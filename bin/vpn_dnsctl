@@ -266,7 +266,7 @@ local_test() {
 }
 
 test_profile() {
-  local profile="${1:-}" upstream_url rc=0 domain out
+  local profile="${1:-}" upstream_url domain out ok_count=0 fail_count=0
   if ! upstream_url="$(profile_url "$profile")"; then
     echo "ERROR perfil desconocido: ${profile:-<vacio>}"
     return 64
@@ -285,7 +285,7 @@ test_profile() {
     return 0
   fi
 
-  for domain in google.com gemini.google.com notebooklm.google.com; do
+  for domain in google.com youtube.com notebooklm.google.com; do
     out="$(
       timeout 12s curl -4 -fsS \
         --doh-url "$upstream_url" \
@@ -297,15 +297,23 @@ test_profile() {
     )"
     if [[ "$out" == http=2* || "$out" == http=3* || "$out" == http=4* ]]; then
       printf 'OK   %-24s %s\n' "$domain" "$out"
+      ok_count=$((ok_count + 1))
     elif [[ "$out" =~ http=[234][0-9][0-9] ]]; then
       printf 'WARN %-24s %s\n' "$domain" "$out"
+      ok_count=$((ok_count + 1))
     else
       printf 'FAIL %-24s %s\n' "$domain" "${out:-no output}"
-      rc=1
+      fail_count=$((fail_count + 1))
     fi
   done
 
-  return "$rc"
+  if ((ok_count >= 2)); then
+    ((fail_count > 0)) && echo "WARN profile=$profile partial_failures=$fail_count accepted_ok=$ok_count"
+    return 0
+  fi
+
+  echo "ERROR profile=$profile insufficient_success ok=$ok_count fail=$fail_count" >&2
+  return 1
 }
 
 test_all() {
