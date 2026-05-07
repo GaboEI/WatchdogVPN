@@ -52,3 +52,29 @@ enable_systemd_units() {
     run_step sudo systemctl enable --now "$unit"
   done
 }
+
+disable_systemd_units() {
+  local unit
+  for unit in "${SYSTEMD_ENABLE_UNITS[@]}"; do
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      run_step sudo systemctl disable --now "$unit"
+    else
+      sudo systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    fi
+  done
+  for unit in vpn-rotate-firstboot.timer vpn-rotate-onboot.service; do
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      run_step sudo systemctl disable --now "$unit"
+    else
+      sudo systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+remove_systemd_units() {
+  local unit
+  for unit in "${SYSTEMD_UNITS[@]}"; do
+    remove_root_path "/etc/systemd/system/$unit"
+  done
+  run_step sudo systemctl daemon-reload
+}

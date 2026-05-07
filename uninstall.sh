@@ -1,11 +1,218 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cat <<'EOF'
-WatchdogVPN - Uninstall
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-The uninstall path is planned but not implemented yet.
+# shellcheck source=lib/common.sh
+. "$ROOT_DIR/lib/common.sh"
+# shellcheck source=lib/install_files.sh
+. "$ROOT_DIR/lib/install_files.sh"
+# shellcheck source=lib/systemd.sh
+. "$ROOT_DIR/lib/systemd.sh"
 
-It must remove product files and ask before deleting user configuration,
-state or logs. It must not remove the official AdGuard VPN CLI.
+ASSUME_YES=0
+PURGE_CONFIG=0
+PURGE_LOGS=0
+PURGE_STATE=0
+PURGE_CONKY=0
+
+usage() {
+  cat <<'USAGE'
+WatchdogVPN uninstaller
+
+Usage:
+  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--purge-conky]
+
+Options:
+  --dry-run       Show what would be removed without changing the system.
+  --yes           Do not ask for confirmation for the basic uninstall.
+  --purge-config  Also remove WatchdogVPN config files.
+  --purge-logs    Also remove WatchdogVPN logs.
+  --purge-state   Also remove WatchdogVPN rotation state.
+  --purge-conky   Also remove WatchdogVPN Conky files.
+  --help          Show this help.
+
+This script never removes the official AdGuard VPN CLI or account/license state.
+USAGE
+}
+
+while (($#)); do
+  case "${1:-}" in
+    --dry-run)
+      INSTALL_DRY_RUN=1
+      ;;
+    --yes|-y)
+      ASSUME_YES=1
+      ;;
+    --purge-config)
+      PURGE_CONFIG=1
+      ;;
+    --purge-logs)
+      PURGE_LOGS=1
+      ;;
+    --purge-state)
+      PURGE_STATE=1
+      ;;
+    --purge-conky)
+      PURGE_CONKY=1
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1"
+      usage >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+prompt_yes_no() {
+  local question="$1" default="$2" answer prompt
+
+  if ((ASSUME_YES == 1)); then
+    [[ "$default" == "yes" ]]
+    return
+  fi
+
+  case "$default" in
+    yes) prompt="[Y/n]" ;;
+    no) prompt="[y/N]" ;;
+    *) prompt="[y/n]" ;;
+  esac
+
+  while true; do
+    read -r -p "$question $prompt " answer
+    answer="${answer:-$default}"
+    case "$answer" in
+      y|Y|yes|YES|Yes|s|S|si|SI|Si)
+        return 0
+        ;;
+      n|N|no|NO|No)
+        return 1
+        ;;
+    esac
+  done
+}
+
+print_contract() {
+  cat <<'EOF'
+This removes WatchdogVPN product files:
+  product commands and privileged scripts
+  TUI launcher
+  product systemd units and timers
+  NetworkManager dispatcher
+  logrotate policy
+  desktop launcher
+
+Preserved unless explicitly purged:
+  /etc/adguardvpn.env
+  /etc/vpn-domain-bypass.conf
+  /var/log/myvpn/
+  /var/lib/vpn-rotate/
+  AdGuard Home configuration
+  Conky configuration
+
+Never removed:
+  official AdGuard VPN CLI
+  AdGuard account/license state
 EOF
+}
+
+remove_runtime_files() {
+  remove_root_path /usr/local/bin/no_vpn
+  remove_root_path /usr/local/bin/vpn_auth_check
+  remove_root_path /usr/local/bin/vpn_dnsctl
+  remove_root_path /usr/local/bin/vpn_notify
+  remove_root_path /usr/local/bin/vpn_truth_check
+  remove_root_path /usr/local/bin/vpnctl
+
+  remove_root_path /usr/local/sbin/vpn_domain_bypass_apply.sh
+  remove_root_path /usr/local/sbin/vpn_rotate.sh
+  remove_root_path /usr/local/sbin/vpn_set
+  remove_root_path /usr/local/sbin/vpn_watchdog.sh
+
+  remove_user_path "$HOME/.local/bin/VPN"
+  remove_user_path "$HOME/.local/share/applications/watchdogvpn.desktop"
+  remove_user_path "$HOME/.local/share/applications/vpn-control-center.desktop"
+
+  remove_root_path /etc/NetworkManager/dispatcher.d/99-vpn-rotate
+  remove_root_path /etc/logrotate.d/myvpn
+}
+
+remove_optional_user_data() {
+  if ((PURGE_CONFIG == 1)); then
+    remove_root_path /etc/adguardvpn.env
+    remove_root_path /etc/vpn-domain-bypass.conf
+  else
+    printf '[KEEP] config: /etc/adguardvpn.env\n'
+    printf '[KEEP] config: /etc/vpn-domain-bypass.conf\n'
+  fi
+
+  if ((PURGE_LOGS == 1)); then
+    remove_root_path /var/log/myvpn
+  else
+    printf '[KEEP] logs: /var/log/myvpn\n'
+  fi
+
+  if ((PURGE_STATE == 1)); then
+    remove_root_path /var/lib/vpn-rotate
+  else
+    printf '[KEEP] state: /var/lib/vpn-rotate\n'
+  fi
+
+  if ((PURGE_CONKY == 1)); then
+    remove_user_path "$HOME/.conky/WatchdogVPN"
+  else
+    printf '[KEEP] conky: %s\n' "$HOME/.conky/WatchdogVPN"
+  fi
+}
+
+final_report() {
+  cat <<'EOF'
+
+WatchdogVPN uninstall finished.
+
+The official AdGuard VPN CLI was not removed.
+EOF
+}
+
+printf '%s - Uninstall\n' "$PROJECT_NAME"
+print_contract
+
+if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+  warn "dry-run mode: no system changes will be made"
+else
+  sudo -v
+fi
+
+if ((ASSUME_YES == 0)); then
+  if ! prompt_yes_no "Remove WatchdogVPN product files?" no; then
+    warn "uninstall cancelled"
+    exit 0
+  fi
+fi
+
+if ((PURGE_CONFIG == 0)) && prompt_yes_no "Also remove WatchdogVPN config files?" no; then
+  PURGE_CONFIG=1
+fi
+
+if ((PURGE_LOGS == 0)) && prompt_yes_no "Also remove WatchdogVPN logs?" no; then
+  PURGE_LOGS=1
+fi
+
+if ((PURGE_STATE == 0)) && prompt_yes_no "Also remove WatchdogVPN rotation state?" no; then
+  PURGE_STATE=1
+fi
+
+if ((PURGE_CONKY == 0)) && prompt_yes_no "Also remove WatchdogVPN Conky files?" no; then
+  PURGE_CONKY=1
+fi
+
+disable_systemd_units
+remove_systemd_units
+remove_runtime_files
+remove_optional_user_data
+final_report

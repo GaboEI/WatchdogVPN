@@ -74,3 +74,26 @@ create_service_user() {
   [[ -x "$shell" ]] || shell="/bin/false"
   run_step sudo useradd --system --home-dir "$home" --create-home --shell "$shell" "$user"
 }
+
+remove_root_path() {
+  local path="$1"
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    printf '[KEEP] absent: %s\n' "$path"
+    return 0
+  fi
+  backup_path "$path"
+  run_step sudo rm -rf -- "$path"
+}
+
+remove_user_path() {
+  local path="$1"
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    printf '[KEEP] absent: %s\n' "$path"
+    return 0
+  fi
+  if [[ "$INSTALL_DRY_RUN" == "1" ]]; then
+    printf '[DRY-RUN] remove user path %s\n' "$path"
+    return 0
+  fi
+  rm -rf -- "$path"
+}
