@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONF_FILE="/etc/vpn-domain-bypass.conf"
+APPLY_SERVICE="vpn-domain-bypass.service"
+
+usage() {
+  cat <<USAGE
+Uso:
+  no_vpn                # interactivo (pide dominio)
+  no_vpn ejemplo.com    # directo
+  no_vpn --list         # ver dominios configurados
+  no_vpn --remove       # quitar dominio por lista numerada
+USAGE
+}
+
+normalize_domain() {
+  local d="${1,,}"
+  d="${d#http://}"
+  d="${d#https://}"
+  d="${d%%/*}"
+  d="${d#\*.}" # permite "*.dominio.com" sin romper "dominio.com"
+  d="${d%.}"   # quita punto final si lo hubiese
+  printf '%s' "$d"
+}
+
+valid_domain() {
+  local d="$1"
+  [[ "$d" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]]
+}
+
+ensure_sudo() {
+  sudo -v >/dev/null
+}
+
+list_domains() {
+  if ! sudo test -f "$CONF_FILE"; then
+    echo "No existe $CONF_FILE"
+    exit 0
+  fi
+  echo "Dominios fuera de VPN en $CONF_FILE:"
+  sudo awk '!/^[[:space:]]*(#|$)/ {print "- "$0}' "$CONF_FILE"
+}
+
+remove_domain_menu() {
+  if ! sudo test -f "$CONF_FILE"; then
+    echo "No existe $CONF_FILE"
+    exit 0
+  fi
+
+  mapfile -t domains < <(
+    sudo awk '
+      !/^[[:space:]]*(#|$)/ {
+        d=tolower($1)
+        if (d ~ /^\*\./) d=substr(d,3)
+        print d
+      }' "$CONF_FILE" | sort -u
+  )
+
+  if (( ${#domains[@]} == 0 )); then
+    echo "No hay dominios para quitar."
+    exit 0
+  fi
+
+  echo "Selecciona el dominio a desexcluir:"
+  local i=1
+  for d in "${domains[@]}"; do
+    echo "$i) $d"
+    i=$((i + 1))
+  done
+
+  local choice
+  read -r -p "Número: " choice
+
+  if [[ ! "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#domains[@]} )); then
+    echo "Selección inválida."
+    exit 1
+  fi
+
+  local domain="${domains[$((choice - 1))]}"
+  local tmp
+  tmp="$(mktemp)"
+
+  sudo awk -v d="$domain" '
+    BEGIN { wd="*." d }
+    {
+      line=tolower($0)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line == d || line == wd) next
+      print $0
+    }' "$CONF_FILE" > "$tmp"
+
+  sudo install -m 0644 -o root -g root "$tmp" "$CONF_FILE"
+  rm -f -- "$tmp"
+
+  sudo systemctl start "$APPLY_SERVICE"
+  echo "Quitado: $domain y *.$domain"
+  echo "Aplicado bypass con: $APPLY_SERVICE"
+}
+
+add_domain() {
+  local domain="$1"
+  local wildcard="*.$domain"
+  local tmp
+  tmp="$(mktemp)"
+
+  if sudo test -f "$CONF_FILE"; then
+    sudo cat "$CONF_FILE" > "$tmp"
+  else
+    cat > "$tmp" <<'HDR'
+# Domains that must bypass VPN and use main routing table
+HDR
+  fi
+
+  local changed=0
+
+  if ! grep -Fqx "$domain" "$tmp"; then
+    echo "$domain" >> "$tmp"
+    changed=1
+  fi
+
+  if ! grep -Fqx "$wildcard" "$tmp"; then
+    echo "$wildcard" >> "$tmp"
+    changed=1
+  fi
+
+  if (( changed == 0 )); then
+    echo "Ya existía: $domain (y su wildcard)."
+  else
+    sudo install -m 0644 -o root -g root "$tmp" "$CONF_FILE"
+    echo "Agregado: $domain"
+    echo "Agregado: $wildcard"
+  fi
+
+  sudo systemctl start "$APPLY_SERVICE"
+  echo "Aplicado bypass con: $APPLY_SERVICE"
+
+  echo
+  echo "Regla de ruta para el dominio:"
+  local ip4 ip6 route_line
+  ip4="$(timeout 4 getent ahostsv4 "$domain" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+  ip6="$(timeout 4 getent ahosts "$domain" 2>/dev/null | awk '$1 ~ /:/{print $1; exit}' || true)"
+
+  if [[ -n "${ip4:-}" ]]; then
+    route_line="$(ip -o route get "$ip4" 2>/dev/null | head -n1 || true)"
+    [[ -n "$route_line" ]] && echo "IPv4: $route_line" || echo "IPv4: sin ruta para $ip4"
+  else
+    echo "IPv4: no resuelve"
+  fi
+
+  if [[ -n "${ip6:-}" ]]; then
+    route_line="$(ip -6 -o route get "$ip6" 2>/dev/null | head -n1 || true)"
+    [[ -n "$route_line" ]] && echo "IPv6: $route_line" || echo "IPv6: sin ruta para $ip6"
+  else
+    echo "IPv6: no resuelve"
+  fi
+
+  rm -f -- "$tmp"
+}
+
+main() {
+  case "${1:-}" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --list)
+      ensure_sudo
+      list_domains
+      exit 0
+      ;;
+    --remove)
+      ensure_sudo
+      remove_domain_menu
+      exit 0
+      ;;
+  esac
+
+  local domain="${1:-}"
+
+  if [[ -z "$domain" ]]; then
+    read -r -p "Escribe el dominio a excluir de VPN (ej: ejemplo.com): " domain
+  fi
+
+  domain="$(normalize_domain "$domain")"
+
+  if [[ -z "$domain" ]] || ! valid_domain "$domain"; then
+    echo "Dominio inválido. Ejemplo válido: ejemplo.com"
+    exit 1
+  fi
+
+  ensure_sudo
+  add_domain "$domain"
+}
+
+main "$@"

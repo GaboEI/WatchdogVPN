@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CMD="${1:-}"
+shift || true
+
+AG="/usr/local/bin/adguardvpn-cli"
+TRUTH="/usr/local/bin/vpn_truth_check"
+VPN_SET="/usr/local/sbin/vpn_set"
+RUN_AS_ADGVPN=(sudo -u adgvpn -H "$AG")
+
+current_location() {
+  sudo sed -n 's/^LOCATION="\?\([^"]*\)"\?/\1/p' /etc/adguardvpn.env 2>/dev/null | head -n1 || true
+}
+
+valid_location_hint() {
+  local loc="${1:-}"
+  [[ "$loc" =~ ^[A-Za-z]{2}$ ]]
+}
+
+load_truth() {
+  local line
+  while IFS= read -r line; do
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "$key" in
+      STATUS|TUN|ROUTE|IP|IP_ADDR)
+        printf -v "$key" '%s' "$val"
+        ;;
+    esac
+  done < <("$TRUTH")
+}
+
+case "$CMD" in
+  status)
+    STATUS="DOWN"
+    TUN="DOWN"
+    ROUTE="UNKNOWN"
+    IP="FAIL"
+    IP_ADDR="none"
+    load_truth
+
+    cli_status="$("${RUN_AS_ADGVPN[@]}" status 2>/dev/null | sed -n '1p' || true)"
+    cli_status="${cli_status:-no-response}"
+
+    icon="🔴"
+    case "$STATUS" in
+      UP) icon="🟢" ;;
+      DEGRADED) icon="🟡" ;;
+      DOWN) icon="🔴" ;;
+    esac
+
+    echo "${icon} VPN STATUS: ${STATUS} (REAL)"
+    echo
+    echo "🧵 tun0: ${TUN}"
+    echo "🧭 route: ${ROUTE}"
+    echo "🌍 public ip: ${IP_ADDR}"
+    echo
+    echo "⚠️ CLI status: ${cli_status} (no confiable)"
+    ;;
+
+  list)
+    "${RUN_AS_ADGVPN[@]}" list-locations
+    ;;
+
+  connect)
+    LOC="${1:-}"
+    if [[ -z "$LOC" ]]; then
+      echo "❌ Uso: vpnctl connect <ISO/CIUDAD/ID>"
+      exit 1
+    fi
+    sudo "$VPN_SET" "$LOC"
+    echo
+    "$0" status
+    ;;
+
+  disconnect)
+    sudo systemctl stop adguardvpn.service
+    echo "🔓 VPN desconectada"
+    echo
+    "$0" status
+    ;;
+
+  restart)
+    loc="$(current_location)"
+    if valid_location_hint "$loc"; then
+      sudo "$VPN_SET" "$loc"
+    else
+      sudo systemctl restart adguardvpn.service
+    fi
+    echo "🔄 VPN reiniciada"
+    echo
+    "$0" status
+    ;;
+
+  *)
+    echo "Uso:"
+    echo "  vpnctl status"
+    echo "  vpnctl list"
+    echo "  vpnctl connect <ISO/CIUDAD/ID>"
+    echo "  vpnctl disconnect"
+    echo "  vpnctl restart"
+    exit 1
+    ;;
+esac

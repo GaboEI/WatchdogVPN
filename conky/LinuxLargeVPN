@@ -1,0 +1,76 @@
+#AUTHOR
+#https://github.com/Vict0rBit
+# Fused variant created locally: LinuxLarge + VPN status block
+
+update_interval 1
+total_run_times 0
+net_avg_samples 1
+cpu_avg_samples 1
+imlib_cache_size 0
+double_buffer yes
+no_buffers yes
+use_xft yes
+xftfont Droid Sans:size=9
+override_utf8_locale yes
+text_buffer_size 4096
+own_window yes
+own_window_type desktop
+own_window_transparent yes
+own_window_hints undecorated,sticky,skip_taskbar,skip_pager
+alignment top_left
+gap_x -290
+gap_y 0
+minimum_size 2000 0
+default_bar_size 30 8
+draw_shades no
+default_color ffffff
+default_shade_color 000000
+color0 00d9ff
+color1 ffffff
+color2 c5c5c5
+color3 ff8400
+own_window_argb_visual yes
+own_window_colour 000000
+own_window_argb_value 0
+
+TEXT
+${goto 210}${color0}${font Zekton:style=bold:size=13}${voffset 40}${exec whoami}
+${voffset -45}${font Zekton:style=Bold:size=12}${color}${goto 90}${uptime}
+${goto 90}${color1}${font Zekton:style=Bold:size=12}${color1}${sysname}${color}${font}
+${font Chinacat:size=12}${offset 70}${voffset 45}${time %B %d, %Y} ${goto 248}${font Zekton:style=bold:size=11}${acpitemp}
+${goto 248}${font Zekton:style=bold:size=11}°C
+${voffset -11}${goto 65}${color3}${font Zekton:style=bold:size=30}${time %H:%M}${font}${color1}${goto 220}${font Zekton:style=Bold:size=11}CPU
+${goto 220}${font Zekton:style=Bold:size=11}${color1}${cpu cpu1}%
+${voffset 30}${goto 82}/home
+${goto 82}${font Zekton:style=Bold:size=10}${fs_used /home}
+${voffset 35}${goto 25}${font Zekton:style=Bold:size=10}/dev/sda${goto 113}/dev/sdb${font Zekton:style=Bold:size=11}${color1}${goto 217}RAM
+${goto 30}${font Zekton:style=Bold:size=9}${diskio /dev/sda}${goto 120}${diskio /dev/sdb} ${goto 220}${font Zekton:style=Bold:size=11}${memperc}%
+${voffset 16}${font Zekton:style=Bold:size=11}${goto 83}ROOT${goto 175}SWAP
+${font Zekton:style=Bold:size=9}${goto 83}${fs_used /}${goto 175}${swapperc}%
+${font Zekton:style=Bold:size=10}${voffset 40}${goto 50}kernel${goto 130} ${kernel}
+${font Zekton:style=Bold:size=10}${goto 50}machine${goto 130}${machine}
+
+${image ~/.conky/victorConky/LinuxLarge.png -p 10,0}
+
+# VPN fused block
+${goto 28}${voffset -305}${color0}${font Zekton:style=bold:size=14}VPN${font}
+${goto 28}${color0}${hr 2}
+
+${goto 28}${voffset 10}${color0}${font Zekton:style=bold:size=10}CORE${font}
+${goto 28}${color2}${font Zekton:style=bold:size=10}VPN${goto 88}${color1}${execi 4 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh vpn}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Tun${goto 88}${color1}${execi 4 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh tun}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Loc${goto 88}${color1}${execi 4 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh location}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Age${goto 88}${color1}${execi 4 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh age}
+${goto 28}${color2}${font Zekton:style=bold:size=10}CLI${goto 88}${color1}${execi 5 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh cli}
+
+${goto 28}${voffset 10}${color0}${font Zekton:style=bold:size=10}NETWORK${font}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Route${goto 88}${color1}${execi 4 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh route}
+${goto 28}${color2}${font Zekton:style=bold:size=10}IP${goto 88}${color1}${execi 10 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh ip}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Country${goto 88}${color1}${execi 12 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh country}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Bypass${goto 88}${color1}${execi 15 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh bypass}
+
+${goto 28}${voffset 10}${color0}${font Zekton:style=bold:size=10}AUTO${font}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Rotate${goto 88}${color1}${execi 6 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh rotate}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Next${goto 88}${color1}${execi 2 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh next_rotate}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Watch${goto 88}${color1}${execi 6 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh watchdog}
+${goto 28}${color2}${font Zekton:style=bold:size=10}Event${goto 88}${color1}${execi 6 ~/.conky/VPN\ Dashboard/vpn_dashboard_data.sh event}

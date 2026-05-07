@@ -1,0 +1,482 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TRUTH_BIN="/usr/local/bin/vpn_truth_check"
+LOCAL_DNS="${VPN_DNS_LOCAL:-127.0.0.1}"
+AGH_CONF="${VPN_DNS_AGH_CONF:-/opt/AdGuardHome/AdGuardHome.yaml}"
+AGH_WORK="${VPN_DNS_AGH_WORK:-/opt/AdGuardHome}"
+AGH_BIN="${VPN_DNS_AGH_BIN:-/opt/AdGuardHome/AdGuardHome}"
+STATE_DIR="${VPN_DNS_STATE_DIR:-/var/lib/vpn-dns-profile}"
+BACKUP_DIR="${VPN_DNS_BACKUP_DIR:-/var/backups/vpn-dns-profile}"
+
+DOMAINS=(
+  google.com
+  gemini.google.com
+  notebooklm.google.com
+  avito.ru
+  ozon.ru
+  dns-shop.ru
+)
+
+usage() {
+  cat <<'USAGE'
+Uso:
+  vpn_dnsctl status
+  vpn_dnsctl current
+  vpn_dnsctl local-test
+  vpn_dnsctl profiles
+  vpn_dnsctl test-profile <perfil>
+  vpn_dnsctl test-all
+  vpn_dnsctl plan <perfil>
+  vpn_dnsctl backup
+  vpn_dnsctl apply <perfil>
+  vpn_dnsctl rollback
+  vpn_dnsctl help
+
+Perfiles iniciales:
+  quad9-doh
+  quad9-alt-doh
+  cloudflare-doh
+  google-doh
+  adguard-doh
+  adguard-unfiltered-doh
+  adguard-doq
+  opendns-doh
+
+Notas:
+  - status/local-test/profiles/test-profile/test-all/current son solo lectura.
+  - backup/apply/rollback tocan solo AdGuard Home y requieren sudo.
+  - apply crea backup, valida config, reinicia AdGuard Home y hace rollback automatico si falla DNS local.
+  - No modifica NetworkManager ni resolv.conf.
+USAGE
+}
+
+profile_url() {
+  case "${1:-}" in
+    quad9-doh) echo "https://dns10.quad9.net/dns-query" ;;
+    quad9-alt-doh) echo "https://dns11.quad9.net/dns-query" ;;
+    cloudflare-doh) echo "https://cloudflare-dns.com/dns-query" ;;
+    google-doh) echo "https://dns.google/dns-query" ;;
+    adguard-doh) echo "https://dns.adguard-dns.com/dns-query" ;;
+    adguard-unfiltered-doh) echo "https://unfiltered.adguard-dns.com/dns-query" ;;
+    adguard-doq) echo "quic://dns.adguard-dns.com" ;;
+    opendns-doh) echo "https://doh.opendns.com/dns-query" ;;
+    *) return 1 ;;
+  esac
+}
+
+profile_upstreams() {
+  case "${1:-}" in
+    quad9-doh) printf '%s\n' "https://dns10.quad9.net/dns-query" "https://dns11.quad9.net/dns-query" ;;
+    quad9-alt-doh) printf '%s\n' "https://dns11.quad9.net/dns-query" "https://dns10.quad9.net/dns-query" ;;
+    cloudflare-doh) printf '%s\n' "https://cloudflare-dns.com/dns-query" ;;
+    google-doh) printf '%s\n' "https://dns.google/dns-query" ;;
+    adguard-doh) printf '%s\n' "https://dns.adguard-dns.com/dns-query" ;;
+    adguard-unfiltered-doh) printf '%s\n' "https://unfiltered.adguard-dns.com/dns-query" ;;
+    adguard-doq) printf '%s\n' "quic://dns.adguard-dns.com" ;;
+    opendns-doh) printf '%s\n' "https://doh.opendns.com/dns-query" ;;
+    *) return 1 ;;
+  esac
+}
+
+profile_bootstrap() {
+  case "${1:-}" in
+    quad9-doh|quad9-alt-doh) printf '%s\n' "9.9.9.10" "149.112.112.10" "2620:fe::10" "2620:fe::fe:10" ;;
+    cloudflare-doh) printf '%s\n' "1.1.1.1" "1.0.0.1" "2606:4700:4700::1111" "2606:4700:4700::1001" ;;
+    google-doh) printf '%s\n' "8.8.8.8" "8.8.4.4" "2001:4860:4860::8888" "2001:4860:4860::8844" ;;
+    adguard-doh) printf '%s\n' "94.140.14.14" "94.140.15.15" "2a10:50c0::ad1:ff" "2a10:50c0::ad2:ff" ;;
+    adguard-unfiltered-doh) printf '%s\n' "94.140.14.140" "94.140.14.141" "2a10:50c0::1:ff" "2a10:50c0::2:ff" ;;
+    adguard-doq) printf '%s\n' "94.140.14.14" "94.140.15.15" "2a10:50c0::ad1:ff" "2a10:50c0::ad2:ff" ;;
+    opendns-doh) printf '%s\n' "208.67.222.222" "208.67.220.220" "2620:119:35::35" "2620:119:53::53" ;;
+    *) return 1 ;;
+  esac
+}
+
+profile_fallbacks() {
+  case "${1:-}" in
+    quad9-doh|quad9-alt-doh) printf '%s\n' "https://cloudflare-dns.com/dns-query" "https://dns.google/dns-query" ;;
+    cloudflare-doh) printf '%s\n' "https://dns.google/dns-query" "https://dns10.quad9.net/dns-query" ;;
+    google-doh) printf '%s\n' "https://cloudflare-dns.com/dns-query" "https://dns10.quad9.net/dns-query" ;;
+    adguard-doh|adguard-unfiltered-doh|adguard-doq|opendns-doh) printf '%s\n' "https://cloudflare-dns.com/dns-query" "https://dns.google/dns-query" ;;
+    *) return 1 ;;
+  esac
+}
+
+profiles() {
+  cat <<'PROFILES'
+quad9-doh
+quad9-alt-doh
+cloudflare-doh
+google-doh
+adguard-doh
+adguard-unfiltered-doh
+adguard-doq
+opendns-doh
+PROFILES
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+need_sudo() {
+  if ! sudo -n true 2>/dev/null; then
+    echo "ERROR sudo requerido. Ejecuta primero: sudo -v" >&2
+    return 1
+  fi
+}
+
+read_config() {
+  if [[ -r "$AGH_CONF" ]]; then
+    cat "$AGH_CONF"
+  else
+    need_sudo
+    sudo -n cat "$AGH_CONF"
+  fi
+}
+
+yaml_list() {
+  local key="$1"
+  read_config | awk -v key="$key" '
+    $0 == "  " key ":" { in_list=1; next }
+    in_list && /^    - / { sub(/^    - /, ""); print; next }
+    in_list { exit }
+  '
+}
+
+yaml_list_from_config() {
+  local key="$1"
+  awk -v key="$key" '
+    $0 == "  " key ":" { in_list=1; next }
+    in_list && /^    - / { sub(/^    - /, ""); print; next }
+    in_list { exit }
+  '
+}
+
+join_csv() {
+  paste -sd ', ' -
+}
+
+print_truth() {
+  if [[ -x "$TRUTH_BIN" ]]; then
+    "$TRUTH_BIN" 2>/dev/null || true
+  else
+    echo "vpn_truth_check=missing"
+  fi
+}
+
+status() {
+  echo "== VPN truth =="
+  print_truth
+
+  echo
+  echo "== resolv.conf =="
+  sed -n '1,80p' /etc/resolv.conf 2>/dev/null || true
+
+  echo
+  echo "== NetworkManager DNS =="
+  if have nmcli; then
+    nmcli dev show 2>/dev/null \
+      | grep -E 'GENERAL.DEVICE|GENERAL.STATE|IP4.ADDRESS|IP4.GATEWAY|IP4.DNS|IP6.DNS' \
+      || true
+  else
+    echo "nmcli=missing"
+  fi
+
+  echo
+  echo "== Services =="
+  systemctl is-active AdGuardHome.service adguardvpn.service vpn-domain-bypass.timer vpn-watchdog.timer vpn-rotate.timer 2>/dev/null || true
+}
+
+current() {
+  local conf upstreams first guess=""
+  if ! conf="$(read_config)"; then
+    echo "ERROR no pude leer configuracion: $AGH_CONF" >&2
+    return 1
+  fi
+  upstreams="$(printf '%s\n' "$conf" | yaml_list_from_config upstream_dns || true)"
+  first="$(printf '%s\n' "$upstreams" | sed -n '1p')"
+
+  case "$first" in
+    https://dns10.quad9.net/dns-query) guess="quad9-doh" ;;
+    https://dns11.quad9.net/dns-query) guess="quad9-alt-doh" ;;
+    https://cloudflare-dns.com/dns-query) guess="cloudflare-doh" ;;
+    https://dns.google/dns-query) guess="google-doh" ;;
+    https://dns.adguard-dns.com/dns-query) guess="adguard-doh" ;;
+    https://unfiltered.adguard-dns.com/dns-query) guess="adguard-unfiltered-doh" ;;
+    quic://dns.adguard-dns.com) guess="adguard-doq" ;;
+    https://doh.opendns.com/dns-query) guess="opendns-doh" ;;
+    *) guess="unknown" ;;
+  esac
+
+  echo "== AdGuard Home DNS current =="
+  echo "config=$AGH_CONF"
+  echo "profile_guess=$guess"
+  echo
+  echo "upstream_dns:"
+  printf '%s\n' "$conf" | yaml_list_from_config upstream_dns | sed 's/^/  - /' || true
+  echo "bootstrap_dns:"
+  printf '%s\n' "$conf" | yaml_list_from_config bootstrap_dns | sed 's/^/  - /' || true
+  echo "fallback_dns:"
+  printf '%s\n' "$conf" | yaml_list_from_config fallback_dns | sed 's/^/  - /' || true
+}
+
+local_test() {
+  if ! have dig; then
+    echo "ERROR dig no instalado"
+    return 2
+  fi
+
+  echo "== Local DNS test @${LOCAL_DNS} =="
+  local domain answer rc=0
+  for domain in "${DOMAINS[@]}"; do
+    answer="$(timeout 6s dig "@${LOCAL_DNS}" "$domain" A +short +time=3 +tries=1 2>&1 | head -n 6 | paste -sd, - || true)"
+    if [[ -n "$answer" && "$answer" != *"communications error"* && "$answer" != *"timed out"* ]]; then
+      printf 'OK   %-28s %s\n' "$domain" "$answer"
+    else
+      printf 'FAIL %-28s %s\n' "$domain" "${answer:-no answer}"
+      rc=1
+    fi
+  done
+  return "$rc"
+}
+
+test_profile() {
+  local profile="${1:-}" upstream_url rc=0 domain out
+  if ! upstream_url="$(profile_url "$profile")"; then
+    echo "ERROR perfil desconocido: ${profile:-<vacio>}"
+    return 64
+  fi
+  if ! have curl; then
+    echo "ERROR curl no instalado"
+    return 2
+  fi
+
+  echo "== Profile test: $profile =="
+  echo "upstream_url=$upstream_url"
+
+  if [[ "$upstream_url" != https://* ]]; then
+    echo "WARN preflight HTTP directo no disponible para upstream no-DoH: $upstream_url"
+    echo "INFO apply validara la config de AdGuard Home y hara rollback si DNS local falla."
+    return 0
+  fi
+
+  for domain in google.com gemini.google.com notebooklm.google.com; do
+    out="$(
+      timeout 12s curl -4 -fsS \
+        --doh-url "$upstream_url" \
+        --connect-timeout 5 \
+        --max-time 10 \
+        -o /dev/null \
+        -w "http=%{http_code} time=%{time_total} ip=%{remote_ip}" \
+        "https://${domain}/" 2>&1 || true
+    )"
+    if [[ "$out" == http=2* || "$out" == http=3* || "$out" == http=4* ]]; then
+      printf 'OK   %-24s %s\n' "$domain" "$out"
+    elif [[ "$out" =~ http=[234][0-9][0-9] ]]; then
+      printf 'WARN %-24s %s\n' "$domain" "$out"
+    else
+      printf 'FAIL %-24s %s\n' "$domain" "${out:-no output}"
+      rc=1
+    fi
+  done
+
+  return "$rc"
+}
+
+test_all() {
+  local p rc=0
+  while read -r p; do
+    [[ -z "$p" ]] && continue
+    test_profile "$p" || rc=1
+    echo
+  done < <(profiles)
+  return "$rc"
+}
+
+print_profile_plan() {
+  local profile="$1"
+  echo "== DNS profile plan: $profile =="
+  echo "upstream_dns:"
+  profile_upstreams "$profile" | sed 's/^/  - /'
+  echo "bootstrap_dns:"
+  profile_bootstrap "$profile" | sed 's/^/  - /'
+  echo "fallback_dns:"
+  profile_fallbacks "$profile" | sed 's/^/  - /'
+}
+
+build_config() {
+  local profile="$1"
+  local upstreams bootstrap fallbacks
+  upstreams="$(profile_upstreams "$profile")"
+  bootstrap="$(profile_bootstrap "$profile")"
+  fallbacks="$(profile_fallbacks "$profile")"
+
+  read_config | awk \
+    -v upstreams="$upstreams" \
+    -v bootstrap="$bootstrap" \
+    -v fallbacks="$fallbacks" '
+      function emit_list(values, arr, n, i) {
+        n=split(values, arr, "\n")
+        for (i=1; i<=n; i++) {
+          if (arr[i] != "") print "    - " arr[i]
+        }
+      }
+      skip && /^    - / { next }
+      skip { skip=0 }
+      $0 == "  upstream_dns:" {
+        print
+        emit_list(upstreams)
+        skip=1
+        next
+      }
+      $0 == "  bootstrap_dns:" {
+        print
+        emit_list(bootstrap)
+        skip=1
+        next
+      }
+      $0 == "  fallback_dns:" {
+        print
+        emit_list(fallbacks)
+        skip=1
+        next
+      }
+      { print }
+    '
+}
+
+plan_profile() {
+  local profile="${1:-}" tmp
+  if ! profile_url "$profile" >/dev/null; then
+    echo "ERROR perfil desconocido: ${profile:-<vacio>}" >&2
+    return 64
+  fi
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+
+  print_profile_plan "$profile"
+  echo
+  echo "== Validate generated config =="
+  build_config "$profile" > "$tmp"
+  validate_config_file "$tmp"
+  echo "PLAN_OK profile=$profile"
+}
+
+validate_config_file() {
+  local file="$1"
+  if [[ ! -x "$AGH_BIN" ]]; then
+    echo "ERROR AdGuardHome bin no ejecutable: $AGH_BIN" >&2
+    return 1
+  fi
+  "$AGH_BIN" --check-config -c "$file" -w "$AGH_WORK"
+}
+
+backup_config() {
+  local stamp backup
+  stamp="$(date '+%Y%m%d-%H%M%S')"
+  backup="$BACKUP_DIR/AdGuardHome.yaml.$stamp"
+  need_sudo
+  sudo -n mkdir -p "$BACKUP_DIR" "$STATE_DIR"
+  sudo -n cp -a "$AGH_CONF" "$backup"
+  printf '%s\n' "$backup" | sudo -n tee "$STATE_DIR/last_backup" >/dev/null
+  echo "$backup"
+}
+
+restore_backup() {
+  local backup="$1"
+  need_sudo
+  if ! sudo -n test -f "$backup"; then
+    echo "ERROR backup no existe: $backup" >&2
+    return 1
+  fi
+  sudo -n cp -a "$backup" "$AGH_CONF"
+  sudo -n systemctl restart AdGuardHome.service
+  sleep 2
+  local_test
+}
+
+rollback() {
+  local backup
+  need_sudo
+  backup="$(sudo -n cat "$STATE_DIR/last_backup" 2>/dev/null || true)"
+  if [[ -z "$backup" ]]; then
+    echo "ERROR no hay backup registrado en $STATE_DIR/last_backup" >&2
+    return 1
+  fi
+  echo "== Rollback DNS =="
+  echo "backup=$backup"
+  restore_backup "$backup"
+}
+
+apply_profile() {
+  local profile="${1:-}" tmp backup
+  if ! profile_url "$profile" >/dev/null; then
+    echo "ERROR perfil desconocido: ${profile:-<vacio>}" >&2
+    return 64
+  fi
+  need_sudo
+
+  echo "== Preflight profile =="
+  if ! test_profile "$profile"; then
+    echo
+    echo "APPLY_ABORTED_NO_CHANGES profile=$profile reason=preflight_failed"
+    return 1
+  fi
+
+  echo
+  echo "== Backup current config =="
+  backup="$(backup_config)"
+  echo "backup=$backup"
+
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+
+  echo
+  echo "== Build candidate config =="
+  build_config "$profile" > "$tmp"
+  validate_config_file "$tmp"
+
+  echo
+  echo "== Apply profile: $profile =="
+  sudo -n cp "$tmp" "$AGH_CONF"
+  sudo -n systemctl restart AdGuardHome.service
+  sleep 2
+
+  echo
+  echo "== Validate local DNS after apply =="
+  if local_test; then
+    sudo -n mkdir -p "$STATE_DIR"
+    printf '%s\n' "$profile" | sudo -n tee "$STATE_DIR/current_profile" >/dev/null
+    echo
+    echo "APPLY_OK profile=$profile"
+    return 0
+  fi
+
+  echo
+  echo "APPLY_FAIL profile=$profile -> rollback automático"
+  restore_backup "$backup" || true
+  return 1
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  status) status ;;
+  current) current ;;
+  local-test) local_test ;;
+  profiles) profiles ;;
+  test-profile) test_profile "${1:-}" ;;
+  test-all) test_all ;;
+  plan) plan_profile "${1:-}" ;;
+  backup) backup_config ;;
+  apply) apply_profile "${1:-}" ;;
+  rollback) rollback ;;
+  help|--help|-h) usage ;;
+  *)
+    echo "ERROR comando desconocido: $cmd" >&2
+    usage >&2
+    exit 64
+    ;;
+esac

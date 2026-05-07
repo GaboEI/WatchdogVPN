@@ -1,0 +1,11 @@
+[Unit]
+Description=Apply domain bypass routes (outside VPN)
+After=network-online.target adguardvpn.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vpn_domain_bypass_apply.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Shell/editor temp files
+*~
+*.swp
+*.swo
+
+# Local env and secrets
+.env
+.env.*
+*.key
+*.pem
+*.token
+
+# Runtime/log output
+*.log
+*.gz
+vpn-stress-runs/
+
+# OS/editor metadata
+.DS_Store
+.idea/
+.vscode/
+
+# Local build/cache
+.cache/
+tmp/

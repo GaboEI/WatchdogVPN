@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="shell"
+
+usage() {
+  cat <<'USAGE'
+Uso:
+  vpn_truth_check [--shell]
+  vpn_truth_check --quiet
+  vpn_truth_check --json
+  vpn_truth_check --help
+
+Modos:
+  --shell   Imprime KEY=VALUE. Es el formato por defecto y compatible.
+  --quiet   No imprime nada. Exit code: 0 UP, 1 DEGRADED, 2 DOWN.
+  --json    Imprime JSON estable para integraciones futuras.
+  --help    Muestra esta ayuda.
+
+Contrato de estado:
+  STATUS=UP        tun0 UP, ruta por tun0 e IP publica OK.
+  STATUS=DEGRADED  tun0 UP, pero ruta o IP publica no valida.
+  STATUS=DOWN      tun0 no esta UP.
+USAGE
+}
+
+is_ipv4() {
+  [[ "${1:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
+
+json_escape() {
+  local s="${1:-}"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+tun_state() {
+  local out
+  out="$(ip link show tun0 2>/dev/null || true)"
+  if [[ -n "$out" && "$out" == *"UP"* ]]; then
+    echo "UP"
+  else
+    echo "DOWN"
+  fi
+}
+
+route_state() {
+  local out
+  out="$(ip route get 1.1.1.1 2>/dev/null | head -n1 || true)"
+  if [[ -z "$out" ]]; then
+    echo "UNKNOWN"
+  elif [[ "$out" == *" dev tun0 "* || "$out" == *" dev tun0" ]]; then
+    echo "TUN"
+  else
+    echo "DEFAULT"
+  fi
+}
+
+public_ip() {
+  local ip url
+  for url in \
+    "https://ifconfig.me" \
+    "https://api.ipify.org" \
+    "https://ipinfo.io/ip"
+  do
+    ip="$(curl -4 -s --max-time 3 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+    if is_ipv4 "$ip"; then
+      echo "$ip"
+      return 0
+    fi
+  done
+  echo "none"
+}
+
+status_code() {
+  case "${1:-DOWN}" in
+    UP) echo 0 ;;
+    DEGRADED) echo 1 ;;
+    DOWN) echo 2 ;;
+    *) echo 3 ;;
+  esac
+}
+
+emit_shell() {
+  printf 'STATUS=%s\n' "$STATUS"
+  printf 'TUN=%s\n' "$TUN"
+  printf 'ROUTE=%s\n' "$ROUTE"
+  printf 'IP=%s\n' "$IP"
+  printf 'IP_ADDR=%s\n' "$IP_ADDR"
+}
+
+emit_json() {
+  cat <<JSON
+{"schema":"vpn_truth_check.v1","status":"$(json_escape "$STATUS")","tun":"$(json_escape "$TUN")","route":"$(json_escape "$ROUTE")","ip":"$(json_escape "$IP")","ip_addr":"$(json_escape "$IP_ADDR")","exit_code":$(status_code "$STATUS")}
+JSON
+}
+
+parse_args() {
+  if (( $# > 1 )); then
+    echo "ERROR: demasiados argumentos." >&2
+    usage >&2
+    exit 64
+  fi
+
+  case "${1:---shell}" in
+    --shell|"")
+      MODE="shell"
+      ;;
+    --quiet|-q)
+      MODE="quiet"
+      ;;
+    --json)
+      MODE="json"
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: argumento no reconocido: $1" >&2
+      usage >&2
+      exit 64
+      ;;
+  esac
+}
+
+collect_truth() {
+  TUN="$(tun_state)"
+  ROUTE="$(route_state)"
+  IP_ADDR="$(public_ip)"
+
+  if [[ "$IP_ADDR" == "none" ]]; then
+    IP="FAIL"
+  else
+    IP="OK"
+  fi
+
+  if [[ "$TUN" == "UP" && "$ROUTE" == "TUN" && "$IP" == "OK" ]]; then
+    STATUS="UP"
+  elif [[ "$TUN" == "UP" ]]; then
+    STATUS="DEGRADED"
+  else
+    STATUS="DOWN"
+  fi
+}
+
+main() {
+  parse_args "$@"
+  collect_truth
+
+  case "$MODE" in
+    shell)
+      emit_shell
+      ;;
+    quiet)
+      exit "$(status_code "$STATUS")"
+      ;;
+    json)
+      emit_json
+      ;;
+  esac
+}
+
+STATUS="DOWN"
+TUN="DOWN"
+ROUTE="UNKNOWN"
+IP="FAIL"
+IP_ADDR="none"
+
+main "$@"

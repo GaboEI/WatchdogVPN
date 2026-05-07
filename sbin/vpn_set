@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOC="${1:-}"
+NOTIFY_BIN="/usr/local/bin/vpn_notify"
+TRUTH_BIN="/usr/local/bin/vpn_truth_check"
+
+if [[ -z "$LOC" ]]; then
+  echo "Uso: vpn_set <ISO|ID|Ciudad>"
+  exit 1
+fi
+
+sudo tee /etc/adguardvpn.env >/dev/null <<ENVEOF
+LOCATION="${LOC}"
+ENVEOF
+
+sudo systemctl restart adguardvpn.service
+sleep 3
+
+STATUS="DOWN"
+TUN="DOWN"
+ROUTE="UNKNOWN"
+IP="FAIL"
+IP_ADDR="none"
+
+if [[ -x "$TRUTH_BIN" ]]; then
+  while IFS='=' read -r key value; do
+    case "$key" in
+      STATUS|TUN|ROUTE|IP|IP_ADDR)
+        printf -v "$key" '%s' "$value"
+        ;;
+    esac
+  done < <("$TRUTH_BIN" 2>/dev/null || true)
+fi
+
+echo "Ubicacion solicitada: ${LOC}"
+echo "Estado real: ${STATUS}"
+echo "tun0: ${TUN}"
+echo "route: ${ROUTE}"
+echo "ip: ${IP_ADDR}"
+
+if [[ "$STATUS" == "UP" ]]; then
+  [[ -x "$NOTIFY_BIN" ]] && "$NOTIFY_BIN" "VPN activa" "ACTIVO ${LOC} ${IP_ADDR}" normal >/dev/null 2>&1 || true
+else
+  [[ -x "$NOTIFY_BIN" ]] && "$NOTIFY_BIN" "VPN pendiente" "Solicitada ${LOC}; estado real ${STATUS}" low >/dev/null 2>&1 || true
+fi

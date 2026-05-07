@@ -1,0 +1,18 @@
+/var/log/myvpn/vpn-events.log
+/var/log/myvpn/vpn-watchdog.log
+/var/log/myvpn/vpn-rotate.log
+/var/log/vpn-dispatcher.log
+/var/log/vpn-domain-bypass.log {
+    su root root
+    hourly
+    rotate 336
+    minsize 128k
+    maxsize 5M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+    create 0644 root root
+}

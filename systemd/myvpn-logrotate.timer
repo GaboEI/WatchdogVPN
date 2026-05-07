@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly rotation check for VPN stack logs
+Documentation=man:logrotate(8) man:logrotate.conf(5)
+
+[Timer]
+OnCalendar=hourly
+AccuracySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

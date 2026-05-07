@@ -1,0 +1,2988 @@
+#!/usr/bin/env python3
+import atexit
+import os
+import re
+import select
+import shlex
+import shutil
+import subprocess
+import sys
+import termios
+import threading
+import textwrap
+import tty
+import time
+import traceback
+
+
+AG = "/usr/local/bin/adguardvpn-cli"
+VPNCTL = "/usr/local/bin/vpnctl"
+TRUTH_BIN = "/usr/local/bin/vpn_truth_check"
+AUTH_BIN = "/usr/local/bin/vpn_auth_check"
+VPN_SET = "/usr/local/sbin/vpn_set"
+NO_VPN = "/usr/local/bin/no_vpn"
+DNSCTL = "/usr/local/bin/vpn_dnsctl"
+ROTATE_TIMER = "vpn-rotate.timer"
+ROTATE_FIRSTBOOT_TIMER = "vpn-rotate-firstboot.timer"
+WATCHDOG_TIMER = "vpn-watchdog.timer"
+ROTATE_SERVICE = "vpn-rotate.service"
+WATCHDOG_SERVICE = "vpn-watchdog.service"
+LOGROTATE_TIMER = "myvpn-logrotate.timer"
+LOGROTATE_SERVICE = "myvpn-logrotate.service"
+LOGROTATE_CONF = "/etc/logrotate.d/myvpn"
+VPN_LOG_PATHS = [
+    "/var/log/myvpn/vpn-events.log",
+    "/var/log/myvpn/vpn-watchdog.log",
+    "/var/log/myvpn/vpn-rotate.log",
+    "/var/log/vpn-dispatcher.log",
+    "/var/log/vpn-domain-bypass.log",
+]
+TRACE_LOG_PATHS = [
+    "/var/log/myvpn/vpn-watchdog.log",
+    "/var/log/myvpn/vpn-rotate.log",
+    "/var/log/vpn-dispatcher.log",
+    "/var/log/vpn-domain-bypass.log",
+]
+AUTO_REFRESH_SECONDS = 12
+DASHBOARD_REFRESH_SECONDS = 1
+SUDO_KEEPALIVE_SECONDS = 45
+DNS_PROFILE_LABELS = {
+    "quad9-doh": "Quad9",
+    "cloudflare-doh": "Cloudflare",
+    "google-doh": "Google",
+    "adguard-unfiltered-doh": "AdGuard sin filtro",
+    "adguard-doh": "AdGuard filtrado",
+    "adguard-doq": "AdGuard DoQ",
+    "opendns-doh": "OpenDNS",
+}
+
+MENU_ITEMS = [
+    {"id": "dashboard", "label": "Dashboard", "section": "Dashboard", "group": "OPERACION"},
+    {"id": "location", "label": "Ubicacion", "section": "Cambiar ubicacion", "group": "OPERACION"},
+    {"id": "actions", "label": "Acciones", "section": "Acciones rapidas", "group": "OPERACION"},
+    {"id": "dns", "label": "DNS", "section": "DNS / AdGuard", "group": "OPERACION"},
+    {"id": "bypass", "label": "Bypass", "section": "Bypass dominios", "group": "OPERACION"},
+    {"id": "timers", "label": "Timers", "section": "Timers", "group": "AUTOMATIZACION"},
+    {"id": "pool", "label": "Pool", "section": "Pool de rotacion", "group": "AUTOMATIZACION"},
+    {"id": "logs", "label": "Logs", "section": "Ver logs", "group": "AUDITORIA"},
+    {"id": "history", "label": "Historial", "section": "Historial", "group": "AUDITORIA"},
+    {"id": "install", "label": "Instalacion", "section": "Instalacion", "group": "SISTEMA"},
+    {"id": "exit", "label": "Salir", "section": "Salir", "group": "SISTEMA"},
+]
+
+MENU = [item["label"] for item in MENU_ITEMS]
+
+STATUS_LINE = "Listo"
+COUNTRY_CACHE = {}
+SUDO_KEEPALIVE_STOP = threading.Event()
+SUDO_KEEPALIVE_THREAD = None
+
+CSI = "\x1b["
+RESET = "\x1b[0m"
+BOLD = "\x1b[1m"
+DIM = "\x1b[2m"
+FG = {
+    "white": "\x1b[97m",
+    "gray": "\x1b[37m",
+    "cyan": "\x1b[96m",
+    "yellow": "\x1b[93m",
+    "green": "\x1b[92m",
+    "red": "\x1b[91m",
+    "blue": "\x1b[94m",
+    "magenta": "\x1b[95m",
+    "black": "\x1b[30m",
+}
+BG = {
+    "black": "\x1b[40m",
+    "blue": "\x1b[44m",
+    "cyan": "\x1b[46m",
+    "white": "\x1b[47m",
+}
+
+
+def run(cmd: str, timeout: int = 8) -> str:
+    try:
+        out = subprocess.run(
+            cmd,
+            shell=True,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            executable="/bin/bash",
+        )
+        text = ((out.stdout or "") + (out.stderr or "")).strip()
+        return text
+    except Exception as exc:
+        return f"ERROR: {exc}"
+
+
+def run_with_input(cmd: str, data: str, timeout: int = 8):
+    try:
+        return subprocess.run(
+            cmd,
+            shell=True,
+            text=True,
+            input=data,
+            capture_output=True,
+            timeout=timeout,
+            executable="/bin/bash",
+        )
+    except Exception:
+        return None
+
+
+def run_command(cmd: str, timeout: int = 8):
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            shell=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            executable="/bin/bash",
+        )
+        return proc
+    except Exception:
+        return None
+
+
+def strip_ansi(text: str) -> str:
+    return re.sub(r"\x1B\[[0-9;]*[A-Za-z]", "", text)
+
+
+def service_state(unit: str) -> str:
+    return run(f"systemctl is-active {shlex.quote(unit)} 2>/dev/null || true", 4) or "unknown"
+
+
+def timer_enabled(unit: str) -> str:
+    return run(f"systemctl is-enabled {shlex.quote(unit)} 2>/dev/null || true", 4) or "unknown"
+
+
+def timer_interval(unit: str) -> str:
+    cmd = (
+        "awk -F= "
+        + shlex.quote(r'/^[[:space:]]*OnUnitActiveSec=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}')
+        + f" /etc/systemd/system/{shlex.quote(unit)} 2>/dev/null || true"
+    )
+    return run(cmd, 4) or "?"
+
+
+def monotonic_usec() -> int:
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as fh:
+            first = fh.read().strip().split()[0]
+        return int(float(first) * 1_000_000)
+    except Exception:
+        return 0
+
+
+def systemctl_prop(unit: str, prop: str) -> str:
+    return run(
+        f"systemctl show {shlex.quote(unit)} -p {shlex.quote(prop)} --value 2>/dev/null || true",
+        4,
+    ).strip()
+
+
+def format_span(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d {hours:02}h {minutes:02}m {secs:02}s"
+    if hours > 0:
+        return f"{hours}h {minutes:02}m {secs:02}s"
+    if minutes > 0:
+        return f"{minutes}m {secs:02}s"
+    return f"{secs}s"
+
+
+def service_age(unit: str) -> str:
+    active_state = systemctl_prop(unit, "ActiveState")
+    entered = systemctl_prop(unit, "ActiveEnterTimestampMonotonic")
+    now = monotonic_usec()
+    if active_state != "active" or not entered.isdigit() or now <= 0:
+        return ""
+    delta = max(0, (now - int(entered)) // 1_000_000)
+    return format_span(delta)
+
+
+def timer_countdown(unit: str) -> str:
+    raw = run(
+        f"systemctl status {shlex.quote(unit)} --no-pager -n 0 2>/dev/null "
+        + r"""| sed -n 's/.*;[[:space:]]*\(.*\)[[:space:]]left/\1/p' | head -n1""",
+        6,
+    ).strip()
+    return re.sub(r"\s+", " ", raw) if raw else ""
+
+
+def timer_trigger(unit: str) -> str:
+    raw = run(
+        f"systemctl status {shlex.quote(unit)} --no-pager -n 0 2>/dev/null "
+        + r"""| sed -n 's/^[[:space:]]*Trigger:[[:space:]]*//p' | head -n1""",
+        6,
+    ).strip()
+    return re.sub(r"\s+", " ", raw) if raw else "sin dato"
+
+
+def truth_data():
+    raw = run(f"{shlex.quote(TRUTH_BIN)} 2>/dev/null || true", 6)
+    data = {
+        "STATUS": "DOWN",
+        "TUN": "DOWN",
+        "ROUTE": "UNKNOWN",
+        "IP": "FAIL",
+        "IP_ADDR": "none",
+    }
+    for line in raw.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().upper()
+        if key in data:
+            data[key] = value.strip()
+    return data
+
+
+def auth_data():
+    raw = run(f"{shlex.quote(AUTH_BIN)} 2>/dev/null || true", 2)
+    data = {
+        "AUTH": "UNKNOWN",
+        "REASON": "helper_unavailable",
+        "CLI_RC": "",
+        "DETAIL": "",
+    }
+    for line in raw.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().upper()
+        if key in data:
+            data[key] = value.strip()
+    return data
+
+
+def country_code(ip: str) -> str:
+    if not re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
+        return "UNK"
+    if ip in COUNTRY_CACHE:
+        return COUNTRY_CACHE[ip]
+    cmd = (
+        f"curl -4 -s --max-time 4 https://ipwho.is/{shlex.quote(ip)} 2>/dev/null "
+        r"""| sed -n 's/.*"country_code":"\([A-Za-z][A-Za-z]\)".*/\1/p' | head -n1 | tr '[:lower:]' '[:upper:]'"""
+    )
+    out = run(cmd, 8)
+    code = out if re.match(r"^[A-Z]{2}$", out) else "UNK"
+    COUNTRY_CACHE[ip] = code
+    return code
+
+
+def current_location(fallback_country: str = "") -> str:
+    env_loc = run(r"""sudo -n sed -n 's/^LOCATION="\?\([^"]*\)"\?/\1/p' /etc/adguardvpn.env 2>/dev/null | head -n1 || true""", 4).strip()
+    if env_loc:
+        return env_loc
+    rotate_loc = run(r"""sudo -n awk -F'|' 'NF>=2 {print $2; exit}' /var/lib/vpn-rotate/state.txt 2>/dev/null || true""", 4).strip()
+    if rotate_loc:
+        return rotate_loc.upper()
+    if re.match(r"^[A-Z]{2}$", (fallback_country or "").strip().upper()):
+        return fallback_country.strip().upper()
+    return "sin valor"
+
+
+def valid_location_hint(value: str) -> bool:
+    value = (value or "").strip()
+    if not value or value.lower() == "sin valor":
+        return False
+    return bool(re.match(r"^[A-Za-z0-9 _.-]{2,64}$", value))
+
+
+def restart_action(loc_hint: str) -> str:
+    if valid_location_hint(loc_hint):
+        return f"sudo {shlex.quote(VPN_SET)} {shlex.quote(loc_hint)}; {TRUTH_BIN}"
+    return f"sudo systemctl restart adguardvpn.service; {TRUTH_BIN}"
+
+
+def display_vpn_status(status: str) -> str:
+    mapping = {
+        "UP": "ACTIVO",
+        "DEGRADED": "DEGRADADO",
+        "DOWN": "DESACTIVADO",
+    }
+    return mapping.get((status or "").strip().upper(), status or "DESCONOCIDO")
+
+
+def display_auth_status(status: str, reason: str = "") -> str:
+    status = (status or "").strip().upper()
+    reason = (reason or "").strip().lower()
+    if status == "OK":
+        return "OK"
+    if status == "EXPIRED":
+        return "SESION EXPIRADA"
+    if reason == "sudo_required":
+        return "SIN SUDO"
+    if reason == "helper_unavailable":
+        return "SIN HELPER"
+    return "DESCONOCIDA"
+
+
+def cli_status() -> str:
+    return run(f"sudo -n -u adgvpn -H {shlex.quote(AG)} status 2>/dev/null | sed -n '1p' || true", 6) or "sin respuesta"
+
+
+def bypass_count() -> str:
+    return run(r"""awk '!/^[[:space:]]*(#|$)/ {n++} END{print n+0}' /etc/vpn-domain-bypass.conf 2>/dev/null || true""", 4) or "0"
+
+
+def parse_event_detail(detail: str) -> dict:
+    values = {}
+    for key in ("title", "urgency", "body"):
+        match = re.search(rf"{key}='((?:\\'|[^'])*)'", detail or "")
+        if match:
+            values[key] = match.group(1).replace("\\'", "'").replace("\\\\", "\\")
+    return values
+
+
+def parse_event_line(line: str):
+    line = (line or "").strip()
+    if not line:
+        return None
+
+    parts = [p.strip() for p in line.split("|")]
+
+    if len(parts) >= 5 and parts[1] == "notify":
+        detail = parse_event_detail("|".join(parts[4:]).strip())
+        title = detail.get("title") or parts[3] or "VPN"
+        urgency = detail.get("urgency") or ("critical" if parts[2].upper() == "ERROR" else "normal")
+        body = detail.get("body") or "sin detalle"
+        return {
+            "title": title,
+            "urgency": urgency.lower(),
+            "body": body,
+            "raw": line,
+            "format": "trace",
+        }
+
+    if len(parts) >= 3:
+        title = re.sub(r"^\[[^]]+\]\s*", "", parts[0]).strip() or "VPN"
+        return {
+            "title": title,
+            "urgency": (parts[1] or "low").lower(),
+            "body": parts[2] or "sin detalle",
+            "raw": line,
+            "format": "legacy",
+        }
+
+    return {
+        "title": "VPN",
+        "urgency": "low",
+        "body": fit(line, 80),
+        "raw": line,
+        "format": "raw",
+    }
+
+
+def last_event():
+    raw = run(r"""sudo -n tail -n 1 /var/log/myvpn/vpn-events.log 2>/dev/null || true""", 4)
+    if not raw or raw.startswith("ERROR"):
+        return ("VPN", "low", "sin eventos")
+    event = parse_event_line(raw)
+    if event:
+        return (event["title"], event["urgency"], event["body"])
+    return ("VPN", "low", fit(raw, 60))
+
+
+def rotate_setting(name: str) -> str:
+    cmd = (
+        "sudo -n awk -F= "
+        + shlex.quote(f'/^[[:space:]]*{name}=/' + r'{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}')
+        + " /usr/local/sbin/vpn_rotate.sh 2>/dev/null || true"
+    )
+    value = run(cmd, 4).strip()
+    if value:
+        return value
+    defaults = {
+        "RECENT_KEEP": "5",
+    }
+    return defaults.get(name, "?")
+
+
+def dns_profile() -> str:
+    raw = run(f"sudo -n {shlex.quote(DNSCTL)} current 2>/dev/null | awk -F= '/^profile_guess=/{{print $2; exit}}'", 4).strip()
+    return raw or "locked"
+
+
+def dashboard_data():
+    truth = truth_data()
+    auth = auth_data()
+    ip = truth.get("IP_ADDR", "none")
+    status = truth.get("STATUS", "DOWN")
+    tun = truth.get("TUN", "DOWN")
+    route = truth.get("ROUTE", "UNKNOWN")
+    event_title, event_urgency, event_body = last_event()
+    country = country_code(ip)
+    vpn_age = service_age("adguardvpn.service")
+    rotate_state = service_state(ROTATE_TIMER)
+    rotate_interval = timer_interval(ROTATE_TIMER)
+    rotate_eta = timer_countdown(ROTATE_TIMER)
+    watchdog_state = service_state(WATCHDOG_TIMER)
+    watchdog_interval = timer_interval(WATCHDOG_TIMER)
+    watchdog_eta = timer_countdown(WATCHDOG_TIMER)
+    route_label = {
+        "TUN": "tun0",
+        "DEFAULT": "default",
+        "UNKNOWN": "unknown",
+    }.get(route, route)
+    return [
+        ("VPN", f"{display_vpn_status(status)} · {vpn_age}" if vpn_age and status == "UP" else display_vpn_status(status)),
+        ("Auth", display_auth_status(auth.get("AUTH", "UNKNOWN"), auth.get("REASON", ""))),
+        ("Tun", tun),
+        ("Route", route_label),
+        ("IP", ip if ip != "none" else "no disponible"),
+        ("Country", country),
+        ("Location", current_location(country)),
+        ("DNS", dns_profile()),
+        ("Rotate", f"{rotate_state} · {rotate_interval}" + (f" · {rotate_eta}" if rotate_eta else "")),
+        ("Watchdog", f"{watchdog_state} · {watchdog_interval}" + (f" · {watchdog_eta}" if watchdog_eta else "")),
+        ("Event", f"{event_urgency} · {event_title}: {event_body}"),
+        ("Bypass", f"{bypass_count()} dominios"),
+    ]
+
+
+def set_status(message: str):
+    global STATUS_LINE
+    STATUS_LINE = (message or "").strip() or "Listo"
+
+
+def menu_item(index: int) -> dict:
+    return MENU_ITEMS[index]
+
+
+def menu_label(index: int) -> str:
+    return menu_item(index)["label"]
+
+
+def menu_section(index: int) -> str:
+    return menu_item(index)["section"]
+
+
+def menu_id(index: int) -> str:
+    return menu_item(index)["id"]
+
+
+def menu_rows():
+    rows = []
+    last_group = None
+    for index, item in enumerate(MENU_ITEMS):
+        group = item.get("group", "")
+        if group != last_group:
+            rows.append({"type": "group", "label": group})
+            last_group = group
+        rows.append({"type": "item", "index": index, "label": item["label"]})
+    return rows
+
+
+def menu_help(label: str):
+    data = {
+        "Dashboard": [
+            "Resumen operativo real del stack VPN.",
+            "",
+            "Pulsa r para refrescar. Flechas para navegar. Enter para abrir.",
+        ],
+        "Instalacion": [
+            "Pantalla de arranque y contexto del stack.",
+            "",
+            "Aqui se explica como abrir VPN, que depende de cada script y como se prepararia un repo para otra maquina.",
+        ],
+        "Historial": [
+            "Ultimos eventos del stack VPN.",
+            "",
+            "Muestra la cola reciente de /var/log/myvpn/vpn-events.log.",
+        ],
+        "Cambiar ubicacion": [
+            "Selector de ubicaciones del CLI.",
+            "",
+            "Carga ubicaciones reales y aplica sudo vpn_set <ISO>.",
+        ],
+        "Acciones rapidas": [
+            "Reiniciar, desconectar, rotar o ejecutar watchdog manualmente."
+        ],
+        "Timers": [
+            "Control de rotacion y watchdog.",
+            "",
+            "Permite iniciar, parar y cambiar intervalos.",
+        ],
+        "Bypass dominios": [
+            "Gestiona dominios fuera de la VPN usando no_vpn."
+        ],
+        "DNS / AdGuard": [
+            "Selector real de DNS local y perfiles DoH de AdGuard Home.",
+            "",
+            "Puede aplicar perfiles reales con backup y rollback automatico.",
+        ],
+        "Ver logs": [
+            "Acceso rapido a trazabilidad, rotate, watchdog, dispatcher, journal y housekeeping."
+        ],
+        "Pool de rotacion": [
+            "Configuracion del subconjunto que usa vpn_rotate.sh para elegir nodos.",
+            "",
+            "Aqui controlas cuantas ubicaciones entran al pool antes del filtro por bloqueo y validacion real.",
+        ],
+        "Salir": ["Cerrar la interfaz."],
+    }
+    return data.get(label, [])
+
+
+def menu_overview(label: str):
+    data = {
+        "Dashboard": [
+            ("Rol", "Centro de mando en tiempo real"),
+            ("Uso", "Ver VPN, tunel, DNS, timers y bypass de un vistazo"),
+            ("Riesgo", "Solo lectura"),
+        ],
+        "Cambiar ubicacion": [
+            ("Rol", "Mover la VPN a otro pais o ciudad"),
+            ("Uso", "Cuando una app falla, un nodo va lento o quieres otra IP"),
+            ("Riesgo", "Microcorte mientras cambia el tunel"),
+        ],
+        "Acciones rapidas": [
+            ("Rol", "Intervencion manual inmediata"),
+            ("Uso", "Reiniciar, desconectar, rotar o forzar watchdog"),
+            ("Riesgo", "Puede cortar sesiones activas durante segundos"),
+        ],
+        "DNS / AdGuard": [
+            ("Rol", "Selector DNS real con rollback"),
+            ("Uso", "Cambiar entre Cloudflare, Quad9, Google, AdGuard DoQ u OpenDNS"),
+            ("Riesgo", "Bajo: crea backup y valida DNS local"),
+        ],
+        "Bypass dominios": [
+            ("Rol", "Dominios fuera del tunel"),
+            ("Uso", "Enviar sitios rusos concretos por conexion directa"),
+            ("Riesgo", "El dominio elegido deja de pasar por VPN"),
+        ],
+        "Timers": [
+            ("Rol", "Automatizacion programada"),
+            ("Uso", "Activar/parar o cambiar intervalos de rotacion y watchdog"),
+            ("Riesgo", "Intervalos agresivos pueden causar microcortes"),
+        ],
+        "Pool de rotacion": [
+            ("Rol", "Control del universo de nodos"),
+            ("Uso", "Ajustar cuantos candidatos toma la rotacion"),
+            ("Riesgo", "Pool muy pequeno puede repetir o bloquearse mas"),
+        ],
+        "Ver logs": [
+            ("Rol", "Auditoria tecnica reciente"),
+            ("Uso", "Diagnosticar trazabilidad, rotacion, watchdog, dispatcher, servicio y retencion"),
+            ("Riesgo", "Solo lectura"),
+        ],
+        "Historial": [
+            ("Rol", "Eventos humanos recientes"),
+            ("Uso", "Ver notificaciones y acciones relevantes en orden reciente"),
+            ("Riesgo", "Solo lectura"),
+        ],
+        "Instalacion": [
+            ("Rol", "Guia interna del stack"),
+            ("Uso", "Recordar piezas, comandos y futura instalacion"),
+            ("Riesgo", "Solo lectura"),
+        ],
+        "Salir": [
+            ("Rol", "Cerrar la TUI"),
+            ("Uso", "Los servicios siguen corriendo en segundo plano"),
+            ("Riesgo", "No apaga VPN, watchdog ni rotacion"),
+        ],
+    }
+    return data.get(label, [])
+
+
+def semantic_style(key: str, value: str) -> str:
+    v = value.strip().lower()
+
+    if key in ("VPN", "Tun"):
+        if "activo" in v or v in ("active", "up"):
+            return FG["green"] + BOLD
+        if "degradado" in v or v == "degraded":
+            return FG["yellow"] + BOLD
+        if "desactivado" in v or v in ("inactive", "down", "failed", "dead"):
+            return FG["red"] + BOLD
+        return FG["yellow"] + BOLD
+
+    if key == "Auth":
+        if v == "ok":
+            return FG["green"] + BOLD
+        if "expirada" in v:
+            return FG["red"] + BOLD
+        return FG["yellow"] + BOLD
+
+    if key in ("Rotate", "Watchdog"):
+        if "active" in v:
+            return FG["green"] + BOLD
+        if "inactive" in v or "disabled" in v:
+            return FG["red"] + BOLD
+        return FG["yellow"] + BOLD
+
+    if key == "Country":
+        if v == "ru":
+            return FG["red"] + BOLD
+        if v in ("unk", "unknown"):
+            return FG["yellow"] + BOLD
+        return FG["green"] + BOLD
+
+    if key == "IP":
+        if "no disponible" in v or "error" in v:
+            return FG["yellow"] + BOLD
+        return FG["cyan"] + BOLD
+
+    if key == "Route":
+        if v == "tun0":
+            return FG["green"] + BOLD
+        if v in ("default", "enp4s0"):
+            return FG["red"] + BOLD
+        return FG["yellow"]
+
+    if key == "Location":
+        return FG["cyan"] + BOLD
+
+    if key == "Bypass":
+        return FG["blue"] + BOLD
+
+    if key == "Event":
+        if any(token in v for token in ("critical", "fail", "error")):
+            return FG["red"] + BOLD
+        if any(token in v for token in ("rotate", "connected", "ok", "aplic")):
+            return FG["green"] + BOLD
+        if any(token in v for token in ("warn", "unknown")):
+            return FG["yellow"] + BOLD
+        return FG["cyan"] + BOLD
+
+    if key == "Riesgo":
+        if any(token in v for token in ("ninguno", "solo lectura", "bajo", "automatico")):
+            return FG["green"] + BOLD
+        if any(token in v for token in ("todo el trafico", "fuera del tunel")):
+            return FG["red"] + BOLD
+        if any(token in v for token in ("microcorte", "corte breve", "no recomendado", "directo")):
+            return FG["yellow"] + BOLD
+        return FG["yellow"] + BOLD
+
+    if key in ("Tipo", "Perfil", "Comando", "Timer", "Archivo", "Ruta"):
+        return FG["cyan"] + BOLD
+
+    if key in ("Impacto", "Efecto", "Accion"):
+        return FG["yellow"] + BOLD
+
+    if key in ("Rollback", "Estado"):
+        if any(token in v for token in ("automatico", "active", "running")):
+            return FG["green"] + BOLD
+        if any(token in v for token in ("inactive", "failed", "dead")):
+            return FG["red"] + BOLD
+        return FG["yellow"] + BOLD
+
+    if key in ("Entradas", "TOP_N", "RECENT_KEEP", "Actual", "Intervalo"):
+        return FG["blue"] + BOLD
+
+    return FG["white"]
+
+
+def display_value(key: str, value: str) -> str:
+    if key == "Country":
+        code = value.strip().upper()
+        if re.match(r"^[A-Z]{2}$", code):
+            return f"{flag_from_iso(code)} {code}"
+    if key == "Location":
+        code = value.strip().upper()
+        if re.match(r"^[A-Z]{2}$", code):
+            return f"{flag_from_iso(code)} {code}"
+    return value
+
+
+def display_label(key: str) -> str:
+    labels = {
+        "Auth": "Sesion",
+        "Tun": "Tunel",
+        "Route": "Ruta",
+        "Country": "Pais",
+        "Location": "Ubicacion",
+        "Rotate": "Rotacion",
+        "Watchdog": "Watchdog",
+        "Bypass": "Bypass",
+        "Event": "Evento",
+    }
+    return labels.get(key, key)
+
+
+def build_installation_text() -> str:
+    blocks = [
+        (
+            "VPN Control Center",
+            [
+                "Esta interfaz no reemplaza AdGuard VPN. Solo organiza el stack que ya tienes instalado en el sistema.",
+                "El punto de entrada actual es: VPN",
+                "Tambien puedes abrirlo con: bash ~/.local/bin/VPN",
+            ],
+        ),
+        (
+            "Requisitos",
+            [
+                "AdGuard VPN instalado y con la cuenta ya logueada.",
+                "adguardvpn.service funcional en systemd.",
+                "sudo disponible para las acciones que cambian estado.",
+                "systemd, NetworkManager y curl presentes en la maquina.",
+            ],
+        ),
+        (
+            "Piezas del stack",
+            [
+                "vpnctl: inspeccion rapida del estado real.",
+                "vpn_auth_check: valida si la sesion de AdGuard VPN sigue vigente.",
+                "vpn_set: aplica ubicacion sobre el cliente.",
+                "vpn_rotate.sh: selecciona nodo desde el pool, filtra recencia y valida la ruta real.",
+                "vpn_watchdog.sh: comprueba sesion, salud, tunel y derivaciones de red.",
+                "no_vpn: gestiona bypass por dominio.",
+                "vpn_domain_bypass_apply.sh: mantiene exclusiones por dominio fuera de la VPN.",
+                "vpn_dnsctl: diagnostica DNS local y prepara cambios DoH con backup/rollback.",
+                "99-vpn-rotate: valida eventos de NetworkManager antes de rotar.",
+                "vpn_notify: emite notificaciones y deja eventos en /var/log/myvpn/vpn-events.log.",
+                "Timers y servicios systemd: mantienen el stack vivo y recuperable.",
+            ],
+        ),
+        (
+            "Interaccion viva",
+            [
+                "La pantalla principal se auto refresca cada 12 segundos si no hay entrada del usuario.",
+                "Las rotaciones y recuperaciones relevantes emiten notificaciones si existe una sesion grafica disponible.",
+                "El watchdog no notifica si todo va bien; solo cuando entra en remedio real.",
+            ],
+        ),
+        (
+            "Pantallas",
+            [
+                "Dashboard: estado real, sesion de AdGuard VPN y ultimo evento.",
+                "Historial: cola reciente de eventos de notificacion.",
+                "Instalacion: arranque, piezas del stack y futuro bootstrap de repo.",
+                "Cambiar ubicacion: selector con banderas y detalle del nodo.",
+                "Acciones rapidas: intervenciones directas sobre la VPN.",
+                "Timers: control de rotacion y watchdog.",
+                "Bypass dominios: exclusiones por dominio.",
+                "DNS / AdGuard: diagnostico DNS y planes DoH seguros.",
+                "Ver logs: auditoria rapida.",
+                "Pool de rotacion: control de TOP_N.",
+            ],
+        ),
+        (
+            "Arranque rapido",
+            [
+                "1. source ~/.mis_aliases.sh",
+                "2. VPN",
+                "3. Usa Dashboard para ver estado.",
+                "4. Usa Cambiar ubicacion para mover el nodo.",
+                "5. Usa Pool de rotacion para ajustar TOP_N.",
+            ],
+        ),
+        (
+            "Distribucion prevista en repo",
+            [
+                "La idea es empaquetar estos mismos archivos en GitHub para que otra maquina pueda reproducir el stack sin rehacer el trabajo manual.",
+                "El repo deberia incluir el codigo de instalacion, la copia de los scripts, las unidades systemd y esta misma TUI como punto de entrada.",
+                "En un despliegue futuro, el flujo ideal sera: clonar, verificar que AdGuard ya esta instalado y logueado, ejecutar el bootstrap e iniciar VPN.",
+            ],
+        ),
+        (
+            "Notas operativas",
+            [
+                "El stack ya tiene bypass por dominio, rotacion inteligente y watchdog con politicas separadas.",
+                "La UI muestra estado real, pero la decision final siempre la toma el cliente y systemd.",
+                "Esta pantalla sirve como guia para nuevos equipos y como recordatorio rapido en esta maquina.",
+            ],
+        ),
+    ]
+    lines = []
+    for title, paragraphs in blocks:
+        lines.append(title)
+        lines.append("-" * len(title))
+        for paragraph in paragraphs:
+            lines.extend(textwrap.wrap(paragraph, width=86) or [""])
+        lines.append("")
+    lines.append("Pulsa q para volver.")
+    return "\n".join(lines)
+
+
+def build_history_text(limit: int = 20) -> str:
+    raw = run(rf"sudo -n tail -n {int(limit)} /var/log/myvpn/vpn-events.log 2>/dev/null || true", 5)
+    lines = [
+        "Historial de eventos",
+        "-------------------",
+        "Fuente: /var/log/myvpn/vpn-events.log",
+        "Orden: mas reciente primero",
+        "",
+    ]
+    if not raw or raw.startswith("ERROR"):
+        lines.append("Sin eventos registrados todavia.")
+    else:
+        for line in reversed(raw.splitlines()):
+            event = parse_event_line(line)
+            if not event:
+                lines.append(line)
+                continue
+            marker = {
+                "critical": "ERROR",
+                "normal": "INFO",
+                "low": "LOW",
+            }.get(event["urgency"], event["urgency"].upper())
+            lines.append(f"{marker:<8} {event['title']}: {event['body']}")
+    lines.append("")
+    lines.append("Pulsa q para volver.")
+    return "\n".join(lines)
+
+
+class Terminal:
+    def __init__(self):
+        self.fd = sys.stdin.fileno()
+        self.old = termios.tcgetattr(self.fd)
+
+    def enter(self):
+        tty.setraw(self.fd)
+        sys.stdout.write(
+            CSI + "?1049h"
+            + CSI + "?25l"
+            + CSI + "?1000h"
+            + CSI + "?1006h"
+            + CSI + "2J"
+            + CSI + "H"
+        )
+        sys.stdout.flush()
+
+    def exit(self):
+        termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
+        sys.stdout.write(RESET + CSI + "?1000l" + CSI + "?1006l" + CSI + "?25h" + CSI + "?1049l")
+        sys.stdout.flush()
+
+
+term = Terminal()
+atexit.register(term.exit)
+
+
+def get_size():
+    cols, rows = shutil.get_terminal_size((120, 30))
+    return rows, cols
+
+
+def clear():
+    sys.stdout.write(CSI + "2J" + CSI + "H")
+
+
+def move(y: int, x: int):
+    sys.stdout.write(f"{CSI}{y};{x}H")
+
+
+def write(y: int, x: int, text: str, style: str = ""):
+    move(y, x)
+    sys.stdout.write(style + text + RESET)
+
+
+def hline(y: int, x: int, width: int, ch: str = "─", style: str = ""):
+    write(y, x, ch * max(0, width), style)
+
+
+def box(y: int, x: int, h: int, w: int, title: str = ""):
+    if h < 2 or w < 2:
+        return
+    write(y, x, "┌" + "─" * (w - 2) + "┐", FG["blue"])
+    for row in range(y + 1, y + h - 1):
+        write(row, x, "│", FG["blue"])
+        write(row, x + w - 1, "│", FG["blue"])
+    write(y + h - 1, x, "└" + "─" * (w - 2) + "┘", FG["blue"])
+    if title:
+        write(y, x + 2, f" {title} ", FG["cyan"] + BOLD)
+
+
+def fit(text: str, width: int) -> str:
+    text = strip_ansi(str(text)).replace("\n", " ").strip()
+    return text if len(text) <= width else text[: max(0, width - 1)] + "…"
+
+
+def flag_from_iso(iso: str) -> str:
+    iso = (iso or "").upper()
+    if not re.match(r"^[A-Z]{2}$", iso):
+        return ""
+    base = 127397
+    return chr(base + ord(iso[0])) + chr(base + ord(iso[1]))
+
+
+def render(selected: int, dashboard_cache):
+    rows, cols = get_size()
+    clear()
+    left_w = 24
+    head_h = 3
+    foot_h = 2
+    content_rows = max(10, min(rows - head_h - foot_h - 2, 20))
+    body_h = content_rows
+    right_x = left_w + 2
+    right_w = cols - right_x - 1
+    help_y = head_h + body_h + 1
+    selected_item = menu_item(selected)
+    selected_label = selected_item["label"]
+    selected_section = selected_item["section"]
+    selected_id = selected_item["id"]
+
+    box(1, 1, head_h, cols - 2, "VPN")
+    box(head_h + 1, 1, body_h, left_w, "")
+    box(head_h + 1, right_x, body_h, right_w, selected_label)
+    box(help_y, 1, foot_h + 1, cols - 2, "Status")
+
+    write(2, 3, "Control Center", FG["cyan"] + BOLD)
+    write(2, 19, "Warp-safe UI · ↑↓ navegar · Enter abrir · r refrescar · q salir", FG["gray"])
+
+    rows_menu = menu_rows()
+    selected_row = next(
+        (i for i, row in enumerate(rows_menu) if row.get("type") == "item" and row.get("index") == selected),
+        0,
+    )
+    visible_h = max(1, body_h - 2)
+    menu_offset = max(0, selected_row - visible_h + 1) if selected_row >= visible_h else 0
+    visible_menu = rows_menu[menu_offset : menu_offset + visible_h]
+    for row_idx, row in enumerate(visible_menu):
+        y = head_h + 2 + row_idx
+        if row["type"] == "group":
+            write(y, 3, fit(row["label"], left_w - 5), FG["blue"] + BOLD)
+            continue
+        idx = row["index"]
+        item_label = row["label"]
+        is_selected = idx == selected
+        style = BG["cyan"] + FG["black"] + BOLD if is_selected else FG["gray"]
+        prefix = "› " if is_selected else "  "
+        text = prefix + fit(item_label, left_w - 6)
+        write(y, 2, text.ljust(left_w - 3), style)
+
+    if selected_id == "dashboard":
+        data = {k: v for k, v in dashboard_cache}
+        y = head_h + 2
+        sections = [
+            ("Nucleo", ["VPN", "Auth", "Tun", "Location"]),
+            ("Automatizacion", ["Rotate", "Watchdog"]),
+            ("Red", ["Route", "IP", "Country", "DNS", "Bypass"]),
+        ]
+        for section_name, keys in sections:
+            if y >= head_h + body_h:
+                break
+            write(y, right_x + 2, section_name, FG["cyan"] + BOLD)
+            if y < head_h + body_h - 1:
+                y += 1
+            for key in keys:
+                if y >= head_h + body_h:
+                    break
+                value = data.get(key, "-")
+                label = f"{display_label(key):<12}"
+                write(y, right_x + 4, label, FG["magenta"] + BOLD)
+                write(y, right_x + 18, fit(display_value(key, value), right_w - 20), semantic_style(key, value))
+                y += 1
+            y += 1
+    else:
+        y = head_h + 2
+        overview = menu_overview(selected_section)
+        if overview:
+            write(y, right_x + 2, "Contexto", FG["cyan"] + BOLD)
+            y += 2
+            for key, value in overview:
+                if y >= head_h + body_h:
+                    break
+                write(y, right_x + 4, f"{key:<8}", FG["magenta"] + BOLD)
+                write(y, right_x + 14, fit(value, right_w - 16), semantic_style(key, value))
+                y += 1
+            y += 1
+        else:
+            write(y, right_x + 2, "Resumen", FG["cyan"] + BOLD)
+            y += 2
+            for line in menu_help(selected_section):
+                for wrapped in textwrap.wrap(line, max(20, right_w - 4)) or [""]:
+                    if y >= head_h + body_h:
+                        break
+                    write(y, right_x + 2, fit(wrapped, right_w - 4), FG["white"])
+                    y += 1
+                y += 1
+
+        action_hints = {
+            "Acciones rapidas": ["Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog", "Estado real"],
+            "Timers": ["Activar rotacion", "Parar rotacion", "Cambiar intervalo de rotacion", "Activar watchdog", "Parar watchdog", "Cambiar intervalo del watchdog"],
+            "Bypass dominios": ["Ver lista", "Agregar dominio", "Quitar dominio"],
+            "DNS / AdGuard": ["DNS actual", "Aplicar Quad9", "Aplicar Cloudflare", "Aplicar Google", "Aplicar AdGuard DoQ", "Aplicar OpenDNS", "Aplicar AdGuard sin filtro", "Aplicar AdGuard filtrado", "Rollback DNS"],
+            "Ver logs": ["Resumen trazabilidad", "Housekeeping logs", "vpn-watchdog.log", "vpn-rotate.log", "vpn-dispatcher.log", "journal adguardvpn.service"],
+        }
+        hints = action_hints.get(selected_section, [])
+        if hints and y < head_h + body_h:
+            write(y, right_x + 2, "Acciones principales", FG["cyan"] + BOLD)
+            y += 2
+            for hint in hints:
+                if y >= head_h + body_h:
+                    break
+                write(y, right_x + 4, f"• {fit(hint, right_w - 8)}", FG["yellow"])
+                y += 1
+
+    write(help_y + 1, 3, "↑↓", FG["cyan"] + BOLD)
+    write(help_y + 1, 6, "navegar", FG["yellow"] + BOLD)
+    write(help_y + 1, 16, "Enter", FG["cyan"] + BOLD)
+    write(help_y + 1, 23, "abrir", FG["yellow"] + BOLD)
+    write(help_y + 1, 31, "r", FG["cyan"] + BOLD)
+    write(help_y + 1, 33, "refrescar", FG["yellow"] + BOLD)
+    write(help_y + 1, 46, "q", FG["cyan"] + BOLD)
+    write(help_y + 1, 48, "salir", FG["yellow"] + BOLD)
+    write(help_y + 1, 58, "•", FG["blue"] + BOLD)
+    write(help_y + 1, 61, fit(STATUS_LINE, cols - 64), FG["gray"])
+    sys.stdout.flush()
+
+
+def mouse_event(seq: bytes):
+    m = re.match(rb"\[<(\d+);(\d+);(\d+)([mM])", seq)
+    if not m:
+        return None
+    code = int(m.group(1))
+    x = int(m.group(2))
+    y = int(m.group(3))
+    suffix = m.group(4)
+    if code == 64:
+        return "up"
+    if code == 65:
+        return "down"
+    if suffix == b"m":
+        return ("mouse_release", x, y)
+    button = code & 3
+    if button == 0:
+        return ("mouse_left", x, y)
+    if button == 1:
+        return ("mouse_middle", x, y)
+    if button == 2:
+        return ("mouse_right", x, y)
+    return ("mouse", x, y)
+
+
+def is_mouse_click(key) -> bool:
+    return isinstance(key, tuple) and key and key[0] == "mouse_left"
+
+
+def mouse_xy(key):
+    if isinstance(key, tuple) and len(key) >= 3:
+        return key[1], key[2]
+    return None, None
+
+
+def main_menu_index_at(x: int, y: int, selected: int):
+    rows, _ = get_size()
+    left_w = 24
+    head_h = 3
+    foot_h = 2
+    body_h = max(10, min(rows - head_h - foot_h - 1, 16))
+    if x < 1 or x > left_w or y < head_h + 2 or y >= head_h + body_h:
+        return None
+    rows_menu = menu_rows()
+    selected_row = next(
+        (i for i, row in enumerate(rows_menu) if row.get("type") == "item" and row.get("index") == selected),
+        0,
+    )
+    visible_h = max(1, body_h - 2)
+    menu_offset = max(0, selected_row - visible_h + 1) if selected_row >= visible_h else 0
+    row_pos = menu_offset + (y - (head_h + 2))
+    if row_pos < 0 or row_pos >= len(rows_menu):
+        return None
+    row = rows_menu[row_pos]
+    if row.get("type") != "item":
+        return None
+    return row.get("index")
+
+
+def read_key(timeout: float | None = None, text_mode: bool = False):
+    while True:
+        r, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not r:
+            return None
+        timeout = None
+        ch = os.read(sys.stdin.fileno(), 1)
+        if not ch:
+            continue
+        if ch == b"\x1b":
+            seq = b""
+            while True:
+                ready, _, _ = select.select([sys.stdin], [], [], 0.01)
+                if not ready:
+                    break
+                seq += os.read(sys.stdin.fileno(), 1)
+            if seq == b"":
+                return "esc"
+            if seq.startswith(b"[A"):
+                return "up"
+            if seq.startswith(b"[B"):
+                return "down"
+            if seq.startswith(b"[C"):
+                return "right"
+            if seq.startswith(b"[D"):
+                return "left"
+            if seq.startswith(b"[<"):
+                event = mouse_event(seq)
+                if event:
+                    return event
+                continue
+            continue
+        if ch in (b"\r", b"\n"):
+            return "enter"
+        if not text_mode and ch in (b"q", b"Q"):
+            return "q"
+        if not text_mode and ch in (b"r", b"R"):
+            return "r"
+        if ch in (b"\x7f", b"\b"):
+            return "backspace"
+        if 32 <= ord(ch) <= 126:
+            return f"char:{ch.decode('utf-8', 'ignore')}"
+
+
+def center_message(message: str):
+    rows, cols = get_size()
+    clear()
+    box(max(2, rows // 2 - 2), max(2, cols // 2 - 30), 5, min(60, cols - 4), "VPN")
+    write(rows // 2, max(4, (cols - len(message)) // 2), message, FG["yellow"] + BOLD)
+    sys.stdout.flush()
+
+
+def progress_phase(elapsed: int, timeout: int) -> str:
+    if elapsed < 2:
+        return "Preparando"
+    if elapsed < max(4, timeout // 3):
+        return "Ejecutando"
+    if elapsed < max(8, (timeout * 2) // 3):
+        return "Validando"
+    return "Cerrando"
+
+
+def progress_message(title: str, message: str, elapsed: int, frame: int = 0, timeout: int = 40):
+    rows, cols = get_size()
+    clear()
+    w = min(74, cols - 4)
+    h = 10
+    x = max(2, (cols - w) // 2)
+    y = max(2, rows // 2 - h // 2)
+    spinner = "|/-\\"[frame % 4]
+    bar_w = max(12, w - 12)
+    filled = max(1, min(bar_w, int((elapsed / max(1, timeout)) * bar_w)))
+    bar = ("█" * filled + "░" * (bar_w - filled))[:bar_w]
+    box(y, x, h, w, title)
+    write(y + 2, x + 3, f"{spinner} {progress_phase(elapsed, timeout)}", FG["yellow"] + BOLD)
+    write(y + 3, x + 3, fit(message, w - 8), FG["white"])
+    write(y + 5, x + 3, bar, FG["cyan"])
+    write(y + 7, x + 3, f"Tiempo: {elapsed}s / limite: {timeout}s", FG["gray"])
+    write(y + 8, x + 3, "No cierres la terminal. Si tarda, la operacion sigue viva.", FG["gray"])
+    sys.stdout.flush()
+
+
+def run_with_progress(title: str, message: str, cmd: str, timeout: int = 40) -> str:
+    proc = run_command(cmd)
+    if proc is None:
+        return "ERROR: no pude iniciar el comando."
+
+    chunks = []
+    start = time.monotonic()
+    frame = 0
+    while True:
+        elapsed = int(time.monotonic() - start)
+        progress_message(title, message, elapsed, frame, timeout)
+        frame += 1
+        if proc.poll() is not None:
+            break
+        if elapsed >= timeout:
+            proc.kill()
+            chunks.append(f"\nERROR: timeout despues de {timeout}s")
+            break
+        time.sleep(0.2)
+
+    try:
+        out, _ = proc.communicate(timeout=1)
+    except Exception:
+        out = ""
+    if out:
+        chunks.append(out)
+    return "".join(chunks).strip() or "(sin salida)"
+
+
+def output_line_style(line: str) -> str:
+    text = (line or "").strip()
+    lower = text.lower()
+    upper = text.upper()
+    if text.startswith("==") or text.startswith("----"):
+        return FG["cyan"] + BOLD
+    if any(token in upper for token in ("APPLY_OK", "ROLLBACK_OK", "TRY_OK", "STATUS=UP", "IP=OK", "STATE_SAVED")):
+        return FG["green"] + BOLD
+    if upper.startswith("OK ") or upper == "OK" or " OK " in upper:
+        return FG["green"] + BOLD
+    if any(token in upper for token in ("ERROR", "FAIL", "FAILED", "IP=FAIL", "STATUS=DOWN", "TRACEBACK")):
+        return FG["red"] + BOLD
+    if any(token in upper for token in ("WARN", "WARNING", "DEGRADED", "UNKNOWN", "SKIP", "TIMEOUT")):
+        return FG["yellow"] + BOLD
+    if any(token in lower for token in ("backup=", "profile=", "config=", "rollback", "dns", "tun=", "route=", "ip_addr=")):
+        return FG["blue"] + BOLD
+    return FG["white"]
+
+
+def refresh_dashboard(quiet: bool = False):
+    if not quiet:
+        set_status("Refrescando dashboard")
+        center_message("Cargando estado VPN...")
+    return dashboard_data()
+
+
+def show_output(title: str, text: str):
+    lines = (text or "(sin salida)").splitlines() or ["(sin salida)"]
+    offset = 0
+    while True:
+        rows, cols = get_size()
+        clear()
+        box(1, 1, rows - 2, cols - 2, title)
+        body_h = rows - 6
+        body_w = cols - 6
+        for i in range(body_h):
+            if offset + i >= len(lines):
+                break
+            line = lines[offset + i]
+            write(3 + i, 3, fit(line, body_w), output_line_style(line))
+        footer = "↑↓ scroll   g inicio   G final   q volver"
+        if len(lines) > body_h:
+            footer += f"   lineas {offset + 1}-{min(offset + body_h, len(lines))}/{len(lines)}"
+        write(rows - 2, 3, fit(footer, cols - 6), FG["yellow"] + BOLD)
+        sys.stdout.flush()
+        key = read_key()
+        if key in ("q", "esc", "enter", "left"):
+            set_status(f"Visto: {title}")
+            return
+        if key == "char:g":
+            offset = 0
+        if key == "char:G":
+            offset = max(0, len(lines) - body_h)
+        if key == "down" and offset < max(0, len(lines) - body_h):
+            offset += 1
+        if key == "up" and offset > 0:
+            offset -= 1
+
+
+def select_list(title: str, items):
+    idx = 0
+    offset = 0
+    while True:
+        rows, cols = get_size()
+        clear()
+        box(1, 1, rows - 2, cols - 2, title)
+        body_h = rows - 6
+        body_w = cols - 6
+        if idx < offset:
+            offset = idx
+        if idx >= offset + body_h:
+            offset = idx - body_h + 1
+        visible = items[offset : offset + body_h]
+        for i, (tag, desc) in enumerate(visible):
+            style = BG["cyan"] + FG["black"] + BOLD if offset + i == idx else FG["white"]
+            line = f"{tag:<4} {fit(desc, body_w - 5)}"
+            write(3 + i, 3, line.ljust(body_w), style)
+        write(rows - 2, 3, "↑↓ mover   Enter seleccionar   q volver", FG["yellow"] + BOLD)
+        sys.stdout.flush()
+        key = read_key(text_mode=True)
+        if is_mouse_click(key):
+            x, y = mouse_xy(key)
+            row = y - 3
+            if x is not None and 0 <= row < len(visible):
+                idx = offset + row
+                return items[idx][0]
+            continue
+        if key in ("q", "char:q", "char:Q", "esc", "left"):
+            return None
+        if key in ("enter", "right"):
+            return items[idx][0]
+        if key == "down" and idx < len(items) - 1:
+            idx += 1
+        if key == "up" and idx > 0:
+            idx -= 1
+
+
+def prompt_input(title: str, prompt: str):
+    def clean_paste(text: str) -> str:
+        return "".join(ch for ch in text if 32 <= ord(ch) <= 126)
+
+    def read_bracketed_paste(timeout: float = 5.0) -> str:
+        end = b"\x1b[201~"
+        data = bytearray()
+        tail = bytearray()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not select.select([sys.stdin], [], [], 0.2)[0]:
+                continue
+            tail += os.read(sys.stdin.fileno(), 1)
+            if tail.endswith(end):
+                data.extend(tail[:-len(end)])
+                return clean_paste(data.decode("utf-8", "ignore"))
+            if len(tail) > len(end):
+                data.append(tail[0])
+                del tail[0]
+        data.extend(tail)
+        return clean_paste(data.decode("utf-8", "ignore"))
+
+    value = ""
+    while True:
+        rows, cols = get_size()
+        clear()
+        w = min(80, cols - 4)
+        x = max(2, (cols - w) // 2)
+        y = max(2, rows // 2 - 3)
+        box(y, x, 7, w, title)
+        write(y + 2, x + 2, fit(prompt, w - 4), FG["white"])
+        write(y + 4, x + 2, fit(value, w - 4), FG["cyan"] + BOLD)
+        write(y + 5, x + 2, "Enter confirmar   Esc cancelar", FG["yellow"])
+        sys.stdout.flush()
+        ch = os.read(sys.stdin.fileno(), 1)
+        if ch in (b"\r", b"\n"):
+            set_status(f"{title} captured")
+            return value.strip()
+        if ch == b"\x1b":
+            seq = bytearray()
+            while select.select([sys.stdin], [], [], 0.01)[0] and len(seq) < 6:
+                seq += os.read(sys.stdin.fileno(), 1)
+                if seq.endswith(b"~"):
+                    break
+            if bytes(seq) == b"[200~":
+                value += read_bracketed_paste()
+                continue
+            set_status(f"Cancelado: {title}")
+            return None
+        if ch in (b"\x7f", b"\b"):
+            value = value[:-1]
+        elif 32 <= ord(ch) <= 126:
+            value += ch.decode("utf-8", "ignore")
+
+
+def alert(title: str, message: str):
+    rows, cols = get_size()
+    clear()
+    w = min(84, cols - 4)
+    wrapped = textwrap.wrap(message, max(20, w - 6)) or [""]
+    h = max(7, min(rows - 4, len(wrapped) + 5))
+    x = max(2, (cols - w) // 2)
+    y = max(2, rows // 2 - h // 2)
+    box(y, x, h, w, title)
+    line_y = y + 2
+    for line in wrapped[: h - 5]:
+        write(line_y, x + 3, fit(line, w - 6), FG["white"])
+        line_y += 1
+    write(y + h - 2, x + 3, "Enter volver", FG["yellow"] + BOLD)
+    sys.stdout.flush()
+    while True:
+        key = read_key(text_mode=True)
+        if key in ("enter", "esc", "q", "char:q", "char:Q", "left"):
+            return
+
+
+def confirm_exit() -> bool:
+    while True:
+        rows, cols = get_size()
+        clear()
+        w = min(72, cols - 4)
+        h = 9
+        x = max(2, (cols - w) // 2)
+        y = max(2, rows // 2 - h // 2)
+        box(y, x, h, w, "Confirmar salida")
+        write(y + 2, x + 3, "¿Salir de VPN Control Center?", FG["white"] + BOLD)
+        write(y + 4, x + 3, "La VPN, timers y servicios quedan como estan.", FG["gray"])
+        write(y + 6, x + 3, "s / Enter salir    n / Esc cancelar", FG["yellow"] + BOLD)
+        sys.stdout.flush()
+        key = read_key(text_mode=True)
+        if key in ("enter", "char:s", "char:S", "char:y", "char:Y"):
+            return True
+        if key in ("esc", "left", "q", "char:q", "char:Q", "char:n", "char:N"):
+            return False
+
+
+def valid_domain(value: str) -> tuple[bool, str]:
+    domain = (value or "").strip().lower()
+    if domain.startswith("http://") or domain.startswith("https://"):
+        return False, "Escribe solo el dominio, sin http:// ni https://. Ejemplo: avito.ru"
+    if "/" in domain or ":" in domain:
+        return False, "Escribe solo el dominio base, sin rutas, puertos ni parametros."
+    if domain.startswith("*."):
+        domain = domain[2:]
+    if len(domain) > 253:
+        return False, "El dominio es demasiado largo."
+    pattern = r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$"
+    if not re.match(pattern, domain):
+        return False, "Dominio invalido. Usa formato tipo avito.ru, ozon.ru o sub.dominio.ru."
+    return True, domain
+
+
+def confirm_dns_apply(profile: str) -> bool:
+    label = DNS_PROFILE_LABELS.get(profile, profile)
+    prompt = f"Esto cambiara DNS real a {label}. Escribe APLICAR para confirmar."
+    value = prompt_input("Confirmar cambio DNS", prompt)
+    if value is None:
+        return False
+    if value.strip().upper() == "APLICAR":
+        return True
+    alert("Confirmacion invalida", "No se aplico ningun cambio. Para cambiar DNS debes escribir exactamente APLICAR.")
+    return False
+
+
+def confirm_dns_rollback() -> bool:
+    value = prompt_input("Confirmar rollback DNS", "Esto restaura el ultimo backup DNS. Escribe ROLLBACK para confirmar.")
+    if value is None:
+        return False
+    if value.strip().upper() == "ROLLBACK":
+        return True
+    alert("Confirmacion invalida", "No se hizo rollback. Para restaurar DNS debes escribir exactamente ROLLBACK.")
+    return False
+
+
+def prompt_secret(title: str, prompt: str):
+    value = ""
+    while True:
+        rows, cols = get_size()
+        clear()
+        w = min(80, cols - 4)
+        x = max(2, (cols - w) // 2)
+        y = max(2, rows // 2 - 3)
+        box(y, x, 7, w, title)
+        write(y + 2, x + 2, fit(prompt, w - 4), FG["white"])
+        write(y + 4, x + 2, fit("•" * len(value), w - 4), FG["cyan"] + BOLD)
+        write(y + 5, x + 2, "Enter confirmar   Esc cancelar", FG["yellow"])
+        sys.stdout.flush()
+        ch = os.read(sys.stdin.fileno(), 1)
+        if ch in (b"\r", b"\n"):
+            return value
+        if ch == b"\x1b":
+            seq = select.select([sys.stdin], [], [], 0.02)[0]
+            if seq:
+                os.read(sys.stdin.fileno(), 2)
+            return None
+        if ch in (b"\x7f", b"\b"):
+            value = value[:-1]
+        elif 32 <= ord(ch) <= 126:
+            value += ch.decode("utf-8", "ignore")
+
+
+def sudo_probe(timeout: int = 5) -> bool:
+    try:
+        probe = subprocess.run(
+            "sudo -n -v",
+            shell=True,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            executable="/bin/bash",
+        )
+        return probe.returncode == 0
+    except Exception:
+        return False
+
+
+def sudo_keepalive_loop():
+    while not SUDO_KEEPALIVE_STOP.wait(SUDO_KEEPALIVE_SECONDS):
+        sudo_probe()
+
+
+def start_sudo_keepalive():
+    global SUDO_KEEPALIVE_THREAD
+    if SUDO_KEEPALIVE_THREAD and SUDO_KEEPALIVE_THREAD.is_alive():
+        return
+    SUDO_KEEPALIVE_STOP.clear()
+    SUDO_KEEPALIVE_THREAD = threading.Thread(target=sudo_keepalive_loop, daemon=True)
+    SUDO_KEEPALIVE_THREAD.start()
+
+
+def stop_sudo_keepalive():
+    SUDO_KEEPALIVE_STOP.set()
+    if SUDO_KEEPALIVE_THREAD and SUDO_KEEPALIVE_THREAD.is_alive():
+        SUDO_KEEPALIVE_THREAD.join(timeout=0.2)
+
+
+atexit.register(stop_sudo_keepalive)
+
+
+def ensure_sudo(
+    title: str = "Sudo requerido",
+    prompt: str = "Introduce tu contrasena sudo para acciones del VPN.",
+) -> bool:
+    if sudo_probe():
+        start_sudo_keepalive()
+        return True
+    password = prompt_secret(title, prompt)
+    if password is None:
+        set_status("Sudo cancelado")
+        return False
+    auth = run_with_input("sudo -S -p '' -v", password + "\n", 12)
+    if not auth or auth.returncode != 0:
+        set_status("Sudo fallido")
+        show_output("Sudo", ((auth.stdout or "") + (auth.stderr or "")).strip() or "Autenticacion sudo fallida.")
+        return False
+    start_sudo_keepalive()
+    set_status("Sudo validado")
+    return True
+
+
+def initialize_sudo() -> bool:
+    ok = ensure_sudo(
+        "Sudo inicial",
+        "Introduce tu contrasena sudo para abrir VPN con control completo.",
+    )
+    if ok:
+        set_status("Sudo activo")
+        return True
+    set_status("Modo limitado: sudo no disponible")
+    return False
+
+
+def can_list_locations_without_prompt() -> bool:
+    probe = subprocess.run(
+        f"timeout 4s sudo -n -u adgvpn -H {shlex.quote(AG)} version >/dev/null 2>&1",
+        shell=True,
+        text=True,
+        capture_output=True,
+        executable="/bin/bash",
+    )
+    return probe.returncode == 0
+
+
+def load_locations():
+    raw = run(
+        r"""timeout 10s sudo -n -u adgvpn -H """
+        + shlex.quote(AG)
+        + r""" list-locations 2>/dev/null | sed -E $'s/\x1B\[[0-9;]*[[:alpha:]]//g'""",
+        12,
+    )
+    lower = raw.lower()
+    if "timed out" in lower:
+        return []
+    if "sudo:" in lower or "password" in lower:
+        return None
+    if "please log in" in lower or "you can log in" in lower:
+        return []
+    out = strip_ansi(raw)
+    items = []
+    for raw_line in out.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not re.match(r"^[A-Z][A-Z]\s", line):
+            continue
+        cols = re.split(r"\s{2,}", line)
+        if not cols or not re.match(r"^[A-Z]{2}$", cols[0]):
+            continue
+        iso = cols[0]
+        country = cols[1] if len(cols) > 1 else ""
+        city = cols[2] if len(cols) > 2 else ""
+        ping = cols[3] if len(cols) > 3 else ""
+        desc = f"{flag_from_iso(iso)} {iso}  {country}  {city}  {ping}ms".strip()
+        items.append(
+            {
+                "iso": iso,
+                "country": country,
+                "city": city,
+                "ping": ping,
+                "raw": line,
+                "desc": re.sub(r"\s+", " ", desc).strip(),
+            }
+        )
+    return items
+
+
+def set_timer_interval_command(unit: str, value: str) -> str:
+    return rf"""
+tmp="$(mktemp)"
+awk -F= -v val="{value}" '
+BEGIN {{ done=0 }}
+/^[[:space:]]*OnUnitActiveSec=/ {{ print "  OnUnitActiveSec=" val; done=1; next }}
+{{ print $0 }}
+END {{ if (!done) print "  OnUnitActiveSec=" val }}
+' /etc/systemd/system/{unit} > "$tmp"
+sudo install -m 644 -o root -g root "$tmp" /etc/systemd/system/{unit}
+rm -f "$tmp"
+sudo systemctl daemon-reload
+sudo systemctl restart {unit}
+systemctl status {unit} --no-pager -n 8
+"""
+
+
+def set_timer_interval(unit: str, value: str) -> str:
+    return run(set_timer_interval_command(unit, value), 20)
+
+
+def set_rotate_top_n_command(value: str) -> str:
+    value = (value or "").strip()
+    if not re.match(r"^[0-9]+$", value):
+        return "echo 'ERROR: TOP_N debe ser un numero.'"
+    num = int(value)
+    if num < 1 or num > 100:
+        return "echo 'ERROR: TOP_N debe estar entre 1 y 100.'"
+    return rf"""
+tmp="$(mktemp)"
+sudo awk -F= -v val="{value}" '
+BEGIN {{ done=0 }}
+/^[[:space:]]*TOP_N=/ {{ print "TOP_N=" val; done=1; next }}
+{{ print $0 }}
+END {{ if (!done) print "TOP_N=" val }}
+' /usr/local/sbin/vpn_rotate.sh > "$tmp"
+sudo install -m 700 -o root -g root "$tmp" /usr/local/sbin/vpn_rotate.sh
+rm -f "$tmp"
+sudo grep -E '^(TOP_N|RECENT_KEEP)=' /usr/local/sbin/vpn_rotate.sh
+"""
+
+
+def set_rotate_top_n(value: str) -> str:
+    value = (value or "").strip()
+    if not re.match(r"^[0-9]+$", value):
+        set_status("TOP_N invalido")
+        return "ERROR: TOP_N debe ser un numero."
+    num = int(value)
+    if num < 1 or num > 100:
+        set_status("TOP_N fuera de rango")
+        return "ERROR: TOP_N debe estar entre 1 y 100."
+    return run(set_rotate_top_n_command(value), 20)
+
+
+def bypass_domains():
+    raw = run(
+        r"""awk '!/^[[:space:]]*(#|$)/ {d=tolower($1); if (d ~ /^\*\./) d=substr(d,3); print d}' /etc/vpn-domain-bypass.conf 2>/dev/null | sort -u""",
+        5,
+    )
+    domains = []
+    for line in raw.splitlines():
+        domain = line.strip().lower()
+        if domain and re.match(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", domain):
+            domains.append(domain)
+    return domains
+
+
+def remove_bypass_domain_command(domain: str) -> str:
+    domain = (domain or "").strip().lower()
+    if not re.match(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", domain):
+        return "echo 'ERROR: dominio invalido.'"
+    return rf"""
+tmp="$(mktemp)"
+sudo awk -v d={shlex.quote(domain)} '
+BEGIN {{ wd="*." d }}
+{{
+  line=tolower($0)
+  gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+  if (line == d || line == wd) next
+  print $0
+}}' /etc/vpn-domain-bypass.conf > "$tmp"
+sudo install -m 0644 -o root -g root "$tmp" /etc/vpn-domain-bypass.conf
+rm -f "$tmp"
+sudo systemctl start vpn-domain-bypass.service
+echo "Quitado: {domain}"
+echo "Quitado: *.{domain}"
+echo "Aplicado bypass con: vpn-domain-bypass.service"
+"""
+
+
+def remove_bypass_domain(domain: str) -> str:
+    domain = (domain or "").strip().lower()
+    if not re.match(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", domain):
+        return "ERROR: dominio invalido."
+    return run(remove_bypass_domain_command(domain), 30)
+
+
+def human_size(size: int) -> str:
+    units = ["B", "K", "M", "G", "T"]
+    value = float(max(0, size))
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)}B"
+            return f"{value:.1f}{unit}"
+        value /= 1024
+    return f"{int(size)}B"
+
+
+def log_size(path: str) -> str:
+    try:
+        return human_size(os.path.getsize(path))
+    except FileNotFoundError:
+        return "missing"
+    except Exception:
+        return "locked"
+
+
+def rotated_log_count(path: str) -> int:
+    directory = os.path.dirname(path) or "."
+    base = os.path.basename(path) + "-"
+    try:
+        return sum(1 for name in os.listdir(directory) if name.startswith(base))
+    except Exception:
+        return 0
+
+
+def logrotate_policy() -> dict:
+    policy = {
+        "interval": "hourly",
+        "rotate": "?",
+        "minsize": "?",
+        "maxsize": "?",
+        "compress": "off",
+        "delaycompress": "off",
+        "config": LOGROTATE_CONF,
+    }
+    try:
+        with open(LOGROTATE_CONF, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                key = parts[0]
+                if key in ("hourly", "daily", "weekly", "monthly"):
+                    policy["interval"] = key
+                elif key in ("rotate", "minsize", "maxsize") and len(parts) >= 2:
+                    policy[key] = parts[1]
+                elif key in ("compress", "delaycompress"):
+                    policy[key] = "on"
+    except Exception:
+        policy["config"] = f"{LOGROTATE_CONF} no disponible"
+    return policy
+
+
+def housekeeping_snapshot():
+    policy = logrotate_policy()
+    logs = []
+    for path in VPN_LOG_PATHS:
+        logs.append(
+            {
+                "name": os.path.basename(path),
+                "path": path,
+                "size": log_size(path),
+                "rotated": rotated_log_count(path),
+            }
+        )
+    return {
+        "timer_state": service_state(LOGROTATE_TIMER),
+        "timer_enabled": timer_enabled(LOGROTATE_TIMER),
+        "next": timer_trigger(LOGROTATE_TIMER),
+        "eta": timer_countdown(LOGROTATE_TIMER),
+        "policy": policy,
+        "logs": logs,
+    }
+
+
+def housekeeping_panel():
+    while True:
+        data = housekeeping_snapshot()
+        rows, cols = get_size()
+        clear()
+        head_h = 3
+        foot_h = 2
+        body_h = max(14, rows - head_h - foot_h - 3)
+        left_w = min(54, max(38, cols // 3))
+        right_x = left_w + 2
+        right_w = cols - right_x - 1
+        help_y = head_h + body_h + 2
+
+        box(1, 1, head_h, cols - 2, "Housekeeping logs")
+        box(head_h + 1, 1, body_h, left_w, "Estado")
+        box(head_h + 1, right_x, body_h, right_w, "Logs protegidos")
+        box(help_y, 1, foot_h + 1, cols - 2, "Ayuda")
+
+        write(2, 3, "Rotacion y retencion de logs del stack VPN", FG["gray"])
+
+        y = head_h + 2
+        status_rows = [
+            ("Timer", LOGROTATE_TIMER),
+            ("Estado", data["timer_state"]),
+            ("Enabled", data["timer_enabled"]),
+            ("Proxima", data["next"]),
+        ]
+        if data["eta"]:
+            status_rows.append(("Falta", data["eta"]))
+        status_rows.extend(
+            [
+                ("Intervalo", data["policy"]["interval"]),
+                ("Minsize", data["policy"]["minsize"]),
+                ("Maxsize", data["policy"]["maxsize"]),
+                ("Rotate", data["policy"]["rotate"]),
+                ("Compress", data["policy"]["compress"]),
+                ("Config", data["policy"]["config"]),
+            ]
+        )
+        for key, value in status_rows:
+            if y >= head_h + body_h:
+                break
+            write(y, 3, f"{key:<10}", FG["magenta"] + BOLD)
+            write(y, 15, fit(value, left_w - 17), semantic_style(key, value))
+            y += 1
+
+        y = head_h + 2
+        write(y, right_x + 2, "Archivo", FG["blue"] + BOLD)
+        write(y, right_x + max(20, right_w - 25), "Tamano", FG["blue"] + BOLD)
+        write(y, right_x + max(30, right_w - 12), "Rotadas", FG["blue"] + BOLD)
+        y += 2
+        for item in data["logs"]:
+            if y >= head_h + body_h - 4:
+                break
+            name_w = max(14, right_w - 28)
+            write(y, right_x + 2, fit(item["name"], name_w), FG["white"])
+            write(y, right_x + max(20, right_w - 25), fit(item["size"], 10), semantic_style("Estado", item["size"]))
+            write(y, right_x + max(30, right_w - 12), str(item["rotated"]), FG["cyan"] + BOLD)
+            y += 1
+
+        if y < head_h + body_h - 1:
+            y += 1
+            write(y, right_x + 2, "Impacto", FG["cyan"] + BOLD)
+            y += 2
+            notes = [
+                "Evita crecimiento indefinido durante fallos repetidos.",
+                "No cambia VPN, DNS, bypass ni timers operativos.",
+                "Solo rota y comprime archivos de log del proyecto.",
+            ]
+            for note in notes:
+                if y >= head_h + body_h:
+                    break
+                write(y, right_x + 4, f"• {fit(note, right_w - 8)}", FG["gray"])
+                y += 1
+
+        write(help_y + 1, 3, "r", FG["cyan"] + BOLD)
+        write(help_y + 1, 5, "refrescar", FG["yellow"] + BOLD)
+        write(help_y + 1, 17, "q/Esc/←", FG["cyan"] + BOLD)
+        write(help_y + 1, 26, "volver", FG["yellow"] + BOLD)
+        sys.stdout.flush()
+
+        key = read_key()
+        if key in ("q", "esc", "left", "enter"):
+            set_status("Housekeeping visto")
+            return
+        if key == "r":
+            set_status("Housekeeping refrescado")
+            continue
+
+
+def tail_plain_lines(path: str, limit: int = 300):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+        return lines[-limit:]
+    except Exception:
+        return []
+
+
+def parse_trace_line(line: str):
+    parts = [part.strip() for part in (line or "").split("|", 4)]
+    if len(parts) != 5:
+        return None
+    timestamp, component, level, event, detail = parts
+    level = level.upper()
+    if level not in ("INFO", "WARN", "ERROR"):
+        return None
+    if not component or not event:
+        return None
+    return {
+        "timestamp": timestamp,
+        "component": component,
+        "level": level,
+        "event": event,
+        "detail": detail,
+    }
+
+
+def trace_level_style(level: str) -> str:
+    level = (level or "").upper()
+    if level == "ERROR":
+        return FG["red"] + BOLD
+    if level == "WARN":
+        return FG["yellow"] + BOLD
+    if level == "INFO":
+        return FG["green"] + BOLD
+    return FG["gray"]
+
+
+def trace_snapshot():
+    entries = []
+    legacy = 0
+    for path in TRACE_LOG_PATHS:
+        for line in tail_plain_lines(path, 300):
+            parsed = parse_trace_line(line)
+            if parsed:
+                parsed["source"] = os.path.basename(path)
+                entries.append(parsed)
+            elif line.strip():
+                legacy += 1
+    entries.sort(key=lambda item: item["timestamp"])
+    counts = {"INFO": 0, "WARN": 0, "ERROR": 0}
+    by_component = {}
+    for item in entries:
+        counts[item["level"]] = counts.get(item["level"], 0) + 1
+        by_component[item["component"]] = item
+    important = [
+        item for item in entries
+        if item["level"] in ("WARN", "ERROR") or item["event"] not in ("ok", "snapshot", "state", "truth")
+    ]
+    return {
+        "entries": entries,
+        "counts": counts,
+        "legacy": legacy,
+        "by_component": by_component,
+        "important": important[-10:],
+    }
+
+
+def trace_summary_panel():
+    while True:
+        data = trace_snapshot()
+        rows, cols = get_size()
+        clear()
+        head_h = 3
+        foot_h = 2
+        body_h = max(14, rows - head_h - foot_h - 3)
+        left_w = min(50, max(36, cols // 3))
+        right_x = left_w + 2
+        right_w = cols - right_x - 1
+        help_y = head_h + body_h + 2
+
+        box(1, 1, head_h, cols - 2, "Resumen de trazabilidad")
+        box(head_h + 1, 1, body_h, left_w, "Senales")
+        box(head_h + 1, right_x, body_h, right_w, "Eventos recientes")
+        box(help_y, 1, foot_h + 1, cols - 2, "Ayuda")
+
+        write(2, 3, "Lectura parseada de logs con formato timestamp | component | level | event | detail", FG["gray"])
+
+        y = head_h + 2
+        summary_rows = [
+            ("Parseadas", str(len(data["entries"]))),
+            ("INFO", str(data["counts"].get("INFO", 0))),
+            ("WARN", str(data["counts"].get("WARN", 0))),
+            ("ERROR", str(data["counts"].get("ERROR", 0))),
+            ("Legacy", str(data["legacy"])),
+        ]
+        for key, value in summary_rows:
+            if y >= head_h + body_h:
+                break
+            style = trace_level_style(key) if key in ("INFO", "WARN", "ERROR") else FG["cyan"] + BOLD
+            write(y, 3, f"{key:<10}", FG["magenta"] + BOLD)
+            write(y, 15, fit(value, left_w - 17), style)
+            y += 1
+
+        if y < head_h + body_h - 2:
+            y += 1
+            write(y, 3, "Ultimo por componente", FG["blue"] + BOLD)
+            y += 2
+            for component in ("watchdog", "rotate", "dispatcher", "domain_bypass"):
+                if y >= head_h + body_h:
+                    break
+                item = data["by_component"].get(component)
+                if item:
+                    value = f"{item['level']} · {item['event']}"
+                    style = trace_level_style(item["level"])
+                else:
+                    value = "sin datos nuevos"
+                    style = FG["gray"]
+                write(y, 3, fit(component, 14), FG["white"])
+                write(y, 18, fit(value, left_w - 20), style)
+                y += 1
+
+        y = head_h + 2
+        if not data["entries"]:
+            write(y, right_x + 2, "Sin entradas parseables todavia.", FG["yellow"] + BOLD)
+            write(y + 2, right_x + 2, "Ejecuta watchdog, rotate o dispatcher para generar logs nuevos.", FG["gray"])
+        else:
+            recent = data["important"] or data["entries"][-10:]
+            for item in reversed(recent):
+                if y >= head_h + body_h:
+                    break
+                head = f"{item['timestamp']}  {item['component']}  {item['level']}  {item['event']}"
+                write(y, right_x + 2, fit(head, right_w - 4), trace_level_style(item["level"]))
+                y += 1
+                if y >= head_h + body_h:
+                    break
+                write(y, right_x + 4, fit(item["detail"], right_w - 8), FG["gray"])
+                y += 2
+
+        write(help_y + 1, 3, "r", FG["cyan"] + BOLD)
+        write(help_y + 1, 5, "refrescar", FG["yellow"] + BOLD)
+        write(help_y + 1, 17, "q/Esc/←", FG["cyan"] + BOLD)
+        write(help_y + 1, 26, "volver", FG["yellow"] + BOLD)
+        sys.stdout.flush()
+
+        key = read_key()
+        if key in ("q", "esc", "left", "enter"):
+            set_status("Trazabilidad vista")
+            return
+        if key == "r":
+            set_status("Trazabilidad refrescada")
+            continue
+
+
+def section_meta(section: str, label: str):
+    if section == "Acciones rapidas":
+        data = {
+            "Reiniciar VPN": [
+                ("Tipo", "Recuperacion"),
+                ("Impacto", "Reaplica la ubicacion actual"),
+                ("Uso", "Cuando el tunel o la ruta quedan raros"),
+                ("Riesgo", "Corte breve de sesion"),
+            ],
+            "Desconectar VPN": [
+                ("Tipo", "Corte manual"),
+                ("Impacto", "Detiene el tunel manualmente"),
+                ("Uso", "Cuando quieres salir de VPN por completo"),
+                ("Riesgo", "Todo el trafico sale directo"),
+            ],
+            "Rotar ahora": [
+                ("Tipo", "Rotacion forzada"),
+                ("Impacto", "Busca y valida otro nodo"),
+                ("Uso", "Buscar otro nodo sin tocar scripts"),
+                ("Riesgo", "Cambio de IP y posible microcorte"),
+            ],
+            "Ejecutar watchdog": [
+                ("Tipo", "Chequeo forzado"),
+                ("Impacto", "Ejecuta recuperacion inmediata"),
+                ("Uso", "Validar salud sin esperar al timer"),
+                ("Riesgo", "Puede remediar si detecta fallo"),
+            ],
+            "Estado real": [
+                ("Tipo", "Solo lectura"),
+                ("Impacto", "Muestra estado fuerte por red real"),
+                ("Uso", "Confirmar tun, ruta e IP publica"),
+            ],
+        }
+        return data.get(label, [])
+
+    if section == "Timers":
+        data = {
+            "Activar rotacion": [
+                ("Timer", ROTATE_TIMER),
+                ("Estado", service_state(ROTATE_TIMER)),
+                ("Intervalo", timer_interval(ROTATE_TIMER)),
+                ("Rol", "Rotacion periodica"),
+            ],
+            "Parar rotacion": [
+                ("Timer", ROTATE_TIMER),
+                ("Estado", service_state(ROTATE_TIMER)),
+                ("Intervalo", timer_interval(ROTATE_TIMER)),
+                ("Rol", "Rotacion periodica"),
+            ],
+            "Intervalo rotacion": [
+                ("Timer", ROTATE_TIMER),
+                ("Actual", timer_interval(ROTATE_TIMER)),
+                ("Rol", "Rotacion periodica"),
+                ("Efecto", "Cambia intervalo del timer"),
+            ],
+            "Activar watchdog": [
+                ("Timer", WATCHDOG_TIMER),
+                ("Estado", service_state(WATCHDOG_TIMER)),
+                ("Intervalo", timer_interval(WATCHDOG_TIMER)),
+                ("Rol", "Watchdog de recuperacion"),
+            ],
+            "Parar watchdog": [
+                ("Timer", WATCHDOG_TIMER),
+                ("Estado", service_state(WATCHDOG_TIMER)),
+                ("Intervalo", timer_interval(WATCHDOG_TIMER)),
+                ("Rol", "Watchdog de recuperacion"),
+            ],
+            "Intervalo watchdog": [
+                ("Timer", WATCHDOG_TIMER),
+                ("Actual", timer_interval(WATCHDOG_TIMER)),
+                ("Rol", "Recuperacion automatica"),
+                ("Efecto", "Cambia intervalo del timer"),
+            ],
+        }
+        return data.get(label, [])
+
+    if section == "Bypass dominios":
+        data = {
+            "Ver lista": [
+                ("Entradas", f"{bypass_count()} dominios"),
+                ("Archivo", "/etc/vpn-domain-bypass.conf"),
+                ("Uso", "Auditar exclusiones activas"),
+            ],
+            "Agregar dominio": [
+                ("Entradas", f"{bypass_count()} dominios"),
+                ("Accion", "Anade dominio y *.dominio"),
+                ("Uso", "Enviar ese sitio fuera del tunel"),
+                ("Riesgo", "Ese dominio usara ruta directa"),
+            ],
+            "Quitar dominio": [
+                ("Entradas", f"{bypass_count()} dominios"),
+                ("Accion", "Elimina dominio y *.dominio"),
+                ("Uso", "Volver a pasar ese dominio por VPN"),
+            ],
+        }
+        return data.get(label, [])
+
+    if section == "DNS / AdGuard":
+        data = {
+            "DNS actual": [
+                ("Tipo", "Solo lectura"),
+                ("Comando", "vpn_dnsctl current"),
+                ("Impacto", "Muestra perfil activo"),
+                ("Riesgo", "Ninguno"),
+            ],
+            "Probar DNS local": [
+                ("Tipo", "Diagnostico"),
+                ("Comando", "vpn_dnsctl local-test"),
+                ("Impacto", "Consulta dominios reales"),
+                ("Riesgo", "Ninguno"),
+            ],
+            "Probar perfiles DNS": [
+                ("Tipo", "Diagnostico"),
+                ("Comando", "vpn_dnsctl test-all"),
+                ("Impacto", "Prueba perfiles DoH candidatos"),
+                ("Riesgo", "Ninguno"),
+            ],
+            "Aplicar Quad9": [
+                ("Perfil", "quad9-doh"),
+                ("Tipo", "Aplicar"),
+                ("Impacto", "Cambia DNS real"),
+                ("Rollback", "Automatico si falla"),
+            ],
+            "Aplicar Cloudflare": [
+                ("Perfil", "cloudflare-doh"),
+                ("Tipo", "Aplicar"),
+                ("Impacto", "Cambia DNS real"),
+                ("Rollback", "Automatico si falla"),
+            ],
+            "Aplicar Google": [
+                ("Perfil", "google-doh"),
+                ("Tipo", "Aplicar"),
+                ("Impacto", "Cambia DNS real"),
+                ("Rollback", "Automatico si falla"),
+            ],
+            "Aplicar AdGuard DoQ": [
+                ("Perfil", "adguard-doq"),
+                ("Tipo", "Aplicar"),
+                ("Impacto", "Cambia DNS real"),
+                ("Uso", "Fallback duro para bloqueo DNS"),
+            ],
+            "Aplicar OpenDNS": [
+                ("Perfil", "opendns-doh"),
+                ("Tipo", "Aplicar"),
+                ("Impacto", "Cambia DNS real"),
+                ("Rollback", "Automatico si falla"),
+            ],
+            "Aplicar AdGuard sin filtro": [
+                ("Perfil", "adguard-unfiltered-doh"),
+                ("Tipo", "Aplicar"),
+                ("Impacto", "Cambia DNS real"),
+                ("Rollback", "Automatico si falla"),
+            ],
+            "Aplicar AdGuard filtrado": [
+                ("Perfil", "adguard-doh"),
+                ("Tipo", "Aplicar"),
+                ("Impacto", "Cambia DNS real"),
+                ("Riesgo", "No recomendado inicial"),
+            ],
+            "Rollback DNS": [
+                ("Tipo", "Restaurar"),
+                ("Comando", "vpn_dnsctl rollback"),
+                ("Impacto", "Restaura ultimo backup"),
+                ("Uso", "Si un cambio DNS sale mal"),
+            ],
+            "Plan Quad9": [
+                ("Perfil", "quad9-doh"),
+                ("Tipo", "Plan"),
+                ("Impacto", "Valida config candidata"),
+                ("Riesgo", "No aplica cambios"),
+            ],
+            "Plan Cloudflare": [
+                ("Perfil", "cloudflare-doh"),
+                ("Tipo", "Plan"),
+                ("Impacto", "Valida config candidata"),
+                ("Riesgo", "No aplica cambios"),
+            ],
+            "Plan Google": [
+                ("Perfil", "google-doh"),
+                ("Tipo", "Plan"),
+                ("Impacto", "Valida config candidata"),
+                ("Riesgo", "No aplica cambios"),
+            ],
+            "Plan AdGuard sin filtro": [
+                ("Perfil", "adguard-unfiltered-doh"),
+                ("Tipo", "Plan"),
+                ("Impacto", "Valida config candidata"),
+                ("Riesgo", "No aplica cambios"),
+            ],
+            "Plan AdGuard filtrado": [
+                ("Perfil", "adguard-doh"),
+                ("Tipo", "Plan"),
+                ("Impacto", "Valida config candidata"),
+                ("Riesgo", "No recomendado inicial"),
+            ],
+        }
+        return data.get(label, [])
+
+    if section == "Ver logs":
+        data = {
+            "Resumen trazabilidad": [
+                ("Contenido", "Eventos parseados"),
+                ("Uso", "Ver niveles, componentes y ultimos eventos"),
+                ("Ruta", "logs con formato pipe"),
+            ],
+            "Housekeeping logs": [
+                ("Contenido", "Rotacion y retencion"),
+                ("Uso", "Ver timer, politica y tamanos"),
+                ("Ruta", LOGROTATE_CONF),
+            ],
+            "vpn-watchdog.log": [
+                ("Contenido", "Politica y recuperacion"),
+                ("Uso", "Ver DOWN, UNKNOWN_IP, RU"),
+                ("Ruta", "/var/log/myvpn/vpn-watchdog.log"),
+            ],
+            "vpn-rotate.log": [
+                ("Contenido", "Seleccion de nodos y snapshots"),
+                ("Uso", "Auditar rotacion real"),
+                ("Ruta", "/var/log/myvpn/vpn-rotate.log"),
+            ],
+            "vpn-dispatcher.log": [
+                ("Contenido", "Eventos de NetworkManager"),
+                ("Uso", "Ver NO ACTION vs ROTATE"),
+                ("Ruta", "/var/log/vpn-dispatcher.log"),
+            ],
+            "journal adguardvpn.service": [
+                ("Contenido", "Servicio principal"),
+                ("Uso", "Inspeccionar arranques y fallos"),
+                ("Ruta", "journalctl -u adguardvpn.service"),
+            ],
+        }
+        return data.get(label, [])
+
+    if section == "Pool de rotacion":
+        data = {
+            "Ver configuracion": [
+                ("TOP_N", rotate_setting("TOP_N")),
+                ("RECENT_KEEP", rotate_setting("RECENT_KEEP")),
+                ("Rol", "Subconjunto de ubicaciones para rotate"),
+            ],
+            "TOP_N = 10": [
+                ("TOP_N", "10"),
+                ("Impacto", "Pool corto, mas conservador"),
+                ("Uso", "Cuando quieres priorizar latencia muy baja"),
+            ],
+            "TOP_N = 15": [
+                ("TOP_N", "15"),
+                ("Impacto", "Pool corto-medio"),
+                ("Uso", "Configuracion historica previa"),
+            ],
+            "TOP_N = 20": [
+                ("TOP_N", "20"),
+                ("Impacto", "Pool medio"),
+                ("Uso", "Balance entre variedad y control"),
+            ],
+            "TOP_N = 30": [
+                ("TOP_N", "30"),
+                ("Impacto", "Pool amplio actual"),
+                ("Uso", "Mas margen para nodos no bloqueados"),
+            ],
+            "TOP_N custom": [
+                ("TOP_N", rotate_setting("TOP_N")),
+                ("Impacto", "Valor numerico definido manualmente"),
+                ("Uso", "Control fino del pool"),
+            ],
+        }
+        return data.get(label, [])
+
+    return []
+
+
+def section_intro(section: str) -> str:
+    data = {
+        "Acciones rapidas": "Intervenciones manuales. Algunas cortan o cambian la conexion durante segundos.",
+        "Timers": "Controla automatizacion de rotacion y watchdog sin tocar scripts a mano.",
+        "Bypass dominios": "Gestiona dominios que salen por ruta directa, fuera del tunel VPN.",
+        "DNS / AdGuard": "Cambia DNS real con backup, validacion local y rollback de emergencia.",
+        "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
+        "Pool de rotacion": "Ajusta cuantos nodos entran al pool antes de validar bloqueo y salud real.",
+    }
+    return data.get(section, "Selecciona una accion. El panel derecho resume impacto y contexto.")
+
+
+def action_progress_text(section: str, label: str) -> str:
+    data = {
+        ("Acciones rapidas", "Reiniciar VPN"): "Reaplicando ubicacion actual y verificando salida real",
+        ("Acciones rapidas", "Desconectar VPN"): "Deteniendo tunel y comprobando estado real",
+        ("Acciones rapidas", "Rotar ahora"): "Buscando nodo valido; puede tardar si varios nodos fallan",
+        ("Acciones rapidas", "Ejecutar watchdog"): "Ejecutando watchdog y reiniciando su timer",
+        ("Acciones rapidas", "Estado real"): "Consultando tunel, ruta e IP publica",
+        ("Timers", "Activar rotacion"): "Activando timer de rotacion",
+        ("Timers", "Parar rotacion"): "Deteniendo timer de rotacion",
+        ("Timers", "Activar watchdog"): "Activando timer del watchdog",
+        ("Timers", "Parar watchdog"): "Deteniendo timer del watchdog",
+        ("Bypass dominios", "Ver lista"): "Leyendo dominios configurados fuera del tunel",
+        ("DNS / AdGuard", "DNS actual"): "Leyendo perfil DNS activo",
+        ("Ver logs", "Resumen trazabilidad"): "Parseando niveles y eventos recientes de logs",
+        ("Ver logs", "Housekeeping logs"): "Leyendo estado de rotacion y retencion de logs",
+        ("Ver logs", "vpn-watchdog.log"): "Leyendo eventos recientes del watchdog",
+        ("Ver logs", "vpn-rotate.log"): "Leyendo eventos recientes de rotacion",
+        ("Ver logs", "vpn-dispatcher.log"): "Leyendo eventos recientes de NetworkManager",
+        ("Ver logs", "journal adguardvpn.service"): "Leyendo journal reciente de AdGuard VPN",
+        ("Pool de rotacion", "Ver configuracion"): "Leyendo configuracion actual del pool",
+    }
+    return data.get((section, label), f"Ejecutando {label}")
+
+
+def submenu(title: str, items):
+    return select_list(title, [(str(i + 1), label) for i, (label, _) in enumerate(items)])
+
+
+def section_panel(section: str, items):
+    idx = 0
+    offset = 0
+    while True:
+        rows, cols = get_size()
+        clear()
+        head_h = 3
+        foot_h = 2
+        body_h = max(12, min(rows - head_h - foot_h - 1, 18))
+        left_w = 32
+        right_x = left_w + 2
+        right_w = cols - right_x - 1
+        help_y = head_h + body_h + 2
+
+        box(1, 1, head_h, cols - 2, section)
+        box(head_h + 1, 1, body_h, left_w, "Opciones")
+        box(head_h + 1, right_x, body_h, right_w, "Detalle")
+        box(help_y, 1, foot_h + 1, cols - 2, "Ayuda")
+
+        write(2, 3, fit(section_intro(section), cols - 6), FG["gray"])
+
+        visible_h = max(1, body_h - 2)
+        if idx < offset:
+            offset = idx
+        if idx >= offset + visible_h:
+            offset = idx - visible_h + 1
+        visible = items[offset : offset + visible_h]
+        for i, (label, _) in enumerate(visible):
+            absolute_idx = offset + i
+            selected = absolute_idx == idx
+            style = BG["cyan"] + FG["black"] + BOLD if selected else FG["gray"]
+            prefix = "› " if selected else "  "
+            write(head_h + 2 + i, 2, (prefix + fit(label, left_w - 6)).ljust(left_w - 3), style)
+
+        y = head_h + 2
+        selected_label = items[idx][0]
+        write(y, right_x + 2, fit(selected_label, right_w - 4), FG["cyan"] + BOLD)
+        y += 2
+        meta = section_meta(section, selected_label)
+        if meta:
+            write(y, right_x + 2, "Contexto operativo", FG["blue"] + BOLD)
+            y += 2
+        for key, value in meta:
+            if y >= head_h + body_h:
+                break
+            write(y, right_x + 2, f"{key:<10}", FG["magenta"] + BOLD)
+            write(y, right_x + 14, fit(value, right_w - 16), semantic_style(key, value))
+            y += 1
+
+        extra_hints = {
+            "Acciones rapidas": [
+                "Usa estas acciones para intervenir sin tocar scripts base.",
+                "Las acciones que cambian estado refrescan el dashboard al volver.",
+            ],
+            "Timers": [
+                "Los cambios de intervalo editan solo el .timer correspondiente.",
+                "Despues hacen daemon-reload y reinician el timer afectado.",
+            ],
+            "Bypass dominios": [
+                "El bypass sigue usando no_vpn y el servicio vpn-domain-bypass.service.",
+                "No modifica la arquitectura del VPN; solo rutas por dominio.",
+            ],
+            "DNS / AdGuard": [
+                "Esta vista cambia DNS real cuando usas Aplicar.",
+                "Cada aplicacion crea backup, reinicia solo AdGuard Home y valida DNS local.",
+                "Si la validacion falla, vpn_dnsctl intenta rollback automatico al backup anterior.",
+                "Comando manual de emergencia: sudo /usr/local/bin/vpn_dnsctl rollback",
+            ],
+            "Ver logs": [
+                "Estos visores son solo lectura.",
+                "Sirven para auditar recuperacion, rotacion y dispatcher.",
+                "Resumen trazabilidad interpreta logs nuevos con formato estandar.",
+                "Housekeeping muestra el estado del timer y la politica de retencion.",
+            ],
+            "Pool de rotacion": [
+                "TOP_N define cuantas ubicaciones entran al pool base antes del filtro por bloqueo y validacion real.",
+                "Cambiar TOP_N no toca watchdog ni vpn_set; solo el alcance inicial de vpn_rotate.sh.",
+            ],
+        }
+        hints = extra_hints.get(section, [])
+        if hints and y < head_h + body_h:
+            y += 1
+            write(y, right_x + 2, "Notas", FG["blue"] + BOLD)
+            y += 2
+            for hint in hints:
+                if y >= head_h + body_h:
+                    break
+                for wrapped in textwrap.wrap(hint, max(20, right_w - 6)) or [""]:
+                    if y >= head_h + body_h:
+                        break
+                    write(y, right_x + 4, f"• {fit(wrapped, right_w - 8)}", FG["gray"])
+                    y += 1
+
+        write(help_y + 1, 3, "↑↓", FG["cyan"] + BOLD)
+        write(help_y + 1, 6, "mover", FG["yellow"] + BOLD)
+        write(help_y + 1, 14, "Enter", FG["cyan"] + BOLD)
+        write(help_y + 1, 21, "abrir", FG["yellow"] + BOLD)
+        write(help_y + 1, 29, "g/G", FG["cyan"] + BOLD)
+        write(help_y + 1, 33, "inicio/final", FG["yellow"] + BOLD)
+        write(help_y + 1, 47, "q", FG["cyan"] + BOLD)
+        write(help_y + 1, 49, "volver", FG["yellow"] + BOLD)
+        if len(items) > visible_h:
+            write(help_y + 1, cols - 18, f"{idx + 1}/{len(items)}", FG["gray"])
+        sys.stdout.flush()
+
+        key = read_key(text_mode=True)
+        if is_mouse_click(key):
+            x, y = mouse_xy(key)
+            row = y - (head_h + 2)
+            if x is not None and 0 <= row < len(visible) and 1 <= x <= left_w:
+                idx = offset + row
+                return str(idx + 1)
+            if x is not None and right_x <= x <= right_x + right_w and head_h + 1 <= y <= head_h + body_h:
+                return str(idx + 1)
+            continue
+        if key in ("esc", "left", "q", "char:q", "char:Q"):
+            return None
+        if key in ("enter", "right"):
+            return str(idx + 1)
+        if key == "down" and idx < len(items) - 1:
+            idx += 1
+        if key == "up" and idx > 0:
+            idx -= 1
+        if key == "char:g":
+            idx = 0
+        if key == "char:G":
+            idx = len(items) - 1
+
+
+def location_panel(items):
+    idx = 0
+    offset = 0
+    query = ""
+    while True:
+        filtered = [
+            item for item in items
+            if not query
+            or query.lower() in item["iso"].lower()
+            or query.lower() in item["country"].lower()
+            or query.lower() in item["city"].lower()
+            or query.lower() in item["raw"].lower()
+        ]
+        if filtered:
+            idx = max(0, min(idx, len(filtered) - 1))
+        else:
+            idx = 0
+            offset = 0
+        rows, cols = get_size()
+        clear()
+        head_h = 3
+        foot_h = 2
+        body_h = max(12, min(rows - head_h - foot_h - 1, 18))
+        left_w = 36
+        right_x = left_w + 2
+        right_w = cols - right_x - 1
+        help_y = head_h + body_h + 2
+
+        box(1, 1, head_h, cols - 2, "Cambiar ubicacion")
+        box(head_h + 1, 1, body_h, left_w, "Nodos")
+        box(head_h + 1, right_x, body_h, right_w, "Detalle")
+        box(help_y, 1, foot_h + 1, cols - 2, "Ayuda")
+
+        write(2, 3, "Escribe ISO, pais o ciudad para filtrar. Enter aplica vpn_set sobre el nodo elegido.", FG["gray"])
+        write(head_h + 2, 3, fit(f"Filtro: {query or '-'}", left_w - 4), FG["yellow"] + BOLD)
+
+        visible_h = min(14, max(1, body_h - 5))
+        if idx < offset:
+            offset = idx
+        if idx >= offset + visible_h:
+            offset = idx - visible_h + 1
+        visible = filtered[offset : offset + visible_h]
+
+        flag_w = 2
+        iso_w = 2
+        ping_w = 5
+        city_w = 12
+        country_w = max(7, left_w - 3 - 2 - flag_w - iso_w - ping_w - city_w - 8)
+
+        header = (
+            "FG "
+            + "ISO".ljust(iso_w + 1)
+            + "Pais".ljust(country_w + 1)
+            + "Ciudad".ljust(city_w + 1)
+            + "Ping".rjust(ping_w)
+        )
+        write(head_h + 3, 3, fit(header, left_w - 4), FG["blue"] + BOLD)
+
+        for i, item in enumerate(visible):
+            selected = (offset + i) == idx
+            style = BG["cyan"] + FG["black"] + BOLD if selected else FG["gray"]
+            prefix = "›" if selected else " "
+            line = (
+                f"{prefix} "
+                f"{fit(flag_from_iso(item['iso']) or '', flag_w):<{flag_w}} "
+                f"{item['iso']:<{iso_w}} "
+                f"{fit(item['country'], country_w):<{country_w}} "
+                f"{fit(item['city'], city_w):<{city_w}} "
+                f"{(item['ping'] + 'ms') if item['ping'] else '-':>{ping_w}}"
+            )
+            write(head_h + 4 + i, 2, line.ljust(left_w - 2), style)
+
+        y = head_h + 2
+        if filtered:
+            node = filtered[idx]
+            title = f'{flag_from_iso(node["iso"])} {node["iso"]} · {node["country"]}'
+            if node["city"]:
+                title += f" · {node['city']}"
+            write(y, right_x + 2, fit(title, right_w - 4), FG["cyan"] + BOLD)
+            y += 2
+
+            meta = [
+                ("ISO", node["iso"]),
+                ("Pais", node["country"] or "-"),
+                ("Ciudad", node["city"] or "-"),
+                ("Ping", f'{node["ping"]} ms' if node["ping"] else "-"),
+                ("Perfil", "Pool de rotacion"),
+                ("Accion", f'vpn_set {node["iso"]}'),
+            ]
+            for key, value in meta:
+                if y >= head_h + body_h:
+                    break
+                write(y, right_x + 2, f"{key:<10}", FG["magenta"] + BOLD)
+                write(y, right_x + 14, fit(value, right_w - 16), semantic_style(key, value))
+                y += 1
+
+            if y < head_h + body_h:
+                y += 1
+                write(y, right_x + 2, "Notas", FG["blue"] + BOLD)
+                y += 2
+                notes = [
+                    "Escribe para buscar por ISO, pais o ciudad.",
+                    "Este selector no toca la logica del stack; solo aplica vpn_set sobre el ISO.",
+                    "La ubicacion final sigue sujeta al comportamiento real del cliente y del servicio.",
+                ]
+                for note in notes:
+                    for wrapped in textwrap.wrap(note, max(20, right_w - 6)) or [""]:
+                        if y >= head_h + body_h:
+                            break
+                        write(y, right_x + 4, f"• {fit(wrapped, right_w - 8)}", FG["gray"])
+                        y += 1
+        else:
+            write(y, right_x + 2, "Sin coincidencias", FG["yellow"] + BOLD)
+            write(y + 2, right_x + 2, "Ajusta el filtro o usa Backspace para borrar.", FG["gray"])
+
+        write(help_y + 1, 3, "↑↓", FG["cyan"] + BOLD)
+        write(help_y + 1, 6, "mover", FG["yellow"] + BOLD)
+        write(help_y + 1, 14, "Enter", FG["cyan"] + BOLD)
+        write(help_y + 1, 21, "aplicar", FG["yellow"] + BOLD)
+        write(help_y + 1, 31, "texto", FG["cyan"] + BOLD)
+        write(help_y + 1, 37, "filtrar", FG["yellow"] + BOLD)
+        write(help_y + 1, 47, "Esc/←", FG["cyan"] + BOLD)
+        write(help_y + 1, 54, "volver", FG["yellow"] + BOLD)
+        sys.stdout.flush()
+
+        key = read_key(text_mode=True)
+        if is_mouse_click(key):
+            x, y = mouse_xy(key)
+            row = y - (head_h + 4)
+            if x is not None and filtered and 0 <= row < len(visible) and 1 <= x <= left_w:
+                return visible[row]["iso"]
+            if x is not None and filtered and right_x <= x <= right_x + right_w and head_h + 1 <= y <= head_h + body_h:
+                return filtered[idx]["iso"]
+            continue
+        if key in ("esc", "left"):
+            return None
+        if key in ("enter", "right") and filtered:
+            return filtered[idx]["iso"]
+        if key == "down" and idx < len(filtered) - 1:
+            idx += 1
+        if key == "up" and idx > 0:
+            idx -= 1
+        if key == "backspace":
+            query = query[:-1]
+            idx = 0
+            offset = 0
+        if isinstance(key, str) and key.startswith("char:"):
+            query += key.split(":", 1)[1]
+            idx = 0
+            offset = 0
+
+
+def handle_menu(label: str):
+    try:
+        if label == "Instalacion":
+            set_status("Abriendo instalacion")
+            show_output("Instalacion", build_installation_text())
+            set_status("Instalacion vista")
+            return False
+
+        if label == "Historial":
+            set_status("Abriendo historial")
+            show_output("Historial", build_history_text())
+            set_status("Historial visto")
+            return False
+        if label == "Cambiar ubicacion":
+            if not can_list_locations_without_prompt():
+                set_status("Sudo requerido para ubicaciones")
+                if not ensure_sudo():
+                    return False
+            set_status("Cargando ubicaciones")
+            center_message("Cargando ubicaciones...")
+            items = load_locations()
+            if items is None:
+                set_status("Problema de sudo o sesion")
+                show_output("Cambiar ubicacion", "No pude usar sudo -u adgvpn para cargar ubicaciones.")
+                return False
+            if items == []:
+                set_status("No se pudieron cargar ubicaciones")
+                raw_msg = run(
+                    r"""timeout 8s sudo -n -u adgvpn -H """
+                    + shlex.quote(AG)
+                    + r""" list-locations 2>&1 | head -n 40""",
+                    10,
+                )
+                show_output("Cambiar ubicacion", raw_msg or "No pude cargar ubicaciones.")
+                return False
+            iso = location_panel(items)
+            if iso:
+                if not ensure_sudo():
+                    return False
+                set_status(f"Aplicando {iso}")
+                output = run_with_progress(
+                    f"Aplicando {iso}",
+                    f"Cambiando ubicacion a {iso}",
+                    f"sudo {shlex.quote(VPN_SET)} {shlex.quote(iso)}",
+                    45,
+                )
+                show_output(f"Aplicando {iso}", output)
+                set_status(f"Aplicado {iso}")
+                return True
+            set_status("Cambio de ubicacion cancelado")
+            return False
+
+        truth = truth_data()
+        loc_hint = current_location(country_code(truth.get("IP_ADDR", "none")))
+
+        actions = {
+            "Acciones rapidas": [
+                ("Reiniciar VPN", restart_action(loc_hint)),
+                ("Desconectar VPN", f"sudo systemctl stop adguardvpn.service; {TRUTH_BIN}"),
+                ("Rotar ahora", f"sudo env VPN_ROTATE_FORCE=1 {shlex.quote('/usr/local/sbin/vpn_rotate.sh')}; {TRUTH_BIN}"),
+                ("Ejecutar watchdog", f"sudo systemctl restart {WATCHDOG_TIMER}; sudo env VPN_WATCHDOG_FORCE=1 {shlex.quote('/usr/local/sbin/vpn_watchdog.sh')}; {TRUTH_BIN}"),
+                ("Estado real", f"{VPNCTL} status"),
+            ],
+            "Timers": [
+                ("Activar rotacion", f"sudo systemctl start {ROTATE_TIMER} {ROTATE_FIRSTBOOT_TIMER} && systemctl status {ROTATE_TIMER} --no-pager -n 8"),
+                ("Parar rotacion", f"sudo systemctl stop {ROTATE_TIMER} {ROTATE_FIRSTBOOT_TIMER} && systemctl status {ROTATE_TIMER} --no-pager -n 8"),
+                ("Intervalo rotacion", "__SET_ROTATE__"),
+                ("Activar watchdog", f"sudo systemctl start {WATCHDOG_TIMER} && systemctl status {WATCHDOG_TIMER} --no-pager -n 8"),
+                ("Parar watchdog", f"sudo systemctl stop {WATCHDOG_TIMER} && systemctl status {WATCHDOG_TIMER} --no-pager -n 8"),
+                ("Intervalo watchdog", "__SET_WATCHDOG__"),
+            ],
+            "Bypass dominios": [
+                ("Ver lista", f"sudo -n {shlex.quote(NO_VPN)} --list"),
+                ("Agregar dominio", "__ADD_BYPASS__"),
+                ("Quitar dominio", "__REMOVE_BYPASS__"),
+            ],
+            "DNS / AdGuard": [
+                ("DNS actual", f"sudo -n {shlex.quote(DNSCTL)} current"),
+                ("Aplicar Quad9", "__DNS_APPLY__:quad9-doh"),
+                ("Aplicar Cloudflare", "__DNS_APPLY__:cloudflare-doh"),
+                ("Aplicar Google", "__DNS_APPLY__:google-doh"),
+                ("Aplicar AdGuard DoQ", "__DNS_APPLY__:adguard-doq"),
+                ("Aplicar OpenDNS", "__DNS_APPLY__:opendns-doh"),
+                ("Aplicar AdGuard sin filtro", "__DNS_APPLY__:adguard-unfiltered-doh"),
+                ("Aplicar AdGuard filtrado", "__DNS_APPLY__:adguard-doh"),
+                ("Rollback DNS", "__DNS_ROLLBACK__"),
+            ],
+            "Ver logs": [
+                ("Resumen trazabilidad", "__TRACE_SUMMARY__"),
+                ("Housekeeping logs", "__HOUSEKEEPING__"),
+                ("vpn-watchdog.log", "sudo tac /var/log/myvpn/vpn-watchdog.log 2>/dev/null | head -n 120"),
+                ("vpn-rotate.log", "sudo tac /var/log/myvpn/vpn-rotate.log 2>/dev/null | head -n 120"),
+                ("vpn-dispatcher.log", "sudo tac /var/log/vpn-dispatcher.log 2>/dev/null | head -n 120"),
+                ("journal adguardvpn.service", "sudo journalctl -r -u adguardvpn.service -n 120 --no-pager"),
+            ],
+            "Pool de rotacion": [
+                ("Ver configuracion", "sudo grep -E '^(TOP_N|RECENT_KEEP)=' /usr/local/sbin/vpn_rotate.sh"),
+                ("TOP_N = 10", "__TOPN_10__"),
+                ("TOP_N = 15", "__TOPN_15__"),
+                ("TOP_N = 20", "__TOPN_20__"),
+                ("TOP_N = 30", "__TOPN_30__"),
+                ("TOP_N custom", "__TOPN_CUSTOM__"),
+            ],
+        }
+
+        if label not in actions:
+            return False
+
+        if label in ("Pool de rotacion", "Bypass dominios"):
+            if not ensure_sudo():
+                set_status(f"Cancelado: {label}")
+                return False
+
+        while True:
+            pick = section_panel(label, actions[label])
+            if not pick:
+                set_status(f"{label} closed")
+                return False
+            idx = int(pick) - 1
+            action_label, action = actions[label][idx]
+            if label == "Acciones rapidas" and action_label in ("Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog"):
+                if not ensure_sudo():
+                    continue
+            if action == "__TRACE_SUMMARY__":
+                set_status("Abriendo trazabilidad")
+                trace_summary_panel()
+                set_status("Trazabilidad vista")
+                continue
+            if action == "__HOUSEKEEPING__":
+                set_status("Abriendo housekeeping")
+                housekeeping_panel()
+                set_status("Housekeeping visto")
+                continue
+            if action == "__ADD_BYPASS__":
+                raw_domain = prompt_input("Agregar dominio", "Escribe solo el dominio. Ejemplo: avito.ru")
+                if raw_domain:
+                    ok, domain_or_error = valid_domain(raw_domain)
+                    if not ok:
+                        alert("Dominio invalido", domain_or_error)
+                        set_status("Dominio invalido")
+                        continue
+                    domain = domain_or_error
+                    if not ensure_sudo():
+                        continue
+                    set_status(f"Agregando bypass {domain}")
+                    output = run_with_progress(
+                        action_label,
+                        f"Aplicando bypass para {domain}",
+                        f"sudo -n {shlex.quote(NO_VPN)} {shlex.quote(domain)}",
+                        75,
+                    )
+                    show_output(action_label, output)
+                    set_status(f"Bypass actualizado: {domain}")
+                    return True
+            elif action == "__REMOVE_BYPASS__":
+                if not ensure_sudo():
+                    continue
+                domains = bypass_domains()
+                if not domains:
+                    show_output(action_label, "No hay dominios configurados para quitar.")
+                    return False
+                domain = select_list("Quitar dominio", [(d, d) for d in domains])
+                if domain:
+                    set_status(f"Quitando bypass {domain}")
+                    output = run_with_progress(
+                        action_label,
+                        f"Quitando bypass para {domain}",
+                        remove_bypass_domain_command(domain),
+                        45,
+                    )
+                    show_output(action_label, output)
+                    set_status(f"Bypass eliminado: {domain}")
+                    return True
+            elif action == "__SET_ROTATE__":
+                if not ensure_sudo():
+                    continue
+                val = select_list("Intervalo de rotacion", [(x, x) for x in ["1h", "2h", "3h", "6h", "12h"]])
+                if val:
+                    set_status(f"Ajustando rotacion a {val}")
+                    show_output(action_label, run_with_progress(action_label, f"Ajustando rotacion a {val}", set_timer_interval_command(ROTATE_TIMER, val), 30))
+                    set_status(f"Rotacion: {val}")
+                    return True
+            elif action == "__SET_WATCHDOG__":
+                if not ensure_sudo():
+                    continue
+                val = select_list("Intervalo del watchdog", [(x, x) for x in ["1min", "2min", "3min", "5min"]])
+                if val:
+                    set_status(f"Ajustando watchdog a {val}")
+                    show_output(action_label, run_with_progress(action_label, f"Ajustando watchdog a {val}", set_timer_interval_command(WATCHDOG_TIMER, val), 30))
+                    set_status(f"Watchdog: {val}")
+                    return True
+            elif action in ("__TOPN_10__", "__TOPN_15__", "__TOPN_20__", "__TOPN_30__"):
+                if not ensure_sudo():
+                    continue
+                value_map = {
+                    "__TOPN_10__": "10",
+                    "__TOPN_15__": "15",
+                    "__TOPN_20__": "20",
+                    "__TOPN_30__": "30",
+                }
+                value = value_map[action]
+                set_status(f"Ajustando TOP_N a {value}")
+                show_output(action_label, run_with_progress(action_label, f"Ajustando TOP_N a {value}", set_rotate_top_n_command(value), 30))
+                set_status(f"TOP_N aplicado: {value}")
+                return True
+            elif action == "__TOPN_CUSTOM__":
+                if not ensure_sudo():
+                    continue
+                value = prompt_input("TOP_N custom", "Escribe un numero entre 1 y 100.")
+                if value:
+                    if not re.match(r"^[0-9]+$", value.strip()) or not (1 <= int(value.strip()) <= 100):
+                        alert("TOP_N invalido", "TOP_N debe ser un numero entero entre 1 y 100.")
+                        set_status("TOP_N invalido")
+                        continue
+                    set_status(f"Ajustando TOP_N a {value}")
+                    show_output(action_label, run_with_progress(action_label, f"Ajustando TOP_N a {value}", set_rotate_top_n_command(value), 30))
+                    set_status(f"TOP_N aplicado: {value}")
+                    return True
+            elif isinstance(action, str) and action.startswith("__DNS_APPLY__:"):
+                profile = action.split(":", 1)[1]
+                if not ensure_sudo():
+                    continue
+                if not confirm_dns_apply(profile):
+                    set_status("Cambio DNS cancelado")
+                    continue
+                set_status(f"Aplicando DNS {profile}")
+                output = run_with_progress(
+                    action_label,
+                    f"Aplicando DNS {DNS_PROFILE_LABELS.get(profile, profile)}",
+                    f"sudo -n {shlex.quote(DNSCTL)} apply {shlex.quote(profile)}",
+                    100,
+                )
+                show_output(action_label, output)
+                set_status(f"DNS aplicado: {profile}")
+                return True
+            elif action == "__DNS_ROLLBACK__":
+                if not ensure_sudo():
+                    continue
+                if not confirm_dns_rollback():
+                    set_status("Rollback DNS cancelado")
+                    continue
+                set_status("Restaurando DNS")
+                show_output(
+                    action_label,
+                    run_with_progress(action_label, "Restaurando ultimo DNS bueno", f"sudo -n {shlex.quote(DNSCTL)} rollback", 70),
+                )
+                set_status("Rollback DNS listo")
+                return True
+            else:
+                if "sudo" in action and not ensure_sudo():
+                    continue
+                set_status(action_label)
+                show_output(action_label, run_with_progress(action_label, action_progress_text(label, action_label), action, 50))
+                if label in ("Acciones rapidas", "Timers", "Bypass dominios", "DNS / AdGuard", "Pool de rotacion"):
+                    set_status(f"Listo: {action_label}")
+                    return True
+    except Exception:
+        show_output(f"Error: {label}", traceback.format_exc())
+        set_status(f"Error en {label}")
+        return False
+
+
+def main():
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print("VPN requiere una terminal interactiva.")
+        return
+    term.enter()
+    sudo_ready = initialize_sudo()
+    selected = 0
+    dashboard_cache = refresh_dashboard()
+    set_status("Sudo activo" if sudo_ready else "Modo limitado: sudo no disponible")
+    last_auto_refresh = time.monotonic()
+    dashboard_lock = threading.Lock()
+    dashboard_refreshing = False
+    dashboard_pending = None
+    redraw = True
+
+    def queue_dashboard_refresh():
+        nonlocal dashboard_refreshing, dashboard_pending
+        with dashboard_lock:
+            if dashboard_refreshing:
+                return
+            dashboard_refreshing = True
+
+        def worker():
+            nonlocal dashboard_refreshing, dashboard_pending
+            try:
+                data = refresh_dashboard(quiet=True)
+            except Exception:
+                data = None
+            with dashboard_lock:
+                if data is not None:
+                    dashboard_pending = data
+                dashboard_refreshing = False
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+    def consume_dashboard_refresh() -> bool:
+        nonlocal dashboard_cache, dashboard_pending
+        with dashboard_lock:
+            if dashboard_pending is None:
+                return False
+            dashboard_cache = dashboard_pending
+            dashboard_pending = None
+            return True
+
+    def request_exit() -> bool:
+        if confirm_exit():
+            set_status("Saliendo")
+            return True
+        set_status("Salida cancelada")
+        return False
+
+    while True:
+        if redraw:
+            render(selected, dashboard_cache)
+            redraw = False
+        timeout = None
+        if menu_id(selected) == "dashboard":
+            timeout = 0.2
+        key = read_key(timeout)
+        if consume_dashboard_refresh():
+            redraw = True
+        if is_mouse_click(key):
+            x, y = mouse_xy(key)
+            clicked = main_menu_index_at(x, y, selected) if x is not None else None
+            if clicked is None:
+                continue
+            selected = clicked
+            if menu_id(selected) == "exit":
+                if request_exit():
+                    break
+                redraw = True
+                continue
+            set_status(f"Abriendo: {menu_label(selected)}")
+            try:
+                changed = handle_menu(menu_section(selected))
+            except Exception:
+                show_output("VPN error", traceback.format_exc())
+                changed = False
+            if changed:
+                dashboard_cache = refresh_dashboard()
+                last_auto_refresh = time.monotonic()
+            redraw = True
+            continue
+        if key in ("q", "esc"):
+            if request_exit():
+                break
+            redraw = True
+            continue
+        if key == "left":
+            continue
+        if key is None:
+            if menu_id(selected) == "dashboard" and (time.monotonic() - last_auto_refresh) >= DASHBOARD_REFRESH_SECONDS:
+                queue_dashboard_refresh()
+                last_auto_refresh = time.monotonic()
+            continue
+        if key == "r":
+            dashboard_cache = refresh_dashboard()
+            last_auto_refresh = time.monotonic()
+            set_status("Dashboard refrescado")
+            redraw = True
+        elif key == "down" and selected < len(MENU) - 1:
+            selected += 1
+            set_status(menu_label(selected))
+            redraw = True
+        elif key == "up" and selected > 0:
+            selected -= 1
+            set_status(menu_label(selected))
+            redraw = True
+        elif key in ("enter", "right"):
+            if menu_id(selected) == "exit":
+                if request_exit():
+                    break
+                redraw = True
+                continue
+            set_status(f"Abriendo: {menu_label(selected)}")
+            try:
+                changed = handle_menu(menu_section(selected))
+            except Exception:
+                show_output("VPN error", traceback.format_exc())
+                changed = False
+            if changed:
+                dashboard_cache = refresh_dashboard()
+                last_auto_refresh = time.monotonic()
+            redraw = True
+
+
+if __name__ == "__main__":
+    main()
