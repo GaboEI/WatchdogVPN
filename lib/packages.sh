@@ -22,3 +22,23 @@ package_hint_header() {
       ;;
   esac
 }
+
+install_package_set() {
+  local packages=("$@")
+  ((${#packages[@]} > 0)) || return 0
+
+  case "${DISTRO_PACKAGE_MANAGER:-}" in
+    apt)
+      run_step sudo apt-get update
+      run_step sudo apt-get install -y "${packages[@]}"
+      ;;
+    pacman)
+      run_step sudo pacman -S --needed --noconfirm "${packages[@]}"
+      ;;
+    *)
+      warn "unsupported package manager: ${DISTRO_PACKAGE_MANAGER:-unknown}"
+      print_package_hint "${packages[@]}"
+      return 1
+      ;;
+  esac
+}
