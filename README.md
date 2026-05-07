@@ -1,6 +1,6 @@
-# VPN Control Center
+# WatchdogVPN
 
-VPN Control Center is a terminal-first operations layer for AdGuard VPN CLI on Linux. It provides a TUI, real-state checks, automatic recovery, location rotation, domain bypass, DNS tooling, log housekeeping and traceable events around an existing AdGuard VPN installation.
+WatchdogVPN is a terminal-first operations layer for AdGuard VPN CLI on Linux. It provides a TUI, real-state checks, automatic recovery, location rotation, domain bypass, DNS tooling, log housekeeping and traceable events around an existing AdGuard VPN installation.
 
 The project was built from a real operational need: keeping a VPN connection observable and recoverable in unstable network conditions where endpoints may degrade, routes may change and the CLI status alone is not enough to know whether traffic is really protected.
 
@@ -15,6 +15,8 @@ The runtime already exists and is being migrated into a clean, reproducible repo
 - Arch Linux
 
 Fedora support is planned for a future release.
+
+The repository should remain private until the 1.0 milestone is complete: installer, updater, uninstaller and clean-install testing.
 
 ## What It Does
 
@@ -65,7 +67,7 @@ Required base components:
 
 ```sh
 git clone <repo-url>
-cd vpn-control-center
+cd WatchdogVPN
 ./doctor.sh
 ./install.sh
 VPN
@@ -144,6 +146,10 @@ systemd-analyze verify systemd/*.service systemd/*.timer
 6. Test installation on a clean Ubuntu/Debian system.
 7. Test installation on Arch Linux.
 8. Polish event history view in the TUI.
+
+## License
+
+No license has been selected yet. While the repository remains private, all rights are reserved by default. A public license will be chosen before any public release.
 
 ## Safety Rule
 

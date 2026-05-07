@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_NAME="VPN Control Center"
+PROJECT_NAME="WatchdogVPN"
 
 info() {
   printf '[INFO] %s\n' "$*"

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 cat <<'EOF'
-VPN Control Center - Uninstall
+WatchdogVPN - Uninstall
 
 The uninstall path is planned but not implemented yet.
 

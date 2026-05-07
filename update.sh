@@ -2,7 +2,7 @@
 set -euo pipefail
 
 cat <<'EOF'
-VPN Control Center - Update
+WatchdogVPN - Update
 
 The update path is planned but not implemented yet.
 

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cat <<'EOF'
-VPN Control Center - Installer
+WatchdogVPN - Installer
 
 The installer is not implemented yet in this packaging phase.
 

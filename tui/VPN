@@ -711,7 +711,7 @@ def display_label(key: str) -> str:
 def build_installation_text() -> str:
     blocks = [
         (
-            "VPN Control Center",
+            "WatchdogVPN",
             [
                 "Esta interfaz no reemplaza AdGuard VPN. Solo organiza el stack que ya tienes instalado en el sistema.",
                 "El punto de entrada actual es: VPN",
@@ -1379,7 +1379,7 @@ def confirm_exit() -> bool:
         x = max(2, (cols - w) // 2)
         y = max(2, rows // 2 - h // 2)
         box(y, x, h, w, "Confirmar salida")
-        write(y + 2, x + 3, "¿Salir de VPN Control Center?", FG["white"] + BOLD)
+        write(y + 2, x + 3, "¿Salir de WatchdogVPN?", FG["white"] + BOLD)
         write(y + 4, x + 3, "La VPN, timers y servicios quedan como estan.", FG["gray"])
         write(y + 6, x + 3, "s / Enter salir    n / Esc cancelar", FG["yellow"] + BOLD)
         sys.stdout.flush()

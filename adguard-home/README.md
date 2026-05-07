@@ -2,7 +2,7 @@
 
 AdGuard Home is optional.
 
-Without AdGuard Home, VPN Control Center uses the normal system DNS path and
+Without AdGuard Home, WatchdogVPN uses the normal system DNS path and
 the TUI DNS screen remains limited.
 
 With AdGuard Home, the product can provide advanced DNS profiles, backup,

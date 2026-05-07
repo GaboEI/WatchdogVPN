@@ -8,6 +8,8 @@ Repository packaging.
 
 The working runtime has been imported into a clean structure. The next work is focused on making installation, update and removal reproducible on Ubuntu, Debian and Arch Linux.
 
+The repository remains private until the 1.0 milestone is complete.
+
 ## Milestone 1: Repository Baseline
 
 - Clean repository layout.
@@ -127,6 +129,7 @@ Acceptance criteria:
 ## Future Work
 
 - Fedora support.
+- Public license decision before public release.
 - More complete automated tests.
 - TUI event history polish.
 - More advanced diagnostic summary.

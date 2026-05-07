@@ -1,6 +1,6 @@
 # Architecture
 
-VPN Control Center is a terminal-first control layer for AdGuard VPN CLI.
+WatchdogVPN is a terminal-first control layer for AdGuard VPN CLI.
 
 The runtime is shared across supported distributions. Distro differences belong
 only in installation and dependency detection.

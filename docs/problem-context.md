@@ -1,6 +1,6 @@
 # Problem Context
 
-VPN Control Center was created to solve a practical connectivity problem: a VPN connection can appear active while the real route, tunnel or public IP state is degraded.
+WatchdogVPN was created to solve a practical connectivity problem: a VPN connection can appear active while the real route, tunnel or public IP state is degraded.
 
 In unstable network environments, endpoints can fail, routes can change, public IP validation can become unreliable and a provider CLI may not expose enough operational detail for quick recovery. The goal of this project is to make that state visible and recoverable.
 
