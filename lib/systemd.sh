@@ -30,7 +30,7 @@ verify_systemd_units() {
   fi
 
   if command -v systemd-analyze >/dev/null 2>&1; then
-    if ! systemd-analyze verify "$ROOT_DIR"/systemd/*.service "$ROOT_DIR"/systemd/*.timer; then
+    if ! sudo systemd-analyze verify "$ROOT_DIR"/systemd/*.service "$ROOT_DIR"/systemd/*.timer; then
       return 1
     fi
   else
