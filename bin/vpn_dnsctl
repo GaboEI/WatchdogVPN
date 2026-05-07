@@ -3,9 +3,6 @@ set -euo pipefail
 
 TRUTH_BIN="/usr/local/bin/vpn_truth_check"
 LOCAL_DNS="${VPN_DNS_LOCAL:-127.0.0.1}"
-AGH_CONF="${VPN_DNS_AGH_CONF:-/opt/AdGuardHome/AdGuardHome.yaml}"
-AGH_WORK="${VPN_DNS_AGH_WORK:-/opt/AdGuardHome}"
-AGH_BIN="${VPN_DNS_AGH_BIN:-/opt/AdGuardHome/AdGuardHome}"
 STATE_DIR="${VPN_DNS_STATE_DIR:-/var/lib/vpn-dns-profile}"
 BACKUP_DIR="${VPN_DNS_BACKUP_DIR:-/var/backups/vpn-dns-profile}"
 
@@ -118,6 +115,33 @@ PROFILES
 have() {
   command -v "$1" >/dev/null 2>&1
 }
+
+detect_agh_workdir() {
+  local work=""
+
+  work="$(systemctl cat AdGuardHome.service 2>/dev/null \
+    | awk -F= '$1 == "WorkingDirectory" {print $2; exit}' || true)"
+  if [[ -n "$work" ]]; then
+    printf '%s\n' "$work"
+    return 0
+  fi
+
+  if [[ -x /opt/AdGuardHome/AdGuardHome ]]; then
+    printf '%s\n' /opt/AdGuardHome
+    return 0
+  fi
+
+  if [[ -x "$HOME/AdGuardHome/AdGuardHome" ]]; then
+    printf '%s\n' "$HOME/AdGuardHome"
+    return 0
+  fi
+
+  printf '%s\n' /opt/AdGuardHome
+}
+
+AGH_WORK="${VPN_DNS_AGH_WORK:-$(detect_agh_workdir)}"
+AGH_BIN="${VPN_DNS_AGH_BIN:-$AGH_WORK/AdGuardHome}"
+AGH_CONF="${VPN_DNS_AGH_CONF:-$AGH_WORK/AdGuardHome.yaml}"
 
 need_sudo() {
   if ! sudo -n true 2>/dev/null; then

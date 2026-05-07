@@ -163,7 +163,7 @@ validate_repo_runtime() {
 
 install_optional_integrations() {
   if [[ "$ENABLE_ADVANCED_DNS" == "1" ]]; then
-    adguard_home_message
+    install_adguard_home_integration
   fi
 
   if [[ "$INSTALL_CONKY" == "1" ]]; then

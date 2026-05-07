@@ -9,3 +9,5 @@
 - Add the first real `install.sh` flow with dry-run support, distro adapters, backups, runtime installation, systemd enablement and optional desktop/Conky hooks.
 - Add the first real `update.sh` flow for backed-up runtime refreshes that preserve user configuration, state and logs.
 - Add the first real `uninstall.sh` flow that removes product-managed files while preserving configuration, logs and state unless explicitly purged.
+- Implement advanced DNS installation with AdGuard Home provisioning, local starter config, DNS profile application and `vpn_dnsctl` path detection.
+- Rename the desktop launcher source file to `watchdogvpn.desktop`.
