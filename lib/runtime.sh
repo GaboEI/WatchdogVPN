@@ -5,7 +5,6 @@ install_runtime_files() {
   create_service_user adgvpn /var/lib/adguardvpn
   create_root_dir /var/log/myvpn 0755
   create_root_dir /var/lib/vpn-rotate 0700
-  create_root_dir /var/lib/adguardvpn 0755
 
   create_config_if_missing "$ROOT_DIR/examples/adguardvpn.env.example" /etc/adguardvpn.env 0644
   create_config_if_missing "$ROOT_DIR/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644

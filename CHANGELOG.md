@@ -11,3 +11,4 @@
 - Add the first real `uninstall.sh` flow that removes product-managed files while preserving configuration, logs and state unless explicitly purged.
 - Implement advanced DNS installation with AdGuard Home provisioning, local starter config, DNS profile application and `vpn_dnsctl` path detection.
 - Rename the desktop launcher source file to `watchdogvpn.desktop`.
+- Keep `/var/lib/adguardvpn` owned by the `adgvpn` service user during install/update.

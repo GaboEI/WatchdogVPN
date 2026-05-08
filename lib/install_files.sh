@@ -54,6 +54,11 @@ create_root_dir() {
   run_step sudo install -d -m "$mode" -o root -g root "$path"
 }
 
+create_owned_dir() {
+  local path="$1" owner="$2" group="$3" mode="${4:-0755}"
+  run_step sudo install -d -m "$mode" -o "$owner" -g "$group" "$path"
+}
+
 create_config_if_missing() {
   local src="$1" dest="$2" mode="${3:-0644}"
   if [[ -e "$dest" ]]; then
@@ -67,12 +72,14 @@ create_service_user() {
   local user="${1:-adgvpn}" home="${2:-/var/lib/adguardvpn}" shell
   if getent passwd "$user" >/dev/null 2>&1; then
     printf '[KEEP] service user exists: %s\n' "$user"
+    create_owned_dir "$home" "$user" "$user" 0755
     return 0
   fi
   shell="/usr/sbin/nologin"
   [[ -x "$shell" ]] || shell="/usr/bin/nologin"
   [[ -x "$shell" ]] || shell="/bin/false"
   run_step sudo useradd --system --home-dir "$home" --create-home --shell "$shell" "$user"
+  create_owned_dir "$home" "$user" "$user" 0755
 }
 
 remove_root_path() {
