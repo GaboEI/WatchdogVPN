@@ -717,18 +717,29 @@ def build_installation_text() -> str:
         (
             "WatchdogVPN",
             [
-                "Esta interfaz no reemplaza AdGuard VPN. Solo organiza el stack que ya tienes instalado en el sistema.",
-                "El punto de entrada actual es: VPN",
-                "Tambien puedes abrirlo con: bash ~/.local/bin/VPN",
+                "Centro de control TUI para mantener AdGuard VPN estable, auditable y recuperable.",
+                "El punto de entrada instalado es: VPN",
+                "Soporte actual del instalador: Ubuntu, Debian y Arch Linux con systemd.",
             ],
         ),
         (
-            "Requisitos",
+            "Instalacion limpia",
             [
-                "AdGuard VPN instalado y con la cuenta ya logueada.",
-                "adguardvpn.service funcional en systemd.",
-                "sudo disponible para las acciones que cambian estado.",
-                "systemd, NetworkManager y curl presentes en la maquina.",
+                "1. Clona el repositorio privado de WatchdogVPN.",
+                "2. Ejecuta ./doctor.sh para una revision de solo lectura.",
+                "3. Ejecuta ./install.sh y responde las preguntas del asistente.",
+                "4. Si AdGuard VPN CLI no existe, el instalador guia su instalacion oficial.",
+                "5. Inicia sesion cuando el instalador lo pida para el usuario de servicio adgvpn.",
+                "6. Abre la TUI con VPN.",
+            ],
+        ),
+        (
+            "Preguntas del instalador",
+            [
+                "DNS avanzado con AdGuard Home: opcional, con prueba previa, backup y rollback.",
+                "Acceso directo de escritorio: opcional, se instala en el menu de aplicaciones y en el escritorio del usuario.",
+                "Conky: opcional, copia la integracion si el usuario la quiere usar.",
+                "Los intervalos esenciales no se preguntan en la instalacion: se instalan con valores seguros y se controlan desde Timers.",
             ],
         ),
         (
@@ -739,7 +750,7 @@ def build_installation_text() -> str:
                 "vpn_set: aplica ubicacion sobre el cliente.",
                 "vpn_rotate.sh: selecciona nodo desde el pool, filtra recencia y valida la ruta real.",
                 "vpn_watchdog.sh: comprueba sesion, salud, tunel y derivaciones de red.",
-                "no_vpn: gestiona bypass por dominio.",
+                "no_vpn: gestiona dominios que deben salir por la red normal.",
                 "vpn_domain_bypass_apply.sh: mantiene exclusiones por dominio fuera de la VPN.",
                 "vpn_dnsctl: diagnostica DNS local y prepara cambios DoH con backup/rollback.",
                 "99-vpn-rotate: valida eventos de NetworkManager antes de rotar.",
@@ -760,7 +771,7 @@ def build_installation_text() -> str:
             [
                 "Dashboard: estado real, sesion de AdGuard VPN y ultimo evento.",
                 "Historial: cola reciente de eventos de notificacion.",
-                "Instalacion: arranque, piezas del stack y futuro bootstrap de repo.",
+                "Instalacion: guia de despliegue, piezas instaladas y operacion diaria.",
                 "Cambiar ubicacion: selector con banderas y detalle del nodo.",
                 "Acciones rapidas: intervenciones directas sobre la VPN.",
                 "Timers: control de rotacion y watchdog.",
@@ -773,27 +784,27 @@ def build_installation_text() -> str:
         (
             "Arranque rapido",
             [
-                "1. source ~/.mis_aliases.sh",
-                "2. VPN",
-                "3. Usa Dashboard para ver estado.",
-                "4. Usa Cambiar ubicacion para mover el nodo.",
-                "5. Usa Pool de rotacion para ajustar TOP_N.",
+                "1. ./doctor.sh",
+                "2. ./install.sh",
+                "3. VPN",
+                "4. Revisa Dashboard, DNS y Timers.",
+                "5. Agrega dominios propios en Bypass solo si necesitas excluirlos de la VPN.",
             ],
         ),
         (
-            "Distribucion prevista en repo",
+            "Actualizacion y retiro",
             [
-                "La idea es empaquetar estos mismos archivos en GitHub para que otra maquina pueda reproducir el stack sin rehacer el trabajo manual.",
-                "El repo deberia incluir el codigo de instalacion, la copia de los scripts, las unidades systemd y esta misma TUI como punto de entrada.",
-                "En un despliegue futuro, el flujo ideal sera: clonar, verificar que AdGuard ya esta instalado y logueado, ejecutar el bootstrap e iniciar VPN.",
+                "./update.sh refresca archivos administrados por el producto y conserva configuracion, logs y estado.",
+                "./uninstall.sh retira WatchdogVPN sin borrar la cuenta ni el cliente oficial de AdGuard VPN.",
+                "Los backups administrados se guardan bajo /var/backups/watchdogvpn.",
             ],
         ),
         (
             "Notas operativas",
             [
-                "El stack ya tiene bypass por dominio, rotacion inteligente y watchdog con politicas separadas.",
-                "La UI muestra estado real, pero la decision final siempre la toma el cliente y systemd.",
-                "Esta pantalla sirve como guia para nuevos equipos y como recordatorio rapido en esta maquina.",
+                "Las instalaciones nuevas empiezan sin dominios personales en bypass.",
+                "El watchdog no notifica si todo va bien; solo interviene ante sesion expirada o fallo real.",
+                "La rotacion valida el estado real antes de aceptar un nodo y evita repetir nodos recientes.",
             ],
         ),
     ]
@@ -2669,7 +2680,7 @@ def handle_menu(label: str):
         actions = {
             "Acciones rapidas": [
                 ("Reiniciar VPN", restart_action(loc_hint)),
-                ("Desconectar VPN", f"sudo systemctl stop adguardvpn.service; {TRUTH_BIN}"),
+                ("Desconectar VPN", f"sudo systemctl stop adguardvpn.service; /usr/local/bin/vpn_notify 'VPN desconectada' 'La conexion VPN fue detenida manualmente.' normal >/dev/null 2>&1 || true; {TRUTH_BIN}"),
                 ("Rotar ahora", f"sudo env VPN_ROTATE_FORCE=1 {shlex.quote('/usr/local/sbin/vpn_rotate.sh')}; {TRUTH_BIN}"),
                 ("Ejecutar watchdog", f"sudo systemctl restart {WATCHDOG_TIMER}; sudo env VPN_WATCHDOG_FORCE=1 {shlex.quote('/usr/local/sbin/vpn_watchdog.sh')}; {TRUTH_BIN}"),
                 ("Estado real", f"{VPNCTL} status"),

@@ -30,3 +30,6 @@
 - Update TUI timer interval changes to write `OnUnitInactiveSec`, including custom rotation/watchdog intervals.
 - Install the optional launcher both in the application menu and on the user's desktop directory.
 - Keep manual notification tests quiet when the current user cannot write the root-owned event log.
+- Make VPN location notifications user-facing by hiding public IPs and using readable location names.
+- Keep new bypass configurations empty by default so users do not inherit machine-specific domains.
+- Refresh the TUI installation screen to describe the current product installer, update and uninstall flow.

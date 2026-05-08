@@ -266,7 +266,7 @@ rollback_to_last_good() {
 
   log "ROLLBACK_START reason='$reason' iso='$iso'"
   set +e
-  "$VPN_SET" "$iso" >/dev/null 2>&1
+  VPN_SET_NOTIFY_PENDING=0 "$VPN_SET" "$iso" >/dev/null 2>&1
   rc=$?
   set -e
 
@@ -299,7 +299,7 @@ for iso in "${candidates[@]}"; do
   log "TRY iso='$iso' attempt=${attempts}/${TOP_N} max_run=${MAX_ATTEMPTS_PER_RUN}"
 
   set +e
-  "$VPN_SET" "$iso" >/dev/null 2>&1
+  VPN_SET_NOTIFY_PENDING=0 "$VPN_SET" "$iso" >/dev/null 2>&1
   rc=$?
   set -e
 
