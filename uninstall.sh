@@ -15,13 +15,14 @@ PURGE_CONFIG=0
 PURGE_LOGS=0
 PURGE_STATE=0
 PURGE_CONKY=0
+RUN_DNS_RESCUE=1
 
 usage() {
   cat <<'USAGE'
 WatchdogVPN uninstaller
 
 Usage:
-  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--purge-conky]
+  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--purge-conky] [--skip-dns-rescue]
 
 Options:
   --dry-run       Show what would be removed without changing the system.
@@ -30,6 +31,8 @@ Options:
   --purge-logs    Also remove WatchdogVPN logs.
   --purge-state   Also remove WatchdogVPN rotation state.
   --purge-conky   Also remove WatchdogVPN Conky files.
+  --skip-dns-rescue
+                  Do not reset system DNS before removing product files.
   --help          Show this help.
 
 This script never removes the official AdGuard VPN CLI or account/license state.
@@ -55,6 +58,9 @@ while (($#)); do
       ;;
     --purge-conky)
       PURGE_CONKY=1
+      ;;
+    --skip-dns-rescue)
+      RUN_DNS_RESCUE=0
       ;;
     --help|-h)
       usage
@@ -124,6 +130,7 @@ EOF
 remove_runtime_files() {
   remove_root_path /usr/local/bin/no_vpn
   remove_root_path /usr/local/bin/vpn_auth_check
+  remove_root_path /usr/local/bin/vpn_dns_rescue
   remove_root_path /usr/local/bin/vpn_dnsctl
   remove_root_path /usr/local/bin/vpn_notify
   remove_root_path /usr/local/bin/vpn_truth_check
@@ -170,6 +177,33 @@ remove_optional_user_data() {
   fi
 }
 
+rescue_system_dns() {
+  if ((RUN_DNS_RESCUE == 0)); then
+    printf '[SKIP] DNS rescue disabled\n'
+    return 0
+  fi
+
+  if [[ -x "$ROOT_DIR/bin/vpn_dns_rescue" ]]; then
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect || true
+    else
+      "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect || true
+    fi
+    return 0
+  fi
+
+  if [[ -x /usr/local/bin/vpn_dns_rescue ]]; then
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      INSTALL_DRY_RUN=1 /usr/local/bin/vpn_dns_rescue auto --no-reconnect || true
+    else
+      /usr/local/bin/vpn_dns_rescue auto --no-reconnect || true
+    fi
+    return 0
+  fi
+
+  printf '[WARN] DNS rescue tool not found; if DNS breaks, restore DHCP DNS manually.\n'
+}
+
 final_report() {
   cat <<'EOF'
 
@@ -212,6 +246,7 @@ if ((PURGE_CONKY == 0)) && prompt_yes_no "Also remove WatchdogVPN Conky files?" 
 fi
 
 disable_systemd_units
+rescue_system_dns
 remove_systemd_units
 remove_runtime_files
 remove_optional_user_data

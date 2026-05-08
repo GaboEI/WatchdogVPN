@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="auto"
+RECONNECT=1
+
+usage() {
+  cat <<'USAGE'
+WatchdogVPN DNS rescue
+
+Usage:
+  vpn_dns_rescue [auto|fallback|status] [--no-reconnect]
+
+Modes:
+  auto      Restore NetworkManager DNS to automatic/DHCP and systemd-resolved.
+  fallback  Set public fallback DNS on active NetworkManager connections.
+  status    Show resolver and NetworkManager DNS state.
+
+This tool is independent from AdGuard Home. Use it when DNS was left pointing
+at a local resolver that is no longer running.
+USAGE
+}
+
+while (($#)); do
+  case "${1:-}" in
+    auto|fallback|status)
+      MODE="$1"
+      ;;
+    --no-reconnect)
+      RECONNECT=0
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR unknown argument: $1" >&2
+      usage >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+run() {
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] %q' "$1"
+    shift
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  "$@"
+}
+
+active_connections() {
+  have nmcli || return 0
+  nmcli -t -f NAME con show --active 2>/dev/null | sed '/^$/d'
+}
+
+resolver_works() {
+  getent hosts github.com >/dev/null 2>&1 || getent hosts google.com >/dev/null 2>&1
+}
+
+status() {
+  echo "== resolv.conf =="
+  sed -n '1,40p' /etc/resolv.conf 2>/dev/null || true
+
+  echo
+  echo "== systemd-resolved =="
+  if have systemctl; then
+    systemctl is-active systemd-resolved 2>/dev/null || true
+  else
+    echo "systemctl=missing"
+  fi
+
+  echo
+  echo "== NetworkManager active DNS =="
+  if have nmcli; then
+    nmcli dev show 2>/dev/null \
+      | grep -E 'GENERAL.DEVICE|GENERAL.STATE|IP4.DNS|IP6.DNS' \
+      || true
+  else
+    echo "nmcli=missing"
+  fi
+
+  echo
+  if resolver_works; then
+    echo "DNS=OK"
+  else
+    echo "DNS=FAIL"
+  fi
+}
+
+restore_resolved() {
+  if have systemctl; then
+    run sudo systemctl enable --now systemd-resolved >/dev/null 2>&1 || true
+  fi
+
+  if [[ -e /run/systemd/resolve/stub-resolv.conf || "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    run sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  elif [[ -e /run/systemd/resolve/resolv.conf ]]; then
+    run sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+  fi
+}
+
+reset_nm_dns_auto() {
+  local conn
+  have nmcli || return 0
+
+  while IFS= read -r conn; do
+    [[ -n "$conn" ]] || continue
+    run sudo nmcli con mod "$conn" ipv4.ignore-auto-dns no ipv4.dns "" ipv4.dns-search "" || true
+    run sudo nmcli con mod "$conn" ipv6.ignore-auto-dns no ipv6.dns "" ipv6.dns-search "" || true
+    if ((RECONNECT == 1)); then
+      run sudo nmcli con down "$conn" >/dev/null 2>&1 || true
+      run sudo nmcli con up "$conn" >/dev/null 2>&1 || true
+    fi
+  done < <(active_connections)
+}
+
+set_nm_fallback_dns() {
+  local conn
+  have nmcli || return 0
+
+  while IFS= read -r conn; do
+    [[ -n "$conn" ]] || continue
+    run sudo nmcli con mod "$conn" ipv4.ignore-auto-dns yes ipv4.dns "1.1.1.1 8.8.8.8" || true
+    run sudo nmcli con mod "$conn" ipv6.ignore-auto-dns yes ipv6.dns "2606:4700:4700::1111 2001:4860:4860::8888" || true
+    if ((RECONNECT == 1)); then
+      run sudo nmcli con down "$conn" >/dev/null 2>&1 || true
+      run sudo nmcli con up "$conn" >/dev/null 2>&1 || true
+    fi
+  done < <(active_connections)
+}
+
+case "$MODE" in
+  status)
+    status
+    ;;
+  auto)
+    restore_resolved
+    reset_nm_dns_auto
+    status
+    ;;
+  fallback)
+    restore_resolved
+    set_nm_fallback_dns
+    status
+    ;;
+esac

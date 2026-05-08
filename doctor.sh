@@ -192,6 +192,8 @@ section "Repository Runtime"
 check_repo_file "tui/VPN" exec
 check_repo_file "bin/vpn_truth_check" exec
 check_repo_file "bin/vpn_auth_check" exec
+check_repo_file "bin/vpn_dns_rescue" exec
+check_repo_file "bin/vpn_dnsctl" exec
 check_repo_file "bin/vpn_notify" exec
 check_repo_file "bin/vpnctl" exec
 check_repo_file "sbin/vpn_set" exec
@@ -206,6 +208,8 @@ installed_any=0
 for path in \
   /usr/local/bin/vpn_truth_check \
   /usr/local/bin/vpn_auth_check \
+  /usr/local/bin/vpn_dns_rescue \
+  /usr/local/bin/vpn_dnsctl \
   /usr/local/bin/vpn_notify \
   /usr/local/bin/vpnctl \
   /usr/local/sbin/vpn_set \
