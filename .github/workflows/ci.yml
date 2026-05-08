@@ -40,7 +40,7 @@ jobs:
           sudo install -m 0700 sbin/vpn_rotate.sh /usr/local/sbin/vpn_rotate.sh
           sudo install -m 0700 sbin/vpn_domain_bypass_apply.sh /usr/local/sbin/vpn_domain_bypass_apply.sh
           sudo install -m 0644 etc/logrotate.d/myvpn /etc/logrotate.d/myvpn
-          systemd-analyze verify systemd/*.service systemd/*.timer 2>&1 | tee /tmp/watchdogvpn-systemd-verify.log
+          sudo systemd-analyze verify systemd/*.service systemd/*.timer 2>&1 | tee /tmp/watchdogvpn-systemd-verify.log
           test "${PIPESTATUS[0]}" -eq 0
 
       - name: ShellCheck advisory
