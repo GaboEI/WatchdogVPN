@@ -4,6 +4,18 @@ set -euo pipefail
 AGH_INSTALL_URL="https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh"
 AGH_DEFAULT_PROFILE="${AGH_DEFAULT_PROFILE:-quad9-doh}"
 
+adguard_home_network_ready() {
+  local host
+  for host in raw.githubusercontent.com static.adtidy.org archive.ubuntu.com; do
+    if ! getent hosts "$host" >/dev/null 2>&1; then
+      fail "advanced DNS cannot be installed because DNS cannot resolve: $host"
+      printf 'Your current network has broken name resolution. Rerun ./install.sh and answer "n" to advanced DNS,\n'
+      printf 'or fix DNS first and then enable AdGuard Home later.\n'
+      return 1
+    fi
+  done
+}
+
 adguard_home_service_known() {
   systemctl cat AdGuardHome.service >/dev/null 2>&1 \
     || systemctl list-unit-files AdGuardHome.service >/dev/null 2>&1
@@ -100,6 +112,8 @@ apply_adguard_home_profile() {
 }
 
 install_adguard_home_integration() {
+  adguard_home_network_ready
+
   if declare -p DISTRO_DNS_PACKAGES >/dev/null 2>&1; then
     install_package_set "${DISTRO_DNS_PACKAGES[@]}"
   fi
