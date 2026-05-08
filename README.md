@@ -1,5 +1,7 @@
 # WatchdogVPN
 
+[![CI](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml/badge.svg)](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml)
+
 - **Status:** `v0.1.0-alpha candidate`
 - **License:** Portfolio review only. No reuse rights are granted yet. See [LICENSE](LICENSE).
 
@@ -166,14 +168,16 @@ Current validation commands:
 ```sh
 python3 -m py_compile tui/VPN
 bash tests/syntax.sh
+systemd-analyze verify systemd/*.service systemd/*.timer
 ./doctor.sh
 ```
 
-Some system validations require root or an installed system target, for example:
+GitHub Actions runs syntax checks and systemd unit verification automatically. `shellcheck` and `shfmt` are currently advisory checks while the shell code is being hardened.
+
+Some local system validations require root or an installed system target, for example:
 
 ```sh
 sudo logrotate -d etc/logrotate.d/myvpn
-systemd-analyze verify systemd/*.service systemd/*.timer
 ```
 
 ## Documentation

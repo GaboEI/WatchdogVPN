@@ -35,3 +35,4 @@
 - Refresh the TUI installation screen to describe the current product installer, update and uninstall flow.
 - Refresh README and problem-context documentation around the product philosophy, install/update/uninstall commands and current support status.
 - Add portfolio-review license notice and README alpha status, support matrix and known limitations.
+- Add GitHub Actions CI for Python/Bash syntax, systemd unit verification and advisory shell style checks.

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate runtime and packaging
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck logrotate systemd
+          sudo apt-get install -y shfmt || true
+
+      - name: Python compile
+        run: python3 -m py_compile tui/VPN
+
+      - name: Bash syntax
+        run: bash tests/syntax.sh
+
+      - name: Systemd unit verification
+        run: |
+          sudo install -m 0755 -d /usr/local/bin /usr/local/sbin /etc/logrotate.d
+          sudo install -m 0755 /bin/true /usr/local/bin/adguardvpn-cli
+          sudo install -m 0700 sbin/vpn_watchdog.sh /usr/local/sbin/vpn_watchdog.sh
+          sudo install -m 0700 sbin/vpn_rotate.sh /usr/local/sbin/vpn_rotate.sh
+          sudo install -m 0700 sbin/vpn_domain_bypass_apply.sh /usr/local/sbin/vpn_domain_bypass_apply.sh
+          sudo install -m 0644 etc/logrotate.d/myvpn /etc/logrotate.d/myvpn
+          systemd-analyze verify systemd/*.service systemd/*.timer
+
+      - name: ShellCheck advisory
+        continue-on-error: true
+        run: |
+          find . \
+            -path ./.git -prune -o \
+            -type f \( -name '*.sh' -o -path './bin/*' -o -path './sbin/*' -o -path './networkmanager/dispatcher.d/*' \) \
+            -print0 | xargs -0 shellcheck -x
+
+      - name: shfmt advisory
+        continue-on-error: true
+        run: |
+          command -v shfmt >/dev/null || { echo "shfmt not available on this runner"; exit 0; }
+          find . \
+            -path ./.git -prune -o \
+            -type f \( -name '*.sh' -o -path './bin/*' -o -path './sbin/*' -o -path './networkmanager/dispatcher.d/*' \) \
+            -print0 | xargs -0 shfmt -d
