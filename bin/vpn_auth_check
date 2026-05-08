@@ -126,12 +126,6 @@ collect_auth() {
     return 0
   fi
 
-  if (( rc == 124 )); then
-    AUTH="UNKNOWN"
-    REASON="timeout"
-    return 0
-  fi
-
   if [[ "$DETAIL" == *"a password is required"* || "$DETAIL" == *"terminal is required"* ]]; then
     AUTH="UNKNOWN"
     REASON="sudo_required"
@@ -153,6 +147,13 @@ collect_auth() {
   if (( status_rc == 11 )) || [[ "$status_out" == *"not logged in"* ]] || [[ "$status_out" == *"Please log in"* ]]; then
     AUTH="EXPIRED"
     REASON="login_required"
+    DETAIL="$DETAIL | status=$(printf '%s' "$status_out" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    return 0
+  fi
+
+  if (( rc == 124 )); then
+    AUTH="UNKNOWN"
+    REASON="timeout"
     DETAIL="$DETAIL | status=$(printf '%s' "$status_out" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
     return 0
   fi

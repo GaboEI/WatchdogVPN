@@ -22,3 +22,5 @@
 - Make service-user authentication checks tolerate fresh CLI logins by falling back to `adguardvpn-cli status`.
 - Treat `adguardvpn-cli license` output that includes `Logged in as` as authenticated even if the CLI does not exit before timeout.
 - Block advanced DNS installation early when required download domains cannot be resolved.
+- Strengthen DNS rescue on systems without `systemd-resolved` by writing temporary public fallback DNS when automatic restore does not recover resolution.
+- Try AdGuard VPN CLI `status` before reporting a license timeout as unknown authentication.

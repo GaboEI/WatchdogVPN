@@ -108,6 +108,15 @@ restore_resolved() {
   fi
 }
 
+write_fallback_resolv_conf() {
+  run sudo rm -f /etc/resolv.conf
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] write fallback DNS servers to /etc/resolv.conf\n'
+    return 0
+  fi
+  printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf >/dev/null
+}
+
 reset_nm_dns_auto() {
   local conn
   have nmcli || return 0
@@ -145,6 +154,10 @@ case "$MODE" in
   auto)
     restore_resolved
     reset_nm_dns_auto
+    if ! resolver_works; then
+      echo "DNS still failing after automatic restore; writing temporary public fallback DNS."
+      write_fallback_resolv_conf
+    fi
     status
     ;;
   fallback)
