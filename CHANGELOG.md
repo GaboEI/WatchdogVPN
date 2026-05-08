@@ -18,3 +18,4 @@
 - Let DNS profile apply continue with rollback protection when the current system resolver is broken before AdGuard Home is configured.
 - Add guided installation of the official AdGuard VPN CLI when a clean system does not have `adguardvpn-cli`.
 - Add timeout and visible progress around the official AdGuard VPN CLI installer download.
+- Add GitHub raw IPv4 fallbacks for networks that resolve `raw.githubusercontent.com` poorly.
