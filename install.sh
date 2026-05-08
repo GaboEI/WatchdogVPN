@@ -9,6 +9,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/distro.sh"
 # shellcheck source=lib/packages.sh
 . "$ROOT_DIR/lib/packages.sh"
+# shellcheck source=lib/adguard_vpn_cli.sh
+. "$ROOT_DIR/lib/adguard_vpn_cli.sh"
 # shellcheck source=lib/install_files.sh
 . "$ROOT_DIR/lib/install_files.sh"
 # shellcheck source=lib/systemd.sh
@@ -135,10 +137,6 @@ require_system_shape() {
     fail "sudo is required"
     exit 1
   fi
-}
-
-adguard_cli_available() {
-  command -v adguardvpn-cli >/dev/null 2>&1 || [[ -x /usr/local/bin/adguardvpn-cli ]]
 }
 
 validate_required_commands() {
@@ -285,22 +283,18 @@ EOF
 }
 
 printf '%s - Installer\n' "$PROJECT_NAME"
-printf 'This installs the WatchdogVPN runtime around an existing AdGuard VPN CLI setup.\n'
+printf 'This installs WatchdogVPN and guides the required AdGuard VPN CLI setup.\n'
 
 require_supported_distro
 require_system_shape
 
 if ((RUN_DOCTOR == 1)); then
-  "$ROOT_DIR/doctor.sh"
+  "$ROOT_DIR/doctor.sh" || warn "preflight reported issues; continuing with guided installer checks"
 fi
 
 validate_required_commands
 
-if ! adguard_cli_available; then
-  fail "adguardvpn-cli is required before installing WatchdogVPN"
-  printf 'Install and log in to the official AdGuard VPN CLI first, then rerun ./install.sh.\n'
-  exit 1
-fi
+install_official_adguard_vpn_cli
 
 if prompt_yes_no "Enable advanced DNS with AdGuard Home?" no; then
   ENABLE_ADVANCED_DNS=1

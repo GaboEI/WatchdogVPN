@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ADGUARD_VPN_CLI_INSTALL_URL="${ADGUARD_VPN_CLI_INSTALL_URL:-https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/master/scripts/release/install.sh}"
+
+adguard_cli_available() {
+  command -v adguardvpn-cli >/dev/null 2>&1 || [[ -x /usr/local/bin/adguardvpn-cli ]]
+}
+
+adguard_cli_path() {
+  if command -v adguardvpn-cli >/dev/null 2>&1; then
+    command -v adguardvpn-cli
+  elif [[ -x /usr/local/bin/adguardvpn-cli ]]; then
+    printf '%s\n' /usr/local/bin/adguardvpn-cli
+  else
+    return 1
+  fi
+}
+
+install_official_adguard_vpn_cli() {
+  local tmp cli
+
+  if adguard_cli_available; then
+    cli="$(adguard_cli_path)"
+    printf '[KEEP] AdGuard VPN CLI detected: %s\n' "$cli"
+    return 0
+  fi
+
+  warn "AdGuard VPN CLI is not installed"
+  printf 'WatchdogVPN is a control layer around the official AdGuard VPN CLI.\n'
+  printf 'The official CLI must be installed before WatchdogVPN can manage the VPN.\n'
+  printf 'Source: %s\n' "$ADGUARD_VPN_CLI_INSTALL_URL"
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] sh -c curl -fsSL %s -o /tmp/watchdogvpn-adguardvpn-cli-install.sh\n' "$ADGUARD_VPN_CLI_INSTALL_URL"
+    printf '[DRY-RUN] sh /tmp/watchdogvpn-adguardvpn-cli-install.sh -v\n'
+    return 0
+  fi
+
+  if ! prompt_yes_no "Install the official AdGuard VPN CLI now?" yes; then
+    fail "adguardvpn-cli is required before installing WatchdogVPN"
+    printf 'Install it manually, then rerun ./install.sh:\n'
+    printf '  curl -fsSL %s | sh -s -- -v\n' "$ADGUARD_VPN_CLI_INSTALL_URL"
+    exit 1
+  fi
+
+  tmp="/tmp/watchdogvpn-adguardvpn-cli-install.sh"
+  curl -fsSL "$ADGUARD_VPN_CLI_INSTALL_URL" -o "$tmp"
+  sh "$tmp" -v
+
+  if ! adguard_cli_available; then
+    fail "AdGuard VPN CLI installation finished but adguardvpn-cli was not found"
+    printf 'Expected command: /usr/local/bin/adguardvpn-cli\n'
+    exit 1
+  fi
+
+  cli="$(adguard_cli_path)"
+  ok "AdGuard VPN CLI installed: $cli"
+}
