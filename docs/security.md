@@ -1,0 +1,151 @@
+# Security
+
+WatchdogVPN is system software. It manages VPN services, DNS configuration,
+systemd units, NetworkManager hooks, logs and privileged helper scripts. Treat it
+as trusted local administration tooling, not as an unprivileged desktop app.
+
+## Security Goals
+
+- Detect when the real network state disagrees with the VPN client status.
+- Recover from common tunnel, route and DNS failures without hiding them.
+- Preserve user configuration during install, update and uninstall.
+- Avoid destructive changes unless the user explicitly approves them.
+- Keep operational events traceable in logs and notifications.
+- Provide a read-only preflight path before making system changes.
+
+## Non-Goals
+
+- WatchdogVPN does not replace the official AdGuard VPN client.
+- WatchdogVPN does not provide VPN credentials or bypass licensing.
+- WatchdogVPN does not guarantee anonymity.
+- WatchdogVPN does not protect a host that is already compromised.
+- WatchdogVPN does not hide malicious or illegal traffic.
+- WatchdogVPN does not attempt to defeat endpoint monitoring on the local
+  machine.
+
+## Privilege Model
+
+Most user-facing commands live under `bin/` and are installed into
+`/usr/local/bin`. Privileged runtime scripts live under `sbin/` and are installed
+into `/usr/local/sbin` with root ownership and restrictive permissions.
+
+The privileged layer is required because WatchdogVPN controls:
+
+- `systemd` services and timers.
+- VPN service restarts.
+- Network route and domain exclusion rules.
+- DNS profile application through AdGuard Home.
+- logrotate policy installation.
+- files under `/etc`, `/var/lib` and `/var/log`.
+
+The TUI asks for sudo only when an action changes system state. Read-only views
+should continue to work without privileged access where possible.
+
+## Files and Paths Managed by the Product
+
+Product-managed runtime files include:
+
+- `/usr/local/bin/vpnctl`
+- `/usr/local/bin/vpn_truth_check`
+- `/usr/local/bin/vpn_auth_check`
+- `/usr/local/bin/vpn_dnsctl`
+- `/usr/local/bin/vpn_dns_rescue`
+- `/usr/local/bin/vpn_notify`
+- `/usr/local/bin/no_vpn`
+- `/usr/local/sbin/vpn_set`
+- `/usr/local/sbin/vpn_rotate.sh`
+- `/usr/local/sbin/vpn_watchdog.sh`
+- `/usr/local/sbin/vpn_domain_bypass_apply.sh`
+- product units under `/etc/systemd/system/`
+- product dispatcher hook under `/etc/NetworkManager/dispatcher.d/`
+- product logrotate policy under `/etc/logrotate.d/myvpn`
+- TUI launcher under `~/.local/bin/VPN`
+- optional desktop launcher under the user's application/desktop paths
+- optional Conky files under `~/.conky/WatchdogVPN`
+
+User configuration and state that must be preserved by default:
+
+- `/etc/adguardvpn.env`
+- `/etc/vpn-domain-bypass.conf`
+- `/var/lib/vpn-rotate/`
+- `/var/log/myvpn/`
+- AdGuard Home user configuration
+- Conky user configuration
+- official AdGuard VPN CLI and account/license state
+
+## Install, Update and Uninstall Safety
+
+`doctor.sh` is read-only and must not install, remove or modify files.
+
+`install.sh` and `update.sh` validate repository files before installing them,
+back up replaced files and preserve existing user configuration.
+
+`uninstall.sh` removes product-managed files but does not remove the official
+AdGuard VPN CLI or AdGuard account/license state. Config, logs, rotation state
+and Conky files are removed only when the user explicitly asks for purge options.
+
+## DNS Safety
+
+Advanced DNS mode is optional. When enabled, WatchdogVPN uses AdGuard Home and
+`vpn_dnsctl` to apply DNS profiles with preflight checks, backups and rollback.
+
+Known DNS safety behavior:
+
+- DNS profiles are tested before application.
+- The current AdGuard Home config is backed up before replacement.
+- Local DNS health is validated after application.
+- Rollback is attempted if validation fails.
+- `vpn_dns_rescue` exists to recover name resolution when local DNS services are
+  removed or broken during uninstall/recovery work.
+
+## External Installer Risk
+
+WatchdogVPN can guide installation of the official AdGuard VPN CLI when the CLI
+is missing. This currently depends on downloading the vendor-provided installer
+from a remote endpoint.
+
+Current risk:
+
+- The installer path is practical but not yet fully pinned by checksum or
+  cryptographic signature inside this repository.
+- If the remote endpoint changes or is unavailable, automated installation may
+  fail.
+
+Current mitigation:
+
+- The installer is explicit about what it is doing.
+- The project does not bundle credentials or licensing bypasses.
+- Users may install the official AdGuard VPN CLI manually before running
+  WatchdogVPN.
+
+Planned hardening:
+
+- Document manual verified installation as the safest path.
+- Add checksum/signature validation if the upstream distribution provides stable
+  verification material.
+- Keep automatic download behavior visible and auditable.
+
+## Python TUI Command Execution
+
+The current TUI still uses `subprocess.run(..., shell=True)` in helper functions.
+Many dynamic values are quoted with `shlex.quote`, but this remains a security
+hardening area because the product can trigger privileged actions.
+
+Current rules:
+
+- User-provided domains and locations should be shell-quoted before command
+  execution.
+- Privileged operations are routed through narrow helper scripts where possible.
+- The TUI is treated as trusted local tooling, not as a sandbox boundary.
+
+Planned hardening:
+
+- Move command execution into a dedicated command layer.
+- Convert simple commands to argument-list subprocess calls.
+- Keep shell execution only for pipelines or scripts that genuinely require it.
+- Add tests for command construction and parser behavior.
+
+## Reporting Security Issues
+
+This repository is currently prepared for portfolio review. If it becomes public,
+security reporting instructions should be added before a stable release.

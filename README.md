@@ -184,9 +184,17 @@ sudo logrotate -d etc/logrotate.d/myvpn
 
 - [Architecture](docs/architecture.md)
 - [Problem Context](docs/problem-context.md)
+- [Security](docs/security.md)
+- [Threat Model](docs/threat-model.md)
 - [Validation](docs/validation.md)
 - [Roadmap](docs/roadmap.md)
 - [Install Contracts](docs/install-contracts.md)
+
+## Security
+
+WatchdogVPN is system tooling that can modify VPN services, DNS configuration,
+NetworkManager hooks and systemd units. Review [Security](docs/security.md) and
+[Threat Model](docs/threat-model.md) before running it on a sensitive machine.
 
 ## Roadmap
 
