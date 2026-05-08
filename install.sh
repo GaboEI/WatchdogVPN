@@ -27,6 +27,7 @@ RUN_DOCTOR=1
 INSTALL_DESKTOP=""
 INSTALL_CONKY=""
 ENABLE_ADVANCED_DNS=""
+PATH_UPDATED=0
 
 usage() {
   cat <<'USAGE'
@@ -220,6 +221,44 @@ install_optional_integrations() {
   fi
 }
 
+wait_for_services() {
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] wait for services to settle\n'
+    return 0
+  fi
+
+  info "waiting briefly for services to settle"
+  sleep 8
+}
+
+post_install_validation() {
+  local doctor_rc=0 dns_rc=0
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] ./doctor.sh\n'
+    [[ "$ENABLE_ADVANCED_DNS" == "1" ]] && printf '[DRY-RUN] vpn_dnsctl local-test\n'
+    return 0
+  fi
+
+  printf '\n== Final validation ==\n'
+  "$ROOT_DIR/doctor.sh" || doctor_rc=$?
+
+  if [[ "$ENABLE_ADVANCED_DNS" == "1" ]]; then
+    printf '\n== DNS validation ==\n'
+    /usr/local/bin/vpn_dnsctl local-test || dns_rc=$?
+  fi
+
+  if ((doctor_rc != 0 || dns_rc != 0)); then
+    fail "installation finished with validation errors"
+    printf 'Review the output above. You can rerun diagnostics with:\n'
+    printf '  cd %s\n' "$ROOT_DIR"
+    printf '  ./doctor.sh\n'
+    printf '  vpnctl status\n'
+    printf '  vpn_dnsctl local-test\n'
+    exit 1
+  fi
+}
+
 final_report() {
   cat <<'EOF'
 
@@ -229,10 +268,20 @@ Open the TUI with:
   VPN
 
 Useful checks:
-  doctor.sh
+  ./doctor.sh
   vpnctl status
+  vpn_dnsctl local-test
   systemctl status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer --no-pager
 EOF
+
+  if ((PATH_UPDATED == 1)); then
+    printf '\nA shell PATH update was added. Open a new terminal or run:\n'
+    case "${SHELL:-}" in
+      */zsh) printf '  source ~/.zshrc\n' ;;
+      */bash) printf '  source ~/.bashrc\n' ;;
+      *) printf '  export PATH="$HOME/.local/bin:$PATH"\n' ;;
+    esac
+  fi
 }
 
 printf '%s - Installer\n' "$PROJECT_NAME"
@@ -284,4 +333,6 @@ verify_systemd_units
 install_optional_integrations
 enable_systemd_units
 ensure_user_local_bin_path
+wait_for_services
+post_install_validation
 final_report

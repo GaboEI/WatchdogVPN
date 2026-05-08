@@ -70,5 +70,6 @@ ensure_user_local_bin_path() {
     printf '\n%s\n' "$marker"
     printf '%s\n' "$path_line"
   } >> "$shell_rc"
+  PATH_UPDATED=1
   warn "added ~/.local/bin to PATH in $shell_rc; open a new terminal or run: source $shell_rc"
 }

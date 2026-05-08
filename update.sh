@@ -138,8 +138,9 @@ final_report() {
 WatchdogVPN update finished.
 
 Useful checks:
-  doctor.sh
+  ./doctor.sh
   vpnctl status
+  vpn_dnsctl local-test
   systemctl status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer --no-pager
 EOF
 }
