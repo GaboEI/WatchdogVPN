@@ -61,7 +61,7 @@ MENU_ITEMS = [
     {"id": "location", "label": "Ubicacion", "section": "Cambiar ubicacion", "group": "OPERACION"},
     {"id": "actions", "label": "Acciones", "section": "Acciones rapidas", "group": "OPERACION"},
     {"id": "dns", "label": "DNS", "section": "DNS / AdGuard", "group": "OPERACION"},
-    {"id": "bypass", "label": "Bypass", "section": "Bypass dominios", "group": "OPERACION"},
+    {"id": "bypass", "label": "Exclusiones", "section": "Exclusiones", "group": "OPERACION"},
     {"id": "timers", "label": "Timers", "section": "Timers", "group": "AUTOMATIZACION"},
     {"id": "pool", "label": "Pool", "section": "Pool de rotacion", "group": "AUTOMATIZACION"},
     {"id": "logs", "label": "Logs", "section": "Ver logs", "group": "AUDITORIA"},
@@ -493,9 +493,9 @@ def menu_help(label: str):
             "Pulsa r para refrescar. Flechas para navegar. Enter para abrir.",
         ],
         "Instalacion": [
-            "Pantalla de arranque y contexto del stack.",
+            "Contexto del producto, filosofia e instalacion.",
             "",
-            "Aqui se explica como abrir VPN, que depende de cada script y como se prepararia un repo para otra maquina.",
+            "Aqui se resume por que existe WatchdogVPN, como instalarlo y como mantenerlo.",
         ],
         "Historial": [
             "Ultimos eventos del stack VPN.",
@@ -515,7 +515,7 @@ def menu_help(label: str):
             "",
             "Permite iniciar, parar y cambiar intervalos.",
         ],
-        "Bypass dominios": [
+        "Exclusiones": [
             "Gestiona dominios fuera de la VPN usando no_vpn."
         ],
         "DNS / AdGuard": [
@@ -540,7 +540,7 @@ def menu_overview(label: str):
     data = {
         "Dashboard": [
             ("Rol", "Centro de mando en tiempo real"),
-            ("Uso", "Ver VPN, tunel, DNS, timers y bypass de un vistazo"),
+            ("Uso", "Ver VPN, tunel, DNS, timers y exclusiones de un vistazo"),
             ("Riesgo", "Solo lectura"),
         ],
         "Cambiar ubicacion": [
@@ -558,9 +558,9 @@ def menu_overview(label: str):
             ("Uso", "Cambiar entre Cloudflare, Quad9, Google, AdGuard DoQ u OpenDNS"),
             ("Riesgo", "Bajo: crea backup y valida DNS local"),
         ],
-        "Bypass dominios": [
+        "Exclusiones": [
             ("Rol", "Dominios fuera del tunel"),
-            ("Uso", "Enviar sitios rusos concretos por conexion directa"),
+            ("Uso", "Enviar sitios concretos por conexion directa"),
             ("Riesgo", "El dominio elegido deja de pasar por VPN"),
         ],
         "Timers": [
@@ -706,7 +706,7 @@ def display_label(key: str) -> str:
         "Location": "Ubicacion",
         "Rotate": "Rotacion",
         "Watchdog": "Watchdog",
-        "Bypass": "Bypass",
+        "Bypass": "Exclusiones",
         "Event": "Evento",
     }
     return labels.get(key, key)
@@ -720,6 +720,15 @@ def build_installation_text() -> str:
                 "Centro de control TUI para mantener AdGuard VPN estable, auditable y recuperable.",
                 "El punto de entrada instalado es: VPN",
                 "Soporte actual del instalador: Ubuntu, Debian y Arch Linux con systemd.",
+            ],
+        ),
+        (
+            "Filosofia",
+            [
+                "WatchdogVPN parte de una idea simple: la conexion VPN tarde o temprano puede fallar.",
+                "El objetivo no es prometer la VPN mas rapida, sino una conexion observable y recuperable para usuarios que no pueden detener su trabajo cuando el tunel se cae.",
+                "Esta capa es util para trabajo remoto, investigacion, desarrollo y contextos donde hay censura, rutas inestables o control de la informacion.",
+                "Hoy usa AdGuard VPN CLI; la arquitectura queda preparada para futuros backends como tuneles WireGuard privados.",
             ],
         ),
         (
@@ -775,7 +784,7 @@ def build_installation_text() -> str:
                 "Cambiar ubicacion: selector con banderas y detalle del nodo.",
                 "Acciones rapidas: intervenciones directas sobre la VPN.",
                 "Timers: control de rotacion y watchdog.",
-                "Bypass dominios: exclusiones por dominio.",
+                "Exclusiones: dominios que salen por la red normal.",
                 "DNS / AdGuard: diagnostico DNS y planes DoH seguros.",
                 "Ver logs: auditoria rapida.",
                 "Pool de rotacion: control de TOP_N.",
@@ -788,7 +797,7 @@ def build_installation_text() -> str:
                 "2. ./install.sh",
                 "3. VPN",
                 "4. Revisa Dashboard, DNS y Timers.",
-                "5. Agrega dominios propios en Bypass solo si necesitas excluirlos de la VPN.",
+                "5. Agrega dominios propios en Exclusiones solo si necesitas sacarlos de la VPN.",
             ],
         ),
         (
@@ -937,7 +946,7 @@ def render(selected: int, dashboard_cache):
     selected_section = selected_item["section"]
     selected_id = selected_item["id"]
 
-    box(1, 1, head_h, cols - 2, "VPN")
+    box(1, 1, head_h, cols - 2, "WatchdogVPN")
     box(head_h + 1, 1, body_h, left_w, "")
     box(head_h + 1, right_x, body_h, right_w, selected_label)
     box(help_y, 1, foot_h + 1, cols - 2, "Status")
@@ -1016,7 +1025,7 @@ def render(selected: int, dashboard_cache):
         action_hints = {
             "Acciones rapidas": ["Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog", "Estado real"],
             "Timers": ["Activar rotacion", "Parar rotacion", "Cambiar intervalo de rotacion", "Activar watchdog", "Parar watchdog", "Cambiar intervalo del watchdog"],
-            "Bypass dominios": ["Ver lista", "Agregar dominio", "Quitar dominio"],
+            "Exclusiones": ["Ver lista", "Agregar dominio", "Quitar dominio"],
             "DNS / AdGuard": ["DNS actual", "Aplicar Quad9", "Aplicar Cloudflare", "Aplicar Google", "Aplicar AdGuard DoQ", "Aplicar OpenDNS", "Aplicar AdGuard sin filtro", "Aplicar AdGuard filtrado", "Rollback DNS"],
             "Ver logs": ["Resumen trazabilidad", "Housekeeping logs", "vpn-watchdog.log", "vpn-rotate.log", "vpn-dispatcher.log", "journal adguardvpn.service"],
         }
@@ -2106,7 +2115,7 @@ def section_meta(section: str, label: str):
         }
         return data.get(label, [])
 
-    if section == "Bypass dominios":
+    if section == "Exclusiones":
         data = {
             "Ver lista": [
                 ("Entradas", f"{bypass_count()} dominios"),
@@ -2305,7 +2314,7 @@ def section_intro(section: str) -> str:
     data = {
         "Acciones rapidas": "Intervenciones manuales. Algunas cortan o cambian la conexion durante segundos.",
         "Timers": "Controla automatizacion de rotacion y watchdog sin tocar scripts a mano.",
-        "Bypass dominios": "Gestiona dominios que salen por ruta directa, fuera del tunel VPN.",
+        "Exclusiones": "Gestiona dominios que salen por ruta directa, fuera del tunel VPN.",
         "DNS / AdGuard": "Cambia DNS real con backup, validacion local y rollback de emergencia.",
         "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
         "Pool de rotacion": "Ajusta cuantos nodos entran al pool antes de validar bloqueo y salud real.",
@@ -2324,7 +2333,7 @@ def action_progress_text(section: str, label: str) -> str:
         ("Timers", "Parar rotacion"): "Deteniendo timer de rotacion",
         ("Timers", "Activar watchdog"): "Activando timer del watchdog",
         ("Timers", "Parar watchdog"): "Deteniendo timer del watchdog",
-        ("Bypass dominios", "Ver lista"): "Leyendo dominios configurados fuera del tunel",
+        ("Exclusiones", "Ver lista"): "Leyendo dominios configurados fuera del tunel",
         ("DNS / AdGuard", "DNS actual"): "Leyendo perfil DNS activo",
         ("Ver logs", "Resumen trazabilidad"): "Parseando niveles y eventos recientes de logs",
         ("Ver logs", "Housekeeping logs"): "Leyendo estado de rotacion y retencion de logs",
@@ -2399,8 +2408,8 @@ def section_panel(section: str, items):
                 "Los cambios de intervalo editan solo el .timer correspondiente.",
                 "Despues hacen daemon-reload y reinician el timer afectado.",
             ],
-            "Bypass dominios": [
-                "El bypass sigue usando no_vpn y el servicio vpn-domain-bypass.service.",
+            "Exclusiones": [
+                "Las exclusiones siguen usando no_vpn y el servicio vpn-domain-bypass.service.",
                 "No modifica la arquitectura del VPN; solo rutas por dominio.",
             ],
             "DNS / AdGuard": [
@@ -2693,7 +2702,7 @@ def handle_menu(label: str):
                 ("Parar watchdog", f"sudo systemctl stop {WATCHDOG_TIMER} && systemctl status {WATCHDOG_TIMER} --no-pager -n 8"),
                 ("Intervalo watchdog", "__SET_WATCHDOG__"),
             ],
-            "Bypass dominios": [
+            "Exclusiones": [
                 ("Ver lista", f"sudo -n {shlex.quote(NO_VPN)} --list"),
                 ("Agregar dominio", "__ADD_BYPASS__"),
                 ("Quitar dominio", "__REMOVE_BYPASS__"),
@@ -2730,7 +2739,7 @@ def handle_menu(label: str):
         if label not in actions:
             return False
 
-        if label in ("Pool de rotacion", "Bypass dominios"):
+        if label in ("Pool de rotacion", "Exclusiones"):
             if not ensure_sudo():
                 set_status(f"Cancelado: {label}")
                 return False
@@ -2766,15 +2775,15 @@ def handle_menu(label: str):
                     domain = domain_or_error
                     if not ensure_sudo():
                         continue
-                    set_status(f"Agregando bypass {domain}")
+                    set_status(f"Agregando exclusion {domain}")
                     output = run_with_progress(
                         action_label,
-                        f"Aplicando bypass para {domain}",
+                        f"Aplicando exclusion para {domain}",
                         f"sudo -n {shlex.quote(NO_VPN)} {shlex.quote(domain)}",
                         75,
                     )
                     show_output(action_label, output)
-                    set_status(f"Bypass actualizado: {domain}")
+                    set_status(f"Exclusion actualizada: {domain}")
                     return True
             elif action == "__REMOVE_BYPASS__":
                 if not ensure_sudo():
@@ -2785,15 +2794,15 @@ def handle_menu(label: str):
                     return False
                 domain = select_list("Quitar dominio", [(d, d) for d in domains])
                 if domain:
-                    set_status(f"Quitando bypass {domain}")
+                    set_status(f"Quitando exclusion {domain}")
                     output = run_with_progress(
                         action_label,
-                        f"Quitando bypass para {domain}",
+                        f"Quitando exclusion para {domain}",
                         remove_bypass_domain_command(domain),
                         45,
                     )
                     show_output(action_label, output)
-                    set_status(f"Bypass eliminado: {domain}")
+                    set_status(f"Exclusion eliminada: {domain}")
                     return True
             elif action == "__SET_ROTATE__":
                 if not ensure_sudo():
@@ -2891,7 +2900,7 @@ def handle_menu(label: str):
                     continue
                 set_status(action_label)
                 show_output(action_label, run_with_progress(action_label, action_progress_text(label, action_label), action, 50))
-                if label in ("Acciones rapidas", "Timers", "Bypass dominios", "DNS / AdGuard", "Pool de rotacion"):
+                if label in ("Acciones rapidas", "Timers", "Exclusiones", "DNS / AdGuard", "Pool de rotacion"):
                     set_status(f"Listo: {action_label}")
                     return True
     except Exception:

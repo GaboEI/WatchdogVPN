@@ -2,6 +2,10 @@
 
 WatchdogVPN is a terminal-first control layer for AdGuard VPN CLI.
 
+The current backend is AdGuard VPN CLI. The runtime is intentionally separated
+into truth checking, recovery, rotation, DNS safety and TUI layers so future VPN
+backends can reuse the same product shape without rewriting the user experience.
+
 The runtime is shared across supported distributions. Distro differences belong
 only in installation and dependency detection.
 
@@ -15,7 +19,7 @@ only in installation and dependency detection.
 - `sbin/vpn_set`: privileged location setter
 - `sbin/vpn_rotate.sh`: safe location rotation
 - `sbin/vpn_watchdog.sh`: recovery watchdog
-- `sbin/vpn_domain_bypass_apply.sh`: domain bypass rules
+- `sbin/vpn_domain_bypass_apply.sh`: domain exclusion/bypass rules
 
 ## Install Layer
 

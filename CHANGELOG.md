@@ -33,3 +33,4 @@
 - Make VPN location notifications user-facing by hiding public IPs and using readable location names.
 - Keep new bypass configurations empty by default so users do not inherit machine-specific domains.
 - Refresh the TUI installation screen to describe the current product installer, update and uninstall flow.
+- Refresh README and problem-context documentation around the product philosophy, install/update/uninstall commands and current support status.
