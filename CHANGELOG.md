@@ -14,3 +14,4 @@
 - Keep `/var/lib/adguardvpn` owned by the `adgvpn` service user during install/update.
 - Guide first-time `adgvpn` service-user login during installation and add `~/.local/bin` to the user's shell PATH when needed.
 - Add final installer validation for doctor checks, DNS local health and service settlement.
+- Let DNS profile apply continue with rollback protection when the current system resolver is broken before AdGuard Home is configured.

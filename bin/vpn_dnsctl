@@ -266,7 +266,7 @@ local_test() {
 }
 
 test_profile() {
-  local profile="${1:-}" upstream_url domain out ok_count=0 fail_count=0
+  local profile="${1:-}" upstream_url domain out ok_count=0 fail_count=0 resolver_fail_count=0
   if ! upstream_url="$(profile_url "$profile")"; then
     echo "ERROR perfil desconocido: ${profile:-<vacio>}"
     return 64
@@ -304,11 +304,19 @@ test_profile() {
     else
       printf 'FAIL %-24s %s\n' "$domain" "${out:-no output}"
       fail_count=$((fail_count + 1))
+      if [[ "$out" == *"Could not resolve host"* || "$out" == *"Couldn't resolve host"* ]]; then
+        resolver_fail_count=$((resolver_fail_count + 1))
+      fi
     fi
   done
 
   if ((ok_count >= 2)); then
     ((fail_count > 0)) && echo "WARN profile=$profile partial_failures=$fail_count accepted_ok=$ok_count"
+    return 0
+  fi
+
+  if ((ok_count == 0 && resolver_fail_count == fail_count && fail_count > 0)); then
+    echo "WARN profile=$profile preflight blocked by current system DNS; continuing with rollback-protected apply"
     return 0
   fi
 
