@@ -31,6 +31,7 @@ jobs:
 
       - name: Systemd unit verification
         run: |
+          sudo useradd --system --home-dir /var/lib/adguardvpn --create-home --shell /usr/sbin/nologin adgvpn
           sudo install -m 0755 -d /usr/local/bin /usr/local/sbin /etc/logrotate.d
           sudo install -m 0755 /bin/true /usr/local/bin/adguardvpn-cli
           sudo install -m 0700 sbin/vpn_watchdog.sh /usr/local/sbin/vpn_watchdog.sh
