@@ -3,7 +3,7 @@ Description=Hourly VPN rotation
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=3h
+OnUnitInactiveSec=3h
 AccuracySec=1min
 Persistent=true
 

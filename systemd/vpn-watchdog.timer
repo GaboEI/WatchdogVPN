@@ -1,11 +1,11 @@
 [Unit]
-  Description=Run VPN watchdog every 2 minutes
+Description=Run VPN watchdog every 2 minutes
 
-  [Timer]
-  OnBootSec=2min
-  OnUnitActiveSec=2min
-  AccuracySec=15s
-  Persistent=true
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+AccuracySec=15s
+Persistent=true
 
-  [Install]
-  WantedBy=timers.target
+[Install]
+WantedBy=timers.target
