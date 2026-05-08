@@ -17,3 +17,4 @@
 - Add a DNS rescue helper and run it during uninstall so removing local DNS services does not leave the host without name resolution.
 - Let DNS profile apply continue with rollback protection when the current system resolver is broken before AdGuard Home is configured.
 - Add guided installation of the official AdGuard VPN CLI when a clean system does not have `adguardvpn-cli`.
+- Add timeout and visible progress around the official AdGuard VPN CLI installer download.

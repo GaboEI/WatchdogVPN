@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ADGUARD_VPN_CLI_INSTALL_URL="${ADGUARD_VPN_CLI_INSTALL_URL:-https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/master/scripts/release/install.sh}"
+ADGUARD_VPN_CLI_DOWNLOAD_TIMEOUT="${ADGUARD_VPN_CLI_DOWNLOAD_TIMEOUT:-60}"
 
 adguard_cli_available() {
   command -v adguardvpn-cli >/dev/null 2>&1 || [[ -x /usr/local/bin/adguardvpn-cli ]]
@@ -45,7 +46,20 @@ install_official_adguard_vpn_cli() {
   fi
 
   tmp="/tmp/watchdogvpn-adguardvpn-cli-install.sh"
-  curl -fsSL "$ADGUARD_VPN_CLI_INSTALL_URL" -o "$tmp"
+  info "downloading official AdGuard VPN CLI installer"
+  if ! curl --fail --show-error --location \
+    --connect-timeout 15 \
+    --max-time "$ADGUARD_VPN_CLI_DOWNLOAD_TIMEOUT" \
+    "$ADGUARD_VPN_CLI_INSTALL_URL" \
+    -o "$tmp"; then
+    fail "could not download the official AdGuard VPN CLI installer"
+    printf 'Check DNS/connectivity to raw.githubusercontent.com, then rerun ./install.sh.\n'
+    printf 'Manual test:\n'
+    printf '  curl -I %s\n' "$ADGUARD_VPN_CLI_INSTALL_URL"
+    exit 1
+  fi
+
+  info "running official AdGuard VPN CLI installer"
   sh "$tmp" -v
 
   if ! adguard_cli_available; then
