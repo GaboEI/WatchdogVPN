@@ -19,3 +19,4 @@
 - Add guided installation of the official AdGuard VPN CLI when a clean system does not have `adguardvpn-cli`.
 - Add timeout and visible progress around the official AdGuard VPN CLI installer download.
 - Add GitHub raw IPv4 fallbacks for networks that resolve `raw.githubusercontent.com` poorly.
+- Make service-user authentication checks tolerate fresh CLI logins by falling back to `adguardvpn-cli status`.

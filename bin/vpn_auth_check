@@ -83,7 +83,7 @@ JSON
 }
 
 collect_auth() {
-  local out rc
+  local out rc status_out status_rc
 
   AUTH="UNKNOWN"
   REASON="not_checked"
@@ -135,6 +135,25 @@ collect_auth() {
   if [[ "$DETAIL" == *"a password is required"* || "$DETAIL" == *"terminal is required"* ]]; then
     AUTH="UNKNOWN"
     REASON="sudo_required"
+    return 0
+  fi
+
+  set +e
+  status_out="$(timeout "${TIMEOUT_SECONDS}s" sudo -n -u "$AS_USER" -H "$CLI" status 2>&1)"
+  status_rc=$?
+  set -e
+
+  if (( status_rc == 0 )) && [[ "$status_out" != *"not logged in"* ]] && [[ "$status_out" != *"Please log in"* ]]; then
+    AUTH="OK"
+    REASON="status_available"
+    DETAIL="$DETAIL | status=$(printf '%s' "$status_out" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    return 0
+  fi
+
+  if (( status_rc == 11 )) || [[ "$status_out" == *"not logged in"* ]] || [[ "$status_out" == *"Please log in"* ]]; then
+    AUTH="EXPIRED"
+    REASON="login_required"
+    DETAIL="$DETAIL | status=$(printf '%s' "$status_out" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
     return 0
   fi
 

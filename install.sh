@@ -166,6 +166,12 @@ auth_state() {
   printf '%s\n' "$raw" | awk -F= '$1 == "AUTH" {print $2; exit}'
 }
 
+auth_detail() {
+  local raw
+  raw="$(ADGUARDVPN_CLI="${ADGUARDVPN_CLI:-/usr/local/bin/adguardvpn-cli}" "$ROOT_DIR/bin/vpn_auth_check" 2>/dev/null || true)"
+  printf '%s\n' "$raw"
+}
+
 ensure_adguard_service_login() {
   local state
   state="$(auth_state)"
@@ -196,6 +202,7 @@ ensure_adguard_service_login() {
   state="$(auth_state)"
   if [[ "$state" != "OK" ]]; then
     fail "AdGuard VPN service user is still not authenticated"
+    auth_detail
     exit 1
   fi
 
