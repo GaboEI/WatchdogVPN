@@ -26,3 +26,4 @@
 - Try AdGuard VPN CLI `status` before reporting a license timeout as unknown authentication.
 - Schedule recurring watchdog, rotation and domain-bypass timers from service inactivity so they keep a next trigger after one-shot runs.
 - Add timer activation delays so recurring timers also schedule correctly when restarted long after boot.
+- Teach the TUI timer display to read `OnUnitInactiveSec` intervals after the timer scheduling fix.

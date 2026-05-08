@@ -161,7 +161,11 @@ def timer_enabled(unit: str) -> str:
 def timer_interval(unit: str) -> str:
     cmd = (
         "awk -F= "
-        + shlex.quote(r'/^[[:space:]]*OnUnitActiveSec=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}')
+        + shlex.quote(
+            r'/^[[:space:]]*OnUnitInactiveSec=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; found=1; exit}'
+            r' /^[[:space:]]*OnUnitActiveSec=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); active=$2}'
+            r' END{if (!found && active != "") print active}'
+        )
         + f" /etc/systemd/system/{shlex.quote(unit)} 2>/dev/null || true"
     )
     return run(cmd, 4) or "?"
