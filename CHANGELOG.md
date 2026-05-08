@@ -27,3 +27,6 @@
 - Schedule recurring watchdog, rotation and domain-bypass timers from service inactivity so they keep a next trigger after one-shot runs.
 - Add timer activation delays so recurring timers also schedule correctly when restarted long after boot.
 - Teach the TUI timer display to read `OnUnitInactiveSec` intervals after the timer scheduling fix.
+- Update TUI timer interval changes to write `OnUnitInactiveSec`, including custom rotation/watchdog intervals.
+- Install the optional launcher both in the application menu and on the user's desktop directory.
+- Keep manual notification tests quiet when the current user cannot write the root-owned event log.

@@ -1589,9 +1589,11 @@ def set_timer_interval_command(unit: str, value: str) -> str:
 tmp="$(mktemp)"
 awk -F= -v val="{value}" '
 BEGIN {{ done=0 }}
-/^[[:space:]]*OnUnitActiveSec=/ {{ print "  OnUnitActiveSec=" val; done=1; next }}
+/^[[:space:]]*OnUnitInactiveSec=/ {{ print "OnUnitInactiveSec=" val; done=1; next }}
+/^[[:space:]]*OnUnitActiveSec=/ {{ next }}
+/^[[:space:]]*\[Install\]/ && !done {{ print "OnUnitInactiveSec=" val; done=1 }}
 {{ print $0 }}
-END {{ if (!done) print "  OnUnitActiveSec=" val }}
+END {{ if (!done) print "OnUnitInactiveSec=" val }}
 ' /etc/systemd/system/{unit} > "$tmp"
 sudo install -m 644 -o root -g root "$tmp" /etc/systemd/system/{unit}
 rm -f "$tmp"
@@ -1603,6 +1605,16 @@ systemctl status {unit} --no-pager -n 8
 
 def set_timer_interval(unit: str, value: str) -> str:
     return run(set_timer_interval_command(unit, value), 20)
+
+
+def valid_timer_interval(value: str):
+    value = (value or "").strip()
+    if not re.match(r"^[0-9]+(s|min|h|d)$", value):
+        return False, "Usa formato systemd simple: 30s, 2min, 3h o 1d."
+    amount = int(re.match(r"^([0-9]+)", value).group(1))
+    if amount < 1:
+        return False, "El intervalo debe ser mayor que cero."
+    return True, value
 
 
 def set_rotate_top_n_command(value: str) -> str:
@@ -2775,7 +2787,15 @@ def handle_menu(label: str):
             elif action == "__SET_ROTATE__":
                 if not ensure_sudo():
                     continue
-                val = select_list("Intervalo de rotacion", [(x, x) for x in ["1h", "2h", "3h", "6h", "12h"]])
+                val = select_list("Intervalo de rotacion", [(x, x) for x in ["1h", "2h", "3h", "4h", "6h", "12h"]] + [("custom", "Custom")])
+                if val == "custom":
+                    raw = prompt_input("Intervalo de rotacion", "Ejemplo: 45min, 3h, 1d")
+                    ok, value_or_error = valid_timer_interval(raw)
+                    if not ok:
+                        alert("Intervalo invalido", value_or_error)
+                        set_status("Intervalo invalido")
+                        continue
+                    val = value_or_error
                 if val:
                     set_status(f"Ajustando rotacion a {val}")
                     show_output(action_label, run_with_progress(action_label, f"Ajustando rotacion a {val}", set_timer_interval_command(ROTATE_TIMER, val), 30))
@@ -2784,7 +2804,15 @@ def handle_menu(label: str):
             elif action == "__SET_WATCHDOG__":
                 if not ensure_sudo():
                     continue
-                val = select_list("Intervalo del watchdog", [(x, x) for x in ["1min", "2min", "3min", "5min"]])
+                val = select_list("Intervalo del watchdog", [(x, x) for x in ["1min", "2min", "3min", "5min", "10min"]] + [("custom", "Custom")])
+                if val == "custom":
+                    raw = prompt_input("Intervalo del watchdog", "Ejemplo: 30s, 2min, 5min")
+                    ok, value_or_error = valid_timer_interval(raw)
+                    if not ok:
+                        alert("Intervalo invalido", value_or_error)
+                        set_status("Intervalo invalido")
+                        continue
+                    val = value_or_error
                 if val:
                     set_status(f"Ajustando watchdog a {val}")
                     show_output(action_label, run_with_progress(action_label, f"Ajustando watchdog a {val}", set_timer_interval_command(WATCHDOG_TIMER, val), 30))

@@ -88,6 +88,12 @@ log_event() {
   detail="title=$(quote_value "$TITLE") urgency=$(quote_value "$URGENCY") body=$(quote_value "$BODY")"
 
   ensure_log_dir
+  if [[ -e "$LOG_FILE" && ! -w "$LOG_FILE" ]]; then
+    return 0
+  fi
+  if [[ ! -e "$LOG_FILE" && ! -w "$(dirname "$LOG_FILE")" ]]; then
+    return 0
+  fi
   printf '%s | notify | %s | %s | %s\n' "$(date --iso-8601=seconds)" "$level" "$event" "$detail" >> "$LOG_FILE" 2>/dev/null || true
 }
 
