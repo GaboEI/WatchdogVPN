@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install validation tools
         run: |
@@ -31,14 +31,17 @@ jobs:
 
       - name: Systemd unit verification
         run: |
-          sudo useradd --system --home-dir /var/lib/adguardvpn --create-home --shell /usr/sbin/nologin adgvpn
-          sudo install -m 0755 -d /usr/local/bin /usr/local/sbin /etc/logrotate.d
+          if ! getent passwd adgvpn >/dev/null; then
+            sudo useradd --system --home-dir /var/lib/adguardvpn --create-home --shell /usr/sbin/nologin adgvpn
+          fi
+          sudo install -m 0755 -d /usr/local/bin /usr/local/sbin /etc/logrotate.d /var/log/myvpn /var/lib/vpn-rotate
           sudo install -m 0755 /bin/true /usr/local/bin/adguardvpn-cli
           sudo install -m 0700 sbin/vpn_watchdog.sh /usr/local/sbin/vpn_watchdog.sh
           sudo install -m 0700 sbin/vpn_rotate.sh /usr/local/sbin/vpn_rotate.sh
           sudo install -m 0700 sbin/vpn_domain_bypass_apply.sh /usr/local/sbin/vpn_domain_bypass_apply.sh
           sudo install -m 0644 etc/logrotate.d/myvpn /etc/logrotate.d/myvpn
-          systemd-analyze verify systemd/*.service systemd/*.timer
+          systemd-analyze verify systemd/*.service systemd/*.timer 2>&1 | tee /tmp/watchdogvpn-systemd-verify.log
+          test "${PIPESTATUS[0]}" -eq 0
 
       - name: ShellCheck advisory
         continue-on-error: true
