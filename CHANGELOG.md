@@ -34,3 +34,4 @@
 - Keep new bypass configurations empty by default so users do not inherit machine-specific domains.
 - Refresh the TUI installation screen to describe the current product installer, update and uninstall flow.
 - Refresh README and problem-context documentation around the product philosophy, install/update/uninstall commands and current support status.
+- Add portfolio-review license notice and README alpha status, support matrix and known limitations.

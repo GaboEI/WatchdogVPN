@@ -1,0 +1,17 @@
+All Rights Reserved - Portfolio Review Only
+
+Copyright (c) 2026 GaboEI
+
+This repository is made available for portfolio review, technical evaluation
+and demonstration purposes only.
+
+No permission is granted to copy, modify, distribute, sublicense, sell, host,
+repackage or reuse this software or any substantial portion of it without prior
+written permission from the copyright holder.
+
+No warranty is provided. This software interacts with system networking,
+privileged services, DNS configuration and VPN tooling. Review the code and
+run it only in environments where you understand and accept those risks.
+
+A public open-source license may be selected in a future release. Until then,
+all rights are reserved.

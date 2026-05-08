@@ -1,20 +1,26 @@
 # WatchdogVPN
 
+- **Status:** `v0.1.0-alpha candidate`
+- **License:** Portfolio review only. No reuse rights are granted yet. See [LICENSE](LICENSE).
+
 WatchdogVPN is a terminal-first resilience layer for AdGuard VPN CLI on Linux. It provides a TUI, real-state checks, automatic recovery, location rotation, domain exclusions, DNS tooling, log housekeeping and traceable events around an AdGuard VPN installation.
 
 It is built for the real case where a VPN connection is not perfect: endpoints degrade, routes change, DNS can fail and the provider CLI may say one thing while the real network state says another. WatchdogVPN assumes the connection will eventually fail, then focuses on detecting that failure and recovering without forcing the user to live inside a terminal.
 
 ## Status
 
-WatchdogVPN is an installable private Linux product candidate. Current supported targets:
+WatchdogVPN is an installable Linux product candidate prepared for portfolio review. It is not a stable public 1.0 release yet.
 
-- Ubuntu
-- Debian
-- Arch Linux
+Current support status:
 
-Fedora and other distributions are future targets, but the project is designed as one multi-distro codebase rather than separate repositories per distro.
+| Distribution | Status |
+| --- | --- |
+| Ubuntu 24.04 | Tested on a real workstation |
+| Arch Linux | Tested in a clean VM flow |
+| Debian | Targeted by the distro adapter; clean validation still required |
+| Fedora | Future target |
 
-The repository should remain private until the 1.0 release decision is made.
+The project is designed as one multi-distro codebase rather than separate repositories per distro.
 
 ## Philosophy
 
@@ -46,16 +52,7 @@ The first backend is AdGuard VPN CLI. The architecture is intentionally shaped s
 - It does not install AdGuard Home unless the user explicitly chooses advanced DNS mode.
 - It does not erase existing user configuration without confirmation.
 
-## Supported Systems
-
-Initial support:
-
-| Distribution | Status |
-| --- | --- |
-| Ubuntu | Target |
-| Debian | Target |
-| Arch Linux | Target |
-| Fedora | Future |
+## System Requirements
 
 Required base components are checked by `doctor.sh` and the guided installer:
 
@@ -72,11 +69,17 @@ Required base components are checked by `doctor.sh` and the guided installer:
 ## Install
 
 ```sh
-git clone git@github.com:GaboEI/WatchdogVPN.git
+git clone https://github.com/GaboEI/WatchdogVPN.git
 cd WatchdogVPN
 ./doctor.sh
 ./install.sh
 VPN
+```
+
+For a private repository checkout, use the SSH remote instead:
+
+```sh
+git clone git@github.com:GaboEI/WatchdogVPN.git
 ```
 
 `doctor.sh` is read-only. It checks whether the machine is ready.
@@ -115,6 +118,8 @@ cd WatchdogVPN
 ./uninstall.sh --purge-config --purge-logs --purge-state --purge-conky
 ```
 
+This does not remove the official AdGuard VPN CLI or the user's AdGuard account/license state.
+
 ## Repository Layout
 
 ```text
@@ -143,6 +148,16 @@ tests/              Syntax and runtime validation helpers
 - **No duplicate repos by distro:** multi-distro support stays in one repository to avoid divergent behavior.
 - **Traceable logs:** operational events are written in a parseable format for future diagnostics.
 - **User-owned exclusions:** new installations start without personal bypass domains. Each user chooses which domains should leave through the normal network route.
+
+## Known Limitations
+
+- `v0.1.0-alpha` is not a stable 1.0 release.
+- Debian support has a distro adapter, but still needs a clean-system validation pass.
+- CI, security documentation, demo screenshots and release notes are being added before the repository is made public.
+- The current TUI is functional but still monolithic; a gradual module split is planned.
+- Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
+- The installer can guide installation of the official AdGuard VPN CLI, but external installer verification is not fully cryptographically pinned yet.
+- The first backend is AdGuard VPN CLI. WireGuard/private tunnel support is architectural direction, not implemented behavior.
 
 ## Validation
 
@@ -179,7 +194,7 @@ systemd-analyze verify systemd/*.service systemd/*.timer
 
 ## License
 
-No license has been selected yet. While the repository remains private, all rights are reserved by default. A public license will be chosen before any public release.
+This repository is available for portfolio review only. No reuse rights are granted until a public license is selected. See [LICENSE](LICENSE).
 
 ## Safety Rule
 
