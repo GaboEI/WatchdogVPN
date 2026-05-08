@@ -3,6 +3,7 @@ Description=Run VPN watchdog every 2 minutes
 
 [Timer]
 OnBootSec=2min
+OnActiveSec=30s
 OnUnitInactiveSec=2min
 AccuracySec=15s
 Persistent=true

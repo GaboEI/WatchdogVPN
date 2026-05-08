@@ -25,3 +25,4 @@
 - Strengthen DNS rescue on systems without `systemd-resolved` by writing temporary public fallback DNS when automatic restore does not recover resolution.
 - Try AdGuard VPN CLI `status` before reporting a license timeout as unknown authentication.
 - Schedule recurring watchdog, rotation and domain-bypass timers from service inactivity so they keep a next trigger after one-shot runs.
+- Add timer activation delays so recurring timers also schedule correctly when restarted long after boot.
