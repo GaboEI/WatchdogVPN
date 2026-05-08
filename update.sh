@@ -171,4 +171,5 @@ install_runtime_files
 verify_systemd_units
 refresh_installed_desktop_launcher
 enable_systemd_units
+ensure_user_local_bin_path
 final_report

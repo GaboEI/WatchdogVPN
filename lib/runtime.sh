@@ -32,3 +32,43 @@ refresh_installed_desktop_launcher() {
     install_desktop_launcher
   fi
 }
+
+ensure_user_local_bin_path() {
+  local path_line='export PATH="$HOME/.local/bin:$PATH"'
+  local marker="# WatchdogVPN: user local commands"
+  local shell_rc=""
+
+  case "${SHELL:-}" in
+    */zsh) shell_rc="$HOME/.zshrc" ;;
+    */bash) shell_rc="$HOME/.bashrc" ;;
+  esac
+
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*)
+      ok "PATH includes ~/.local/bin"
+      return 0
+      ;;
+  esac
+
+  if [[ -z "$shell_rc" ]]; then
+    warn "~/.local/bin is not in PATH; run: export PATH=\"\$HOME/.local/bin:\$PATH\""
+    return 0
+  fi
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] append ~/.local/bin PATH setup to %s\n' "$shell_rc"
+    return 0
+  fi
+
+  touch "$shell_rc"
+  if grep -Fq "$path_line" "$shell_rc"; then
+    ok "PATH setup already present in $shell_rc"
+    return 0
+  fi
+
+  {
+    printf '\n%s\n' "$marker"
+    printf '%s\n' "$path_line"
+  } >> "$shell_rc"
+  warn "added ~/.local/bin to PATH in $shell_rc; open a new terminal or run: source $shell_rc"
+}

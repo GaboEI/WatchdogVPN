@@ -161,6 +161,48 @@ validate_repo_runtime() {
   ok "repository runtime validated"
 }
 
+auth_state() {
+  local raw
+  raw="$(ADGUARDVPN_CLI="${ADGUARDVPN_CLI:-/usr/local/bin/adguardvpn-cli}" "$ROOT_DIR/bin/vpn_auth_check" 2>/dev/null || true)"
+  printf '%s\n' "$raw" | awk -F= '$1 == "AUTH" {print $2; exit}'
+}
+
+ensure_adguard_service_login() {
+  local state
+  state="$(auth_state)"
+
+  if [[ "$state" == "OK" ]]; then
+    ok "AdGuard VPN service user authenticated"
+    return 0
+  fi
+
+  warn "AdGuard VPN service user is not authenticated"
+  printf 'WatchdogVPN runs AdGuard VPN as user: adgvpn\n'
+  printf 'The service user must log in once before automatic VPN recovery can work.\n'
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] sudo -u adgvpn -H /usr/local/bin/adguardvpn-cli login\n'
+    return 0
+  fi
+
+  if prompt_yes_no "Log in to AdGuard VPN now as adgvpn?" yes; then
+    sudo -u adgvpn -H "${ADGUARDVPN_CLI:-/usr/local/bin/adguardvpn-cli}" login
+  else
+    fail "AdGuard VPN login for adgvpn is required"
+    printf 'Run manually:\n'
+    printf '  sudo -u adgvpn -H /usr/local/bin/adguardvpn-cli login\n'
+    exit 1
+  fi
+
+  state="$(auth_state)"
+  if [[ "$state" != "OK" ]]; then
+    fail "AdGuard VPN service user is still not authenticated"
+    exit 1
+  fi
+
+  ok "AdGuard VPN service user authenticated"
+}
+
 install_optional_integrations() {
   if [[ "$ENABLE_ADVANCED_DNS" == "1" ]]; then
     install_adguard_home_integration
@@ -237,7 +279,9 @@ fi
 
 validate_repo_runtime
 install_runtime_files
+ensure_adguard_service_login
 verify_systemd_units
 install_optional_integrations
 enable_systemd_units
+ensure_user_local_bin_path
 final_report

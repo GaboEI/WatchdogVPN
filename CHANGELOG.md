@@ -12,3 +12,4 @@
 - Implement advanced DNS installation with AdGuard Home provisioning, local starter config, DNS profile application and `vpn_dnsctl` path detection.
 - Rename the desktop launcher source file to `watchdogvpn.desktop`.
 - Keep `/var/lib/adguardvpn` owned by the `adgvpn` service user during install/update.
+- Guide first-time `adgvpn` service-user login during installation and add `~/.local/bin` to the user's shell PATH when needed.
