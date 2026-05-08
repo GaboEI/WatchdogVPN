@@ -114,7 +114,7 @@ collect_auth() {
   CLI_RC="$rc"
   DETAIL="$(printf '%s' "$out" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
 
-  if (( rc == 0 )); then
+  if (( rc == 0 )) || [[ "$DETAIL" == *"Logged in as"* ]]; then
     AUTH="OK"
     REASON="license_valid"
     return 0
