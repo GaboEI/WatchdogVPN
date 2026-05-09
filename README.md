@@ -4,12 +4,53 @@
 
 - **Status:** `v0.1.0-alpha candidate`
 - **License:** Portfolio review only. No reuse rights are granted yet. See [LICENSE](LICENSE).
+- **Primary backend:** AdGuard VPN CLI
+- **Supported today:** Ubuntu 24.04 and Arch Linux validation paths
 
-WatchdogVPN is a terminal-first resilience layer for AdGuard VPN CLI on Linux. It provides a TUI, real-state checks, automatic recovery, location rotation, domain exclusions, DNS tooling, log housekeeping and traceable events around an AdGuard VPN installation.
+WatchdogVPN is a terminal-first resilience layer for AdGuard VPN CLI on Linux. It turns a fragile command-line VPN setup into an observable control center with real-state checks, automatic recovery, location rotation, domain exclusions, DNS tooling, log housekeeping and traceable events.
 
 It is built for the real case where a VPN connection is not perfect: endpoints degrade, routes change, DNS can fail and the provider CLI may say one thing while the real network state says another. WatchdogVPN assumes the connection will eventually fail, then focuses on detecting that failure and recovering without forcing the user to live inside a terminal.
 
 ![WatchdogVPN dashboard](docs/assets/tui-dashboard.png)
+
+## Quick Links
+
+| Need | Start Here |
+| --- | --- |
+| See the interface | [Demo and screenshots](docs/demo.md) |
+| Install it | [Install](#install) |
+| Understand the design | [Architecture](docs/architecture.md) |
+| Review security tradeoffs | [Security](docs/security.md) and [Threat Model](docs/threat-model.md) |
+| Validate a machine | [Validation](docs/validation.md) |
+| Check planned work | [Roadmap](docs/roadmap.md) |
+
+## Core Capabilities
+
+| Capability | What It Solves |
+| --- | --- |
+| Truth check | Verifies tunnel, route and public IP instead of trusting only CLI text |
+| Watchdog | Detects real VPN failures and triggers recovery when needed |
+| Rotation | Changes VPN location on a controlled schedule with validation |
+| Locations | Lets the user select country/city candidates from the TUI |
+| Exclusions | Routes selected domains outside the VPN tunnel when required |
+| DNS safety | Applies optional AdGuard Home profiles with backup and rollback |
+| Notifications | Emits user-facing and traceable events through `vpn_notify` |
+| Housekeeping | Keeps operational logs bounded with logrotate/systemd timers |
+
+## TUI Overview
+
+WatchdogVPN includes a terminal control center designed for repeated operational
+use rather than one-off script execution.
+
+| View | Purpose |
+| --- | --- |
+| Dashboard | Real VPN state, session, tunnel, route, IP, DNS and timers |
+| Locations | Select VPN country/city from measured candidates |
+| Actions | Restart, disconnect, rotate now and run immediate health checks |
+| DNS | Apply validated DNS profiles with rollback protection |
+| Exclusions | Manage domains routed outside the VPN tunnel |
+| Timers | Adjust watchdog and rotation intervals without editing units by hand |
+| Logs | Read recent operational logs and traceable events |
 
 More screenshots and command examples are available in [Demo](docs/demo.md).
 
