@@ -9,6 +9,10 @@ WatchdogVPN is a terminal-first resilience layer for AdGuard VPN CLI on Linux. I
 
 It is built for the real case where a VPN connection is not perfect: endpoints degrade, routes change, DNS can fail and the provider CLI may say one thing while the real network state says another. WatchdogVPN assumes the connection will eventually fail, then focuses on detecting that failure and recovering without forcing the user to live inside a terminal.
 
+![WatchdogVPN dashboard](docs/assets/tui-dashboard.png)
+
+More screenshots and command examples are available in [Demo](docs/demo.md).
+
 ## Status
 
 WatchdogVPN is an installable Linux product candidate prepared for portfolio review. It is not a stable public 1.0 release yet.
@@ -155,7 +159,7 @@ tests/              Syntax and runtime validation helpers
 
 - `v0.1.0-alpha` is not a stable 1.0 release.
 - Debian support has a distro adapter, but still needs a clean-system validation pass.
-- CI, security documentation, demo screenshots and release notes are being added before the repository is made public.
+- Release notes and clean Debian validation are still required before the repository is treated as public-ready.
 - The current TUI is functional but still monolithic; a gradual module split is planned.
 - Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
 - The installer can guide installation of the official AdGuard VPN CLI, but external installer verification is not fully cryptographically pinned yet.
@@ -186,6 +190,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [Problem Context](docs/problem-context.md)
 - [Security](docs/security.md)
 - [Threat Model](docs/threat-model.md)
+- [Demo](docs/demo.md)
 - [Validation](docs/validation.md)
 - [Roadmap](docs/roadmap.md)
 - [Install Contracts](docs/install-contracts.md)
