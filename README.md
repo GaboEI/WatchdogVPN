@@ -20,6 +20,7 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | See the interface | [Demo and screenshots](docs/demo.md) |
 | Install it | [Install](#install) |
 | Understand the design | [Architecture](docs/architecture.md) |
+| See how it evolved | [Project History](docs/project-history.md) |
 | Review security tradeoffs | [Security](docs/security.md) and [Threat Model](docs/threat-model.md) |
 | Validate a machine | [Validation](docs/validation.md) |
 | Check planned work | [Roadmap](docs/roadmap.md) |
@@ -229,6 +230,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 
 - [Architecture](docs/architecture.md)
 - [Problem Context](docs/problem-context.md)
+- [Project History](docs/project-history.md)
 - [Security](docs/security.md)
 - [Threat Model](docs/threat-model.md)
 - [Demo](docs/demo.md)
