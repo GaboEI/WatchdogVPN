@@ -1,9 +1,16 @@
 # Project History
 
-WatchdogVPN did not start as a polished product repository. It began as a local
-Linux automation prototype around a real VPN workstation, then was migrated into
-this product-oriented repository once the installer, updater, uninstaller and
+WatchdogVPN did not start as a polished product repository. It began as a set of
+local scripts around January 2026 to solve a real VPN stability problem on one
+Linux workstation. Over several months, those scripts grew into a documented
+operational stack, then into a local prototype repository, and finally into this
+product-oriented repository once the installer, updater, uninstaller and
 multi-distro direction became concrete.
+
+The project represents more than 400 hours of iterative work across scripts,
+systemd units, routing diagnostics, DNS recovery, TUI design, testing and
+product packaging. Only the later structured phases are visible as Git commits
+in this repository.
 
 The earlier local prototype history is preserved locally, but it is not imported
 directly into `main` because it contains machine-specific network snapshots,
@@ -18,16 +25,47 @@ machine details.
 
 | Period | Focus |
 | --- | --- |
+| 2026-01 to 2026-02 | Loose local scripts, manual fixes and unstable experiments around one VPN workstation |
+| 2026-02-02 | Inflection point: first long-form replication document for rebuilding the stack step by step |
 | 2026-04-25 to 2026-04-27 | Routing investigation, first TUI state capture, truth-layer hardening |
 | 2026-04-28 to 2026-04-30 | Product planning, DNS diagnostics, rollback, AdGuard Home direction |
 | 2026-05-01 to 2026-05-02 | TUI polish, mouse navigation, sudo keepalive, log traceability, auth watchdog |
 | 2026-05-07 | Decision to migrate from local prototype into a product repository |
 | 2026-05-07 to 2026-05-09 | WatchdogVPN repository, installer/update/uninstall, CI, security docs, demo |
 
+## Script and Documentation Phase
+
+Before there was a repository, the work existed as loose shell scripts, manual
+fixes and system files on the local machine. Some pieces worked reliably, others
+were still experiments. The first major inflection point was 2026-02-02, when
+the work became documented as a repeatable reconstruction process instead of
+only a collection of local fixes.
+
+That 2026-02-02 reference document described how to replicate the current
+AdGuard VPN behavior on another Ubuntu host without simply copying the original
+machine.
+
+That document covered:
+
+- dedicated `adgvpn` service user;
+- `adguardvpn.service` as an always-on systemd service;
+- rotation service and timer;
+- firstboot rotation;
+- location setting helper;
+- truth checks for tunnel, route and public IP;
+- watchdog behavior;
+- systemd enablement;
+- verification commands and diagnostics.
+
+At that stage the goal was still local reliability and repeatability. The idea
+of a reusable project was present, but the product boundary was not yet clean:
+the stack still mixed machine-specific configuration with reusable logic.
+
 ## Local Prototype Phase
 
-The local prototype repository contains 56 commits. It covered the transition
-from machine-specific VPN scripts into a structured resilience layer.
+The local prototype repository contains 56 commits from 2026-04-25 to
+2026-05-07. It covered the transition from machine-specific VPN scripts into a
+structured resilience layer.
 
 Representative milestones:
 
@@ -118,17 +156,19 @@ that work while separating personal machine state from reusable software.
 
 ## Engineering Takeaway
 
-The important story is not that every prototype commit appears in `main`. The
-important story is that the project moved through identifiable engineering
-stages:
+The important story is not that every early script edit or prototype commit
+appears in `main`. The important story is that the project moved through
+identifiable engineering stages:
 
-1. Real failure investigation.
-2. Truth-layer validation.
-3. TUI and operational feedback.
-4. DNS and routing safety.
-5. Watchdog and auth recovery.
-6. Install/update/uninstall contracts.
-7. Multi-distro product packaging.
-8. CI, documentation, security review and demo assets.
+1. Local script automation for a real workstation problem.
+2. Step-by-step replication documentation.
+3. Real failure investigation.
+4. Truth-layer validation.
+5. TUI and operational feedback.
+6. DNS and routing safety.
+7. Watchdog and auth recovery.
+8. Install/update/uninstall contracts.
+9. Multi-distro product packaging.
+10. CI, documentation, security review and demo assets.
 
 That path is what shaped WatchdogVPN into the current alpha candidate.
