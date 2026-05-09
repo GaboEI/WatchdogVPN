@@ -1,0 +1,96 @@
+# WatchdogVPN v0.1.0-alpha Candidate Release Notes
+
+Status: alpha candidate, private portfolio review build.
+
+This is the first product-shaped WatchdogVPN release candidate. It packages the
+working local VPN resilience stack into a reproducible repository with
+installer, updater, uninstaller, TUI, systemd units, DNS tooling, documentation
+and CI.
+
+## Highlights
+
+- Terminal control center for VPN state, locations, actions, DNS, exclusions,
+  timers and logs.
+- Real-state validation through `vpn_truth_check` instead of trusting only
+  `adguardvpn-cli status`.
+- Watchdog service for automatic recovery when the tunnel, route or public IP
+  state is unhealthy.
+- Controlled VPN location rotation with validation and anti-loop behavior.
+- Optional AdGuard Home DNS profile management with backup, preflight and
+  rollback.
+- Domain exclusions that start empty by default for new users.
+- Guided install/update/uninstall flows with backups and preservation contracts.
+- Read-only `doctor.sh` preflight diagnostics.
+- GitHub Actions CI for syntax and systemd validation.
+- Security, threat model, project history, demo and validation documentation.
+
+## Supported and Targeted Platforms
+
+| Distribution | Status |
+| --- | --- |
+| Ubuntu 24.04 | Tested on a real workstation |
+| Arch Linux | Tested in a clean VM flow |
+| Debian | Adapter exists; clean validation still required |
+| Fedora | Future target |
+
+## Known Limitations
+
+- This is not a stable 1.0 release.
+- The repository is still private and under portfolio-review licensing.
+- Debian has not completed a clean-system validation pass.
+- The TUI is still a monolithic Python file and is planned for gradual modular
+  refactor.
+- Some TUI command helpers still use `shell=True`; this is tracked as hardening
+  work.
+- External installer verification for the official AdGuard VPN CLI is not yet
+  cryptographically pinned.
+- The first backend is AdGuard VPN CLI. WireGuard/private backend support is not
+  implemented yet.
+
+## Release Candidate Checklist
+
+- [x] Product README and support matrix.
+- [x] Portfolio-review license notice.
+- [x] CI workflow.
+- [x] Security and threat-model documentation.
+- [x] Demo screenshots and validation examples.
+- [x] Project history documentation.
+- [x] Ubuntu real-machine validation.
+- [x] Arch clean-VM validation.
+- [ ] Debian clean-system validation.
+- [ ] Final license decision before public release.
+- [ ] Release checklist approved.
+- [ ] GitHub release tag and release entry.
+- [ ] GitHub About description and topics.
+
+The full publication checklist is tracked in
+[Release Checklist](release-checklist.md).
+
+## Upgrade Notes
+
+Existing private testers can update with:
+
+```sh
+cd WatchdogVPN
+git pull
+./update.sh
+```
+
+The updater preserves user configuration, logs, rotation state, AdGuard Home
+configuration and Conky files.
+
+## Fresh Install
+
+```sh
+git clone https://github.com/GaboEI/WatchdogVPN.git
+cd WatchdogVPN
+./doctor.sh
+./install.sh
+VPN
+```
+
+For private repository access, use the SSH clone URL:
+
+```sh
+git clone git@github.com:GaboEI/WatchdogVPN.git
+```

@@ -23,6 +23,8 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | See how it evolved | [Project History](docs/project-history.md) |
 | Review security tradeoffs | [Security](docs/security.md) and [Threat Model](docs/threat-model.md) |
 | Validate a machine | [Validation](docs/validation.md) |
+| Review release status | [v0.1.0-alpha notes](docs/release-notes-v0.1.0-alpha.md) |
+| Prepare a release | [Release Checklist](docs/release-checklist.md) |
 | Check planned work | [Roadmap](docs/roadmap.md) |
 
 ## Core Capabilities
@@ -201,7 +203,7 @@ tests/              Syntax and runtime validation helpers
 
 - `v0.1.0-alpha` is not a stable 1.0 release.
 - Debian support has a distro adapter, but still needs a clean-system validation pass.
-- Release notes and clean Debian validation are still required before the repository is treated as public-ready.
+- Clean Debian validation is still required before the repository is treated as public-ready.
 - The current TUI is functional but still monolithic; a gradual module split is planned.
 - Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
 - The installer can guide installation of the official AdGuard VPN CLI, but external installer verification is not fully cryptographically pinned yet.
@@ -235,6 +237,8 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [Threat Model](docs/threat-model.md)
 - [Demo](docs/demo.md)
 - [Validation](docs/validation.md)
+- [v0.1.0-alpha Release Notes](docs/release-notes-v0.1.0-alpha.md)
+- [Release Checklist](docs/release-checklist.md)
 - [Roadmap](docs/roadmap.md)
 - [Install Contracts](docs/install-contracts.md)
 
