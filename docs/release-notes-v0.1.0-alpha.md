@@ -22,6 +22,7 @@ and CI.
 - Guided install/update/uninstall flows with backups and preservation contracts.
 - Read-only `doctor.sh` preflight diagnostics.
 - GitHub Actions CI for syntax and systemd validation.
+- Unit behavior tests with mocks for truth-check and watchdog decisions.
 - Security, threat model, project history, demo and validation documentation.
 
 ## Supported and Targeted Platforms
@@ -52,6 +53,7 @@ and CI.
 - [x] Product README and support matrix.
 - [x] Portfolio-review license notice.
 - [x] CI workflow.
+- [x] Unit behavior tests for core decision logic.
 - [x] Security and threat-model documentation.
 - [x] Demo screenshots and validation examples.
 - [x] Project history documentation.

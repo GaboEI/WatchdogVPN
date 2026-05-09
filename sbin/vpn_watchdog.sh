@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LOG_FILE="/var/log/myvpn/vpn-watchdog.log"
-LAST_RUN_FILE="/run/vpn-watchdog.last_run"
-MIN_RUN_GAP=30
+LOG_FILE="${VPN_WATCHDOG_LOG_FILE:-/var/log/myvpn/vpn-watchdog.log}"
+LAST_RUN_FILE="${VPN_WATCHDOG_LAST_RUN_FILE:-/run/vpn-watchdog.last_run}"
+MIN_RUN_GAP="${VPN_WATCHDOG_MIN_RUN_GAP:-30}"
 
-ROTATE_SCRIPT="/usr/local/sbin/vpn_rotate.sh"
-TRUTH_BIN="/usr/local/bin/vpn_truth_check"
-AUTH_BIN="/usr/local/bin/vpn_auth_check"
-NOTIFY_BIN="/usr/local/bin/vpn_notify"
+ROTATE_SCRIPT="${VPN_WATCHDOG_ROTATE_SCRIPT:-/usr/local/sbin/vpn_rotate.sh}"
+TRUTH_BIN="${VPN_WATCHDOG_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
+AUTH_BIN="${VPN_WATCHDOG_AUTH_BIN:-/usr/local/bin/vpn_auth_check}"
+NOTIFY_BIN="${VPN_WATCHDOG_NOTIFY_BIN:-/usr/local/bin/vpn_notify}"
 LOG_COMPONENT="watchdog"
 
-UNKNOWN_IP_COUNT_FILE="/run/vpn-watchdog.unknown_ip_count"
-AUTH_NOTIFY_FILE="/run/vpn-watchdog.auth_notify.last"
-AUTH_NOTIFY_GAP=1800
+UNKNOWN_IP_COUNT_FILE="${VPN_WATCHDOG_UNKNOWN_IP_COUNT_FILE:-/run/vpn-watchdog.unknown_ip_count}"
+AUTH_NOTIFY_FILE="${VPN_WATCHDOG_AUTH_NOTIFY_FILE:-/run/vpn-watchdog.auth_notify.last}"
+AUTH_NOTIFY_GAP="${VPN_WATCHDOG_AUTH_NOTIFY_GAP:-1800}"
 UNKNOWN_IP_THRESHOLD="${UNKNOWN_IP_THRESHOLD:-3}"
+SETTLE_SECONDS="${VPN_WATCHDOG_SETTLE_SECONDS:-6}"
 FORCE="${VPN_WATCHDOG_FORCE:-0}"
 for arg in "$@"; do
   case "$arg" in
@@ -218,7 +219,7 @@ run_rotate_remediation() {
     return 1
   fi
 
-  sleep 6
+  sleep "$SETTLE_SECONDS"
   set_health_state
 
   if [[ "$HEALTH_STATE" == "OK" ]]; then

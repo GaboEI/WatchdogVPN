@@ -9,8 +9,28 @@ These checks do not modify the system:
 ```sh
 python3 -m py_compile tui/VPN
 bash tests/syntax.sh
+bash tests/unit.sh
 ./doctor.sh
 ```
+
+## Unit Behavior Checks
+
+`tests/unit.sh` runs behavior checks with mocked system commands and temporary
+state. These tests do not require a real VPN tunnel, do not write to `/etc`,
+`/run`, `/var` or systemd, and do not restart services.
+
+Current coverage:
+
+- `vpn_truth_check` state contract:
+  - `UP` when `tun0`, route and public IP are healthy
+  - `DEGRADED` when the tunnel exists but route or public IP is unhealthy
+  - `DOWN` when the tunnel is absent
+  - `--shell`, `--quiet` and `--json` output behavior
+- `vpn_watchdog.sh` decision behavior:
+  - healthy VPN state does not trigger rotation
+  - hard `DOWN` state triggers remediation
+  - unknown public IP is treated as a soft failure until the configured
+    threshold is reached
 
 ## System-Level Checks
 

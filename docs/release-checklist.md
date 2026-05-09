@@ -16,6 +16,8 @@ and presented as a public release.
 - [x] Portfolio-review license notice exists while no public license is selected.
 - [x] CI runs on push and pull request.
 - [x] CI validates Python compilation, Bash syntax and systemd units.
+- [x] CI runs unit behavior tests with mocks for truth checks and watchdog
+  decisions.
 - [x] Security and threat-model documentation exist.
 - [x] Demo screenshots and real command examples exist.
 - [x] Release notes exist for the alpha candidate.

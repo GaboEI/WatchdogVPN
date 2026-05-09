@@ -186,7 +186,7 @@ conky/              Optional Conky integration
 desktop/            Optional desktop launcher
 adguard-home/       Optional DNS advanced integration
 docs/               Architecture, validation and operating notes
-tests/              Syntax and runtime validation helpers
+tests/              Syntax, unit behavior and runtime validation helpers
 ```
 
 ## Key Design Decisions
@@ -216,6 +216,7 @@ Current validation commands:
 ```sh
 python3 -m py_compile tui/VPN
 bash tests/syntax.sh
+bash tests/unit.sh
 systemd-analyze verify systemd/*.service systemd/*.timer
 ./doctor.sh
 ```

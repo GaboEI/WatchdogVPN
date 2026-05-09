@@ -29,6 +29,9 @@ jobs:
       - name: Bash syntax
         run: bash tests/syntax.sh
 
+      - name: Unit behavior tests
+        run: bash tests/unit.sh
+
       - name: Systemd unit verification
         run: |
           if ! getent passwd adgvpn >/dev/null; then

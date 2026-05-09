@@ -105,6 +105,8 @@ complete.
   tag.
 - Add GitHub Actions CI for Python/Bash syntax, systemd unit verification and
   advisory shell style checks.
+- Add unit behavior tests with mocks for `vpn_truth_check` and watchdog
+  remediation decisions.
 - Add security and threat-model documentation covering privileges, DNS safety,
   external installer risk and current hardening gaps.
 - Add an operational audit for excessive VPN rotations and identify
