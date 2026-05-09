@@ -38,3 +38,4 @@
 - Add GitHub Actions CI for Python/Bash syntax, systemd unit verification and advisory shell style checks.
 - Add security and threat-model documentation covering privileges, DNS safety, external installer risk and current hardening gaps.
 - Add an operational audit for excessive VPN rotations and identify timer/restart-triggered rotations as the main suspect after real connectivity failures are excluded.
+- Remove the 5-minute activation trigger from `vpn-rotate.timer` so automatic location rotation only runs after boot, on the stable interval, or through real remediation paths.

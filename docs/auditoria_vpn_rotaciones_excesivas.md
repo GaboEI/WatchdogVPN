@@ -92,7 +92,6 @@ Configuracion actual:
 
 ```ini
 OnBootSec=5min
-OnActiveSec=5min
 OnUnitInactiveSec=3h
 AccuracySec=1min
 Persistent=true
@@ -100,16 +99,20 @@ Persistent=true
 
 Hallazgos:
 
+- `OnBootSec=5min` conserva una rotacion inicial tras encender o reiniciar la
+  maquina.
 - `OnUnitInactiveSec=3h` representa la politica estable esperada.
-- `OnActiveSec=5min` puede provocar una rotacion 5 minutos despues de activar o
-  reiniciar el timer.
+- `OnActiveSec=5min` fue retirado porque podia provocar una rotacion 5 minutos
+  despues de activar o reiniciar el timer.
 - Durante sesiones de update, debug o reinicios manuales del timer, ese disparo
-  corto puede generar rotaciones extra aunque la VPN este sana.
+  corto generaba rotaciones extra aunque la VPN estuviera sana.
 - El estado actual del timer muestra comportamiento estable: proxima rotacion a
   ~3 horas desde la ultima ejecucion.
 
-Conclusion: es el principal sospechoso para rotaciones sanas cercanas despues de
-updates o reinicios de timer.
+Conclusion: `OnActiveSec=5min` era el principal sospechoso para rotaciones sanas
+cercanas despues de updates o reinicios de timer. La politica aceptada para
+rotacion automatica queda limitada a arranque, intervalo estable de 3 horas y
+remediacion por fallo real.
 
 ## Evidencia de rotaciones justificadas
 
@@ -220,12 +223,13 @@ Revisar si `OnActiveSec=5min` debe mantenerse en `vpn-rotate.timer`.
 Opcion conservadora:
 
 - mantener `OnUnitInactiveSec=3h`;
-- quitar o aumentar `OnActiveSec=5min`;
+- quitar `OnActiveSec=5min` de `vpn-rotate.timer`;
 - conservar firstboot separado para el arranque.
 
-La razon: `OnActiveSec=5min` es util para que el timer no quede sin siguiente
-disparo al reiniciarse, pero puede causar rotaciones extra despues de updates o
-reinicios manuales.
+La razon: `OnActiveSec=5min` es util para timers livianos, pero en rotacion de
+pais puede causar rotaciones extra despues de updates o reinicios manuales.
+Rotar pais reinicia partes internas de AdGuard VPN y debe tratarse como una
+accion pesada.
 
 ### Accion de hardening: no rotar si todo esta sano
 
@@ -260,6 +264,7 @@ de estabilizar, registro `NO ACTION`.
 probable no es un fallo del tunel, sino activaciones del timer, reinicios del
 timer durante updates/pruebas o falta de trazabilidad para distinguir origen.
 
-La siguiente mejora tecnica deberia ser agregar trazabilidad de origen y revisar
-la politica `OnActiveSec=5min` para que la automatizacion no parezca mas agresiva
-de lo necesario.
+La primera correccion aplicada fue retirar `OnActiveSec=5min` de
+`vpn-rotate.timer`. La siguiente mejora tecnica deberia ser agregar trazabilidad
+de origen para distinguir `timer`, `watchdog`, `dispatcher`, `manual` y `tui` sin
+depender solo de correlacion por timestamps.
