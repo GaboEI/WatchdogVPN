@@ -175,7 +175,7 @@ This does not remove the official AdGuard VPN CLI or the user's AdGuard account/
 ```text
 bin/                User-facing helper commands
 sbin/               Privileged runtime scripts
-tui/                Terminal UI
+tui/                Terminal UI and support modules
 systemd/            Services and timers
 networkmanager/     NetworkManager dispatcher hooks
 etc/                Product configuration templates
@@ -204,7 +204,7 @@ tests/              Syntax, unit behavior and runtime validation helpers
 - `v0.1.0-alpha` is not a stable 1.0 release.
 - Debian support has a distro adapter, but still needs a clean-system validation pass.
 - Clean Debian validation is still required before the repository is treated as public-ready.
-- The current TUI is functional but still monolithic; a gradual module split is planned.
+- The current TUI is functional and the gradual module split has started, but most rendering/action flow still lives in `tui/VPN`.
 - Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
 - The installer can guide installation of the official AdGuard VPN CLI, but external installer verification is not fully cryptographically pinned yet.
 - The first backend is AdGuard VPN CLI. WireGuard/private tunnel support is architectural direction, not implemented behavior.
@@ -214,7 +214,7 @@ tests/              Syntax, unit behavior and runtime validation helpers
 Current validation commands:
 
 ```sh
-python3 -m py_compile tui/VPN
+python3 -m compileall -q tui tests/unit/test_tui_modules.py
 bash tests/syntax.sh
 bash tests/unit.sh
 systemd-analyze verify systemd/*.service systemd/*.timer

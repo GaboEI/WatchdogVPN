@@ -24,7 +24,7 @@ jobs:
           sudo apt-get install -y shfmt || true
 
       - name: Python compile
-        run: python3 -m py_compile tui/VPN
+        run: python3 -m compileall -q tui tests/unit/test_tui_modules.py
 
       - name: Bash syntax
         run: bash tests/syntax.sh

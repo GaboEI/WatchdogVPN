@@ -7,7 +7,7 @@ This repository separates lightweight validation from system-level validation.
 These checks do not modify the system:
 
 ```sh
-python3 -m py_compile tui/VPN
+python3 -m compileall -q tui tests/unit/test_tui_modules.py
 bash tests/syntax.sh
 bash tests/unit.sh
 ./doctor.sh
@@ -31,6 +31,9 @@ Current coverage:
   - hard `DOWN` state triggers remediation
   - unknown public IP is treated as a soft failure until the configured
     threshold is reached
+- TUI module behavior:
+  - extracted constants, formatters, parsers and validators keep stable behavior
+  - installed layout with `VPN` plus `watchdogvpn/` remains importable
 
 ## System-Level Checks
 

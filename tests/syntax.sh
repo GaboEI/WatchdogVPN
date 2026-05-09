@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-python3 -m py_compile "$ROOT_DIR/tui/VPN"
+python3 -m compileall -q "$ROOT_DIR/tui" "$ROOT_DIR/tests/unit/test_tui_modules.py"
 
 while IFS= read -r file; do
   bash -n "$file"

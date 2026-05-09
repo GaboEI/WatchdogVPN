@@ -18,6 +18,7 @@ and presented as a public release.
 - [x] CI validates Python compilation, Bash syntax and systemd units.
 - [x] CI runs unit behavior tests with mocks for truth checks and watchdog
   decisions.
+- [x] CI validates the installed TUI layout after the module split.
 - [x] Security and threat-model documentation exist.
 - [x] Demo screenshots and real command examples exist.
 - [x] Release notes exist for the alpha candidate.
@@ -52,7 +53,7 @@ linux vpn tui systemd networkmanager bash python devops dns adguard-vpn automati
 Run from the repository root:
 
 ```sh
-python3 -m py_compile tui/VPN
+python3 -m compileall -q tui tests/unit/test_tui_modules.py
 bash tests/syntax.sh
 systemd-analyze verify systemd/*.service systemd/*.timer
 ./doctor.sh

@@ -190,6 +190,12 @@ fi
 
 section "Repository Runtime"
 check_repo_file "tui/VPN" exec
+check_repo_file "tui/watchdogvpn/__init__.py"
+check_repo_file "tui/watchdogvpn/constants.py"
+check_repo_file "tui/watchdogvpn/formatting.py"
+check_repo_file "tui/watchdogvpn/parsers.py"
+check_repo_file "tui/watchdogvpn/styles.py"
+check_repo_file "tui/watchdogvpn/validators.py"
 check_repo_file "bin/vpn_truth_check" exec
 check_repo_file "bin/vpn_auth_check" exec
 check_repo_file "bin/vpn_dns_rescue" exec
@@ -215,7 +221,8 @@ for path in \
   /usr/local/sbin/vpn_set \
   /usr/local/sbin/vpn_rotate.sh \
   /usr/local/sbin/vpn_watchdog.sh \
-  "$HOME/.local/bin/VPN"
+  "$HOME/.local/bin/VPN" \
+  "$HOME/.local/bin/watchdogvpn"
 do
   if [[ -e "$path" ]]; then
     installed_any=1

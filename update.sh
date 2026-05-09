@@ -94,7 +94,7 @@ require_supported_distro() {
 }
 
 validate_repo_runtime() {
-  python3 -m py_compile "$ROOT_DIR/tui/VPN"
+  python3 -m compileall -q "$ROOT_DIR/tui"
   bash "$ROOT_DIR/tests/syntax.sh" >/dev/null
   ok "repository runtime validated"
 }

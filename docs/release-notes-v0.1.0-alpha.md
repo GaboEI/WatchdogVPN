@@ -11,6 +11,10 @@ and CI.
 
 - Terminal control center for VPN state, locations, actions, DNS, exclusions,
   timers and logs.
+- Initial TUI module split for constants, parsers, formatting helpers and
+  validators.
+- Installer/update support for deploying the extracted TUI support package next
+  to the `VPN` launcher.
 - Real-state validation through `vpn_truth_check` instead of trusting only
   `adguardvpn-cli status`.
 - Watchdog service for automatic recovery when the tunnel, route or public IP
@@ -39,8 +43,8 @@ and CI.
 - This is not a stable 1.0 release.
 - The repository is still private and under portfolio-review licensing.
 - Debian has not completed a clean-system validation pass.
-- The TUI is still a monolithic Python file and is planned for gradual modular
-  refactor.
+- The TUI still contains most rendering and action flow in `tui/VPN`, but the
+  gradual module split has started.
 - Some TUI command helpers still use `shell=True`; this is tracked as hardening
   work.
 - External installer verification for the official AdGuard VPN CLI is not yet

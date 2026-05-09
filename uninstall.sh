@@ -142,6 +142,7 @@ remove_runtime_files() {
   remove_root_path /usr/local/sbin/vpn_watchdog.sh
 
   remove_user_path "$HOME/.local/bin/VPN"
+  remove_user_path "$HOME/.local/bin/watchdogvpn"
   remove_user_path "$HOME/.local/share/applications/watchdogvpn.desktop"
   remove_user_path "$HOME/.local/share/applications/vpn-control-center.desktop"
   desktop_dir="$(xdg-user-dir DESKTOP 2>/dev/null || true)"

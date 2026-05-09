@@ -22,7 +22,7 @@ The repository remains private until the 1.0 milestone is complete.
 Acceptance criteria:
 
 - No personal paths or credentials in runtime files.
-- `python3 -m py_compile tui/VPN` passes.
+- `python3 -m compileall -q tui tests/unit/test_tui_modules.py` passes.
 - `bash tests/syntax.sh` passes.
 - `./doctor.sh` runs without modifying the system.
 

@@ -49,6 +49,28 @@ install_user_file() {
   run_step install -m "$mode" "$src" "$dest"
 }
 
+install_user_dir() {
+  local src="$1" dest="$2"
+  run_step install -d -m 0755 "$(dirname "$dest")"
+  if [[ -e "$dest" ]]; then
+    if [[ "$INSTALL_DRY_RUN" == "1" ]]; then
+      printf '[DRY-RUN] backup user directory %s\n' "$dest"
+    else
+      local stamp backup
+      stamp="$(date +%Y%m%d-%H%M%S)"
+      backup="$dest.$stamp.bak"
+      cp -a "$dest" "$backup"
+      printf '[BACKUP] %s -> %s\n' "$dest" "$backup"
+    fi
+  fi
+  if [[ "$INSTALL_DRY_RUN" == "1" ]]; then
+    printf '[DRY-RUN] install user directory %s -> %s\n' "$src" "$dest"
+    return 0
+  fi
+  rm -rf -- "$dest"
+  cp -a "$src" "$dest"
+}
+
 create_root_dir() {
   local path="$1" mode="${2:-0755}"
   run_step sudo install -d -m "$mode" -o root -g root "$path"
