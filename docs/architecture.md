@@ -12,8 +12,8 @@ only in installation and dependency detection.
 ## Core Runtime
 
 - `tui/VPN`: compatibility entrypoint and main terminal UI loop
-- `tui/watchdogvpn/`: extracted command runners, constants, parsers, formatters
-  and validators
+- `tui/watchdogvpn/`: extracted command runners, state collectors, constants,
+  parsers, formatters and validators
 - `bin/vpnctl`: user command surface
 - `bin/vpn_truth_check`: source of truth for tunnel/routing/IP state
 - `bin/vpn_auth_check`: AdGuard VPN session check

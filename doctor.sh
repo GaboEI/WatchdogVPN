@@ -195,6 +195,7 @@ check_repo_file "tui/watchdogvpn/commands.py"
 check_repo_file "tui/watchdogvpn/constants.py"
 check_repo_file "tui/watchdogvpn/formatting.py"
 check_repo_file "tui/watchdogvpn/parsers.py"
+check_repo_file "tui/watchdogvpn/state.py"
 check_repo_file "tui/watchdogvpn/styles.py"
 check_repo_file "tui/watchdogvpn/validators.py"
 check_repo_file "bin/vpn_truth_check" exec

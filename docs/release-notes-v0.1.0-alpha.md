@@ -11,8 +11,8 @@ and CI.
 
 - Terminal control center for VPN state, locations, actions, DNS, exclusions,
   timers and logs.
-- Initial TUI module split for command helpers, constants, parsers, formatting
-  helpers and validators.
+- Initial TUI module split for command helpers, state collectors, constants,
+  parsers, formatting helpers and validators.
 - Installer/update support for deploying the extracted TUI support package next
   to the `VPN` launcher.
 - Real-state validation through `vpn_truth_check` instead of trusting only

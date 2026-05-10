@@ -8,6 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tui"))
 
 from watchdogvpn import commands
+from watchdogvpn import state
 from watchdogvpn.constants import MENU, MENU_ITEMS
 from watchdogvpn.formatting import display_auth_status, display_vpn_status, format_span, strip_ansi
 from watchdogvpn.parsers import parse_event_line, parse_trace_line
@@ -75,6 +76,41 @@ class TuiModuleTests(unittest.TestCase):
             self.assertEqual(commands.timer_interval("vpn-rotate.timer"), "3h")
         with patch.object(commands, "run", return_value="2h"):
             self.assertEqual(commands.timer_countdown("vpn-rotate.timer"), "2h")
+
+    def test_state_key_value_parsing(self):
+        truth_raw = "STATUS=UP\nTUN=UP\nROUTE=TUN\nIP=OK\nIP_ADDR=198.51.100.10\n"
+        auth_raw = "AUTH=OK\nREASON=ok\nCLI_RC=0\nDETAIL=\n"
+        with patch.object(state, "run", return_value=truth_raw):
+            parsed = state.truth_data()
+            self.assertEqual(parsed["STATUS"], "UP")
+            self.assertEqual(parsed["ROUTE"], "TUN")
+        with patch.object(state, "run", return_value=auth_raw):
+            parsed = state.auth_data()
+            self.assertEqual(parsed["AUTH"], "OK")
+            self.assertEqual(parsed["REASON"], "ok")
+
+    def test_state_snapshots_with_mocks(self):
+        with patch.object(state, "run", return_value="example.com\nexample.org\n# ignored\n"):
+            self.assertEqual(state.bypass_domains(), ["example.com", "example.org"])
+
+        with patch.object(state, "logrotate_policy", return_value={"interval": "hourly"}), \
+             patch.object(state, "log_size", return_value="1.0K"), \
+             patch.object(state, "rotated_log_count", return_value=2), \
+             patch.object(state, "service_state", return_value="active"), \
+             patch.object(state, "timer_enabled", return_value="enabled"), \
+             patch.object(state, "timer_trigger", return_value="soon"), \
+             patch.object(state, "timer_countdown", return_value="5min"):
+            snapshot = state.housekeeping_snapshot()
+            self.assertEqual(snapshot["timer_state"], "active")
+            self.assertEqual(snapshot["logs"][0]["size"], "1.0K")
+
+        with patch.object(state, "tail_plain_lines", return_value=[
+            "2026-05-09T01:02:03+03:00 | watchdog | WARN | soft_fail | count=1",
+            "legacy line",
+        ]):
+            snapshot = state.trace_snapshot()
+            self.assertEqual(snapshot["counts"]["WARN"], 4)
+            self.assertEqual(snapshot["legacy"], 4)
 
 
 if __name__ == "__main__":
