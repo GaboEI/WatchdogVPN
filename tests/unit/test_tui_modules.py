@@ -2,10 +2,12 @@
 import pathlib
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tui"))
 
+from watchdogvpn import commands
 from watchdogvpn.constants import MENU, MENU_ITEMS
 from watchdogvpn.formatting import display_auth_status, display_vpn_status, format_span, strip_ansi
 from watchdogvpn.parsers import parse_event_line, parse_trace_line
@@ -58,6 +60,21 @@ class TuiModuleTests(unittest.TestCase):
         self.assertEqual(valid_timer_interval("0h")[0], False)
         self.assertTrue(valid_location_hint("Berlin"))
         self.assertFalse(valid_location_hint("sin valor"))
+
+    def test_command_runner_contract(self):
+        self.assertEqual(commands.run("printf ok"), "ok")
+        proc = commands.run_process("printf ok")
+        self.assertIsNotNone(proc)
+        self.assertEqual(proc.stdout, "ok")
+        self.assertEqual(proc.returncode, 0)
+
+    def test_systemd_helpers_parse_mocked_output(self):
+        with patch.object(commands, "run", return_value="active"):
+            self.assertEqual(commands.service_state("vpn-watchdog.timer"), "active")
+        with patch.object(commands, "run", return_value="3h"):
+            self.assertEqual(commands.timer_interval("vpn-rotate.timer"), "3h")
+        with patch.object(commands, "run", return_value="2h"):
+            self.assertEqual(commands.timer_countdown("vpn-rotate.timer"), "2h")
 
 
 if __name__ == "__main__":

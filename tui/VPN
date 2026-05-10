@@ -5,7 +5,6 @@ import re
 import select
 import shlex
 import shutil
-import subprocess
 import sys
 import termios
 import threading
@@ -39,10 +38,22 @@ from watchdogvpn.constants import (
     WATCHDOG_SERVICE,
     WATCHDOG_TIMER,
 )
+from watchdogvpn.commands import (
+    run,
+    run_command,
+    run_process,
+    run_with_input,
+    service_age,
+    service_state,
+    sudo_probe,
+    timer_countdown,
+    timer_enabled,
+    timer_interval,
+    timer_trigger,
+)
 from watchdogvpn.formatting import (
     display_auth_status,
     display_vpn_status,
-    format_span,
     strip_ansi,
 )
 from watchdogvpn.parsers import parse_event_line, parse_trace_line
@@ -53,117 +64,6 @@ STATUS_LINE = "Listo"
 COUNTRY_CACHE = {}
 SUDO_KEEPALIVE_STOP = threading.Event()
 SUDO_KEEPALIVE_THREAD = None
-
-
-def run(cmd: str, timeout: int = 8) -> str:
-    try:
-        out = subprocess.run(
-            cmd,
-            shell=True,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            executable="/bin/bash",
-        )
-        text = ((out.stdout or "") + (out.stderr or "")).strip()
-        return text
-    except Exception as exc:
-        return f"ERROR: {exc}"
-
-
-def run_with_input(cmd: str, data: str, timeout: int = 8):
-    try:
-        return subprocess.run(
-            cmd,
-            shell=True,
-            text=True,
-            input=data,
-            capture_output=True,
-            timeout=timeout,
-            executable="/bin/bash",
-        )
-    except Exception:
-        return None
-
-
-def run_command(cmd: str, timeout: int = 8):
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            shell=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            executable="/bin/bash",
-        )
-        return proc
-    except Exception:
-        return None
-
-
-def service_state(unit: str) -> str:
-    return run(f"systemctl is-active {shlex.quote(unit)} 2>/dev/null || true", 4) or "unknown"
-
-
-def timer_enabled(unit: str) -> str:
-    return run(f"systemctl is-enabled {shlex.quote(unit)} 2>/dev/null || true", 4) or "unknown"
-
-
-def timer_interval(unit: str) -> str:
-    cmd = (
-        "awk -F= "
-        + shlex.quote(
-            r'/^[[:space:]]*OnUnitInactiveSec=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; found=1; exit}'
-            r' /^[[:space:]]*OnUnitActiveSec=/{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); active=$2}'
-            r' END{if (!found && active != "") print active}'
-        )
-        + f" /etc/systemd/system/{shlex.quote(unit)} 2>/dev/null || true"
-    )
-    return run(cmd, 4) or "?"
-
-
-def monotonic_usec() -> int:
-    try:
-        with open("/proc/uptime", "r", encoding="utf-8") as fh:
-            first = fh.read().strip().split()[0]
-        return int(float(first) * 1_000_000)
-    except Exception:
-        return 0
-
-
-def systemctl_prop(unit: str, prop: str) -> str:
-    return run(
-        f"systemctl show {shlex.quote(unit)} -p {shlex.quote(prop)} --value 2>/dev/null || true",
-        4,
-    ).strip()
-
-
-def service_age(unit: str) -> str:
-    active_state = systemctl_prop(unit, "ActiveState")
-    entered = systemctl_prop(unit, "ActiveEnterTimestampMonotonic")
-    now = monotonic_usec()
-    if active_state != "active" or not entered.isdigit() or now <= 0:
-        return ""
-    delta = max(0, (now - int(entered)) // 1_000_000)
-    return format_span(delta)
-
-
-def timer_countdown(unit: str) -> str:
-    raw = run(
-        f"systemctl status {shlex.quote(unit)} --no-pager -n 0 2>/dev/null "
-        + r"""| sed -n 's/.*;[[:space:]]*\(.*\)[[:space:]]left/\1/p' | head -n1""",
-        6,
-    ).strip()
-    return re.sub(r"\s+", " ", raw) if raw else ""
-
-
-def timer_trigger(unit: str) -> str:
-    raw = run(
-        f"systemctl status {shlex.quote(unit)} --no-pager -n 0 2>/dev/null "
-        + r"""| sed -n 's/^[[:space:]]*Trigger:[[:space:]]*//p' | head -n1""",
-        6,
-    ).strip()
-    return re.sub(r"\s+", " ", raw) if raw else "sin dato"
 
 
 def truth_data():
@@ -1322,21 +1222,6 @@ def prompt_secret(title: str, prompt: str):
             value += ch.decode("utf-8", "ignore")
 
 
-def sudo_probe(timeout: int = 5) -> bool:
-    try:
-        probe = subprocess.run(
-            "sudo -n -v",
-            shell=True,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            executable="/bin/bash",
-        )
-        return probe.returncode == 0
-    except Exception:
-        return False
-
-
 def sudo_keepalive_loop():
     while not SUDO_KEEPALIVE_STOP.wait(SUDO_KEEPALIVE_SECONDS):
         sudo_probe()
@@ -1394,14 +1279,11 @@ def initialize_sudo() -> bool:
 
 
 def can_list_locations_without_prompt() -> bool:
-    probe = subprocess.run(
+    probe = run_process(
         f"timeout 4s sudo -n -u adgvpn -H {shlex.quote(AG)} version >/dev/null 2>&1",
-        shell=True,
-        text=True,
-        capture_output=True,
-        executable="/bin/bash",
+        5,
     )
-    return probe.returncode == 0
+    return bool(probe and probe.returncode == 0)
 
 
 def load_locations():
