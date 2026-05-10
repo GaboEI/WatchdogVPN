@@ -20,8 +20,14 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
-for name in ("truth_data", "country_code", "current_location"):
+for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count"):
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
+
+for name in ("strip_ansi",):
+    assert name in module.load_locations.__globals__, f"missing load_locations global: {name}"
+
+for name in ("bypass_count",):
+    assert name in module.section_meta.__globals__, f"missing section_meta global: {name}"
 PY
 launcher_output="$("$tmpdir/VPN")"
 [[ "$launcher_output" == "VPN requiere una terminal interactiva." ]]

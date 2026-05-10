@@ -55,6 +55,7 @@ from watchdogvpn.actions import (
     stop_watchdog_timer_command,
 )
 from watchdogvpn.parsers import parse_event_line
+from watchdogvpn.formatting import strip_ansi
 from watchdogvpn.render import (
     box,
     clear,
@@ -68,6 +69,7 @@ from watchdogvpn.render import (
 )
 from watchdogvpn.styles import BG, BOLD, CSI, DIM, FG, RESET
 from watchdogvpn.state import (
+    bypass_count,
     bypass_domains,
     cli_status,
     country_code,
