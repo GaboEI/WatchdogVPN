@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml/badge.svg)](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml)
 
-- **Status:** `v0.1.0-alpha candidate`
+- **Status:** `v0.1.0-alpha`
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 - **Primary backend:** AdGuard VPN CLI
 - **Supported today:** Ubuntu 24.04 and Arch Linux validation paths
@@ -25,6 +25,7 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | Validate a machine | [Validation](docs/validation.md) |
 | Review release status | [v0.1.0-alpha notes](docs/release-notes-v0.1.0-alpha.md) |
 | Prepare a release | [Release Checklist](docs/release-checklist.md) |
+| Configure GitHub About | [GitHub About](docs/github-about.md) |
 | Check planned work | [Roadmap](docs/roadmap.md) |
 
 ## Core Capabilities
@@ -59,7 +60,8 @@ More screenshots and command examples are available in [Demo](docs/demo.md).
 
 ## Status
 
-WatchdogVPN is an installable Linux product candidate prepared for portfolio review. It is not a stable public 1.0 release yet.
+WatchdogVPN is an installable Linux alpha release. It is useful for controlled
+testing and portfolio review, but it is not a stable public 1.0 release yet.
 
 Current support status:
 
@@ -203,7 +205,6 @@ tests/              Syntax, unit behavior and runtime validation helpers
 
 - `v0.1.0-alpha` is not a stable 1.0 release.
 - Debian support has a distro adapter, but still needs a clean-system validation pass.
-- Clean Debian validation is still required before the repository is treated as public-ready.
 - The current TUI is functional and the gradual module split has started, but most rendering/action flow still lives in `tui/VPN`.
 - Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
 - The installer can guide installation of the official AdGuard VPN CLI, but external installer verification is not fully cryptographically pinned yet.
@@ -240,6 +241,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [Validation](docs/validation.md)
 - [v0.1.0-alpha Release Notes](docs/release-notes-v0.1.0-alpha.md)
 - [Release Checklist](docs/release-checklist.md)
+- [GitHub About](docs/github-about.md)
 - [Roadmap](docs/roadmap.md)
 - [Install Contracts](docs/install-contracts.md)
 

@@ -6,8 +6,9 @@ and presented as a public release.
 ## Current Target
 
 - Target version: `v0.1.0-alpha`
-- Current status: alpha candidate
-- Intended audience: portfolio reviewers and controlled Linux testers
+- Current status: alpha release preparation
+- Intended audience: portfolio reviewers, Linux automation reviewers and
+  controlled Linux testers
 - Public license: GPL-3.0-or-later
 
 ## Required Before Tagging `v0.1.0-alpha`
@@ -23,12 +24,13 @@ and presented as a public release.
 - [x] External installer risks and manual-first alternatives are documented.
 - [x] Install/uninstall security contracts are covered by unit checks.
 - [x] Demo screenshots and real command examples exist.
-- [x] Release notes exist for the alpha candidate.
+- [x] Release notes exist for the alpha release.
 - [x] Changelog is grouped by release.
 - [x] Ubuntu 24.04 real-machine validation passed.
 - [x] Arch Linux clean-VM validation passed.
 - [ ] Debian clean-system validation passed.
 - [x] Final public-license decision is made.
+- [x] GitHub About description, topics and website/demo link are documented.
 - [ ] GitHub About description, topics and website/demo link are configured.
 - [ ] Final release tag is created.
 - [ ] GitHub release entry is published with release notes.
@@ -48,6 +50,12 @@ Suggested topics:
 
 ```text
 linux vpn tui systemd networkmanager bash python devops dns adguard-vpn automation resilience
+```
+
+Suggested website/demo link:
+
+```text
+https://github.com/GaboEI/WatchdogVPN/blob/main/docs/demo.md
 ```
 
 ## Validation Commands

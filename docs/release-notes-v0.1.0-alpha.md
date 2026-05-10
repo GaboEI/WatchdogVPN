@@ -1,9 +1,9 @@
-# WatchdogVPN v0.1.0-alpha Candidate Release Notes
+# WatchdogVPN v0.1.0-alpha Release Notes
 
-Status: alpha candidate.
+Status: alpha release.
 
-This is the first product-shaped WatchdogVPN release candidate. It packages the
-working local VPN resilience stack into a reproducible repository with
+This is the first product-shaped WatchdogVPN alpha release. It packages the
+working local VPN resilience stack into a reproducible repository with an
 installer, updater, uninstaller, TUI, systemd units, DNS tooling, documentation
 and CI.
 
@@ -57,7 +57,7 @@ and CI.
 - The first backend is AdGuard VPN CLI. WireGuard/private backend support is not
   implemented yet.
 
-## Release Candidate Checklist
+## Release Checklist
 
 - [x] Product README and support matrix.
 - [x] GPL-3.0-or-later license.

@@ -171,4 +171,4 @@ identifiable engineering stages:
 9. Multi-distro product packaging.
 10. CI, documentation, security review and demo assets.
 
-That path is what shaped WatchdogVPN into the current alpha candidate.
+That path is what shaped WatchdogVPN into the current alpha release.

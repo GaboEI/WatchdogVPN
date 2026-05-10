@@ -2,8 +2,7 @@
 
 All notable product-facing changes are documented here.
 
-WatchdogVPN is currently an alpha candidate being prepared for the first public
-release.
+WatchdogVPN is currently being prepared for the first public alpha release.
 
 ## Unreleased
 
@@ -12,7 +11,7 @@ release.
   summaries.
 - Switch the project license from portfolio-review-only to GPL-3.0-or-later.
 
-## v0.1.0-alpha candidate - 2026-05-09
+## v0.1.0-alpha - 2026-05-09
 
 ### Productization
 
@@ -110,8 +109,7 @@ release.
 ### Documentation, CI and Security
 
 - Add README alpha status, support matrix, license state and known limitations.
-- Add alpha candidate release notes and a release checklist for the first public
-  tag.
+- Add alpha release notes and a release checklist for the first public tag.
 - Add GitHub Actions CI for Python/Bash syntax, systemd unit verification and
   advisory shell style checks.
 - Add unit behavior tests with mocks for `vpn_truth_check` and watchdog
