@@ -18,18 +18,13 @@ from watchdogvpn.constants import (
     AUTO_REFRESH_SECONDS,
     DASHBOARD_REFRESH_SECONDS,
     DNS_PROFILE_LABELS,
-    DNSCTL,
     LOGROTATE_CONF,
     LOGROTATE_TIMER,
     MENU,
     MENU_ITEMS,
-    NO_VPN,
-    ROTATE_FIRSTBOOT_TIMER,
     ROTATE_TIMER,
     SUDO_KEEPALIVE_SECONDS,
-    TRUTH_BIN,
     VPN_SET,
-    VPNCTL,
     WATCHDOG_TIMER,
 )
 from watchdogvpn.commands import (
@@ -40,6 +35,25 @@ from watchdogvpn.commands import (
     service_state,
     sudo_probe,
     timer_interval,
+)
+from watchdogvpn.actions import (
+    add_bypass_domain_command,
+    disconnect_vpn_command,
+    dns_apply_command,
+    dns_current_command,
+    dns_rollback_command,
+    list_bypass_domains_command,
+    real_status_command,
+    remove_bypass_domain_command,
+    restart_vpn_command,
+    rotate_now_command,
+    run_watchdog_command,
+    set_rotate_top_n_command,
+    set_timer_interval_command,
+    start_rotate_timer_command,
+    start_watchdog_timer_command,
+    stop_rotate_timer_command,
+    stop_watchdog_timer_command,
 )
 from watchdogvpn.formatting import strip_ansi
 from watchdogvpn.parsers import parse_event_line
@@ -52,17 +66,11 @@ from watchdogvpn.state import (
     rotate_setting,
     trace_snapshot,
 )
-from watchdogvpn.validators import valid_domain, valid_location_hint, valid_timer_interval
+from watchdogvpn.validators import valid_domain, valid_timer_interval
 
 STATUS_LINE = "Listo"
 SUDO_KEEPALIVE_STOP = threading.Event()
 SUDO_KEEPALIVE_THREAD = None
-
-
-def restart_action(loc_hint: str) -> str:
-    if valid_location_hint(loc_hint):
-        return f"sudo {shlex.quote(VPN_SET)} {shlex.quote(loc_hint)}; {TRUTH_BIN}"
-    return f"sudo systemctl restart adguardvpn.service; {TRUTH_BIN}"
 
 
 def set_status(message: str):
@@ -1183,92 +1191,6 @@ def load_locations():
     return items
 
 
-def set_timer_interval_command(unit: str, value: str) -> str:
-    return rf"""
-tmp="$(mktemp)"
-awk -F= -v val="{value}" '
-BEGIN {{ done=0 }}
-/^[[:space:]]*OnUnitInactiveSec=/ {{ print "OnUnitInactiveSec=" val; done=1; next }}
-/^[[:space:]]*OnUnitActiveSec=/ {{ next }}
-/^[[:space:]]*\[Install\]/ && !done {{ print "OnUnitInactiveSec=" val; done=1 }}
-{{ print $0 }}
-END {{ if (!done) print "OnUnitInactiveSec=" val }}
-' /etc/systemd/system/{unit} > "$tmp"
-sudo install -m 644 -o root -g root "$tmp" /etc/systemd/system/{unit}
-rm -f "$tmp"
-sudo systemctl daemon-reload
-sudo systemctl restart {unit}
-systemctl status {unit} --no-pager -n 8
-"""
-
-
-def set_timer_interval(unit: str, value: str) -> str:
-    return run(set_timer_interval_command(unit, value), 20)
-
-
-def set_rotate_top_n_command(value: str) -> str:
-    value = (value or "").strip()
-    if not re.match(r"^[0-9]+$", value):
-        return "echo 'ERROR: TOP_N debe ser un numero.'"
-    num = int(value)
-    if num < 1 or num > 100:
-        return "echo 'ERROR: TOP_N debe estar entre 1 y 100.'"
-    return rf"""
-tmp="$(mktemp)"
-sudo awk -F= -v val="{value}" '
-BEGIN {{ done=0 }}
-/^[[:space:]]*TOP_N=/ {{ print "TOP_N=" val; done=1; next }}
-{{ print $0 }}
-END {{ if (!done) print "TOP_N=" val }}
-' /usr/local/sbin/vpn_rotate.sh > "$tmp"
-sudo install -m 700 -o root -g root "$tmp" /usr/local/sbin/vpn_rotate.sh
-rm -f "$tmp"
-sudo grep -E '^(TOP_N|RECENT_KEEP)=' /usr/local/sbin/vpn_rotate.sh
-"""
-
-
-def set_rotate_top_n(value: str) -> str:
-    value = (value or "").strip()
-    if not re.match(r"^[0-9]+$", value):
-        set_status("TOP_N invalido")
-        return "ERROR: TOP_N debe ser un numero."
-    num = int(value)
-    if num < 1 or num > 100:
-        set_status("TOP_N fuera de rango")
-        return "ERROR: TOP_N debe estar entre 1 y 100."
-    return run(set_rotate_top_n_command(value), 20)
-
-
-def remove_bypass_domain_command(domain: str) -> str:
-    domain = (domain or "").strip().lower()
-    if not re.match(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", domain):
-        return "echo 'ERROR: dominio invalido.'"
-    return rf"""
-tmp="$(mktemp)"
-sudo awk -v d={shlex.quote(domain)} '
-BEGIN {{ wd="*." d }}
-{{
-  line=tolower($0)
-  gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-  if (line == d || line == wd) next
-  print $0
-}}' /etc/vpn-domain-bypass.conf > "$tmp"
-sudo install -m 0644 -o root -g root "$tmp" /etc/vpn-domain-bypass.conf
-rm -f "$tmp"
-sudo systemctl start vpn-domain-bypass.service
-echo "Quitado: {domain}"
-echo "Quitado: *.{domain}"
-echo "Aplicado bypass con: vpn-domain-bypass.service"
-"""
-
-
-def remove_bypass_domain(domain: str) -> str:
-    domain = (domain or "").strip().lower()
-    if not re.match(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", domain):
-        return "ERROR: dominio invalido."
-    return run(remove_bypass_domain_command(domain), 30)
-
-
 def housekeeping_panel():
     while True:
         data = housekeeping_snapshot()
@@ -2105,27 +2027,27 @@ def handle_menu(label: str):
 
         actions = {
             "Acciones rapidas": [
-                ("Reiniciar VPN", restart_action(loc_hint)),
-                ("Desconectar VPN", f"sudo systemctl stop adguardvpn.service; /usr/local/bin/vpn_notify 'VPN desconectada' 'La conexion VPN fue detenida manualmente.' normal >/dev/null 2>&1 || true; {TRUTH_BIN}"),
-                ("Rotar ahora", f"sudo env VPN_ROTATE_FORCE=1 {shlex.quote('/usr/local/sbin/vpn_rotate.sh')}; {TRUTH_BIN}"),
-                ("Ejecutar watchdog", f"sudo systemctl restart {WATCHDOG_TIMER}; sudo env VPN_WATCHDOG_FORCE=1 {shlex.quote('/usr/local/sbin/vpn_watchdog.sh')}; {TRUTH_BIN}"),
-                ("Estado real", f"{VPNCTL} status"),
+                ("Reiniciar VPN", restart_vpn_command(loc_hint)),
+                ("Desconectar VPN", disconnect_vpn_command()),
+                ("Rotar ahora", rotate_now_command()),
+                ("Ejecutar watchdog", run_watchdog_command()),
+                ("Estado real", real_status_command()),
             ],
             "Timers": [
-                ("Activar rotacion", f"sudo systemctl start {ROTATE_TIMER} {ROTATE_FIRSTBOOT_TIMER} && systemctl status {ROTATE_TIMER} --no-pager -n 8"),
-                ("Parar rotacion", f"sudo systemctl stop {ROTATE_TIMER} {ROTATE_FIRSTBOOT_TIMER} && systemctl status {ROTATE_TIMER} --no-pager -n 8"),
+                ("Activar rotacion", start_rotate_timer_command()),
+                ("Parar rotacion", stop_rotate_timer_command()),
                 ("Intervalo rotacion", "__SET_ROTATE__"),
-                ("Activar watchdog", f"sudo systemctl start {WATCHDOG_TIMER} && systemctl status {WATCHDOG_TIMER} --no-pager -n 8"),
-                ("Parar watchdog", f"sudo systemctl stop {WATCHDOG_TIMER} && systemctl status {WATCHDOG_TIMER} --no-pager -n 8"),
+                ("Activar watchdog", start_watchdog_timer_command()),
+                ("Parar watchdog", stop_watchdog_timer_command()),
                 ("Intervalo watchdog", "__SET_WATCHDOG__"),
             ],
             "Exclusiones": [
-                ("Ver lista", f"sudo -n {shlex.quote(NO_VPN)} --list"),
+                ("Ver lista", list_bypass_domains_command()),
                 ("Agregar dominio", "__ADD_BYPASS__"),
                 ("Quitar dominio", "__REMOVE_BYPASS__"),
             ],
             "DNS / AdGuard": [
-                ("DNS actual", f"sudo -n {shlex.quote(DNSCTL)} current"),
+                ("DNS actual", dns_current_command()),
                 ("Aplicar Quad9", "__DNS_APPLY__:quad9-doh"),
                 ("Aplicar Cloudflare", "__DNS_APPLY__:cloudflare-doh"),
                 ("Aplicar Google", "__DNS_APPLY__:google-doh"),
@@ -2196,7 +2118,7 @@ def handle_menu(label: str):
                     output = run_with_progress(
                         action_label,
                         f"Aplicando exclusion para {domain}",
-                        f"sudo -n {shlex.quote(NO_VPN)} {shlex.quote(domain)}",
+                        add_bypass_domain_command(domain),
                         75,
                     )
                     show_output(action_label, output)
@@ -2293,7 +2215,7 @@ def handle_menu(label: str):
                 output = run_with_progress(
                     action_label,
                     f"Aplicando DNS {DNS_PROFILE_LABELS.get(profile, profile)}",
-                    f"sudo -n {shlex.quote(DNSCTL)} apply {shlex.quote(profile)}",
+                    dns_apply_command(profile),
                     100,
                 )
                 show_output(action_label, output)
@@ -2308,7 +2230,7 @@ def handle_menu(label: str):
                 set_status("Restaurando DNS")
                 show_output(
                     action_label,
-                    run_with_progress(action_label, "Restaurando ultimo DNS bueno", f"sudo -n {shlex.quote(DNSCTL)} rollback", 70),
+                    run_with_progress(action_label, "Restaurando ultimo DNS bueno", dns_rollback_command(), 70),
                 )
                 set_status("Rollback DNS listo")
                 return True

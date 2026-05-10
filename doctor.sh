@@ -191,6 +191,7 @@ fi
 section "Repository Runtime"
 check_repo_file "tui/VPN" exec
 check_repo_file "tui/watchdogvpn/__init__.py"
+check_repo_file "tui/watchdogvpn/actions.py"
 check_repo_file "tui/watchdogvpn/commands.py"
 check_repo_file "tui/watchdogvpn/constants.py"
 check_repo_file "tui/watchdogvpn/formatting.py"

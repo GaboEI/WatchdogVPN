@@ -11,8 +11,8 @@ and CI.
 
 - Terminal control center for VPN state, locations, actions, DNS, exclusions,
   timers and logs.
-- Initial TUI module split for command helpers, state collectors, constants,
-  parsers, formatting helpers and validators.
+- Initial TUI module split for action command builders, command helpers, state
+  collectors, constants, parsers, formatting helpers and validators.
 - Installer/update support for deploying the extracted TUI support package next
   to the `VPN` launcher.
 - Real-state validation through `vpn_truth_check` instead of trusting only
@@ -43,8 +43,8 @@ and CI.
 - This is not a stable 1.0 release.
 - The repository is still private and under portfolio-review licensing.
 - Debian has not completed a clean-system validation pass.
-- The TUI still contains most rendering and action flow in `tui/VPN`, but the
-  gradual module split has started.
+- The TUI still contains most rendering flow in `tui/VPN`, but action command
+  builders and state/command helpers are already split into importable modules.
 - Some TUI command helpers still use `shell=True`; this is tracked as hardening
   work.
 - External installer verification for the official AdGuard VPN CLI is not yet

@@ -7,6 +7,7 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tui"))
 
+from watchdogvpn import actions
 from watchdogvpn import commands
 from watchdogvpn import state
 from watchdogvpn.constants import MENU, MENU_ITEMS
@@ -68,6 +69,23 @@ class TuiModuleTests(unittest.TestCase):
         self.assertIsNotNone(proc)
         self.assertEqual(proc.stdout, "ok")
         self.assertEqual(proc.returncode, 0)
+
+    def test_action_command_builders(self):
+        self.assertIn("/usr/local/sbin/vpn_set DK", actions.restart_vpn_command("DK"))
+        self.assertIn("systemctl restart adguardvpn.service", actions.restart_vpn_command("sin valor"))
+        self.assertIn("VPN_ROTATE_FORCE=1", actions.rotate_now_command())
+        self.assertEqual(actions.real_status_command(), "/usr/local/bin/vpnctl status")
+        self.assertEqual(actions.dns_apply_command("quad9-doh"), "sudo -n /usr/local/bin/vpn_dnsctl apply quad9-doh")
+        self.assertEqual(actions.add_bypass_domain_command("example.com"), "sudo -n /usr/local/bin/no_vpn example.com")
+
+        timer_cmd = actions.set_timer_interval_command("vpn-rotate.timer", "3h")
+        self.assertIn("OnUnitInactiveSec=", timer_cmd)
+        self.assertIn("systemctl restart vpn-rotate.timer", timer_cmd)
+
+        self.assertIn('-v val="15"', actions.set_rotate_top_n_command("15"))
+        self.assertIn("ERROR: TOP_N", actions.set_rotate_top_n_command("0"))
+        self.assertIn("dominio invalido", actions.remove_bypass_domain_command("bad/domain"))
+        self.assertIn("Quitado: example.com", actions.remove_bypass_domain_command("example.com"))
 
     def test_systemd_helpers_parse_mocked_output(self):
         with patch.object(commands, "run", return_value="active"):
