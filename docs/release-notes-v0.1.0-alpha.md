@@ -29,6 +29,8 @@ and CI.
 - GitHub Actions CI for syntax and systemd validation.
 - Unit behavior tests with mocks for truth-check and watchdog decisions.
 - Security, threat model, project history, demo and validation documentation.
+- Hardening notes and warnings for external vendor installers.
+- Defensive TUI action validation for user-facing DNS, timer and bypass inputs.
 
 ## Supported and Targeted Platforms
 
@@ -48,9 +50,10 @@ and CI.
   builders, render primitives and state/command helpers are already split into
   importable modules.
 - Some TUI command helpers still use `shell=True`; this is tracked as hardening
-  work.
-- External installer verification for the official AdGuard VPN CLI is not yet
-  cryptographically pinned.
+  work, although simple helper paths have started moving to argument-list
+  subprocess calls.
+- External installer verification for the official AdGuard VPN CLI and AdGuard
+  Home is not yet cryptographically pinned.
 - The first backend is AdGuard VPN CLI. WireGuard/private backend support is not
   implemented yet.
 

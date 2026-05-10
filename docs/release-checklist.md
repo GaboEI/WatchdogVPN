@@ -20,6 +20,8 @@ and presented as a public release.
   decisions.
 - [x] CI validates the installed TUI layout after the module split.
 - [x] Security and threat-model documentation exist.
+- [x] External installer risks and manual-first alternatives are documented.
+- [x] Install/uninstall security contracts are covered by unit checks.
 - [x] Demo screenshots and real command examples exist.
 - [x] Release notes exist for the alpha candidate.
 - [x] Changelog is grouped by release.

@@ -28,6 +28,34 @@ def run(cmd: str, timeout: int = 8) -> str:
         return f"ERROR: {exc}"
 
 
+def run_args(args: list[str], timeout: int = 8) -> str:
+    try:
+        out = subprocess.run(
+            args,
+            shell=False,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+        text = ((out.stdout or "") + (out.stderr or "")).strip()
+        return text
+    except Exception as exc:
+        return f"ERROR: {exc}"
+
+
+def run_process_args(args: list[str], timeout: int = 8):
+    try:
+        return subprocess.run(
+            args,
+            shell=False,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except Exception:
+        return None
+
+
 def run_process(cmd: str, timeout: int = 8):
     try:
         return subprocess.run(
@@ -74,11 +102,13 @@ def run_command(cmd: str, timeout: int = 8):
 
 
 def service_state(unit: str) -> str:
-    return run(f"systemctl is-active {shlex.quote(unit)} 2>/dev/null || true", 4) or "unknown"
+    out = run_args(["systemctl", "is-active", unit], 4)
+    return "unknown" if out.startswith("ERROR:") else (out or "unknown")
 
 
 def timer_enabled(unit: str) -> str:
-    return run(f"systemctl is-enabled {shlex.quote(unit)} 2>/dev/null || true", 4) or "unknown"
+    out = run_args(["systemctl", "is-enabled", unit], 4)
+    return "unknown" if out.startswith("ERROR:") else (out or "unknown")
 
 
 def timer_interval(unit: str) -> str:
@@ -104,10 +134,8 @@ def monotonic_usec() -> int:
 
 
 def systemctl_prop(unit: str, prop: str) -> str:
-    return run(
-        f"systemctl show {shlex.quote(unit)} -p {shlex.quote(prop)} --value 2>/dev/null || true",
-        4,
-    ).strip()
+    out = run_args(["systemctl", "show", unit, "-p", prop, "--value"], 4)
+    return "" if out.startswith("ERROR:") else out.strip()
 
 
 def service_age(unit: str) -> str:
@@ -139,5 +167,5 @@ def timer_trigger(unit: str) -> str:
 
 
 def sudo_probe(timeout: int = 5) -> bool:
-    probe = run_process("sudo -n -v", timeout)
+    probe = run_process_args(["sudo", "-n", "-v"], timeout)
     return bool(probe and probe.returncode == 0)

@@ -117,6 +117,14 @@ complete.
   remediation decisions.
 - Add security and threat-model documentation covering privileges, DNS safety,
   external installer risk and current hardening gaps.
+- Add explicit runtime warnings for remote vendor installers used by AdGuard VPN
+  CLI and AdGuard Home, including the manual-install-first security path.
+- Harden TUI action command builders with defensive validation for DNS profiles,
+  timer units, timer intervals and bypass domains.
+- Add install/security contract tests for privileged file modes, TUI package
+  installation and DNS rescue ordering during uninstall.
+- Start reducing `shell=True` usage by adding argument-list subprocess helpers
+  for simple TUI command execution.
 - Add an operational audit for excessive VPN rotations and identify
   timer/restart-triggered rotations as the main suspect after real connectivity
   failures are excluded.

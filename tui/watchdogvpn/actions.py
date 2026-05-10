@@ -11,6 +11,7 @@ import shlex
 from watchdogvpn.commands import run
 from watchdogvpn.constants import (
     DNSCTL,
+    DNS_PROFILE_LABELS,
     NO_VPN,
     ROTATE_FIRSTBOOT_TIMER,
     ROTATE_TIMER,
@@ -19,7 +20,9 @@ from watchdogvpn.constants import (
     VPNCTL,
     WATCHDOG_TIMER,
 )
-from watchdogvpn.validators import valid_location_hint
+from watchdogvpn.validators import valid_domain, valid_location_hint, valid_timer_interval
+
+ALLOWED_TIMER_UNITS = {ROTATE_TIMER, WATCHDOG_TIMER}
 
 
 def restart_vpn_command(loc_hint: str) -> str:
@@ -80,6 +83,10 @@ def list_bypass_domains_command() -> str:
 
 
 def add_bypass_domain_command(domain: str) -> str:
+    ok, domain_or_error = valid_domain(domain)
+    if not ok:
+        return f"echo 'ERROR: {domain_or_error}'"
+    domain = domain_or_error
     return f"sudo -n {shlex.quote(NO_VPN)} {shlex.quote(domain)}"
 
 
@@ -88,6 +95,8 @@ def dns_current_command() -> str:
 
 
 def dns_apply_command(profile: str) -> str:
+    if profile not in DNS_PROFILE_LABELS:
+        return "echo 'ERROR: perfil DNS invalido.'"
     return f"sudo -n {shlex.quote(DNSCTL)} apply {shlex.quote(profile)}"
 
 
@@ -96,6 +105,12 @@ def dns_rollback_command() -> str:
 
 
 def set_timer_interval_command(unit: str, value: str) -> str:
+    if unit not in ALLOWED_TIMER_UNITS:
+        return "echo 'ERROR: timer no permitido.'"
+    ok, value_or_error = valid_timer_interval(value)
+    if not ok:
+        return f"echo 'ERROR: {value_or_error}'"
+    value = value_or_error
     return rf"""
 tmp="$(mktemp)"
 awk -F= -v val="{value}" '

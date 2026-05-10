@@ -4,6 +4,18 @@ set -euo pipefail
 ADGUARD_VPN_CLI_INSTALL_URL="${ADGUARD_VPN_CLI_INSTALL_URL:-https://raw.githubusercontent.com/AdguardTeam/AdGuardVPNCLI/master/scripts/release/install.sh}"
 ADGUARD_VPN_CLI_DOWNLOAD_TIMEOUT="${ADGUARD_VPN_CLI_DOWNLOAD_TIMEOUT:-60}"
 
+print_adguard_cli_external_notice() {
+  cat <<EOF
+Security notice:
+  WatchdogVPN can download and execute the official AdGuard VPN CLI installer.
+  Source: $ADGUARD_VPN_CLI_INSTALL_URL
+
+  This repository does not currently pin that vendor script by checksum or
+  signature. The safest path is to install AdGuard VPN CLI manually from the
+  official vendor instructions, then rerun ./install.sh.
+EOF
+}
+
 download_adguard_cli_installer() {
   local target="$1" ip
 
@@ -57,7 +69,7 @@ install_official_adguard_vpn_cli() {
   warn "AdGuard VPN CLI is not installed"
   printf 'WatchdogVPN is a control layer around the official AdGuard VPN CLI.\n'
   printf 'The official CLI must be installed before WatchdogVPN can manage the VPN.\n'
-  printf 'Source: %s\n' "$ADGUARD_VPN_CLI_INSTALL_URL"
+  print_adguard_cli_external_notice
 
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] sh -c curl -fsSL %s -o /tmp/watchdogvpn-adguardvpn-cli-install.sh\n' "$ADGUARD_VPN_CLI_INSTALL_URL"
@@ -65,7 +77,7 @@ install_official_adguard_vpn_cli() {
     return 0
   fi
 
-  if ! prompt_yes_no "Install the official AdGuard VPN CLI now?" yes; then
+  if ! prompt_yes_no "Download and run the official AdGuard VPN CLI installer now?" yes; then
     fail "adguardvpn-cli is required before installing WatchdogVPN"
     printf 'Install it manually, then rerun ./install.sh:\n'
     printf '  curl -fsSL %s | sh -s -- -v\n' "$ADGUARD_VPN_CLI_INSTALL_URL"

@@ -4,6 +4,18 @@ set -euo pipefail
 AGH_INSTALL_URL="https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh"
 AGH_DEFAULT_PROFILE="${AGH_DEFAULT_PROFILE:-quad9-doh}"
 
+print_adguard_home_external_notice() {
+  cat <<EOF
+Security notice:
+  Advanced DNS can download and execute the official AdGuard Home installer.
+  Source: $AGH_INSTALL_URL
+
+  This repository does not currently pin that vendor script by checksum or
+  signature. You can answer "n" to advanced DNS, install AdGuard Home manually
+  later, and then use vpn_dnsctl to apply a DNS profile.
+EOF
+}
+
 adguard_home_network_ready() {
   local host
   for host in raw.githubusercontent.com static.adtidy.org archive.ubuntu.com; do
@@ -54,6 +66,7 @@ install_adguard_home_binary() {
     return 0
   fi
 
+  print_adguard_home_external_notice
   run_step sh -c "curl -s -S -L '$AGH_INSTALL_URL' -o /tmp/watchdogvpn-adguardhome-install.sh"
   run_step sudo sh /tmp/watchdogvpn-adguardhome-install.sh -v
 }

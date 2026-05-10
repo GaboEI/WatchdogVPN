@@ -73,7 +73,12 @@ class TuiModuleTests(unittest.TestCase):
 
     def test_command_runner_contract(self):
         self.assertEqual(commands.run("printf ok"), "ok")
+        self.assertEqual(commands.run_args(["printf", "ok"]), "ok")
         proc = commands.run_process("printf ok")
+        self.assertIsNotNone(proc)
+        self.assertEqual(proc.stdout, "ok")
+        self.assertEqual(proc.returncode, 0)
+        proc = commands.run_process_args(["printf", "ok"])
         self.assertIsNotNone(proc)
         self.assertEqual(proc.stdout, "ok")
         self.assertEqual(proc.returncode, 0)
@@ -84,11 +89,15 @@ class TuiModuleTests(unittest.TestCase):
         self.assertIn("VPN_ROTATE_FORCE=1", actions.rotate_now_command())
         self.assertEqual(actions.real_status_command(), "/usr/local/bin/vpnctl status")
         self.assertEqual(actions.dns_apply_command("quad9-doh"), "sudo -n /usr/local/bin/vpn_dnsctl apply quad9-doh")
+        self.assertIn("perfil DNS invalido", actions.dns_apply_command("bad;profile"))
         self.assertEqual(actions.add_bypass_domain_command("example.com"), "sudo -n /usr/local/bin/no_vpn example.com")
+        self.assertIn("sin rutas", actions.add_bypass_domain_command("bad/domain"))
 
         timer_cmd = actions.set_timer_interval_command("vpn-rotate.timer", "3h")
         self.assertIn("OnUnitInactiveSec=", timer_cmd)
         self.assertIn("systemctl restart vpn-rotate.timer", timer_cmd)
+        self.assertIn("timer no permitido", actions.set_timer_interval_command("bad.timer", "3h"))
+        self.assertIn("Usa formato", actions.set_timer_interval_command("vpn-rotate.timer", "bad"))
 
         self.assertIn('-v val="15"', actions.set_rotate_top_n_command("15"))
         self.assertIn("ERROR: TOP_N", actions.set_rotate_top_n_command("0"))
@@ -96,7 +105,7 @@ class TuiModuleTests(unittest.TestCase):
         self.assertIn("Quitado: example.com", actions.remove_bypass_domain_command("example.com"))
 
     def test_systemd_helpers_parse_mocked_output(self):
-        with patch.object(commands, "run", return_value="active"):
+        with patch.object(commands, "run_args", return_value="active"):
             self.assertEqual(commands.service_state("vpn-watchdog.timer"), "active")
         with patch.object(commands, "run", return_value="3h"):
             self.assertEqual(commands.timer_interval("vpn-rotate.timer"), "3h")

@@ -110,6 +110,8 @@ Current risk:
   cryptographic signature inside this repository.
 - If the remote endpoint changes or is unavailable, automated installation may
   fail.
+- Advanced DNS can also install AdGuard Home through the vendor installer. That
+  path has the same remote-script trust model.
 
 Current mitigation:
 
@@ -117,6 +119,15 @@ Current mitigation:
 - The project does not bundle credentials or licensing bypasses.
 - Users may install the official AdGuard VPN CLI manually before running
   WatchdogVPN.
+- Users may answer "no" to advanced DNS and install AdGuard Home manually later.
+
+Manual-first path:
+
+1. Install the official AdGuard VPN CLI from the vendor documentation.
+2. Confirm `adguardvpn-cli --version` works.
+3. Run `./install.sh` and let WatchdogVPN configure its service user and runtime.
+4. For DNS, either skip advanced DNS during install or install AdGuard Home
+   manually first, then use `vpn_dnsctl` for profile application.
 
 Planned hardening:
 
@@ -127,23 +138,43 @@ Planned hardening:
 
 ## Python TUI Command Execution
 
-The current TUI still uses `subprocess.run(..., shell=True)` in helper functions.
-Many dynamic values are quoted with `shlex.quote`, but this remains a security
-hardening area because the product can trigger privileged actions.
+The TUI centralizes shell execution in `tui/watchdogvpn/commands.py`. Some helper
+functions still use `subprocess.run(..., shell=True)` because the current TUI
+executes existing shell pipelines around systemd, sudo, awk and sed. This remains
+a hardening area because the product can trigger privileged actions.
 
 Current rules:
 
+- Simple subprocess calls should use argument-list helpers such as `run_args`
+  and `run_process_args`.
 - User-provided domains and locations should be shell-quoted before command
   execution.
+- User-provided domains, timer intervals and DNS profiles are validated before
+  command construction in the TUI action layer where practical.
 - Privileged operations are routed through narrow helper scripts where possible.
 - The TUI is treated as trusted local tooling, not as a sandbox boundary.
+- New action command builders should be covered by unit tests when they accept
+  dynamic input.
 
 Planned hardening:
 
-- Move command execution into a dedicated command layer.
 - Convert simple commands to argument-list subprocess calls.
 - Keep shell execution only for pipelines or scripts that genuinely require it.
 - Add tests for command construction and parser behavior.
+
+## Uninstall and DNS Recovery
+
+`uninstall.sh` runs DNS rescue before removing product runtime files by default.
+The goal is to avoid leaving the host pointed at a local resolver that no longer
+exists. Users can disable this with `--skip-dns-rescue`, but the default path is
+conservative.
+
+The uninstall contract is:
+
+- never remove the official AdGuard VPN CLI;
+- never remove AdGuard account/license state;
+- preserve config, logs, rotation state and Conky unless purge flags are used;
+- attempt DNS recovery before removing WatchdogVPN commands.
 
 ## Reporting Security Issues
 
