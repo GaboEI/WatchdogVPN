@@ -70,9 +70,12 @@ from watchdogvpn.styles import BG, BOLD, CSI, DIM, FG, RESET
 from watchdogvpn.state import (
     bypass_domains,
     cli_status,
+    country_code,
+    current_location,
     dashboard_data,
     housekeeping_snapshot,
     rotate_setting,
+    truth_data,
     trace_snapshot,
 )
 from watchdogvpn.validators import valid_domain, valid_timer_interval
