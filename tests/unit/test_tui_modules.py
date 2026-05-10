@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "tui"))
 
 from watchdogvpn import actions
 from watchdogvpn import commands
+from watchdogvpn import render
 from watchdogvpn import state
 from watchdogvpn.constants import MENU, MENU_ITEMS
 from watchdogvpn.formatting import display_auth_status, display_vpn_status, format_span, strip_ansi
@@ -30,6 +31,13 @@ class TuiModuleTests(unittest.TestCase):
         self.assertEqual(display_vpn_status("degraded"), "DEGRADADO")
         self.assertEqual(display_auth_status("expired"), "SESION EXPIRADA")
         self.assertEqual(display_auth_status("unknown", "sudo_required"), "SIN SUDO")
+
+    def test_render_helpers(self):
+        self.assertEqual(render.fit("abcdef", 4), "abc…")
+        self.assertEqual(render.display_label("Auth"), "Sesion")
+        self.assertEqual(render.display_value("Location", "DK"), "🇩🇰 DK")
+        self.assertEqual(render.flag_from_iso("bad"), "")
+        self.assertIn("\x1b[", render.semantic_style("VPN", "ACTIVO"))
 
     def test_event_parser_new_trace_format(self):
         event = parse_event_line(

@@ -13,7 +13,7 @@ only in installation and dependency detection.
 
 - `tui/VPN`: compatibility entrypoint and main terminal UI loop
 - `tui/watchdogvpn/`: extracted action command builders, command runners, state
-  collectors, constants, parsers, formatters and validators
+  collectors, render helpers, constants, parsers, formatters and validators
 - `bin/vpnctl`: user command surface
 - `bin/vpn_truth_check`: source of truth for tunnel/routing/IP state
 - `bin/vpn_auth_check`: AdGuard VPN session check

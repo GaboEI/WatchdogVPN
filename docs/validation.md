@@ -32,8 +32,9 @@ Current coverage:
   - unknown public IP is treated as a soft failure until the configured
     threshold is reached
 - TUI module behavior:
-  - extracted command helpers, state collectors, constants, formatters, parsers
-    and validators keep stable behavior
+  - extracted action command builders, command helpers, state collectors,
+    render helpers, constants, formatters, parsers and validators keep stable
+    behavior
   - installed layout with `VPN` plus `watchdogvpn/` remains importable
 
 ## System-Level Checks

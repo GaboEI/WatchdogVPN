@@ -87,8 +87,9 @@ complete.
 ### TUI and Notifications
 
 - Continue the gradual TUI module split by extracting action command builders,
-  command helpers, state collectors, side-effect-free constants, parsers,
-  formatting helpers and validators into `tui/watchdogvpn/`.
+  command helpers, state collectors, render helpers, side-effect-free
+  constants, parsers, formatting helpers and validators into
+  `tui/watchdogvpn/`.
 - Install, update, uninstall and doctor now track the extracted TUI support
   package next to the `VPN` launcher.
 - Make VPN location notifications user-facing by hiding public IPs and using
