@@ -10,5 +10,7 @@ install -m 0755 "$ROOT_DIR/tui/VPN" "$tmpdir/VPN"
 cp -a "$ROOT_DIR/tui/watchdogvpn" "$tmpdir/watchdogvpn"
 
 python3 -m py_compile "$tmpdir/VPN" "$tmpdir"/watchdogvpn/*.py
+launcher_output="$("$tmpdir/VPN")"
+[[ "$launcher_output" == "VPN requiere una terminal interactiva." ]]
 
 echo "tui install layout check passed"

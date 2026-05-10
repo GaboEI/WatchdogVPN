@@ -36,6 +36,7 @@ Current coverage:
     render helpers, constants, formatters, parsers and validators keep stable
     behavior
   - installed layout with `VPN` plus `watchdogvpn/` remains importable
+  - non-interactive launcher execution exits cleanly before terminal setup
 
 ## System-Level Checks
 

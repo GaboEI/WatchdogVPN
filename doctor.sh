@@ -235,6 +235,27 @@ do
 done
 ((installed_any == 1)) || mark_warn "no previous WatchdogVPN runtime detected"
 
+if [[ -d "$HOME/.local/bin/watchdogvpn" ]]; then
+  for module in \
+    __init__.py \
+    actions.py \
+    commands.py \
+    constants.py \
+    formatting.py \
+    parsers.py \
+    render.py \
+    state.py \
+    styles.py \
+    validators.py
+  do
+    if [[ -f "$HOME/.local/bin/watchdogvpn/$module" ]]; then
+      mark_ok "installed TUI module: $module"
+    else
+      mark_fail "missing installed TUI module: $module"
+    fi
+  done
+fi
+
 for unit in adguardvpn.service vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer; do
   if systemd_unit_known "$unit"; then
     info "$unit: active=$(systemd_active_state "$unit") enabled=$(systemd_enabled_state "$unit")"

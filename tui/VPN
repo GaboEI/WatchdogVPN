@@ -394,8 +394,7 @@ class Terminal:
         sys.stdout.flush()
 
 
-term = Terminal()
-atexit.register(term.exit)
+term = None
 
 
 def render(selected: int, dashboard_cache):
@@ -2096,9 +2095,12 @@ def handle_menu(label: str):
 
 
 def main():
+    global term
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         print("VPN requiere una terminal interactiva.")
         return
+    term = Terminal()
+    atexit.register(term.exit)
     term.enter()
     sudo_ready = initialize_sudo()
     selected = 0
