@@ -1,6 +1,6 @@
 # WatchdogVPN v0.1.0-alpha Candidate Release Notes
 
-Status: alpha candidate, private portfolio review build.
+Status: alpha candidate.
 
 This is the first product-shaped WatchdogVPN release candidate. It packages the
 working local VPN resilience stack into a reproducible repository with
@@ -44,7 +44,7 @@ and CI.
 ## Known Limitations
 
 - This is not a stable 1.0 release.
-- The repository is still private and under portfolio-review licensing.
+- The project is licensed under GPL-3.0-or-later.
 - Debian has not completed a clean-system validation pass.
 - The TUI still contains most rendering flow in `tui/VPN`, but action command
   builders, render primitives and state/command helpers are already split into
@@ -60,7 +60,7 @@ and CI.
 ## Release Candidate Checklist
 
 - [x] Product README and support matrix.
-- [x] Portfolio-review license notice.
+- [x] GPL-3.0-or-later license.
 - [x] CI workflow.
 - [x] Unit behavior tests for core decision logic.
 - [x] Security and threat-model documentation.
@@ -69,7 +69,7 @@ and CI.
 - [x] Ubuntu real-machine validation.
 - [x] Arch clean-VM validation.
 - [ ] Debian clean-system validation.
-- [ ] Final license decision before public release.
+- [x] Final license decision before public release.
 - [ ] Release checklist approved.
 - [ ] GitHub release tag and release entry.
 - [ ] GitHub About description and topics.
@@ -79,7 +79,7 @@ The full publication checklist is tracked in
 
 ## Upgrade Notes
 
-Existing private testers can update with:
+Existing testers can update with:
 
 ```sh
 cd WatchdogVPN
@@ -100,7 +100,7 @@ cd WatchdogVPN
 VPN
 ```
 
-For private repository access, use the SSH clone URL:
+For SSH access, use:
 
 ```sh
 git clone git@github.com:GaboEI/WatchdogVPN.git

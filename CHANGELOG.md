@@ -2,15 +2,15 @@
 
 All notable product-facing changes are documented here.
 
-WatchdogVPN is currently an alpha candidate. The repository is still private and
-published for portfolio review only until the public release checklist is
-complete.
+WatchdogVPN is currently an alpha candidate being prepared for the first public
+release.
 
 ## Unreleased
 
 - Improve `install.sh`, `update.sh` and `uninstall.sh` console UX with clearer
   contracts, pre-execution plans, actionable errors and final next-step
   summaries.
+- Switch the project license from portfolio-review-only to GPL-3.0-or-later.
 
 ## v0.1.0-alpha candidate - 2026-05-09
 
@@ -109,8 +109,7 @@ complete.
 
 ### Documentation, CI and Security
 
-- Add portfolio-review license notice and README alpha status, support matrix
-  and known limitations.
+- Add README alpha status, support matrix, license state and known limitations.
 - Add alpha candidate release notes and a release checklist for the first public
   tag.
 - Add GitHub Actions CI for Python/Bash syntax, systemd unit verification and

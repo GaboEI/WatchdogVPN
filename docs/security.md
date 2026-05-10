@@ -178,5 +178,6 @@ The uninstall contract is:
 
 ## Reporting Security Issues
 
-This repository is currently prepared for portfolio review. If it becomes public,
-security reporting instructions should be added before a stable release.
+For the alpha release, report security concerns through GitHub issues or direct
+maintainer contact. A dedicated security policy should be added before a stable
+1.0 release.

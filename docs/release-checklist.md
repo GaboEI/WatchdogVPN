@@ -8,12 +8,12 @@ and presented as a public release.
 - Target version: `v0.1.0-alpha`
 - Current status: alpha candidate
 - Intended audience: portfolio reviewers and controlled Linux testers
-- Public license: not selected yet
+- Public license: GPL-3.0-or-later
 
 ## Required Before Tagging `v0.1.0-alpha`
 
 - [x] README explains the product purpose, status, install flow and limitations.
-- [x] Portfolio-review license notice exists while no public license is selected.
+- [x] GPL-3.0-or-later license exists.
 - [x] CI runs on push and pull request.
 - [x] CI validates Python compilation, Bash syntax and systemd units.
 - [x] CI runs unit behavior tests with mocks for truth checks and watchdog
@@ -28,7 +28,7 @@ and presented as a public release.
 - [x] Ubuntu 24.04 real-machine validation passed.
 - [x] Arch Linux clean-VM validation passed.
 - [ ] Debian clean-system validation passed.
-- [ ] Final public-license decision is made.
+- [x] Final public-license decision is made.
 - [ ] GitHub About description, topics and website/demo link are configured.
 - [ ] Final release tag is created.
 - [ ] GitHub release entry is published with release notes.

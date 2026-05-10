@@ -3,7 +3,7 @@
 [![CI](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml/badge.svg)](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml)
 
 - **Status:** `v0.1.0-alpha candidate`
-- **License:** Portfolio review only. No reuse rights are granted yet. See [LICENSE](LICENSE).
+- **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 - **Primary backend:** AdGuard VPN CLI
 - **Supported today:** Ubuntu 24.04 and Arch Linux validation paths
 
@@ -126,7 +126,7 @@ cd WatchdogVPN
 VPN
 ```
 
-For a private repository checkout, use the SSH remote instead:
+For an SSH checkout, use:
 
 ```sh
 git clone git@github.com:GaboEI/WatchdogVPN.git
@@ -259,7 +259,9 @@ NetworkManager hooks and systemd units. Review [Security](docs/security.md) and
 
 ## License
 
-This repository is available for portfolio review only. No reuse rights are granted until a public license is selected. See [LICENSE](LICENSE).
+WatchdogVPN is licensed under GPL-3.0-or-later. You may use, study, modify and
+redistribute it under the terms of the GNU General Public License version 3 or
+any later version. See [LICENSE](LICENSE).
 
 ## Safety Rule
 
