@@ -73,13 +73,14 @@ Expected flow:
 3. Detect distro and load its adapter.
 4. Validate dependencies.
 5. Ask product-level options.
-6. Back up files that would be replaced.
-7. Validate scripts and TUI.
-8. Install runtime files.
-9. Validate systemd and logrotate.
-10. Enable services and timers.
-11. Run final checks.
-12. Tell the user to open `VPN`.
+6. Show an installation plan with target paths, options and backup location.
+7. Back up files that would be replaced.
+8. Validate scripts and TUI.
+9. Install runtime files.
+10. Validate systemd and logrotate.
+11. Enable services and timers.
+12. Run final checks.
+13. Tell the user to open `VPN`.
 
 ## update.sh
 
@@ -95,6 +96,7 @@ It must preserve:
 - user Conky configuration
 
 It should replace only product-managed runtime files after validation and backup.
+It should show a preservation contract and update plan before replacing files.
 
 ## uninstall.sh
 
@@ -123,3 +125,5 @@ It must not remove:
 - official AdGuard VPN CLI
 - AdGuard account/license state
 - unrelated user files
+
+It should show a removal plan before disabling units or removing files.

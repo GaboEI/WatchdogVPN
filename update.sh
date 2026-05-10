@@ -30,9 +30,12 @@ Usage:
 
 Options:
   --dry-run       Show what would be updated without changing the system.
-  --yes           Do not ask for confirmation.
+  --yes           Do not ask for update confirmation.
   --skip-doctor   Do not run the read-only preflight first.
   --help          Show this help.
+
+The updater validates the repository, backs up replaced product files, and
+preserves user configuration, logs and runtime state.
 USAGE
 }
 
@@ -78,7 +81,7 @@ require_supported_distro() {
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
 
   if [[ "${DISTRO_SUPPORTED:-0}" != "1" ]]; then
-    fail "unsupported distro for this release"
+    print_unsupported_distro
     exit 1
   fi
 
@@ -119,57 +122,72 @@ require_existing_installation() {
 }
 
 print_preservation_contract() {
-  cat <<'EOF'
-The updater preserves:
-  /etc/adguardvpn.env
-  /etc/vpn-domain-bypass.conf
-  /var/lib/vpn-rotate/
-  /var/log/myvpn/
-  user AdGuard Home configuration
-  user Conky configuration
-
-It replaces only product-managed runtime files after validation and backup.
-EOF
+  print_section "Preserved by update"
+  printf '/etc/adguardvpn.env\n'
+  printf '/etc/vpn-domain-bypass.conf\n'
+  printf '/var/lib/vpn-rotate/\n'
+  printf '/var/log/myvpn/\n'
+  printf 'user AdGuard Home configuration\n'
+  printf 'user Conky configuration\n'
+  printf '\nOnly product-managed runtime files are replaced after validation and backup.\n'
 }
 
 final_report() {
-  cat <<'EOF'
+  print_title "WatchdogVPN update completed"
+  print_field "Preserved config" "/etc/adguardvpn.env"
+  print_field "Preserved bypass" "/etc/vpn-domain-bypass.conf"
+  print_field "Preserved state" "/var/lib/vpn-rotate/"
+  print_field "Preserved logs" "/var/log/myvpn/"
 
-WatchdogVPN update finished.
-
-Useful checks:
-  ./doctor.sh
-  vpnctl status
-  vpn_dnsctl local-test
-  systemctl status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer --no-pager
-EOF
+  print_section "Recommended checks"
+  printf './doctor.sh\n'
+  printf 'vpnctl status\n'
+  printf 'vpn_dnsctl local-test\n'
+  printf 'VPN\n'
 }
 
-printf '%s - Update\n' "$PROJECT_NAME"
+print_update_plan() {
+  print_title "WatchdogVPN update plan"
+  print_field "Target distro" "$DISTRO_NAME ($DISTRO_ID)"
+  print_field "Runtime commands" "/usr/local/bin"
+  print_field "Privileged scripts" "/usr/local/sbin"
+  print_field "Systemd units" "refreshed and enabled"
+  print_field "Backups" "$BACKUP_ROOT"
+  print_field "Dry run" "$(yes_no_word "${INSTALL_DRY_RUN:-0}")"
+}
+
+print_title "$PROJECT_NAME Update"
 print_preservation_contract
 
 require_supported_distro
 require_existing_installation
 
 if ((RUN_DOCTOR == 1)); then
+  print_section "Read-only preflight"
   "$ROOT_DIR/doctor.sh"
 fi
 
 if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
   warn "dry-run mode: no system changes will be made"
 else
+  print_section "Privilege check"
   sudo -v
 fi
 
+print_section "Runtime validation"
 validate_repo_runtime
+print_update_plan
 
 if ! prompt_continue; then
   warn "update cancelled"
   exit 0
 fi
 
+print_section "Replace product files"
 install_runtime_files
+print_section "Systemd verification"
 verify_systemd_units
+print_section "Refresh launchers and services"
 refresh_installed_desktop_launcher
 enable_systemd_units
 ensure_user_local_bin_path

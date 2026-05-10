@@ -8,7 +8,9 @@ complete.
 
 ## Unreleased
 
-- No unreleased changes yet.
+- Improve `install.sh`, `update.sh` and `uninstall.sh` console UX with clearer
+  contracts, pre-execution plans, actionable errors and final next-step
+  summaries.
 
 ## v0.1.0-alpha candidate - 2026-05-09
 

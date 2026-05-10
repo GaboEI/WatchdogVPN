@@ -104,27 +104,25 @@ prompt_yes_no() {
 }
 
 print_contract() {
-  cat <<'EOF'
-This removes WatchdogVPN product files:
-  product commands and privileged scripts
-  TUI launcher
-  product systemd units and timers
-  NetworkManager dispatcher
-  logrotate policy
-  desktop launcher
+  print_section "Removed by uninstall"
+  printf 'product commands and privileged scripts\n'
+  printf 'TUI launcher\n'
+  printf 'product systemd units and timers\n'
+  printf 'NetworkManager dispatcher\n'
+  printf 'logrotate policy\n'
+  printf 'desktop launcher\n'
 
-Preserved unless explicitly purged:
-  /etc/adguardvpn.env
-  /etc/vpn-domain-bypass.conf
-  /var/log/myvpn/
-  /var/lib/vpn-rotate/
-  AdGuard Home configuration
-  Conky configuration
+  print_section "Preserved unless explicitly purged"
+  printf '/etc/adguardvpn.env\n'
+  printf '/etc/vpn-domain-bypass.conf\n'
+  printf '/var/log/myvpn/\n'
+  printf '/var/lib/vpn-rotate/\n'
+  printf 'AdGuard Home configuration\n'
+  printf 'Conky configuration\n'
 
-Never removed:
-  official AdGuard VPN CLI
-  AdGuard account/license state
-EOF
+  print_section "Never removed"
+  printf 'official AdGuard VPN CLI\n'
+  printf 'AdGuard account/license state\n'
 }
 
 remove_runtime_files() {
@@ -209,30 +207,51 @@ rescue_system_dns() {
 }
 
 final_report() {
-  cat <<'EOF'
+  print_title "WatchdogVPN uninstall completed"
+  print_field "AdGuard VPN CLI" "preserved"
+  print_field "Account/license state" "preserved"
+  print_field "Config purged" "$(yes_no_word "$PURGE_CONFIG")"
+  print_field "Logs purged" "$(yes_no_word "$PURGE_LOGS")"
+  print_field "Rotation state purged" "$(yes_no_word "$PURGE_STATE")"
+  print_field "Conky files purged" "$(yes_no_word "$PURGE_CONKY")"
 
-WatchdogVPN uninstall finished.
-
-The official AdGuard VPN CLI was not removed.
-EOF
+  print_section "Recovery"
+  printf 'To reinstall, run: ./install.sh\n'
+  printf 'If DNS looks wrong, run: vpn_dns_rescue auto --no-reconnect\n'
 }
 
-printf '%s - Uninstall\n' "$PROJECT_NAME"
+print_uninstall_plan() {
+  print_title "WatchdogVPN uninstall plan"
+  print_field "Product files" "remove"
+  print_field "Systemd units" "disable and remove"
+  print_field "DNS rescue" "$(yes_no_word "$RUN_DNS_RESCUE")"
+  print_field "Purge config" "$(yes_no_word "$PURGE_CONFIG")"
+  print_field "Purge logs" "$(yes_no_word "$PURGE_LOGS")"
+  print_field "Purge state" "$(yes_no_word "$PURGE_STATE")"
+  print_field "Purge Conky" "$(yes_no_word "$PURGE_CONKY")"
+  print_field "Dry run" "$(yes_no_word "${INSTALL_DRY_RUN:-0}")"
+  print_field "Backups" "$BACKUP_ROOT"
+}
+
+print_title "$PROJECT_NAME Uninstall"
 print_contract
 
 if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
   warn "dry-run mode: no system changes will be made"
 else
+  print_section "Privilege check"
   sudo -v
 fi
 
 if ((ASSUME_YES == 0)); then
-  if ! prompt_yes_no "Remove WatchdogVPN product files?" no; then
+  printf '\nThis removes WatchdogVPN product files but keeps the official AdGuard VPN CLI.\n'
+  if ! prompt_yes_no "Remove WatchdogVPN product files from this system?" no; then
     warn "uninstall cancelled"
     exit 0
   fi
 fi
 
+printf '\nThe next options control whether user data is purged. Defaults preserve data.\n'
 if ((PURGE_CONFIG == 0)) && prompt_yes_no "Also remove WatchdogVPN config files?" no; then
   PURGE_CONFIG=1
 fi
@@ -249,9 +268,15 @@ if ((PURGE_CONKY == 0)) && prompt_yes_no "Also remove WatchdogVPN Conky files?" 
   PURGE_CONKY=1
 fi
 
+print_uninstall_plan
+print_section "Disable services"
 disable_systemd_units
+print_section "DNS rescue"
 rescue_system_dns
+print_section "Remove systemd units"
 remove_systemd_units
+print_section "Remove product files"
 remove_runtime_files
+print_section "Remove optional user data"
 remove_optional_user_data
 final_report

@@ -183,3 +183,24 @@ files:
 
 The official AdGuard VPN CLI and the user's AdGuard account/license state are
 not removed by WatchdogVPN uninstall.
+
+## Example: Installer UX
+
+The installer shows a product-level plan before it writes files:
+
+```text
+WatchdogVPN installation plan
+-----------------------------
+Target distro:         Ubuntu 24.04.4 LTS (ubuntu)
+Runtime commands:      /usr/local/bin
+Privileged scripts:    /usr/local/sbin
+Systemd units:         enabled
+Advanced DNS:          no
+Desktop launcher:      yes
+Conky integration:     no
+Backups:               /var/backups/watchdogvpn
+Dry run:               yes
+```
+
+The update and uninstall flows follow the same pattern: contract first, plan
+second, execution details third, and a short final checklist.

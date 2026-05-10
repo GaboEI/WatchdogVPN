@@ -40,9 +40,17 @@ Usage:
 
 Options:
   --dry-run       Show what would be installed without changing the system.
-  --yes           Use product defaults for prompts.
+  --yes           Use product defaults: DNS off, desktop on, Conky off.
   --skip-doctor   Do not run the read-only preflight first.
   --help          Show this help.
+
+What this installer manages:
+  - WatchdogVPN runtime commands and privileged scripts.
+  - WatchdogVPN systemd units and timers.
+  - Optional AdGuard Home DNS integration.
+  - Optional desktop launcher and Conky integration.
+
+It does not remove the official AdGuard VPN CLI or account/license state.
 USAGE
 }
 
@@ -103,7 +111,7 @@ require_supported_distro() {
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
 
   if [[ "${DISTRO_SUPPORTED:-0}" != "1" ]]; then
-    fail "unsupported distro for this release"
+    print_unsupported_distro
     exit 1
   fi
 
@@ -124,17 +132,20 @@ require_system_shape() {
       warn "systemd is required; dry-run continues without validating init PID 1"
     else
       fail "systemd is required"
+      printf 'WatchdogVPN installs system services and timers. Run it on a systemd-based distro.\n'
       exit 1
     fi
   fi
 
   if ! command -v systemctl >/dev/null 2>&1; then
     fail "systemd is required"
+    printf 'Missing command: systemctl\n'
     exit 1
   fi
 
   if ! command -v sudo >/dev/null 2>&1; then
     fail "sudo is required"
+    printf 'Install sudo or run from an environment where privileged setup is available.\n'
     exit 1
   fi
 }
@@ -151,6 +162,7 @@ validate_required_commands() {
   fi
 
   warn "missing required commands: ${missing[*]}"
+  printf 'WatchdogVPN will ask the distro package manager to install missing prerequisites.\n'
   install_package_set "${DISTRO_BASE_PACKAGES[@]}"
 }
 
@@ -265,19 +277,17 @@ post_install_validation() {
 }
 
 final_report() {
-  cat <<'EOF'
+  print_title "WatchdogVPN installation completed"
+  print_field "TUI command" "VPN"
+  print_field "Diagnostics" "./doctor.sh"
+  print_field "Runtime status" "vpnctl status"
+  print_field "DNS test" "vpn_dnsctl local-test"
+  print_field "Service status" "systemctl status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer --no-pager"
 
-WatchdogVPN installation finished.
-
-Open the TUI with:
-  VPN
-
-Useful checks:
-  ./doctor.sh
-  vpnctl status
-  vpn_dnsctl local-test
-  systemctl status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer --no-pager
-EOF
+  print_section "Next steps"
+  printf '1. Open the TUI with: VPN\n'
+  printf '2. Check the dashboard state.\n'
+  printf '3. Run ./doctor.sh if anything looks wrong.\n'
 
   if ((PATH_UPDATED == 1)); then
     printf '\nA shell PATH update was added. Open a new terminal or run:\n'
@@ -289,49 +299,77 @@ EOF
   fi
 }
 
-printf '%s - Installer\n' "$PROJECT_NAME"
-printf 'This installs WatchdogVPN and guides the required AdGuard VPN CLI setup.\n'
+print_install_plan() {
+  print_title "WatchdogVPN installation plan"
+  print_field "Target distro" "$DISTRO_NAME ($DISTRO_ID)"
+  print_field "Runtime commands" "/usr/local/bin"
+  print_field "Privileged scripts" "/usr/local/sbin"
+  print_field "Systemd units" "enabled"
+  print_field "Advanced DNS" "$(yes_no_word "$ENABLE_ADVANCED_DNS")"
+  print_field "Desktop launcher" "$(yes_no_word "$INSTALL_DESKTOP")"
+  print_field "Conky integration" "$(yes_no_word "$INSTALL_CONKY")"
+  print_field "Backups" "$BACKUP_ROOT"
+  print_field "Dry run" "$(yes_no_word "${INSTALL_DRY_RUN:-0}")"
+}
+
+print_title "$PROJECT_NAME Installer"
+printf 'Installs WatchdogVPN and guides the required AdGuard VPN CLI setup.\n'
 
 require_supported_distro
 require_system_shape
 
 if ((RUN_DOCTOR == 1)); then
+  print_section "Read-only preflight"
   "$ROOT_DIR/doctor.sh" || warn "preflight reported issues; continuing with guided installer checks"
 fi
 
+print_section "Prerequisites"
 validate_required_commands
 
 install_official_adguard_vpn_cli
 
-if prompt_yes_no "Enable advanced DNS with AdGuard Home?" no; then
+printf '\nAdvanced DNS with AdGuard Home is optional. It enables DNS profile management\n'
+printf 'with preflight checks, backup and rollback. You can skip it and enable it later.\n'
+if prompt_yes_no "Enable advanced DNS mode with AdGuard Home?" no; then
   ENABLE_ADVANCED_DNS=1
 else
   ENABLE_ADVANCED_DNS=0
 fi
 
-if prompt_yes_no "Install desktop launcher?" yes; then
+printf '\nThe desktop launcher adds WatchdogVPN to the applications menu and user desktop.\n'
+if prompt_yes_no "Install desktop launcher for this user?" yes; then
   INSTALL_DESKTOP=1
 else
   INSTALL_DESKTOP=0
 fi
 
-if prompt_yes_no "Install Conky integration?" no; then
+printf '\nConky integration is optional and only useful if this desktop uses Conky widgets.\n'
+if prompt_yes_no "Install Conky integration for this user?" no; then
   INSTALL_CONKY=1
 else
   INSTALL_CONKY=0
 fi
 
+print_install_plan
+
 if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
   warn "dry-run mode: no system changes will be made"
 else
+  print_section "Privilege check"
   sudo -v
 fi
 
+print_section "Runtime validation"
 validate_repo_runtime
+print_section "Install runtime"
 install_runtime_files
+print_section "AdGuard VPN login"
 ensure_adguard_service_login
+print_section "Systemd verification"
 verify_systemd_units
+print_section "Optional integrations"
 install_optional_integrations
+print_section "Enable services"
 enable_systemd_units
 ensure_user_local_bin_path
 wait_for_services
