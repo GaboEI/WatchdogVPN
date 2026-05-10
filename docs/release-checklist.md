@@ -26,6 +26,7 @@ and presented as a public release.
 - [x] Demo screenshots and real command examples exist.
 - [x] Release notes exist for the alpha release.
 - [x] Changelog is grouped by release.
+- [x] Post-alpha and v1.1.0 roadmap documents exist.
 - [x] Ubuntu 24.04 real-machine validation passed.
 - [x] Arch Linux clean-VM validation passed.
 - [ ] Debian clean-system validation passed.

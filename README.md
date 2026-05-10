@@ -26,7 +26,7 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | Review release status | [v0.1.0-alpha notes](docs/release-notes-v0.1.0-alpha.md) |
 | Prepare a release | [Release Checklist](docs/release-checklist.md) |
 | Configure GitHub About | [GitHub About](docs/github-about.md) |
-| Check planned work | [Roadmap](docs/roadmap.md) |
+| Check planned work | [Roadmap](docs/roadmap.md) and [Post-Alpha Roadmap](docs/roadmap-post-alpha.md) |
 
 ## Core Capabilities
 
@@ -243,6 +243,8 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [Release Checklist](docs/release-checklist.md)
 - [GitHub About](docs/github-about.md)
 - [Roadmap](docs/roadmap.md)
+- [Post-Alpha Roadmap](docs/roadmap-post-alpha.md)
+- [Roadmap v1.1.0](docs/roadmap-v1.1.0.md)
 - [Install Contracts](docs/install-contracts.md)
 
 ## Security

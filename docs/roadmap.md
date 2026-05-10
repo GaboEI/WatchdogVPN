@@ -1,14 +1,21 @@
 # Roadmap
 
-This roadmap describes the path from the current packaged runtime to a reproducible multi-distro product.
+This roadmap describes the original packaging path from loose local runtime
+scripts to a reproducible multi-distro product.
+
+Current forward-looking planning is split into:
+
+- [Post-Alpha Roadmap](roadmap-post-alpha.md)
+- [Roadmap v1.1.0](roadmap-v1.1.0.md)
 
 ## Current Phase
 
-Repository packaging.
+Public alpha released.
 
-The working runtime has been imported into a clean structure. The next work is focused on making installation, update and removal reproducible on Ubuntu, Debian and Arch Linux.
-
-The repository is being prepared for the first public alpha release.
+The working runtime has been imported into a clean structure, documented,
+licensed, tagged and published as `v0.1.0-alpha`. The next work focuses on
+post-release hygiene, support readiness, persistent configuration and a more
+professional CLI.
 
 ## Milestone 1: Repository Baseline
 
@@ -128,6 +135,9 @@ Acceptance criteria:
 
 ## Future Work
 
+- Post-alpha support and reporting.
+- Persistent configuration.
+- Professional `watchdogvpn` CLI.
 - Fedora support.
 - More complete automated tests.
 - TUI event history polish.
