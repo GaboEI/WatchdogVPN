@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml/badge.svg)](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml)
 
-- **Status:** `v0.1.0-alpha`
+- **Status:** `v0.1.1`
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 - **Primary backend:** AdGuard VPN CLI
 - **Supported today:** Ubuntu 24.04, Debian and Arch Linux validation paths
@@ -24,7 +24,7 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | Review security tradeoffs | [Security](docs/security.md) and [Threat Model](docs/threat-model.md) |
 | Report an issue safely | [Reporting Issues](docs/reporting.md) and [Security Policy](SECURITY.md) |
 | Validate a machine | [Validation](docs/validation.md) |
-| Review release status | [v0.1.0-alpha notes](docs/release-notes-v0.1.0-alpha.md) |
+| Review release status | [v0.1.1 notes](docs/release-notes-v0.1.1.md) |
 | Prepare a release | [Release Checklist](docs/release-checklist.md) |
 | Configure GitHub About | [GitHub About](docs/github-about.md) |
 | Check planned work | [Roadmap](docs/roadmap.md) and [Post-Alpha Roadmap](docs/roadmap-post-alpha.md) |
@@ -205,7 +205,7 @@ tests/              Syntax, unit behavior and runtime validation helpers
 
 ## Known Limitations
 
-- `v0.1.0-alpha` is not a stable 1.0 release.
+- `v0.1.1` is not a stable 1.0 release.
 - CachyOS is Arch-derived and uses the Arch adapter through `ID_LIKE=arch`
   detection. Real installation and DNS validation passed, with one observation:
   the initial VPN tunnel may need extra settle time or one reboot after install.
@@ -250,6 +250,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [Reporting Issues](docs/reporting.md)
 - [Demo](docs/demo.md)
 - [Validation](docs/validation.md)
+- [v0.1.1 Release Notes](docs/release-notes-v0.1.1.md)
 - [v0.1.0-alpha Release Notes](docs/release-notes-v0.1.0-alpha.md)
 - [Release Checklist](docs/release-checklist.md)
 - [GitHub About](docs/github-about.md)

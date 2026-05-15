@@ -19,6 +19,8 @@ v1.1.0        -> internationalization and advanced UX
 
 ## v0.1.1: Post-Release Hygiene
 
+Status: ready for release tagging.
+
 Purpose: make the public alpha easier to support, report and review.
 
 Planned work:
@@ -31,8 +33,8 @@ Planned work:
 - Validate Debian clean install if a clean system is available. Done.
 - Fix CachyOS/Arch-derived distro detection. Done.
 - Validate CachyOS on a real machine. Done, with post-reboot VPN recovery observation.
-- Create initial GitHub milestones and labels. Planned in
-  [GitHub Planning](github-planning.md).
+- Create initial GitHub milestones and labels. Done.
+- Fix installed `watchdogvpn` CLI path shadowing. Done.
 
 Acceptance criteria:
 
@@ -42,7 +44,8 @@ Acceptance criteria:
 - A public clone can run `doctor.sh` and installer dry-run.
 - Debian validation is recorded after a real install flow.
 - CachyOS validation is recorded after a real install flow with advanced DNS.
-- Known post-alpha risks have ready-to-create GitHub issue drafts.
+- Known post-alpha risks are tracked through GitHub planning and issues.
+- `watchdogvpn report` works after update from an older installed layout.
 
 ## v0.2.0: Persistent Configuration
 

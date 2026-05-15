@@ -13,9 +13,10 @@ Current forward-looking planning is split into:
 Public alpha released.
 
 The working runtime has been imported into a clean structure, documented,
-licensed, tagged and published as `v0.1.0-alpha`. The next work focuses on
-post-release hygiene, support readiness, persistent configuration and a more
-professional CLI.
+licensed, tagged and published as `v0.1.0-alpha`. The `v0.1.1` maintenance
+work adds support readiness, reporting, Debian/CachyOS validation and the first
+`watchdogvpn` CLI report command. The next larger work focuses on persistent
+configuration and a more professional CLI.
 
 ## Milestone 1: Repository Baseline
 

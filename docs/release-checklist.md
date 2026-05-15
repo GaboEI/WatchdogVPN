@@ -5,8 +5,8 @@ and presented as a public release.
 
 ## Current Target
 
-- Target version: `v0.1.0-alpha`
-- Current status: public alpha released; post-alpha hygiene in progress
+- Target version: `v0.1.1`
+- Current status: alpha maintenance release ready for tagging
 - Intended audience: portfolio reviewers, Linux automation reviewers and
   controlled Linux testers
 - Public license: GPL-3.0-or-later
@@ -36,7 +36,7 @@ and presented as a public release.
 - [x] Final release tag is created.
 - [x] GitHub release entry is published with release notes.
 
-## Post-Alpha Hygiene Started
+## Required Before Tagging `v0.1.1`
 
 - [x] `SECURITY.md` exists.
 - [x] Bug report and feature request issue templates exist.
@@ -44,9 +44,12 @@ and presented as a public release.
 - [x] Public clone smoke test recorded.
 - [x] Local diagnostic report command exists.
 - [x] Initial GitHub milestones, labels and issue drafts are documented.
+- [x] GitHub milestones and labels are created.
 - [x] Debian clean-system validation passed.
 - [x] CachyOS/Arch-derived distro detection issue fixed.
 - [x] CachyOS real-machine validation passed with post-reboot VPN recovery observation.
+- [x] Installed `watchdogvpn` CLI is not shadowed by the TUI support package.
+- [x] `v0.1.1` release notes exist.
 
 ## Manual GitHub Repository Setup
 
@@ -91,16 +94,16 @@ systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypas
 Do not run this until the checklist is approved:
 
 ```sh
-git tag -a v0.1.0-alpha -m "WatchdogVPN v0.1.0-alpha"
-git push origin v0.1.0-alpha
+git tag -a v0.1.1 -m "WatchdogVPN v0.1.1"
+git push origin v0.1.1
 ```
 
 ## Release Boundaries
 
-`v0.1.0-alpha` should not claim:
+`v0.1.1` should not claim:
 
 - stable 1.0 readiness
-- CachyOS or broad Arch-derived distribution validation
+- broad Arch-derived distribution validation beyond Arch Linux and CachyOS
 - Fedora support
 - WireGuard/private backend support
 - complete TUI modularity
