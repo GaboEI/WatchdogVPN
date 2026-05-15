@@ -43,6 +43,7 @@ and presented as a public release.
 - [x] Reporting guidance exists in `docs/reporting.md`.
 - [x] Public clone smoke test recorded.
 - [x] Local diagnostic report command exists.
+- [x] Initial GitHub milestones, labels and issue drafts are documented.
 - [x] Debian clean-system validation passed.
 - [x] CachyOS/Arch-derived distro detection issue fixed.
 - [x] CachyOS real-machine validation passed with post-reboot VPN recovery observation.

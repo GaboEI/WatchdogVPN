@@ -21,6 +21,8 @@ progress.
   guidance when the tunnel remains degraded.
 - Add initial `watchdogvpn` product CLI with local sanitized diagnostic report
   generation.
+- Document initial GitHub milestones, labels and issue drafts for post-alpha
+  planning.
 
 ## v0.1.0-alpha - 2026-05-09
 

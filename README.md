@@ -253,6 +253,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [v0.1.0-alpha Release Notes](docs/release-notes-v0.1.0-alpha.md)
 - [Release Checklist](docs/release-checklist.md)
 - [GitHub About](docs/github-about.md)
+- [GitHub Planning](docs/github-planning.md)
 - [Roadmap](docs/roadmap.md)
 - [Post-Alpha Roadmap](docs/roadmap-post-alpha.md)
 - [Roadmap v1.1.0](docs/roadmap-v1.1.0.md)
