@@ -41,7 +41,7 @@ and presented as a public release.
 - [x] `SECURITY.md` exists.
 - [x] Bug report and feature request issue templates exist.
 - [x] Reporting guidance exists in `docs/reporting.md`.
-- [ ] Public clone smoke test recorded.
+- [x] Public clone smoke test recorded.
 - [ ] Debian clean-system validation passed.
 
 ## Manual GitHub Repository Setup

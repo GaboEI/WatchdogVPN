@@ -27,7 +27,7 @@ Planned work:
 - Add GitHub issue templates for bugs and feature requests. Done.
 - Add `docs/reporting.md`. Done.
 - Add a local diagnostic report command or first report generator.
-- Perform a public clone smoke test.
+- Perform a public clone smoke test. Done.
 - Validate Debian clean install if a clean system is available.
 - Create initial GitHub milestones and labels.
 

@@ -10,6 +10,7 @@ progress.
 - Add `SECURITY.md` for public vulnerability reporting guidance.
 - Add GitHub issue templates for bug reports and feature requests.
 - Add `docs/reporting.md` with safe diagnostic sharing guidance.
+- Record a public clone smoke test for the alpha repository.
 
 ## v0.1.0-alpha - 2026-05-09
 

@@ -13,6 +13,33 @@ bash tests/unit.sh
 ./doctor.sh
 ```
 
+## Public Clone Smoke Test
+
+Last recorded public clone smoke test: 2026-05-15.
+
+Commands:
+
+```sh
+git clone https://github.com/GaboEI/WatchdogVPN.git /tmp/watchdogvpn-public-test
+cd /tmp/watchdogvpn-public-test
+python3 -m compileall -q tui tests/unit/test_tui_modules.py
+bash tests/syntax.sh
+bash tests/unit.sh
+./install.sh --dry-run --yes --skip-doctor
+./doctor.sh
+```
+
+Recorded result:
+
+- HTTPS clone succeeded from the public repository.
+- Python compile check passed.
+- Syntax checks passed.
+- Unit behavior checks passed.
+- Installer dry-run passed without modifying the system.
+- `doctor.sh` executed, but returned expected environment failures in a
+  non-systemd/non-NetworkManager test context. A full doctor pass still requires
+  a real supported Linux host.
+
 ## Unit Behavior Checks
 
 `tests/unit.sh` runs behavior checks with mocked system commands and temporary
