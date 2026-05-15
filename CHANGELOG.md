@@ -12,10 +12,13 @@ progress.
 - Add `docs/reporting.md` with safe diagnostic sharing guidance.
 - Record a public clone smoke test for the alpha repository.
 - Record successful Debian real install validation, including DNS tooling.
-- Add Arch-derived distro detection so CachyOS can use the Arch adapter, with
-  full CachyOS validation still pending.
+- Add Arch-derived distro detection so CachyOS can use the Arch adapter.
 - Skip desktop-file placement cleanly when tiling/minimal desktop environments
   do not expose a real Desktop folder.
+- Record CachyOS real install validation with advanced DNS and post-reboot VPN
+  recovery observation.
+- Add a post-install VPN settle check with one recovery restart and clear reboot
+  guidance when the tunnel remains degraded.
 
 ## v0.1.0-alpha - 2026-05-09
 

@@ -30,7 +30,7 @@ Planned work:
 - Perform a public clone smoke test. Done.
 - Validate Debian clean install if a clean system is available. Done.
 - Fix CachyOS/Arch-derived distro detection. Done.
-- Validate CachyOS on a real machine.
+- Validate CachyOS on a real machine. Done, with post-reboot VPN recovery observation.
 - Create initial GitHub milestones and labels.
 
 Acceptance criteria:
@@ -39,6 +39,7 @@ Acceptance criteria:
 - Users can open structured bug reports.
 - A public clone can run `doctor.sh` and installer dry-run.
 - Debian validation is recorded after a real install flow.
+- CachyOS validation is recorded after a real install flow with advanced DNS.
 - Known post-alpha risks are tracked as GitHub issues.
 
 ## v0.2.0: Persistent Configuration

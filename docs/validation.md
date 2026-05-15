@@ -49,12 +49,14 @@ Current manually reported validation status:
 | Ubuntu 24.04 | Passed | Real workstation validation. |
 | Arch Linux | Passed | Real non-virtualized machine validation. |
 | Debian | Passed | Real install flow including DNS tooling. |
-| CachyOS | Detection fixed | Arch-derived system now maps to the Arch adapter; full validation pending. |
+| CachyOS | Passed with observation | Real install flow including DNS tooling; VPN recovered after reboot. |
 
-The CachyOS result is treated as a compatibility finding, not as full official
-support. The distro detector now maps Arch-derived systems that declare
-`ID_LIKE=arch` to the Arch adapter. A full CachyOS install validation is still
-required before listing it beside Arch Linux.
+The CachyOS result confirms that the Arch adapter works for a real install flow
+with advanced DNS. During the first post-install validation, `adguardvpn.service`
+was still `activating` and `vpn_truth_check` reported `DEGRADED`; after reboot,
+the system came up healthy without manual repair. The installer now performs an
+extra post-install VPN settle check and gives reboot guidance if the tunnel
+remains degraded.
 
 On tiling/minimal environments such as Hyprland setups where `xdg-user-dir
 DESKTOP` resolves to `$HOME` or no real Desktop folder exists, the installer

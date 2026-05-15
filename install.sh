@@ -248,6 +248,57 @@ wait_for_services() {
   sleep 8
 }
 
+truth_status() {
+  /usr/local/bin/vpn_truth_check 2>/dev/null | awk -F= '$1 == "STATUS" {print $2; exit}'
+}
+
+wait_for_vpn_truth() {
+  local timeout="${1:-30}" elapsed=0 status=""
+
+  while ((elapsed < timeout)); do
+    status="$(truth_status || true)"
+    [[ "$status" == "UP" ]] && return 0
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+
+  [[ -n "$status" ]] && printf '%s\n' "$status"
+  return 1
+}
+
+settle_vpn_after_install() {
+  local status=""
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] validate VPN tunnel after install\n'
+    return 0
+  fi
+
+  print_section "VPN settle check"
+  if wait_for_vpn_truth 30 >/dev/null; then
+    ok "VPN truth state is UP"
+    return 0
+  fi
+
+  status="$(truth_status || true)"
+  if [[ "$status" == "DEGRADED" ]]; then
+    warn "VPN truth state is DEGRADED after initial service start"
+    warn "restarting adguardvpn.service once before final validation"
+    sudo systemctl restart adguardvpn.service || true
+    if wait_for_vpn_truth 30 >/dev/null; then
+      ok "VPN truth state recovered after service restart"
+      return 0
+    fi
+    status="$(truth_status || true)"
+  fi
+
+  warn "VPN truth state after install: ${status:-UNKNOWN}"
+  printf 'If the dashboard stays degraded, reboot once and rerun:\n'
+  printf '  cd %s\n' "$ROOT_DIR"
+  printf '  ./doctor.sh\n'
+  printf '  vpnctl status\n'
+}
+
 post_install_validation() {
   local doctor_rc=0 dns_rc=0
 
@@ -373,5 +424,6 @@ print_section "Enable services"
 enable_systemd_units
 ensure_user_local_bin_path
 wait_for_services
+settle_vpn_after_install
 post_install_validation
 final_report

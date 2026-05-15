@@ -71,7 +71,7 @@ Current support status:
 | Ubuntu 24.04 | Tested on a real workstation |
 | Arch Linux | Tested on a real workstation |
 | Debian | Tested with a real install flow, including DNS tooling |
-| CachyOS | Arch-derived; detected through the Arch adapter, real validation pending |
+| CachyOS | Tested with a real install flow; initial VPN settle may require reboot |
 | Fedora | Future target |
 
 The project is designed as one multi-distro codebase rather than separate repositories per distro.
@@ -207,7 +207,8 @@ tests/              Syntax, unit behavior and runtime validation helpers
 
 - `v0.1.0-alpha` is not a stable 1.0 release.
 - CachyOS is Arch-derived and uses the Arch adapter through `ID_LIKE=arch`
-  detection, but still needs a full real-machine validation pass.
+  detection. Real installation and DNS validation passed, with one observation:
+  the initial VPN tunnel may need extra settle time or one reboot after install.
 - The current TUI is functional and the gradual module split has started, but most rendering/action flow still lives in `tui/VPN`.
 - Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
 - The installer can guide installation of the official AdGuard VPN CLI, but external installer verification is not fully cryptographically pinned yet.

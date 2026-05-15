@@ -44,7 +44,7 @@ and presented as a public release.
 - [x] Public clone smoke test recorded.
 - [x] Debian clean-system validation passed.
 - [x] CachyOS/Arch-derived distro detection issue fixed.
-- [ ] CachyOS real-machine validation passed.
+- [x] CachyOS real-machine validation passed with post-reboot VPN recovery observation.
 
 ## Manual GitHub Repository Setup
 
