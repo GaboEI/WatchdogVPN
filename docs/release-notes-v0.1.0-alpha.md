@@ -37,15 +37,17 @@ and CI.
 | Distribution | Status |
 | --- | --- |
 | Ubuntu 24.04 | Tested on a real workstation |
-| Arch Linux | Tested in a clean VM flow |
-| Debian | Adapter exists; clean validation still required |
+| Arch Linux | Tested on a real workstation |
+| Debian | Tested with a real install flow, including DNS tooling |
+| CachyOS | Arch-derived; detection work remains |
 | Fedora | Future target |
 
 ## Known Limitations
 
 - This is not a stable 1.0 release.
 - The project is licensed under GPL-3.0-or-later.
-- Debian has not completed a clean-system validation pass.
+- CachyOS is not yet recognized by the distro detector even though it is
+  Arch-derived.
 - The TUI still contains most rendering flow in `tui/VPN`, but action command
   builders, render primitives and state/command helpers are already split into
   importable modules.
@@ -67,8 +69,8 @@ and CI.
 - [x] Demo screenshots and validation examples.
 - [x] Project history documentation.
 - [x] Ubuntu real-machine validation.
-- [x] Arch clean-VM validation.
-- [ ] Debian clean-system validation.
+- [x] Arch real-machine validation.
+- [x] Debian clean-system validation.
 - [x] Final license decision before public release.
 - [ ] Release checklist approved.
 - [ ] GitHub release tag and release entry.

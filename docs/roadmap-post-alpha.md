@@ -28,7 +28,8 @@ Planned work:
 - Add `docs/reporting.md`. Done.
 - Add a local diagnostic report command or first report generator.
 - Perform a public clone smoke test. Done.
-- Validate Debian clean install if a clean system is available.
+- Validate Debian clean install if a clean system is available. Done.
+- Track CachyOS/Arch-derived distro detection.
 - Create initial GitHub milestones and labels.
 
 Acceptance criteria:
@@ -36,6 +37,7 @@ Acceptance criteria:
 - Users know how to report security issues.
 - Users can open structured bug reports.
 - A public clone can run `doctor.sh` and installer dry-run.
+- Debian validation is recorded after a real install flow.
 - Known post-alpha risks are tracked as GitHub issues.
 
 ## v0.2.0: Persistent Configuration
@@ -95,7 +97,7 @@ are mature enough.
 Required before `v1.0.0`:
 
 - Install/update/uninstall tested on Ubuntu and Arch.
-- Debian validation either completed or clearly excluded.
+- Debian validation completed or clearly maintained.
 - Persistent config implemented and tested.
 - Security reporting exists.
 - Known `shell=True` hardening work is reduced or documented.

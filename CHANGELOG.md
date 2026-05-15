@@ -11,6 +11,8 @@ progress.
 - Add GitHub issue templates for bug reports and feature requests.
 - Add `docs/reporting.md` with safe diagnostic sharing guidance.
 - Record a public clone smoke test for the alpha repository.
+- Record successful Debian real install validation, including DNS tooling.
+- Record CachyOS as an Arch-derived distro detection follow-up.
 
 ## v0.1.0-alpha - 2026-05-09
 

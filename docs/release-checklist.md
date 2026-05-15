@@ -28,8 +28,8 @@ and presented as a public release.
 - [x] Changelog is grouped by release.
 - [x] Post-alpha and v1.1.0 roadmap documents exist.
 - [x] Ubuntu 24.04 real-machine validation passed.
-- [x] Arch Linux clean-VM validation passed.
-- [ ] Debian clean-system validation passed.
+- [x] Arch Linux real-machine validation passed.
+- [x] Debian clean-system validation passed, including DNS tooling.
 - [x] Final public-license decision is made.
 - [x] GitHub About description, topics and website/demo link are documented.
 - [x] GitHub About description, topics and website/demo link are configured.
@@ -42,7 +42,8 @@ and presented as a public release.
 - [x] Bug report and feature request issue templates exist.
 - [x] Reporting guidance exists in `docs/reporting.md`.
 - [x] Public clone smoke test recorded.
-- [ ] Debian clean-system validation passed.
+- [x] Debian clean-system validation passed.
+- [ ] CachyOS/Arch-derived distro detection issue tracked.
 
 ## Manual GitHub Repository Setup
 
@@ -95,7 +96,7 @@ git push origin v0.1.0-alpha
 `v0.1.0-alpha` should not claim:
 
 - stable 1.0 readiness
-- full Debian validation
+- CachyOS or broad Arch-derived distribution support
 - Fedora support
 - WireGuard/private backend support
 - complete TUI modularity

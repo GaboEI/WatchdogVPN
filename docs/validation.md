@@ -40,6 +40,21 @@ Recorded result:
   non-systemd/non-NetworkManager test context. A full doctor pass still requires
   a real supported Linux host.
 
+## Real Distribution Validation
+
+Current manually reported validation status:
+
+| Distribution | Status | Notes |
+| --- | --- | --- |
+| Ubuntu 24.04 | Passed | Real workstation validation. |
+| Arch Linux | Passed | Real non-virtualized machine validation. |
+| Debian | Passed | Real install flow including DNS tooling. |
+| CachyOS | Blocked | Arch-derived system was not recognized by the distro detector. |
+
+The CachyOS result is treated as a compatibility finding, not as official
+support. The likely next step is to improve distro detection for Arch-derived
+systems while keeping the support matrix honest.
+
 ## Unit Behavior Checks
 
 `tests/unit.sh` runs behavior checks with mocked system commands and temporary
