@@ -14,6 +14,8 @@ only in installation and dependency detection.
 - `tui/VPN`: compatibility entrypoint and main terminal UI loop
 - `tui/watchdogvpn/`: extracted action command builders, command runners, state
   collectors, render helpers, constants, parsers, formatters and validators
+- `bin/watchdogvpn`: product CLI for status, TUI launch and local diagnostic
+  reports
 - `bin/vpnctl`: user command surface
 - `bin/vpn_truth_check`: source of truth for tunnel/routing/IP state
 - `bin/vpn_auth_check`: AdGuard VPN session check

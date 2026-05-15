@@ -19,6 +19,8 @@ progress.
   recovery observation.
 - Add a post-install VPN settle check with one recovery restart and clear reboot
   guidance when the tunnel remains degraded.
+- Add initial `watchdogvpn` product CLI with local sanitized diagnostic report
+  generation.
 
 ## v0.1.0-alpha - 2026-05-09
 

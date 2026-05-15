@@ -52,6 +52,7 @@ Product-managed runtime files include:
 - `/usr/local/bin/vpn_dns_rescue`
 - `/usr/local/bin/vpn_notify`
 - `/usr/local/bin/no_vpn`
+- `/usr/local/bin/watchdogvpn`
 - `/usr/local/sbin/vpn_set`
 - `/usr/local/sbin/vpn_rotate.sh`
 - `/usr/local/sbin/vpn_watchdog.sh`
@@ -175,6 +176,14 @@ The uninstall contract is:
 - never remove AdGuard account/license state;
 - preserve config, logs, rotation state and Conky unless purge flags are used;
 - attempt DNS recovery before removing WatchdogVPN commands.
+
+## Local Diagnostic Reports
+
+`watchdogvpn report` generates a local text report for support and debugging. It
+does not upload anything automatically. The report applies basic sanitization for
+common sensitive values such as IPv4 addresses, email addresses, device-code URLs
+and the user's home directory path, but users should still review the file before
+sharing it.
 
 ## Reporting Security Issues
 

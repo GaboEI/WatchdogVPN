@@ -102,6 +102,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 ```sh
 vpn_truth_check
 vpn_auth_check
+watchdogvpn report
 systemctl status vpn-watchdog.timer
 systemctl status vpn-rotate.timer
 VPN

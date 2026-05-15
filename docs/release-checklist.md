@@ -42,6 +42,7 @@ and presented as a public release.
 - [x] Bug report and feature request issue templates exist.
 - [x] Reporting guidance exists in `docs/reporting.md`.
 - [x] Public clone smoke test recorded.
+- [x] Local diagnostic report command exists.
 - [x] Debian clean-system validation passed.
 - [x] CachyOS/Arch-derived distro detection issue fixed.
 - [x] CachyOS real-machine validation passed with post-reboot VPN recovery observation.
@@ -78,6 +79,7 @@ python3 -m compileall -q tui tests/unit/test_tui_modules.py
 bash tests/syntax.sh
 systemd-analyze verify systemd/*.service systemd/*.timer
 ./doctor.sh
+watchdogvpn report
 vpnctl status
 vpn_dnsctl local-test
 systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager

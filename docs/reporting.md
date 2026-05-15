@@ -61,8 +61,21 @@ Do not open a public issue with exploit details, credentials or sensitive local
 network information. Follow [SECURITY.md](../SECURITY.md) for vulnerability
 reports.
 
-## Local Report Direction
+## Local Diagnostic Report
 
-A future `watchdogvpn report` command is planned. It should generate a local
-diagnostic bundle only after explicit user consent and should never upload data
-automatically.
+Use:
+
+```sh
+watchdogvpn report
+```
+
+The command writes a local text file named like:
+
+```text
+~/watchdogvpn-report-YYYYMMDD-HHMMSS.txt
+```
+
+It does not upload anything. Review the file before sharing it. The report
+sanitizes common sensitive values such as IPv4 addresses, email addresses,
+device-code URLs and the home directory path, but manual review is still
+required.

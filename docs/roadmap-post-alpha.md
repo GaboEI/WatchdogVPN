@@ -26,7 +26,7 @@ Planned work:
 - Add `SECURITY.md`. Done.
 - Add GitHub issue templates for bugs and feature requests. Done.
 - Add `docs/reporting.md`. Done.
-- Add a local diagnostic report command or first report generator.
+- Add a local diagnostic report command or first report generator. Done.
 - Perform a public clone smoke test. Done.
 - Validate Debian clean install if a clean system is available. Done.
 - Fix CachyOS/Arch-derived distro detection. Done.
@@ -37,6 +37,7 @@ Acceptance criteria:
 
 - Users know how to report security issues.
 - Users can open structured bug reports.
+- Users can generate a local diagnostic report without telemetry.
 - A public clone can run `doctor.sh` and installer dry-run.
 - Debian validation is recorded after a real install flow.
 - CachyOS validation is recorded after a real install flow with advanced DNS.

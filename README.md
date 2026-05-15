@@ -226,6 +226,12 @@ systemd-analyze verify systemd/*.service systemd/*.timer
 ./doctor.sh
 ```
 
+Generate a local support report without uploading anything:
+
+```sh
+watchdogvpn report
+```
+
 GitHub Actions runs syntax checks and systemd unit verification automatically. `shellcheck` and `shfmt` are currently advisory checks while the shell code is being hardened.
 
 Some local system validations require root or an installed system target, for example:

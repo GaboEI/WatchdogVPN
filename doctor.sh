@@ -206,6 +206,7 @@ check_repo_file "bin/vpn_dns_rescue" exec
 check_repo_file "bin/vpn_dnsctl" exec
 check_repo_file "bin/vpn_notify" exec
 check_repo_file "bin/vpnctl" exec
+check_repo_file "bin/watchdogvpn" exec
 check_repo_file "sbin/vpn_set" exec
 check_repo_file "sbin/vpn_rotate.sh" exec
 check_repo_file "sbin/vpn_watchdog.sh" exec
@@ -222,6 +223,7 @@ for path in \
   /usr/local/bin/vpn_dnsctl \
   /usr/local/bin/vpn_notify \
   /usr/local/bin/vpnctl \
+  /usr/local/bin/watchdogvpn \
   /usr/local/sbin/vpn_set \
   /usr/local/sbin/vpn_rotate.sh \
   /usr/local/sbin/vpn_watchdog.sh \
