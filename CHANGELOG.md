@@ -23,6 +23,8 @@ progress.
   generation.
 - Document initial GitHub milestones, labels and issue drafts for post-alpha
   planning.
+- Move the installed TUI support package out of `~/.local/bin` so it no longer
+  shadows the `watchdogvpn` CLI command.
 
 ## v0.1.0-alpha - 2026-05-09
 

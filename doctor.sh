@@ -228,7 +228,7 @@ for path in \
   /usr/local/sbin/vpn_rotate.sh \
   /usr/local/sbin/vpn_watchdog.sh \
   "$HOME/.local/bin/VPN" \
-  "$HOME/.local/bin/watchdogvpn"
+  "$HOME/.local/share/watchdogvpn/watchdogvpn"
 do
   if [[ -e "$path" ]]; then
     installed_any=1
@@ -238,6 +238,10 @@ done
 ((installed_any == 1)) || mark_warn "no previous WatchdogVPN runtime detected"
 
 if [[ -d "$HOME/.local/bin/watchdogvpn" ]]; then
+  mark_warn "legacy TUI package path shadows CLI: $HOME/.local/bin/watchdogvpn"
+fi
+
+if [[ -d "$HOME/.local/share/watchdogvpn/watchdogvpn" ]]; then
   for module in \
     __init__.py \
     actions.py \
@@ -250,7 +254,7 @@ if [[ -d "$HOME/.local/bin/watchdogvpn" ]]; then
     styles.py \
     validators.py
   do
-    if [[ -f "$HOME/.local/bin/watchdogvpn/$module" ]]; then
+    if [[ -f "$HOME/.local/share/watchdogvpn/watchdogvpn/$module" ]]; then
       mark_ok "installed TUI module: $module"
     else
       mark_fail "missing installed TUI module: $module"

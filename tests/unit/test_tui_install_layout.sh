@@ -6,11 +6,13 @@ tmpdir="$(mktemp -d)"
 cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT
 
-install -m 0755 "$ROOT_DIR/tui/VPN" "$tmpdir/VPN"
-cp -a "$ROOT_DIR/tui/watchdogvpn" "$tmpdir/watchdogvpn"
+home_dir="$tmpdir/home"
+install -d -m 0755 "$home_dir/.local/bin" "$home_dir/.local/share/watchdogvpn"
+install -m 0755 "$ROOT_DIR/tui/VPN" "$home_dir/.local/bin/VPN"
+cp -a "$ROOT_DIR/tui/watchdogvpn" "$home_dir/.local/share/watchdogvpn/watchdogvpn"
 
-python3 -m py_compile "$tmpdir/VPN" "$tmpdir"/watchdogvpn/*.py
-PYTHONPATH="$tmpdir" python3 - "$tmpdir/VPN" <<'PY'
+python3 -m py_compile "$home_dir/.local/bin/VPN" "$home_dir"/.local/share/watchdogvpn/watchdogvpn/*.py
+HOME="$home_dir" python3 - "$home_dir/.local/bin/VPN" <<'PY'
 import importlib.util
 import importlib.machinery
 import sys
@@ -29,7 +31,7 @@ for name in ("strip_ansi",):
 for name in ("bypass_count",):
     assert name in module.section_meta.__globals__, f"missing section_meta global: {name}"
 PY
-launcher_output="$("$tmpdir/VPN")"
+launcher_output="$(HOME="$home_dir" "$home_dir/.local/bin/VPN")"
 [[ "$launcher_output" == "VPN requiere una terminal interactiva." ]]
 
 echo "tui install layout check passed"

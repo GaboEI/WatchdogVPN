@@ -24,7 +24,8 @@ install_runtime_files() {
   install_root_file "$ROOT_DIR/sbin/vpn_watchdog.sh" /usr/local/sbin/vpn_watchdog.sh 0700
 
   install_user_file "$ROOT_DIR/tui/VPN" "$HOME/.local/bin/VPN" 0755
-  install_user_dir "$ROOT_DIR/tui/watchdogvpn" "$HOME/.local/bin/watchdogvpn"
+  remove_user_path "$HOME/.local/bin/watchdogvpn"
+  install_user_dir "$ROOT_DIR/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"
   install_root_file "$ROOT_DIR/networkmanager/dispatcher.d/99-vpn-rotate" /etc/NetworkManager/dispatcher.d/99-vpn-rotate 0755
   install_root_file "$ROOT_DIR/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
   install_systemd_units

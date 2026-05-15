@@ -12,6 +12,10 @@ import tty
 import time
 import traceback
 
+INSTALLED_SUPPORT_DIR = os.path.expanduser("~/.local/share/watchdogvpn")
+if os.path.isdir(os.path.join(INSTALLED_SUPPORT_DIR, "watchdogvpn")):
+    sys.path.insert(0, INSTALLED_SUPPORT_DIR)
+
 from watchdogvpn.constants import (
     AG,
     AUTO_REFRESH_SECONDS,
