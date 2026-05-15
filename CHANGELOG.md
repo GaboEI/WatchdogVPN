@@ -14,6 +14,8 @@ progress.
 - Record successful Debian real install validation, including DNS tooling.
 - Add Arch-derived distro detection so CachyOS can use the Arch adapter, with
   full CachyOS validation still pending.
+- Skip desktop-file placement cleanly when tiling/minimal desktop environments
+  do not expose a real Desktop folder.
 
 ## v0.1.0-alpha - 2026-05-09
 

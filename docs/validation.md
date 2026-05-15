@@ -56,6 +56,11 @@ support. The distro detector now maps Arch-derived systems that declare
 `ID_LIKE=arch` to the Arch adapter. A full CachyOS install validation is still
 required before listing it beside Arch Linux.
 
+On tiling/minimal environments such as Hyprland setups where `xdg-user-dir
+DESKTOP` resolves to `$HOME` or no real Desktop folder exists, the installer
+should install only the application-menu launcher and skip the desktop-file copy
+with a warning.
+
 ## Unit Behavior Checks
 
 `tests/unit.sh` runs behavior checks with mocked system commands and temporary
