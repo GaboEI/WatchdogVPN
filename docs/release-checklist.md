@@ -6,7 +6,7 @@ and presented as a public release.
 ## Current Target
 
 - Target version: `v0.1.0-alpha`
-- Current status: alpha release preparation
+- Current status: public alpha released; post-alpha hygiene in progress
 - Intended audience: portfolio reviewers, Linux automation reviewers and
   controlled Linux testers
 - Public license: GPL-3.0-or-later
@@ -32,9 +32,17 @@ and presented as a public release.
 - [ ] Debian clean-system validation passed.
 - [x] Final public-license decision is made.
 - [x] GitHub About description, topics and website/demo link are documented.
-- [ ] GitHub About description, topics and website/demo link are configured.
-- [ ] Final release tag is created.
-- [ ] GitHub release entry is published with release notes.
+- [x] GitHub About description, topics and website/demo link are configured.
+- [x] Final release tag is created.
+- [x] GitHub release entry is published with release notes.
+
+## Post-Alpha Hygiene Started
+
+- [x] `SECURITY.md` exists.
+- [x] Bug report and feature request issue templates exist.
+- [x] Reporting guidance exists in `docs/reporting.md`.
+- [ ] Public clone smoke test recorded.
+- [ ] Debian clean-system validation passed.
 
 ## Manual GitHub Repository Setup
 

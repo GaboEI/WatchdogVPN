@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest an improvement for WatchdogVPN.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for product improvements. For vulnerabilities or sensitive
+        security reports, use the security reporting path instead.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Installer/update/uninstall
+        - TUI
+        - CLI
+        - Watchdog/recovery
+        - Rotation
+        - DNS
+        - Domain exclusions
+        - Reporting/diagnostics
+        - Documentation
+        - Distribution support
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you want.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This request does not require hidden telemetry or automatic upload of network data.
+          required: true

@@ -22,6 +22,7 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | Understand the design | [Architecture](docs/architecture.md) |
 | See how it evolved | [Project History](docs/project-history.md) |
 | Review security tradeoffs | [Security](docs/security.md) and [Threat Model](docs/threat-model.md) |
+| Report an issue safely | [Reporting Issues](docs/reporting.md) and [Security Policy](SECURITY.md) |
 | Validate a machine | [Validation](docs/validation.md) |
 | Review release status | [v0.1.0-alpha notes](docs/release-notes-v0.1.0-alpha.md) |
 | Prepare a release | [Release Checklist](docs/release-checklist.md) |
@@ -237,6 +238,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [Project History](docs/project-history.md)
 - [Security](docs/security.md)
 - [Threat Model](docs/threat-model.md)
+- [Reporting Issues](docs/reporting.md)
 - [Demo](docs/demo.md)
 - [Validation](docs/validation.md)
 - [v0.1.0-alpha Release Notes](docs/release-notes-v0.1.0-alpha.md)

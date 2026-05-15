@@ -2,14 +2,14 @@
 
 All notable product-facing changes are documented here.
 
-WatchdogVPN is currently being prepared for the first public alpha release.
+WatchdogVPN is a public alpha. Post-alpha support and reporting work is now in
+progress.
 
 ## Unreleased
 
-- Improve `install.sh`, `update.sh` and `uninstall.sh` console UX with clearer
-  contracts, pre-execution plans, actionable errors and final next-step
-  summaries.
-- Switch the project license from portfolio-review-only to GPL-3.0-or-later.
+- Add `SECURITY.md` for public vulnerability reporting guidance.
+- Add GitHub issue templates for bug reports and feature requests.
+- Add `docs/reporting.md` with safe diagnostic sharing guidance.
 
 ## v0.1.0-alpha - 2026-05-09
 

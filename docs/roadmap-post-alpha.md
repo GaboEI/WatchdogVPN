@@ -23,9 +23,9 @@ Purpose: make the public alpha easier to support, report and review.
 
 Planned work:
 
-- Add `SECURITY.md`.
-- Add GitHub issue templates for bugs and feature requests.
-- Add `docs/reporting.md`.
+- Add `SECURITY.md`. Done.
+- Add GitHub issue templates for bugs and feature requests. Done.
+- Add `docs/reporting.md`. Done.
 - Add a local diagnostic report command or first report generator.
 - Perform a public clone smoke test.
 - Validate Debian clean install if a clean system is available.

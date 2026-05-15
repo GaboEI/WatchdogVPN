@@ -1,0 +1,87 @@
+name: Bug report
+description: Report a reproducible WatchdogVPN problem.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a WatchdogVPN issue. Do not include credentials,
+        private keys, account details, private domains or raw logs with sensitive
+        network information.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of WatchdogVPN is affected?
+      options:
+        - Installer
+        - Update
+        - Uninstall
+        - Doctor
+        - TUI
+        - Watchdog
+        - Rotation
+        - DNS
+        - Domain exclusions
+        - Logs/notifications
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Example: v0.1.0-alpha or a commit hash.
+      placeholder: v0.1.0-alpha
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution
+      description: Include version if known.
+      placeholder: Ubuntu 24.04, Arch Linux, Debian 12
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact commands or UI actions.
+      placeholder: |
+        1. Run ...
+        2. Select ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste only reviewed output. Remove IPs, private domains and account details if needed.
+      render: text
+      placeholder: |
+        ./doctor.sh
+        vpn_truth_check
+        vpn_auth_check
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, tokens, private keys and sensitive network details.
+          required: true
