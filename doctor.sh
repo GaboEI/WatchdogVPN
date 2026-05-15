@@ -114,7 +114,7 @@ if [[ "${DISTRO_SUPPORTED:-0}" == "1" ]]; then
   if [[ -r "$adapter" ]]; then
     # shellcheck disable=SC1090
     . "$adapter"
-    mark_ok "distro adapter: distros/$DISTRO_ID.sh"
+    mark_ok "distro adapter: distros/${DISTRO_ADAPTER_ID:-$DISTRO_ID}.sh"
     info "package manager: ${DISTRO_PACKAGE_MANAGER:-unknown}"
   else
     mark_fail "missing distro adapter: $adapter"

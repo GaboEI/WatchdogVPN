@@ -71,7 +71,7 @@ Current support status:
 | Ubuntu 24.04 | Tested on a real workstation |
 | Arch Linux | Tested on a real workstation |
 | Debian | Tested with a real install flow, including DNS tooling |
-| CachyOS | Arch-derived; currently needs distro detection work |
+| CachyOS | Arch-derived; detected through the Arch adapter, real validation pending |
 | Fedora | Future target |
 
 The project is designed as one multi-distro codebase rather than separate repositories per distro.
@@ -206,8 +206,8 @@ tests/              Syntax, unit behavior and runtime validation helpers
 ## Known Limitations
 
 - `v0.1.0-alpha` is not a stable 1.0 release.
-- CachyOS is Arch-derived, but current distro detection does not recognize it
-  as a supported adapter target yet.
+- CachyOS is Arch-derived and uses the Arch adapter through `ID_LIKE=arch`
+  detection, but still needs a full real-machine validation pass.
 - The current TUI is functional and the gradual module split has started, but most rendering/action flow still lives in `tui/VPN`.
 - Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
 - The installer can guide installation of the official AdGuard VPN CLI, but external installer verification is not fully cryptographically pinned yet.
@@ -262,7 +262,7 @@ NetworkManager hooks and systemd units. Review [Security](docs/security.md) and
 - Polish the event history view in the TUI.
 - Add a first-class `watchdogvpn`/brand command while keeping `VPN` as a compatibility launcher.
 - Continue clean-install testing across Ubuntu, Debian and Arch Linux.
-- Improve detection for Arch-derived distributions such as CachyOS.
+- Validate Arch-derived distributions such as CachyOS after adapter detection.
 - Evaluate Fedora support after the 1.0 baseline is stable.
 - Prepare future backend support beyond AdGuard VPN CLI.
 

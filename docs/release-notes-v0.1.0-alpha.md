@@ -39,15 +39,15 @@ and CI.
 | Ubuntu 24.04 | Tested on a real workstation |
 | Arch Linux | Tested on a real workstation |
 | Debian | Tested with a real install flow, including DNS tooling |
-| CachyOS | Arch-derived; detection work remains |
+| CachyOS | Arch-derived; detected through Arch adapter, full validation pending |
 | Fedora | Future target |
 
 ## Known Limitations
 
 - This is not a stable 1.0 release.
 - The project is licensed under GPL-3.0-or-later.
-- CachyOS is not yet recognized by the distro detector even though it is
-  Arch-derived.
+- CachyOS uses the Arch adapter through Arch-derived detection, but still needs
+  a full validation pass before being treated like Arch Linux.
 - The TUI still contains most rendering flow in `tui/VPN`, but action command
   builders, render primitives and state/command helpers are already split into
   importable modules.

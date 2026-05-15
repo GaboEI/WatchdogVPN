@@ -49,11 +49,12 @@ Current manually reported validation status:
 | Ubuntu 24.04 | Passed | Real workstation validation. |
 | Arch Linux | Passed | Real non-virtualized machine validation. |
 | Debian | Passed | Real install flow including DNS tooling. |
-| CachyOS | Blocked | Arch-derived system was not recognized by the distro detector. |
+| CachyOS | Detection fixed | Arch-derived system now maps to the Arch adapter; full validation pending. |
 
-The CachyOS result is treated as a compatibility finding, not as official
-support. The likely next step is to improve distro detection for Arch-derived
-systems while keeping the support matrix honest.
+The CachyOS result is treated as a compatibility finding, not as full official
+support. The distro detector now maps Arch-derived systems that declare
+`ID_LIKE=arch` to the Arch adapter. A full CachyOS install validation is still
+required before listing it beside Arch Linux.
 
 ## Unit Behavior Checks
 

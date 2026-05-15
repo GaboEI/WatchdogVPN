@@ -44,7 +44,8 @@ print_unsupported_distro() {
   fail "unsupported distro: ${DISTRO_NAME:-unknown} (${DISTRO_ID:-unknown})"
   cat <<'EOF'
 WatchdogVPN v0.1.0-alpha currently supports Ubuntu, Debian and Arch Linux
-systems running systemd.
+systems running systemd. Some Arch-derived distributions may use the Arch
+adapter when their /etc/os-release metadata declares a compatible ID_LIKE value.
 
 Next step:
   Run ./doctor.sh to collect diagnostics, or install on a supported distro.

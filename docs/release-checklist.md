@@ -43,7 +43,8 @@ and presented as a public release.
 - [x] Reporting guidance exists in `docs/reporting.md`.
 - [x] Public clone smoke test recorded.
 - [x] Debian clean-system validation passed.
-- [ ] CachyOS/Arch-derived distro detection issue tracked.
+- [x] CachyOS/Arch-derived distro detection issue fixed.
+- [ ] CachyOS real-machine validation passed.
 
 ## Manual GitHub Repository Setup
 
@@ -96,7 +97,7 @@ git push origin v0.1.0-alpha
 `v0.1.0-alpha` should not claim:
 
 - stable 1.0 readiness
-- CachyOS or broad Arch-derived distribution support
+- CachyOS or broad Arch-derived distribution validation
 - Fedora support
 - WireGuard/private backend support
 - complete TUI modularity

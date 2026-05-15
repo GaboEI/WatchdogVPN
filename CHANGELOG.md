@@ -12,7 +12,8 @@ progress.
 - Add `docs/reporting.md` with safe diagnostic sharing guidance.
 - Record a public clone smoke test for the alpha repository.
 - Record successful Debian real install validation, including DNS tooling.
-- Record CachyOS as an Arch-derived distro detection follow-up.
+- Add Arch-derived distro detection so CachyOS can use the Arch adapter, with
+  full CachyOS validation still pending.
 
 ## v0.1.0-alpha - 2026-05-09
 

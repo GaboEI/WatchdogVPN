@@ -29,7 +29,8 @@ Planned work:
 - Add a local diagnostic report command or first report generator.
 - Perform a public clone smoke test. Done.
 - Validate Debian clean install if a clean system is available. Done.
-- Track CachyOS/Arch-derived distro detection.
+- Fix CachyOS/Arch-derived distro detection. Done.
+- Validate CachyOS on a real machine.
 - Create initial GitHub milestones and labels.
 
 Acceptance criteria:
