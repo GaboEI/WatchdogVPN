@@ -22,8 +22,12 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
-for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot"):
+for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command"):
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
+
+cmd = module.settings_set_command("language.current", "es")
+assert "/usr/local/bin/watchdogvpn config set language.current es" in cmd
+assert "clave settings no permitida" in module.settings_set_command("timers.watchdog_interval", "1min")
 
 for name in ("strip_ansi",):
     assert name in module.load_locations.__globals__, f"missing load_locations global: {name}"

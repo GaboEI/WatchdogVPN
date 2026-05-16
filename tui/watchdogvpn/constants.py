@@ -11,6 +11,7 @@ AUTH_BIN = "/usr/local/bin/vpn_auth_check"
 VPN_SET = "/usr/local/sbin/vpn_set"
 NO_VPN = "/usr/local/bin/no_vpn"
 DNSCTL = "/usr/local/bin/vpn_dnsctl"
+WATCHDOGVPN_CLI = "/usr/local/bin/watchdogvpn"
 WATCHDOGVPN_CONFIG = "/etc/watchdogvpn/config.toml"
 
 ROTATE_TIMER = "vpn-rotate.timer"

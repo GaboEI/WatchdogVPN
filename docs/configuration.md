@@ -242,6 +242,16 @@ reporting.sanitize_home
 Timer and DNS keys are intentionally read-only until their changes are wired to
 systemd and DNS apply flows.
 
+The TUI Settings view can update the safe user-interface keys through the same
+`watchdogvpn config set` contract:
+
+```text
+language.current
+tui.theme
+tui.color
+tui.unicode
+```
+
 ## Validation Rules
 
 Required validation:

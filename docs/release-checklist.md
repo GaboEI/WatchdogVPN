@@ -69,6 +69,7 @@ and presented as a public release.
 - [x] Config create, preserve, migration and reset behavior is covered by tests.
 - [x] `docs/cli.md` documents the current product CLI.
 - [x] TUI shows a read-only Settings view backed by persistent config.
+- [x] TUI Settings can update safe language and TUI preferences.
 
 ## Manual GitHub Repository Setup
 

@@ -31,6 +31,7 @@ from watchdogvpn.constants import (
     ROTATE_TIMER,
     SUDO_KEEPALIVE_SECONDS,
     VPN_SET,
+    WATCHDOGVPN_CLI,
     WATCHDOG_TIMER,
 )
 from watchdogvpn.commands import (
@@ -177,7 +178,7 @@ def menu_help(label: str):
         "Settings": [
             "Configuracion persistente de WatchdogVPN.",
             "",
-            "Esta vista es solo lectura por ahora. Los cambios se hacen con watchdogvpn config.",
+            "Permite ver configuracion y cambiar preferencias seguras de idioma y TUI.",
         ],
         "Salir": ["Cerrar la interfaz."],
     }
@@ -238,8 +239,8 @@ def menu_overview(label: str):
         ],
         "Settings": [
             ("Rol", "Preferencias persistentes"),
-            ("Uso", "Ver idioma, tema, color y sanitizacion de reportes"),
-            ("Riesgo", "Solo lectura"),
+            ("Uso", "Ver y cambiar idioma, tema, color y unicode"),
+            ("Riesgo", "Bajo: usa watchdogvpn config set con backup"),
         ],
         "Salir": [
             ("Rol", "Cerrar la TUI"),
@@ -415,11 +416,26 @@ def build_settings_text() -> str:
             "  watchdogvpn config set tui.theme high_contrast",
             "  watchdogvpn config reset tui --yes",
             "",
-            "La edicion directa desde la TUI queda para el siguiente bloque.",
+            "Tambien puedes editar idioma, tema, color y unicode desde el menu Settings.",
             "Pulsa q para volver.",
         ]
     )
     return "\n".join(lines)
+
+
+def settings_set_command(key: str, value: str) -> str:
+    allowed = {
+        "language.current",
+        "tui.theme",
+        "tui.color",
+        "tui.unicode",
+    }
+    if key not in allowed:
+        return "echo 'ERROR: clave settings no permitida.'"
+    return (
+        f"sudo -n {shlex.quote(WATCHDOGVPN_CLI)} config set "
+        f"{shlex.quote(key)} {shlex.quote(value)}"
+    )
 
 
 class Terminal:
@@ -528,7 +544,7 @@ def render(selected: int, dashboard_cache):
             y += 1
         if y < head_h + body_h:
             y += 1
-            write(y, right_x + 4, "Enter abre detalle. Edicion desde TUI pendiente.", FG["gray"])
+            write(y, right_x + 4, "Enter abre acciones de Settings.", FG["gray"])
     else:
         y = head_h + 2
         overview = menu_overview(selected_section)
@@ -1556,6 +1572,37 @@ def section_meta(section: str, label: str):
         }
         return data.get(label, [])
 
+    if section == "Settings":
+        snapshot = dict(settings_snapshot())
+        data = {
+            "Ver configuracion": [
+                ("Archivo", snapshot.get("Archivo", "-")),
+                ("Estado", snapshot.get("Estado", "-")),
+                ("Riesgo", "Solo lectura"),
+            ],
+            "Cambiar idioma": [
+                ("Actual", snapshot.get("Idioma", "-")),
+                ("Accion", "watchdogvpn config set language.current"),
+                ("Impacto", "Preferencia persistente"),
+            ],
+            "Cambiar tema": [
+                ("Actual", snapshot.get("Tema", "-")),
+                ("Accion", "watchdogvpn config set tui.theme"),
+                ("Impacto", "Preferencia persistente"),
+            ],
+            "Cambiar color": [
+                ("Actual", snapshot.get("Color", "-")),
+                ("Accion", "watchdogvpn config set tui.color"),
+                ("Impacto", "Preferencia persistente"),
+            ],
+            "Cambiar unicode": [
+                ("Actual", snapshot.get("Unicode", "-")),
+                ("Accion", "watchdogvpn config set tui.unicode"),
+                ("Impacto", "Preferencia persistente"),
+            ],
+        }
+        return data.get(label, [])
+
     return []
 
 
@@ -1567,6 +1614,7 @@ def section_intro(section: str) -> str:
         "DNS / AdGuard": "Cambia DNS real con backup, validacion local y rollback de emergencia.",
         "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
         "Pool de rotacion": "Ajusta cuantos nodos entran al pool antes de validar bloqueo y salud real.",
+        "Settings": "Preferencias persistentes. Los cambios usan watchdogvpn config set y crean backup.",
     }
     return data.get(section, "Selecciona una accion. El panel derecho resume impacto y contexto.")
 
@@ -1584,6 +1632,11 @@ def action_progress_text(section: str, label: str) -> str:
         ("Timers", "Parar watchdog"): "Deteniendo timer del watchdog",
         ("Exclusiones", "Ver lista"): "Leyendo dominios configurados fuera del tunel",
         ("DNS / AdGuard", "DNS actual"): "Leyendo perfil DNS activo",
+        ("Settings", "Ver configuracion"): "Leyendo configuracion persistente",
+        ("Settings", "Cambiar idioma"): "Actualizando idioma persistente",
+        ("Settings", "Cambiar tema"): "Actualizando tema persistente",
+        ("Settings", "Cambiar color"): "Actualizando preferencia de color",
+        ("Settings", "Cambiar unicode"): "Actualizando preferencia unicode",
         ("Ver logs", "Resumen trazabilidad"): "Parseando niveles y eventos recientes de logs",
         ("Ver logs", "Housekeeping logs"): "Leyendo estado de rotacion y retencion de logs",
         ("Ver logs", "vpn-watchdog.log"): "Leyendo eventos recientes del watchdog",
@@ -1676,6 +1729,11 @@ def section_panel(section: str, items):
             "Pool de rotacion": [
                 "TOP_N define cuantas ubicaciones entran al pool base antes del filtro por bloqueo y validacion real.",
                 "Cambiar TOP_N no toca watchdog ni vpn_set; solo el alcance inicial de vpn_rotate.sh.",
+            ],
+            "Settings": [
+                "Esta vista edita solo preferencias seguras: idioma, tema, color y unicode.",
+                "Cada cambio usa watchdogvpn config set, valida el valor y crea backup.",
+                "Los cambios de idioma/tema todavia son preferencias persistidas; la traduccion completa llega en una fase posterior.",
             ],
         }
         hints = extra_hints.get(section, [])
@@ -1894,12 +1952,6 @@ def handle_menu(label: str):
             set_status("Historial visto")
             return False
 
-        if label == "Settings":
-            set_status("Abriendo settings")
-            show_output("Settings", build_settings_text())
-            set_status("Settings visto")
-            return False
-
         if label == "Cambiar ubicacion":
             if not can_list_locations_without_prompt():
                 set_status("Sudo requerido para ubicaciones")
@@ -1990,6 +2042,13 @@ def handle_menu(label: str):
                 ("TOP_N = 30", "__TOPN_30__"),
                 ("TOP_N custom", "__TOPN_CUSTOM__"),
             ],
+            "Settings": [
+                ("Ver configuracion", "__SETTINGS_VIEW__"),
+                ("Cambiar idioma", "__SET_LANGUAGE__"),
+                ("Cambiar tema", "__SET_THEME__"),
+                ("Cambiar color", "__SET_COLOR__"),
+                ("Cambiar unicode", "__SET_UNICODE__"),
+            ],
         }
 
         if label not in actions:
@@ -2010,6 +2069,75 @@ def handle_menu(label: str):
             if label == "Acciones rapidas" and action_label in ("Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog"):
                 if not ensure_sudo():
                     continue
+            if action == "__SETTINGS_VIEW__":
+                set_status("Abriendo settings")
+                show_output("Settings", build_settings_text())
+                set_status("Settings visto")
+                continue
+            if action == "__SET_LANGUAGE__":
+                value = select_list(
+                    "Cambiar idioma",
+                    [
+                        ("en", "English"),
+                        ("es", "Espanol"),
+                        ("ru", "Russian"),
+                        ("fa", "Persian/Farsi"),
+                        ("zh_CN", "Chinese Simplified"),
+                        ("ar", "Arabic"),
+                        ("fr", "French"),
+                    ],
+                )
+                if value:
+                    if not ensure_sudo():
+                        continue
+                    set_status(f"Cambiando idioma a {value}")
+                    output = run_with_progress(
+                        action_label,
+                        f"Guardando idioma {value}",
+                        settings_set_command("language.current", value),
+                        25,
+                    )
+                    show_output(action_label, output)
+                    set_status(f"Idioma guardado: {value}")
+                continue
+            if action == "__SET_THEME__":
+                value = select_list(
+                    "Cambiar tema",
+                    [
+                        ("default", "Default"),
+                        ("high_contrast", "High contrast"),
+                        ("no_color", "No color"),
+                    ],
+                )
+                if value:
+                    if not ensure_sudo():
+                        continue
+                    set_status(f"Cambiando tema a {value}")
+                    output = run_with_progress(
+                        action_label,
+                        f"Guardando tema {value}",
+                        settings_set_command("tui.theme", value),
+                        25,
+                    )
+                    show_output(action_label, output)
+                    set_status(f"Tema guardado: {value}")
+                continue
+            if action in ("__SET_COLOR__", "__SET_UNICODE__"):
+                key = "tui.color" if action == "__SET_COLOR__" else "tui.unicode"
+                value = select_list(action_label, [("true", "Activado"), ("false", "Desactivado")])
+                if value:
+                    if not ensure_sudo():
+                        continue
+                    set_status(f"Cambiando {key} a {value}")
+                    output = run_with_progress(
+                        action_label,
+                        f"Guardando {key}={value}",
+                        settings_set_command(key, value),
+                        25,
+                    )
+                    show_output(action_label, output)
+                    set_status(f"{key} guardado: {value}")
+                continue
             if action == "__TRACE_SUMMARY__":
                 set_status("Abriendo trazabilidad")
                 trace_summary_panel()

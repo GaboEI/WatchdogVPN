@@ -22,6 +22,8 @@ post-alpha support, reporting and distro-validation improvements.
 - Record real Arch update validation for the persistent configuration
   foundation.
 - Add a read-only TUI Settings view for persistent configuration preferences.
+- Add TUI Settings actions for safe language, theme, color and unicode
+  preferences.
 
 ## v0.1.1 - 2026-05-16
 

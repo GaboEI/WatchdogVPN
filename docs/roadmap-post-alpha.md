@@ -74,6 +74,7 @@ Planned work:
 - Document the current product CLI in [CLI](cli.md). Done.
 - Validate installed config update on a real Arch workstation. Done.
 - Add a read-only TUI Settings view backed by persistent config. Done.
+- Add TUI Settings actions for safe language and TUI preferences. Done.
 
 Acceptance criteria:
 
