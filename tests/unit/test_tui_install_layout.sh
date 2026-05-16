@@ -22,7 +22,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
-for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "update_center_snapshot", "update_center_recommendations", "update_center_fetch_command", "build_update_center_text", "confirm_update_fetch", "apply_tui_preferences"):
+for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "update_center_snapshot", "update_center_recommendations", "update_center_fetch_command", "update_center_runtime_plan", "build_update_runtime_plan_text", "build_update_center_text", "confirm_update_fetch", "apply_tui_preferences"):
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
 
 cmd = module.settings_set_command("language.current", "es")
@@ -36,6 +36,7 @@ assert "Modo actual: solo lectura." in update_text
 assert "Estado remoto" in update_text
 assert "Recomendacion segun estado actual:" in update_text
 assert "Comprobar remoto ejecuta git fetch origin --tags" in update_text
+assert "Actualizar runtime muestra una guia contextual." in update_text
 assert "./update.sh --skip-doctor" in update_text
 assert "git fetch origin --tags" in update_text
 fetch_cmd = module.update_center_fetch_command()
@@ -45,6 +46,11 @@ assert "sudo" not in fetch_cmd
 assert any("git pull --ff-only origin main" in line for line in module.update_center_recommendations([("Estado remoto", "behind"), ("Cambios locales", "clean")]))
 assert any("git push origin main" in line for line in module.update_center_recommendations([("Estado remoto", "ahead"), ("Cambios locales", "clean")]))
 assert any("git status --short" in line for line in module.update_center_recommendations([("Estado remoto", "up to date"), ("Cambios locales", "dirty")]))
+assert any("git pull --ff-only origin main" in line for line in module.update_center_runtime_plan([("Estado remoto", "behind"), ("Cambios locales", "clean")]))
+assert any("./update.sh --skip-doctor" in line for line in module.update_center_runtime_plan([("Estado remoto", "up to date"), ("Cambios locales", "clean")]))
+assert not any("./update.sh --skip-doctor" in line for line in module.update_center_runtime_plan([("Estado remoto", "diverged"), ("Cambios locales", "clean")]))
+runtime_text = module.build_update_runtime_plan_text()
+assert "Guia contextual. No ejecuta comandos." in runtime_text
 
 original_cyan = module.FG["cyan"]
 module.settings_snapshot = lambda: [("Tema", "no_color"), ("Color", "false")]

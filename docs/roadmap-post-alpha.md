@@ -82,6 +82,8 @@ Planned work:
   working trees. Done.
 - Add confirmed Update Center remote metadata refresh with `git fetch
   origin --tags`, without automatic pull or runtime update. Done.
+- Add contextual runtime update guidance in the TUI based on repository state,
+  without automatic execution. Done.
 
 Acceptance criteria:
 

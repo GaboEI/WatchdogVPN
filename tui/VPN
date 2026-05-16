@@ -586,6 +586,110 @@ def update_center_fetch_command() -> str:
     return f"cd {shlex.quote(repo_root)} && git fetch origin --tags && git status --short --branch"
 
 
+def update_center_runtime_plan(snapshot=None):
+    data = dict(snapshot or update_center_snapshot())
+    remote_state = data.get("Estado remoto", "unknown")
+    local_state = data.get("Cambios locales", "unknown")
+
+    if local_state == "dirty":
+        return [
+            "Hay cambios locales sin cerrar.",
+            "No actualices el runtime todavia.",
+            "",
+            "Primero revisa y cierra el trabajo:",
+            "  git status --short",
+            "  git diff --stat",
+            "  git add ...",
+            "  git commit -m \"...\"",
+        ]
+    if remote_state == "behind":
+        return [
+            "Tu checkout esta atrasado respecto a origin/main.",
+            "Actualiza el repo antes de tocar runtime:",
+            "",
+            "  git pull --ff-only origin main",
+            "  bash tests/unit.sh",
+            "  bash tests/syntax.sh",
+            "  python3 -m compileall -q tui tests/unit/test_tui_modules.py",
+            "  git diff --check",
+            "",
+            "Despues, si todo pasa:",
+            "  sudo -v",
+            "  ./update.sh --skip-doctor",
+            "  hash -r",
+            "  ./doctor.sh",
+        ]
+    if remote_state == "ahead":
+        return [
+            "Tu rama local tiene commits que origin/main no tiene.",
+            "Publica primero para no dejar otras PCs atrasadas:",
+            "",
+            "  git push origin main",
+            "",
+            "Luego actualiza runtime si esta maquina necesita refrescar instalacion:",
+            "  sudo -v",
+            "  ./update.sh --skip-doctor",
+            "  hash -r",
+            "  ./doctor.sh",
+        ]
+    if remote_state == "diverged":
+        return [
+            "La rama local y origin/main divergieron.",
+            "No ejecutes update runtime desde este estado.",
+            "",
+            "Revisa manualmente antes de mezclar:",
+            "  git log --oneline --graph --decorate --all -n 20",
+            "  git status --short --branch",
+        ]
+    if remote_state == "no upstream":
+        return [
+            "La rama no tiene upstream configurado.",
+            "Configura origin/main antes de usar la rutina normal:",
+            "",
+            "  git branch --set-upstream-to=origin/main main",
+            "  git status --short --branch",
+        ]
+    if remote_state == "up to date" and local_state == "clean":
+        return [
+            "Repo limpio y alineado con origin/main conocido.",
+            "Puedes actualizar el runtime instalado:",
+            "",
+            "  sudo -v",
+            "  ./update.sh --skip-doctor",
+            "  hash -r",
+            "  ./doctor.sh",
+            "  watchdogvpn version",
+            "  VPN",
+        ]
+    return [
+        "Estado no reconocido. Usa la rutina manual conservadora:",
+        "",
+        "  git status --short --branch",
+        "  git fetch origin --tags",
+        "  git pull --ff-only origin main",
+        "  bash tests/unit.sh",
+        "  bash tests/syntax.sh",
+    ]
+
+
+def build_update_runtime_plan_text() -> str:
+    snapshot = update_center_snapshot()
+    lines = [
+        "Update Runtime Plan",
+        "-------------------",
+        "Guia contextual. No ejecuta comandos.",
+        "",
+    ]
+    for key, value in snapshot:
+        if key in ("Version", "Branch", "Commit", "Upstream", "Origin", "Estado remoto", "Cambios locales", "Ahead/behind"):
+            lines.append(f"{key:<15} {value or 'unknown'}")
+    lines.extend(["", "Plan recomendado:"])
+    lines.extend(update_center_runtime_plan(snapshot))
+    lines.append("")
+    lines.append("Pulsa q para volver.")
+    return "\n".join(lines)
+
+
 def build_update_center_text() -> str:
     snapshot = update_center_snapshot()
     lines = [
@@ -607,6 +711,10 @@ def build_update_center_text() -> str:
             "Comprobacion remota desde la TUI:",
             "  Comprobar remoto ejecuta git fetch origin --tags con confirmacion.",
             "  No ejecuta git pull, git push, update.sh ni sudo.",
+            "",
+            "Plan runtime desde la TUI:",
+            "  Actualizar runtime muestra una guia contextual.",
+            "  No ejecuta comandos automaticos en esta fase.",
             "",
             "Rutina recomendada antes de trabajar:",
             "  git status --short --branch",
@@ -1841,9 +1949,9 @@ def section_meta(section: str, label: str):
                 ("Riesgo", "Requiere confirmacion; no hace pull"),
             ],
             "Actualizar runtime": [
-                ("Accion", "./update.sh --skip-doctor"),
-                ("Impacto", "Refresca instalacion local"),
-                ("Riesgo", "Manual por ahora"),
+                ("Accion", "guia contextual"),
+                ("Impacto", "Muestra pasos seguros segun estado git"),
+                ("Riesgo", "No ejecuta comandos"),
             ],
         }
         return data.get(label, [])
@@ -1887,7 +1995,7 @@ def action_progress_text(section: str, label: str) -> str:
         ("Update Center", "Ver estado"): "Leyendo estado local de version y repositorio",
         ("Update Center", "Rutina diaria"): "Mostrando rutina diaria recomendada",
         ("Update Center", "Comprobar remoto"): "Refrescando origin/main y tags sin mezclar cambios",
-        ("Update Center", "Actualizar runtime"): "Mostrando rutina manual de update",
+        ("Update Center", "Actualizar runtime"): "Mostrando guia contextual de update runtime",
         ("Ver logs", "Resumen trazabilidad"): "Parseando niveles y eventos recientes de logs",
         ("Ver logs", "Housekeeping logs"): "Leyendo estado de rotacion y retencion de logs",
         ("Ver logs", "vpn-watchdog.log"): "Leyendo eventos recientes del watchdog",
@@ -1991,7 +2099,7 @@ def section_panel(section: str, items):
                 "Solo lectura en esta fase.",
                 "Sirve para revisar version, branch, commit, ultimo tag y comandos recomendados.",
                 "Comprobar remoto solo ejecuta git fetch origin --tags si lo confirmas.",
-                "El update real sigue siendo manual para evitar cambios privilegiados accidentales.",
+                "Actualizar runtime muestra el plan correcto segun estado; no ejecuta comandos.",
             ],
         }
         hints = extra_hints.get(section, [])
@@ -2312,7 +2420,7 @@ def handle_menu(label: str):
                 ("Ver estado", "__UPDATE_VIEW__"),
                 ("Rutina diaria", "__UPDATE_VIEW__"),
                 ("Comprobar remoto", "__UPDATE_FETCH__"),
-                ("Actualizar runtime", "__UPDATE_VIEW__"),
+                ("Actualizar runtime", "__UPDATE_RUNTIME_PLAN__"),
             ],
         }
 
@@ -2356,6 +2464,11 @@ def handle_menu(label: str):
                 )
                 show_output("Update Center", output + "\n\n" + build_update_center_text())
                 set_status("Comprobacion remota terminada")
+                continue
+            if action == "__UPDATE_RUNTIME_PLAN__":
+                set_status("Mostrando plan de update runtime")
+                show_output("Update Runtime", build_update_runtime_plan_text())
+                set_status("Plan de update runtime visto")
                 continue
             if action == "__SET_LANGUAGE__":
                 value = select_list(

@@ -77,6 +77,8 @@ and presented as a public release.
   `pull` or privileged commands.
 - [x] TUI Update Center can refresh remote metadata with confirmed
   `git fetch origin --tags` only.
+- [x] TUI Update Center shows a contextual runtime update plan without
+  executing update commands.
 
 ## Manual GitHub Repository Setup
 

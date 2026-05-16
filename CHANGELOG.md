@@ -35,6 +35,8 @@ post-alpha support, reporting and distro-validation improvements.
   `diverged` and dirty working tree states.
 - Add a confirmed TUI Update Center action to run `git fetch origin --tags`
   without running `pull`, `push`, `update.sh` or privileged commands.
+- Add a contextual TUI runtime update plan that recommends safe manual steps
+  based on dirty, behind, ahead, diverged or clean repository states.
 
 ## v0.1.1 - 2026-05-16
 
