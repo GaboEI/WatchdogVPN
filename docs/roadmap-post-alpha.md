@@ -65,7 +65,8 @@ Planned work:
 - Add read-only `watchdogvpn config get`. Done.
 - Add validated `watchdogvpn config set` for safe keys. Done.
 - Add explicit reset commands for selected configuration groups.
-- Add migration and preservation tests.
+  Done for safe sections.
+- Add migration and preservation tests. Done.
 - Document configuration in [Configuration](configuration.md). Done.
 
 Acceptance criteria:

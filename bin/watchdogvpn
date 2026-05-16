@@ -22,6 +22,7 @@ Usage:
   watchdogvpn report
   watchdogvpn config get [section.key]
   watchdogvpn config set section.key value
+  watchdogvpn config reset [language|tui|reporting|all] --yes
   watchdogvpn version
   watchdogvpn help
 
@@ -180,11 +181,37 @@ config_format_value() {
   esac
 }
 
+config_default_value() {
+  local key="$1" section name
+  section="${key%%.*}"
+  name="${key#*.}"
+
+  [[ "$section" != "$key" && -n "$section" && -n "$name" ]] || return 64
+  awk -v section="$section" -v name="$name" '
+    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; next}
+    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
+    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+      sub(/^[^=]*=[[:space:]]*/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      gsub(/^"|"$/, "")
+      print
+      found=1
+      exit
+    }
+    END {exit found ? 0 : 1}
+  ' "${WATCHDOGVPN_CONFIG_DEFAULTS:-/etc/watchdogvpn/config.toml.example}"
+}
+
 config_backup() {
-  local stamp backup_dir backup
+  local stamp backup_dir backup counter
   stamp="$(date +%Y%m%d-%H%M%S)"
   backup_dir="${WATCHDOGVPN_CONFIG_BACKUP_DIR:-$(dirname "$CONFIG_FILE")}"
   backup="$backup_dir/$(basename "$CONFIG_FILE").$stamp.bak"
+  counter=1
+  while [[ -e "$backup" ]]; do
+    backup="$backup_dir/$(basename "$CONFIG_FILE").$stamp.$counter.bak"
+    counter=$((counter + 1))
+  done
   install -d -m 0755 "$backup_dir"
   cp -a "$CONFIG_FILE" "$backup"
   printf 'Backup written: %s\n' "$backup" >&2
@@ -209,8 +236,30 @@ config_get() {
   fi
 }
 
+config_write_value() {
+  local key="$1" value="$2" section name formatted tmp
+  section="${key%%.*}"
+  name="${key#*.}"
+  formatted="$(config_format_value "$key" "$value")"
+  tmp="$(mktemp)"
+
+  awk -v section="$section" -v name="$name" -v value="$formatted" '
+    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; print; next}
+    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
+    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+      print name " = " value
+      changed=1
+      next
+    }
+    {print}
+    END {exit changed ? 0 : 1}
+  ' "$CONFIG_FILE" >"$tmp"
+  install -m 0644 "$tmp" "$CONFIG_FILE"
+  rm -f "$tmp"
+}
+
 config_set() {
-  local key="${1:-}" value="${2:-}" section name formatted tmp
+  local key="${1:-}" value="${2:-}" section name
   section="${key%%.*}"
   name="${key#*.}"
 
@@ -235,23 +284,72 @@ config_set() {
     return 1
   }
 
-  formatted="$(config_format_value "$key" "$value")"
   config_backup
-  tmp="$(mktemp)"
-  awk -v section="$section" -v name="$name" -v value="$formatted" '
-    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; print; next}
-    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
-    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
-      print name " = " value
-      changed=1
-      next
-    }
-    {print}
-    END {exit changed ? 0 : 1}
-  ' "$CONFIG_FILE" >"$tmp"
-  install -m 0644 "$tmp" "$CONFIG_FILE"
-  rm -f "$tmp"
+  config_write_value "$key" "$value"
   printf '%s updated\n' "$key"
+}
+
+config_reset_keys() {
+  local target="$1"
+  case "$target" in
+    all)
+      printf '%s\n' \
+        language.current \
+        language.auto_detect \
+        tui.theme \
+        tui.color \
+        tui.unicode \
+        reporting.sanitize_ipv4 \
+        reporting.sanitize_ipv6 \
+        reporting.sanitize_email \
+        reporting.sanitize_home
+      ;;
+    language)
+      printf '%s\n' language.current language.auto_detect
+      ;;
+    tui)
+      printf '%s\n' tui.theme tui.color tui.unicode
+      ;;
+    reporting)
+      printf '%s\n' reporting.sanitize_ipv4 reporting.sanitize_ipv6 reporting.sanitize_email reporting.sanitize_home
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+config_reset() {
+  local target="${1:-all}" confirm="${2:-}" key default
+
+  [[ "$confirm" == "--yes" ]] || {
+    printf 'config reset requires --yes confirmation\n' >&2
+    return 64
+  }
+  [[ -r "$CONFIG_FILE" && -w "$CONFIG_FILE" ]] || {
+    printf 'config not writable: %s\n' "$CONFIG_FILE" >&2
+    return 66
+  }
+  [[ -r "${WATCHDOGVPN_CONFIG_DEFAULTS:-/etc/watchdogvpn/config.toml.example}" ]] || {
+    printf 'config defaults unavailable: %s\n' "${WATCHDOGVPN_CONFIG_DEFAULTS:-/etc/watchdogvpn/config.toml.example}" >&2
+    return 66
+  }
+
+  config_reset_keys "$target" >/dev/null || {
+    printf 'config reset target is not supported: %s\n' "$target" >&2
+    return 64
+  }
+
+  config_backup
+  while IFS= read -r key; do
+    default="$(config_default_value "$key")"
+    config_validate_value "$key" "$default" || {
+      printf 'invalid default for %s: %s\n' "$key" "$default" >&2
+      return 65
+    }
+    config_write_value "$key" "$default"
+  done < <(config_reset_keys "$target")
+  printf '%s reset\n' "$target"
 }
 
 config_command() {
@@ -265,14 +363,19 @@ config_command() {
     set)
       config_set "${1:-}" "${2:-}"
       ;;
+    reset)
+      config_reset "${1:-all}" "${2:-}"
+      ;;
     help|--help|-h)
       printf 'Usage: watchdogvpn config get [section.key]\n'
       printf '       watchdogvpn config set section.key value\n'
+      printf '       watchdogvpn config reset [language|tui|reporting|all] --yes\n'
       ;;
     *)
       printf 'unknown config command: %s\n\n' "$subcmd" >&2
       printf 'Usage: watchdogvpn config get [section.key]\n' >&2
       printf '       watchdogvpn config set section.key value\n' >&2
+      printf '       watchdogvpn config reset [language|tui|reporting|all] --yes\n' >&2
       return 64
       ;;
   esac

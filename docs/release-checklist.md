@@ -65,8 +65,8 @@ and presented as a public release.
 - [x] Config migration creates a backup before modifying the active file.
 - [x] `watchdogvpn config get` exists.
 - [x] `watchdogvpn config set` validates supported keys and values.
-- [ ] `watchdogvpn config reset` requires confirmation.
-- [ ] Config create, preserve, migration and reset behavior is covered by tests.
+- [x] `watchdogvpn config reset` requires confirmation.
+- [x] Config create, preserve, migration and reset behavior is covered by tests.
 
 ## Manual GitHub Repository Setup
 

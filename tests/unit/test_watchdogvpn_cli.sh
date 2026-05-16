@@ -31,12 +31,16 @@ current = "es"
 auto_detect = true
 
 [reporting]
+sanitize_ipv4 = true
+sanitize_ipv6 = true
 sanitize_email = true
+sanitize_home = true
 support_email = "user@example.com"
 
 [tui]
 theme = "default"
 color = true
+unicode = true
 EOF
 
 output="$(
@@ -72,7 +76,8 @@ if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.
 fi
 WATCHDOGVPN_CONFIG_BACKUP_DIR="$TMP_DIR/backups" WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set language.current fr >/dev/null 2>&1
 [[ "$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)" == "fr" ]]
-find "$TMP_DIR/backups" -type f -name 'config.toml.*.bak' | grep -q .
+WATCHDOGVPN_CONFIG_BACKUP_DIR="$TMP_DIR/backups" WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set language.current es >/dev/null 2>&1
+[[ "$(find "$TMP_DIR/backups" -type f -name 'config.toml.*.bak' | wc -l)" -ge 2 ]]
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set tui.color false >/dev/null 2>&1
 grep -Fq 'color = false' "$TMP_DIR/config.toml"
 if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set timers.watchdog_interval 1min >/dev/null 2>&1; then
@@ -81,6 +86,19 @@ if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set timers.wa
 fi
 if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set language.current klingon >/dev/null 2>&1; then
   printf 'FAIL: invalid language should fail validation\n' >&2
+  exit 1
+fi
+if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" WATCHDOGVPN_CONFIG_DEFAULTS="$ROOT_DIR/examples/watchdogvpn-config.toml.example" "$SCRIPT" config reset language >/dev/null 2>&1; then
+  printf 'FAIL: config reset without --yes should fail\n' >&2
+  exit 1
+fi
+WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" WATCHDOGVPN_CONFIG_DEFAULTS="$ROOT_DIR/examples/watchdogvpn-config.toml.example" "$SCRIPT" config reset language --yes >/dev/null 2>&1
+[[ "$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)" == "en" ]]
+WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set tui.theme high_contrast >/dev/null 2>&1
+WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" WATCHDOGVPN_CONFIG_DEFAULTS="$ROOT_DIR/examples/watchdogvpn-config.toml.example" "$SCRIPT" config reset tui --yes >/dev/null 2>&1
+[[ "$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get tui.theme)" == "default" ]]
+if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" WATCHDOGVPN_CONFIG_DEFAULTS="$ROOT_DIR/examples/watchdogvpn-config.toml.example" "$SCRIPT" config reset timers --yes >/dev/null 2>&1; then
+  printf 'FAIL: unsafe reset target should fail\n' >&2
   exit 1
 fi
 version_output="$("$SCRIPT" version)"

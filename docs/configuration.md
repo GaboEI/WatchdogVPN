@@ -207,7 +207,9 @@ watchdogvpn config get language.current
 watchdogvpn config set language.current es
 watchdogvpn config set tui.theme high_contrast
 watchdogvpn config set tui.color false
-watchdogvpn config reset timers
+watchdogvpn config reset language --yes
+watchdogvpn config reset tui --yes
+watchdogvpn config reset reporting --yes
 ```
 
 Behavior:
@@ -216,6 +218,8 @@ Behavior:
 - `get section.key` prints only one value. Implemented.
 - `set section.key value` validates key and value before writing. Implemented
   for safe user-interface and reporting keys.
+- `reset [section|all] --yes` restores safe sections to defaults. Implemented
+  for `language`, `tui`, `reporting` and `all`.
 - Unknown keys must fail with a clear error.
 - Values that can affect systemd or DNS must be validated before being applied.
 
