@@ -72,4 +72,32 @@ grep -Fq 'current = "es"' "$WATCHDOGVPN_CONFIG_FILE"
 backup_config_file
 find "$BACKUP_ROOT" -type f -path '*/etc/watchdogvpn/config.toml.*' | grep -q .
 
+rm -rf "$BACKUP_ROOT"
+cat >"$WATCHDOGVPN_CONFIG_FILE" <<'EOF'
+[language]
+current = "es"
+custom_language_note = "keep"
+
+[timers]
+watchdog_interval = "10min"
+
+[custom]
+local_value = "preserve"
+EOF
+
+migrate_config_missing_keys
+
+grep -Fq 'current = "es"' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq 'custom_language_note = "keep"' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq 'local_value = "preserve"' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq 'auto_detect = true' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq 'rotation_interval = "12h"' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq '[dns]' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq 'sanitize_ipv6 = true' "$WATCHDOGVPN_CONFIG_FILE"
+if grep -Fq 'current = "en"' "$WATCHDOGVPN_CONFIG_FILE"; then
+  printf 'FAIL: migration overwrote existing language.current\n' >&2
+  exit 1
+fi
+find "$BACKUP_ROOT" -type f -path '*/etc/watchdogvpn/config.toml.*' | grep -q .
+
 printf 'config helper checks passed\n'
