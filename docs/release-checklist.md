@@ -73,6 +73,8 @@ and presented as a public release.
 - [x] TUI Settings reset requires confirmation and does not touch DNS/timers.
 - [x] TUI Update Center shows local version, repository state and update
   commands without executing privileged changes.
+- [x] TUI Update Center reports local sync state without running `fetch`,
+  `pull` or privileged commands.
 
 ## Manual GitHub Repository Setup
 

@@ -519,31 +519,85 @@ def update_center_snapshot():
 
     installed_version = run(f"{shlex.quote(WATCHDOGVPN_CLI)} version 2>/dev/null || true", 4).strip()
     local_version = local("./bin/watchdogvpn version")
+    upstream = local("git rev-parse --abbrev-ref --symbolic-full-name @{u}")
+    remote_commit = local("git rev-parse --short @{u}") if upstream else ""
+    counts = local("git rev-list --left-right --count HEAD...@{u}") if upstream else ""
+    dirty = bool(local("git status --porcelain"))
+    ahead, behind = 0, 0
+    if counts:
+        parts = counts.split()
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            ahead, behind = int(parts[0]), int(parts[1])
+
+    if not upstream:
+        remote_state = "no upstream"
+    elif ahead and behind:
+        remote_state = "diverged"
+    elif behind:
+        remote_state = "behind"
+    elif ahead:
+        remote_state = "ahead"
+    else:
+        remote_state = "up to date"
+    local_state = "dirty" if dirty else "clean"
 
     return [
         ("Version", installed_version or local_version or "unknown"),
         ("Repo", repo_root),
         ("Branch", local("git branch --show-current")),
         ("Commit", local("git rev-parse --short HEAD")),
-        ("Upstream", local("git rev-parse --abbrev-ref --symbolic-full-name @{u}")),
+        ("Upstream", upstream),
+        ("Origin", remote_commit),
+        ("Estado remoto", remote_state),
+        ("Cambios locales", local_state),
+        ("Ahead/behind", f"{ahead}/{behind}" if upstream else "unknown"),
         ("Ultimo tag", local("git tag --list 'v*' --sort=-version:refname | head -n 1")),
         ("Estado", local("git status --short --branch | head -n 1")),
     ]
 
 
+def update_center_recommendations(snapshot=None):
+    data = dict(snapshot or update_center_snapshot())
+    remote_state = data.get("Estado remoto", "unknown")
+    local_state = data.get("Cambios locales", "unknown")
+
+    recommendations = []
+    if local_state == "dirty":
+        recommendations.append("  git status --short")
+        recommendations.append("  git add ... && git commit -m \"...\"")
+    if remote_state == "behind":
+        recommendations.append("  git pull --ff-only origin main")
+    elif remote_state == "ahead":
+        recommendations.append("  git push origin main")
+    elif remote_state == "diverged":
+        recommendations.append("  git log --oneline --graph --decorate --all -n 20")
+        recommendations.append("  # revisar antes de mezclar ramas")
+    elif remote_state == "no upstream":
+        recommendations.append("  git branch --set-upstream-to=origin/main main")
+    elif remote_state == "up to date" and local_state == "clean":
+        recommendations.append("  # repo local limpio y alineado con origin/main conocido")
+    if not recommendations:
+        recommendations.append("  git status --short --branch")
+    return recommendations
+
+
 def build_update_center_text() -> str:
+    snapshot = update_center_snapshot()
     lines = [
         "Update Center",
         "-------------",
         "Estado local de version y repositorio.",
         "Modo actual: solo lectura.",
-        "No descarga, no ejecuta git pull y no usa sudo.",
+        "No descarga, no ejecuta fetch/pull y no usa sudo.",
         "",
     ]
-    for key, value in update_center_snapshot():
+    for key, value in snapshot:
         lines.append(f"{key:<12} {value or 'unknown'}")
     lines.extend(
         [
+            "",
+            "Recomendacion segun estado actual:",
+            *update_center_recommendations(snapshot),
             "",
             "Rutina recomendada antes de trabajar:",
             "  git status --short --branch",

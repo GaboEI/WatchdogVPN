@@ -78,6 +78,8 @@ Planned work:
 - Add confirmed TUI Settings reset for language and TUI preferences. Done.
 - Add a read-only TUI Update Center for version, repository state and update
   routines. Done.
+- Add read-only Update Center sync status for local/remote divergence and dirty
+  working trees. Done.
 
 Acceptance criteria:
 

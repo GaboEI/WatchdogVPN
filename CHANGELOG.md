@@ -31,6 +31,8 @@ post-alpha support, reporting and distro-validation improvements.
 - Record real Arch runtime validation for TUI Settings update and reset.
 - Add a read-only TUI Update Center for local version, repository state and
   recommended update routines.
+- Add read-only Update Center sync status for `up to date`, `behind`, `ahead`,
+  `diverged` and dirty working tree states.
 
 ## v0.1.1 - 2026-05-16
 
