@@ -46,6 +46,7 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vp
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_rotate.sh" /usr/local/sbin/vpn_rotate.sh 0700' "vpn_rotate.sh must be installed root-only executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_watchdog.sh" /usr/local/sbin/vpn_watchdog.sh 0700' "vpn_watchdog.sh must be installed root-only executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700' "domain bypass helper must be installed root-only executable"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_config_defaults' "runtime install must create persistent config defaults"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755' "watchdogvpn CLI must be installed as user command"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_file "$ROOT_DIR/tui/VPN" "$HOME/.local/bin/VPN" 0755' "TUI launcher must be user executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_user_path "$HOME/.local/bin/watchdogvpn"' "legacy TUI package path must be removed so watchdogvpn CLI is not shadowed"
@@ -60,6 +61,9 @@ assert_contains "$ROOT_DIR/install.sh" "If the dashboard stays degraded, reboot 
 
 assert_runtime_order "$ROOT_DIR/uninstall.sh" "rescue_system_dns" "remove_runtime_files" "uninstall must run DNS rescue before removing runtime files"
 assert_contains "$ROOT_DIR/uninstall.sh" "This script never removes the official AdGuard VPN CLI or account/license state." "uninstall must declare preserved vendor CLI state"
+assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''/etc/watchdogvpn/\n'\''' "uninstall preservation contract must mention WatchdogVPN config directory"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$WATCHDOGVPN_CONFIG_DIR"' "purge-config must remove WatchdogVPN config directory"
+assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] config: %s\n'\'' "$WATCHDOGVPN_CONFIG_DIR"' "uninstall must preserve WatchdogVPN config by default"
 
 assert_contains "$ROOT_DIR/lib/adguard_vpn_cli.sh" "does not currently pin that vendor script by checksum" "AdGuard VPN CLI external installer risk must be explicit"
 assert_contains "$ROOT_DIR/lib/adguard_home.sh" "does not currently pin that vendor script by checksum" "AdGuard Home external installer risk must be explicit"

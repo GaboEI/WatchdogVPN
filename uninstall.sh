@@ -117,6 +117,7 @@ print_contract() {
   print_section "Preserved unless explicitly purged"
   printf '/etc/adguardvpn.env\n'
   printf '/etc/vpn-domain-bypass.conf\n'
+  printf '/etc/watchdogvpn/\n'
   printf '/var/log/myvpn/\n'
   printf '/var/lib/vpn-rotate/\n'
   printf 'AdGuard Home configuration\n'
@@ -158,9 +159,11 @@ remove_optional_user_data() {
   if ((PURGE_CONFIG == 1)); then
     remove_root_path /etc/adguardvpn.env
     remove_root_path /etc/vpn-domain-bypass.conf
+    remove_root_path "$WATCHDOGVPN_CONFIG_DIR"
   else
     printf '[KEEP] config: /etc/adguardvpn.env\n'
     printf '[KEEP] config: /etc/vpn-domain-bypass.conf\n'
+    printf '[KEEP] config: %s\n' "$WATCHDOGVPN_CONFIG_DIR"
   fi
 
   if ((PURGE_LOGS == 1)); then
