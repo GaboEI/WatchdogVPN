@@ -22,7 +22,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
-for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "apply_tui_preferences"):
+for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "update_center_snapshot", "build_update_center_text", "apply_tui_preferences"):
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
 
 cmd = module.settings_set_command("language.current", "es")
@@ -31,6 +31,9 @@ assert "clave settings no permitida" in module.settings_set_command("timers.watc
 reset_cmd = module.settings_reset_command()
 assert "config reset language --yes" in reset_cmd
 assert "config reset tui --yes" in reset_cmd
+update_text = module.build_update_center_text()
+assert "Modo actual: solo lectura." in update_text
+assert "./update.sh --skip-doctor" in update_text
 
 original_cyan = module.FG["cyan"]
 module.settings_snapshot = lambda: [("Tema", "no_color"), ("Color", "false")]

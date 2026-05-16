@@ -59,6 +59,7 @@ use rather than one-off script execution.
 | Timers | Adjust watchdog and rotation intervals without editing units by hand |
 | Logs | Read recent operational logs and traceable events |
 | Settings | Read and update safe persistent language and TUI preferences |
+| Update | Read local version, repository state and recommended update commands |
 
 More screenshots and command examples are available in [Demo](docs/demo.md).
 

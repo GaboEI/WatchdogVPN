@@ -24,6 +24,7 @@ class TuiModuleTests(unittest.TestCase):
         self.assertIn("Dashboard", MENU)
         self.assertIn("Exclusiones", MENU)
         self.assertIn("Settings", MENU)
+        self.assertIn("Update", MENU)
 
     def test_formatting_helpers(self):
         self.assertEqual(strip_ansi("\x1b[31mred\x1b[0m"), "red")

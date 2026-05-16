@@ -71,6 +71,8 @@ and presented as a public release.
 - [x] TUI shows a read-only Settings view backed by persistent config.
 - [x] TUI Settings can update safe language and TUI preferences.
 - [x] TUI Settings reset requires confirmation and does not touch DNS/timers.
+- [x] TUI Update Center shows local version, repository state and update
+  commands without executing privileged changes.
 
 ## Manual GitHub Repository Setup
 

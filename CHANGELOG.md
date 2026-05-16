@@ -29,6 +29,8 @@ post-alpha support, reporting and distro-validation improvements.
 - Add confirmed TUI Settings reset for language and visual preferences without
   touching DNS or timers.
 - Record real Arch runtime validation for TUI Settings update and reset.
+- Add a read-only TUI Update Center for local version, repository state and
+  recommended update routines.
 
 ## v0.1.1 - 2026-05-16
 

@@ -232,6 +232,11 @@ def menu_help(label: str):
             "",
             "Permite ver configuracion y cambiar preferencias seguras de idioma y TUI.",
         ],
+        "Update Center": [
+            "Estado local de version y repositorio.",
+            "",
+            "Solo lectura: no descarga, no actualiza y no usa sudo.",
+        ],
         "Salir": ["Cerrar la interfaz."],
     }
     return data.get(label, [])
@@ -293,6 +298,11 @@ def menu_overview(label: str):
             ("Rol", "Preferencias persistentes"),
             ("Uso", "Ver y cambiar idioma, tema, color y unicode"),
             ("Riesgo", "Bajo: usa watchdogvpn config set con backup"),
+        ],
+        "Update Center": [
+            ("Rol", "Preparar actualizaciones"),
+            ("Uso", "Ver version, tag local, branch y comandos recomendados"),
+            ("Riesgo", "Solo lectura"),
         ],
         "Salir": [
             ("Rol", "Cerrar la TUI"),
@@ -501,6 +511,61 @@ def settings_reset_command() -> str:
     )
 
 
+def update_center_snapshot():
+    repo_root = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
+
+    def local(cmd: str, timeout: int = 4) -> str:
+        return run(f"cd {shlex.quote(repo_root)} && {cmd} 2>/dev/null || true", timeout).strip()
+
+    installed_version = run(f"{shlex.quote(WATCHDOGVPN_CLI)} version 2>/dev/null || true", 4).strip()
+    local_version = local("./bin/watchdogvpn version")
+
+    return [
+        ("Version", installed_version or local_version or "unknown"),
+        ("Repo", repo_root),
+        ("Branch", local("git branch --show-current")),
+        ("Commit", local("git rev-parse --short HEAD")),
+        ("Upstream", local("git rev-parse --abbrev-ref --symbolic-full-name @{u}")),
+        ("Ultimo tag", local("git tag --list 'v*' --sort=-version:refname | head -n 1")),
+        ("Estado", local("git status --short --branch | head -n 1")),
+    ]
+
+
+def build_update_center_text() -> str:
+    lines = [
+        "Update Center",
+        "-------------",
+        "Estado local de version y repositorio.",
+        "Modo actual: solo lectura.",
+        "No descarga, no ejecuta git pull y no usa sudo.",
+        "",
+    ]
+    for key, value in update_center_snapshot():
+        lines.append(f"{key:<12} {value or 'unknown'}")
+    lines.extend(
+        [
+            "",
+            "Rutina recomendada antes de trabajar:",
+            "  git status --short --branch",
+            "  git fetch origin --tags",
+            "  git pull --ff-only origin main",
+            "  bash tests/unit.sh",
+            "  bash tests/syntax.sh",
+            "  python3 -m compileall -q tui tests/unit/test_tui_modules.py",
+            "  git diff --check",
+            "",
+            "Rutina recomendada para actualizar runtime instalado:",
+            "  sudo -v",
+            "  ./update.sh --skip-doctor",
+            "  hash -r",
+            "  ./doctor.sh",
+            "",
+            "Pulsa q para volver.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 class Terminal:
     def __init__(self):
         self.fd = sys.stdin.fileno()
@@ -608,6 +673,19 @@ def render(selected: int, dashboard_cache):
         if y < head_h + body_h:
             y += 1
             write(y, right_x + 4, "Enter abre acciones de Settings.", FG["gray"])
+    elif selected_id == "update":
+        y = head_h + 2
+        write(y, right_x + 2, "Update Center", FG["cyan"] + BOLD)
+        y += 2
+        for key, value in update_center_snapshot():
+            if y >= head_h + body_h:
+                break
+            write(y, right_x + 4, f"{key:<12}", FG["magenta"] + BOLD)
+            write(y, right_x + 18, fit(value or "unknown", right_w - 20), semantic_style(key, value or "unknown"))
+            y += 1
+        if y < head_h + body_h:
+            y += 1
+            write(y, right_x + 4, "Enter abre detalle. No ejecuta actualizaciones.", FG["gray"])
     else:
         y = head_h + 2
         overview = menu_overview(selected_section)
@@ -1671,6 +1749,27 @@ def section_meta(section: str, label: str):
         }
         return data.get(label, [])
 
+    if section == "Update Center":
+        snapshot = dict(update_center_snapshot())
+        data = {
+            "Ver estado": [
+                ("Version", snapshot.get("Version", "unknown")),
+                ("Branch", snapshot.get("Branch", "unknown")),
+                ("Riesgo", "Solo lectura"),
+            ],
+            "Rutina diaria": [
+                ("Accion", "fetch + pull --ff-only + tests"),
+                ("Impacto", "Deja checkout actualizado"),
+                ("Riesgo", "No se ejecuta desde TUI"),
+            ],
+            "Actualizar runtime": [
+                ("Accion", "./update.sh --skip-doctor"),
+                ("Impacto", "Refresca instalacion local"),
+                ("Riesgo", "Manual por ahora"),
+            ],
+        }
+        return data.get(label, [])
+
     return []
 
 
@@ -1683,6 +1782,7 @@ def section_intro(section: str) -> str:
         "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
         "Pool de rotacion": "Ajusta cuantos nodos entran al pool antes de validar bloqueo y salud real.",
         "Settings": "Preferencias persistentes. Los cambios usan watchdogvpn config set y crean backup.",
+        "Update Center": "Estado local de version y repo. Esta vista no ejecuta actualizaciones.",
     }
     return data.get(section, "Selecciona una accion. El panel derecho resume impacto y contexto.")
 
@@ -1706,6 +1806,9 @@ def action_progress_text(section: str, label: str) -> str:
         ("Settings", "Cambiar color"): "Actualizando preferencia de color",
         ("Settings", "Cambiar unicode"): "Actualizando preferencia unicode",
         ("Settings", "Reset Settings"): "Restaurando idioma y preferencias TUI",
+        ("Update Center", "Ver estado"): "Leyendo estado local de version y repositorio",
+        ("Update Center", "Rutina diaria"): "Mostrando rutina diaria recomendada",
+        ("Update Center", "Actualizar runtime"): "Mostrando rutina manual de update",
         ("Ver logs", "Resumen trazabilidad"): "Parseando niveles y eventos recientes de logs",
         ("Ver logs", "Housekeeping logs"): "Leyendo estado de rotacion y retencion de logs",
         ("Ver logs", "vpn-watchdog.log"): "Leyendo eventos recientes del watchdog",
@@ -1804,6 +1907,11 @@ def section_panel(section: str, items):
                 "Cada cambio usa watchdogvpn config set, valida el valor y crea backup.",
                 "Los cambios de idioma/tema todavia son preferencias persistidas; la traduccion completa llega en una fase posterior.",
                 "Reset Settings restaura idioma y TUI; no toca DNS, timers ni reporting.",
+            ],
+            "Update Center": [
+                "Solo lectura en esta fase.",
+                "Sirve para revisar version, branch, commit, ultimo tag y comandos recomendados.",
+                "El update real sigue siendo manual para evitar cambios privilegiados accidentales.",
             ],
         }
         hints = extra_hints.get(section, [])
@@ -2120,6 +2228,11 @@ def handle_menu(label: str):
                 ("Cambiar unicode", "__SET_UNICODE__"),
                 ("Reset Settings", "__RESET_SETTINGS__"),
             ],
+            "Update Center": [
+                ("Ver estado", "__UPDATE_VIEW__"),
+                ("Rutina diaria", "__UPDATE_VIEW__"),
+                ("Actualizar runtime", "__UPDATE_VIEW__"),
+            ],
         }
 
         if label not in actions:
@@ -2144,6 +2257,11 @@ def handle_menu(label: str):
                 set_status("Abriendo settings")
                 show_output("Settings", build_settings_text())
                 set_status("Settings visto")
+                continue
+            if action == "__UPDATE_VIEW__":
+                set_status("Abriendo Update Center")
+                show_output("Update Center", build_update_center_text())
+                set_status("Update Center visto")
                 continue
             if action == "__SET_LANGUAGE__":
                 value = select_list(
