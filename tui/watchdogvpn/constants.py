@@ -11,6 +11,7 @@ AUTH_BIN = "/usr/local/bin/vpn_auth_check"
 VPN_SET = "/usr/local/sbin/vpn_set"
 NO_VPN = "/usr/local/bin/no_vpn"
 DNSCTL = "/usr/local/bin/vpn_dnsctl"
+WATCHDOGVPN_CONFIG = "/etc/watchdogvpn/config.toml"
 
 ROTATE_TIMER = "vpn-rotate.timer"
 ROTATE_FIRSTBOOT_TIMER = "vpn-rotate-firstboot.timer"
@@ -60,6 +61,7 @@ MENU_ITEMS = [
     {"id": "pool", "label": "Pool", "section": "Pool de rotacion", "group": "AUTOMATIZACION"},
     {"id": "logs", "label": "Logs", "section": "Ver logs", "group": "AUDITORIA"},
     {"id": "history", "label": "Historial", "section": "Historial", "group": "AUDITORIA"},
+    {"id": "settings", "label": "Settings", "section": "Settings", "group": "SISTEMA"},
     {"id": "install", "label": "Instalacion", "section": "Instalacion", "group": "SISTEMA"},
     {"id": "exit", "label": "Salir", "section": "Salir", "group": "SISTEMA"},
 ]

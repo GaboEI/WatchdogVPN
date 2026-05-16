@@ -23,12 +23,66 @@ from watchdogvpn.constants import (
     TRACE_LOG_PATHS,
     TRUTH_BIN,
     VPN_LOG_PATHS,
+    WATCHDOGVPN_CONFIG,
     WATCHDOG_TIMER,
 )
 from watchdogvpn.formatting import display_auth_status, display_vpn_status
 from watchdogvpn.parsers import parse_event_line, parse_trace_line
 
 COUNTRY_CACHE = {}
+
+
+def config_path() -> str:
+    return os.environ.get("WATCHDOGVPN_CONFIG_FILE", WATCHDOGVPN_CONFIG)
+
+
+def parse_simple_toml(path: str) -> dict:
+    values = {}
+    section = ""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                if line.startswith("[") and line.endswith("]"):
+                    section = line[1:-1].strip()
+                    continue
+                if "=" not in line or not section:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"')
+                if key:
+                    values[f"{section}.{key}"] = value
+    except FileNotFoundError:
+        values["_status"] = "missing"
+    except PermissionError:
+        values["_status"] = "locked"
+    except OSError:
+        values["_status"] = "unavailable"
+    else:
+        values["_status"] = "readable"
+    return values
+
+
+def settings_snapshot():
+    path = config_path()
+    values = parse_simple_toml(path)
+    status = values.get("_status", "unavailable")
+    return [
+        ("Archivo", path),
+        ("Estado", status),
+        ("Idioma", values.get("language.current", "unknown")),
+        ("Auto idioma", values.get("language.auto_detect", "unknown")),
+        ("Tema", values.get("tui.theme", "unknown")),
+        ("Color", values.get("tui.color", "unknown")),
+        ("Unicode", values.get("tui.unicode", "unknown")),
+        ("Sanitize IPv4", values.get("reporting.sanitize_ipv4", "unknown")),
+        ("Sanitize IPv6", values.get("reporting.sanitize_ipv6", "unknown")),
+        ("Sanitize email", values.get("reporting.sanitize_email", "unknown")),
+        ("Sanitize home", values.get("reporting.sanitize_home", "unknown")),
+    ]
 
 
 def truth_data():

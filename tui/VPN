@@ -12,8 +12,11 @@ import tty
 import time
 import traceback
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 INSTALLED_SUPPORT_DIR = os.path.expanduser("~/.local/share/watchdogvpn")
-if os.path.isdir(os.path.join(INSTALLED_SUPPORT_DIR, "watchdogvpn")):
+if os.path.isdir(os.path.join(SCRIPT_DIR, "watchdogvpn")):
+    sys.path.insert(0, SCRIPT_DIR)
+elif os.path.isdir(os.path.join(INSTALLED_SUPPORT_DIR, "watchdogvpn")):
     sys.path.insert(0, INSTALLED_SUPPORT_DIR)
 
 from watchdogvpn.constants import (
@@ -81,6 +84,7 @@ from watchdogvpn.state import (
     dashboard_data,
     housekeeping_snapshot,
     rotate_setting,
+    settings_snapshot,
     truth_data,
     trace_snapshot,
 )
@@ -170,6 +174,11 @@ def menu_help(label: str):
             "",
             "Aqui controlas cuantas ubicaciones entran al pool antes del filtro por bloqueo y validacion real.",
         ],
+        "Settings": [
+            "Configuracion persistente de WatchdogVPN.",
+            "",
+            "Esta vista es solo lectura por ahora. Los cambios se hacen con watchdogvpn config.",
+        ],
         "Salir": ["Cerrar la interfaz."],
     }
     return data.get(label, [])
@@ -225,6 +234,11 @@ def menu_overview(label: str):
         "Instalacion": [
             ("Rol", "Guia interna del stack"),
             ("Uso", "Recordar piezas, comandos y futura instalacion"),
+            ("Riesgo", "Solo lectura"),
+        ],
+        "Settings": [
+            ("Rol", "Preferencias persistentes"),
+            ("Uso", "Ver idioma, tema, color y sanitizacion de reportes"),
             ("Riesgo", "Solo lectura"),
         ],
         "Salir": [
@@ -380,6 +394,34 @@ def build_history_text(limit: int = 20) -> str:
     return "\n".join(lines)
 
 
+def build_settings_text() -> str:
+    rows = settings_snapshot()
+    lines = [
+        "Settings",
+        "--------",
+        "Configuracion persistente de WatchdogVPN.",
+        "Modo actual: solo lectura.",
+        "",
+    ]
+    for key, value in rows:
+        lines.append(f"{key:<16} {value}")
+    lines.extend(
+        [
+            "",
+            "Comandos CLI relacionados:",
+            "  watchdogvpn config get",
+            "  watchdogvpn config get language.current",
+            "  watchdogvpn config set language.current es",
+            "  watchdogvpn config set tui.theme high_contrast",
+            "  watchdogvpn config reset tui --yes",
+            "",
+            "La edicion directa desde la TUI queda para el siguiente bloque.",
+            "Pulsa q para volver.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 class Terminal:
     def __init__(self):
         self.fd = sys.stdin.fileno()
@@ -474,6 +516,19 @@ def render(selected: int, dashboard_cache):
                 write(y, right_x + 18, fit(display_value(key, value), right_w - 20), semantic_style(key, value))
                 y += 1
             y += 1
+    elif selected_id == "settings":
+        y = head_h + 2
+        write(y, right_x + 2, "Configuracion persistente", FG["cyan"] + BOLD)
+        y += 2
+        for key, value in settings_snapshot():
+            if y >= head_h + body_h:
+                break
+            write(y, right_x + 4, f"{key:<16}", FG["magenta"] + BOLD)
+            write(y, right_x + 22, fit(value, right_w - 24), semantic_style(key, value))
+            y += 1
+        if y < head_h + body_h:
+            y += 1
+            write(y, right_x + 4, "Enter abre detalle. Edicion desde TUI pendiente.", FG["gray"])
     else:
         y = head_h + 2
         overview = menu_overview(selected_section)
@@ -1838,6 +1893,13 @@ def handle_menu(label: str):
             show_output("Historial", build_history_text())
             set_status("Historial visto")
             return False
+
+        if label == "Settings":
+            set_status("Abriendo settings")
+            show_output("Settings", build_settings_text())
+            set_status("Settings visto")
+            return False
+
         if label == "Cambiar ubicacion":
             if not can_list_locations_without_prompt():
                 set_status("Sudo requerido para ubicaciones")

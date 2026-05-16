@@ -22,7 +22,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
-for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count"):
+for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot"):
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
 
 for name in ("strip_ansi",):
@@ -33,5 +33,8 @@ for name in ("bypass_count",):
 PY
 launcher_output="$(HOME="$home_dir" "$home_dir/.local/bin/VPN")"
 [[ "$launcher_output" == "VPN requiere una terminal interactiva." ]]
+
+repo_output="$(HOME="$home_dir" "$ROOT_DIR/tui/VPN")"
+[[ "$repo_output" == "VPN requiere una terminal interactiva." ]]
 
 echo "tui install layout check passed"

@@ -73,6 +73,7 @@ Planned work:
 - Document configuration in [Configuration](configuration.md). Done.
 - Document the current product CLI in [CLI](cli.md). Done.
 - Validate installed config update on a real Arch workstation. Done.
+- Add a read-only TUI Settings view backed by persistent config. Done.
 
 Acceptance criteria:
 

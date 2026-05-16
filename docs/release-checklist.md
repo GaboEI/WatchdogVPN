@@ -68,6 +68,7 @@ and presented as a public release.
 - [x] `watchdogvpn config reset` requires confirmation.
 - [x] Config create, preserve, migration and reset behavior is covered by tests.
 - [x] `docs/cli.md` documents the current product CLI.
+- [x] TUI shows a read-only Settings view backed by persistent config.
 
 ## Manual GitHub Repository Setup
 

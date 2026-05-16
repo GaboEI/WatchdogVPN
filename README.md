@@ -58,6 +58,7 @@ use rather than one-off script execution.
 | Exclusions | Manage domains routed outside the VPN tunnel |
 | Timers | Adjust watchdog and rotation intervals without editing units by hand |
 | Logs | Read recent operational logs and traceable events |
+| Settings | Read persistent language, theme and report-sanitization preferences |
 
 More screenshots and command examples are available in [Demo](docs/demo.md).
 

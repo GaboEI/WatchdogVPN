@@ -21,6 +21,7 @@ post-alpha support, reporting and distro-validation improvements.
 - Add `docs/cli.md` with the current `watchdogvpn` command reference.
 - Record real Arch update validation for the persistent configuration
   foundation.
+- Add a read-only TUI Settings view for persistent configuration preferences.
 
 ## v0.1.1 - 2026-05-16
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ class TuiModuleTests(unittest.TestCase):
         self.assertEqual(MENU, [item["label"] for item in MENU_ITEMS])
         self.assertIn("Dashboard", MENU)
         self.assertIn("Exclusiones", MENU)
+        self.assertIn("Settings", MENU)
 
     def test_formatting_helpers(self):
         self.assertEqual(strip_ansi("\x1b[31mred\x1b[0m"), "red")
@@ -123,6 +125,37 @@ class TuiModuleTests(unittest.TestCase):
             parsed = state.auth_data()
             self.assertEqual(parsed["AUTH"], "OK")
             self.assertEqual(parsed["REASON"], "ok")
+
+    def test_settings_snapshot_reads_persistent_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[language]",
+                        'current = "es"',
+                        "auto_detect = true",
+                        "",
+                        "[tui]",
+                        'theme = "high_contrast"',
+                        "color = false",
+                        "unicode = true",
+                        "",
+                        "[reporting]",
+                        "sanitize_ipv4 = true",
+                        "sanitize_ipv6 = true",
+                        "sanitize_email = false",
+                        "sanitize_home = true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"WATCHDOGVPN_CONFIG_FILE": str(path)}):
+                snapshot = dict(state.settings_snapshot())
+            self.assertEqual(snapshot["Estado"], "readable")
+            self.assertEqual(snapshot["Idioma"], "es")
+            self.assertEqual(snapshot["Tema"], "high_contrast")
+            self.assertEqual(snapshot["Color"], "false")
 
     def test_state_snapshots_with_mocks(self):
         with patch.object(state, "run", return_value="example.com\nexample.org\n# ignored\n"):
