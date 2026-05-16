@@ -8,6 +8,7 @@ install_runtime_files() {
 
   create_config_if_missing "$ROOT_DIR/examples/adguardvpn.env.example" /etc/adguardvpn.env 0644
   create_config_if_missing "$ROOT_DIR/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
+  install_config_defaults
 
   install_root_file "$ROOT_DIR/bin/no_vpn" /usr/local/bin/no_vpn 0755
   install_root_file "$ROOT_DIR/bin/vpn_auth_check" /usr/local/bin/vpn_auth_check 0755

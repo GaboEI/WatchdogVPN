@@ -57,12 +57,12 @@ and presented as a public release.
 - [x] Default config example exists in `examples/watchdogvpn-config.toml.example`.
 - [x] Default config schema is covered by a unit contract test.
 - [x] Minimal config helper functions exist in `lib/config.sh`.
-- [ ] `/etc/watchdogvpn/config.toml` is created on fresh install.
+- [x] `/etc/watchdogvpn/config.toml` is created on fresh install.
+- [x] `uninstall.sh` preserves config by default.
+- [x] `uninstall.sh --purge-config` removes WatchdogVPN config explicitly.
 - [ ] `update.sh` preserves existing user configuration.
 - [ ] Missing config keys are added safely during migration.
 - [ ] Config migration creates a backup before modifying the active file.
-- [ ] `uninstall.sh` preserves config by default.
-- [ ] `uninstall.sh --purge-config` removes WatchdogVPN config explicitly.
 - [ ] `watchdogvpn config get` exists.
 - [ ] `watchdogvpn config set` validates supported keys and values.
 - [ ] `watchdogvpn config reset` requires confirmation.

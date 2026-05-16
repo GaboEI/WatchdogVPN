@@ -8,12 +8,15 @@ updates and future CLI/TUI features can evolve without overwriting local choices
 
 ## Status
 
-Persistent configuration is planned for `v0.2.0`.
+Persistent configuration is being introduced for `v0.2.0`.
 
 `v0.1.1` preserves existing product-managed configuration files such as
 `/etc/adguardvpn.env`, `/etc/vpn-domain-bypass.conf`, AdGuard Home user
 configuration, Conky configuration, logs and rotation state. It does not yet
 provide a central WatchdogVPN configuration file.
+
+The `v0.2.0` development path now creates `/etc/watchdogvpn/config.toml` from
+the packaged defaults when the file is missing.
 
 ## Planned Paths
 

@@ -57,6 +57,8 @@ Planned work:
 - Prefer `config.toml` if the standard toolchain remains simple enough.
 - Add default config example and schema contract tests. Done.
 - Add minimal configuration helper functions. Done.
+- Create default config during install/update and preserve it during uninstall.
+  Done.
 - Preserve timer, DNS, language and TUI preferences during update.
 - Add explicit reset commands for selected configuration groups.
 - Add migration and preservation tests.
