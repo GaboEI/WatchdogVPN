@@ -205,8 +205,6 @@ Planned command forms:
 watchdogvpn config get
 watchdogvpn config get language.current
 watchdogvpn config set language.current es
-watchdogvpn config set timers.watchdog_interval 5min
-watchdogvpn config set timers.rotation_interval 12h
 watchdogvpn config set tui.theme high_contrast
 watchdogvpn config set tui.color false
 watchdogvpn config reset timers
@@ -216,9 +214,27 @@ Behavior:
 
 - `get` with no key prints the sanitized configuration. Implemented.
 - `get section.key` prints only one value. Implemented.
-- `set section.key value` validates key and value before writing.
+- `set section.key value` validates key and value before writing. Implemented
+  for safe user-interface and reporting keys.
 - Unknown keys must fail with a clear error.
 - Values that can affect systemd or DNS must be validated before being applied.
+
+`config set` currently supports only:
+
+```text
+language.current
+language.auto_detect
+tui.theme
+tui.color
+tui.unicode
+reporting.sanitize_ipv4
+reporting.sanitize_ipv6
+reporting.sanitize_email
+reporting.sanitize_home
+```
+
+Timer and DNS keys are intentionally read-only until their changes are wired to
+systemd and DNS apply flows.
 
 ## Validation Rules
 

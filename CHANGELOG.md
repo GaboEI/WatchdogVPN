@@ -15,6 +15,8 @@ post-alpha support, reporting and distro-validation improvements.
 - Add safe config migration for missing keys without overwriting existing user
   preferences.
 - Add read-only `watchdogvpn config get` support.
+- Add validated `watchdogvpn config set` support for safe language, TUI and
+  reporting keys.
 
 ## v0.1.1 - 2026-05-16
 

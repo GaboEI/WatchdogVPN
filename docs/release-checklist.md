@@ -64,7 +64,7 @@ and presented as a public release.
 - [x] Missing config keys are added safely during migration.
 - [x] Config migration creates a backup before modifying the active file.
 - [x] `watchdogvpn config get` exists.
-- [ ] `watchdogvpn config set` validates supported keys and values.
+- [x] `watchdogvpn config set` validates supported keys and values.
 - [ ] `watchdogvpn config reset` requires confirmation.
 - [ ] Config create, preserve, migration and reset behavior is covered by tests.
 
