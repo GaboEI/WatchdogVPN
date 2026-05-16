@@ -33,6 +33,8 @@ post-alpha support, reporting and distro-validation improvements.
   recommended update routines.
 - Add read-only Update Center sync status for `up to date`, `behind`, `ahead`,
   `diverged` and dirty working tree states.
+- Add a confirmed TUI Update Center action to run `git fetch origin --tags`
+  without running `pull`, `push`, `update.sh` or privileged commands.
 
 ## v0.1.1 - 2026-05-16
 

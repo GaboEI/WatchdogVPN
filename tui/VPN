@@ -581,6 +581,11 @@ def update_center_recommendations(snapshot=None):
     return recommendations
 
 
+def update_center_fetch_command() -> str:
+    repo_root = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
+    return f"cd {shlex.quote(repo_root)} && git fetch origin --tags && git status --short --branch"
+
+
 def build_update_center_text() -> str:
     snapshot = update_center_snapshot()
     lines = [
@@ -598,6 +603,10 @@ def build_update_center_text() -> str:
             "",
             "Recomendacion segun estado actual:",
             *update_center_recommendations(snapshot),
+            "",
+            "Comprobacion remota desde la TUI:",
+            "  Comprobar remoto ejecuta git fetch origin --tags con confirmacion.",
+            "  No ejecuta git pull, git push, update.sh ni sudo.",
             "",
             "Rutina recomendada antes de trabajar:",
             "  git status --short --branch",
@@ -618,6 +627,16 @@ def build_update_center_text() -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def confirm_update_fetch() -> bool:
+    value = prompt_input("Confirmar comprobacion remota", "Ejecutar git fetch origin --tags. Escribe FETCH para confirmar.")
+    if value is None:
+        return False
+    if value.strip().upper() == "FETCH":
+        return True
+    alert("Confirmacion invalida", "No se comprobo el remoto. Para refrescar origin debes escribir exactamente FETCH.")
+    return False
 
 
 class Terminal:
@@ -1816,6 +1835,11 @@ def section_meta(section: str, label: str):
                 ("Impacto", "Deja checkout actualizado"),
                 ("Riesgo", "No se ejecuta desde TUI"),
             ],
+            "Comprobar remoto": [
+                ("Accion", "git fetch origin --tags"),
+                ("Impacto", "Refresca origin/main y tags conocidos"),
+                ("Riesgo", "Requiere confirmacion; no hace pull"),
+            ],
             "Actualizar runtime": [
                 ("Accion", "./update.sh --skip-doctor"),
                 ("Impacto", "Refresca instalacion local"),
@@ -1862,6 +1886,7 @@ def action_progress_text(section: str, label: str) -> str:
         ("Settings", "Reset Settings"): "Restaurando idioma y preferencias TUI",
         ("Update Center", "Ver estado"): "Leyendo estado local de version y repositorio",
         ("Update Center", "Rutina diaria"): "Mostrando rutina diaria recomendada",
+        ("Update Center", "Comprobar remoto"): "Refrescando origin/main y tags sin mezclar cambios",
         ("Update Center", "Actualizar runtime"): "Mostrando rutina manual de update",
         ("Ver logs", "Resumen trazabilidad"): "Parseando niveles y eventos recientes de logs",
         ("Ver logs", "Housekeeping logs"): "Leyendo estado de rotacion y retencion de logs",
@@ -1965,6 +1990,7 @@ def section_panel(section: str, items):
             "Update Center": [
                 "Solo lectura en esta fase.",
                 "Sirve para revisar version, branch, commit, ultimo tag y comandos recomendados.",
+                "Comprobar remoto solo ejecuta git fetch origin --tags si lo confirmas.",
                 "El update real sigue siendo manual para evitar cambios privilegiados accidentales.",
             ],
         }
@@ -2285,6 +2311,7 @@ def handle_menu(label: str):
             "Update Center": [
                 ("Ver estado", "__UPDATE_VIEW__"),
                 ("Rutina diaria", "__UPDATE_VIEW__"),
+                ("Comprobar remoto", "__UPDATE_FETCH__"),
                 ("Actualizar runtime", "__UPDATE_VIEW__"),
             ],
         }
@@ -2316,6 +2343,19 @@ def handle_menu(label: str):
                 set_status("Abriendo Update Center")
                 show_output("Update Center", build_update_center_text())
                 set_status("Update Center visto")
+                continue
+            if action == "__UPDATE_FETCH__":
+                if not confirm_update_fetch():
+                    set_status("Comprobacion remota cancelada")
+                    continue
+                output = run_with_progress(
+                    "Comprobar remoto",
+                    "Ejecutando git fetch origin --tags",
+                    update_center_fetch_command(),
+                    60,
+                )
+                show_output("Update Center", output + "\n\n" + build_update_center_text())
+                set_status("Comprobacion remota terminada")
                 continue
             if action == "__SET_LANGUAGE__":
                 value = select_list(

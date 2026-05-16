@@ -75,6 +75,8 @@ and presented as a public release.
   commands without executing privileged changes.
 - [x] TUI Update Center reports local sync state without running `fetch`,
   `pull` or privileged commands.
+- [x] TUI Update Center can refresh remote metadata with confirmed
+  `git fetch origin --tags` only.
 
 ## Manual GitHub Repository Setup
 

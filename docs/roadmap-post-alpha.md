@@ -80,6 +80,8 @@ Planned work:
   routines. Done.
 - Add read-only Update Center sync status for local/remote divergence and dirty
   working trees. Done.
+- Add confirmed Update Center remote metadata refresh with `git fetch
+  origin --tags`, without automatic pull or runtime update. Done.
 
 Acceptance criteria:
 

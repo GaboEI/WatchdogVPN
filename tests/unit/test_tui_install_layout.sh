@@ -22,7 +22,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
-for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "update_center_snapshot", "update_center_recommendations", "build_update_center_text", "apply_tui_preferences"):
+for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "update_center_snapshot", "update_center_recommendations", "update_center_fetch_command", "build_update_center_text", "confirm_update_fetch", "apply_tui_preferences"):
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
 
 cmd = module.settings_set_command("language.current", "es")
@@ -35,8 +35,13 @@ update_text = module.build_update_center_text()
 assert "Modo actual: solo lectura." in update_text
 assert "Estado remoto" in update_text
 assert "Recomendacion segun estado actual:" in update_text
+assert "Comprobar remoto ejecuta git fetch origin --tags" in update_text
 assert "./update.sh --skip-doctor" in update_text
 assert "git fetch origin --tags" in update_text
+fetch_cmd = module.update_center_fetch_command()
+assert "git fetch origin --tags" in fetch_cmd
+assert "git pull" not in fetch_cmd
+assert "sudo" not in fetch_cmd
 assert any("git pull --ff-only origin main" in line for line in module.update_center_recommendations([("Estado remoto", "behind"), ("Cambios locales", "clean")]))
 assert any("git push origin main" in line for line in module.update_center_recommendations([("Estado remoto", "ahead"), ("Cambios locales", "clean")]))
 assert any("git status --short" in line for line in module.update_center_recommendations([("Estado remoto", "up to date"), ("Cambios locales", "dirty")]))
