@@ -9,6 +9,7 @@ DNSCTL_BIN="${WATCHDOGVPN_DNSCTL_BIN:-/usr/local/bin/vpn_dnsctl}"
 VPNCTL_BIN="${WATCHDOGVPN_VPNCTL_BIN:-/usr/local/bin/vpnctl}"
 DOCTOR_BIN="${WATCHDOGVPN_DOCTOR_BIN:-./doctor.sh}"
 TUI_BIN="${WATCHDOGVPN_TUI_BIN:-$HOME/.local/bin/VPN}"
+CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}"
 
 usage() {
   cat <<'USAGE'
@@ -19,6 +20,7 @@ Usage:
   watchdogvpn doctor
   watchdogvpn tui
   watchdogvpn report
+  watchdogvpn config get [section.key]
   watchdogvpn version
   watchdogvpn help
 
@@ -27,6 +29,7 @@ Commands:
   doctor   Run repository doctor when available.
   tui      Open the WatchdogVPN terminal UI.
   report   Generate a local sanitized diagnostic report.
+  config   Read persistent WatchdogVPN configuration.
   version  Print command version.
   help     Show this help.
 
@@ -108,6 +111,67 @@ generate_report() {
   printf 'Review this file before sharing it. Nothing was uploaded.\n'
 }
 
+config_value() {
+  local key="$1" file="${2:-$CONFIG_FILE}" section name
+  section="${key%%.*}"
+  name="${key#*.}"
+
+  [[ "$section" != "$key" && -n "$section" && -n "$name" ]] || return 64
+  [[ -r "$file" ]] || return 66
+
+  awk -v section="$section" -v name="$name" '
+    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; next}
+    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
+    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+      sub(/^[^=]*=[[:space:]]*/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      gsub(/^"|"$/, "")
+      print
+      found=1
+      exit
+    }
+    END {exit found ? 0 : 1}
+  ' "$file"
+}
+
+config_get() {
+  local key="${1:-}"
+
+  if [[ ! -r "$CONFIG_FILE" ]]; then
+    printf 'config unavailable: %s\n' "$CONFIG_FILE" >&2
+    return 66
+  fi
+
+  if [[ -z "$key" ]]; then
+    sanitize_stream <"$CONFIG_FILE"
+    return 0
+  fi
+
+  if ! config_value "$key" "$CONFIG_FILE"; then
+    printf 'config key not found: %s\n' "$key" >&2
+    return 1
+  fi
+}
+
+config_command() {
+  local subcmd="${1:-help}"
+  shift || true
+
+  case "$subcmd" in
+    get)
+      config_get "${1:-}"
+      ;;
+    help|--help|-h)
+      printf 'Usage: watchdogvpn config get [section.key]\n'
+      ;;
+    *)
+      printf 'unknown config command: %s\n\n' "$subcmd" >&2
+      printf 'Usage: watchdogvpn config get [section.key]\n' >&2
+      return 64
+      ;;
+  esac
+}
+
 cmd="${1:-help}"
 shift || true
 
@@ -127,6 +191,9 @@ case "$cmd" in
     ;;
   report)
     generate_report
+    ;;
+  config)
+    config_command "$@"
     ;;
   version)
     printf 'WatchdogVPN %s\n' "$VERSION"

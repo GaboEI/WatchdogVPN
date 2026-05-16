@@ -214,8 +214,8 @@ watchdogvpn config reset timers
 
 Behavior:
 
-- `get` with no key prints the sanitized configuration.
-- `get section.key` prints only one value.
+- `get` with no key prints the sanitized configuration. Implemented.
+- `get section.key` prints only one value. Implemented.
 - `set section.key value` validates key and value before writing.
 - Unknown keys must fail with a clear error.
 - Values that can affect systemd or DNS must be validated before being applied.

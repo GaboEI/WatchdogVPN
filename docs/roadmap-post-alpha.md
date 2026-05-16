@@ -62,6 +62,7 @@ Planned work:
 - Preserve timer, DNS, language and TUI preferences during update.
 - Add missing config keys during migration without overwriting user values.
   Done.
+- Add read-only `watchdogvpn config get`. Done.
 - Add explicit reset commands for selected configuration groups.
 - Add migration and preservation tests.
 - Document configuration in [Configuration](configuration.md). Done.
