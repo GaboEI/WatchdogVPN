@@ -7,7 +7,8 @@ post-alpha support, reporting and distro-validation improvements.
 
 ## Unreleased
 
-No unreleased changes yet.
+- Add the planned WatchdogVPN persistent configuration default example and unit
+  contract checks for the v0.2.0 configuration schema.
 
 ## v0.1.1 - 2026-05-16
 

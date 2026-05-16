@@ -35,6 +35,12 @@ Packaged defaults and reference example:
 /etc/watchdogvpn/config.toml.example
 ```
 
+Repository source for that example:
+
+```text
+examples/watchdogvpn-config.toml.example
+```
+
 Backups created during migration or update should use the existing WatchdogVPN
 backup root:
 
