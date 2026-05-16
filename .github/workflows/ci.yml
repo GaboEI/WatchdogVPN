@@ -56,8 +56,8 @@ jobs:
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
-            echo "ShellCheck advisory found issues. This is non-blocking for v0.1.0-alpha."
-            echo "ShellCheck cleanup is tracked for the final release hygiene pass."
+            echo "ShellCheck advisory found issues. This is non-blocking while shell hardening is in progress."
+            echo "ShellCheck cleanup is tracked for the v0.2/v1.0 hardening path."
           fi
           exit 0
 
@@ -72,7 +72,7 @@ jobs:
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
-            echo "shfmt advisory found formatting diffs. This is non-blocking for v0.1.0-alpha."
-            echo "Formatting cleanup is tracked for the final release hygiene pass."
+            echo "shfmt advisory found formatting diffs. This is non-blocking while shell hardening is in progress."
+            echo "Formatting cleanup is tracked for the v0.2/v1.0 hardening path."
           fi
           exit 0

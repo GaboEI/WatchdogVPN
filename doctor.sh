@@ -122,7 +122,7 @@ if [[ "${DISTRO_SUPPORTED:-0}" == "1" ]]; then
 elif [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
   mark_fail "Fedora support is planned for a future release"
 else
-  mark_fail "unsupported distro for initial release"
+  mark_fail "unsupported distro for this release"
 fi
 
 section "System"

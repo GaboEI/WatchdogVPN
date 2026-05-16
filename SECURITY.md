@@ -9,10 +9,11 @@ privilege boundaries, DNS recovery or preservation of user configuration.
 
 | Version | Supported |
 | --- | --- |
+| `v0.1.1` | Security reports accepted |
 | `v0.1.0-alpha` | Security reports accepted |
 
-The alpha release is not a stable 1.0 release. Reports are still useful and will
-shape the post-alpha roadmap.
+The current alpha release is not a stable 1.0 release. Reports are still useful
+and will shape the stabilization roadmap.
 
 ## Reporting a Vulnerability
 

@@ -48,6 +48,11 @@ if grep -Eq '198\.51\.100|203\.0\.113|user@example\.com' "$report"; then
 fi
 
 "$SCRIPT" help >/dev/null
-"$SCRIPT" version | grep -Fq "WatchdogVPN"
+version_output="$("$SCRIPT" version)"
+printf '%s\n' "$version_output" | grep -Fq "WatchdogVPN v0.1.1"
+if printf '%s\n' "$version_output" | grep -Fq -- "-dev"; then
+  printf 'FAIL: published CLI version must not use a -dev suffix\n' >&2
+  exit 1
+fi
 
 printf 'watchdogvpn CLI checks passed\n'

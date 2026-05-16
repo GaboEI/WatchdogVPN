@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="v0.1.1-dev"
+VERSION="v0.1.1"
 REPORT_DIR="${WATCHDOGVPN_REPORT_DIR:-$HOME}"
 TRUTH_BIN="${WATCHDOGVPN_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
 AUTH_BIN="${WATCHDOGVPN_AUTH_BIN:-/usr/local/bin/vpn_auth_check}"
