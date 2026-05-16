@@ -5,8 +5,8 @@ and presented as a public release.
 
 ## Current Target
 
-- Target version: `v0.1.1`
-- Current status: alpha maintenance release ready for tagging
+- Target version: `v0.2.0`
+- Current status: persistent configuration design started
 - Intended audience: portfolio reviewers, Linux automation reviewers and
   controlled Linux testers
 - Public license: GPL-3.0-or-later
@@ -50,6 +50,20 @@ and presented as a public release.
 - [x] CachyOS real-machine validation passed with post-reboot VPN recovery observation.
 - [x] Installed `watchdogvpn` CLI is not shadowed by the TUI support package.
 - [x] `v0.1.1` release notes exist.
+
+## Required Before Tagging `v0.2.0`
+
+- [x] Configuration contract exists in `docs/configuration.md`.
+- [ ] `/etc/watchdogvpn/config.toml` is created on fresh install.
+- [ ] `update.sh` preserves existing user configuration.
+- [ ] Missing config keys are added safely during migration.
+- [ ] Config migration creates a backup before modifying the active file.
+- [ ] `uninstall.sh` preserves config by default.
+- [ ] `uninstall.sh --purge-config` removes WatchdogVPN config explicitly.
+- [ ] `watchdogvpn config get` exists.
+- [ ] `watchdogvpn config set` validates supported keys and values.
+- [ ] `watchdogvpn config reset` requires confirmation.
+- [ ] Config create, preserve, migration and reset behavior is covered by tests.
 
 ## Manual GitHub Repository Setup
 

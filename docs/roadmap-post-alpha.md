@@ -58,7 +58,7 @@ Planned work:
 - Preserve timer, DNS, language and TUI preferences during update.
 - Add explicit reset commands for selected configuration groups.
 - Add migration and preservation tests.
-- Document configuration in `docs/configuration.md`.
+- Document configuration in [Configuration](configuration.md). Done.
 
 Acceptance criteria:
 
@@ -66,6 +66,8 @@ Acceptance criteria:
 - Missing new config keys are added safely.
 - Existing config is backed up before migration.
 - Reset behavior requires explicit confirmation.
+- `docs/configuration.md` defines the install, update, uninstall, reset and CLI
+  contracts before runtime implementation begins.
 
 ## v0.3.0: Professional CLI
 

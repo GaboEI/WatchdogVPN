@@ -24,6 +24,7 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | Review security tradeoffs | [Security](docs/security.md) and [Threat Model](docs/threat-model.md) |
 | Report an issue safely | [Reporting Issues](docs/reporting.md) and [Security Policy](SECURITY.md) |
 | Validate a machine | [Validation](docs/validation.md) |
+| Understand configuration | [Configuration](docs/configuration.md) |
 | Review release status | [v0.1.1 notes](docs/release-notes-v0.1.1.md) |
 | Prepare a release | [Release Checklist](docs/release-checklist.md) |
 | Configure GitHub About | [GitHub About](docs/github-about.md) |
@@ -248,6 +249,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [Security](docs/security.md)
 - [Threat Model](docs/threat-model.md)
 - [Reporting Issues](docs/reporting.md)
+- [Configuration](docs/configuration.md)
 - [Demo](docs/demo.md)
 - [Validation](docs/validation.md)
 - [v0.1.1 Release Notes](docs/release-notes-v0.1.1.md)
