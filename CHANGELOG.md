@@ -24,6 +24,8 @@ post-alpha support, reporting and distro-validation improvements.
 - Add a read-only TUI Settings view for persistent configuration preferences.
 - Add TUI Settings actions for safe language, theme, color and unicode
   preferences.
+- Apply persisted TUI color and theme preferences when the interface starts and
+  after Settings changes.
 
 ## v0.1.1 - 2026-05-16
 

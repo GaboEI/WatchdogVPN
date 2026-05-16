@@ -19,6 +19,9 @@ if os.path.isdir(os.path.join(SCRIPT_DIR, "watchdogvpn")):
 elif os.path.isdir(os.path.join(INSTALLED_SUPPORT_DIR, "watchdogvpn")):
     sys.path.insert(0, INSTALLED_SUPPORT_DIR)
 
+import watchdogvpn.render as render_module
+import watchdogvpn.styles as styles_module
+
 from watchdogvpn.constants import (
     AG,
     AUTO_REFRESH_SECONDS,
@@ -94,6 +97,55 @@ from watchdogvpn.validators import valid_domain, valid_timer_interval
 STATUS_LINE = "Listo"
 SUDO_KEEPALIVE_STOP = threading.Event()
 SUDO_KEEPALIVE_THREAD = None
+ORIGINAL_FG = FG.copy()
+ORIGINAL_BG = BG.copy()
+ORIGINAL_BOLD = BOLD
+ORIGINAL_DIM = DIM
+ORIGINAL_RESET = RESET
+
+
+def apply_tui_preferences():
+    global BOLD, DIM, RESET
+    snapshot = dict(settings_snapshot())
+    theme = snapshot.get("Tema", "default")
+    color_enabled = snapshot.get("Color", "true").lower() != "false"
+
+    FG.clear()
+    FG.update(ORIGINAL_FG)
+    BG.clear()
+    BG.update(ORIGINAL_BG)
+    BOLD = ORIGINAL_BOLD
+    DIM = ORIGINAL_DIM
+    RESET = ORIGINAL_RESET
+    styles_module.BOLD = ORIGINAL_BOLD
+    styles_module.DIM = ORIGINAL_DIM
+    styles_module.RESET = ORIGINAL_RESET
+    render_module.BOLD = ORIGINAL_BOLD
+    render_module.RESET = ORIGINAL_RESET
+
+    if theme == "high_contrast":
+        FG.update(
+            {
+                "gray": ORIGINAL_FG["white"],
+                "blue": ORIGINAL_FG["cyan"],
+                "magenta": ORIGINAL_FG["yellow"],
+            }
+        )
+        BG["cyan"] = ORIGINAL_BG["white"]
+
+    if theme == "no_color" or not color_enabled:
+        for key in FG:
+            FG[key] = ""
+        for key in BG:
+            BG[key] = ""
+        BOLD = ""
+        DIM = ""
+        RESET = ""
+        styles_module.BOLD = ""
+        styles_module.DIM = ""
+        styles_module.RESET = ""
+        render_module.BOLD = ""
+        render_module.RESET = ""
 
 
 def set_status(message: str):
@@ -457,7 +509,7 @@ class Terminal:
 
     def exit(self):
         termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
-        sys.stdout.write(RESET + CSI + "?1000l" + CSI + "?1006l" + CSI + "?25h" + CSI + "?1049l")
+        sys.stdout.write(ORIGINAL_RESET + CSI + "?1000l" + CSI + "?1006l" + CSI + "?25h" + CSI + "?1049l")
         sys.stdout.flush()
 
 
@@ -2098,7 +2150,8 @@ def handle_menu(label: str):
                         25,
                     )
                     show_output(action_label, output)
-                    set_status(f"Idioma guardado: {value}")
+                    apply_tui_preferences()
+                    set_status(f"Idioma guardado: {value}; traduccion pendiente")
                 continue
             if action == "__SET_THEME__":
                 value = select_list(
@@ -2120,6 +2173,7 @@ def handle_menu(label: str):
                         25,
                     )
                     show_output(action_label, output)
+                    apply_tui_preferences()
                     set_status(f"Tema guardado: {value}")
                 continue
             if action in ("__SET_COLOR__", "__SET_UNICODE__"):
@@ -2136,6 +2190,7 @@ def handle_menu(label: str):
                         25,
                     )
                     show_output(action_label, output)
+                    apply_tui_preferences()
                     set_status(f"{key} guardado: {value}")
                 continue
             if action == "__TRACE_SUMMARY__":
@@ -2301,6 +2356,7 @@ def main():
     term = Terminal()
     atexit.register(term.exit)
     term.enter()
+    apply_tui_preferences()
     sudo_ready = initialize_sudo()
     selected = 0
     dashboard_cache = refresh_dashboard()
