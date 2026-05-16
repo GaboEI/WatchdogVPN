@@ -108,6 +108,44 @@ Recorded result:
   treated that provider CLI text as non-authoritative because tunnel, route and
   public IP truth checks were healthy.
 
+## TUI Settings Runtime Validation
+
+Last recorded TUI Settings runtime validation: 2026-05-16.
+
+Host type:
+
+- Arch Linux real workstation.
+- Existing WatchdogVPN runtime already installed.
+- Persistent config present at `/etc/watchdogvpn/config.toml`.
+
+Commands:
+
+```sh
+sudo -v
+./update.sh --skip-doctor
+watchdogvpn config get language.current
+watchdogvpn config get tui.theme
+watchdogvpn config get tui.color
+watchdogvpn config get tui.unicode
+VPN
+./doctor.sh
+```
+
+Recorded result:
+
+- `update.sh --skip-doctor` completed successfully.
+- Existing `/etc/watchdogvpn/config.toml.example` was preserved.
+- Existing `/etc/watchdogvpn/config.toml` was preserved.
+- TUI Settings reset restored:
+  - `language.current`: `en`
+  - `tui.theme`: `default`
+  - `tui.color`: `true`
+  - `tui.unicode`: `true`
+- `VPN` opened after update.
+- `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
+- Settings reset did not touch DNS, timers, reporting, VPN state, logs or
+  bypass configuration.
+
 ## Unit Behavior Checks
 
 `tests/unit.sh` runs behavior checks with mocked system commands and temporary
