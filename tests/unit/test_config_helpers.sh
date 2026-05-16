@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+# shellcheck source=../../lib/common.sh
+. "$ROOT_DIR/lib/common.sh"
+# shellcheck source=../../lib/install_files.sh
+. "$ROOT_DIR/lib/install_files.sh"
+
+create_root_dir() {
+  local path="$1" mode="${2:-0755}"
+  install -d -m "$mode" "$path"
+}
+
+create_config_if_missing() {
+  local src="$1" dest="$2" mode="${3:-0644}"
+  [[ -e "$dest" ]] && return 0
+  install -d -m 0755 "$(dirname "$dest")"
+  install -m "$mode" "$src" "$dest"
+}
+
+backup_path() {
+  local path="$1" stamp backup
+  [[ -e "$path" ]] || return 0
+  stamp="test"
+  backup="$BACKUP_ROOT$path.$stamp"
+  install -d -m 0755 "$(dirname "$backup")"
+  cp -a "$path" "$backup"
+}
+
+WATCHDOGVPN_CONFIG_DIR="$TMP_DIR/etc/watchdogvpn"
+WATCHDOGVPN_CONFIG_FILE="$WATCHDOGVPN_CONFIG_DIR/config.toml"
+WATCHDOGVPN_CONFIG_EXAMPLE="$WATCHDOGVPN_CONFIG_DIR/config.toml.example"
+WATCHDOGVPN_REPO_CONFIG_EXAMPLE="$ROOT_DIR/examples/watchdogvpn-config.toml.example"
+BACKUP_ROOT="$TMP_DIR/backups"
+INSTALL_DRY_RUN=0
+
+# shellcheck source=../../lib/config.sh
+. "$ROOT_DIR/lib/config.sh"
+
+validate_config_example "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE"
+
+install_config_defaults
+
+[[ -d "$WATCHDOGVPN_CONFIG_DIR" ]]
+[[ -f "$WATCHDOGVPN_CONFIG_FILE" ]]
+[[ -f "$WATCHDOGVPN_CONFIG_EXAMPLE" ]]
+
+config_has_key language.current "$WATCHDOGVPN_CONFIG_FILE"
+config_has_key timers.watchdog_interval "$WATCHDOGVPN_CONFIG_FILE"
+config_has_key dns.profile "$WATCHDOGVPN_CONFIG_FILE"
+config_has_key tui.theme "$WATCHDOGVPN_CONFIG_FILE"
+config_has_key reporting.sanitize_ipv4 "$WATCHDOGVPN_CONFIG_FILE"
+
+if config_has_key timers.missing_key "$WATCHDOGVPN_CONFIG_FILE"; then
+  printf 'FAIL: config_has_key returned true for a missing key\n' >&2
+  exit 1
+fi
+
+if config_has_key malformed "$WATCHDOGVPN_CONFIG_FILE"; then
+  printf 'FAIL: config_has_key returned true for malformed key\n' >&2
+  exit 1
+fi
+
+printf 'current = "es"\n' >>"$WATCHDOGVPN_CONFIG_FILE"
+install_config_defaults
+grep -Fq 'current = "es"' "$WATCHDOGVPN_CONFIG_FILE"
+
+backup_config_file
+find "$BACKUP_ROOT" -type f -path '*/etc/watchdogvpn/config.toml.*' | grep -q .
+
+printf 'config helper checks passed\n'
