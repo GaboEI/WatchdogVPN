@@ -70,6 +70,7 @@ and presented as a public release.
 - [x] `docs/cli.md` documents the current product CLI.
 - [x] TUI shows a read-only Settings view backed by persistent config.
 - [x] TUI Settings can update safe language and TUI preferences.
+- [x] TUI Settings reset requires confirmation and does not touch DNS/timers.
 
 ## Manual GitHub Repository Setup
 

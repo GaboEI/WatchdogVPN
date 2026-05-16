@@ -252,6 +252,9 @@ tui.color
 tui.unicode
 ```
 
+It can also reset the safe language and TUI sections through explicit
+confirmation. This does not reset DNS, timers or reporting preferences.
+
 ## Validation Rules
 
 Required validation:

@@ -22,12 +22,15 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
-for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "apply_tui_preferences"):
+for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "apply_tui_preferences"):
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
 
 cmd = module.settings_set_command("language.current", "es")
 assert "/usr/local/bin/watchdogvpn config set language.current es" in cmd
 assert "clave settings no permitida" in module.settings_set_command("timers.watchdog_interval", "1min")
+reset_cmd = module.settings_reset_command()
+assert "config reset language --yes" in reset_cmd
+assert "config reset tui --yes" in reset_cmd
 
 original_cyan = module.FG["cyan"]
 module.settings_snapshot = lambda: [("Tema", "no_color"), ("Color", "false")]

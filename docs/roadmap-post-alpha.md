@@ -75,6 +75,7 @@ Planned work:
 - Validate installed config update on a real Arch workstation. Done.
 - Add a read-only TUI Settings view backed by persistent config. Done.
 - Add TUI Settings actions for safe language and TUI preferences. Done.
+- Add confirmed TUI Settings reset for language and TUI preferences. Done.
 
 Acceptance criteria:
 

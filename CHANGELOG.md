@@ -26,6 +26,8 @@ post-alpha support, reporting and distro-validation improvements.
   preferences.
 - Apply persisted TUI color and theme preferences when the interface starts and
   after Settings changes.
+- Add confirmed TUI Settings reset for language and visual preferences without
+  touching DNS or timers.
 
 ## v0.1.1 - 2026-05-16
 

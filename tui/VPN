@@ -453,7 +453,9 @@ def build_settings_text() -> str:
         "Settings",
         "--------",
         "Configuracion persistente de WatchdogVPN.",
-        "Modo actual: solo lectura.",
+        "Modo actual: editable para preferencias seguras.",
+        "Nota: language.current se guarda, pero la traduccion completa queda para i18n.",
+        "Settings no modifica DNS ni timers.",
         "",
     ]
     for key, value in rows:
@@ -466,6 +468,7 @@ def build_settings_text() -> str:
             "  watchdogvpn config get language.current",
             "  watchdogvpn config set language.current es",
             "  watchdogvpn config set tui.theme high_contrast",
+            "  watchdogvpn config reset language --yes",
             "  watchdogvpn config reset tui --yes",
             "",
             "Tambien puedes editar idioma, tema, color y unicode desde el menu Settings.",
@@ -487,6 +490,14 @@ def settings_set_command(key: str, value: str) -> str:
     return (
         f"sudo -n {shlex.quote(WATCHDOGVPN_CLI)} config set "
         f"{shlex.quote(key)} {shlex.quote(value)}"
+    )
+
+
+def settings_reset_command() -> str:
+    cli = shlex.quote(WATCHDOGVPN_CLI)
+    return (
+        f"sudo -n {cli} config reset language --yes && "
+        f"sudo -n {cli} config reset tui --yes"
     )
 
 
@@ -1652,6 +1663,11 @@ def section_meta(section: str, label: str):
                 ("Accion", "watchdogvpn config set tui.unicode"),
                 ("Impacto", "Preferencia persistente"),
             ],
+            "Reset Settings": [
+                ("Accion", "config reset language + tui"),
+                ("Impacto", "Restaura idioma y preferencias visuales"),
+                ("Riesgo", "No toca DNS ni timers"),
+            ],
         }
         return data.get(label, [])
 
@@ -1689,6 +1705,7 @@ def action_progress_text(section: str, label: str) -> str:
         ("Settings", "Cambiar tema"): "Actualizando tema persistente",
         ("Settings", "Cambiar color"): "Actualizando preferencia de color",
         ("Settings", "Cambiar unicode"): "Actualizando preferencia unicode",
+        ("Settings", "Reset Settings"): "Restaurando idioma y preferencias TUI",
         ("Ver logs", "Resumen trazabilidad"): "Parseando niveles y eventos recientes de logs",
         ("Ver logs", "Housekeeping logs"): "Leyendo estado de rotacion y retencion de logs",
         ("Ver logs", "vpn-watchdog.log"): "Leyendo eventos recientes del watchdog",
@@ -1786,6 +1803,7 @@ def section_panel(section: str, items):
                 "Esta vista edita solo preferencias seguras: idioma, tema, color y unicode.",
                 "Cada cambio usa watchdogvpn config set, valida el valor y crea backup.",
                 "Los cambios de idioma/tema todavia son preferencias persistidas; la traduccion completa llega en una fase posterior.",
+                "Reset Settings restaura idioma y TUI; no toca DNS, timers ni reporting.",
             ],
         }
         hints = extra_hints.get(section, [])
@@ -2100,6 +2118,7 @@ def handle_menu(label: str):
                 ("Cambiar tema", "__SET_THEME__"),
                 ("Cambiar color", "__SET_COLOR__"),
                 ("Cambiar unicode", "__SET_UNICODE__"),
+                ("Reset Settings", "__RESET_SETTINGS__"),
             ],
         }
 
@@ -2192,6 +2211,26 @@ def handle_menu(label: str):
                     show_output(action_label, output)
                     apply_tui_preferences()
                     set_status(f"{key} guardado: {value}")
+                continue
+            if action == "__RESET_SETTINGS__":
+                confirm = prompt_input(
+                    "Reset Settings",
+                    "Restaura idioma y preferencias TUI. No toca DNS ni timers. Escribe RESET para confirmar.",
+                )
+                if confirm != "RESET":
+                    set_status("Reset Settings cancelado")
+                    continue
+                if not ensure_sudo():
+                    continue
+                output = run_with_progress(
+                    action_label,
+                    "Restaurando idioma y preferencias TUI",
+                    settings_reset_command(),
+                    30,
+                )
+                show_output(action_label, output)
+                apply_tui_preferences()
+                set_status("Settings restaurado")
                 continue
             if action == "__TRACE_SUMMARY__":
                 set_status("Abriendo trazabilidad")
