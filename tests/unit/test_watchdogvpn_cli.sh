@@ -33,6 +33,10 @@ auto_detect = true
 [reporting]
 sanitize_email = true
 support_email = "user@example.com"
+
+[tui]
+theme = "default"
+color = true
 EOF
 
 output="$(
@@ -64,6 +68,19 @@ config_value="$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config 
 [[ "$config_value" == "es" ]]
 if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.missing >/dev/null 2>&1; then
   printf 'FAIL: missing config key should fail\n' >&2
+  exit 1
+fi
+WATCHDOGVPN_CONFIG_BACKUP_DIR="$TMP_DIR/backups" WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set language.current fr >/dev/null 2>&1
+[[ "$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)" == "fr" ]]
+find "$TMP_DIR/backups" -type f -name 'config.toml.*.bak' | grep -q .
+WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set tui.color false >/dev/null 2>&1
+grep -Fq 'color = false' "$TMP_DIR/config.toml"
+if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set timers.watchdog_interval 1min >/dev/null 2>&1; then
+  printf 'FAIL: unsafe config key should not be writable yet\n' >&2
+  exit 1
+fi
+if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config set language.current klingon >/dev/null 2>&1; then
+  printf 'FAIL: invalid language should fail validation\n' >&2
   exit 1
 fi
 version_output="$("$SCRIPT" version)"
