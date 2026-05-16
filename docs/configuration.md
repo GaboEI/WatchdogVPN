@@ -16,7 +16,8 @@ configuration, Conky configuration, logs and rotation state. It does not yet
 provide a central WatchdogVPN configuration file.
 
 The `v0.2.0` development path now creates `/etc/watchdogvpn/config.toml` from
-the packaged defaults when the file is missing.
+the packaged defaults when the file is missing. When the file already exists,
+missing default sections and keys are added without overwriting existing values.
 
 ## Planned Paths
 

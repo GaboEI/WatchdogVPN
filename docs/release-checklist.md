@@ -60,9 +60,9 @@ and presented as a public release.
 - [x] `/etc/watchdogvpn/config.toml` is created on fresh install.
 - [x] `uninstall.sh` preserves config by default.
 - [x] `uninstall.sh --purge-config` removes WatchdogVPN config explicitly.
-- [ ] `update.sh` preserves existing user configuration.
-- [ ] Missing config keys are added safely during migration.
-- [ ] Config migration creates a backup before modifying the active file.
+- [x] `update.sh` preserves existing user configuration.
+- [x] Missing config keys are added safely during migration.
+- [x] Config migration creates a backup before modifying the active file.
 - [ ] `watchdogvpn config get` exists.
 - [ ] `watchdogvpn config set` validates supported keys and values.
 - [ ] `watchdogvpn config reset` requires confirmation.

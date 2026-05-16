@@ -60,6 +60,8 @@ Planned work:
 - Create default config during install/update and preserve it during uninstall.
   Done.
 - Preserve timer, DNS, language and TUI preferences during update.
+- Add missing config keys during migration without overwriting user values.
+  Done.
 - Add explicit reset commands for selected configuration groups.
 - Add migration and preservation tests.
 - Document configuration in [Configuration](configuration.md). Done.

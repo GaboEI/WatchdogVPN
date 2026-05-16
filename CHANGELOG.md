@@ -12,6 +12,8 @@ post-alpha support, reporting and distro-validation improvements.
 - Add minimal persistent configuration helper functions and unit coverage.
 - Create the persistent WatchdogVPN config defaults during runtime install and
   preserve `/etc/watchdogvpn/` during uninstall unless `--purge-config` is used.
+- Add safe config migration for missing keys without overwriting existing user
+  preferences.
 
 ## v0.1.1 - 2026-05-16
 
