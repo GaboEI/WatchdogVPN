@@ -49,6 +49,8 @@ Acceptance criteria:
 
 ## v0.2.0: Persistent Configuration
 
+Status: foundation complete.
+
 Purpose: separate product defaults from user preferences.
 
 Planned work:
@@ -60,6 +62,7 @@ Planned work:
 - Create default config during install/update and preserve it during uninstall.
   Done.
 - Preserve timer, DNS, language and TUI preferences during update.
+  Foundation done; timer and DNS runtime application remains read-only for now.
 - Add missing config keys during migration without overwriting user values.
   Done.
 - Add read-only `watchdogvpn config get`. Done.
@@ -69,6 +72,7 @@ Planned work:
 - Add migration and preservation tests. Done.
 - Document configuration in [Configuration](configuration.md). Done.
 - Document the current product CLI in [CLI](cli.md). Done.
+- Validate installed config update on a real Arch workstation. Done.
 
 Acceptance criteria:
 

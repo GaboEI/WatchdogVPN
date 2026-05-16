@@ -19,6 +19,8 @@ post-alpha support, reporting and distro-validation improvements.
   reporting keys.
 - Add confirmed `watchdogvpn config reset` support for safe config sections.
 - Add `docs/cli.md` with the current `watchdogvpn` command reference.
+- Record real Arch update validation for the persistent configuration
+  foundation.
 
 ## v0.1.1 - 2026-05-16
 

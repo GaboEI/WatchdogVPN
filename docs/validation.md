@@ -63,6 +63,51 @@ DESKTOP` resolves to `$HOME` or no real Desktop folder exists, the installer
 should install only the application-menu launcher and skip the desktop-file copy
 with a warning.
 
+## Persistent Configuration Update Validation
+
+Last recorded persistent configuration update validation: 2026-05-16.
+
+Host type:
+
+- Arch Linux real workstation.
+- Existing WatchdogVPN runtime already installed.
+- Existing VPN services active.
+
+Commands:
+
+```sh
+cd ~/WatchdogVPN
+git status --short --branch
+sudo -v
+./update.sh --skip-doctor
+hash -r
+command -v watchdogvpn
+watchdogvpn version
+watchdogvpn config get language.current
+watchdogvpn config get tui.theme
+watchdogvpn config get reporting.sanitize_ipv4
+./doctor.sh
+vpnctl status
+vpnctl connect US
+```
+
+Recorded result:
+
+- Repository was clean and synchronized with `origin/main`.
+- `update.sh --skip-doctor` completed successfully.
+- Installed CLI resolved to `/usr/local/bin/watchdogvpn`.
+- Installed CLI reported `WatchdogVPN v0.1.1`.
+- Persistent config reads returned:
+  - `language.current`: `en`
+  - `tui.theme`: `default`
+  - `reporting.sanitize_ipv4`: `true`
+- `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
+- `vpnctl status` reported real VPN state `UP`.
+- `vpnctl connect US` completed and kept real VPN state `UP`.
+- AdGuard VPN CLI text still reported disconnected, but WatchdogVPN correctly
+  treated that provider CLI text as non-authoritative because tunnel, route and
+  public IP truth checks were healthy.
+
 ## Unit Behavior Checks
 
 `tests/unit.sh` runs behavior checks with mocked system commands and temporary

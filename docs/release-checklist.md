@@ -6,7 +6,7 @@ and presented as a public release.
 ## Current Target
 
 - Target version: `v0.2.0`
-- Current status: persistent configuration design started
+- Current status: persistent configuration foundation complete
 - Intended audience: portfolio reviewers, Linux automation reviewers and
   controlled Linux testers
 - Public license: GPL-3.0-or-later
