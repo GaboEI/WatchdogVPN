@@ -22,7 +22,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
 
-for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "update_center_snapshot", "update_center_recommendations", "update_center_fetch_command", "update_center_runtime_plan", "build_update_runtime_plan_text", "build_update_center_text", "confirm_update_fetch", "apply_tui_preferences"):
+for name in ("truth_data", "country_code", "current_location", "strip_ansi", "bypass_count", "settings_snapshot", "settings_set_command", "settings_reset_command", "update_center_repo_root", "update_center_snapshot", "update_center_recommendations", "update_center_fetch_command", "update_center_runtime_plan", "update_center_product_rows", "build_update_runtime_plan_text", "build_update_center_text", "build_update_technical_details_text", "confirm_update_fetch", "apply_tui_preferences"):
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
 
 cmd = module.settings_set_command("language.current", "es")
@@ -32,13 +32,14 @@ reset_cmd = module.settings_reset_command()
 assert "config reset language --yes" in reset_cmd
 assert "config reset tui --yes" in reset_cmd
 update_text = module.build_update_center_text()
-assert "Modo actual: solo lectura." in update_text
-assert "Estado remoto" in update_text
-assert "Recomendacion segun estado actual:" in update_text
-assert "Comprobar remoto ejecuta git fetch origin --tags" in update_text
-assert "Actualizar runtime muestra una guia contextual." in update_text
-assert "./update.sh --skip-doctor" in update_text
-assert "git fetch origin --tags" in update_text
+assert "Product update status." in update_text
+assert "Runtime update" in update_text
+assert "Show technical details" in update_text
+assert "git fetch origin --tags" not in update_text
+assert "./update.sh --skip-doctor" not in update_text
+technical_text = module.build_update_technical_details_text()
+assert "Technical Update Details" in technical_text
+assert "git fetch origin --tags" in technical_text
 fetch_cmd = module.update_center_fetch_command()
 assert "git fetch origin --tags" in fetch_cmd
 assert "git pull" not in fetch_cmd
@@ -50,7 +51,8 @@ assert any("git pull --ff-only origin main" in line for line in module.update_ce
 assert any("./update.sh --skip-doctor" in line for line in module.update_center_runtime_plan([("Estado remoto", "up to date"), ("Cambios locales", "clean")]))
 assert not any("./update.sh --skip-doctor" in line for line in module.update_center_runtime_plan([("Estado remoto", "diverged"), ("Cambios locales", "clean")]))
 runtime_text = module.build_update_runtime_plan_text()
-assert "Guia contextual. No ejecuta comandos." in runtime_text
+assert "Contextual guide. No commands are executed." in runtime_text
+assert module.update_center_repo_root().endswith("WatchdogVPN")
 
 original_cyan = module.FG["cyan"]
 module.settings_snapshot = lambda: [("Tema", "no_color"), ("Color", "false")]

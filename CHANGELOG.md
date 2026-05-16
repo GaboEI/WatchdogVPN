@@ -37,6 +37,8 @@ post-alpha support, reporting and distro-validation improvements.
   without running `pull`, `push`, `update.sh` or privileged commands.
 - Add a contextual TUI runtime update plan that recommends safe manual steps
   based on dirty, behind, ahead, diverged or clean repository states.
+- Polish the TUI Update Center into a product-facing status view and move
+  maintainer commands into a separate technical details screen.
 
 ## v0.1.1 - 2026-05-16
 

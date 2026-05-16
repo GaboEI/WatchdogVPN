@@ -84,6 +84,8 @@ Planned work:
   origin --tags`, without automatic pull or runtime update. Done.
 - Add contextual runtime update guidance in the TUI based on repository state,
   without automatic execution. Done.
+- Polish Update Center into a product-facing status view with technical details
+  separated for maintainers. Done.
 
 Acceptance criteria:
 

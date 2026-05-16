@@ -79,6 +79,8 @@ and presented as a public release.
   `git fetch origin --tags` only.
 - [x] TUI Update Center shows a contextual runtime update plan without
   executing update commands.
+- [x] TUI Update Center presents product-facing status separately from
+  maintainer technical details.
 
 ## Manual GitHub Repository Setup
 
