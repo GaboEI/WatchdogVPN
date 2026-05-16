@@ -68,6 +68,7 @@ Planned work:
   Done for safe sections.
 - Add migration and preservation tests. Done.
 - Document configuration in [Configuration](configuration.md). Done.
+- Document the current product CLI in [CLI](cli.md). Done.
 
 Acceptance criteria:
 
@@ -105,7 +106,7 @@ Acceptance criteria:
 
 - `watchdogvpn --help` is clear.
 - Common operations have stable subcommands.
-- Documentation exists in `docs/cli.md`.
+- Documentation exists in [CLI](cli.md).
 
 ## v1.0.0: Stable Baseline
 

@@ -67,6 +67,7 @@ and presented as a public release.
 - [x] `watchdogvpn config set` validates supported keys and values.
 - [x] `watchdogvpn config reset` requires confirmation.
 - [x] Config create, preserve, migration and reset behavior is covered by tests.
+- [x] `docs/cli.md` documents the current product CLI.
 
 ## Manual GitHub Repository Setup
 

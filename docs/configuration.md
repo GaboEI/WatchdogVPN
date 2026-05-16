@@ -199,6 +199,8 @@ Rules:
 
 ## CLI Contract
 
+For the complete command reference, see [WatchdogVPN CLI](cli.md).
+
 Planned command forms:
 
 ```sh
