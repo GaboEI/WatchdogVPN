@@ -25,6 +25,16 @@ make_cmd "$TMP_DIR/vpnctl" \
 make_cmd "$TMP_DIR/dnsctl" \
   'case "${1:-}" in current) printf "profile_guess=quad9-doh\n";; local-test) printf "OK example.com 198.51.100.20\n";; esac'
 
+cat >"$TMP_DIR/config.toml" <<'EOF'
+[language]
+current = "es"
+auto_detect = true
+
+[reporting]
+sanitize_email = true
+support_email = "user@example.com"
+EOF
+
 output="$(
   WATCHDOGVPN_REPORT_DIR="$TMP_DIR" \
   WATCHDOGVPN_TRUTH_BIN="$TMP_DIR/truth" \
@@ -48,6 +58,14 @@ if grep -Eq '198\.51\.100|203\.0\.113|user@example\.com' "$report"; then
 fi
 
 "$SCRIPT" help >/dev/null
+WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '[language]'
+WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '<redacted-email>'
+config_value="$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)"
+[[ "$config_value" == "es" ]]
+if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.missing >/dev/null 2>&1; then
+  printf 'FAIL: missing config key should fail\n' >&2
+  exit 1
+fi
 version_output="$("$SCRIPT" version)"
 printf '%s\n' "$version_output" | grep -Fq "WatchdogVPN v0.1.1"
 if printf '%s\n' "$version_output" | grep -Fq -- "-dev"; then
