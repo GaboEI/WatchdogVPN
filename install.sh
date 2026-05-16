@@ -13,6 +13,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/adguard_vpn_cli.sh"
 # shellcheck source=lib/install_files.sh
 . "$ROOT_DIR/lib/install_files.sh"
+# shellcheck source=lib/config.sh
+. "$ROOT_DIR/lib/config.sh"
 # shellcheck source=lib/systemd.sh
 . "$ROOT_DIR/lib/systemd.sh"
 # shellcheck source=lib/runtime.sh

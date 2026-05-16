@@ -56,6 +56,7 @@ Planned work:
 - Add central configuration under `/etc/watchdogvpn/`.
 - Prefer `config.toml` if the standard toolchain remains simple enough.
 - Add default config example and schema contract tests. Done.
+- Add minimal configuration helper functions. Done.
 - Preserve timer, DNS, language and TUI preferences during update.
 - Add explicit reset commands for selected configuration groups.
 - Add migration and preservation tests.

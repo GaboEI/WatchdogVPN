@@ -56,6 +56,7 @@ and presented as a public release.
 - [x] Configuration contract exists in `docs/configuration.md`.
 - [x] Default config example exists in `examples/watchdogvpn-config.toml.example`.
 - [x] Default config schema is covered by a unit contract test.
+- [x] Minimal config helper functions exist in `lib/config.sh`.
 - [ ] `/etc/watchdogvpn/config.toml` is created on fresh install.
 - [ ] `update.sh` preserves existing user configuration.
 - [ ] Missing config keys are added safely during migration.
