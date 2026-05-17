@@ -6,6 +6,8 @@ SCRIPT="$ROOT_DIR/bin/watchdogvpn"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 LOG_DIR="$TMP_DIR/logs"
+UPDATE_REPO="$TMP_DIR/update-repo"
+UPDATE_REMOTE="$TMP_DIR/update-remote.git"
 mkdir -p "$LOG_DIR"
 
 make_cmd() {
@@ -50,6 +52,16 @@ printf '%s\n' \
   '2026-05-16T00:01:00Z | vpn_watchdog | warn | sample | 203.0.113.22' \
   >"$LOG_DIR/vpn-events.log"
 
+git init -q --bare "$UPDATE_REMOTE"
+git init -q -b main "$UPDATE_REPO"
+git -C "$UPDATE_REPO" config user.email "test@example.com"
+git -C "$UPDATE_REPO" config user.name "WatchdogVPN Test"
+printf 'initial\n' >"$UPDATE_REPO/README.md"
+git -C "$UPDATE_REPO" add README.md
+git -C "$UPDATE_REPO" commit -q -m initial
+git -C "$UPDATE_REPO" remote add origin "$UPDATE_REMOTE"
+git -C "$UPDATE_REPO" push -q -u origin main
+
 output="$(
   WATCHDOGVPN_REPORT_DIR="$TMP_DIR" \
   WATCHDOGVPN_TRUTH_BIN="$TMP_DIR/truth" \
@@ -75,6 +87,7 @@ fi
 help_output="$("$SCRIPT" help)"
 printf '%s\n' "$help_output" | grep -Fq 'Read-only commands:'
 printf '%s\n' "$help_output" | grep -Fq 'logs          Read recent WatchdogVPN logs without sudo.'
+printf '%s\n' "$help_output" | grep -Fq 'update-check  Show local repository update status without network access.'
 printf '%s\n' "$help_output" | grep -Fq 'Configuration commands:'
 printf '%s\n' "$help_output" | grep -Fq 'Interactive commands:'
 printf '%s\n' "$help_output" | grep -Fq 'config set    Update a validated safe configuration key.'
@@ -97,6 +110,18 @@ if WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 0 >/dev/null 2>&1; then
   printf 'FAIL: invalid log line count should fail\n' >&2
   exit 1
 fi
+update_output="$(WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-check)"
+printf '%s\n' "$update_output" | grep -Fq 'WatchdogVPN update check'
+printf '%s\n' "$update_output" | grep -Fq 'Mode: read-only. No fetch, pull, push, update.sh or sudo is executed.'
+printf '%s\n' "$update_output" | grep -Fq 'Branch: main'
+printf '%s\n' "$update_output" | grep -Fq 'Remote state: up to date'
+printf '%s\n' "$update_output" | grep -Fq 'Local changes: clean'
+printf 'dirty\n' >"$UPDATE_REPO/dirty.txt"
+dirty_update_output="$(WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-check)"
+printf '%s\n' "$dirty_update_output" | grep -Fq 'Local changes: dirty'
+printf '%s\n' "$dirty_update_output" | grep -Fq 'Review local changes before updating'
+not_repo_output="$(WATCHDOGVPN_REPO_DIR="$TMP_DIR/not-a-repo" "$SCRIPT" update-check)"
+printf '%s\n' "$not_repo_output" | grep -Fq 'State: not a git checkout'
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '[language]'
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '<redacted-email>'
 config_value="$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)"

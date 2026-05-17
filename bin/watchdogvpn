@@ -12,6 +12,7 @@ TUI_BIN="${WATCHDOGVPN_TUI_BIN:-$HOME/.local/bin/VPN}"
 CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}"
 LOG_DIR="${WATCHDOGVPN_LOG_DIR:-/var/log/myvpn}"
 LOG_LINES="${WATCHDOGVPN_LOG_LINES:-80}"
+REPO_DIR="${WATCHDOGVPN_REPO_DIR:-$(pwd)}"
 
 usage() {
   cat <<'USAGE'
@@ -27,6 +28,7 @@ Read-only commands:
   doctor        Run repository doctor when available.
   report        Generate a local sanitized diagnostic report.
   logs          Read recent WatchdogVPN logs without sudo.
+  update-check  Show local repository update status without network access.
   config get    Read persistent WatchdogVPN configuration.
   version       Print command version.
   help          Show this help.
@@ -42,6 +44,7 @@ Common examples:
   watchdogvpn status
   watchdogvpn report
   watchdogvpn logs
+  watchdogvpn update-check
   watchdogvpn logs watchdog 120
   watchdogvpn config get language.current
   watchdogvpn config set tui.theme high_contrast
@@ -51,6 +54,7 @@ Common examples:
 Safety:
   report writes a local file only. Nothing is uploaded automatically.
   logs reads local files only and sanitizes obvious sensitive values.
+  update-check does not fetch, pull, push, update runtime files or use sudo.
   config set/reset creates a backup before modifying configuration.
   update, connect, disconnect and rotate are intentionally not product CLI
   commands yet.
@@ -118,9 +122,113 @@ logs_command() {
 sanitize_stream() {
   sed -E \
     -e "s#${HOME}#<home>#g" \
+    -e 's#(https?://)[^/@[:space:]]+@#\1<redacted>@#g' \
     -e 's#https?://[^[:space:]]*device_code[^[:space:]]*#<redacted-device-code-url>#g' \
     -e 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/<redacted-email>/g' \
     -e 's/([0-9]{1,3}\.){3}[0-9]{1,3}/<redacted-ip>/g'
+}
+
+sanitize_remote_url() {
+  sed -E -e 's#(https?://)[^/@[:space:]]+@#\1<redacted>@#g'
+}
+
+git_repo_command() {
+  git -C "$REPO_DIR" "$@" 2>/dev/null || true
+}
+
+git_repo_available() {
+  command -v git >/dev/null 2>&1 && git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+update_check() {
+  local repo_root branch commit upstream origin status_line dirty latest_tag counts ahead behind sync_state
+
+  printf 'WatchdogVPN update check\n'
+  printf 'Mode: read-only. No fetch, pull, push, update.sh or sudo is executed.\n\n'
+  printf 'Version: %s\n' "$VERSION"
+
+  if ! git_repo_available; then
+    printf 'Repository: unavailable\n'
+    printf 'State: not a git checkout\n'
+    return 0
+  fi
+
+  repo_root="$(git_repo_command rev-parse --show-toplevel)"
+  branch="$(git_repo_command branch --show-current)"
+  commit="$(git_repo_command rev-parse --short HEAD)"
+  upstream="$(git_repo_command rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
+  origin="$(git_repo_command config --get remote.origin.url)"
+  status_line="$(git_repo_command status --short --branch | sed -n '1p')"
+  latest_tag="$(git_repo_command describe --tags --abbrev=0)"
+
+  if [[ -n "$(git_repo_command status --porcelain)" ]]; then
+    dirty="dirty"
+  else
+    dirty="clean"
+  fi
+
+  ahead=0
+  behind=0
+  sync_state="no upstream"
+  if [[ -n "$upstream" ]]; then
+    counts="$(git_repo_command rev-list --left-right --count 'HEAD...@{u}')"
+    if [[ "$counts" =~ ^([0-9]+)[[:space:]]+([0-9]+)$ ]]; then
+      ahead="${BASH_REMATCH[1]}"
+      behind="${BASH_REMATCH[2]}"
+      if ((ahead > 0 && behind > 0)); then
+        sync_state="diverged"
+      elif ((behind > 0)); then
+        sync_state="behind"
+      elif ((ahead > 0)); then
+        sync_state="ahead"
+      else
+        sync_state="up to date"
+      fi
+    else
+      sync_state="unknown"
+    fi
+  fi
+
+  printf 'Repository: %s\n' "${repo_root:-unknown}" | sanitize_stream
+  printf 'Branch: %s\n' "${branch:-unknown}"
+  printf 'Commit: %s\n' "${commit:-unknown}"
+  printf 'Upstream: %s\n' "${upstream:-none}"
+  printf 'Origin: %s\n' "${origin:-none}" | sanitize_remote_url
+  printf 'Remote state: %s\n' "$sync_state"
+  printf 'Local changes: %s\n' "$dirty"
+  printf 'Ahead/behind: '
+  if [[ -n "$upstream" ]]; then
+    printf '%s/%s\n' "$ahead" "$behind"
+  else
+    printf 'unknown\n'
+  fi
+  printf 'Latest local tag: %s\n' "${latest_tag:-unknown}"
+  printf 'Git status: %s\n' "${status_line:-unknown}"
+
+  printf '\nNext step:\n'
+  case "$dirty:$sync_state" in
+    dirty:*)
+      printf '  Review local changes before updating: git status --short\n'
+      ;;
+    clean:behind)
+      printf '  Source checkout can be fast-forwarded: git pull --ff-only origin main\n'
+      ;;
+    clean:up\ to\ date)
+      printf '  Source checkout appears current against the local upstream metadata.\n'
+      ;;
+    clean:ahead)
+      printf '  Local branch has unpublished commits: git push origin main\n'
+      ;;
+    clean:diverged)
+      printf '  Branch diverged. Inspect history before pulling or pushing.\n'
+      ;;
+    clean:no\ upstream)
+      printf '  Configure upstream if this checkout should track origin/main.\n'
+      ;;
+    *)
+      printf '  Inspect repository state manually before updating.\n'
+      ;;
+  esac
 }
 
 section() {
@@ -479,6 +587,9 @@ case "$cmd" in
     ;;
   logs)
     logs_command "$@"
+    ;;
+  update-check)
+    update_check
     ;;
   config)
     config_command "$@"

@@ -12,6 +12,8 @@ product-facing Update Center.
   classes, and make `watchdogvpn --help` match `watchdogvpn help`.
 - Add read-only `watchdogvpn logs` for recent sanitized local WatchdogVPN log
   output without running `sudo`.
+- Add read-only `watchdogvpn update-check` for local repository update status
+  without running `fetch`, `pull`, `push`, `update.sh` or `sudo`.
 - Start `v0.3.0` professional CLI planning.
 - Add the planned WatchdogVPN persistent configuration default example and unit
   contract checks for the v0.2.0 configuration schema.

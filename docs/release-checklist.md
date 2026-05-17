@@ -90,7 +90,7 @@ and presented as a public release.
 - [x] `watchdogvpn help` groups commands clearly.
 - [x] `watchdogvpn --help` behaves like `watchdogvpn help`.
 - [x] `watchdogvpn logs` exists and is read-only.
-- [ ] `watchdogvpn update-check` exists and is read-only.
+- [x] `watchdogvpn update-check` exists and is read-only.
 - [ ] `watchdogvpn update-plan` exists and is read-only.
 - [ ] New CLI commands are covered by unit tests.
 - [ ] `docs/cli.md` documents every supported command.

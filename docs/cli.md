@@ -15,6 +15,7 @@ watchdogvpn status
 watchdogvpn doctor
 watchdogvpn report
 watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]
+watchdogvpn update-check
 watchdogvpn config get [section.key]
 watchdogvpn version
 watchdogvpn help
@@ -152,6 +153,38 @@ Rules:
 - Sanitizes obvious home paths, email addresses and IPv4 addresses.
 - Does not call `sudo`.
 - Does not modify logs, services, configuration or VPN state.
+
+## Update State
+
+### `watchdogvpn update-check`
+
+Shows local source checkout status without contacting the network.
+
+```sh
+watchdogvpn update-check
+```
+
+Reported fields include:
+
+- WatchdogVPN CLI version.
+- Repository root.
+- Current branch.
+- Current commit.
+- Configured upstream.
+- Origin URL, sanitized for obvious sensitive values.
+- Local upstream sync state: `up to date`, `behind`, `ahead`, `diverged`,
+  `no upstream` or `unknown`.
+- Local working tree state: `clean` or `dirty`.
+- Latest local tag.
+
+Rules:
+
+- Does not run `git fetch`.
+- Does not run `git pull`.
+- Does not run `git push`.
+- Does not run `update.sh`.
+- Does not use `sudo`.
+- Uses only local Git metadata already present in the checkout.
 
 ## Configuration Commands
 
