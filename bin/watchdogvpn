@@ -85,6 +85,56 @@ sensitive values. Defaults to:
 USAGE
 }
 
+update_check_usage() {
+  cat <<'USAGE'
+Usage:
+  watchdogvpn update-check
+
+Shows local source checkout status without network access. It does not run
+git fetch, git pull, git push, update.sh or sudo.
+USAGE
+}
+
+update_plan_usage() {
+  cat <<'USAGE'
+Usage:
+  watchdogvpn update-plan
+
+Prints safe manual update steps for the current checkout state. It prints
+commands only and does not execute them.
+USAGE
+}
+
+config_usage() {
+  cat <<'USAGE'
+Usage:
+  watchdogvpn config get [section.key]
+  watchdogvpn config set section.key value
+  watchdogvpn config reset [language|tui|reporting|all] --yes
+
+Readable:
+  config get                  Print sanitized config.
+  config get language.current Print one key.
+
+Writable safe keys:
+  language.current
+  language.auto_detect
+  tui.theme
+  tui.color
+  tui.unicode
+  reporting.sanitize_ipv4
+  reporting.sanitize_ipv6
+  reporting.sanitize_email
+  reporting.sanitize_home
+
+Reset targets:
+  language
+  tui
+  reporting
+  all
+USAGE
+}
+
 logs_command() {
   local target="${1:-events}" lines="${2:-$LOG_LINES}" path
 
@@ -638,15 +688,52 @@ config_command() {
       config_reset "${1:-all}" "${2:-}"
       ;;
     help|--help|-h)
-      printf 'Usage: watchdogvpn config get [section.key]\n'
-      printf '       watchdogvpn config set section.key value\n'
-      printf '       watchdogvpn config reset [language|tui|reporting|all] --yes\n'
+      config_usage
       ;;
     *)
       printf 'unknown config command: %s\n\n' "$subcmd" >&2
-      printf 'Usage: watchdogvpn config get [section.key]\n' >&2
-      printf '       watchdogvpn config set section.key value\n' >&2
-      printf '       watchdogvpn config reset [language|tui|reporting|all] --yes\n' >&2
+      config_usage >&2
+      return 64
+      ;;
+  esac
+}
+
+help_command() {
+  local topic="${1:-}"
+  case "$topic" in
+    ""|help|--help|-h)
+      usage
+      ;;
+    logs)
+      logs_usage
+      ;;
+    update-check)
+      update_check_usage
+      ;;
+    update-plan)
+      update_plan_usage
+      ;;
+    config)
+      config_usage
+      ;;
+    status)
+      printf 'Usage:\n  watchdogvpn status\n\nShows VPN runtime status through vpnctl.\n'
+      ;;
+    doctor)
+      printf 'Usage:\n  watchdogvpn doctor\n\nRuns the repository doctor when available.\n'
+      ;;
+    report)
+      printf 'Usage:\n  watchdogvpn report\n\nGenerates a local sanitized diagnostic report. Nothing is uploaded.\n'
+      ;;
+    tui)
+      printf 'Usage:\n  watchdogvpn tui\n\nOpens the WatchdogVPN terminal UI.\n'
+      ;;
+    version)
+      printf 'Usage:\n  watchdogvpn version\n\nPrints the WatchdogVPN CLI version.\n'
+      ;;
+    *)
+      printf 'unknown help topic: %s\n\n' "$topic" >&2
+      usage >&2
       return 64
       ;;
   esac
@@ -676,10 +763,34 @@ case "$cmd" in
     logs_command "$@"
     ;;
   update-check)
-    update_check
+    case "${1:-}" in
+      help|--help|-h)
+        update_check_usage
+        ;;
+      "")
+        update_check
+        ;;
+      *)
+        printf 'unknown update-check argument: %s\n\n' "$1" >&2
+        update_check_usage >&2
+        exit 64
+        ;;
+    esac
     ;;
   update-plan)
-    update_plan
+    case "${1:-}" in
+      help|--help|-h)
+        update_plan_usage
+        ;;
+      "")
+        update_plan
+        ;;
+      *)
+        printf 'unknown update-plan argument: %s\n\n' "$1" >&2
+        update_plan_usage >&2
+        exit 64
+        ;;
+    esac
     ;;
   config)
     config_command "$@"
@@ -688,7 +799,7 @@ case "$cmd" in
     printf 'WatchdogVPN %s\n' "$VERSION"
     ;;
   help|--help|-h)
-    usage
+    help_command "$@"
     ;;
   *)
     printf 'unknown command: %s\n\n' "$cmd" >&2

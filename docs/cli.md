@@ -97,6 +97,10 @@ Prints grouped command help.
 ```sh
 watchdogvpn help
 watchdogvpn --help
+watchdogvpn help logs
+watchdogvpn help update-check
+watchdogvpn help update-plan
+watchdogvpn help config
 ```
 
 The help output separates read-only commands, configuration-write commands and

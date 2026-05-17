@@ -16,6 +16,8 @@ product-facing Update Center.
   without running `fetch`, `pull`, `push`, `update.sh` or `sudo`.
 - Add read-only `watchdogvpn update-plan` for safe manual update guidance based
   on the current local checkout state.
+- Polish `watchdogvpn help <topic>`, config help and update command argument
+  validation for the v0.3.0 CLI surface.
 - Start `v0.3.0` professional CLI planning.
 - Add the planned WatchdogVPN persistent configuration default example and unit
   contract checks for the v0.2.0 configuration schema.

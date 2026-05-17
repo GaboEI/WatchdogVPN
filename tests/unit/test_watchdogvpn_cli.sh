@@ -95,6 +95,15 @@ printf '%s\n' "$help_output" | grep -Fq 'config set    Update a validated safe c
 printf '%s\n' "$help_output" | grep -Fq 'update, connect, disconnect and rotate are intentionally not product CLI'
 dash_help_output="$("$SCRIPT" --help)"
 [[ "$dash_help_output" == "$help_output" ]]
+printf '%s\n' "$("$SCRIPT" help logs)" | grep -Fq 'watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]'
+printf '%s\n' "$("$SCRIPT" help update-check)" | grep -Fq 'watchdogvpn update-check'
+printf '%s\n' "$("$SCRIPT" help update-plan)" | grep -Fq 'watchdogvpn update-plan'
+printf '%s\n' "$("$SCRIPT" help config)" | grep -Fq 'Writable safe keys:'
+printf '%s\n' "$("$SCRIPT" config help)" | grep -Fq 'Reset targets:'
+if "$SCRIPT" help missing-topic >/dev/null 2>&1; then
+  printf 'FAIL: unknown help topic should fail\n' >&2
+  exit 1
+fi
 logs_output="$(WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 2)"
 printf '%s\n' "$logs_output" | grep -Fq 'WatchdogVPN logs: events'
 printf '%s\n' "$logs_output" | grep -Fq '<redacted-email>'
@@ -137,6 +146,14 @@ not_repo_output="$(WATCHDOGVPN_REPO_DIR="$TMP_DIR/not-a-repo" "$SCRIPT" update-c
 printf '%s\n' "$not_repo_output" | grep -Fq 'State: not a git checkout'
 not_repo_plan="$(WATCHDOGVPN_REPO_DIR="$TMP_DIR/not-a-repo" "$SCRIPT" update-plan)"
 printf '%s\n' "$not_repo_plan" | grep -Fq 'Current state: not a git checkout'
+if WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-check unexpected >/dev/null 2>&1; then
+  printf 'FAIL: update-check unexpected argument should fail\n' >&2
+  exit 1
+fi
+if WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-plan unexpected >/dev/null 2>&1; then
+  printf 'FAIL: update-plan unexpected argument should fail\n' >&2
+  exit 1
+fi
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '[language]'
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '<redacted-email>'
 config_value="$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)"
