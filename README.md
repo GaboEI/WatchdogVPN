@@ -25,6 +25,7 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | Report an issue safely | [Reporting Issues](docs/reporting.md) and [Security Policy](SECURITY.md) |
 | Validate a machine | [Validation](docs/validation.md) |
 | Use the CLI | [CLI](docs/cli.md) |
+| Follow CLI planning | [CLI Plan v0.3.0](docs/cli-plan-v0.3.0.md) |
 | Understand configuration | [Configuration](docs/configuration.md) |
 | Review release status | [v0.2.0 notes](docs/release-notes-v0.2.0.md) |
 | Prepare a release | [Release Checklist](docs/release-checklist.md) |

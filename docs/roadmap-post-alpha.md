@@ -99,6 +99,8 @@ Acceptance criteria:
 
 ## v0.3.0: Professional CLI
 
+Status: planning started.
+
 Purpose: expose WatchdogVPN as a product command, not only as `VPN`.
 
 Planned command shape:
@@ -111,8 +113,12 @@ watchdogvpn config get
 watchdogvpn config set
 watchdogvpn report
 watchdogvpn logs
+watchdogvpn update-check
+watchdogvpn update-plan
 watchdogvpn version
 ```
+
+The detailed implementation plan is tracked in [CLI Plan v0.3.0](cli-plan-v0.3.0.md).
 
 Compatibility:
 
@@ -125,6 +131,9 @@ Acceptance criteria:
 - `watchdogvpn --help` is clear.
 - Common operations have stable subcommands.
 - Documentation exists in [CLI](cli.md).
+- New read-only commands are covered by tests.
+- State-changing commands are deferred until confirmation and rollback behavior
+  is designed.
 
 ## v1.0.0: Stable Baseline
 

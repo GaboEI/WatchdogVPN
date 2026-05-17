@@ -8,6 +8,7 @@ product-facing Update Center.
 
 ## Unreleased
 
+- Start `v0.3.0` professional CLI planning.
 - Add the planned WatchdogVPN persistent configuration default example and unit
   contract checks for the v0.2.0 configuration schema.
 - Add minimal persistent configuration helper functions and unit coverage.
