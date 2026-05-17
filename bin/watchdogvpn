@@ -29,6 +29,7 @@ Read-only commands:
   report        Generate a local sanitized diagnostic report.
   logs          Read recent WatchdogVPN logs without sudo.
   update-check  Show local repository update status without network access.
+  update-plan   Print safe manual update steps for the current checkout.
   config get    Read persistent WatchdogVPN configuration.
   version       Print command version.
   help          Show this help.
@@ -45,6 +46,7 @@ Common examples:
   watchdogvpn report
   watchdogvpn logs
   watchdogvpn update-check
+  watchdogvpn update-plan
   watchdogvpn logs watchdog 120
   watchdogvpn config get language.current
   watchdogvpn config set tui.theme high_contrast
@@ -55,6 +57,7 @@ Safety:
   report writes a local file only. Nothing is uploaded automatically.
   logs reads local files only and sanitizes obvious sensitive values.
   update-check does not fetch, pull, push, update runtime files or use sudo.
+  update-plan prints commands only; it does not execute them.
   config set/reset creates a backup before modifying configuration.
   update, connect, disconnect and rotate are intentionally not product CLI
   commands yet.
@@ -140,73 +143,91 @@ git_repo_available() {
   command -v git >/dev/null 2>&1 && git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1
 }
 
-update_check() {
-  local repo_root branch commit upstream origin status_line dirty latest_tag counts ahead behind sync_state
+update_state() {
+  UPDATE_REPO_AVAILABLE=0
+  UPDATE_REPO_ROOT=""
+  UPDATE_BRANCH=""
+  UPDATE_COMMIT=""
+  UPDATE_UPSTREAM=""
+  UPDATE_ORIGIN=""
+  UPDATE_STATUS_LINE=""
+  UPDATE_DIRTY="unknown"
+  UPDATE_LATEST_TAG=""
+  UPDATE_AHEAD=0
+  UPDATE_BEHIND=0
+  UPDATE_SYNC_STATE="not a git checkout"
 
+  if ! git_repo_available; then
+    return 0
+  fi
+
+  UPDATE_REPO_AVAILABLE=1
+  UPDATE_REPO_ROOT="$(git_repo_command rev-parse --show-toplevel)"
+  UPDATE_BRANCH="$(git_repo_command branch --show-current)"
+  UPDATE_COMMIT="$(git_repo_command rev-parse --short HEAD)"
+  UPDATE_UPSTREAM="$(git_repo_command rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
+  UPDATE_ORIGIN="$(git_repo_command config --get remote.origin.url)"
+  UPDATE_STATUS_LINE="$(git_repo_command status --short --branch | sed -n '1p')"
+  UPDATE_LATEST_TAG="$(git_repo_command describe --tags --abbrev=0)"
+
+  if [[ -n "$(git_repo_command status --porcelain)" ]]; then
+    UPDATE_DIRTY="dirty"
+  else
+    UPDATE_DIRTY="clean"
+  fi
+
+  UPDATE_SYNC_STATE="no upstream"
+  if [[ -n "$UPDATE_UPSTREAM" ]]; then
+    local counts
+    counts="$(git_repo_command rev-list --left-right --count 'HEAD...@{u}')"
+    if [[ "$counts" =~ ^([0-9]+)[[:space:]]+([0-9]+)$ ]]; then
+      UPDATE_AHEAD="${BASH_REMATCH[1]}"
+      UPDATE_BEHIND="${BASH_REMATCH[2]}"
+      if ((UPDATE_AHEAD > 0 && UPDATE_BEHIND > 0)); then
+        UPDATE_SYNC_STATE="diverged"
+      elif ((UPDATE_BEHIND > 0)); then
+        UPDATE_SYNC_STATE="behind"
+      elif ((UPDATE_AHEAD > 0)); then
+        UPDATE_SYNC_STATE="ahead"
+      else
+        UPDATE_SYNC_STATE="up to date"
+      fi
+    else
+      UPDATE_SYNC_STATE="unknown"
+    fi
+  fi
+}
+
+update_check() {
   printf 'WatchdogVPN update check\n'
   printf 'Mode: read-only. No fetch, pull, push, update.sh or sudo is executed.\n\n'
   printf 'Version: %s\n' "$VERSION"
 
-  if ! git_repo_available; then
+  update_state
+  if ((UPDATE_REPO_AVAILABLE == 0)); then
     printf 'Repository: unavailable\n'
     printf 'State: not a git checkout\n'
     return 0
   fi
 
-  repo_root="$(git_repo_command rev-parse --show-toplevel)"
-  branch="$(git_repo_command branch --show-current)"
-  commit="$(git_repo_command rev-parse --short HEAD)"
-  upstream="$(git_repo_command rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
-  origin="$(git_repo_command config --get remote.origin.url)"
-  status_line="$(git_repo_command status --short --branch | sed -n '1p')"
-  latest_tag="$(git_repo_command describe --tags --abbrev=0)"
-
-  if [[ -n "$(git_repo_command status --porcelain)" ]]; then
-    dirty="dirty"
-  else
-    dirty="clean"
-  fi
-
-  ahead=0
-  behind=0
-  sync_state="no upstream"
-  if [[ -n "$upstream" ]]; then
-    counts="$(git_repo_command rev-list --left-right --count 'HEAD...@{u}')"
-    if [[ "$counts" =~ ^([0-9]+)[[:space:]]+([0-9]+)$ ]]; then
-      ahead="${BASH_REMATCH[1]}"
-      behind="${BASH_REMATCH[2]}"
-      if ((ahead > 0 && behind > 0)); then
-        sync_state="diverged"
-      elif ((behind > 0)); then
-        sync_state="behind"
-      elif ((ahead > 0)); then
-        sync_state="ahead"
-      else
-        sync_state="up to date"
-      fi
-    else
-      sync_state="unknown"
-    fi
-  fi
-
-  printf 'Repository: %s\n' "${repo_root:-unknown}" | sanitize_stream
-  printf 'Branch: %s\n' "${branch:-unknown}"
-  printf 'Commit: %s\n' "${commit:-unknown}"
-  printf 'Upstream: %s\n' "${upstream:-none}"
-  printf 'Origin: %s\n' "${origin:-none}" | sanitize_remote_url
-  printf 'Remote state: %s\n' "$sync_state"
-  printf 'Local changes: %s\n' "$dirty"
+  printf 'Repository: %s\n' "${UPDATE_REPO_ROOT:-unknown}" | sanitize_stream
+  printf 'Branch: %s\n' "${UPDATE_BRANCH:-unknown}"
+  printf 'Commit: %s\n' "${UPDATE_COMMIT:-unknown}"
+  printf 'Upstream: %s\n' "${UPDATE_UPSTREAM:-none}"
+  printf 'Origin: %s\n' "${UPDATE_ORIGIN:-none}" | sanitize_remote_url
+  printf 'Remote state: %s\n' "$UPDATE_SYNC_STATE"
+  printf 'Local changes: %s\n' "$UPDATE_DIRTY"
   printf 'Ahead/behind: '
-  if [[ -n "$upstream" ]]; then
-    printf '%s/%s\n' "$ahead" "$behind"
+  if [[ -n "$UPDATE_UPSTREAM" ]]; then
+    printf '%s/%s\n' "$UPDATE_AHEAD" "$UPDATE_BEHIND"
   else
     printf 'unknown\n'
   fi
-  printf 'Latest local tag: %s\n' "${latest_tag:-unknown}"
-  printf 'Git status: %s\n' "${status_line:-unknown}"
+  printf 'Latest local tag: %s\n' "${UPDATE_LATEST_TAG:-unknown}"
+  printf 'Git status: %s\n' "${UPDATE_STATUS_LINE:-unknown}"
 
   printf '\nNext step:\n'
-  case "$dirty:$sync_state" in
+  case "$UPDATE_DIRTY:$UPDATE_SYNC_STATE" in
     dirty:*)
       printf '  Review local changes before updating: git status --short\n'
       ;;
@@ -229,6 +250,72 @@ update_check() {
       printf '  Inspect repository state manually before updating.\n'
       ;;
   esac
+}
+
+update_plan() {
+  printf 'WatchdogVPN update plan\n'
+  printf 'Mode: read-only. This prints commands only; it does not execute them.\n\n'
+
+  update_state
+  if ((UPDATE_REPO_AVAILABLE == 0)); then
+    printf 'Current state: not a git checkout\n\n'
+    printf 'Recommended action:\n'
+    printf '  Run this from the WatchdogVPN repository checkout.\n'
+    return 0
+  fi
+
+  printf 'Current state:\n'
+  printf '  Repository: %s\n' "${UPDATE_REPO_ROOT:-unknown}" | sanitize_stream
+  printf '  Branch: %s\n' "${UPDATE_BRANCH:-unknown}"
+  printf '  Remote state: %s\n' "$UPDATE_SYNC_STATE"
+  printf '  Local changes: %s\n' "$UPDATE_DIRTY"
+  printf '  Ahead/behind: '
+  if [[ -n "$UPDATE_UPSTREAM" ]]; then
+    printf '%s/%s\n' "$UPDATE_AHEAD" "$UPDATE_BEHIND"
+  else
+    printf 'unknown\n'
+  fi
+
+  printf '\nRecommended source routine:\n'
+  if [[ "$UPDATE_DIRTY" == "dirty" ]]; then
+    printf '  git status --short --branch\n'
+    printf '  Review, commit or stash local changes before pulling.\n'
+    return 0
+  fi
+
+  case "$UPDATE_SYNC_STATE" in
+    behind)
+      printf '  git pull --ff-only origin main\n'
+      ;;
+    up\ to\ date)
+      printf '  git status --short --branch\n'
+      printf '  Source checkout appears current against local upstream metadata.\n'
+      ;;
+    ahead)
+      printf '  git push origin main\n'
+      ;;
+    diverged)
+      printf '  git log --oneline --graph --decorate --all -20\n'
+      printf '  Resolve divergence manually before updating runtime.\n'
+      return 0
+      ;;
+    no\ upstream)
+      printf '  git branch --set-upstream-to=origin/main main\n'
+      printf '  git status --short --branch\n'
+      return 0
+      ;;
+    *)
+      printf '  git status --short --branch\n'
+      printf '  Inspect repository state manually.\n'
+      return 0
+      ;;
+  esac
+
+  printf '\nRecommended installed runtime routine:\n'
+  printf '  sudo -v\n'
+  printf '  ./update.sh --skip-doctor\n'
+  printf '  hash -r\n'
+  printf '  ./doctor.sh\n'
 }
 
 section() {
@@ -590,6 +677,9 @@ case "$cmd" in
     ;;
   update-check)
     update_check
+    ;;
+  update-plan)
+    update_plan
     ;;
   config)
     config_command "$@"

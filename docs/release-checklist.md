@@ -91,8 +91,8 @@ and presented as a public release.
 - [x] `watchdogvpn --help` behaves like `watchdogvpn help`.
 - [x] `watchdogvpn logs` exists and is read-only.
 - [x] `watchdogvpn update-check` exists and is read-only.
-- [ ] `watchdogvpn update-plan` exists and is read-only.
-- [ ] New CLI commands are covered by unit tests.
+- [x] `watchdogvpn update-plan` exists and is read-only.
+- [x] New CLI commands are covered by unit tests.
 - [ ] `docs/cli.md` documents every supported command.
 - [ ] Release notes exist for `v0.3.0`.
 

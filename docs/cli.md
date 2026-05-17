@@ -16,6 +16,7 @@ watchdogvpn doctor
 watchdogvpn report
 watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]
 watchdogvpn update-check
+watchdogvpn update-plan
 watchdogvpn config get [section.key]
 watchdogvpn version
 watchdogvpn help
@@ -185,6 +186,37 @@ Rules:
 - Does not run `update.sh`.
 - Does not use `sudo`.
 - Uses only local Git metadata already present in the checkout.
+
+### `watchdogvpn update-plan`
+
+Prints a safe manual update plan for the current checkout state.
+
+```sh
+watchdogvpn update-plan
+```
+
+The command uses the same local Git metadata as `watchdogvpn update-check`.
+It prints commands and guidance only.
+
+Rules:
+
+- Does not run `git fetch`.
+- Does not run `git pull`.
+- Does not run `git push`.
+- Does not run `update.sh`.
+- Does not use `sudo`.
+- Does not recommend runtime update steps while the working tree is dirty,
+  diverged, missing an upstream or otherwise ambiguous.
+
+When the source checkout is clean and safe to proceed, it prints the installed
+runtime update routine:
+
+```sh
+sudo -v
+./update.sh --skip-doctor
+hash -r
+./doctor.sh
+```
 
 ## Configuration Commands
 

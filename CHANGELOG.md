@@ -14,6 +14,8 @@ product-facing Update Center.
   output without running `sudo`.
 - Add read-only `watchdogvpn update-check` for local repository update status
   without running `fetch`, `pull`, `push`, `update.sh` or `sudo`.
+- Add read-only `watchdogvpn update-plan` for safe manual update guidance based
+  on the current local checkout state.
 - Start `v0.3.0` professional CLI planning.
 - Add the planned WatchdogVPN persistent configuration default example and unit
   contract checks for the v0.2.0 configuration schema.

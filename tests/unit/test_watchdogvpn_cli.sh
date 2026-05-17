@@ -88,6 +88,7 @@ help_output="$("$SCRIPT" help)"
 printf '%s\n' "$help_output" | grep -Fq 'Read-only commands:'
 printf '%s\n' "$help_output" | grep -Fq 'logs          Read recent WatchdogVPN logs without sudo.'
 printf '%s\n' "$help_output" | grep -Fq 'update-check  Show local repository update status without network access.'
+printf '%s\n' "$help_output" | grep -Fq 'update-plan   Print safe manual update steps for the current checkout.'
 printf '%s\n' "$help_output" | grep -Fq 'Configuration commands:'
 printf '%s\n' "$help_output" | grep -Fq 'Interactive commands:'
 printf '%s\n' "$help_output" | grep -Fq 'config set    Update a validated safe configuration key.'
@@ -116,12 +117,26 @@ printf '%s\n' "$update_output" | grep -Fq 'Mode: read-only. No fetch, pull, push
 printf '%s\n' "$update_output" | grep -Fq 'Branch: main'
 printf '%s\n' "$update_output" | grep -Fq 'Remote state: up to date'
 printf '%s\n' "$update_output" | grep -Fq 'Local changes: clean'
+plan_output="$(WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-plan)"
+printf '%s\n' "$plan_output" | grep -Fq 'WatchdogVPN update plan'
+printf '%s\n' "$plan_output" | grep -Fq 'Mode: read-only. This prints commands only; it does not execute them.'
+printf '%s\n' "$plan_output" | grep -Fq 'Recommended source routine:'
+printf '%s\n' "$plan_output" | grep -Fq 'Source checkout appears current against local upstream metadata.'
+printf '%s\n' "$plan_output" | grep -Fq './update.sh --skip-doctor'
 printf 'dirty\n' >"$UPDATE_REPO/dirty.txt"
 dirty_update_output="$(WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-check)"
 printf '%s\n' "$dirty_update_output" | grep -Fq 'Local changes: dirty'
 printf '%s\n' "$dirty_update_output" | grep -Fq 'Review local changes before updating'
+dirty_plan_output="$(WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-plan)"
+printf '%s\n' "$dirty_plan_output" | grep -Fq 'Review, commit or stash local changes before pulling.'
+if printf '%s\n' "$dirty_plan_output" | grep -Fq './update.sh --skip-doctor'; then
+  printf 'FAIL: dirty update plan should not recommend runtime update yet\n' >&2
+  exit 1
+fi
 not_repo_output="$(WATCHDOGVPN_REPO_DIR="$TMP_DIR/not-a-repo" "$SCRIPT" update-check)"
 printf '%s\n' "$not_repo_output" | grep -Fq 'State: not a git checkout'
+not_repo_plan="$(WATCHDOGVPN_REPO_DIR="$TMP_DIR/not-a-repo" "$SCRIPT" update-plan)"
+printf '%s\n' "$not_repo_plan" | grep -Fq 'Current state: not a git checkout'
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '[language]'
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '<redacted-email>'
 config_value="$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)"
