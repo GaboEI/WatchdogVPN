@@ -20,6 +20,11 @@ make_cmd() {
   chmod +x "$path"
 }
 
+contains() {
+  local haystack="$1" needle="$2"
+  grep -Fq "$needle" <<<"$haystack"
+}
+
 make_cmd "$TMP_DIR/truth" \
   'printf "STATUS=UP\nTUN=UP\nROUTE=TUN\nIP=OK\nIP_ADDR=198.51.100.10\n"'
 make_cmd "$TMP_DIR/auth" \
@@ -85,21 +90,21 @@ if grep -Eq '198\.51\.100|203\.0\.113|user@example\.com' "$report"; then
 fi
 
 help_output="$("$SCRIPT" help)"
-printf '%s\n' "$help_output" | grep -Fq 'Read-only commands:'
-printf '%s\n' "$help_output" | grep -Fq 'logs          Read recent WatchdogVPN logs without sudo.'
-printf '%s\n' "$help_output" | grep -Fq 'update-check  Show local repository update status without network access.'
-printf '%s\n' "$help_output" | grep -Fq 'update-plan   Print safe manual update steps for the current checkout.'
-printf '%s\n' "$help_output" | grep -Fq 'Configuration commands:'
-printf '%s\n' "$help_output" | grep -Fq 'Interactive commands:'
-printf '%s\n' "$help_output" | grep -Fq 'config set    Update a validated safe configuration key.'
-printf '%s\n' "$help_output" | grep -Fq 'update, connect, disconnect and rotate are intentionally not product CLI'
+contains "$help_output" 'Read-only commands:'
+contains "$help_output" 'logs          Read recent WatchdogVPN logs without sudo.'
+contains "$help_output" 'update-check  Show local repository update status without network access.'
+contains "$help_output" 'update-plan   Print safe manual update steps for the current checkout.'
+contains "$help_output" 'Configuration commands:'
+contains "$help_output" 'Interactive commands:'
+contains "$help_output" 'config set    Update a validated safe configuration key.'
+contains "$help_output" 'update, connect, disconnect and rotate are intentionally not product CLI'
 dash_help_output="$("$SCRIPT" --help)"
 [[ "$dash_help_output" == "$help_output" ]]
-printf '%s\n' "$("$SCRIPT" help logs)" | grep -Fq 'watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]'
-printf '%s\n' "$("$SCRIPT" help update-check)" | grep -Fq 'watchdogvpn update-check'
-printf '%s\n' "$("$SCRIPT" help update-plan)" | grep -Fq 'watchdogvpn update-plan'
-printf '%s\n' "$("$SCRIPT" help config)" | grep -Fq 'Writable safe keys:'
-printf '%s\n' "$("$SCRIPT" config help)" | grep -Fq 'Reset targets:'
+contains "$("$SCRIPT" help logs)" 'watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]'
+contains "$("$SCRIPT" help update-check)" 'watchdogvpn update-check'
+contains "$("$SCRIPT" help update-plan)" 'watchdogvpn update-plan'
+contains "$("$SCRIPT" help config)" 'Writable safe keys:'
+contains "$("$SCRIPT" config help)" 'Reset targets:'
 if "$SCRIPT" help missing-topic >/dev/null 2>&1; then
   printf 'FAIL: unknown help topic should fail\n' >&2
   exit 1

@@ -8,7 +8,8 @@ safe update visibility and clearer command help.
 
 ## Unreleased
 
-- No unreleased changes yet.
+- Add the `watchdogvpn runtime-update` safety contract for the planned
+  `v0.3.1` update engine.
 
 ## v0.3.0 - 2026-05-17
 
