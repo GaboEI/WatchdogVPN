@@ -17,6 +17,7 @@ watchdogvpn report
 watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]
 watchdogvpn update-check
 watchdogvpn update-plan
+watchdogvpn runtime-update --preflight
 watchdogvpn config get [section.key]
 watchdogvpn version
 watchdogvpn help
@@ -30,13 +31,15 @@ watchdogvpn config set section.key value
 watchdogvpn config reset [language|tui|reporting|all] --yes
 ```
 
-Planned state-changing commands:
+Preflight-only state-changing commands:
 
 ```sh
-watchdogvpn runtime-update
+watchdogvpn runtime-update --preflight
 ```
 
-`runtime-update` is planned for `v0.3.1`. Its safety contract is documented in
+`runtime-update` starts in `v0.3.1` as a preflight-only command. It validates
+whether a runtime update would be safe, but it does not execute the update yet.
+Its full safety contract is documented in
 [Runtime Update Contract](runtime-update-contract.md).
 
 Interactive commands:
@@ -109,6 +112,7 @@ watchdogvpn --help
 watchdogvpn help logs
 watchdogvpn help update-check
 watchdogvpn help update-plan
+watchdogvpn help runtime-update
 watchdogvpn help config
 ```
 
@@ -230,6 +234,51 @@ sudo -v
 hash -r
 ./doctor.sh
 ```
+
+### `watchdogvpn runtime-update`
+
+Runs the runtime update safety preflight.
+
+```sh
+watchdogvpn runtime-update --preflight
+watchdogvpn runtime-update --help
+watchdogvpn help runtime-update
+```
+
+Current `v0.3.1` behavior:
+
+- Does not run `git fetch`.
+- Does not run `git pull`.
+- Does not run `./update.sh`.
+- Does not run `./doctor.sh`.
+- Does not use `sudo`.
+- Does not modify the source checkout or installed runtime.
+
+The preflight refuses to continue when:
+
+- the command is not running from a Git checkout;
+- the current branch is not `main`;
+- no upstream is configured;
+- the working tree is dirty;
+- the local branch is ahead of upstream;
+- the local branch has diverged from upstream;
+- upstream state is unknown;
+- `update.sh` is missing or not executable;
+- `doctor.sh` is missing or not executable.
+
+When all checks pass, it prints the exact future command order that will be used
+after execution is enabled:
+
+```sh
+git fetch origin --tags
+git pull --ff-only origin main
+./update.sh --skip-doctor
+hash -r
+./doctor.sh
+```
+
+This command is intentionally preflight-only until confirmation handling,
+execution order, failure reporting and runtime mocks are covered.
 
 ## Configuration Commands
 

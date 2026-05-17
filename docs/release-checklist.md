@@ -99,15 +99,17 @@ and presented as a public release.
 ## Required Before Tagging `v0.3.1`
 
 - [x] Runtime update contract exists.
-- [ ] `watchdogvpn runtime-update` preflight exists.
-- [ ] Dirty working tree refusal is covered by tests.
-- [ ] Missing upstream refusal is covered by tests.
-- [ ] Ahead/diverged refusal is covered by tests.
-- [ ] Wrong branch refusal is covered by tests.
+- [x] `watchdogvpn runtime-update` preflight exists.
+- [x] Dirty working tree refusal is covered by tests.
+- [x] Missing upstream refusal is covered by tests.
+- [x] Ahead/diverged refusal is covered by tests.
+- [x] Wrong branch refusal is covered by tests.
+- [x] Missing `update.sh` refusal is covered by tests.
+- [x] Missing `doctor.sh` refusal is covered by tests.
 - [ ] Confirmation is required before execution.
 - [ ] Runtime update command order is covered with mocks.
 - [ ] Failure stops later steps and reports the failed step.
-- [ ] `docs/cli.md` documents `runtime-update`.
+- [x] `docs/cli.md` documents `runtime-update`.
 - [ ] Release notes exist for `v0.3.1`.
 
 ## Manual GitHub Repository Setup

@@ -30,6 +30,8 @@ Read-only commands:
   logs          Read recent WatchdogVPN logs without sudo.
   update-check  Show local repository update status without network access.
   update-plan   Print safe manual update steps for the current checkout.
+  runtime-update
+                Run safe runtime update preflight. Execution is not enabled yet.
   config get    Read persistent WatchdogVPN configuration.
   version       Print command version.
   help          Show this help.
@@ -47,6 +49,7 @@ Common examples:
   watchdogvpn logs
   watchdogvpn update-check
   watchdogvpn update-plan
+  watchdogvpn runtime-update --preflight
   watchdogvpn logs watchdog 120
   watchdogvpn config get language.current
   watchdogvpn config set tui.theme high_contrast
@@ -58,6 +61,7 @@ Safety:
   logs reads local files only and sanitizes obvious sensitive values.
   update-check does not fetch, pull, push, update runtime files or use sudo.
   update-plan prints commands only; it does not execute them.
+  runtime-update currently runs preflight only and does not execute updates.
   config set/reset creates a backup before modifying configuration.
   update, connect, disconnect and rotate are intentionally not product CLI
   commands yet.
@@ -102,6 +106,25 @@ Usage:
 
 Prints safe manual update steps for the current checkout state. It prints
 commands only and does not execute them.
+USAGE
+}
+
+runtime_update_usage() {
+  cat <<'USAGE'
+Usage:
+  watchdogvpn runtime-update --preflight
+  watchdogvpn runtime-update --help
+
+Runs the safe runtime update preflight for the current source checkout.
+
+Current implementation:
+  - validates whether runtime update would be safe;
+  - refuses dirty, ahead, diverged, wrong-branch and no-upstream states;
+  - verifies update.sh and doctor.sh are executable;
+  - does not fetch, pull, run update.sh, use sudo or modify files.
+
+Full state-changing execution is planned after this preflight contract is
+covered and validated.
 USAGE
 }
 
@@ -363,6 +386,112 @@ update_plan() {
 
   printf '\nRecommended installed runtime routine:\n'
   printf '  sudo -v\n'
+  printf '  ./update.sh --skip-doctor\n'
+  printf '  hash -r\n'
+  printf '  ./doctor.sh\n'
+}
+
+runtime_update_refuse() {
+  local reason="$1" next_step="$2"
+  printf 'Runtime update preflight: blocked\n'
+  printf 'Reason: %s\n' "$reason"
+  printf 'Next step: %s\n' "$next_step"
+  return 1
+}
+
+runtime_update_preflight() {
+  local update_script doctor_script
+
+  printf 'WatchdogVPN runtime update\n'
+  printf 'Mode: preflight only. No fetch, pull, update.sh, doctor.sh or sudo is executed.\n\n'
+
+  update_state
+  if ((UPDATE_REPO_AVAILABLE == 0)); then
+    runtime_update_refuse \
+      "not a git checkout" \
+      "run this from the WatchdogVPN source repository"
+    return $?
+  fi
+
+  update_script="$UPDATE_REPO_ROOT/update.sh"
+  doctor_script="$UPDATE_REPO_ROOT/doctor.sh"
+
+  printf 'Preflight state:\n'
+  printf '  Repository: %s\n' "${UPDATE_REPO_ROOT:-unknown}" | sanitize_stream
+  printf '  Branch: %s\n' "${UPDATE_BRANCH:-unknown}"
+  printf '  Commit: %s\n' "${UPDATE_COMMIT:-unknown}"
+  printf '  Upstream: %s\n' "${UPDATE_UPSTREAM:-none}"
+  printf '  Remote state: %s\n' "$UPDATE_SYNC_STATE"
+  printf '  Local changes: %s\n' "$UPDATE_DIRTY"
+  printf '  Ahead/behind: '
+  if [[ -n "$UPDATE_UPSTREAM" ]]; then
+    printf '%s/%s\n' "$UPDATE_AHEAD" "$UPDATE_BEHIND"
+  else
+    printf 'unknown\n'
+  fi
+  printf '\n'
+
+  if [[ "$UPDATE_BRANCH" != "main" ]]; then
+    runtime_update_refuse \
+      "current branch is not main" \
+      "switch to main before updating: git switch main"
+    return $?
+  fi
+
+  if [[ -z "$UPDATE_UPSTREAM" || "$UPDATE_SYNC_STATE" == "no upstream" ]]; then
+    runtime_update_refuse \
+      "upstream is not configured" \
+      "configure tracking first: git branch --set-upstream-to=origin/main main"
+    return $?
+  fi
+
+  if [[ "$UPDATE_DIRTY" != "clean" ]]; then
+    runtime_update_refuse \
+      "working tree is dirty" \
+      "review, commit or stash local changes before updating"
+    return $?
+  fi
+
+  case "$UPDATE_SYNC_STATE" in
+    ahead)
+      runtime_update_refuse \
+        "branch is ahead of upstream" \
+        "push or inspect local commits before updating"
+      return $?
+      ;;
+    diverged)
+      runtime_update_refuse \
+        "branch diverged from upstream" \
+        "inspect history and resolve divergence manually"
+      return $?
+      ;;
+    unknown)
+      runtime_update_refuse \
+        "upstream state is unknown" \
+        "inspect repository state manually before updating"
+      return $?
+      ;;
+  esac
+
+  if [[ ! -x "$update_script" ]]; then
+    runtime_update_refuse \
+      "update.sh is missing or not executable" \
+      "restore the repository runtime before updating"
+    return $?
+  fi
+
+  if [[ ! -x "$doctor_script" ]]; then
+    runtime_update_refuse \
+      "doctor.sh is missing or not executable" \
+      "restore the repository doctor before updating"
+    return $?
+  fi
+
+  printf 'Runtime update preflight: OK\n'
+  printf 'Execution: not run in this version.\n'
+  printf '\nFuture execution will require explicit confirmation before running:\n'
+  printf '  git fetch origin --tags\n'
+  printf '  git pull --ff-only origin main\n'
   printf '  ./update.sh --skip-doctor\n'
   printf '  hash -r\n'
   printf '  ./doctor.sh\n'
@@ -713,6 +842,9 @@ help_command() {
     update-plan)
       update_plan_usage
       ;;
+    runtime-update)
+      runtime_update_usage
+      ;;
     config)
       config_usage
       ;;
@@ -788,6 +920,21 @@ case "$cmd" in
       *)
         printf 'unknown update-plan argument: %s\n\n' "$1" >&2
         update_plan_usage >&2
+        exit 64
+        ;;
+    esac
+    ;;
+  runtime-update)
+    case "${1:---preflight}" in
+      help|--help|-h)
+        runtime_update_usage
+        ;;
+      --preflight)
+        runtime_update_preflight
+        ;;
+      *)
+        printf 'unknown runtime-update argument: %s\n\n' "$1" >&2
+        runtime_update_usage >&2
         exit 64
         ;;
     esac

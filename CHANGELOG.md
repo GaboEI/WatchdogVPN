@@ -10,6 +10,8 @@ safe update visibility and clearer command help.
 
 - Add the `watchdogvpn runtime-update` safety contract for the planned
   `v0.3.1` update engine.
+- Add `watchdogvpn runtime-update --preflight` to validate safe runtime-update
+  conditions without fetching, pulling, running `update.sh` or using `sudo`.
 
 ## v0.3.0 - 2026-05-17
 
