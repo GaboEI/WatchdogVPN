@@ -30,6 +30,15 @@ watchdogvpn config set section.key value
 watchdogvpn config reset [language|tui|reporting|all] --yes
 ```
 
+Planned state-changing commands:
+
+```sh
+watchdogvpn runtime-update
+```
+
+`runtime-update` is planned for `v0.3.1`. Its safety contract is documented in
+[Runtime Update Contract](runtime-update-contract.md).
+
 Interactive commands:
 
 ```sh

@@ -255,6 +255,7 @@ sudo logrotate -d etc/logrotate.d/myvpn
 - [Reporting Issues](docs/reporting.md)
 - [CLI](docs/cli.md)
 - [Configuration](docs/configuration.md)
+- [Runtime Update Contract](docs/runtime-update-contract.md)
 - [Demo](docs/demo.md)
 - [Validation](docs/validation.md)
 - [v0.3.0 Release Notes](docs/release-notes-v0.3.0.md)

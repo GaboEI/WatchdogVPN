@@ -62,6 +62,7 @@ Required behavior:
 Implementation blocks:
 
 1. Document the contract.
+   Done in [Runtime Update Contract](runtime-update-contract.md).
 2. Add preflight logic and tests.
 3. Add confirmed execution path.
 4. Add docs and release notes.
