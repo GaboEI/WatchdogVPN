@@ -87,8 +87,8 @@ and presented as a public release.
 ## Required Before Tagging `v0.3.0`
 
 - [x] CLI implementation plan exists.
-- [ ] `watchdogvpn help` groups commands clearly.
-- [ ] `watchdogvpn --help` behaves like `watchdogvpn help`.
+- [x] `watchdogvpn help` groups commands clearly.
+- [x] `watchdogvpn --help` behaves like `watchdogvpn help`.
 - [ ] `watchdogvpn logs` exists and is read-only.
 - [ ] `watchdogvpn update-check` exists and is read-only.
 - [ ] `watchdogvpn update-plan` exists and is read-only.

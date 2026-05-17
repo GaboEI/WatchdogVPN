@@ -8,16 +8,29 @@ documentation should prefer `watchdogvpn`.
 
 ## Command Summary
 
+Read-only commands:
+
 ```sh
 watchdogvpn status
 watchdogvpn doctor
-watchdogvpn tui
 watchdogvpn report
 watchdogvpn config get [section.key]
-watchdogvpn config set section.key value
-watchdogvpn config reset [language|tui|reporting|all] --yes
 watchdogvpn version
 watchdogvpn help
+watchdogvpn --help
+```
+
+Configuration commands:
+
+```sh
+watchdogvpn config set section.key value
+watchdogvpn config reset [language|tui|reporting|all] --yes
+```
+
+Interactive commands:
+
+```sh
+watchdogvpn tui
 ```
 
 ## Runtime Commands
@@ -73,6 +86,19 @@ Expected output for the current release:
 ```text
 WatchdogVPN v0.2.0
 ```
+
+### `watchdogvpn help`
+
+Prints grouped command help.
+
+```sh
+watchdogvpn help
+watchdogvpn --help
+```
+
+The help output separates read-only commands, configuration-write commands and
+interactive commands. State-changing runtime commands such as update, connect,
+disconnect and rotate are intentionally not part of the product CLI yet.
 
 ## Diagnostic Reports
 

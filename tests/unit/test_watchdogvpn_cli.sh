@@ -65,7 +65,14 @@ if grep -Eq '198\.51\.100|203\.0\.113|user@example\.com' "$report"; then
   exit 1
 fi
 
-"$SCRIPT" help >/dev/null
+help_output="$("$SCRIPT" help)"
+printf '%s\n' "$help_output" | grep -Fq 'Read-only commands:'
+printf '%s\n' "$help_output" | grep -Fq 'Configuration commands:'
+printf '%s\n' "$help_output" | grep -Fq 'Interactive commands:'
+printf '%s\n' "$help_output" | grep -Fq 'config set    Update a validated safe configuration key.'
+printf '%s\n' "$help_output" | grep -Fq 'update, connect, disconnect and rotate are intentionally not product CLI'
+dash_help_output="$("$SCRIPT" --help)"
+[[ "$dash_help_output" == "$help_output" ]]
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '[language]'
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '<redacted-email>'
 config_value="$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)"

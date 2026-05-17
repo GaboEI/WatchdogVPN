@@ -15,27 +15,39 @@ usage() {
   cat <<'USAGE'
 WatchdogVPN command line
 
+Primary command for WatchdogVPN diagnostics, configuration and TUI access.
+
 Usage:
+  watchdogvpn <command> [options]
+
+Read-only commands:
+  status        Show VPN runtime status through vpnctl.
+  doctor        Run repository doctor when available.
+  report        Generate a local sanitized diagnostic report.
+  config get    Read persistent WatchdogVPN configuration.
+  version       Print command version.
+  help          Show this help.
+
+Configuration commands:
+  config set    Update a validated safe configuration key.
+  config reset  Reset safe configuration sections. Requires --yes.
+
+Interactive commands:
+  tui           Open the WatchdogVPN terminal UI.
+
+Common examples:
   watchdogvpn status
-  watchdogvpn doctor
-  watchdogvpn tui
   watchdogvpn report
-  watchdogvpn config get [section.key]
-  watchdogvpn config set section.key value
-  watchdogvpn config reset [language|tui|reporting|all] --yes
-  watchdogvpn version
-  watchdogvpn help
+  watchdogvpn config get language.current
+  watchdogvpn config set tui.theme high_contrast
+  watchdogvpn config reset tui --yes
+  watchdogvpn tui
 
-Commands:
-  status   Show VPN runtime status through vpnctl.
-  doctor   Run repository doctor when available.
-  tui      Open the WatchdogVPN terminal UI.
-  report   Generate a local sanitized diagnostic report.
-  config   Read persistent WatchdogVPN configuration.
-  version  Print command version.
-  help     Show this help.
-
-Reports are generated locally only. Nothing is uploaded automatically.
+Safety:
+  report writes a local file only. Nothing is uploaded automatically.
+  config set/reset creates a backup before modifying configuration.
+  update, connect, disconnect and rotate are intentionally not product CLI
+  commands yet.
 USAGE
 }
 

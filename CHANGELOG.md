@@ -8,6 +8,8 @@ product-facing Update Center.
 
 ## Unreleased
 
+- Group `watchdogvpn help` by read-only, configuration and interactive command
+  classes, and make `watchdogvpn --help` match `watchdogvpn help`.
 - Start `v0.3.0` professional CLI planning.
 - Add the planned WatchdogVPN persistent configuration default example and unit
   contract checks for the v0.2.0 configuration schema.
