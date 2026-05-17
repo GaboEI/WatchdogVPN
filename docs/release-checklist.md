@@ -81,6 +81,7 @@ and presented as a public release.
   executing update commands.
 - [x] TUI Update Center presents product-facing status separately from
   maintainer technical details.
+- [x] TUI Update Center installed-runtime validation is recorded.
 
 ## Manual GitHub Repository Setup
 

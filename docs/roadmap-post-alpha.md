@@ -86,6 +86,7 @@ Planned work:
   without automatic execution. Done.
 - Polish Update Center into a product-facing status view with technical details
   separated for maintainers. Done.
+- Validate installed Update Center behavior on a real workstation. Done.
 
 Acceptance criteria:
 

@@ -146,6 +146,59 @@ Recorded result:
 - Settings reset did not touch DNS, timers, reporting, VPN state, logs or
   bypass configuration.
 
+## TUI Update Center Runtime Validation
+
+Last recorded TUI Update Center runtime validation: 2026-05-17.
+
+Host type:
+
+- Arch Linux real workstation.
+- Existing WatchdogVPN runtime already installed.
+- Source checkout present at `~/WatchdogVPN`.
+
+Commands:
+
+```sh
+cd ~/WatchdogVPN
+git status --short --branch
+git fetch origin --tags
+git pull --ff-only origin main
+bash tests/unit.sh
+bash tests/syntax.sh
+python3 -m compileall -q tui tests/unit/test_tui_modules.py
+git diff --check
+sudo -v
+./update.sh --skip-doctor
+hash -r
+watchdogvpn version
+VPN
+```
+
+TUI paths checked:
+
+- `Update -> Ver estado`
+- `Update -> Comprobar remoto`
+- `Update -> Actualizar runtime`
+- `Update -> Detalles tecnicos`
+
+Recorded result:
+
+- Repository was clean and synchronized with `origin/main`.
+- Unit behavior checks passed.
+- Syntax checks passed.
+- Python compile check passed.
+- `git diff --check` passed.
+- Installed runtime update completed successfully.
+- Installed `watchdogvpn` resolved after `hash -r`.
+- `watchdogvpn version` reported the installed product version.
+- `VPN` opened after update.
+- Update Center presented product-facing status separately from maintainer
+  technical details.
+- Update Center detected the source checkout from the installed TUI context
+  instead of treating `~/.local` as the repository.
+- Update Center did not run `pull`, `push`, `update.sh` or privileged commands
+  from the product status screen.
+
 ## Unit Behavior Checks
 
 `tests/unit.sh` runs behavior checks with mocked system commands and temporary
