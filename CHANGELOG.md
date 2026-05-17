@@ -40,6 +40,7 @@ post-alpha support, reporting and distro-validation improvements.
 - Polish the TUI Update Center into a product-facing status view and move
   maintainer commands into a separate technical details screen.
 - Record real installed-runtime validation for the TUI Update Center.
+- Add `v0.2.0` release notes.
 
 ## v0.1.1 - 2026-05-16
 
