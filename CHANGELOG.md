@@ -2,12 +2,17 @@
 
 All notable product-facing changes are documented here.
 
-WatchdogVPN is a public alpha. The current `v0.2.0` target adds persistent
-configuration, safer product CLI configuration commands, TUI Settings and a
-product-facing Update Center.
+WatchdogVPN is a public alpha. The current `v0.3.0` target turns
+`watchdogvpn` into a more professional product CLI with read-only diagnostics,
+safe update visibility and clearer command help.
 
 ## Unreleased
 
+- No unreleased changes yet.
+
+## v0.3.0 - 2026-05-17
+
+- Start `v0.3.0` professional CLI planning.
 - Group `watchdogvpn help` by read-only, configuration and interactive command
   classes, and make `watchdogvpn --help` match `watchdogvpn help`.
 - Add read-only `watchdogvpn logs` for recent sanitized local WatchdogVPN log
@@ -19,7 +24,9 @@ product-facing Update Center.
 - Polish `watchdogvpn help <topic>`, config help and update command argument
   validation for the v0.3.0 CLI surface.
 - Add `v0.3.0` release notes.
-- Start `v0.3.0` professional CLI planning.
+
+## v0.2.0 - 2026-05-17
+
 - Add the planned WatchdogVPN persistent configuration default example and unit
   contract checks for the v0.2.0 configuration schema.
 - Add minimal persistent configuration helper functions and unit coverage.

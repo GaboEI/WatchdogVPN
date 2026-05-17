@@ -6,7 +6,7 @@ and presented as a public release.
 ## Current Target
 
 - Target version: `v0.3.0`
-- Current status: professional CLI planning started
+- Current status: ready for v0.3.0 tagging
 - Intended audience: portfolio reviewers, Linux automation reviewers and
   controlled Linux testers
 - Public license: GPL-3.0-or-later
@@ -139,13 +139,13 @@ systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypas
 Do not run this until the checklist is approved:
 
 ```sh
-git tag -a v0.2.0 -m "WatchdogVPN v0.2.0"
-git push origin v0.2.0
+git tag -a v0.3.0 -m "WatchdogVPN v0.3.0"
+git push origin v0.3.0
 ```
 
 ## Release Boundaries
 
-`v0.2.0` should not claim:
+`v0.3.0` should not claim:
 
 - stable 1.0 readiness
 - broad Arch-derived distribution validation beyond Arch Linux and CachyOS
