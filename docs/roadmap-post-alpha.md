@@ -6,6 +6,8 @@ The goal is to move WatchdogVPN from a public alpha into a reliable, testable
 and maintainable Linux system tool without rushing into large international
 features too early.
 
+The current detailed product plan is tracked in [Product Roadmap](product-roadmap.md).
+
 ## Release Strategy
 
 ```text
@@ -13,6 +15,13 @@ v0.1.0-alpha  -> public technical alpha
 v0.1.1        -> post-release hygiene and support readiness
 v0.2.0        -> persistent configuration and migration
 v0.3.0        -> professional CLI
+v0.3.1        -> safe runtime-update engine
+v0.4.0        -> product Update Center UX
+v0.5.0        -> operational CLI expansion
+v0.6.0        -> runtime-applied persistent configuration
+v0.7.0        -> hardening and stronger tests
+v0.8.0        -> TUI modularity and polish
+v0.9.0        -> release candidate
 v1.0.0        -> first stable baseline
 v1.1.0        -> internationalization and advanced UX
 ```
@@ -99,7 +108,7 @@ Acceptance criteria:
 
 ## v0.3.0: Professional CLI
 
-Status: planning started.
+Status: released as `v0.3.0`.
 
 Purpose: expose WatchdogVPN as a product command, not only as `VPN`.
 
