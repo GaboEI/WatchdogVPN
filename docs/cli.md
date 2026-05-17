@@ -14,6 +14,7 @@ Read-only commands:
 watchdogvpn status
 watchdogvpn doctor
 watchdogvpn report
+watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]
 watchdogvpn config get [section.key]
 watchdogvpn version
 watchdogvpn help
@@ -120,6 +121,37 @@ Rules:
 The report may include runtime status, doctor-adjacent checks, VPN truth state,
 auth state, DNS test output and recent troubleshooting context. See
 [Reporting Issues](reporting.md) for safe sharing guidance.
+
+## Local Logs
+
+### `watchdogvpn logs`
+
+Reads recent local WatchdogVPN logs without using `sudo`.
+
+```sh
+watchdogvpn logs
+watchdogvpn logs events 80
+watchdogvpn logs watchdog 120
+watchdogvpn logs rotate 120
+watchdogvpn logs dispatcher 80
+```
+
+Supported targets:
+
+```text
+events      /var/log/myvpn/vpn-events.log
+watchdog    /var/log/myvpn/vpn-watchdog.log
+rotate      /var/log/myvpn/vpn-rotate.log
+dispatcher  /var/log/myvpn/vpn-dispatcher.log
+```
+
+Rules:
+
+- Defaults to `events` and 80 lines.
+- Accepts 1 to 500 lines.
+- Sanitizes obvious home paths, email addresses and IPv4 addresses.
+- Does not call `sudo`.
+- Does not modify logs, services, configuration or VPN state.
 
 ## Configuration Commands
 

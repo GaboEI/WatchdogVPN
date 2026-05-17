@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/bin/watchdogvpn"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+LOG_DIR="$TMP_DIR/logs"
+mkdir -p "$LOG_DIR"
 
 make_cmd() {
   local path="$1"
@@ -43,6 +45,11 @@ color = true
 unicode = true
 EOF
 
+printf '%s\n' \
+  '2026-05-16T00:00:00Z | vpn_notify | info | sample | user@example.com 198.51.100.11 /home/tester' \
+  '2026-05-16T00:01:00Z | vpn_watchdog | warn | sample | 203.0.113.22' \
+  >"$LOG_DIR/vpn-events.log"
+
 output="$(
   WATCHDOGVPN_REPORT_DIR="$TMP_DIR" \
   WATCHDOGVPN_TRUTH_BIN="$TMP_DIR/truth" \
@@ -67,12 +74,29 @@ fi
 
 help_output="$("$SCRIPT" help)"
 printf '%s\n' "$help_output" | grep -Fq 'Read-only commands:'
+printf '%s\n' "$help_output" | grep -Fq 'logs          Read recent WatchdogVPN logs without sudo.'
 printf '%s\n' "$help_output" | grep -Fq 'Configuration commands:'
 printf '%s\n' "$help_output" | grep -Fq 'Interactive commands:'
 printf '%s\n' "$help_output" | grep -Fq 'config set    Update a validated safe configuration key.'
 printf '%s\n' "$help_output" | grep -Fq 'update, connect, disconnect and rotate are intentionally not product CLI'
 dash_help_output="$("$SCRIPT" --help)"
 [[ "$dash_help_output" == "$help_output" ]]
+logs_output="$(WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 2)"
+printf '%s\n' "$logs_output" | grep -Fq 'WatchdogVPN logs: events'
+printf '%s\n' "$logs_output" | grep -Fq '<redacted-email>'
+printf '%s\n' "$logs_output" | grep -Fq '<redacted-ip>'
+if printf '%s\n' "$logs_output" | grep -Eq '198\.51\.100|203\.0\.113|user@example\.com'; then
+  printf 'FAIL: logs output contains unsanitized sensitive sample data\n' >&2
+  exit 1
+fi
+if WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs unknown >/dev/null 2>&1; then
+  printf 'FAIL: unknown log target should fail\n' >&2
+  exit 1
+fi
+if WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 0 >/dev/null 2>&1; then
+  printf 'FAIL: invalid log line count should fail\n' >&2
+  exit 1
+fi
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '[language]'
 WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get | grep -Fq '<redacted-email>'
 config_value="$(WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" "$SCRIPT" config get language.current)"

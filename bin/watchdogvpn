@@ -10,6 +10,8 @@ VPNCTL_BIN="${WATCHDOGVPN_VPNCTL_BIN:-/usr/local/bin/vpnctl}"
 DOCTOR_BIN="${WATCHDOGVPN_DOCTOR_BIN:-./doctor.sh}"
 TUI_BIN="${WATCHDOGVPN_TUI_BIN:-$HOME/.local/bin/VPN}"
 CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}"
+LOG_DIR="${WATCHDOGVPN_LOG_DIR:-/var/log/myvpn}"
+LOG_LINES="${WATCHDOGVPN_LOG_LINES:-80}"
 
 usage() {
   cat <<'USAGE'
@@ -24,6 +26,7 @@ Read-only commands:
   status        Show VPN runtime status through vpnctl.
   doctor        Run repository doctor when available.
   report        Generate a local sanitized diagnostic report.
+  logs          Read recent WatchdogVPN logs without sudo.
   config get    Read persistent WatchdogVPN configuration.
   version       Print command version.
   help          Show this help.
@@ -38,6 +41,8 @@ Interactive commands:
 Common examples:
   watchdogvpn status
   watchdogvpn report
+  watchdogvpn logs
+  watchdogvpn logs watchdog 120
   watchdogvpn config get language.current
   watchdogvpn config set tui.theme high_contrast
   watchdogvpn config reset tui --yes
@@ -45,10 +50,69 @@ Common examples:
 
 Safety:
   report writes a local file only. Nothing is uploaded automatically.
+  logs reads local files only and sanitizes obvious sensitive values.
   config set/reset creates a backup before modifying configuration.
   update, connect, disconnect and rotate are intentionally not product CLI
   commands yet.
 USAGE
+}
+
+log_path() {
+  case "$1" in
+    events) printf '%s/vpn-events.log\n' "$LOG_DIR" ;;
+    watchdog) printf '%s/vpn-watchdog.log\n' "$LOG_DIR" ;;
+    rotate) printf '%s/vpn-rotate.log\n' "$LOG_DIR" ;;
+    dispatcher) printf '%s/vpn-dispatcher.log\n' "$LOG_DIR" ;;
+    *) return 1 ;;
+  esac
+}
+
+logs_usage() {
+  cat <<'USAGE'
+Usage:
+  watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]
+
+Reads recent local WatchdogVPN logs without sudo and sanitizes obvious
+sensitive values. Defaults to:
+  watchdogvpn logs events 80
+USAGE
+}
+
+logs_command() {
+  local target="${1:-events}" lines="${2:-$LOG_LINES}" path
+
+  case "$target" in
+    help|--help|-h)
+      logs_usage
+      return 0
+      ;;
+  esac
+
+  if ! [[ "$lines" =~ ^[0-9]+$ ]] || ((lines < 1 || lines > 500)); then
+    printf 'invalid log line count: %s\n' "$lines" >&2
+    return 64
+  fi
+
+  path="$(log_path "$target")" || {
+    printf 'unknown log target: %s\n\n' "$target" >&2
+    logs_usage >&2
+    return 64
+  }
+
+  printf 'WatchdogVPN logs: %s\n' "$target"
+  printf 'Source: %s\n' "$path"
+  printf 'Lines: %s\n\n' "$lines"
+
+  if [[ ! -e "$path" ]]; then
+    printf 'log unavailable: %s\n' "$path" >&2
+    return 66
+  fi
+  if [[ ! -r "$path" ]]; then
+    printf 'log not readable without sudo: %s\n' "$path" >&2
+    return 77
+  fi
+
+  tail -n "$lines" "$path" | sanitize_stream
 }
 
 sanitize_stream() {
@@ -412,6 +476,9 @@ case "$cmd" in
     ;;
   report)
     generate_report
+    ;;
+  logs)
+    logs_command "$@"
     ;;
   config)
     config_command "$@"
