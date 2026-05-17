@@ -18,6 +18,7 @@ product-facing Update Center.
   on the current local checkout state.
 - Polish `watchdogvpn help <topic>`, config help and update command argument
   validation for the v0.3.0 CLI surface.
+- Add `v0.3.0` release notes.
 - Start `v0.3.0` professional CLI planning.
 - Add the planned WatchdogVPN persistent configuration default example and unit
   contract checks for the v0.2.0 configuration schema.
