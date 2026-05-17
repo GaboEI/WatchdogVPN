@@ -2,8 +2,9 @@
 
 All notable product-facing changes are documented here.
 
-WatchdogVPN is a public alpha. The `v0.1.1` maintenance release adds
-post-alpha support, reporting and distro-validation improvements.
+WatchdogVPN is a public alpha. The current `v0.2.0` target adds persistent
+configuration, safer product CLI configuration commands, TUI Settings and a
+product-facing Update Center.
 
 ## Unreleased
 

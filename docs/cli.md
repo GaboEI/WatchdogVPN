@@ -71,7 +71,7 @@ watchdogvpn version
 Expected output for the current release:
 
 ```text
-WatchdogVPN v0.1.1
+WatchdogVPN v0.2.0
 ```
 
 ## Diagnostic Reports

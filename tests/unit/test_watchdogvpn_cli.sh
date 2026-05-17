@@ -102,7 +102,7 @@ if WATCHDOGVPN_CONFIG_FILE="$TMP_DIR/config.toml" WATCHDOGVPN_CONFIG_DEFAULTS="$
   exit 1
 fi
 version_output="$("$SCRIPT" version)"
-printf '%s\n' "$version_output" | grep -Fq "WatchdogVPN v0.1.1"
+printf '%s\n' "$version_output" | grep -Fq "WatchdogVPN v0.2.0"
 if printf '%s\n' "$version_output" | grep -Fq -- "-dev"; then
   printf 'FAIL: published CLI version must not use a -dev suffix\n' >&2
   exit 1
