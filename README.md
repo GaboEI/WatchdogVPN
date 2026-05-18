@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml/badge.svg)](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml)
 
-- **Status:** `v0.3.0` published; `v0.3.1` in preparation
+- **Status:** `v0.3.1`
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 - **Primary backend:** AdGuard VPN CLI
 - **Supported today:** Ubuntu 24.04, Debian and Arch Linux validation paths
@@ -210,7 +210,7 @@ tests/              Syntax, unit behavior and runtime validation helpers
 
 ## Known Limitations
 
-- `v0.3.0` is not a stable 1.0 release.
+- `v0.3.1` is not a stable 1.0 release.
 - CachyOS is Arch-derived and uses the Arch adapter through `ID_LIKE=arch`
   detection. Real installation and DNS validation passed, with one observation:
   the initial VPN tunnel may need extra settle time or one reboot after install.

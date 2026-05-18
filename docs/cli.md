@@ -105,7 +105,7 @@ watchdogvpn version
 Expected output for the current release:
 
 ```text
-WatchdogVPN v0.3.0
+WatchdogVPN v0.3.1
 ```
 
 ### `watchdogvpn help`

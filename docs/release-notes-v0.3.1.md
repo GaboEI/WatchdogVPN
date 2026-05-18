@@ -1,6 +1,6 @@
 # WatchdogVPN v0.3.1 Release Notes
 
-Status: alpha feature release candidate.
+Status: alpha feature release.
 
 `v0.3.1` adds the safe runtime update engine behind
 `watchdogvpn runtime-update`. The release turns the update work introduced in

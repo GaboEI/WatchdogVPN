@@ -5,10 +5,10 @@ and presented as a public release.
 
 ## Current Target
 
-- Last published version: `v0.3.0`
-- Current target: `v0.3.1`
-- Current status: preparing installed validation for the safe runtime-update
-  engine
+- Last published version: `v0.3.1`
+- Current target: `v0.4.0`
+- Current status: `v0.3.1` safe runtime-update engine ready for release
+  publication
 - Intended audience: portfolio reviewers, Linux automation reviewers and
   controlled Linux testers
 - Public license: GPL-3.0-or-later
@@ -157,8 +157,8 @@ systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypas
 Do not run this until the checklist is approved:
 
 ```sh
-git tag -a v0.3.0 -m "WatchdogVPN v0.3.0"
-git push origin v0.3.0
+git tag -a v0.3.1 -m "WatchdogVPN v0.3.1"
+git push origin v0.3.1
 ```
 
 ## Release Boundaries
