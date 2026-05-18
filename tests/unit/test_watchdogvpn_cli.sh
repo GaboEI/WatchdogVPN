@@ -58,6 +58,80 @@ contains() {
   grep -Fq "$needle" <<<"$haystack"
 }
 
+run_confirmed_runtime_update() {
+  local repo="$1" log="$2" git_wrapper_dir="$3"
+  printf 'yes\n' | \
+    PATH="$git_wrapper_dir:$PATH" \
+    WATCHDOGVPN_REAL_GIT="$REAL_GIT" \
+    WATCHDOGVPN_REPO_DIR="$repo" \
+    WATCHDOGVPN_TEST_STEP_LOG="$log" \
+    "$SCRIPT" runtime-update 2>&1
+}
+
+make_runtime_git_wrapper() {
+  local path="$1" mode="${2:-success}"
+
+  case "$mode" in
+    success)
+      make_cmd "$path" \
+        'if [[ "${1:-}" == "-C" ]]; then' \
+        '  repo="$2"' \
+        '  shift 2' \
+        '  if [[ "${1:-}" == "fetch" && "${2:-}" == "origin" && "${3:-}" == "--tags" ]]; then' \
+        '    printf "git fetch origin --tags\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
+        '  fi' \
+        '  if [[ "${1:-}" == "pull" && "${2:-}" == "--ff-only" && "${3:-}" == "origin" && "${4:-}" == "main" ]]; then' \
+        '    printf "git pull --ff-only origin main\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
+        '  fi' \
+        '  exec "$WATCHDOGVPN_REAL_GIT" -C "$repo" "$@"' \
+        'fi' \
+        'exec "$WATCHDOGVPN_REAL_GIT" "$@"'
+      ;;
+    fail-fetch)
+      make_cmd "$path" \
+        'if [[ "${1:-}" == "-C" ]]; then' \
+        '  repo="$2"' \
+        '  shift 2' \
+        '  if [[ "${1:-}" == "fetch" && "${2:-}" == "origin" && "${3:-}" == "--tags" ]]; then' \
+        '    printf "git fetch origin --tags\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
+        '    exit 42' \
+        '  fi' \
+        '  if [[ "${1:-}" == "pull" && "${2:-}" == "--ff-only" && "${3:-}" == "origin" && "${4:-}" == "main" ]]; then' \
+        '    printf "git pull --ff-only origin main\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
+        '  fi' \
+        '  exec "$WATCHDOGVPN_REAL_GIT" -C "$repo" "$@"' \
+        'fi' \
+        'exec "$WATCHDOGVPN_REAL_GIT" "$@"'
+      ;;
+    fail-pull)
+      make_cmd "$path" \
+        'if [[ "${1:-}" == "-C" ]]; then' \
+        '  repo="$2"' \
+        '  shift 2' \
+        '  if [[ "${1:-}" == "fetch" && "${2:-}" == "origin" && "${3:-}" == "--tags" ]]; then' \
+        '    printf "git fetch origin --tags\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
+        '  fi' \
+        '  if [[ "${1:-}" == "pull" && "${2:-}" == "--ff-only" && "${3:-}" == "origin" && "${4:-}" == "main" ]]; then' \
+        '    printf "git pull --ff-only origin main\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
+        '    exit 43' \
+        '  fi' \
+        '  exec "$WATCHDOGVPN_REAL_GIT" -C "$repo" "$@"' \
+        'fi' \
+        'exec "$WATCHDOGVPN_REAL_GIT" "$@"'
+      ;;
+    *)
+      printf 'unknown git wrapper mode: %s\n' "$mode" >&2
+      return 64
+      ;;
+  esac
+}
+
+force_remote_back_one_commit() {
+  local repo="$1" remote="$2" previous
+  previous="$(git -C "$repo" rev-parse HEAD~1)"
+  git --git-dir="$remote" update-ref refs/heads/main "$previous"
+}
+
 make_cmd "$TMP_DIR/truth" \
   'printf "STATUS=UP\nTUN=UP\nROUTE=TUN\nIP=OK\nIP_ADDR=198.51.100.10\n"'
 make_cmd "$TMP_DIR/auth" \
@@ -190,30 +264,11 @@ git -C "$RUNTIME_EXEC_REPO" add update.sh doctor.sh
 git -C "$RUNTIME_EXEC_REPO" commit -q -m runtime-exec-mocks
 git -C "$RUNTIME_EXEC_REPO" push -q origin main
 mkdir -p "$GIT_WRAPPER_DIR"
-make_cmd "$GIT_WRAPPER_DIR/git" \
-  'if [[ "${1:-}" == "-C" ]]; then' \
-  '  repo="$2"' \
-  '  shift 2' \
-  '  if [[ "${1:-}" == "fetch" && "${2:-}" == "origin" && "${3:-}" == "--tags" ]]; then' \
-  '    printf "git fetch origin --tags\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
-  '  fi' \
-  '  if [[ "${1:-}" == "pull" && "${2:-}" == "--ff-only" && "${3:-}" == "origin" && "${4:-}" == "main" ]]; then' \
-  '    printf "git pull --ff-only origin main\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
-  '  fi' \
-  '  exec "$WATCHDOGVPN_REAL_GIT" -C "$repo" "$@"' \
-  'fi' \
-  'exec "$WATCHDOGVPN_REAL_GIT" "$@"'
+make_runtime_git_wrapper "$GIT_WRAPPER_DIR/git" success
 cancel_output="$(printf 'no\n' | WATCHDOGVPN_REPO_DIR="$RUNTIME_EXEC_REPO" WATCHDOGVPN_TEST_STEP_LOG="$RUNTIME_EXEC_LOG" "$SCRIPT" runtime-update || true)"
 printf '%s\n' "$cancel_output" | grep -Fq 'Runtime update cancelled.'
 [[ ! -e "$RUNTIME_EXEC_LOG" ]]
-runtime_exec_output="$(
-  printf 'yes\n' | \
-    PATH="$GIT_WRAPPER_DIR:$PATH" \
-    WATCHDOGVPN_REAL_GIT="$REAL_GIT" \
-    WATCHDOGVPN_REPO_DIR="$RUNTIME_EXEC_REPO" \
-    WATCHDOGVPN_TEST_STEP_LOG="$RUNTIME_EXEC_LOG" \
-    "$SCRIPT" runtime-update 2>&1
-)"
+runtime_exec_output="$(run_confirmed_runtime_update "$RUNTIME_EXEC_REPO" "$RUNTIME_EXEC_LOG" "$GIT_WRAPPER_DIR")"
 printf '%s\n' "$runtime_exec_output" | grep -Fq 'Mode: confirmed execution.'
 printf '%s\n' "$runtime_exec_output" | grep -Fq 'Warning: ./update.sh --skip-doctor may prompt for sudo.'
 printf '%s\n' "$runtime_exec_output" | grep -Fq 'Running: hash -r'
@@ -240,14 +295,7 @@ make_cmd "$RUNTIME_FAIL_REPO/doctor.sh" \
 git -C "$RUNTIME_FAIL_REPO" add update.sh doctor.sh
 git -C "$RUNTIME_FAIL_REPO" commit -q -m runtime-fail-mocks
 git -C "$RUNTIME_FAIL_REPO" push -q origin main
-runtime_fail_output="$(
-  printf 'yes\n' | \
-    PATH="$GIT_WRAPPER_DIR:$PATH" \
-    WATCHDOGVPN_REAL_GIT="$REAL_GIT" \
-    WATCHDOGVPN_REPO_DIR="$RUNTIME_FAIL_REPO" \
-    WATCHDOGVPN_TEST_STEP_LOG="$RUNTIME_FAIL_LOG" \
-    "$SCRIPT" runtime-update 2>&1 || true
-)"
+runtime_fail_output="$(run_confirmed_runtime_update "$RUNTIME_FAIL_REPO" "$RUNTIME_FAIL_LOG" "$GIT_WRAPPER_DIR" || true)"
 printf '%s\n' "$runtime_fail_output" | grep -Fq 'Runtime update failed.'
 printf '%s\n' "$runtime_fail_output" | grep -Fq 'Failed step: ./update.sh --skip-doctor'
 printf '%s\n' "$runtime_fail_output" | grep -Fq 'Last successful step: git pull --ff-only origin main'
@@ -261,6 +309,81 @@ git pull --ff-only origin main
 update:--skip-doctor
 EOF
 diff -u "$TMP_DIR/expected-runtime-fail.log" "$RUNTIME_FAIL_LOG"
+RUNTIME_FETCH_FAIL_REPO="$TMP_DIR/runtime-fetch-fail-repo"
+RUNTIME_FETCH_FAIL_REMOTE="$TMP_DIR/runtime-fetch-fail-remote.git"
+RUNTIME_FETCH_FAIL_LOG="$TMP_DIR/runtime-fetch-fail.log"
+RUNTIME_FETCH_FAIL_WRAPPER_DIR="$TMP_DIR/git-wrapper-fetch-fail"
+init_runtime_update_repo "$RUNTIME_FETCH_FAIL_REPO" "$RUNTIME_FETCH_FAIL_REMOTE"
+mkdir -p "$RUNTIME_FETCH_FAIL_WRAPPER_DIR"
+make_runtime_git_wrapper "$RUNTIME_FETCH_FAIL_WRAPPER_DIR/git" fail-fetch
+runtime_fetch_fail_output="$(run_confirmed_runtime_update "$RUNTIME_FETCH_FAIL_REPO" "$RUNTIME_FETCH_FAIL_LOG" "$RUNTIME_FETCH_FAIL_WRAPPER_DIR" || true)"
+printf '%s\n' "$runtime_fetch_fail_output" | grep -Fq 'Runtime update failed.'
+printf '%s\n' "$runtime_fetch_fail_output" | grep -Fq 'Failed step: git fetch origin --tags'
+printf '%s\n' "$runtime_fetch_fail_output" | grep -Fq 'Last successful step: none'
+cat >"$TMP_DIR/expected-runtime-fetch-fail.log" <<'EOF'
+git fetch origin --tags
+EOF
+diff -u "$TMP_DIR/expected-runtime-fetch-fail.log" "$RUNTIME_FETCH_FAIL_LOG"
+
+RUNTIME_POST_FETCH_FAIL_REPO="$TMP_DIR/runtime-post-fetch-fail-repo"
+RUNTIME_POST_FETCH_FAIL_REMOTE="$TMP_DIR/runtime-post-fetch-fail-remote.git"
+RUNTIME_POST_FETCH_FAIL_LOG="$TMP_DIR/runtime-post-fetch-fail.log"
+init_runtime_update_repo "$RUNTIME_POST_FETCH_FAIL_REPO" "$RUNTIME_POST_FETCH_FAIL_REMOTE"
+printf 'second\n' >>"$RUNTIME_POST_FETCH_FAIL_REPO/README.md"
+git -C "$RUNTIME_POST_FETCH_FAIL_REPO" add README.md
+git -C "$RUNTIME_POST_FETCH_FAIL_REPO" commit -q -m second
+git -C "$RUNTIME_POST_FETCH_FAIL_REPO" push -q origin main
+force_remote_back_one_commit "$RUNTIME_POST_FETCH_FAIL_REPO" "$RUNTIME_POST_FETCH_FAIL_REMOTE"
+runtime_post_fetch_fail_output="$(run_confirmed_runtime_update "$RUNTIME_POST_FETCH_FAIL_REPO" "$RUNTIME_POST_FETCH_FAIL_LOG" "$GIT_WRAPPER_DIR" || true)"
+printf '%s\n' "$runtime_post_fetch_fail_output" | grep -Fq 'Runtime update failed.'
+printf '%s\n' "$runtime_post_fetch_fail_output" | grep -Fq 'Failed step: post-fetch preflight'
+printf '%s\n' "$runtime_post_fetch_fail_output" | grep -Fq 'Last successful step: git fetch origin --tags'
+printf '%s\n' "$runtime_post_fetch_fail_output" | grep -Fq 'Reason: branch is ahead of upstream'
+cat >"$TMP_DIR/expected-runtime-post-fetch-fail.log" <<'EOF'
+git fetch origin --tags
+EOF
+diff -u "$TMP_DIR/expected-runtime-post-fetch-fail.log" "$RUNTIME_POST_FETCH_FAIL_LOG"
+
+RUNTIME_PULL_FAIL_REPO="$TMP_DIR/runtime-pull-fail-repo"
+RUNTIME_PULL_FAIL_REMOTE="$TMP_DIR/runtime-pull-fail-remote.git"
+RUNTIME_PULL_FAIL_LOG="$TMP_DIR/runtime-pull-fail.log"
+RUNTIME_PULL_FAIL_WRAPPER_DIR="$TMP_DIR/git-wrapper-pull-fail"
+init_runtime_update_repo "$RUNTIME_PULL_FAIL_REPO" "$RUNTIME_PULL_FAIL_REMOTE"
+mkdir -p "$RUNTIME_PULL_FAIL_WRAPPER_DIR"
+make_runtime_git_wrapper "$RUNTIME_PULL_FAIL_WRAPPER_DIR/git" fail-pull
+runtime_pull_fail_output="$(run_confirmed_runtime_update "$RUNTIME_PULL_FAIL_REPO" "$RUNTIME_PULL_FAIL_LOG" "$RUNTIME_PULL_FAIL_WRAPPER_DIR" || true)"
+printf '%s\n' "$runtime_pull_fail_output" | grep -Fq 'Runtime update failed.'
+printf '%s\n' "$runtime_pull_fail_output" | grep -Fq 'Failed step: git pull --ff-only origin main'
+printf '%s\n' "$runtime_pull_fail_output" | grep -Fq 'Last successful step: post-fetch preflight'
+cat >"$TMP_DIR/expected-runtime-pull-fail.log" <<'EOF'
+git fetch origin --tags
+git pull --ff-only origin main
+EOF
+diff -u "$TMP_DIR/expected-runtime-pull-fail.log" "$RUNTIME_PULL_FAIL_LOG"
+
+RUNTIME_DOCTOR_FAIL_REPO="$TMP_DIR/runtime-doctor-fail-repo"
+RUNTIME_DOCTOR_FAIL_REMOTE="$TMP_DIR/runtime-doctor-fail-remote.git"
+RUNTIME_DOCTOR_FAIL_LOG="$TMP_DIR/runtime-doctor-fail.log"
+init_runtime_update_repo "$RUNTIME_DOCTOR_FAIL_REPO" "$RUNTIME_DOCTOR_FAIL_REMOTE"
+make_cmd "$RUNTIME_DOCTOR_FAIL_REPO/update.sh" \
+  'printf "update:%s\n" "$*" >>"$WATCHDOGVPN_TEST_STEP_LOG"'
+make_cmd "$RUNTIME_DOCTOR_FAIL_REPO/doctor.sh" \
+  'printf "doctor\n" >>"$WATCHDOGVPN_TEST_STEP_LOG"' \
+  'exit 24'
+git -C "$RUNTIME_DOCTOR_FAIL_REPO" add update.sh doctor.sh
+git -C "$RUNTIME_DOCTOR_FAIL_REPO" commit -q -m runtime-doctor-fail-mocks
+git -C "$RUNTIME_DOCTOR_FAIL_REPO" push -q origin main
+runtime_doctor_fail_output="$(run_confirmed_runtime_update "$RUNTIME_DOCTOR_FAIL_REPO" "$RUNTIME_DOCTOR_FAIL_LOG" "$GIT_WRAPPER_DIR" || true)"
+printf '%s\n' "$runtime_doctor_fail_output" | grep -Fq 'Runtime update failed.'
+printf '%s\n' "$runtime_doctor_fail_output" | grep -Fq 'Failed step: ./doctor.sh'
+printf '%s\n' "$runtime_doctor_fail_output" | grep -Fq 'Last successful step: hash -r'
+cat >"$TMP_DIR/expected-runtime-doctor-fail.log" <<'EOF'
+git fetch origin --tags
+git pull --ff-only origin main
+update:--skip-doctor
+doctor
+EOF
+diff -u "$TMP_DIR/expected-runtime-doctor-fail.log" "$RUNTIME_DOCTOR_FAIL_LOG"
 printf 'dirty\n' >"$UPDATE_REPO/dirty.txt"
 dirty_update_output="$(WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-check)"
 printf '%s\n' "$dirty_update_output" | grep -Fq 'Local changes: dirty'
