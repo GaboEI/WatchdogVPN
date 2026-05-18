@@ -229,8 +229,8 @@ Recorded result:
 
 - Repository was clean and synchronized with `origin/main`.
 - Checkout `./bin/watchdogvpn runtime-update --preflight` passed.
-- Before the real update, installed `/usr/local/bin/watchdogvpn` was still the
-  older preflight-only runtime update implementation.
+- Before the first real update, installed `/usr/local/bin/watchdogvpn` was
+  still the older preflight-only runtime update implementation.
 - `./update.sh --dry-run --yes --skip-doctor` passed and showed the expected
   replacement plan, including `/usr/local/bin/watchdogvpn` backup and install.
 - Real `./update.sh --yes --skip-doctor` completed successfully after `sudo`
@@ -242,10 +242,12 @@ Recorded result:
   `/etc/watchdogvpn/config.toml` were preserved.
 - `systemd-analyze verify` emitted an unrelated legacy `/var/run/anydesk.pid`
   warning for `anydesk.service`; WatchdogVPN systemd verification continued.
+- Final release update after the `v0.3.1` version bump completed successfully.
+- Installed `/usr/local/bin/watchdogvpn version` reported `WatchdogVPN v0.3.1`.
 - `cmp_exit=0` confirmed installed `/usr/local/bin/watchdogvpn` matched
   `./bin/watchdogvpn`.
 - Installed `/usr/local/bin/watchdogvpn runtime-update --preflight` passed and
-  showed the confirmed-execution preflight text.
+  showed the confirmed-execution preflight text for commit `36618ae`.
 - `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
 - Installed service state after update:
   - `adguardvpn.service`: active and enabled
