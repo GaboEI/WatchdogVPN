@@ -201,7 +201,7 @@ Recorded result:
 
 ## Runtime Update Engine Installed Validation
 
-Last recorded runtime update engine validation attempt: 2026-05-18.
+Last recorded runtime update engine installed validation: 2026-05-18.
 
 Host type:
 
@@ -217,33 +217,43 @@ git status --short --branch
 ./bin/watchdogvpn runtime-update --preflight
 /usr/local/bin/watchdogvpn runtime-update --preflight
 ./update.sh --dry-run --yes --skip-doctor
+sudo -v
 ./update.sh --yes --skip-doctor
+hash -r
+cmp -s ./bin/watchdogvpn /usr/local/bin/watchdogvpn; echo cmp_exit=$?
+/usr/local/bin/watchdogvpn runtime-update --preflight
+./doctor.sh
 ```
 
 Recorded result:
 
 - Repository was clean and synchronized with `origin/main`.
 - Checkout `./bin/watchdogvpn runtime-update --preflight` passed.
-- Installed `/usr/local/bin/watchdogvpn` was still the older preflight-only
-  runtime update implementation.
+- Before the real update, installed `/usr/local/bin/watchdogvpn` was still the
+  older preflight-only runtime update implementation.
 - `./update.sh --dry-run --yes --skip-doctor` passed and showed the expected
   replacement plan, including `/usr/local/bin/watchdogvpn` backup and install.
-- Real `./update.sh --yes --skip-doctor` did not modify the system because
-  `sudo` required an interactive password prompt in a TTY.
-- Installed runtime validation of the new confirmed `runtime-update` engine
-  remains pending until sudo authentication is available.
-
-Next validation commands:
-
-```sh
-cd ~/WatchdogVPN
-sudo -v
-./update.sh --yes --skip-doctor
-hash -r
-cmp -s ./bin/watchdogvpn /usr/local/bin/watchdogvpn
-/usr/local/bin/watchdogvpn runtime-update --preflight
-./doctor.sh
-```
+- Real `./update.sh --yes --skip-doctor` completed successfully after `sudo`
+  authentication in a real terminal.
+- Product-managed runtime files were backed up under `/var/backups/watchdogvpn/`.
+- User TUI launcher and installed TUI module directory were backed up before
+  replacement.
+- Existing `/etc/watchdogvpn/config.toml.example` and
+  `/etc/watchdogvpn/config.toml` were preserved.
+- `systemd-analyze verify` emitted an unrelated legacy `/var/run/anydesk.pid`
+  warning for `anydesk.service`; WatchdogVPN systemd verification continued.
+- `cmp_exit=0` confirmed installed `/usr/local/bin/watchdogvpn` matched
+  `./bin/watchdogvpn`.
+- Installed `/usr/local/bin/watchdogvpn runtime-update --preflight` passed and
+  showed the confirmed-execution preflight text.
+- `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
+- Installed service state after update:
+  - `adguardvpn.service`: active and enabled
+  - `vpn-watchdog.timer`: active and enabled
+  - `vpn-rotate.timer`: active and enabled
+  - `vpn-domain-bypass.timer`: active and enabled
+  - `myvpn-logrotate.timer`: active and enabled
+- Network truth state was `UP`.
 
 ## Unit Behavior Checks
 
