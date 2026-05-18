@@ -31,7 +31,7 @@ Read-only commands:
   update-check  Show local repository update status without network access.
   update-plan   Print safe manual update steps for the current checkout.
   runtime-update
-                Run safe runtime update preflight. Execution is not enabled yet.
+                Run a confirmed safe runtime update.
   config get    Read persistent WatchdogVPN configuration.
   version       Print command version.
   help          Show this help.
@@ -61,7 +61,7 @@ Safety:
   logs reads local files only and sanitizes obvious sensitive values.
   update-check does not fetch, pull, push, update runtime files or use sudo.
   update-plan prints commands only; it does not execute them.
-  runtime-update currently runs preflight only and does not execute updates.
+  runtime-update requires explicit confirmation before executing updates.
   config set/reset creates a backup before modifying configuration.
   update, connect, disconnect and rotate are intentionally not product CLI
   commands yet.
@@ -112,19 +112,26 @@ USAGE
 runtime_update_usage() {
   cat <<'USAGE'
 Usage:
+  watchdogvpn runtime-update
   watchdogvpn runtime-update --preflight
   watchdogvpn runtime-update --help
 
-Runs the safe runtime update preflight for the current source checkout.
+Runs the safe runtime update flow for the current source checkout.
 
-Current implementation:
-  - validates whether runtime update would be safe;
-  - refuses dirty, ahead, diverged, wrong-branch and no-upstream states;
-  - verifies update.sh and doctor.sh are executable;
-  - does not fetch, pull, run update.sh, use sudo or modify files.
+Behavior:
+  - validates whether runtime update is safe;
+  - shows the exact commands before executing them;
+  - requires explicit confirmation: yes;
+  - runs git fetch origin --tags;
+  - recomputes safety state after fetch;
+  - runs git pull --ff-only origin main;
+  - runs ./update.sh --skip-doctor;
+  - runs hash -r;
+  - runs ./doctor.sh;
+  - stops at the first failure and reports the failed step.
 
-Full state-changing execution is planned after this preflight contract is
-covered and validated.
+Use --preflight to validate only, without executing fetch, pull, update.sh or
+doctor.sh.
 USAGE
 }
 
@@ -399,23 +406,7 @@ runtime_update_refuse() {
   return 1
 }
 
-runtime_update_preflight() {
-  local update_script doctor_script
-
-  printf 'WatchdogVPN runtime update\n'
-  printf 'Mode: preflight only. No fetch, pull, update.sh, doctor.sh or sudo is executed.\n\n'
-
-  update_state
-  if ((UPDATE_REPO_AVAILABLE == 0)); then
-    runtime_update_refuse \
-      "not a git checkout" \
-      "run this from the WatchdogVPN source repository"
-    return $?
-  fi
-
-  update_script="$UPDATE_REPO_ROOT/update.sh"
-  doctor_script="$UPDATE_REPO_ROOT/doctor.sh"
-
+runtime_update_print_state() {
   printf 'Preflight state:\n'
   printf '  Repository: %s\n' "${UPDATE_REPO_ROOT:-unknown}" | sanitize_stream
   printf '  Branch: %s\n' "${UPDATE_BRANCH:-unknown}"
@@ -430,6 +421,23 @@ runtime_update_preflight() {
     printf 'unknown\n'
   fi
   printf '\n'
+}
+
+runtime_update_validate_state() {
+  local update_script doctor_script
+
+  update_state
+  if ((UPDATE_REPO_AVAILABLE == 0)); then
+    runtime_update_refuse \
+      "not a git checkout" \
+      "run this from the WatchdogVPN source repository"
+    return $?
+  fi
+
+  update_script="$UPDATE_REPO_ROOT/update.sh"
+  doctor_script="$UPDATE_REPO_ROOT/doctor.sh"
+
+  runtime_update_print_state
 
   if [[ "$UPDATE_BRANCH" != "main" ]]; then
     runtime_update_refuse \
@@ -488,13 +496,120 @@ runtime_update_preflight() {
   fi
 
   printf 'Runtime update preflight: OK\n'
-  printf 'Execution: not run in this version.\n'
-  printf '\nFuture execution will require explicit confirmation before running:\n'
+}
+
+runtime_update_preflight() {
+  printf 'WatchdogVPN runtime update\n'
+  printf 'Mode: preflight only. No fetch, pull, update.sh, doctor.sh or sudo is executed.\n\n'
+
+  runtime_update_validate_state || return $?
+
+  printf 'Execution: not run in preflight mode.\n'
+  printf '\nRuntime update execution requires explicit confirmation before running:\n'
   printf '  git fetch origin --tags\n'
   printf '  git pull --ff-only origin main\n'
   printf '  ./update.sh --skip-doctor\n'
   printf '  hash -r\n'
   printf '  ./doctor.sh\n'
+}
+
+runtime_update_print_plan() {
+  printf '\nExecution plan:\n'
+  printf '  git fetch origin --tags\n'
+  printf '  git pull --ff-only origin main\n'
+  printf '  ./update.sh --skip-doctor\n'
+  printf '  hash -r\n'
+  printf '  ./doctor.sh\n'
+  printf '\nWarning: ./update.sh --skip-doctor may prompt for sudo.\n'
+}
+
+runtime_update_confirm() {
+  local answer
+  printf '\nType yes to continue: '
+  IFS= read -r answer || answer=""
+  if [[ "$answer" != "yes" ]]; then
+    printf 'Runtime update cancelled.\n'
+    return 1
+  fi
+}
+
+runtime_update_run_step() {
+  local step="$1"
+  shift
+  printf '\nRunning: %s\n' "$step"
+  "$@"
+}
+
+runtime_update_run_update_script() {
+  (cd "$UPDATE_REPO_ROOT" && ./update.sh --skip-doctor)
+}
+
+runtime_update_run_doctor_script() {
+  (cd "$UPDATE_REPO_ROOT" && ./doctor.sh)
+}
+
+runtime_update_report_failure() {
+  local failed_step="$1" last_successful_step="$2"
+  printf '\nRuntime update failed.\n'
+  printf 'Failed step: %s\n' "$failed_step"
+  printf 'Last successful step: %s\n' "$last_successful_step"
+}
+
+runtime_update_execute() {
+  local failed_step last_successful_step="none"
+
+  failed_step="git fetch origin --tags"
+  if ! runtime_update_run_step "$failed_step" git -C "$UPDATE_REPO_ROOT" fetch origin --tags; then
+    runtime_update_report_failure "$failed_step" "$last_successful_step"
+    return 1
+  fi
+  last_successful_step="$failed_step"
+
+  failed_step="post-fetch preflight"
+  if ! runtime_update_validate_state; then
+    runtime_update_report_failure "$failed_step" "$last_successful_step"
+    return 1
+  fi
+  last_successful_step="$failed_step"
+
+  failed_step="git pull --ff-only origin main"
+  if ! runtime_update_run_step "$failed_step" git -C "$UPDATE_REPO_ROOT" pull --ff-only origin main; then
+    runtime_update_report_failure "$failed_step" "$last_successful_step"
+    return 1
+  fi
+  last_successful_step="$failed_step"
+
+  failed_step="./update.sh --skip-doctor"
+  if ! runtime_update_run_step "$failed_step" runtime_update_run_update_script; then
+    runtime_update_report_failure "$failed_step" "$last_successful_step"
+    return 1
+  fi
+  last_successful_step="$failed_step"
+
+  failed_step="hash -r"
+  if ! runtime_update_run_step "$failed_step" hash -r; then
+    runtime_update_report_failure "$failed_step" "$last_successful_step"
+    return 1
+  fi
+  last_successful_step="$failed_step"
+
+  failed_step="./doctor.sh"
+  if ! runtime_update_run_step "$failed_step" runtime_update_run_doctor_script; then
+    runtime_update_report_failure "$failed_step" "$last_successful_step"
+    return 1
+  fi
+
+  printf '\nRuntime update completed.\n'
+}
+
+runtime_update() {
+  printf 'WatchdogVPN runtime update\n'
+  printf 'Mode: confirmed execution.\n\n'
+
+  runtime_update_validate_state || return $?
+  runtime_update_print_plan
+  runtime_update_confirm || return $?
+  runtime_update_execute
 }
 
 section() {
@@ -925,9 +1040,12 @@ case "$cmd" in
     esac
     ;;
   runtime-update)
-    case "${1:---preflight}" in
+    case "${1:-}" in
       help|--help|-h)
         runtime_update_usage
+        ;;
+      "")
+        runtime_update
         ;;
       --preflight)
         runtime_update_preflight

@@ -37,9 +37,15 @@ Preflight-only state-changing commands:
 watchdogvpn runtime-update --preflight
 ```
 
-`runtime-update` starts in `v0.3.1` as a preflight-only command. It validates
-whether a runtime update would be safe, but it does not execute the update yet.
-Its full safety contract is documented in
+State-changing runtime commands:
+
+```sh
+watchdogvpn runtime-update
+```
+
+`runtime-update` validates whether a runtime update is safe, prints the exact
+execution plan and requires explicit `yes` confirmation before it changes the
+source checkout or installed runtime. Its full safety contract is documented in
 [Runtime Update Contract](runtime-update-contract.md).
 
 Interactive commands:
@@ -237,9 +243,10 @@ hash -r
 
 ### `watchdogvpn runtime-update`
 
-Runs the runtime update safety preflight.
+Runs the confirmed runtime update flow.
 
 ```sh
+watchdogvpn runtime-update
 watchdogvpn runtime-update --preflight
 watchdogvpn runtime-update --help
 watchdogvpn help runtime-update
@@ -247,14 +254,19 @@ watchdogvpn help runtime-update
 
 Current `v0.3.1` behavior:
 
-- Does not run `git fetch`.
-- Does not run `git pull`.
-- Does not run `./update.sh`.
-- Does not run `./doctor.sh`.
-- Does not use `sudo`.
-- Does not modify the source checkout or installed runtime.
+- Runs preflight before executing state-changing steps.
+- Prints the exact command order before executing it.
+- Requires explicit confirmation: `yes`.
+- Runs `git fetch origin --tags`.
+- Recomputes repository safety state after fetch.
+- Runs `git pull --ff-only origin main`.
+- Runs `./update.sh --skip-doctor`.
+- Runs `hash -r`.
+- Runs `./doctor.sh`.
+- Stops at the first failure.
+- Reports the failed step and last successful step.
 
-The preflight refuses to continue when:
+The command refuses to continue when:
 
 - the command is not running from a Git checkout;
 - the current branch is not `main`;
@@ -266,8 +278,7 @@ The preflight refuses to continue when:
 - `update.sh` is missing or not executable;
 - `doctor.sh` is missing or not executable.
 
-When all checks pass, it prints the exact future command order that will be used
-after execution is enabled:
+When all checks pass and the user confirms, it runs:
 
 ```sh
 git fetch origin --tags
@@ -277,8 +288,9 @@ hash -r
 ./doctor.sh
 ```
 
-This command is intentionally preflight-only until confirmation handling,
-execution order, failure reporting and runtime mocks are covered.
+Use `watchdogvpn runtime-update --preflight` to run only the safety checks. In
+preflight mode, the command does not fetch, pull, run `update.sh`, run
+`doctor.sh` or use `sudo`.
 
 ## Configuration Commands
 

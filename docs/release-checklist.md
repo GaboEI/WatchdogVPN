@@ -106,9 +106,9 @@ and presented as a public release.
 - [x] Wrong branch refusal is covered by tests.
 - [x] Missing `update.sh` refusal is covered by tests.
 - [x] Missing `doctor.sh` refusal is covered by tests.
-- [ ] Confirmation is required before execution.
-- [ ] Runtime update command order is covered with mocks.
-- [ ] Failure stops later steps and reports the failed step.
+- [x] Confirmation is required before execution.
+- [x] Runtime update command order is covered with mocks.
+- [x] Failure stops later steps and reports the failed step.
 - [x] `docs/cli.md` documents `runtime-update`.
 - [ ] Release notes exist for `v0.3.1`.
 
