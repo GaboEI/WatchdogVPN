@@ -199,6 +199,52 @@ Recorded result:
 - Update Center did not run `pull`, `push`, `update.sh` or privileged commands
   from the product status screen.
 
+## Runtime Update Engine Installed Validation
+
+Last recorded runtime update engine validation attempt: 2026-05-18.
+
+Host type:
+
+- Ubuntu 24.04 real workstation.
+- Existing WatchdogVPN runtime already installed.
+- Source checkout present at `~/WatchdogVPN`.
+
+Commands:
+
+```sh
+cd ~/WatchdogVPN
+git status --short --branch
+./bin/watchdogvpn runtime-update --preflight
+/usr/local/bin/watchdogvpn runtime-update --preflight
+./update.sh --dry-run --yes --skip-doctor
+./update.sh --yes --skip-doctor
+```
+
+Recorded result:
+
+- Repository was clean and synchronized with `origin/main`.
+- Checkout `./bin/watchdogvpn runtime-update --preflight` passed.
+- Installed `/usr/local/bin/watchdogvpn` was still the older preflight-only
+  runtime update implementation.
+- `./update.sh --dry-run --yes --skip-doctor` passed and showed the expected
+  replacement plan, including `/usr/local/bin/watchdogvpn` backup and install.
+- Real `./update.sh --yes --skip-doctor` did not modify the system because
+  `sudo` required an interactive password prompt in a TTY.
+- Installed runtime validation of the new confirmed `runtime-update` engine
+  remains pending until sudo authentication is available.
+
+Next validation commands:
+
+```sh
+cd ~/WatchdogVPN
+sudo -v
+./update.sh --yes --skip-doctor
+hash -r
+cmp -s ./bin/watchdogvpn /usr/local/bin/watchdogvpn
+/usr/local/bin/watchdogvpn runtime-update --preflight
+./doctor.sh
+```
+
 ## Unit Behavior Checks
 
 `tests/unit.sh` runs behavior checks with mocked system commands and temporary
