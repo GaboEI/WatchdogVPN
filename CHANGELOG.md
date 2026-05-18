@@ -2,16 +2,27 @@
 
 All notable product-facing changes are documented here.
 
-WatchdogVPN is a public alpha. The current `v0.3.0` target turns
-`watchdogvpn` into a more professional product CLI with read-only diagnostics,
-safe update visibility and clearer command help.
+WatchdogVPN is a public alpha. The current `v0.3.1` target adds a confirmed,
+safe runtime update engine on top of the professional `watchdogvpn` CLI.
 
 ## Unreleased
 
-- Add the `watchdogvpn runtime-update` safety contract for the planned
-  `v0.3.1` update engine.
+## v0.3.1 - 2026-05-18
+
+- Add the `watchdogvpn runtime-update` safety contract for the `v0.3.1` update
+  engine.
 - Add `watchdogvpn runtime-update --preflight` to validate safe runtime-update
   conditions without fetching, pulling, running `update.sh` or using `sudo`.
+- Add confirmed `watchdogvpn runtime-update` execution with exact `yes`
+  confirmation.
+- Run runtime update steps in the safe order: `git fetch origin --tags`,
+  post-fetch preflight, `git pull --ff-only origin main`,
+  `./update.sh --skip-doctor`, `hash -r` and `./doctor.sh`.
+- Stop runtime update execution at the first failed step and report the failed
+  step plus the last successful step.
+- Cover runtime update execution order and step failures with temporary
+  repositories and mock scripts.
+- Add `v0.3.1` release notes.
 
 ## v0.3.0 - 2026-05-17
 

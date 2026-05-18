@@ -1,9 +1,9 @@
 # Runtime Update Contract
 
-This document defines the contract for the future
-`watchdogvpn runtime-update` command.
+This document defines the contract for the `watchdogvpn runtime-update`
+command.
 
-The command is planned for `v0.3.1`. It is not implemented in `v0.3.0`.
+The command is implemented for the `v0.3.1` release line.
 
 ## Goal
 
@@ -19,13 +19,13 @@ sudo ./update.sh
 
 ## Command Shape
 
-Planned command:
+Command:
 
 ```sh
 watchdogvpn runtime-update
 ```
 
-Planned help:
+Help:
 
 ```sh
 watchdogvpn help runtime-update

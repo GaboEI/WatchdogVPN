@@ -5,8 +5,10 @@ and presented as a public release.
 
 ## Current Target
 
-- Target version: `v0.3.0`
-- Current status: planning `v0.3.1` safe runtime-update engine
+- Last published version: `v0.3.0`
+- Current target: `v0.3.1`
+- Current status: preparing installed validation for the safe runtime-update
+  engine
 - Intended audience: portfolio reviewers, Linux automation reviewers and
   controlled Linux testers
 - Public license: GPL-3.0-or-later
@@ -110,7 +112,7 @@ and presented as a public release.
 - [x] Runtime update command order is covered with mocks.
 - [x] Failure stops later steps and reports the failed step.
 - [x] `docs/cli.md` documents `runtime-update`.
-- [ ] Release notes exist for `v0.3.1`.
+- [x] Release notes exist for `v0.3.1`.
 
 ## Manual GitHub Repository Setup
 
