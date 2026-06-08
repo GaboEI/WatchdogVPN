@@ -201,6 +201,7 @@ check_repo_file "tui/watchdogvpn/state.py"
 check_repo_file "tui/watchdogvpn/styles.py"
 check_repo_file "tui/watchdogvpn/validators.py"
 check_repo_file "bin/vpn_truth_check" exec
+check_repo_file "bin/vpn_backend" exec
 check_repo_file "bin/vpn_auth_check" exec
 check_repo_file "bin/vpn_dns_rescue" exec
 check_repo_file "bin/vpn_dnsctl" exec
@@ -219,6 +220,7 @@ section "Current Installation"
 installed_any=0
 for path in \
   /usr/local/bin/vpn_truth_check \
+  /usr/local/bin/vpn_backend \
   /usr/local/bin/vpn_auth_check \
   /usr/local/bin/vpn_dns_rescue \
   /usr/local/bin/vpn_dnsctl \

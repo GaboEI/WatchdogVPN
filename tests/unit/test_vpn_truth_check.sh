@@ -65,6 +65,8 @@ run_case() {
   write_fake_commands "$tun" "$route" "$public_ip"
 
   output="$(PATH="$tmpdir:$PATH" "$SCRIPT" --shell)"
+  assert_contains "$output" "BACKEND=adguard"
+  assert_contains "$output" "INTERFACE=tun0"
   assert_contains "$output" "STATUS=$expected_status"
 
   set +e
@@ -77,6 +79,8 @@ run_case() {
   fi
 
   json="$(PATH="$tmpdir:$PATH" "$SCRIPT" --json)"
+  assert_contains "$json" "\"backend\":\"adguard\""
+  assert_contains "$json" "\"interface\":\"tun0\""
   assert_contains "$json" "\"status\":\"$expected_status\""
   assert_contains "$json" "\"exit_code\":$expected_exit"
 }

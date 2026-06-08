@@ -7,6 +7,7 @@ TRUTH_BIN="${WATCHDOGVPN_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
 AUTH_BIN="${WATCHDOGVPN_AUTH_BIN:-/usr/local/bin/vpn_auth_check}"
 DNSCTL_BIN="${WATCHDOGVPN_DNSCTL_BIN:-/usr/local/bin/vpn_dnsctl}"
 VPNCTL_BIN="${WATCHDOGVPN_VPNCTL_BIN:-/usr/local/bin/vpnctl}"
+BACKEND_BIN="${WATCHDOGVPN_BACKEND_BIN:-/usr/local/bin/vpn_backend}"
 DOCTOR_BIN="${WATCHDOGVPN_DOCTOR_BIN:-./doctor.sh}"
 TUI_BIN="${WATCHDOGVPN_TUI_BIN:-$HOME/.local/bin/VPN}"
 CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}"
@@ -25,6 +26,7 @@ Usage:
 
 Read-only commands:
   status        Show VPN runtime status through vpnctl.
+  backend       Show active backend capability summary.
   doctor        Run repository doctor when available.
   report        Generate a local sanitized diagnostic report.
   logs          Read recent WatchdogVPN logs without sudo.
@@ -45,6 +47,7 @@ Interactive commands:
 
 Common examples:
   watchdogvpn status
+  watchdogvpn backend status
   watchdogvpn report
   watchdogvpn logs
   watchdogvpn update-check
@@ -162,6 +165,17 @@ Reset targets:
   tui
   reporting
   all
+USAGE
+}
+
+backend_usage() {
+  cat <<'USAGE'
+Usage:
+  watchdogvpn backend status
+  watchdogvpn backend help
+
+Shows the active WatchdogVPN backend contract without changing runtime state.
+In this phase only the "adguard" backend is implemented.
 USAGE
 }
 
@@ -661,6 +675,7 @@ generate_report() {
     fi
 
     run_report_command "VPN truth" "$TRUTH_BIN"
+    run_report_command "Backend status" "$BACKEND_BIN" status
     run_report_command "VPN auth" "$AUTH_BIN"
     run_report_command "VPN status" "$VPNCTL_BIN" status
     run_report_command "DNS current" "$DNSCTL_BIN" current
@@ -942,6 +957,31 @@ config_command() {
   esac
 }
 
+backend_command() {
+  local subcmd="${1:-status}"
+  case "$subcmd" in
+    status)
+      printf 'WatchdogVPN backend status\n'
+      if command -v "$BACKEND_BIN" >/dev/null 2>&1 || [[ -x "$BACKEND_BIN" ]]; then
+        "$BACKEND_BIN" status
+      else
+        printf 'BACKEND=adguard\n'
+        printf 'IMPLEMENTED=true\n'
+        printf 'SUPPORTS_ROTATION=true\n'
+        printf 'TRUTH_INTERFACE=tun0\n'
+      fi
+      ;;
+    help|--help|-h)
+      backend_usage
+      ;;
+    *)
+      printf 'unknown backend command: %s\n\n' "$subcmd" >&2
+      backend_usage >&2
+      return 64
+      ;;
+  esac
+}
+
 help_command() {
   local topic="${1:-}"
   case "$topic" in
@@ -962,6 +1002,9 @@ help_command() {
       ;;
     config)
       config_usage
+      ;;
+    backend)
+      backend_usage
       ;;
     status)
       printf 'Usage:\n  watchdogvpn status\n\nShows VPN runtime status through vpnctl.\n'
@@ -1059,6 +1102,9 @@ case "$cmd" in
     ;;
   config)
     config_command "$@"
+    ;;
+  backend)
+    backend_command "$@"
     ;;
   version)
     printf 'WatchdogVPN %s\n' "$VERSION"

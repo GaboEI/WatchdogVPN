@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}"
+DEFAULT_BACKEND="adguard"
+
+usage() {
+  cat <<'USAGE'
+Uso:
+  vpn_backend active
+  vpn_backend validate
+  vpn_backend status
+  vpn_backend supports-rotation
+  vpn_backend truth-interface
+
+Contrato:
+  En esta fase solo el backend "adguard" esta implementado.
+  Si la configuracion apunta a otro backend, validate falla sin tocar runtime.
+USAGE
+}
+
+config_value() {
+  local key="$1" file="${2:-$CONFIG_FILE}" section name
+  section="${key%%.*}"
+  name="${key#*.}"
+
+  [[ "$section" != "$key" && -n "$section" && -n "$name" ]] || return 64
+  [[ -r "$file" ]] || return 1
+
+  awk -v section="$section" -v name="$name" '
+    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; next}
+    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
+    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+      sub(/^[^=]*=[[:space:]]*/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      gsub(/^"|"$/, "")
+      print
+      found=1
+      exit
+    }
+    END {exit found ? 0 : 1}
+  ' "$file"
+}
+
+active_backend() {
+  local backend
+  backend="$(config_value backend.active 2>/dev/null || true)"
+  printf '%s\n' "${backend:-$DEFAULT_BACKEND}"
+}
+
+validate_backend() {
+  case "$(active_backend)" in
+    adguard)
+      return 0
+      ;;
+    *)
+      printf 'unsupported backend: %s\n' "$(active_backend)" >&2
+      printf 'implemented backends: adguard\n' >&2
+      return 65
+      ;;
+  esac
+}
+
+supports_rotation() {
+  case "$(active_backend)" in
+    adguard) printf 'true\n' ;;
+    *) printf 'false\n' ;;
+  esac
+}
+
+truth_interface() {
+  case "$(active_backend)" in
+    adguard) printf 'tun0\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+status() {
+  local backend
+  backend="$(active_backend)"
+  printf 'BACKEND=%s\n' "$backend"
+  printf 'IMPLEMENTED=%s\n' "$(validate_backend >/dev/null 2>&1 && printf true || printf false)"
+  printf 'SUPPORTS_ROTATION=%s\n' "$(supports_rotation)"
+  printf 'TRUTH_INTERFACE=%s\n' "$(truth_interface)"
+}
+
+case "${1:-status}" in
+  active)
+    active_backend
+    ;;
+  validate)
+    validate_backend
+    ;;
+  status)
+    status
+    ;;
+  supports-rotation)
+    validate_backend >/dev/null
+    supports_rotation
+    ;;
+  truth-interface)
+    validate_backend >/dev/null
+    truth_interface
+    ;;
+  --help|-h|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
+esac

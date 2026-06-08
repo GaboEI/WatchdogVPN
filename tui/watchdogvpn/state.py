@@ -16,6 +16,7 @@ from watchdogvpn.commands import (
 from watchdogvpn.constants import (
     AG,
     AUTH_BIN,
+    BACKEND_BIN,
     DNSCTL,
     LOGROTATE_CONF,
     LOGROTATE_TIMER,
@@ -112,6 +113,24 @@ def auth_data():
         "REASON": "helper_unavailable",
         "CLI_RC": "",
         "DETAIL": "",
+    }
+    for line in raw.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().upper()
+        if key in data:
+            data[key] = value.strip()
+    return data
+
+
+def backend_data():
+    raw = run(f"{shlex.quote(BACKEND_BIN)} status 2>/dev/null || true", 4)
+    data = {
+        "BACKEND": "adguard",
+        "IMPLEMENTED": "true",
+        "SUPPORTS_ROTATION": "true",
+        "TRUTH_INTERFACE": "tun0",
     }
     for line in raw.splitlines():
         if "=" not in line:
@@ -222,6 +241,7 @@ def dns_profile() -> str:
 def dashboard_data():
     truth = truth_data()
     auth = auth_data()
+    backend = backend_data()
     manual_state = manual_state_data()
     ip = truth.get("IP_ADDR", "none")
     status = truth.get("STATUS", "DOWN")
@@ -247,6 +267,7 @@ def dashboard_data():
 
     return [
         ("VPN", vpn_label),
+        ("Backend", backend.get("BACKEND", "adguard")),
         ("Auth", display_auth_status(auth.get("AUTH", "UNKNOWN"), auth.get("REASON", ""))),
         ("Tun", tun),
         ("Route", route_label),

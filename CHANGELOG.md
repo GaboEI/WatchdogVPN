@@ -7,6 +7,10 @@ safe runtime update engine on top of the professional `watchdogvpn` CLI.
 
 ## Unreleased
 
+- Add a backend contract helper with `adguard` as the only implemented backend
+  and fail-closed validation for unsupported configured backend names.
+- Add backend visibility to `watchdogvpn backend status`, reports, truth-check
+  output and the TUI dashboard without integrating new providers yet.
 - Add a manual-off runtime state for user-requested VPN shutdowns.
 - Make `vpnctl disconnect` pause watchdog and rotation automation before
   stopping AdGuard VPN, so recovery paths do not immediately reconnect against

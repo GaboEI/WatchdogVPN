@@ -7,7 +7,7 @@ WATCHDOGVPN_CONFIG_EXAMPLE="${WATCHDOGVPN_CONFIG_EXAMPLE:-$WATCHDOGVPN_CONFIG_DI
 WATCHDOGVPN_REPO_CONFIG_EXAMPLE="${WATCHDOGVPN_REPO_CONFIG_EXAMPLE:-$ROOT_DIR/examples/watchdogvpn-config.toml.example}"
 
 config_required_sections() {
-  printf '%s\n' language timers dns tui reporting
+  printf '%s\n' backend language timers dns tui reporting
 }
 
 config_section_exists() {

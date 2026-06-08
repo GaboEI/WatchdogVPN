@@ -15,6 +15,7 @@ install_runtime_files() {
   install_root_file "$ROOT_DIR/bin/vpn_auth_check" /usr/local/bin/vpn_auth_check 0755
   install_root_file "$ROOT_DIR/bin/vpn_dns_rescue" /usr/local/bin/vpn_dns_rescue 0755
   install_root_file "$ROOT_DIR/bin/vpn_dnsctl" /usr/local/bin/vpn_dnsctl 0755
+  install_root_file "$ROOT_DIR/bin/vpn_backend" /usr/local/bin/vpn_backend 0755
   install_root_file "$ROOT_DIR/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755
   install_root_file "$ROOT_DIR/bin/vpn_notify" /usr/local/bin/vpn_notify 0755
   install_root_file "$ROOT_DIR/bin/vpn_truth_check" /usr/local/bin/vpn_truth_check 0755

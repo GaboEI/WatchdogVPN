@@ -19,7 +19,15 @@ EOF
 printf 'DE\n'
 EOF
 
-  chmod +x "$tmpdir/auth_ok" "$tmpdir/curl"
+  cat > "$tmpdir/manual_auto" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  is-manual-off) exit 1 ;;
+  *) printf 'MODE=auto\n' ;;
+esac
+EOF
+
+  chmod +x "$tmpdir/auth_ok" "$tmpdir/curl" "$tmpdir/manual_auto"
 }
 
 write_truth() {
@@ -57,6 +65,7 @@ run_watchdog() {
   VPN_WATCHDOG_AUTH_BIN="$tmpdir/auth_ok" \
   VPN_WATCHDOG_ROTATE_SCRIPT="$tmpdir/rotate" \
   VPN_WATCHDOG_NOTIFY_BIN="$tmpdir/missing_notify" \
+  VPN_WATCHDOG_MANUAL_STATE_BIN="$tmpdir/manual_auto" \
   UNKNOWN_IP_THRESHOLD=2 \
   bash "$SCRIPT"
 }

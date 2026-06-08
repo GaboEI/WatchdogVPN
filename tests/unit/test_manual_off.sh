@@ -74,6 +74,7 @@ run_vpnctl() {
   WATCHDOGVPN_MANUAL_STATE_FILE="$STATE_FILE" \
   VPNCTL_MANUAL_STATE_BIN="$MANUAL_STATE" \
   VPNCTL_TRUTH_BIN="$tmpdir/truth_down" \
+  VPNCTL_BACKEND_BIN="$ROOT_DIR/bin/vpn_backend" \
   VPNCTL_ADGUARDVPN_CLI="$tmpdir/adguardvpn-cli" \
   VPNCTL_VPN_SET="$tmpdir/vpn_set" \
   VPNCTL_NOTIFY_BIN="$tmpdir/vpn_notify" \
@@ -97,6 +98,44 @@ if [[ -e "$STATE_FILE" ]]; then
   exit 1
 fi
 grep -Fq "VPN STATUS: DOWN (REAL)" <<< "$connect_output"
+
+cat >"$tmpdir/backend_block" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  active) printf "custom-vps\n" ;;
+  validate)
+    printf "unsupported backend: custom-vps\n" >&2
+    exit 65
+    ;;
+  *) exit 65 ;;
+esac
+EOF
+chmod +x "$tmpdir/backend_block"
+: > "$tmpdir/systemctl.calls"
+: > "$tmpdir/vpn_set.calls"
+set +e
+PATH="$tmpdir:$PATH" \
+WATCHDOGVPN_MANUAL_STATE_FILE="$STATE_FILE" \
+VPNCTL_MANUAL_STATE_BIN="$MANUAL_STATE" \
+VPNCTL_TRUTH_BIN="$tmpdir/truth_down" \
+VPNCTL_BACKEND_BIN="$tmpdir/backend_block" \
+VPNCTL_ADGUARDVPN_CLI="$tmpdir/adguardvpn-cli" \
+VPNCTL_VPN_SET="$tmpdir/vpn_set" \
+VPNCTL_NOTIFY_BIN="$tmpdir/vpn_notify" \
+"$VPNCTL" connect DK >"$tmpdir/vpnctl-block.out" 2>&1
+block_rc=$?
+set -e
+if ((block_rc != 65)); then
+  printf 'FAIL: unsupported backend should exit 65, got %s\n' "$block_rc" >&2
+  cat "$tmpdir/vpnctl-block.out" >&2
+  exit 1
+fi
+if [[ -s "$tmpdir/systemctl.calls" || -s "$tmpdir/vpn_set.calls" ]]; then
+  printf 'FAIL: unsupported backend must not touch automation or vpn_set\n' >&2
+  cat "$tmpdir/systemctl.calls" "$tmpdir/vpn_set.calls" >&2
+  exit 1
+fi
 
 make_cmd "$tmpdir/manual_on" \
   'case "${1:-}" in' \

@@ -7,6 +7,7 @@ tests without touching the host VPN or system services.
 AG = "/usr/local/bin/adguardvpn-cli"
 VPNCTL = "/usr/local/bin/vpnctl"
 TRUTH_BIN = "/usr/local/bin/vpn_truth_check"
+BACKEND_BIN = "/usr/local/bin/vpn_backend"
 AUTH_BIN = "/usr/local/bin/vpn_auth_check"
 MANUAL_STATE_BIN = "/usr/local/bin/vpn_manual_state"
 VPN_SET = "/usr/local/sbin/vpn_set"

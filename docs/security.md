@@ -46,6 +46,7 @@ should continue to work without privileged access where possible.
 Product-managed runtime files include:
 
 - `/usr/local/bin/vpnctl`
+- `/usr/local/bin/vpn_backend`
 - `/usr/local/bin/vpn_truth_check`
 - `/usr/local/bin/vpn_auth_check`
 - `/usr/local/bin/vpn_dnsctl`

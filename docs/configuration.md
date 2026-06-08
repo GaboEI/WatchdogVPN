@@ -57,6 +57,9 @@ backup root:
 The initial configuration should stay small and stable.
 
 ```toml
+[backend]
+active = "adguard"
+
 [language]
 current = "en"
 auto_detect = true
@@ -82,6 +85,13 @@ sanitize_home = true
 ```
 
 ## Field Meaning
+
+`backend.active`
+
+Active VPN backend name. The only implemented value in this phase is `adguard`.
+If a different value is configured, backend validation fails before runtime
+commands touch systemd services, routes or vendor CLIs. Future values must be
+configured by local user data and must not store credentials in this repository.
 
 `language.current`
 

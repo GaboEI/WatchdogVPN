@@ -134,6 +134,7 @@ remove_runtime_files() {
   remove_root_path /usr/local/bin/vpn_auth_check
   remove_root_path /usr/local/bin/vpn_dns_rescue
   remove_root_path /usr/local/bin/vpn_dnsctl
+  remove_root_path /usr/local/bin/vpn_backend
   remove_root_path /usr/local/bin/vpn_manual_state
   remove_root_path /usr/local/bin/vpn_notify
   remove_root_path /usr/local/bin/vpn_truth_check

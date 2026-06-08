@@ -16,6 +16,8 @@ only in installation and dependency detection.
   collectors, render helpers, constants, parsers, formatters and validators
 - `bin/watchdogvpn`: product CLI for status, TUI launch and local diagnostic
   reports
+- `bin/vpn_backend`: backend contract helper; currently validates `adguard`
+  as the only implemented backend
 - `bin/vpnctl`: user command surface
 - `bin/vpn_truth_check`: source of truth for tunnel/routing/IP state
 - `bin/vpn_auth_check`: AdGuard VPN session check

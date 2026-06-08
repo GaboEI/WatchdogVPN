@@ -138,6 +138,8 @@ make_cmd "$TMP_DIR/auth" \
   'printf "AUTH=OK\nREASON=license_valid\nDETAIL=user@example.com 203.0.113.4\n"'
 make_cmd "$TMP_DIR/vpnctl" \
   'printf "VPN STATUS: UP\npublic ip: 198.51.100.10\n"'
+make_cmd "$TMP_DIR/backend" \
+  'case "${1:-}" in status) printf "BACKEND=adguard\nIMPLEMENTED=true\nSUPPORTS_ROTATION=true\nTRUTH_INTERFACE=tun0\n";; active) printf "adguard\n";; validate) exit 0;; *) exit 64;; esac'
 make_cmd "$TMP_DIR/dnsctl" \
   'case "${1:-}" in current) printf "profile_guess=quad9-doh\n";; local-test) printf "OK example.com 198.51.100.20\n";; esac'
 
@@ -170,6 +172,7 @@ output="$(
   WATCHDOGVPN_REPORT_DIR="$TMP_DIR" \
   WATCHDOGVPN_TRUTH_BIN="$TMP_DIR/truth" \
   WATCHDOGVPN_AUTH_BIN="$TMP_DIR/auth" \
+  WATCHDOGVPN_BACKEND_BIN="$TMP_DIR/backend" \
   WATCHDOGVPN_VPNCTL_BIN="$TMP_DIR/vpnctl" \
   WATCHDOGVPN_DNSCTL_BIN="$TMP_DIR/dnsctl" \
   "$SCRIPT" report
@@ -180,6 +183,7 @@ report="$(printf '%s\n' "$output" | sed -n 's/^Report written: //p')"
 
 grep -Fq "WatchdogVPN diagnostic report" "$report"
 grep -Fq "== VPN truth ==" "$report"
+grep -Fq "== Backend status ==" "$report"
 grep -Fq "== DNS local test ==" "$report"
 grep -Fq "<redacted-email>" "$report"
 grep -Fq "<redacted-ip>" "$report"
@@ -190,6 +194,7 @@ fi
 
 help_output="$("$SCRIPT" help)"
 contains "$help_output" 'Read-only commands:'
+contains "$help_output" 'backend       Show active backend capability summary.'
 contains "$help_output" 'logs          Read recent WatchdogVPN logs without sudo.'
 contains "$help_output" 'update-check  Show local repository update status without network access.'
 contains "$help_output" 'update-plan   Print safe manual update steps for the current checkout.'
@@ -205,6 +210,7 @@ contains "$("$SCRIPT" help update-plan)" 'watchdogvpn update-plan'
 contains "$("$SCRIPT" help runtime-update)" 'watchdogvpn runtime-update --preflight'
 contains "$("$SCRIPT" help runtime-update)" 'requires explicit confirmation: yes'
 contains "$("$SCRIPT" help config)" 'Writable safe keys:'
+contains "$("$SCRIPT" help backend)" 'watchdogvpn backend status'
 contains "$("$SCRIPT" config help)" 'Reset targets:'
 if "$SCRIPT" help missing-topic >/dev/null 2>&1; then
   printf 'FAIL: unknown help topic should fail\n' >&2
@@ -224,6 +230,13 @@ if WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs unknown >/dev/null 2>&1; then
 fi
 if WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 0 >/dev/null 2>&1; then
   printf 'FAIL: invalid log line count should fail\n' >&2
+  exit 1
+fi
+backend_output="$(WATCHDOGVPN_BACKEND_BIN="$TMP_DIR/backend" "$SCRIPT" backend status)"
+printf '%s\n' "$backend_output" | grep -Fq 'WatchdogVPN backend status'
+printf '%s\n' "$backend_output" | grep -Fq 'BACKEND=adguard'
+if "$SCRIPT" backend unknown >/dev/null 2>&1; then
+  printf 'FAIL: unknown backend command should fail\n' >&2
   exit 1
 fi
 update_output="$(WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" update-check)"

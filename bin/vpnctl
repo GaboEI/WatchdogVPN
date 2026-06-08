@@ -6,6 +6,7 @@ shift || true
 
 AG="${VPNCTL_ADGUARDVPN_CLI:-/usr/local/bin/adguardvpn-cli}"
 TRUTH="${VPNCTL_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
+BACKEND_BIN="${VPNCTL_BACKEND_BIN:-/usr/local/bin/vpn_backend}"
 VPN_SET="${VPNCTL_VPN_SET:-/usr/local/sbin/vpn_set}"
 MANUAL_STATE="${VPNCTL_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"
 NOTIFY_BIN="${VPNCTL_NOTIFY_BIN:-/usr/local/bin/vpn_notify}"
@@ -25,6 +26,22 @@ current_location() {
 valid_location_hint() {
   local loc="${1:-}"
   [[ "$loc" =~ ^[A-Za-z]{2}$ ]]
+}
+
+active_backend() {
+  if [[ -x "$BACKEND_BIN" ]]; then
+    "$BACKEND_BIN" active
+  else
+    printf 'adguard\n'
+  fi
+}
+
+validate_backend() {
+  if [[ -x "$BACKEND_BIN" ]]; then
+    "$BACKEND_BIN" validate
+  else
+    return 0
+  fi
 }
 
 load_truth() {
@@ -51,7 +68,7 @@ clear_manual_off() {
 
 set_manual_off() {
   if [[ -x "$MANUAL_STATE" ]]; then
-    sudo "$MANUAL_STATE" set-manual-off user-request adguard
+    sudo "$MANUAL_STATE" set-manual-off user-request "$(active_backend)"
   fi
 }
 
@@ -77,6 +94,8 @@ network_after_disconnect_summary() {
 
 case "$CMD" in
   status)
+    validate_backend
+    BACKEND="$(active_backend)"
     STATUS="DOWN"
     TUN="DOWN"
     ROUTE="UNKNOWN"
@@ -99,6 +118,7 @@ case "$CMD" in
     else
       echo "${icon} VPN STATUS: ${STATUS} (REAL)"
     fi
+    echo "Backend: ${BACKEND}"
     echo
     echo "🧵 tun0: ${TUN}"
     echo "🧭 route: ${ROUTE}"
@@ -108,10 +128,12 @@ case "$CMD" in
     ;;
 
   list)
+    validate_backend
     "${RUN_AS_ADGVPN[@]}" list-locations
     ;;
 
   connect)
+    validate_backend
     LOC="${1:-}"
     if [[ -z "$LOC" ]]; then
       echo "❌ Uso: vpnctl connect <ISO/CIUDAD/ID>"
@@ -125,6 +147,7 @@ case "$CMD" in
     ;;
 
   disconnect)
+    validate_backend
     set_manual_off
     pause_automation
     sudo systemctl stop adguardvpn.service
@@ -138,6 +161,7 @@ case "$CMD" in
     ;;
 
   restart)
+    validate_backend
     clear_manual_off
     resume_automation
     loc="$(current_location)"

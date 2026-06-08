@@ -107,6 +107,7 @@ validate_repo_runtime() {
 require_existing_installation() {
   local found=0 path
   for path in \
+    /usr/local/bin/vpn_backend \
     /usr/local/bin/vpn_truth_check \
     /usr/local/bin/vpnctl \
     /usr/local/sbin/vpn_watchdog.sh \

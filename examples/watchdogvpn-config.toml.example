@@ -3,6 +3,9 @@
 # This file is planned for /etc/watchdogvpn/config.toml in v0.2.0.
 # It must not contain credentials, tokens, account data or private keys.
 
+[backend]
+active = "adguard"
+
 [language]
 current = "en"
 auto_detect = true

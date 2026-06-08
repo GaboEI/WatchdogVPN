@@ -12,6 +12,7 @@ Read-only commands:
 
 ```sh
 watchdogvpn status
+watchdogvpn backend status
 watchdogvpn doctor
 watchdogvpn report
 watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]
@@ -65,6 +66,18 @@ watchdogvpn status
 ```
 
 Use this for a quick operational view after install, update, reboot or recovery.
+
+### `watchdogvpn backend status`
+
+Shows the active backend contract without changing runtime state.
+
+```sh
+watchdogvpn backend status
+```
+
+The current implemented backend is `adguard`. Unsupported configured backend
+names fail closed in runtime commands before services, routes or vendor CLIs are
+touched.
 
 ### `watchdogvpn doctor`
 
@@ -120,6 +133,7 @@ watchdogvpn help update-check
 watchdogvpn help update-plan
 watchdogvpn help runtime-update
 watchdogvpn help config
+watchdogvpn help backend
 ```
 
 The help output separates read-only commands, configuration-write commands and
