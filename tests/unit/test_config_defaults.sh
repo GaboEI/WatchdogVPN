@@ -17,12 +17,15 @@ assert_contains() {
 
 [[ -f "$CONFIG_EXAMPLE" ]] || fail "missing config example: $CONFIG_EXAMPLE"
 
-for section in backend language timers dns tui reporting; do
+for section in backend custom_vps language timers dns tui reporting; do
   assert_contains "$CONFIG_EXAMPLE" "[$section]" "missing [$section] section"
   assert_contains "$CONFIG_DOC" "[$section]" "configuration docs must mention [$section]"
 done
 
+assert_contains "$CONFIG_EXAMPLE" 'mode = "adguard"' "default backend mode must be adguard"
 assert_contains "$CONFIG_EXAMPLE" 'active = "adguard"' "default backend must be adguard"
+assert_contains "$CONFIG_EXAMPLE" 'enabled = false' "custom VPS must default disabled"
+assert_contains "$CONFIG_EXAMPLE" 'ssh_port = 22' "custom VPS SSH port default missing"
 assert_contains "$CONFIG_EXAMPLE" 'current = "en"' "default language must be English"
 assert_contains "$CONFIG_EXAMPLE" 'auto_detect = true' "language auto-detect default must be explicit"
 assert_contains "$CONFIG_EXAMPLE" 'watchdog_interval = "5min"' "watchdog interval default missing"

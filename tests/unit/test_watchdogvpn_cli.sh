@@ -139,7 +139,7 @@ make_cmd "$TMP_DIR/auth" \
 make_cmd "$TMP_DIR/vpnctl" \
   'printf "VPN STATUS: UP\npublic ip: 198.51.100.10\n"'
 make_cmd "$TMP_DIR/backend" \
-  'case "${1:-}" in status) printf "BACKEND=adguard\nIMPLEMENTED=true\nSUPPORTS_ROTATION=true\nTRUTH_INTERFACE=tun0\n";; active) printf "adguard\n";; validate) exit 0;; *) exit 64;; esac'
+  'case "${1:-}" in status) printf "MODE=adguard\nBACKEND=adguard\nCUSTOM_VPS_ENABLED=false\nIMPLEMENTED=true\nSUPPORTS_ROTATION=true\nTRUTH_INTERFACE=tun0\n";; active) printf "adguard\n";; mode) printf "adguard\n";; validate) exit 0;; *) exit 64;; esac'
 make_cmd "$TMP_DIR/dnsctl" \
   'case "${1:-}" in current) printf "profile_guess=quad9-doh\n";; local-test) printf "OK example.com 198.51.100.20\n";; esac'
 
@@ -234,6 +234,7 @@ if WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 0 >/dev/null 2>&1; then
 fi
 backend_output="$(WATCHDOGVPN_BACKEND_BIN="$TMP_DIR/backend" "$SCRIPT" backend status)"
 printf '%s\n' "$backend_output" | grep -Fq 'WatchdogVPN backend status'
+printf '%s\n' "$backend_output" | grep -Fq 'MODE=adguard'
 printf '%s\n' "$backend_output" | grep -Fq 'BACKEND=adguard'
 if "$SCRIPT" backend unknown >/dev/null 2>&1; then
   printf 'FAIL: unknown backend command should fail\n' >&2

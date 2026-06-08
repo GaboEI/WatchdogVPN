@@ -7,6 +7,10 @@ safe runtime update engine on top of the professional `watchdogvpn` CLI.
 
 ## Unreleased
 
+- Add installer backend selection for `adguard`, future `custom-vps` and
+  `both` mode, with AdGuard kept as the default for compatibility.
+- Add non-secret `custom_vps` configuration placeholders and fail-closed
+  validation while the Custom VPS backend is not implemented.
 - Add a backend contract helper with `adguard` as the only implemented backend
   and fail-closed validation for unsupported configured backend names.
 - Add backend visibility to `watchdogvpn backend status`, reports, truth-check

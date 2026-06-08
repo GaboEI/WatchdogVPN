@@ -10,7 +10,8 @@ This document defines how the product scripts should behave.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.
 - Existing user configuration must not be overwritten without backup.
-- AdGuard VPN CLI is required and is not replaced by this project.
+- AdGuard VPN CLI is required only when the selected backend mode uses
+  `adguard`; it is not removed or replaced by this project.
 
 ## User-Facing Questions
 
@@ -19,6 +20,7 @@ This document defines how the product scripts should behave.
 - Enable advanced DNS with AdGuard Home?
 - Install desktop launcher?
 - Install Conky integration?
+- Select VPN backend: AdGuard VPN, Custom VPS or both.
 
 `install.sh` should not ask:
 
@@ -48,8 +50,8 @@ It should check:
 - iproute2
 - awk/sed/coreutils
 - logrotate
-- AdGuard VPN CLI
-- AdGuard VPN session/auth state
+- AdGuard VPN CLI, when the selected backend mode uses `adguard`
+- AdGuard VPN session/auth state, when the selected backend mode uses `adguard`
 - basic DNS
 - previous installation state
 - optional AdGuard Home
@@ -69,7 +71,8 @@ Role: install a new system or complete a partial installation.
 Expected flow:
 
 1. Run preflight checks.
-2. Explain that the product controls AdGuard VPN but does not replace it.
+2. Explain that the product can control AdGuard VPN or prepare a Custom VPS
+   backend, depending on the selected mode.
 3. Detect distro and load its adapter.
 4. Validate dependencies.
 5. Ask product-level options.

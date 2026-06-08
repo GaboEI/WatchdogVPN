@@ -58,7 +58,18 @@ The initial configuration should stay small and stable.
 
 ```toml
 [backend]
+mode = "adguard"
 active = "adguard"
+
+[custom_vps]
+enabled = false
+name = ""
+host = ""
+ssh_user = ""
+ssh_port = 22
+protocol = ""
+profile_path = ""
+service_name = ""
 
 [language]
 current = "en"
@@ -88,10 +99,21 @@ sanitize_home = true
 
 `backend.active`
 
-Active VPN backend name. The only implemented value in this phase is `adguard`.
-If a different value is configured, backend validation fails before runtime
-commands touch systemd services, routes or vendor CLIs. Future values must be
-configured by local user data and must not store credentials in this repository.
+Active VPN backend name. The implemented value in this phase is `adguard`.
+`custom-vps` is reserved for a future user-owned server backend and currently
+fails closed before runtime commands touch services, routes or vendor CLIs.
+
+`backend.mode`
+
+Configured backend mode. Supported values are `adguard`, `custom-vps` and
+`both`. `both` keeps AdGuard as the active implemented backend today while
+preparing local Custom VPS configuration for a future implementation.
+
+`custom_vps.*`
+
+Local placeholders for a future user-owned VPS backend. These fields must not
+store passwords, private keys, API tokens or other secrets. Until the backend is
+implemented, they are informational configuration only.
 
 `language.current`
 

@@ -965,7 +965,9 @@ backend_command() {
       if command -v "$BACKEND_BIN" >/dev/null 2>&1 || [[ -x "$BACKEND_BIN" ]]; then
         "$BACKEND_BIN" status
       else
+        printf 'MODE=adguard\n'
         printf 'BACKEND=adguard\n'
+        printf 'CUSTOM_VPS_ENABLED=false\n'
         printf 'IMPLEMENTED=true\n'
         printf 'SUPPORTS_ROTATION=true\n'
         printf 'TRUTH_INTERFACE=tun0\n'

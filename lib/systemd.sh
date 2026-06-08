@@ -23,6 +23,10 @@ SYSTEMD_ENABLE_UNITS=(
   myvpn-logrotate.timer
 )
 
+SYSTEMD_COMMON_ENABLE_UNITS=(
+  myvpn-logrotate.timer
+)
+
 verify_systemd_units() {
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] systemd-analyze verify systemd/*.service systemd/*.timer\n'
@@ -48,7 +52,14 @@ install_systemd_units() {
 enable_systemd_units() {
   local unit
   run_step sudo systemctl daemon-reload
-  for unit in "${SYSTEMD_ENABLE_UNITS[@]}"; do
+  if [[ "${ENABLE_VPN_AUTOMATION:-1}" == "1" ]]; then
+    for unit in "${SYSTEMD_ENABLE_UNITS[@]}"; do
+      run_step sudo systemctl enable --now "$unit"
+    done
+    return 0
+  fi
+
+  for unit in "${SYSTEMD_COMMON_ENABLE_UNITS[@]}"; do
     run_step sudo systemctl enable --now "$unit"
   done
 }

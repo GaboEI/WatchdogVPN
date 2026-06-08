@@ -3,19 +3,23 @@ set -euo pipefail
 
 CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}"
 DEFAULT_BACKEND="adguard"
+DEFAULT_MODE="adguard"
 
 usage() {
   cat <<'USAGE'
 Uso:
   vpn_backend active
+  vpn_backend mode
   vpn_backend validate
+  vpn_backend implemented
   vpn_backend status
   vpn_backend supports-rotation
   vpn_backend truth-interface
 
 Contrato:
   En esta fase solo el backend "adguard" esta implementado.
-  Si la configuracion apunta a otro backend, validate falla sin tocar runtime.
+  "custom-vps" puede quedar configurado para instalacion futura, pero validate
+  falla sin tocar runtime hasta que el backend real exista.
 USAGE
 }
 
@@ -48,10 +52,34 @@ active_backend() {
   printf '%s\n' "${backend:-$DEFAULT_BACKEND}"
 }
 
+backend_mode() {
+  local mode
+  mode="$(config_value backend.mode 2>/dev/null || true)"
+  printf '%s\n' "${mode:-$DEFAULT_MODE}"
+}
+
+custom_vps_enabled() {
+  local enabled
+  enabled="$(config_value custom_vps.enabled 2>/dev/null || true)"
+  printf '%s\n' "${enabled:-false}"
+}
+
+implemented_backend() {
+  case "$(active_backend)" in
+    adguard) printf 'true\n' ;;
+    *) printf 'false\n' ;;
+  esac
+}
+
 validate_backend() {
   case "$(active_backend)" in
     adguard)
       return 0
+      ;;
+    custom-vps)
+      printf 'backend custom-vps is configured but not implemented yet\n' >&2
+      printf 'implemented backends: adguard\n' >&2
+      return 65
       ;;
     *)
       printf 'unsupported backend: %s\n' "$(active_backend)" >&2
@@ -78,8 +106,10 @@ truth_interface() {
 status() {
   local backend
   backend="$(active_backend)"
+  printf 'MODE=%s\n' "$(backend_mode)"
   printf 'BACKEND=%s\n' "$backend"
-  printf 'IMPLEMENTED=%s\n' "$(validate_backend >/dev/null 2>&1 && printf true || printf false)"
+  printf 'CUSTOM_VPS_ENABLED=%s\n' "$(custom_vps_enabled)"
+  printf 'IMPLEMENTED=%s\n' "$(implemented_backend)"
   printf 'SUPPORTS_ROTATION=%s\n' "$(supports_rotation)"
   printf 'TRUTH_INTERFACE=%s\n' "$(truth_interface)"
 }
@@ -87,6 +117,12 @@ status() {
 case "${1:-status}" in
   active)
     active_backend
+    ;;
+  mode)
+    backend_mode
+    ;;
+  implemented)
+    implemented_backend
     ;;
   validate)
     validate_backend

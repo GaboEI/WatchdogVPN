@@ -75,9 +75,9 @@ Shows the active backend contract without changing runtime state.
 watchdogvpn backend status
 ```
 
-The current implemented backend is `adguard`. Unsupported configured backend
-names fail closed in runtime commands before services, routes or vendor CLIs are
-touched.
+The current implemented backend is `adguard`. `custom-vps` can be prepared in
+local configuration for a future user-owned server backend, but runtime commands
+fail closed until that backend is implemented.
 
 ### `watchdogvpn doctor`
 

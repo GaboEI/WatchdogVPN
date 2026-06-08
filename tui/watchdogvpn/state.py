@@ -127,7 +127,9 @@ def auth_data():
 def backend_data():
     raw = run(f"{shlex.quote(BACKEND_BIN)} status 2>/dev/null || true", 4)
     data = {
+        "MODE": "adguard",
         "BACKEND": "adguard",
+        "CUSTOM_VPS_ENABLED": "false",
         "IMPLEMENTED": "true",
         "SUPPORTS_ROTATION": "true",
         "TRUTH_INTERFACE": "tun0",
@@ -267,6 +269,7 @@ def dashboard_data():
 
     return [
         ("VPN", vpn_label),
+        ("Backend mode", backend.get("MODE", "adguard")),
         ("Backend", backend.get("BACKEND", "adguard")),
         ("Auth", display_auth_status(auth.get("AUTH", "UNKNOWN"), auth.get("REASON", ""))),
         ("Tun", tun),

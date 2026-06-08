@@ -50,7 +50,9 @@ install_config_defaults
 [[ -f "$WATCHDOGVPN_CONFIG_EXAMPLE" ]]
 
 config_has_key language.current "$WATCHDOGVPN_CONFIG_FILE"
+config_has_key backend.mode "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key backend.active "$WATCHDOGVPN_CONFIG_FILE"
+config_has_key custom_vps.enabled "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key timers.watchdog_interval "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key dns.profile "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key tui.theme "$WATCHDOGVPN_CONFIG_FILE"
@@ -95,7 +97,10 @@ grep -Fq 'auto_detect = true' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq 'rotation_interval = "12h"' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq '[dns]' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq '[backend]' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq 'mode = "adguard"' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq 'active = "adguard"' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq '[custom_vps]' "$WATCHDOGVPN_CONFIG_FILE"
+grep -Fq 'enabled = false' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq 'sanitize_ipv6 = true' "$WATCHDOGVPN_CONFIG_FILE"
 if grep -Fq 'current = "en"' "$WATCHDOGVPN_CONFIG_FILE"; then
   printf 'FAIL: migration overwrote existing language.current\n' >&2

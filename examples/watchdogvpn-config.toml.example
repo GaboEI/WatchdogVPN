@@ -4,7 +4,18 @@
 # It must not contain credentials, tokens, account data or private keys.
 
 [backend]
+mode = "adguard"
 active = "adguard"
+
+[custom_vps]
+enabled = false
+name = ""
+host = ""
+ssh_user = ""
+ssh_port = 22
+protocol = ""
+profile_path = ""
+service_name = ""
 
 [language]
 current = "en"

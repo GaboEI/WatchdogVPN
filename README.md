@@ -87,7 +87,7 @@ WatchdogVPN is not designed around the fantasy that a VPN is always fast, stable
 
 The goal is resilience for people who cannot afford to stop working because the tunnel silently died: journalists, researchers, developers, students, remote workers and users living under network censorship or unreliable routing. The product does not promise the fastest possible VPN. It tries to keep the connection observable, recoverable and boring in the best sense: when something fails, the system should detect it, repair it when possible and keep the user informed only when attention is needed.
 
-The first backend is AdGuard VPN CLI. The architecture is intentionally shaped so future backends, including WireGuard-based private tunnels, can reuse the same operating model: truth check, watchdog, rotation/recovery policy, DNS safety, logs and a clear TUI.
+The implemented backend is currently AdGuard VPN CLI. The architecture is intentionally shaped so future user-owned VPS backends and private tunnels can reuse the same operating model: truth check, watchdog, rotation/recovery policy, DNS safety, logs and a clear TUI.
 
 ## What It Does
 
@@ -217,7 +217,7 @@ tests/              Syntax, unit behavior and runtime validation helpers
 - The current TUI is functional and the gradual module split has started, but most rendering/action flow still lives in `tui/VPN`.
 - Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
 - The installer can guide installation of the official AdGuard VPN CLI, but external installer verification is not fully cryptographically pinned yet.
-- The first backend is AdGuard VPN CLI. WireGuard/private tunnel support is architectural direction, not implemented behavior.
+- The implemented backend is AdGuard VPN CLI. Custom VPS/private tunnel support is architectural direction, not implemented behavior.
 
 ## Validation
 
