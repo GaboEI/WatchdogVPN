@@ -4,10 +4,19 @@ set -euo pipefail
 CMD="${1:-}"
 shift || true
 
-AG="/usr/local/bin/adguardvpn-cli"
-TRUTH="/usr/local/bin/vpn_truth_check"
-VPN_SET="/usr/local/sbin/vpn_set"
+AG="${VPNCTL_ADGUARDVPN_CLI:-/usr/local/bin/adguardvpn-cli}"
+TRUTH="${VPNCTL_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
+VPN_SET="${VPNCTL_VPN_SET:-/usr/local/sbin/vpn_set}"
+MANUAL_STATE="${VPNCTL_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"
+NOTIFY_BIN="${VPNCTL_NOTIFY_BIN:-/usr/local/bin/vpn_notify}"
 RUN_AS_ADGVPN=(sudo -u adgvpn -H "$AG")
+AUTOMATION_UNITS=(
+  vpn-watchdog.timer
+  vpn-rotate.timer
+  vpn-rotate-firstboot.timer
+  vpn-watchdog.service
+  vpn-rotate.service
+)
 
 current_location() {
   sudo sed -n 's/^LOCATION="\?\([^"]*\)"\?/\1/p' /etc/adguardvpn.env 2>/dev/null | head -n1 || true
@@ -32,6 +41,40 @@ load_truth() {
   done < <("$TRUTH")
 }
 
+manual_off_active() {
+  [[ -x "$MANUAL_STATE" ]] && "$MANUAL_STATE" is-manual-off >/dev/null 2>&1
+}
+
+clear_manual_off() {
+  [[ -x "$MANUAL_STATE" ]] && sudo "$MANUAL_STATE" clear || true
+}
+
+set_manual_off() {
+  if [[ -x "$MANUAL_STATE" ]]; then
+    sudo "$MANUAL_STATE" set-manual-off user-request adguard
+  fi
+}
+
+pause_automation() {
+  sudo systemctl stop "${AUTOMATION_UNITS[@]}" >/dev/null 2>&1 || true
+}
+
+resume_automation() {
+  sudo systemctl start vpn-watchdog.timer vpn-rotate.timer >/dev/null 2>&1 || true
+}
+
+network_after_disconnect_summary() {
+  local route dns
+  route="$(ip route get 1.1.1.1 2>/dev/null | sed -n '1p' || true)"
+  if getent hosts example.com >/dev/null 2>&1; then
+    dns="OK"
+  else
+    dns="FAIL"
+  fi
+  echo "Ruta normal: ${route:-no disponible}"
+  echo "DNS sin VPN: ${dns}"
+}
+
 case "$CMD" in
   status)
     STATUS="DOWN"
@@ -51,7 +94,11 @@ case "$CMD" in
       DOWN) icon="🔴" ;;
     esac
 
-    echo "${icon} VPN STATUS: ${STATUS} (REAL)"
+    if manual_off_active; then
+      echo "🔴 VPN STATUS: OFF (manual-off)"
+    else
+      echo "${icon} VPN STATUS: ${STATUS} (REAL)"
+    fi
     echo
     echo "🧵 tun0: ${TUN}"
     echo "🧭 route: ${ROUTE}"
@@ -70,19 +117,29 @@ case "$CMD" in
       echo "❌ Uso: vpnctl connect <ISO/CIUDAD/ID>"
       exit 1
     fi
+    clear_manual_off
+    resume_automation
     sudo "$VPN_SET" "$LOC"
     echo
     "$0" status
     ;;
 
   disconnect)
+    set_manual_off
+    pause_automation
     sudo systemctl stop adguardvpn.service
+    "${RUN_AS_ADGVPN[@]}" disconnect >/dev/null 2>&1 || true
+    "$NOTIFY_BIN" "VPN desconectada" "La conexion VPN fue detenida manualmente." normal >/dev/null 2>&1 || true
     echo "🔓 VPN desconectada"
     echo
     "$0" status
+    echo
+    network_after_disconnect_summary
     ;;
 
   restart)
+    clear_manual_off
+    resume_automation
     loc="$(current_location)"
     if valid_location_hint "$loc"; then
       sudo "$VPN_SET" "$loc"

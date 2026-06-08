@@ -19,6 +19,7 @@ only in installation and dependency detection.
 - `bin/vpnctl`: user command surface
 - `bin/vpn_truth_check`: source of truth for tunnel/routing/IP state
 - `bin/vpn_auth_check`: AdGuard VPN session check
+- `bin/vpn_manual_state`: runtime state helper for user-requested manual-off
 - `bin/vpn_notify`: desktop notification and traceable event helper
 - `sbin/vpn_set`: privileged location setter
 - `sbin/vpn_rotate.sh`: safe location rotation

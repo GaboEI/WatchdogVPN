@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_FILE="${WATCHDOGVPN_MANUAL_STATE_FILE:-/var/lib/watchdogvpn/runtime-state}"
+
+usage() {
+  cat <<'USAGE'
+Uso:
+  vpn_manual_state status
+  vpn_manual_state is-manual-off
+  vpn_manual_state set-manual-off [reason] [backend]
+  vpn_manual_state clear
+
+Contrato:
+  status         Imprime MODE=auto o el estado manual-off actual.
+  is-manual-off Exit code 0 si el usuario pidio apagar VPN, 1 si no.
+  set-manual-off Registra apagado manual. Requiere permiso de escritura.
+  clear          Borra el estado manual-off. Requiere permiso de escritura.
+USAGE
+}
+
+state_dir() {
+  dirname "$STATE_FILE"
+}
+
+read_field() {
+  local key="$1"
+  awk -F= -v k="$key" '$1 == k {print $2; exit}' "$STATE_FILE" 2>/dev/null || true
+}
+
+is_manual_off() {
+  [[ -r "$STATE_FILE" ]] || return 1
+  [[ "$(read_field MODE)" == "manual-off" ]]
+}
+
+write_manual_off() {
+  local reason="${1:-user-request}" backend="${2:-adguard}" tmp
+  if (( EUID == 0 )); then
+    install -d -m 0755 -o root -g root "$(state_dir)"
+  else
+    install -d -m 0755 "$(state_dir)"
+  fi
+  tmp="$(mktemp "$(state_dir)/runtime-state.XXXXXX")"
+  {
+    printf 'MODE=manual-off\n'
+    printf 'BACKEND=%s\n' "$backend"
+    printf 'REASON=%s\n' "$reason"
+    printf 'SINCE=%s\n' "$(date --iso-8601=seconds)"
+  } > "$tmp"
+  chmod 0644 "$tmp"
+  if (( EUID == 0 )); then
+    chown root:root "$tmp" 2>/dev/null || true
+  fi
+  mv "$tmp" "$STATE_FILE"
+}
+
+clear_manual_off() {
+  rm -f -- "$STATE_FILE"
+}
+
+status() {
+  if is_manual_off; then
+    cat "$STATE_FILE"
+    return 0
+  fi
+  printf 'MODE=auto\n'
+}
+
+case "${1:-status}" in
+  status)
+    status
+    ;;
+  is-manual-off)
+    is_manual_off
+    ;;
+  set-manual-off)
+    shift || true
+    write_manual_off "${1:-user-request}" "${2:-adguard}"
+    ;;
+  clear)
+    clear_manual_off
+    ;;
+  --help|-h|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
+esac

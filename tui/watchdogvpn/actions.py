@@ -32,12 +32,7 @@ def restart_vpn_command(loc_hint: str) -> str:
 
 
 def disconnect_vpn_command() -> str:
-    return (
-        "sudo systemctl stop adguardvpn.service; "
-        "/usr/local/bin/vpn_notify 'VPN desconectada' "
-        "'La conexion VPN fue detenida manualmente.' normal >/dev/null 2>&1 || true; "
-        f"{TRUTH_BIN}"
-    )
+    return f"{shlex.quote(VPNCTL)} disconnect"
 
 
 def rotate_now_command() -> str:

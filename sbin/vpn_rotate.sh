@@ -6,6 +6,7 @@ CLI="/usr/local/bin/adguardvpn-cli"
 AS_USER="adgvpn"
 VPN_SET="/usr/local/sbin/vpn_set"
 TRUTH_BIN="/usr/local/bin/vpn_truth_check"
+MANUAL_STATE_BIN="${VPN_ROTATE_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"
 
 STATE_DIR="/var/lib/vpn-rotate"
 STATE_FILE="$STATE_DIR/state.txt"
@@ -50,6 +51,10 @@ log() {
   event="$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+|_+$//g')"
   [[ -n "$event" ]] || event="message"
   printf '%s | %s | %s | %s | %s\n' "$(date --iso-8601=seconds)" "$LOG_COMPONENT" "$level" "$event" "$msg" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+manual_off_active() {
+  [[ -x "$MANUAL_STATE_BIN" ]] && "$MANUAL_STATE_BIN" is-manual-off >/dev/null 2>&1
 }
 
 # Normaliza un candidato ISO: quita ANSI/basura y deja solo [A-Z]{2}
@@ -133,6 +138,12 @@ flock -n 9 || exit 0
 
 log "---- vpn_rotate start ----"
 vpn_snapshot
+
+if manual_off_active; then
+  log "SKIP manual-off: user requested VPN off"
+  log "---- vpn_rotate end manual-off ----"
+  exit 0
+fi
 
 if [[ ! "$TOP_N" =~ ^[0-9]+$ ]] || (( TOP_N < 1 )); then
   log "ERROR: TOP_N invalido: '$TOP_N'"

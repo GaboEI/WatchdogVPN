@@ -4,6 +4,7 @@ set -euo pipefail
 LOC="${1:-}"
 NOTIFY_BIN="/usr/local/bin/vpn_notify"
 TRUTH_BIN="/usr/local/bin/vpn_truth_check"
+MANUAL_STATE_BIN="${VPN_SET_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"
 NOTIFY_PENDING="${VPN_SET_NOTIFY_PENDING:-1}"
 
 if [[ -z "$LOC" ]]; then
@@ -11,10 +12,15 @@ if [[ -z "$LOC" ]]; then
   exit 1
 fi
 
+if [[ -x "$MANUAL_STATE_BIN" ]]; then
+  "$MANUAL_STATE_BIN" clear >/dev/null 2>&1 || true
+fi
+
 sudo tee /etc/adguardvpn.env >/dev/null <<ENVEOF
 LOCATION="${LOC}"
 ENVEOF
 
+sudo systemctl start vpn-watchdog.timer vpn-rotate.timer >/dev/null 2>&1 || true
 sudo systemctl restart adguardvpn.service
 sleep 3
 

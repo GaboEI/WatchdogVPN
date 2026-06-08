@@ -9,6 +9,7 @@ ROTATE_SCRIPT="${VPN_WATCHDOG_ROTATE_SCRIPT:-/usr/local/sbin/vpn_rotate.sh}"
 TRUTH_BIN="${VPN_WATCHDOG_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
 AUTH_BIN="${VPN_WATCHDOG_AUTH_BIN:-/usr/local/bin/vpn_auth_check}"
 NOTIFY_BIN="${VPN_WATCHDOG_NOTIFY_BIN:-/usr/local/bin/vpn_notify}"
+MANUAL_STATE_BIN="${VPN_WATCHDOG_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"
 LOG_COMPONENT="watchdog"
 
 UNKNOWN_IP_COUNT_FILE="${VPN_WATCHDOG_UNKNOWN_IP_COUNT_FILE:-/run/vpn-watchdog.unknown_ip_count}"
@@ -36,6 +37,10 @@ log() {
   event="$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+|_+$//g')"
   [[ -n "$event" ]] || event="message"
   printf '%s | %s | %s | %s | %s\n' "$(date --iso-8601=seconds)" "$LOG_COMPONENT" "$level" "$event" "$msg" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+manual_off_active() {
+  [[ -x "$MANUAL_STATE_BIN" ]] && "$MANUAL_STATE_BIN" is-manual-off >/dev/null 2>&1
 }
 
 auth_log() {
@@ -233,6 +238,12 @@ run_rotate_remediation() {
   log "REMEDIATION_FAIL state='$HEALTH_STATE' status='${STATUS:-unknown}' ip='${IP_ADDR:-none}' after rotate"
   return 1
 }
+
+if manual_off_active; then
+  reset_unknown_ip_count
+  log "SKIP manual-off: user requested VPN off"
+  exit 0
+fi
 
 if [[ "$FORCE" != "1" ]] && recently_ran; then
   log "SKIP run: min gap ${MIN_RUN_GAP}s"

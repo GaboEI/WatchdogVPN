@@ -50,6 +50,7 @@ Product-managed runtime files include:
 - `/usr/local/bin/vpn_auth_check`
 - `/usr/local/bin/vpn_dnsctl`
 - `/usr/local/bin/vpn_dns_rescue`
+- `/usr/local/bin/vpn_manual_state`
 - `/usr/local/bin/vpn_notify`
 - `/usr/local/bin/no_vpn`
 - `/usr/local/bin/watchdogvpn`
@@ -69,6 +70,7 @@ User configuration and state that must be preserved by default:
 - `/etc/adguardvpn.env`
 - `/etc/vpn-domain-bypass.conf`
 - `/var/lib/vpn-rotate/`
+- `/var/lib/watchdogvpn/`
 - `/var/log/myvpn/`
 - AdGuard Home user configuration
 - Conky user configuration

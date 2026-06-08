@@ -19,6 +19,7 @@ from watchdogvpn.constants import (
     DNSCTL,
     LOGROTATE_CONF,
     LOGROTATE_TIMER,
+    MANUAL_STATE_BIN,
     ROTATE_TIMER,
     TRACE_LOG_PATHS,
     TRUTH_BIN,
@@ -122,6 +123,24 @@ def auth_data():
     return data
 
 
+def manual_state_data():
+    raw = run(f"{shlex.quote(MANUAL_STATE_BIN)} status 2>/dev/null || true", 4)
+    data = {
+        "MODE": "auto",
+        "BACKEND": "",
+        "REASON": "",
+        "SINCE": "",
+    }
+    for line in raw.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().upper()
+        if key in data:
+            data[key] = value.strip()
+    return data
+
+
 def country_code(ip: str) -> str:
     if not re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
         return "UNK"
@@ -203,6 +222,7 @@ def dns_profile() -> str:
 def dashboard_data():
     truth = truth_data()
     auth = auth_data()
+    manual_state = manual_state_data()
     ip = truth.get("IP_ADDR", "none")
     status = truth.get("STATUS", "DOWN")
     tun = truth.get("TUN", "DOWN")
@@ -221,8 +241,12 @@ def dashboard_data():
         "DEFAULT": "default",
         "UNKNOWN": "unknown",
     }.get(route, route)
+    vpn_label = f"{display_vpn_status(status)} · {vpn_age}" if vpn_age and status == "UP" else display_vpn_status(status)
+    if manual_state.get("MODE") == "manual-off":
+        vpn_label = "OFF MANUAL"
+
     return [
-        ("VPN", f"{display_vpn_status(status)} · {vpn_age}" if vpn_age and status == "UP" else display_vpn_status(status)),
+        ("VPN", vpn_label),
         ("Auth", display_auth_status(auth.get("AUTH", "UNKNOWN"), auth.get("REASON", ""))),
         ("Tun", tun),
         ("Route", route_label),

@@ -120,6 +120,7 @@ print_contract() {
   printf '/etc/watchdogvpn/\n'
   printf '/var/log/myvpn/\n'
   printf '/var/lib/vpn-rotate/\n'
+  printf '/var/lib/watchdogvpn/\n'
   printf 'AdGuard Home configuration\n'
   printf 'Conky configuration\n'
 
@@ -133,6 +134,7 @@ remove_runtime_files() {
   remove_root_path /usr/local/bin/vpn_auth_check
   remove_root_path /usr/local/bin/vpn_dns_rescue
   remove_root_path /usr/local/bin/vpn_dnsctl
+  remove_root_path /usr/local/bin/vpn_manual_state
   remove_root_path /usr/local/bin/vpn_notify
   remove_root_path /usr/local/bin/vpn_truth_check
   remove_root_path /usr/local/bin/vpnctl
@@ -174,8 +176,10 @@ remove_optional_user_data() {
 
   if ((PURGE_STATE == 1)); then
     remove_root_path /var/lib/vpn-rotate
+    remove_root_path /var/lib/watchdogvpn
   else
     printf '[KEEP] state: /var/lib/vpn-rotate\n'
+    printf '[KEEP] state: /var/lib/watchdogvpn\n'
   fi
 
   if ((PURGE_CONKY == 1)); then

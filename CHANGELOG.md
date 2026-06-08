@@ -7,6 +7,14 @@ safe runtime update engine on top of the professional `watchdogvpn` CLI.
 
 ## Unreleased
 
+- Add a manual-off runtime state for user-requested VPN shutdowns.
+- Make `vpnctl disconnect` pause watchdog and rotation automation before
+  stopping AdGuard VPN, so recovery paths do not immediately reconnect against
+  the user's intent.
+- Teach watchdog, rotation and NetworkManager dispatcher paths to skip
+  remediation while manual-off is active.
+- Route the TUI disconnect action through `vpnctl disconnect`.
+
 ## v0.3.1 - 2026-05-18
 
 - Add the `watchdogvpn runtime-update` safety contract for the `v0.3.1` update

@@ -5,11 +5,12 @@ set -euo pipefail
 # $1 = interface, $2 = action
 
 ACTION="${2:-}"
-LOG_FILE="/var/log/vpn-dispatcher.log"
+LOG_FILE="${VPN_DISPATCHER_LOG_FILE:-/var/log/vpn-dispatcher.log}"
 LOG_COMPONENT="dispatcher"
 ROTATE_SERVICE="vpn-rotate.service"
 TRUTH_BIN="/usr/local/bin/vpn_truth_check"
-STABILIZE_SECONDS=3
+MANUAL_STATE_BIN="${VPN_DISPATCHER_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"
+STABILIZE_SECONDS="${VPN_DISPATCHER_STABILIZE_SECONDS:-3}"
 
 log() {
   local msg="$*" level="INFO" event first
@@ -22,6 +23,10 @@ log() {
   event="$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+|_+$//g')"
   [[ -n "$event" ]] || event="message"
   printf '%s | %s | %s | %s | %s\n' "$(date --iso-8601=seconds)" "$LOG_COMPONENT" "$level" "$event" "$msg" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+manual_off_active() {
+  [[ -x "$MANUAL_STATE_BIN" ]] && "$MANUAL_STATE_BIN" is-manual-off >/dev/null 2>&1
 }
 
 check_vpn_health() {
@@ -64,6 +69,11 @@ should_handle_action() {
 }
 
 if ! should_handle_action; then
+  exit 0
+fi
+
+if manual_off_active; then
+  log "SKIP manual-off: user requested VPN off action='${ACTION}' interface='${1:-unknown}'"
   exit 0
 fi
 

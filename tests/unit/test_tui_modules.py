@@ -89,6 +89,7 @@ class TuiModuleTests(unittest.TestCase):
     def test_action_command_builders(self):
         self.assertIn("/usr/local/sbin/vpn_set DK", actions.restart_vpn_command("DK"))
         self.assertIn("systemctl restart adguardvpn.service", actions.restart_vpn_command("sin valor"))
+        self.assertEqual(actions.disconnect_vpn_command(), "/usr/local/bin/vpnctl disconnect")
         self.assertIn("VPN_ROTATE_FORCE=1", actions.rotate_now_command())
         self.assertEqual(actions.real_status_command(), "/usr/local/bin/vpnctl status")
         self.assertEqual(actions.dns_apply_command("quad9-doh"), "sudo -n /usr/local/bin/vpn_dnsctl apply quad9-doh")
