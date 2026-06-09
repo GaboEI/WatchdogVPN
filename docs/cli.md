@@ -75,9 +75,9 @@ Shows the active backend contract without changing runtime state.
 watchdogvpn backend status
 ```
 
-The current implemented backend is `adguard`. `custom-vps` can be prepared in
-local configuration for a future user-owned server backend, but runtime commands
-fail closed until that backend is implemented.
+The stable backend is `adguard`. `custom-vps` is experimental and can control a
+local systemd service configured by the user. It fails closed if required
+configuration, such as `custom_vps.service_name`, is missing.
 
 ### `watchdogvpn doctor`
 

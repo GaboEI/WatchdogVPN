@@ -7,6 +7,7 @@ AS_USER="adgvpn"
 VPN_SET="/usr/local/sbin/vpn_set"
 TRUTH_BIN="/usr/local/bin/vpn_truth_check"
 MANUAL_STATE_BIN="${VPN_ROTATE_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"
+BACKEND_BIN="${VPN_ROTATE_BACKEND_BIN:-/usr/local/bin/vpn_backend}"
 
 STATE_DIR="/var/lib/vpn-rotate"
 STATE_FILE="$STATE_DIR/state.txt"
@@ -55,6 +56,14 @@ log() {
 
 manual_off_active() {
   [[ -x "$MANUAL_STATE_BIN" ]] && "$MANUAL_STATE_BIN" is-manual-off >/dev/null 2>&1
+}
+
+backend_supports_rotation() {
+  if [[ -x "$BACKEND_BIN" ]]; then
+    "$BACKEND_BIN" supports-rotation 2>/dev/null || printf 'true'
+  else
+    printf 'true'
+  fi
 }
 
 # Normaliza un candidato ISO: quita ANSI/basura y deja solo [A-Z]{2}
@@ -142,6 +151,12 @@ vpn_snapshot
 if manual_off_active; then
   log "SKIP manual-off: user requested VPN off"
   log "---- vpn_rotate end manual-off ----"
+  exit 0
+fi
+
+if [[ "$(backend_supports_rotation)" != "true" ]]; then
+  log "SKIP backend does not support rotation"
+  log "---- vpn_rotate end unsupported-backend ----"
   exit 0
 fi
 

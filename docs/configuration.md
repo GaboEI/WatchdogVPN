@@ -99,21 +99,22 @@ sanitize_home = true
 
 `backend.active`
 
-Active VPN backend name. The implemented value in this phase is `adguard`.
-`custom-vps` is reserved for a future user-owned server backend and currently
-fails closed before runtime commands touch services, routes or vendor CLIs.
+Active VPN backend name. `adguard` is the stable backend. `custom-vps` is an
+experimental user-owned server backend controlled through a local systemd
+service configured by the user.
 
 `backend.mode`
 
 Configured backend mode. Supported values are `adguard`, `custom-vps` and
-`both`. `both` keeps AdGuard as the active implemented backend today while
-preparing local Custom VPS configuration for a future implementation.
+`both`. `both` keeps AdGuard active while preparing local Custom VPS
+configuration for experimental service-control use.
 
 `custom_vps.*`
 
-Local placeholders for a future user-owned VPS backend. These fields must not
-store passwords, private keys, API tokens or other secrets. Until the backend is
-implemented, they are informational configuration only.
+Local metadata for a user-owned VPS backend. These fields must not store
+passwords, private keys, API tokens or other secrets. `service_name` is required
+before runtime commands can control `custom-vps`; `interface` is recommended so
+truth checks can validate tunnel, route and public IP.
 
 See [Custom VPS Backend](custom-vps-backend.md) for the installer flow and
 diagnostic commands.

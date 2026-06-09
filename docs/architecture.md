@@ -2,10 +2,10 @@
 
 WatchdogVPN is a terminal-first VPN resilience control layer.
 
-The implemented backend is currently AdGuard VPN CLI. The runtime is
-intentionally separated into truth checking, recovery, rotation, DNS safety and
-TUI layers so future user-owned VPS backends can reuse the same product shape
-without rewriting the user experience.
+The stable backend is currently AdGuard VPN CLI. The runtime is intentionally
+separated into truth checking, recovery, rotation, DNS safety and TUI layers so
+experimental user-owned VPS backends can reuse the same product shape without
+rewriting the user experience.
 
 The runtime is shared across supported distributions. Distro differences belong
 only in installation and dependency detection.
@@ -17,8 +17,8 @@ only in installation and dependency detection.
   collectors, render helpers, constants, parsers, formatters and validators
 - `bin/watchdogvpn`: product CLI for status, TUI launch and local diagnostic
   reports
-- `bin/vpn_backend`: backend contract helper for `adguard`, future
-  `custom-vps` and `both` install mode; only `adguard` is implemented today
+- `bin/vpn_backend`: backend contract helper for `adguard`, experimental
+  `custom-vps` and `both` install mode
 - `bin/vpnctl`: user command surface
 - `bin/vpn_truth_check`: source of truth for tunnel/routing/IP state
 - `bin/vpn_auth_check`: AdGuard VPN session check

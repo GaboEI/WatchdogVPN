@@ -53,14 +53,35 @@ if ((unsupported_rc != 65)); then
   printf 'expected unsupported backend rc 65, got %s\n%s\n' "$unsupported_rc" "$unsupported_output" >&2
   exit 1
 fi
-assert_contains "$unsupported_output" "backend custom-vps is configured but not implemented yet"
+assert_contains "$unsupported_output" "backend custom-vps requires custom_vps.service_name"
 
 status_output="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" status)"
 assert_contains "$status_output" "MODE=custom-vps"
 assert_contains "$status_output" "BACKEND=custom-vps"
 assert_contains "$status_output" "CUSTOM_VPS_ENABLED=true"
+assert_contains "$status_output" "CUSTOM_VPS_CONFIGURED=false"
 assert_contains "$status_output" "IMPLEMENTED=false"
 assert_contains "$status_output" "SUPPORTS_ROTATION=false"
 assert_contains "$status_output" "TRUTH_INTERFACE=unknown"
+
+cat >"$tmpdir/config.toml" <<'EOF'
+[backend]
+mode = "custom-vps"
+active = "custom-vps"
+
+[custom_vps]
+enabled = true
+service_name = "wg-quick@wg0.service"
+interface = "wg0"
+EOF
+
+WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" validate
+status_output="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" status)"
+assert_contains "$status_output" "CUSTOM_VPS_CONFIGURED=true"
+assert_contains "$status_output" "CUSTOM_VPS_SERVICE_NAME=wg-quick@wg0.service"
+assert_contains "$status_output" "CUSTOM_VPS_INTERFACE=wg0"
+assert_contains "$status_output" "IMPLEMENTED=true"
+assert_contains "$status_output" "SUPPORTS_ROTATION=false"
+assert_contains "$status_output" "TRUTH_INTERFACE=wg0"
 
 echo "vpn_backend unit checks passed"

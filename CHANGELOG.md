@@ -7,16 +7,18 @@ safe runtime update engine on top of the professional `watchdogvpn` CLI.
 
 ## Unreleased
 
-- Add installer backend selection for `adguard`, future `custom-vps` and
+- Add installer backend selection for `adguard`, experimental `custom-vps` and
   `both` mode, with AdGuard kept as the default for compatibility.
 - Add guided non-secret Custom VPS metadata prompts to the installer and a TUI
   Backend view for status/configuration review.
-- Add `docs/custom-vps-backend.md` as the public product guide for the future
+- Add `docs/custom-vps-backend.md` as the public product guide for the
   user-owned VPS backend.
+- Add experimental Custom VPS service-control backend for user-owned tunnels via
+  a configured local systemd service.
 - Add non-secret `custom_vps` configuration placeholders and fail-closed
-  validation while the Custom VPS backend is not implemented.
-- Add a backend contract helper with `adguard` as the only implemented backend
-  and fail-closed validation for unsupported configured backend names.
+  validation while required Custom VPS fields are missing.
+- Add a backend contract helper with stable `adguard` support, experimental
+  `custom-vps` support and fail-closed validation for unsupported backend names.
 - Add backend visibility to `watchdogvpn backend status`, reports, truth-check
   output and the TUI dashboard without integrating new providers yet.
 - Add a manual-off runtime state for user-requested VPN shutdowns.

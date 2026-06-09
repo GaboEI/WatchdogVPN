@@ -16,19 +16,16 @@ from watchdogvpn.constants import (
     ROTATE_FIRSTBOOT_TIMER,
     ROTATE_TIMER,
     TRUTH_BIN,
-    VPN_SET,
     VPNCTL,
     WATCHDOG_TIMER,
 )
-from watchdogvpn.validators import valid_domain, valid_location_hint, valid_timer_interval
+from watchdogvpn.validators import valid_domain, valid_timer_interval
 
 ALLOWED_TIMER_UNITS = {ROTATE_TIMER, WATCHDOG_TIMER}
 
 
 def restart_vpn_command(loc_hint: str) -> str:
-    if valid_location_hint(loc_hint):
-        return f"sudo {shlex.quote(VPN_SET)} {shlex.quote(loc_hint)}; {TRUTH_BIN}"
-    return f"sudo systemctl restart adguardvpn.service; {TRUTH_BIN}"
+    return f"{shlex.quote(VPNCTL)} restart"
 
 
 def disconnect_vpn_command() -> str:

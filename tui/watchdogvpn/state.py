@@ -107,6 +107,7 @@ def backend_snapshot():
         ("Protocolo", values.get("custom_vps.protocol", "")),
         ("Perfil", values.get("custom_vps.profile_path", "")),
         ("Servicio", values.get("custom_vps.service_name", "")),
+        ("Interfaz VPS", values.get("custom_vps.interface", runtime.get("CUSTOM_VPS_INTERFACE", ""))),
     ]
 
 

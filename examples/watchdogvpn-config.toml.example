@@ -16,6 +16,7 @@ ssh_port = 22
 protocol = ""
 profile_path = ""
 service_name = ""
+interface = ""
 
 [language]
 current = "en"

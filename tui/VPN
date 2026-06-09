@@ -505,7 +505,7 @@ def build_backend_text() -> str:
         "Backend",
         "-------",
         "Estado del backend configurado para WatchdogVPN.",
-        "Custom VPS guarda solo metadatos no secretos y todavia no conecta tuneles.",
+        "Custom VPS usa metadatos no secretos y controla un servicio local configurado.",
         "",
     ]
     for key, value in rows:
@@ -523,7 +523,7 @@ def build_backend_text() -> str:
             "  ./install.sh",
             "  Selecciona AdGuard VPN, Custom VPS o Both.",
             "",
-            "Nota: si active=custom-vps, los comandos runtime fallan cerrado hasta implementar ese backend.",
+            "Nota: si active=custom-vps, se requiere custom_vps.service_name.",
             "Pulsa q para volver.",
         ]
     )
@@ -2248,7 +2248,7 @@ def section_panel(section: str, items):
                 "Comando manual de emergencia: sudo /usr/local/bin/vpn_dnsctl rollback",
             ],
             "Backend": [
-                "Custom VPS todavia no conecta tuneles; solo prepara metadatos locales no secretos.",
+                "Custom VPS controla un servicio systemd local configurado por el usuario.",
                 "Usa ./install.sh para elegir AdGuard, Custom VPS o Both en una instalacion guiada.",
                 "watchdogvpn backend status es el diagnostico CLI equivalente.",
             ],

@@ -15,11 +15,13 @@ Uso:
   vpn_backend status
   vpn_backend supports-rotation
   vpn_backend truth-interface
+  vpn_backend service-name
+  vpn_backend configured
 
 Contrato:
-  En esta fase solo el backend "adguard" esta implementado.
-  "custom-vps" puede quedar configurado para instalacion futura, pero validate
-  falla sin tocar runtime hasta que el backend real exista.
+  "adguard" usa AdGuard VPN CLI.
+  "custom-vps" es experimental y controla un servicio local configurado por el
+  usuario. No guarda secretos ni instala protocolos por si solo.
 USAGE
 }
 
@@ -64,26 +66,70 @@ custom_vps_enabled() {
   printf '%s\n' "${enabled:-false}"
 }
 
+custom_vps_service_name() {
+  local service
+  service="$(config_value custom_vps.service_name 2>/dev/null || true)"
+  printf '%s\n' "$service"
+}
+
+custom_vps_interface() {
+  local iface
+  iface="$(config_value custom_vps.interface 2>/dev/null || true)"
+  printf '%s\n' "$iface"
+}
+
+valid_systemd_service_name() {
+  local service="${1:-}"
+  [[ "$service" =~ ^[A-Za-z0-9_.@:-]+\.service$ ]]
+}
+
+custom_vps_configured() {
+  local service
+  service="$(custom_vps_service_name)"
+  [[ "$(custom_vps_enabled)" == "true" ]] || return 1
+  valid_systemd_service_name "$service"
+}
+
 implemented_backend() {
   case "$(active_backend)" in
     adguard) printf 'true\n' ;;
+    custom-vps)
+      if custom_vps_configured; then
+        printf 'true\n'
+      else
+        printf 'false\n'
+      fi
+      ;;
     *) printf 'false\n' ;;
   esac
 }
 
 validate_backend() {
-  case "$(active_backend)" in
+  local backend service
+  backend="$(active_backend)"
+  case "$backend" in
     adguard)
       return 0
       ;;
     custom-vps)
-      printf 'backend custom-vps is configured but not implemented yet\n' >&2
-      printf 'implemented backends: adguard\n' >&2
-      return 65
+      if [[ "$(custom_vps_enabled)" != "true" ]]; then
+        printf 'backend custom-vps is active but custom_vps.enabled is not true\n' >&2
+        return 65
+      fi
+      service="$(custom_vps_service_name)"
+      if [[ -z "$service" ]]; then
+        printf 'backend custom-vps requires custom_vps.service_name\n' >&2
+        return 65
+      fi
+      if ! valid_systemd_service_name "$service"; then
+        printf 'backend custom-vps has invalid service_name: %s\n' "$service" >&2
+        return 65
+      fi
+      return 0
       ;;
     *)
-      printf 'unsupported backend: %s\n' "$(active_backend)" >&2
-      printf 'implemented backends: adguard\n' >&2
+      printf 'unsupported backend: %s\n' "$backend" >&2
+      printf 'implemented backends: adguard custom-vps\n' >&2
       return 65
       ;;
   esac
@@ -99,6 +145,11 @@ supports_rotation() {
 truth_interface() {
   case "$(active_backend)" in
     adguard) printf 'tun0\n' ;;
+    custom-vps)
+      local iface
+      iface="$(custom_vps_interface)"
+      printf '%s\n' "${iface:-unknown}"
+      ;;
     *) printf 'unknown\n' ;;
   esac
 }
@@ -109,6 +160,13 @@ status() {
   printf 'MODE=%s\n' "$(backend_mode)"
   printf 'BACKEND=%s\n' "$backend"
   printf 'CUSTOM_VPS_ENABLED=%s\n' "$(custom_vps_enabled)"
+  if custom_vps_configured; then
+    printf 'CUSTOM_VPS_CONFIGURED=true\n'
+  else
+    printf 'CUSTOM_VPS_CONFIGURED=false\n'
+  fi
+  printf 'CUSTOM_VPS_SERVICE_NAME=%s\n' "$(custom_vps_service_name)"
+  printf 'CUSTOM_VPS_INTERFACE=%s\n' "$(custom_vps_interface)"
   printf 'IMPLEMENTED=%s\n' "$(implemented_backend)"
   printf 'SUPPORTS_ROTATION=%s\n' "$(supports_rotation)"
   printf 'TRUTH_INTERFACE=%s\n' "$(truth_interface)"
@@ -131,12 +189,22 @@ case "${1:-status}" in
     status
     ;;
   supports-rotation)
-    validate_backend >/dev/null
     supports_rotation
     ;;
   truth-interface)
-    validate_backend >/dev/null
     truth_interface
+    ;;
+  service-name)
+    validate_backend >/dev/null
+    custom_vps_service_name
+    ;;
+  configured)
+    if custom_vps_configured; then
+      printf 'true\n'
+    else
+      printf 'false\n'
+      exit 1
+    fi
     ;;
   --help|-h|help)
     usage

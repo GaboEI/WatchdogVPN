@@ -1,20 +1,25 @@
 # Custom VPS Backend
 
-Custom VPS is the future backend path for users who want to operate WatchdogVPN
-with their own server instead of depending only on a commercial VPN provider.
+Custom VPS is the user-owned backend path for people who want to operate
+WatchdogVPN with their own server instead of depending only on a commercial VPN
+provider.
 
 ## Current Status
 
-Custom VPS configuration is available as non-secret local metadata. Runtime
-control is not implemented yet.
+Custom VPS is available as an experimental backend controlled through a local
+systemd service configured by the user. WatchdogVPN does not install protocols,
+does not provision servers and does not store secrets.
 
 That means:
 
 - the installer can prepare `backend.mode = "custom-vps"` or `backend.mode = "both"`;
 - `watchdogvpn backend status` reports the selected mode and active backend;
 - the TUI has a Backend view for status and configuration review;
-- runtime commands fail closed if `backend.active = "custom-vps"` until a real
-  backend implementation exists.
+- `vpnctl connect`, `vpnctl disconnect`, `vpnctl restart` and `vpnctl status`
+  can control the configured service;
+- rotation is disabled for Custom VPS unless a future backend explicitly
+  supports multiple nodes;
+- runtime commands fail closed if required Custom VPS fields are missing.
 
 ## Installer Flow
 
@@ -38,8 +43,8 @@ Select VPN backend:
 `Custom VPS` prepares WatchdogVPN for a user-owned server and skips AdGuard CLI
 installation and login.
 
-`Both` keeps AdGuard active today and stores Custom VPS metadata for a future
-backend implementation.
+`Both` keeps AdGuard active and stores Custom VPS metadata for experimental
+service-control use.
 
 ## Non-Secret Fields
 
@@ -55,10 +60,18 @@ ssh_port = 22
 protocol = "awg"
 profile_path = "/etc/watchdogvpn/custom-vps.conf"
 service_name = "custom-vps.service"
+interface = "wg0"
 ```
 
 Do not store passwords, private keys, API tokens, certificate pins or
 obfuscation secrets in this file or in the repository.
+
+`service_name` must be a local systemd service unit, for example
+`custom-vps.service` or `wg-quick@wg0.service`.
+
+`interface` is optional but recommended. Without it WatchdogVPN can control the
+service, but `vpn_truth_check` cannot prove that the default route uses the
+VPN tunnel.
 
 ## Diagnostics
 
@@ -69,6 +82,7 @@ watchdogvpn backend status
 watchdogvpn config get backend.mode
 watchdogvpn config get backend.active
 watchdogvpn config get custom_vps.enabled
+vpnctl status
 ```
 
 In the TUI, open:
@@ -79,10 +93,9 @@ VPN -> Backend
 
 ## Future Implementation
 
-The future backend implementation should add:
+Future implementation work should add:
 
-- real connect/disconnect/status operations for Custom VPS;
-- truth check support for its tunnel interface;
-- health check and cleanup behavior;
+- protocol-specific setup helpers;
+- health check and cleanup behavior per protocol;
 - optional rotation over one or more user-owned nodes;
 - tests that prove unsupported or incomplete configuration fails closed.

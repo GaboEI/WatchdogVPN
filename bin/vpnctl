@@ -44,6 +44,20 @@ validate_backend() {
   fi
 }
 
+backend_supports_rotation() {
+  if [[ -x "$BACKEND_BIN" ]]; then
+    "$BACKEND_BIN" supports-rotation 2>/dev/null || printf 'true\n'
+  else
+    printf 'true\n'
+  fi
+}
+
+backend_service_name() {
+  if [[ -x "$BACKEND_BIN" ]]; then
+    "$BACKEND_BIN" service-name
+  fi
+}
+
 load_truth() {
   local line
   while IFS= read -r line; do
@@ -77,7 +91,11 @@ pause_automation() {
 }
 
 resume_automation() {
-  sudo systemctl start vpn-watchdog.timer vpn-rotate.timer >/dev/null 2>&1 || true
+  if [[ "$(backend_supports_rotation)" == "true" ]]; then
+    sudo systemctl start vpn-watchdog.timer vpn-rotate.timer >/dev/null 2>&1 || true
+  else
+    sudo systemctl start vpn-watchdog.timer >/dev/null 2>&1 || true
+  fi
 }
 
 network_after_disconnect_summary() {
@@ -92,6 +110,14 @@ network_after_disconnect_summary() {
   echo "DNS sin VPN: ${dns}"
 }
 
+custom_service_status() {
+  local service="$1" active enabled
+  active="$(systemctl is-active "$service" 2>/dev/null || true)"
+  enabled="$(systemctl is-enabled "$service" 2>/dev/null || true)"
+  echo "🧩 service: ${service}"
+  echo "⚙️ systemd: ${active:-unknown} / ${enabled:-unknown}"
+}
+
 case "$CMD" in
   status)
     validate_backend
@@ -103,8 +129,12 @@ case "$CMD" in
     IP_ADDR="none"
     load_truth
 
-    cli_status="$("${RUN_AS_ADGVPN[@]}" status 2>/dev/null | sed -n '1p' || true)"
-    cli_status="${cli_status:-no-response}"
+    if [[ "$BACKEND" == "adguard" ]]; then
+      cli_status="$("${RUN_AS_ADGVPN[@]}" status 2>/dev/null | sed -n '1p' || true)"
+      cli_status="${cli_status:-no-response}"
+    else
+      cli_status="not-applicable"
+    fi
 
     icon="🔴"
     case "$STATUS" in
@@ -120,38 +150,67 @@ case "$CMD" in
     fi
     echo "Backend: ${BACKEND}"
     echo
-    echo "🧵 tun0: ${TUN}"
+    echo "🧵 tunnel: ${TUN}"
     echo "🧭 route: ${ROUTE}"
     echo "🌍 public ip: ${IP_ADDR}"
     echo
-    echo "⚠️ CLI status: ${cli_status} (no confiable)"
+    if [[ "$BACKEND" == "custom-vps" ]]; then
+      custom_service_status "$(backend_service_name)"
+      echo
+      echo "⚠️ CLI status: ${cli_status}"
+    else
+      echo "⚠️ CLI status: ${cli_status} (no confiable)"
+    fi
     ;;
 
   list)
     validate_backend
-    "${RUN_AS_ADGVPN[@]}" list-locations
+    BACKEND="$(active_backend)"
+    if [[ "$BACKEND" == "custom-vps" ]]; then
+      echo "Custom VPS no expone ubicaciones por CLI en esta fase."
+      echo "Servicio: $(backend_service_name)"
+      echo "Rotacion: no soportada"
+    else
+      "${RUN_AS_ADGVPN[@]}" list-locations
+    fi
     ;;
 
   connect)
     validate_backend
-    LOC="${1:-}"
-    if [[ -z "$LOC" ]]; then
-      echo "❌ Uso: vpnctl connect <ISO/CIUDAD/ID>"
-      exit 1
+    BACKEND="$(active_backend)"
+    if [[ "$BACKEND" == "custom-vps" ]]; then
+      service="$(backend_service_name)"
+      clear_manual_off
+      resume_automation
+      sudo systemctl start "$service"
+      echo "🔐 Custom VPS iniciado"
+      echo
+      "$0" status
+    else
+      LOC="${1:-}"
+      if [[ -z "$LOC" ]]; then
+        echo "❌ Uso: vpnctl connect <ISO/CIUDAD/ID>"
+        exit 1
+      fi
+      clear_manual_off
+      resume_automation
+      sudo "$VPN_SET" "$LOC"
+      echo
+      "$0" status
     fi
-    clear_manual_off
-    resume_automation
-    sudo "$VPN_SET" "$LOC"
-    echo
-    "$0" status
     ;;
 
   disconnect)
     validate_backend
+    BACKEND="$(active_backend)"
     set_manual_off
     pause_automation
-    sudo systemctl stop adguardvpn.service
-    "${RUN_AS_ADGVPN[@]}" disconnect >/dev/null 2>&1 || true
+    if [[ "$BACKEND" == "custom-vps" ]]; then
+      sudo systemctl stop "$(backend_service_name)"
+    else
+      sudo systemctl stop adguardvpn.service
+      "${RUN_AS_ADGVPN[@]}" disconnect >/dev/null 2>&1 || true
+    fi
     "$NOTIFY_BIN" "VPN desconectada" "La conexion VPN fue detenida manualmente." normal >/dev/null 2>&1 || true
     echo "🔓 VPN desconectada"
     echo
@@ -162,13 +221,18 @@ case "$CMD" in
 
   restart)
     validate_backend
+    BACKEND="$(active_backend)"
     clear_manual_off
     resume_automation
-    loc="$(current_location)"
-    if valid_location_hint "$loc"; then
-      sudo "$VPN_SET" "$loc"
+    if [[ "$BACKEND" == "custom-vps" ]]; then
+      sudo systemctl restart "$(backend_service_name)"
     else
-      sudo systemctl restart adguardvpn.service
+      loc="$(current_location)"
+      if valid_location_hint "$loc"; then
+        sudo "$VPN_SET" "$loc"
+      else
+        sudo systemctl restart adguardvpn.service
+      fi
     fi
     echo "🔄 VPN reiniciada"
     echo

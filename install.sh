@@ -41,6 +41,7 @@ CUSTOM_VPS_SSH_PORT="22"
 CUSTOM_VPS_PROTOCOL=""
 CUSTOM_VPS_PROFILE_PATH=""
 CUSTOM_VPS_SERVICE_NAME=""
+CUSTOM_VPS_INTERFACE=""
 ENABLE_ADGUARD_BACKEND=1
 ENABLE_VPN_AUTOMATION=1
 PATH_UPDATED=0
@@ -157,8 +158,8 @@ prompt_backend_mode() {
         CUSTOM_VPS_ENABLED="true"
         ENABLE_ADGUARD_BACKEND=0
         ENABLE_VPN_AUTOMATION=0
-        printf 'Custom VPS backend setup is reserved for a future implementation.\n'
-        printf 'No passwords, private keys or server secrets will be requested now.\n'
+        printf 'Custom VPS backend setup is experimental and uses a user-configured local service.\n'
+        printf 'No passwords, private keys or server secrets will be requested.\n'
         return 0
         ;;
       3|both|Both|BOTH)
@@ -211,6 +212,7 @@ prompt_custom_vps_config() {
   CUSTOM_VPS_PROTOCOL="$(prompt_text "Protocol label (example: awg, wireguard, openvpn, hysteria2)" "$CUSTOM_VPS_PROTOCOL")"
   CUSTOM_VPS_PROFILE_PATH="$(prompt_text "Local profile path" "$CUSTOM_VPS_PROFILE_PATH")"
   CUSTOM_VPS_SERVICE_NAME="$(prompt_text "Local service name" "$CUSTOM_VPS_SERVICE_NAME")"
+  CUSTOM_VPS_INTERFACE="$(prompt_text "Tunnel interface (example: wg0, awg0, tun0)" "$CUSTOM_VPS_INTERFACE")"
 }
 
 config_write_installed_key() {
@@ -259,6 +261,7 @@ apply_backend_install_selection() {
   config_write_installed_key custom_vps.protocol "$CUSTOM_VPS_PROTOCOL"
   config_write_installed_key custom_vps.profile_path "$CUSTOM_VPS_PROFILE_PATH"
   config_write_installed_key custom_vps.service_name "$CUSTOM_VPS_SERVICE_NAME"
+  config_write_installed_key custom_vps.interface "$CUSTOM_VPS_INTERFACE"
 }
 
 require_supported_distro() {
@@ -465,7 +468,7 @@ post_install_validation() {
   if [[ "$ENABLE_ADGUARD_BACKEND" != "1" ]]; then
     printf '\n== Final validation ==\n'
     printf '[SKIP] AdGuard runtime validation; selected backend is %s\n' "$BACKEND_MODE"
-    printf '[INFO] Custom VPS backend is configured but not implemented yet.\n'
+    printf '[INFO] Custom VPS backend is experimental and controlled through custom_vps.service_name.\n'
     return 0
   fi
 

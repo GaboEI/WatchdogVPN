@@ -88,8 +88,8 @@ class TuiModuleTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
 
     def test_action_command_builders(self):
-        self.assertIn("/usr/local/sbin/vpn_set DK", actions.restart_vpn_command("DK"))
-        self.assertIn("systemctl restart adguardvpn.service", actions.restart_vpn_command("sin valor"))
+        self.assertEqual(actions.restart_vpn_command("DK"), "/usr/local/bin/vpnctl restart")
+        self.assertEqual(actions.restart_vpn_command("sin valor"), "/usr/local/bin/vpnctl restart")
         self.assertEqual(actions.disconnect_vpn_command(), "/usr/local/bin/vpnctl disconnect")
         self.assertIn("VPN_ROTATE_FORCE=1", actions.rotate_now_command())
         self.assertEqual(actions.real_status_command(), "/usr/local/bin/vpnctl status")
@@ -179,6 +179,7 @@ class TuiModuleTests(unittest.TestCase):
                         'protocol = "awg"',
                         'profile_path = "/etc/watchdogvpn/custom.conf"',
                         'service_name = "custom-vpn.service"',
+                        'interface = "awg0"',
                     ]
                 ),
                 encoding="utf-8",
@@ -190,6 +191,7 @@ class TuiModuleTests(unittest.TestCase):
                 "IMPLEMENTED": "true",
                 "SUPPORTS_ROTATION": "true",
                 "TRUTH_INTERFACE": "tun0",
+                "CUSTOM_VPS_INTERFACE": "awg0",
             }
             with patch.dict("os.environ", {"WATCHDOGVPN_CONFIG_FILE": str(path)}), \
                  patch.object(state, "backend_data", return_value=runtime):
@@ -197,6 +199,7 @@ class TuiModuleTests(unittest.TestCase):
             self.assertEqual(snapshot["Modo"], "both")
             self.assertEqual(snapshot["Custom VPS"], "true")
             self.assertEqual(snapshot["Host"], "203.0.113.10")
+            self.assertEqual(snapshot["Interfaz VPS"], "awg0")
 
     def test_state_snapshots_with_mocks(self):
         with patch.object(state, "run", return_value="example.com\nexample.org\n# ignored\n"):

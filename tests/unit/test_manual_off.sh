@@ -186,4 +186,53 @@ fi
 grep -Fq 'MANUAL_STATE_BIN="${VPN_ROTATE_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"' "$ROTATE"
 grep -Fq "SKIP manual-off: user requested VPN off" "$ROTATE"
 
+cat >"$tmpdir/backend_custom" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  active) printf "custom-vps\n" ;;
+  validate) exit 0 ;;
+  supports-rotation) printf "false\n" ;;
+  service-name) printf "custom-vps.service\n" ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$tmpdir/backend_custom"
+: > "$tmpdir/systemctl.calls"
+: > "$tmpdir/vpn_set.calls"
+custom_connect_output="$(
+  PATH="$tmpdir:$PATH" \
+  WATCHDOGVPN_MANUAL_STATE_FILE="$STATE_FILE" \
+  VPNCTL_MANUAL_STATE_BIN="$MANUAL_STATE" \
+  VPNCTL_TRUTH_BIN="$tmpdir/truth_down" \
+  VPNCTL_BACKEND_BIN="$tmpdir/backend_custom" \
+  VPNCTL_ADGUARDVPN_CLI="$tmpdir/adguardvpn-cli" \
+  VPNCTL_VPN_SET="$tmpdir/vpn_set" \
+  VPNCTL_NOTIFY_BIN="$tmpdir/vpn_notify" \
+  "$VPNCTL" connect
+)"
+grep -Fq "Custom VPS iniciado" <<< "$custom_connect_output"
+grep -Fq "systemctl start vpn-watchdog.timer" "$tmpdir/systemctl.calls"
+grep -Fq "systemctl start custom-vps.service" "$tmpdir/systemctl.calls"
+if [[ -s "$tmpdir/vpn_set.calls" ]]; then
+  printf 'FAIL: custom-vps connect must not call vpn_set\n' >&2
+  cat "$tmpdir/vpn_set.calls" >&2
+  exit 1
+fi
+
+: > "$tmpdir/systemctl.calls"
+custom_disconnect_output="$(
+  PATH="$tmpdir:$PATH" \
+  WATCHDOGVPN_MANUAL_STATE_FILE="$STATE_FILE" \
+  VPNCTL_MANUAL_STATE_BIN="$MANUAL_STATE" \
+  VPNCTL_TRUTH_BIN="$tmpdir/truth_down" \
+  VPNCTL_BACKEND_BIN="$tmpdir/backend_custom" \
+  VPNCTL_ADGUARDVPN_CLI="$tmpdir/adguardvpn-cli" \
+  VPNCTL_VPN_SET="$tmpdir/vpn_set" \
+  VPNCTL_NOTIFY_BIN="$tmpdir/vpn_notify" \
+  "$VPNCTL" disconnect
+)"
+grep -Fq "VPN STATUS: OFF (manual-off)" <<< "$custom_disconnect_output"
+grep -Fq "systemctl stop custom-vps.service" "$tmpdir/systemctl.calls"
+
 echo "manual-off checks passed"

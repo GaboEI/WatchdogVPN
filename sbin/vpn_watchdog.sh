@@ -10,6 +10,7 @@ TRUTH_BIN="${VPN_WATCHDOG_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
 AUTH_BIN="${VPN_WATCHDOG_AUTH_BIN:-/usr/local/bin/vpn_auth_check}"
 NOTIFY_BIN="${VPN_WATCHDOG_NOTIFY_BIN:-/usr/local/bin/vpn_notify}"
 MANUAL_STATE_BIN="${VPN_WATCHDOG_MANUAL_STATE_BIN:-/usr/local/bin/vpn_manual_state}"
+BACKEND_BIN="${VPN_WATCHDOG_BACKEND_BIN:-/usr/local/bin/vpn_backend}"
 LOG_COMPONENT="watchdog"
 
 UNKNOWN_IP_COUNT_FILE="${VPN_WATCHDOG_UNKNOWN_IP_COUNT_FILE:-/run/vpn-watchdog.unknown_ip_count}"
@@ -41,6 +42,22 @@ log() {
 
 manual_off_active() {
   [[ -x "$MANUAL_STATE_BIN" ]] && "$MANUAL_STATE_BIN" is-manual-off >/dev/null 2>&1
+}
+
+active_backend() {
+  if [[ -x "$BACKEND_BIN" ]]; then
+    "$BACKEND_BIN" active 2>/dev/null || printf 'adguard'
+  else
+    printf 'adguard'
+  fi
+}
+
+supports_rotation() {
+  if [[ -x "$BACKEND_BIN" ]]; then
+    "$BACKEND_BIN" supports-rotation 2>/dev/null || printf 'true'
+  else
+    printf 'true'
+  fi
 }
 
 auth_log() {
@@ -254,20 +271,27 @@ if [[ "$FORCE" == "1" ]]; then
 fi
 mark_run
 
-if read_auth; then
-  case "$AUTH_STATE" in
-    EXPIRED)
-      reset_unknown_ip_count
-      auth_log "SESSION_EXPIRED action=user_reauth_required reason='${AUTH_REASON:-unknown}' detail='${AUTH_DETAIL:-}'"
-      notify_auth_expired
-      exit 0
-      ;;
-    UNKNOWN)
-      auth_log "AUTH_UNKNOWN reason='${AUTH_REASON:-unknown}' detail='${AUTH_DETAIL:-}' -> continue health check"
-      ;;
-  esac
+BACKEND="$(active_backend)"
+ROTATION_SUPPORTED="$(supports_rotation)"
+
+if [[ "$BACKEND" == "adguard" ]]; then
+  if read_auth; then
+    case "$AUTH_STATE" in
+      EXPIRED)
+        reset_unknown_ip_count
+        auth_log "SESSION_EXPIRED action=user_reauth_required reason='${AUTH_REASON:-unknown}' detail='${AUTH_DETAIL:-}'"
+        notify_auth_expired
+        exit 0
+        ;;
+      UNKNOWN)
+        auth_log "AUTH_UNKNOWN reason='${AUTH_REASON:-unknown}' detail='${AUTH_DETAIL:-}' -> continue health check"
+        ;;
+    esac
+  else
+    auth_log "AUTH_UNKNOWN reason='helper_unavailable' bin='$AUTH_BIN' -> continue health check"
+  fi
 else
-  auth_log "AUTH_UNKNOWN reason='helper_unavailable' bin='$AUTH_BIN' -> continue health check"
+  log "AUTH_SKIP backend='$BACKEND'"
 fi
 
 set_health_state
@@ -281,6 +305,10 @@ case "$HEALTH_STATE" in
     ;;
   DOWN|RUSSIAN_IP)
     reset_unknown_ip_count
+    if [[ "$ROTATION_SUPPORTED" != "true" ]]; then
+      log "POLICY_FAIL state='$HEALTH_STATE' backend='$BACKEND' remediation='unsupported'"
+      exit 0
+    fi
     log "POLICY_FAIL state='$HEALTH_STATE' -> start remediation"
     if run_rotate_remediation; then
       exit 0
@@ -291,6 +319,10 @@ case "$HEALTH_STATE" in
     unknown_ip_count="$(bump_unknown_ip_count)"
     log "SOFT_FAIL state='UNKNOWN_IP' count=${unknown_ip_count}/${UNKNOWN_IP_THRESHOLD}"
     if (( unknown_ip_count < UNKNOWN_IP_THRESHOLD )); then
+      exit 0
+    fi
+    if [[ "$ROTATION_SUPPORTED" != "true" ]]; then
+      log "POLICY_FAIL state='UNKNOWN_IP' threshold_reached=${unknown_ip_count}/${UNKNOWN_IP_THRESHOLD} backend='$BACKEND' remediation='unsupported'"
       exit 0
     fi
     log "POLICY_FAIL state='UNKNOWN_IP' threshold_reached=${unknown_ip_count}/${UNKNOWN_IP_THRESHOLD} -> start remediation"

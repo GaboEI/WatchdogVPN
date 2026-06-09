@@ -54,7 +54,7 @@ runtime_text = module.build_update_runtime_plan_text()
 assert "Contextual guide. No commands are executed." in runtime_text
 assert module.update_center_repo_root().endswith("WatchdogVPN")
 backend_text = module.build_backend_text()
-assert "Custom VPS guarda solo metadatos no secretos" in backend_text
+assert "Custom VPS usa metadatos no secretos" in backend_text
 assert "watchdogvpn backend status" in backend_text
 
 original_cyan = module.FG["cyan"]
