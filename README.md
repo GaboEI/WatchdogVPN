@@ -27,6 +27,7 @@ It is built for the real case where a VPN connection is not perfect: endpoints d
 | Use the CLI | [CLI](docs/cli.md) |
 | Follow CLI planning | [CLI Plan v0.3.0](docs/cli-plan-v0.3.0.md) |
 | Understand configuration | [Configuration](docs/configuration.md) |
+| Prepare Custom VPS | [Custom VPS Backend](docs/custom-vps-backend.md) |
 | Review release status | [v0.3.1 notes](docs/release-notes-v0.3.1.md) |
 | Prepare a release | [Release Checklist](docs/release-checklist.md) |
 | Configure GitHub About | [GitHub About](docs/github-about.md) |

@@ -56,6 +56,7 @@ DNS_PROFILE_LABELS = {
 
 MENU_ITEMS = [
     {"id": "dashboard", "label": "Dashboard", "section": "Dashboard", "group": "OPERACION"},
+    {"id": "backend", "label": "Backend", "section": "Backend", "group": "OPERACION"},
     {"id": "location", "label": "Ubicacion", "section": "Cambiar ubicacion", "group": "OPERACION"},
     {"id": "actions", "label": "Acciones", "section": "Acciones rapidas", "group": "OPERACION"},
     {"id": "dns", "label": "DNS", "section": "DNS / AdGuard", "group": "OPERACION"},

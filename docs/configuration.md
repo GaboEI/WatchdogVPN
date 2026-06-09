@@ -115,6 +115,9 @@ Local placeholders for a future user-owned VPS backend. These fields must not
 store passwords, private keys, API tokens or other secrets. Until the backend is
 implemented, they are informational configuration only.
 
+See [Custom VPS Backend](custom-vps-backend.md) for the installer flow and
+diagnostic commands.
+
 `language.current`
 
 Selected interface language. English is the default. Internationalization is

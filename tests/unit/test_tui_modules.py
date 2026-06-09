@@ -22,6 +22,7 @@ class TuiModuleTests(unittest.TestCase):
     def test_menu_labels_match_items(self):
         self.assertEqual(MENU, [item["label"] for item in MENU_ITEMS])
         self.assertIn("Dashboard", MENU)
+        self.assertIn("Backend", MENU)
         self.assertIn("Exclusiones", MENU)
         self.assertIn("Settings", MENU)
         self.assertIn("Update", MENU)
@@ -158,6 +159,44 @@ class TuiModuleTests(unittest.TestCase):
             self.assertEqual(snapshot["Idioma"], "es")
             self.assertEqual(snapshot["Tema"], "high_contrast")
             self.assertEqual(snapshot["Color"], "false")
+
+    def test_backend_snapshot_reads_persistent_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[backend]",
+                        'mode = "both"',
+                        'active = "adguard"',
+                        "",
+                        "[custom_vps]",
+                        "enabled = true",
+                        'name = "Paris"',
+                        'host = "203.0.113.10"',
+                        'ssh_user = "ubuntu"',
+                        "ssh_port = 22",
+                        'protocol = "awg"',
+                        'profile_path = "/etc/watchdogvpn/custom.conf"',
+                        'service_name = "custom-vpn.service"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            runtime = {
+                "MODE": "both",
+                "BACKEND": "adguard",
+                "CUSTOM_VPS_ENABLED": "true",
+                "IMPLEMENTED": "true",
+                "SUPPORTS_ROTATION": "true",
+                "TRUTH_INTERFACE": "tun0",
+            }
+            with patch.dict("os.environ", {"WATCHDOGVPN_CONFIG_FILE": str(path)}), \
+                 patch.object(state, "backend_data", return_value=runtime):
+                snapshot = dict(state.backend_snapshot())
+            self.assertEqual(snapshot["Modo"], "both")
+            self.assertEqual(snapshot["Custom VPS"], "true")
+            self.assertEqual(snapshot["Host"], "203.0.113.10")
 
     def test_state_snapshots_with_mocks(self):
         with patch.object(state, "run", return_value="example.com\nexample.org\n# ignored\n"):

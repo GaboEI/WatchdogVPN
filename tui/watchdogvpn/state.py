@@ -87,6 +87,29 @@ def settings_snapshot():
     ]
 
 
+def backend_snapshot():
+    path = config_path()
+    values = parse_simple_toml(path)
+    runtime = backend_data()
+    return [
+        ("Archivo", path),
+        ("Estado", values.get("_status", "unavailable")),
+        ("Modo", runtime.get("MODE", values.get("backend.mode", "adguard"))),
+        ("Activo", runtime.get("BACKEND", values.get("backend.active", "adguard"))),
+        ("Implementado", runtime.get("IMPLEMENTED", "unknown")),
+        ("Rotacion", runtime.get("SUPPORTS_ROTATION", "unknown")),
+        ("Interfaz", runtime.get("TRUTH_INTERFACE", "unknown")),
+        ("Custom VPS", values.get("custom_vps.enabled", runtime.get("CUSTOM_VPS_ENABLED", "false"))),
+        ("Nombre", values.get("custom_vps.name", "")),
+        ("Host", values.get("custom_vps.host", "")),
+        ("SSH user", values.get("custom_vps.ssh_user", "")),
+        ("SSH port", values.get("custom_vps.ssh_port", "")),
+        ("Protocolo", values.get("custom_vps.protocol", "")),
+        ("Perfil", values.get("custom_vps.profile_path", "")),
+        ("Servicio", values.get("custom_vps.service_name", "")),
+    ]
+
+
 def truth_data():
     raw = run(f"{shlex.quote(TRUTH_BIN)} 2>/dev/null || true", 6)
     data = {

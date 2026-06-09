@@ -29,6 +29,7 @@ This document defines how the product scripts should behave.
 - whether log housekeeping is enabled
 - whether base domain bypass support is prepared
 - internal install paths
+- Custom VPS passwords, private keys, tokens or certificate pins
 
 Those are product defaults and can be adjusted later from the TUI.
 

@@ -34,6 +34,13 @@ ENABLE_ADVANCED_DNS=""
 BACKEND_MODE="adguard"
 BACKEND_ACTIVE="adguard"
 CUSTOM_VPS_ENABLED="false"
+CUSTOM_VPS_NAME=""
+CUSTOM_VPS_HOST=""
+CUSTOM_VPS_SSH_USER=""
+CUSTOM_VPS_SSH_PORT="22"
+CUSTOM_VPS_PROTOCOL=""
+CUSTOM_VPS_PROFILE_PATH=""
+CUSTOM_VPS_SERVICE_NAME=""
 ENABLE_ADGUARD_BACKEND=1
 ENABLE_VPN_AUTOMATION=1
 PATH_UPDATED=0
@@ -167,19 +174,57 @@ prompt_backend_mode() {
   done
 }
 
+prompt_text() {
+  local question="$1" default="${2:-}" answer
+  if [[ -n "$default" ]]; then
+    read -r -p "$question [$default]: " answer
+    printf '%s\n' "${answer:-$default}"
+  else
+    read -r -p "$question: " answer
+    printf '%s\n' "$answer"
+  fi
+}
+
+prompt_custom_vps_config() {
+  local port
+
+  [[ "$CUSTOM_VPS_ENABLED" == "true" ]] || return 0
+
+  if ((ASSUME_YES == 1)); then
+    return 0
+  fi
+
+  printf '\nCustom VPS configuration stores only non-secret local metadata.\n'
+  printf 'Do not enter passwords, private keys, tokens or certificate pins here.\n'
+  printf 'You can leave fields empty and complete them later in /etc/watchdogvpn/config.toml.\n\n'
+
+  CUSTOM_VPS_NAME="$(prompt_text "Display name" "$CUSTOM_VPS_NAME")"
+  CUSTOM_VPS_HOST="$(prompt_text "VPS host or IP" "$CUSTOM_VPS_HOST")"
+  CUSTOM_VPS_SSH_USER="$(prompt_text "SSH user" "$CUSTOM_VPS_SSH_USER")"
+  port="$(prompt_text "SSH port" "$CUSTOM_VPS_SSH_PORT")"
+  if [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1 && port <= 65535)); then
+    CUSTOM_VPS_SSH_PORT="$port"
+  else
+    warn "invalid SSH port; keeping 22"
+    CUSTOM_VPS_SSH_PORT="22"
+  fi
+  CUSTOM_VPS_PROTOCOL="$(prompt_text "Protocol label (example: awg, wireguard, openvpn, hysteria2)" "$CUSTOM_VPS_PROTOCOL")"
+  CUSTOM_VPS_PROFILE_PATH="$(prompt_text "Local profile path" "$CUSTOM_VPS_PROFILE_PATH")"
+  CUSTOM_VPS_SERVICE_NAME="$(prompt_text "Local service name" "$CUSTOM_VPS_SERVICE_NAME")"
+}
+
 config_write_installed_key() {
   local key="$1" value="$2" section name formatted tmp
   section="${key%%.*}"
   name="${key#*.}"
 
-  case "$value" in
-    true|false|[0-9]*)
-      formatted="$value"
-      ;;
-    *)
-      formatted="\"$value\""
-      ;;
-  esac
+  if [[ "$value" == "true" || "$value" == "false" || "$value" =~ ^[0-9]+$ ]]; then
+    formatted="$value"
+  else
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    formatted="\"$value\""
+  fi
 
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] set %s = %s in %s\n' "$key" "$formatted" "$WATCHDOGVPN_CONFIG_FILE"
@@ -207,6 +252,13 @@ apply_backend_install_selection() {
   config_write_installed_key backend.mode "$BACKEND_MODE"
   config_write_installed_key backend.active "$BACKEND_ACTIVE"
   config_write_installed_key custom_vps.enabled "$CUSTOM_VPS_ENABLED"
+  config_write_installed_key custom_vps.name "$CUSTOM_VPS_NAME"
+  config_write_installed_key custom_vps.host "$CUSTOM_VPS_HOST"
+  config_write_installed_key custom_vps.ssh_user "$CUSTOM_VPS_SSH_USER"
+  config_write_installed_key custom_vps.ssh_port "$CUSTOM_VPS_SSH_PORT"
+  config_write_installed_key custom_vps.protocol "$CUSTOM_VPS_PROTOCOL"
+  config_write_installed_key custom_vps.profile_path "$CUSTOM_VPS_PROFILE_PATH"
+  config_write_installed_key custom_vps.service_name "$CUSTOM_VPS_SERVICE_NAME"
 }
 
 require_supported_distro() {
@@ -499,6 +551,7 @@ print_section "Prerequisites"
 validate_required_commands
 
 prompt_backend_mode
+prompt_custom_vps_config
 
 if [[ "$ENABLE_ADGUARD_BACKEND" == "1" ]]; then
   install_official_adguard_vpn_cli
