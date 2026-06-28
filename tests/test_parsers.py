@@ -3,8 +3,17 @@ from __future__ import annotations
 import base64
 import json
 import unittest
+from unittest.mock import patch
 
-from parsers import ParseError, detect_scheme, parse_clash_yaml, parse_singbox_json, parse_uri, parse_wg_config
+from parsers import (
+    ParseError,
+    detect_scheme,
+    fetch_and_parse,
+    parse_clash_yaml,
+    parse_singbox_json,
+    parse_uri,
+    parse_wg_config,
+)
 from models.profile import ProtocolType
 
 
@@ -199,6 +208,77 @@ class ClashYamlParserTests(unittest.TestCase):
             parse_clash_yaml("foo: bar")
         with self.assertRaises(ParseError):
             parse_clash_yaml("proxies:\n  name: bad")
+
+
+class SubscriptionParserTests(unittest.TestCase):
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_and_parse_base64_lines(self, urlopen_mock) -> None:
+        payload = "\n".join(
+            [
+                "vless://uuid@example.com:443?encryption=none",
+                "trojan://secret@example.com:443",
+            ]
+        ).encode("utf-8")
+        encoded = base64.b64encode(payload).decode("utf-8")
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = encoded.encode("utf-8")
+
+        profiles = fetch_and_parse("https://example.com/sub")
+
+        self.assertEqual([profile.protocol for profile in profiles], [ProtocolType.VLESS, ProtocolType.TROJAN])
+        self.assertEqual(profiles[0].config["host"], "example.com")
+        self.assertEqual(profiles[1].config["password"], "secret")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_and_parse_json(self, urlopen_mock) -> None:
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                ]
+            }
+        ).encode("utf-8")
+
+        profiles = fetch_and_parse("https://example.com/sub")
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].name, "sb1")
+        self.assertEqual(profiles[0].protocol, ProtocolType.VLESS)
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_and_parse_yaml(self, urlopen_mock) -> None:
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = (
+            """
+            proxies:
+              - name: clash1
+                type: trojan
+                server: clash.example.com
+                port: 443
+                password: secret
+            """
+        ).encode("utf-8")
+
+        profiles = fetch_and_parse("https://example.com/sub")
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].name, "clash1")
+        self.assertEqual(profiles[0].protocol, ProtocolType.TROJAN)
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_and_parse_errors(self, urlopen_mock) -> None:
+        from urllib.error import URLError
+
+        urlopen_mock.side_effect = URLError("boom")
+        with self.assertRaises(ParseError):
+            fetch_and_parse("https://example.com/sub")
+
+        urlopen_mock.side_effect = None
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = b""
+        with self.assertRaises(ParseError):
+            fetch_and_parse("https://example.com/sub")
+
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = b"@@@"
+        with self.assertRaises(ParseError):
+            fetch_and_parse("https://example.com/sub")
 
 
 if __name__ == "__main__":
