@@ -4,7 +4,7 @@ import base64
 import json
 import unittest
 
-from parsers import ParseError, detect_scheme, parse_uri, parse_wg_config
+from parsers import ParseError, detect_scheme, parse_singbox_json, parse_uri, parse_wg_config
 from models.profile import ProtocolType
 
 
@@ -129,6 +129,45 @@ class UriParserTests(unittest.TestCase):
             parse_wg_config("[Interface]\nPrivateKey = x\n")
         with self.assertRaises(ParseError):
             parse_wg_config("[Peer]\nPublicKey = x\nEndpoint = y\n")
+
+
+class SingboxJsonParserTests(unittest.TestCase):
+    def test_parse_single_outbound_dict(self) -> None:
+        profiles = parse_singbox_json(
+            {
+                "type": "vless",
+                "tag": "primary",
+                "server": "sb.example.com",
+                "server_port": 443,
+                "uuid": "uuid-1",
+            }
+        )
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].protocol, ProtocolType.VLESS)
+        self.assertEqual(profiles[0].name, "primary")
+        self.assertEqual(profiles[0].config["server"], "sb.example.com")
+        self.assertEqual(profiles[0].config["server_port"], 443)
+
+    def test_parse_multi_outbound_json(self) -> None:
+        profiles = parse_singbox_json(
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vmess", "tag": "vm1", "server": "vmess.example.com", "server_port": 443},
+                        {"type": "trojan", "tag": "tr1", "server": "trojan.example.com", "server_port": 443},
+                        {"type": "direct", "tag": "bypass"},
+                    ]
+                }
+            )
+        )
+        self.assertEqual([profile.protocol for profile in profiles], [ProtocolType.VMESS, ProtocolType.TROJAN])
+        self.assertEqual([profile.name for profile in profiles], ["vm1", "tr1"])
+
+    def test_parse_singbox_json_errors(self) -> None:
+        with self.assertRaises(ParseError):
+            parse_singbox_json("not json")
+        with self.assertRaises(ParseError):
+            parse_singbox_json(json.dumps(["invalid", "shape"]))
 
 
 if __name__ == "__main__":
