@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from config.app_config import AppConfig, DEFAULT_CONFIG
 from config.profile_store import ProfileStore
@@ -40,6 +41,27 @@ class ConfigStorageTests(unittest.TestCase):
             config.save(loaded)
             restored = config.load()
             self.assertEqual(restored["watchdog"]["check_interval_seconds"], 45)
+
+    def test_config_paths_follow_environment_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = Path(tmp) / "cfg"
+            env = {
+                "WATCHDOGVPN_CONFIG_DIR": str(config_dir),
+                "WATCHDOGVPN_STATE_FILE": str(Path(tmp) / "state.toml"),
+                "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
+                "WATCHDOGVPN_PROVIDERS_FILE": str(Path(tmp) / "providers.json"),
+                "WATCHDOGVPN_CONFIG_FILE": str(Path(tmp) / "config.toml"),
+            }
+            with patch.dict("os.environ", env, clear=False):
+                state_manager = StateManager()
+                app_config = AppConfig()
+                profile_store = ProfileStore()
+                provider_store = ProviderStore()
+
+            self.assertEqual(state_manager.path, Path(env["WATCHDOGVPN_STATE_FILE"]))
+            self.assertEqual(app_config.path, Path(env["WATCHDOGVPN_CONFIG_FILE"]))
+            self.assertEqual(profile_store.path, Path(env["WATCHDOGVPN_PROFILES_FILE"]))
+            self.assertEqual(provider_store.path, Path(env["WATCHDOGVPN_PROVIDERS_FILE"]))
 
     def test_profile_store_crud_and_rotation_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
