@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -45,7 +45,7 @@ class Profile:
     provider_id: str | None = None
     in_rotation_pool: bool = False
     enabled: bool = True
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_used: datetime | None = None
     last_health_check: datetime | None = None
     health_status: str = "unknown"
@@ -75,4 +75,3 @@ class Profile:
             last_health_check=_dt_from_iso(data.get("last_health_check")),
             health_status=str(data.get("health_status", "unknown")),
         )
-
