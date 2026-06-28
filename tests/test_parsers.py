@@ -4,7 +4,7 @@ import base64
 import json
 import unittest
 
-from parsers import ParseError, detect_scheme, parse_singbox_json, parse_uri, parse_wg_config
+from parsers import ParseError, detect_scheme, parse_clash_yaml, parse_singbox_json, parse_uri, parse_wg_config
 from models.profile import ProtocolType
 
 
@@ -168,6 +168,37 @@ class SingboxJsonParserTests(unittest.TestCase):
             parse_singbox_json("not json")
         with self.assertRaises(ParseError):
             parse_singbox_json(json.dumps(["invalid", "shape"]))
+
+
+class ClashYamlParserTests(unittest.TestCase):
+    def test_parse_clash_yaml(self) -> None:
+        profiles = parse_clash_yaml(
+            """
+            proxies:
+              - name: vless-1
+                type: vless
+                server: vless.example.com
+                port: 443
+                uuid: uuid-1
+              - name: trojan-1
+                type: trojan
+                server: trojan.example.com
+                port: 443
+                password: secret
+              - name: bypass
+                type: direct
+            """
+        )
+        self.assertEqual([profile.protocol for profile in profiles], [ProtocolType.VLESS, ProtocolType.TROJAN])
+        self.assertEqual([profile.name for profile in profiles], ["vless-1", "trojan-1"])
+        self.assertEqual(profiles[0].config["server"], "vless.example.com")
+        self.assertEqual(profiles[1].config["password"], "secret")
+
+    def test_parse_clash_yaml_errors(self) -> None:
+        with self.assertRaises(ParseError):
+            parse_clash_yaml("foo: bar")
+        with self.assertRaises(ParseError):
+            parse_clash_yaml("proxies:\n  name: bad")
 
 
 if __name__ == "__main__":
