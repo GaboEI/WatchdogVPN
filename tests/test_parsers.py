@@ -90,6 +90,8 @@ class UriParserTests(unittest.TestCase):
             parse_uri("vmess://not-base64")
         with self.assertRaises(ParseError):
             parse_uri("ss://badpayload")
+        with self.assertRaises(ParseError):
+            parse_uri("ftp://example.com")
 
     def test_parse_wireguard_config(self) -> None:
         profile = parse_wg_config(
@@ -138,6 +140,16 @@ class UriParserTests(unittest.TestCase):
             parse_wg_config("[Interface]\nPrivateKey = x\n")
         with self.assertRaises(ParseError):
             parse_wg_config("[Peer]\nPublicKey = x\nEndpoint = y\n")
+        with self.assertRaises(ParseError):
+            parse_wg_config(
+                """
+                [Interface]
+                PrivateKey = private-key
+
+                [Peer]
+                Endpoint = wg.example.com:51820
+                """
+            )
 
 
 class SingboxJsonParserTests(unittest.TestCase):
