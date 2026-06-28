@@ -4,7 +4,7 @@ import base64
 import json
 import unittest
 
-from parsers import ParseError, detect_scheme, parse_uri
+from parsers import ParseError, detect_scheme, parse_uri, parse_wg_config
 from models.profile import ProtocolType
 
 
@@ -81,6 +81,54 @@ class UriParserTests(unittest.TestCase):
             parse_uri("vmess://not-base64")
         with self.assertRaises(ParseError):
             parse_uri("ss://badpayload")
+
+    def test_parse_wireguard_config(self) -> None:
+        profile = parse_wg_config(
+            """
+            [Interface]
+            PrivateKey = private-key
+            Address = 10.0.0.2/32
+            DNS = 1.1.1.1
+
+            [Peer]
+            PublicKey = public-key
+            Endpoint = wg.example.com:51820
+            AllowedIPs = 0.0.0.0/0, ::/0
+            PersistentKeepalive = 25
+            """
+        )
+        self.assertEqual(profile.protocol, ProtocolType.WIREGUARD)
+        self.assertEqual(profile.config["private_key"], "private-key")
+        self.assertEqual(profile.config["public_key"], "public-key")
+        self.assertEqual(profile.config["endpoint"], "wg.example.com:51820")
+        self.assertEqual(profile.config["allowed_ips"], "0.0.0.0/0, ::/0")
+
+    def test_parse_amneziawg_config(self) -> None:
+        profile = parse_wg_config(
+            """
+            [Interface]
+            PrivateKey = private-key
+            Address = 10.0.0.2/32
+            Jc = 4
+            Jmin = 10
+            Jmax = 20
+
+            [Peer]
+            PublicKey = public-key
+            Endpoint = awg.example.com:51820
+            AllowedIPs = 0.0.0.0/0, ::/0
+            """
+        )
+        self.assertEqual(profile.protocol, ProtocolType.AMNEZIAWG)
+        self.assertEqual(profile.config["private_key"], "private-key")
+        self.assertEqual(profile.config["public_key"], "public-key")
+        self.assertEqual(profile.config["endpoint"], "awg.example.com:51820")
+
+    def test_parse_wireguard_config_errors(self) -> None:
+        with self.assertRaises(ParseError):
+            parse_wg_config("[Interface]\nPrivateKey = x\n")
+        with self.assertRaises(ParseError):
+            parse_wg_config("[Peer]\nPublicKey = x\nEndpoint = y\n")
 
 
 if __name__ == "__main__":
