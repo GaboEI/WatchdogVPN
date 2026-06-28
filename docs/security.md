@@ -15,7 +15,7 @@ as trusted local administration tooling, not as an unprivileged desktop app.
 
 ## Non-Goals
 
-- WatchdogVPN does not replace the official AdGuard VPN client.
+- WatchdogVPN does not replace the underlying VPN or proxy provider.
 - WatchdogVPN does not provide VPN credentials or bypass licensing.
 - WatchdogVPN does not guarantee anonymity.
 - WatchdogVPN does not protect a host that is already compromised.
@@ -75,7 +75,7 @@ User configuration and state that must be preserved by default:
 - `/var/log/myvpn/`
 - AdGuard Home user configuration
 - Conky user configuration
-- official AdGuard VPN CLI and account/license state
+- provider installation and account/license state
 
 ## Install, Update and Uninstall Safety
 
@@ -84,8 +84,8 @@ User configuration and state that must be preserved by default:
 `install.sh` and `update.sh` validate repository files before installing them,
 back up replaced files and preserve existing user configuration.
 
-`uninstall.sh` removes product-managed files but does not remove the official
-AdGuard VPN CLI or AdGuard account/license state. Config, logs, rotation state
+`uninstall.sh` removes product-managed files but does not remove the underlying
+provider installation or account/license state. Config, logs, rotation state
 and Conky files are removed only when the user explicitly asks for purge options.
 
 ## DNS Safety
@@ -104,9 +104,9 @@ Known DNS safety behavior:
 
 ## External Installer Risk
 
-WatchdogVPN can guide installation of the official AdGuard VPN CLI when the CLI
-is missing. This currently depends on downloading the vendor-provided installer
-from a remote endpoint.
+WatchdogVPN can guide installation of the selected provider path when the
+required CLI is missing. This currently depends on downloading the
+vendor-provided installer from a remote endpoint.
 
 Current risk:
 
@@ -121,14 +121,13 @@ Current mitigation:
 
 - The installer is explicit about what it is doing.
 - The project does not bundle credentials or licensing bypasses.
-- Users may install the official AdGuard VPN CLI manually before running
-  WatchdogVPN.
+- Users may install the selected provider manually before running WatchdogVPN.
 - Users may answer "no" to advanced DNS and install AdGuard Home manually later.
 
 Manual-first path:
 
-1. Install the official AdGuard VPN CLI from the vendor documentation.
-2. Confirm `adguardvpn-cli --version` works.
+1. Install the selected provider from the vendor documentation.
+2. Confirm the provider CLI works.
 3. Run `./install.sh` and let WatchdogVPN configure its service user and runtime.
 4. For DNS, either skip advanced DNS during install or install AdGuard Home
    manually first, then use `vpn_dnsctl` for profile application.
@@ -175,8 +174,8 @@ conservative.
 
 The uninstall contract is:
 
-- never remove the official AdGuard VPN CLI;
-- never remove AdGuard account/license state;
+- never remove the underlying provider installation without consent;
+- never remove provider account/license state without consent;
 - preserve config, logs, rotation state and Conky unless purge flags are used;
 - attempt DNS recovery before removing WatchdogVPN commands.
 

@@ -6,7 +6,10 @@ In unstable network environments, endpoints can fail, routes can change, public 
 
 The project starts from the assumption that the connection will eventually fail. That matters for users who cannot treat connectivity as a convenience: journalists, researchers, developers, students, remote workers and people living under network censorship or unreliable routing. WatchdogVPN does not promise a perfect or fastest VPN; it provides an operating layer that can detect failure, recover when possible and keep the user informed without requiring constant terminal work.
 
-The implemented backend is currently AdGuard VPN CLI. The long-term operating model is broader: the same truth-check, watchdog, DNS safety, logging and TUI concepts should be reusable for future user-owned VPS backends and private tunnels.
+The implemented compatibility path includes AdGuard VPN CLI, but the long-term
+operating model is broader: the same truth-check, watchdog, DNS safety, logging
+and TUI concepts should be reusable for future provider backends and private
+tunnels.
 
 ## Goals
 

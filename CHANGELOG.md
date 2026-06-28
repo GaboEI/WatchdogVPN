@@ -2,11 +2,16 @@
 
 All notable product-facing changes are documented here.
 
-WatchdogVPN is a public alpha. The current `v0.3.1` target adds a confirmed,
-safe runtime update engine on top of the professional `watchdogvpn` CLI.
+WatchdogVPN is moving toward a stable `v2.0.0` Linux CLI + TUI line. The
+current documentation and implementation work are reorienting the product from
+an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 
 ## Unreleased
 
+- Start the `v2.0.0` documentation reorientation with the new Linux
+  resilience-layer identity.
+- Mark AdGuard VPN compatibility as legacy support in the public product
+  narrative while preserving existing compatibility paths.
 - Add installer backend selection for `adguard`, experimental `custom-vps` and
   `both` mode, with AdGuard kept as the default for compatibility.
 - Add guided non-secret Custom VPS metadata prompts to the installer and a TUI

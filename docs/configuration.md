@@ -99,9 +99,9 @@ sanitize_home = true
 
 `backend.active`
 
-Active VPN backend name. `adguard` is the stable backend. `custom-vps` is an
-experimental user-owned server backend controlled through a local systemd
-service configured by the user.
+Active VPN backend name. `adguard` is the legacy compatibility backend.
+`custom-vps` is an experimental user-owned server backend controlled through a
+local systemd service configured by the user.
 
 `backend.mode`
 

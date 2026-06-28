@@ -75,9 +75,9 @@ Shows the active backend contract without changing runtime state.
 watchdogvpn backend status
 ```
 
-The stable backend is `adguard`. `custom-vps` is experimental and can control a
-local systemd service configured by the user. It fails closed if required
-configuration, such as `custom_vps.service_name`, is missing.
+The legacy compatibility backend is `adguard`. `custom-vps` is experimental and
+can control a local systemd service configured by the user. It fails closed if
+required configuration, such as `custom_vps.service_name`, is missing.
 
 ### `watchdogvpn doctor`
 

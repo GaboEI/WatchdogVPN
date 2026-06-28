@@ -5,7 +5,7 @@ Use these values when preparing the repository for public alpha visibility.
 ## Description
 
 ```text
-Terminal-first resilience layer for AdGuard VPN CLI on Linux: truth checks, watchdog recovery, rotation, DNS safety and TUI control center.
+Terminal-first resilience layer for VPN/proxy connections on Linux: truth checks, watchdog recovery, rotation, DNS safety and TUI control center.
 ```
 
 ## Website
