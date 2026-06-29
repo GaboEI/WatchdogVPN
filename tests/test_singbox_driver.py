@@ -209,5 +209,36 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertEqual(state.status, "standby")
 
 
+class SingBoxDriverHealthTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.driver = SingBoxDriver()
+        self.process = unittest.mock.Mock()
+        self.process.poll.return_value = None
+        self.driver._process = self.process
+
+    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
+    @patch.object(SingBoxDriver, "_port_open", return_value=True)
+    def test_health_check_ok(self, port_mock, http_mock) -> None:
+        self.assertEqual(self.driver.health_check(), "ok")
+
+    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
+    @patch.object(SingBoxDriver, "_port_open", return_value=True)
+    def test_health_check_degraded_when_proxy_http_fails(self, port_mock, http_mock) -> None:
+        self.assertEqual(self.driver.health_check(), "degraded")
+
+    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
+    @patch.object(SingBoxDriver, "_port_open", return_value=False)
+    def test_health_check_degraded_when_ports_closed(self, port_mock, http_mock) -> None:
+        self.assertEqual(self.driver.health_check(), "degraded")
+
+    def test_health_check_down_when_process_missing(self) -> None:
+        self.driver._process = None
+        self.assertEqual(self.driver.health_check(), "down")
+
+    def test_health_check_down_when_process_dead(self) -> None:
+        self.process.poll.return_value = 1
+        self.assertEqual(self.driver.health_check(), "down")
+
+
 if __name__ == "__main__":
     unittest.main()

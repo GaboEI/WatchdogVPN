@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import build_opener, install_opener, ProxyHandler, Request, urlopen
 
 from drivers.base import BaseDriver
 from models.connection_state import ConnectionState
@@ -214,6 +217,22 @@ class SingBoxDriver(BaseDriver):
         if CONFIG_PATH.exists():
             CONFIG_PATH.unlink()
 
+    def _port_open(self, host: str, port: int, timeout: float = 1.0) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    def _http_via_proxy(self, proxy_url: str, target_url: str, timeout: float = 3.0) -> bool:
+        opener = build_opener(ProxyHandler({"http": proxy_url, "https": proxy_url}))
+        install_opener(opener)
+        try:
+            with opener.open(Request(target_url), timeout=timeout) as response:
+                return 200 <= getattr(response, "status", 200) < 500
+        except (URLError, OSError, TimeoutError):
+            return False
+
     def generate_singbox_config(self, profile: Profile) -> dict[str, Any]:
         config = {
             "log": {"level": "warning"},
@@ -254,7 +273,18 @@ class SingBoxDriver(BaseDriver):
         return True
 
     def health_check(self) -> str:
-        raise NotImplementedError("Task 4.1 does not implement health_check yet")
+        process = self._process
+        if process is None or process.poll() is not None:
+            return "down"
+
+        ports_ok = self._port_open("127.0.0.1", 2080) or self._port_open("127.0.0.1", 2081)
+        if not ports_ok:
+            return "degraded"
+
+        proxy_ok = self._http_via_proxy("socks5://127.0.0.1:2080", "https://example.com")
+        if proxy_ok:
+            return "ok"
+        return "degraded"
 
     def status(self) -> ConnectionState:
         process = self._process
