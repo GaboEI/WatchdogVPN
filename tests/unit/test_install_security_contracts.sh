@@ -73,5 +73,9 @@ assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] state: /var/lib/watc
 
 assert_contains "$ROOT_DIR/lib/adguard_vpn_cli.sh" "does not currently pin that vendor script by checksum" "AdGuard VPN CLI external installer risk must be explicit"
 assert_contains "$ROOT_DIR/lib/adguard_home.sh" "does not currently pin that vendor script by checksum" "AdGuard Home external installer risk must be explicit"
+assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn' "OpenVPN normal compatibility requires installer dependency detection"
+assert_contains "$ROOT_DIR/distros/ubuntu.sh" "openvpn" "Ubuntu package set must include OpenVPN"
+assert_contains "$ROOT_DIR/distros/debian.sh" "openvpn" "Debian package set must include OpenVPN"
+assert_contains "$ROOT_DIR/distros/arch.sh" "openvpn" "Arch package set must include OpenVPN"
 
 echo "install security contract checks passed"

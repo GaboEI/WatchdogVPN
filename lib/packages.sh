@@ -2,7 +2,7 @@
 set -euo pipefail
 
 required_commands() {
-  printf '%s\n' bash python3 curl tar ip systemctl sudo logrotate awk sed
+  printf '%s\n' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn
 }
 
 optional_commands() {

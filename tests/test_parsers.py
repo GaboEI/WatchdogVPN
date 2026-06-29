@@ -10,6 +10,7 @@ from parsers import (
     detect_scheme,
     fetch_and_parse,
     parse_clash_yaml,
+    parse_openvpn_config,
     parse_singbox_json,
     parse_uri,
     parse_wg_config,
@@ -220,6 +221,37 @@ class SingboxJsonParserTests(unittest.TestCase):
             parse_singbox_json("not json")
         with self.assertRaises(ParseError):
             parse_singbox_json(json.dumps(["invalid", "shape"]))
+
+
+class OpenVPNConfigParserTests(unittest.TestCase):
+    def test_parse_openvpn_config(self) -> None:
+        profile = parse_openvpn_config(
+            """
+            client
+            dev tun
+            proto udp
+            remote vpn.example.com 1194
+            auth-user-pass
+
+            <ca>
+            certificate body ignored by directive parser
+            </ca>
+            """
+        )
+        self.assertEqual(profile.protocol, ProtocolType.OPENVPN)
+        self.assertEqual(profile.name, "openvpn-vpn.example.com-1194")
+        self.assertEqual(profile.config["host"], "vpn.example.com")
+        self.assertEqual(profile.config["port"], 1194)
+        self.assertEqual(profile.config["proto"], "udp")
+        self.assertEqual(profile.config["dev"], "tun")
+        self.assertEqual(profile.config["compatibility_category"], "standard")
+        self.assertIn("raw_config", profile.config)
+
+    def test_parse_openvpn_config_errors(self) -> None:
+        with self.assertRaises(ParseError):
+            parse_openvpn_config("")
+        with self.assertRaises(ParseError):
+            parse_openvpn_config("client\ndev tun\n")
 
 
 class ClashYamlParserTests(unittest.TestCase):

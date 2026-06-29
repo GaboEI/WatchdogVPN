@@ -17,6 +17,7 @@ class ProtocolType(str, Enum):
     AMNEZIAWG = "amneziawg"
     SOCKS = "socks"
     HTTP = "http"
+    OPENVPN = "openvpn"
     ADGUARD = "adguard"
 
 
