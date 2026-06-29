@@ -256,10 +256,17 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.process.poll.return_value = None
         self.driver._process = self.process
 
+    @patch.object(SingBoxDriver, "_public_ip_via_proxy", return_value="203.0.113.10")
     @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_ok(self, port_mock, http_mock) -> None:
+    def test_health_check_ok(self, port_mock, http_mock, ip_mock) -> None:
         self.assertEqual(self.driver.health_check(), "ok")
+
+    @patch.object(SingBoxDriver, "_public_ip_via_proxy", return_value=None)
+    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_degraded_when_public_ip_check_fails(self, port_mock, http_mock, ip_mock) -> None:
+        self.assertEqual(self.driver.health_check(), "degraded")
 
     @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
@@ -287,6 +294,18 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         args = run_mock.call_args.args[0]
         self.assertIn("--socks5-hostname", args)
         self.assertIn("127.0.0.1:2080", args)
+
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/curl")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_public_ip_via_proxy_logs_observed_ip(self, run_mock, which_mock) -> None:
+        run_mock.return_value.returncode = 0
+        run_mock.return_value.stdout = "203.0.113.10\n"
+        run_mock.return_value.stderr = ""
+        self.assertEqual(self.driver._public_ip_via_proxy(), "203.0.113.10")
+        args = run_mock.call_args.args[0]
+        self.assertIn("--socks5-hostname", args)
+        self.assertIn("127.0.0.1:2080", args)
+        self.assertIn("https://api.ipify.org", args)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from models.profile import Profile, ProtocolType
 
 CONFIG_PATH = Path("/tmp/watchdogvpn_singbox.json")
 LOG_PATH = Path("/tmp/watchdogvpn_singbox.log")
+PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
 DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
 VIRTUAL_INTERFACE_PREFIXES = (
     "lo",
@@ -326,6 +327,40 @@ class SingBoxDriver(BaseDriver):
                 log_file.write("\n")
         return result.returncode == 0
 
+    def _public_ip_via_proxy(self, timeout: int = 5) -> str | None:
+        if not shutil.which("curl"):
+            with LOG_PATH.open("a", encoding="utf-8") as log_file:
+                log_file.write("health_check: curl not found for public IP check\n")
+            return None
+        result = subprocess.run(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--max-time",
+                str(timeout),
+                "--socks5-hostname",
+                "127.0.0.1:2080",
+                PUBLIC_IP_ENDPOINT,
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        output = (result.stdout or "").strip()
+        error = (result.stderr or "").strip()
+        with LOG_PATH.open("a", encoding="utf-8") as log_file:
+            if result.returncode == 0 and output:
+                log_file.write(f"health_check: public_ip_via_proxy={output}\n")
+                return output
+            log_file.write(f"health_check: public IP check exited {result.returncode}")
+            if error:
+                log_file.write(f": {error}")
+            log_file.write("\n")
+        return None
+
     def generate_singbox_config(self, profile: Profile) -> dict[str, Any]:
         outbound = self._protocol_to_outbound(profile)
         self._apply_dialer_options(outbound, profile)
@@ -386,7 +421,8 @@ class SingBoxDriver(BaseDriver):
             return "degraded"
 
         proxy_ok = self._http_via_proxy("https://example.com")
-        if proxy_ok:
+        public_ip = self._public_ip_via_proxy() if proxy_ok else None
+        if proxy_ok and public_ip:
             return "ok"
         return "degraded"
 
