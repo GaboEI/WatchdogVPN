@@ -203,10 +203,29 @@ def _parse_vmess(uri: str):
         raise ParseError("VMess payload requires add and port")
     config = {"raw_payload": data}
     config.update(_query_dict(parsed))
+    try:
+        config["port"] = int(port)
+    except (TypeError, ValueError) as exc:
+        raise ParseError("invalid VMess port") from exc
     config["host"] = host
-    config["port"] = int(port)
     if "id" in data:
         config["uuid"] = data["id"]
+    field_map = {
+        "aid": "alter_id",
+        "alterId": "alter_id",
+        "scy": "security",
+        "tls": "tls",
+        "sni": "sni",
+        "fp": "fingerprint",
+        "net": "network",
+        "path": "path",
+        "host": "transport_host",
+        "type": "header_type",
+        "alpn": "alpn",
+    }
+    for source_key, target_key in field_map.items():
+        if source_key in data and data[source_key] not in (None, ""):
+            config[target_key] = data[source_key]
     if "ps" in data:
         name = str(data["ps"])
     else:

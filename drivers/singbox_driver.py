@@ -116,6 +116,17 @@ class SingBoxDriver(BaseDriver):
             return [item.strip() for item in value.split(",") if item.strip()]
         return [value]
 
+    def _first_config_value(self, cfg: dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            value = cfg.get(key)
+            if value not in (None, ""):
+                return value
+        return None
+
+    def _normalize_alpn(self, value: Any) -> list[str] | None:
+        alpn = [str(item) for item in self._normalize_list(value) if str(item)]
+        return alpn or None
+
     def _split_endpoint(self, endpoint: Any) -> tuple[str | None, int | None]:
         if not isinstance(endpoint, str) or not endpoint.strip():
             return None, None
@@ -136,6 +147,57 @@ class SingBoxDriver(BaseDriver):
         if isinstance(value, str):
             return value.strip().lower() in {"1", "true", "yes", "on"}
         return False
+
+    def _vmess_tls_enabled(self, cfg: dict[str, Any]) -> bool:
+        tls_value = cfg.get("tls")
+        if isinstance(tls_value, bool):
+            return tls_value
+        if isinstance(tls_value, str):
+            return tls_value.strip().lower() in {"1", "true", "yes", "on", "tls"}
+        return False
+
+    def _build_standard_tls_options(self, cfg: dict[str, Any], default_server: Any) -> dict[str, Any]:
+        tls_options: dict[str, Any] = {
+            "enabled": True,
+            "server_name": self._first_config_value(cfg, "sni", "server_name") or default_server,
+        }
+        if self._truthy_config(self._first_config_value(cfg, "insecure", "allow_insecure", "allowInsecure")):
+            tls_options["insecure"] = True
+        fingerprint = self._first_config_value(cfg, "fingerprint", "fp")
+        if fingerprint:
+            tls_options["utls"] = {"enabled": True, "fingerprint": fingerprint}
+        alpn = self._normalize_alpn(cfg.get("alpn"))
+        if alpn:
+            tls_options["alpn"] = alpn
+        return tls_options
+
+    def _build_v2ray_transport(self, cfg: dict[str, Any]) -> dict[str, Any] | None:
+        network = str(self._first_config_value(cfg, "network", "net") or "tcp").lower()
+        if network in {"", "tcp"}:
+            return None
+
+        transport: dict[str, Any] = {"type": network}
+        if network in {"ws", "websocket"}:
+            transport["type"] = "ws"
+            path = cfg.get("path")
+            if path:
+                transport["path"] = path
+            host_header = self._first_config_value(cfg, "transport_host", "host_header", "ws_host")
+            if host_header:
+                transport["headers"] = {"Host": host_header}
+        elif network == "grpc":
+            service_name = self._first_config_value(cfg, "service_name", "serviceName", "grpc_service_name")
+            if service_name:
+                transport["service_name"] = service_name
+        elif network in {"http", "h2"}:
+            transport["type"] = "http"
+            path = cfg.get("path")
+            if path:
+                transport["path"] = path
+            host_header = self._first_config_value(cfg, "transport_host", "host_header")
+            if host_header:
+                transport["host"] = self._normalize_list(host_header)
+        return transport
 
     def _is_physical_interface(self, name: str) -> bool:
         return bool(name) and not name.startswith(VIRTUAL_INTERFACE_PREFIXES)
@@ -215,28 +277,23 @@ class SingBoxDriver(BaseDriver):
                 }
             return outbound
         if profile.protocol is ProtocolType.VMESS:
-            return {
+            outbound = {
                 "type": "vmess",
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
                 "uuid": cfg.get("uuid") or profile.id,
-                "alter_id": self._normalize_port(cfg.get("alter_id"), 0) or 0,
-                "security": cfg.get("security", "auto"),
+                "alter_id": self._normalize_port(self._first_config_value(cfg, "alter_id", "alterId", "aid"), 0) or 0,
+                "security": self._first_config_value(cfg, "security", "scy") or "auto",
             }
+            if self._vmess_tls_enabled(cfg):
+                outbound["tls"] = self._build_standard_tls_options(cfg, outbound["server"])
+            transport = self._build_v2ray_transport(cfg)
+            if transport:
+                outbound["transport"] = transport
+            return outbound
         if profile.protocol is ProtocolType.TROJAN:
-            tls_options = {
-                "enabled": True,
-                "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
-            }
-            if self._truthy_config(cfg.get("insecure") or cfg.get("allow_insecure") or cfg.get("allowInsecure")):
-                tls_options["insecure"] = True
-            fingerprint = cfg.get("fingerprint") or cfg.get("fp")
-            if fingerprint:
-                tls_options["utls"] = {"enabled": True, "fingerprint": fingerprint}
-            alpn = cfg.get("alpn")
-            if alpn:
-                tls_options["alpn"] = alpn if isinstance(alpn, list) else [alpn]
+            tls_options = self._build_standard_tls_options(cfg, cfg.get("host") or cfg.get("server"))
             return {
                 "type": "trojan",
                 "tag": profile.name,
@@ -276,7 +333,7 @@ class SingBoxDriver(BaseDriver):
                 outbound["obfs"] = {"type": "salamander", "password": obfs_password}
             return outbound
         if profile.protocol is ProtocolType.TUIC:
-            return {
+            outbound = {
                 "type": "tuic",
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
@@ -284,11 +341,12 @@ class SingBoxDriver(BaseDriver):
                 "uuid": cfg.get("uuid") or profile.id,
                 "password": cfg.get("password") or profile.id,
                 "congestion_control": cfg.get("congestion_control", "bbr"),
-                "tls": {
-                    "enabled": True,
-                    "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
-                },
+                "tls": self._build_standard_tls_options(cfg, cfg.get("host") or cfg.get("server")),
             }
+            udp_relay_mode = self._first_config_value(cfg, "udp_relay_mode", "udpRelayMode")
+            if udp_relay_mode:
+                outbound["udp_relay_mode"] = udp_relay_mode
+            return outbound
         if profile.protocol is ProtocolType.SHADOWSOCKS:
             return {
                 "type": "shadowsocks",
@@ -315,24 +373,30 @@ class SingBoxDriver(BaseDriver):
                 outbound["mtu"] = mtu
             return outbound
         if profile.protocol is ProtocolType.SOCKS:
-            return {
+            outbound = {
                 "type": "socks",
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
                 "version": cfg.get("version", "5"),
-                "username": cfg.get("username"),
-                "password": cfg.get("password"),
             }
+            if cfg.get("username"):
+                outbound["username"] = cfg["username"]
+            if cfg.get("password"):
+                outbound["password"] = cfg["password"]
+            return outbound
         if profile.protocol is ProtocolType.HTTP:
-            return {
+            outbound = {
                 "type": "http",
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "username": cfg.get("username"),
-                "password": cfg.get("password"),
             }
+            if cfg.get("username"):
+                outbound["username"] = cfg["username"]
+            if cfg.get("password"):
+                outbound["password"] = cfg["password"]
+            return outbound
         raise ValueError(f"unsupported protocol for sing-box: {profile.protocol.value}")
 
     def _write_config(self, config: dict[str, Any]) -> None:

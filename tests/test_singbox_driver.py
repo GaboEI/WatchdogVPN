@@ -180,6 +180,74 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_vmess_standard_tls_ws_options(self, bind_mock, write_mock) -> None:
+        profile = self._profile(
+            ProtocolType.VMESS,
+            host="vmess.example.com",
+            port="443",
+            uuid="uuid-1",
+            alter_id="0",
+            security="auto",
+            tls="tls",
+            sni="sni.example.com",
+            fingerprint="firefox",
+            alpn="h2,http/1.1",
+            network="ws",
+            path="/ws",
+            transport_host="cdn.example.com",
+        )
+        config = self.driver.generate_singbox_config(profile)
+        outbound = config["outbounds"][0]
+        self.assertEqual(outbound["type"], "vmess")
+        self.assertEqual(outbound["alter_id"], 0)
+        self.assertEqual(outbound["security"], "auto")
+        self.assertTrue(outbound["tls"]["enabled"])
+        self.assertEqual(outbound["tls"]["server_name"], "sni.example.com")
+        self.assertEqual(outbound["tls"]["utls"]["fingerprint"], "firefox")
+        self.assertEqual(outbound["tls"]["alpn"], ["h2", "http/1.1"])
+        self.assertEqual(outbound["transport"]["type"], "ws")
+        self.assertEqual(outbound["transport"]["path"], "/ws")
+        self.assertEqual(outbound["transport"]["headers"]["Host"], "cdn.example.com")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_tuic_standard_options(self, bind_mock, write_mock) -> None:
+        profile = self._profile(
+            ProtocolType.TUIC,
+            host="tuic.example.com",
+            port=443,
+            uuid="uuid-1",
+            password="secret",
+            sni="tuic.example.com",
+            alpn="h3",
+            insecure="true",
+            congestion_control="cubic",
+            udp_relay_mode="native",
+        )
+        config = self.driver.generate_singbox_config(profile)
+        outbound = config["outbounds"][0]
+        self.assertEqual(outbound["type"], "tuic")
+        self.assertEqual(outbound["congestion_control"], "cubic")
+        self.assertEqual(outbound["udp_relay_mode"], "native")
+        self.assertTrue(outbound["tls"]["insecure"])
+        self.assertEqual(outbound["tls"]["alpn"], ["h3"])
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_proxy_credentials_are_optional(self, bind_mock, write_mock) -> None:
+        socks_profile = self._profile(ProtocolType.SOCKS, host="socks.example.com", port=1080)
+        http_profile = self._profile(ProtocolType.HTTP, host="http.example.com", port=8080)
+
+        socks_outbound = self.driver.generate_singbox_config(socks_profile)["outbounds"][0]
+        http_outbound = self.driver.generate_singbox_config(http_profile)["outbounds"][0]
+
+        self.assertNotIn("username", socks_outbound)
+        self.assertNotIn("password", socks_outbound)
+        self.assertNotIn("username", http_outbound)
+        self.assertNotIn("password", http_outbound)
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_wireguard_from_standard_conf(self, bind_mock, write_mock) -> None:
         profile = parse_wg_config(
             """

@@ -39,6 +39,14 @@ class UriParserTests(unittest.TestCase):
                     "add": "vmess.example.com",
                     "port": "443",
                     "id": "uuid-1234",
+                    "aid": "0",
+                    "scy": "auto",
+                    "net": "ws",
+                    "tls": "tls",
+                    "sni": "sni.example.com",
+                    "host": "cdn.example.com",
+                    "path": "/ws",
+                    "fp": "firefox",
                 }
             ).encode("utf-8")
         ).decode("utf-8")
@@ -48,6 +56,14 @@ class UriParserTests(unittest.TestCase):
         self.assertEqual(profile.config["host"], "vmess.example.com")
         self.assertEqual(profile.config["port"], 443)
         self.assertEqual(profile.config["uuid"], "uuid-1234")
+        self.assertEqual(profile.config["alter_id"], "0")
+        self.assertEqual(profile.config["security"], "auto")
+        self.assertEqual(profile.config["network"], "ws")
+        self.assertEqual(profile.config["tls"], "tls")
+        self.assertEqual(profile.config["sni"], "sni.example.com")
+        self.assertEqual(profile.config["transport_host"], "cdn.example.com")
+        self.assertEqual(profile.config["path"], "/ws")
+        self.assertEqual(profile.config["fingerprint"], "firefox")
 
     def test_parse_trojan(self) -> None:
         profile = parse_uri("trojan://secret@example.com:443?security=tls")
