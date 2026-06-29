@@ -25,6 +25,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/conky.sh"
 # shellcheck source=lib/adguard_home.sh
 . "$ROOT_DIR/lib/adguard_home.sh"
+# shellcheck source=lib/singbox.sh
+. "$ROOT_DIR/lib/singbox.sh"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
@@ -560,6 +562,10 @@ if [[ "$ENABLE_ADGUARD_BACKEND" == "1" ]]; then
   install_official_adguard_vpn_cli
 else
   printf '[SKIP] AdGuard VPN CLI installation; selected backend is %s\n' "$BACKEND_MODE"
+fi
+
+if [[ "$CUSTOM_VPS_ENABLED" == "true" ]]; then
+  install_official_singbox
 fi
 
 printf '\nAdvanced DNS with AdGuard Home is optional. It enables DNS profile management\n'

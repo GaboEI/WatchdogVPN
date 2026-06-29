@@ -5,12 +5,11 @@ import os
 import shutil
 import socket
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
-from urllib.request import build_opener, install_opener, ProxyHandler, Request, urlopen
 
 from drivers.base import BaseDriver
 from models.connection_state import ConnectionState
@@ -18,6 +17,7 @@ from models.profile import Profile, ProtocolType
 
 
 CONFIG_PATH = Path("/tmp/watchdogvpn_singbox.json")
+LOG_PATH = Path("/tmp/watchdogvpn_singbox.log")
 
 
 @dataclass(slots=True)
@@ -40,8 +40,12 @@ class SingBoxDriver(BaseDriver):
         self.binaries = binaries or _BinaryPaths()
         self._process: subprocess.Popen[str] | None = None
         self._active_profile: Profile | None = None
+        self._connected_at: datetime | None = None
 
     def find_singbox_binary(self) -> str | None:
+        env_binary = os.environ.get("WATCHDOGVPN_SINGBOX_BIN")
+        if env_binary and os.path.exists(env_binary) and os.access(env_binary, os.X_OK):
+            return env_binary
         for candidate in self.binaries.sing_box:
             if os.path.exists(candidate) and os.access(candidate, os.X_OK):
                 return candidate
@@ -67,16 +71,12 @@ class SingBoxDriver(BaseDriver):
                 "tag": "watchdogvpn-socks-in",
                 "listen": "127.0.0.1",
                 "listen_port": 2080,
-                "sniff": True,
-                "sniff_override_destination": True,
             },
             {
                 "type": "http",
                 "tag": "watchdogvpn-http-in",
                 "listen": "127.0.0.1",
                 "listen_port": 2081,
-                "sniff": True,
-                "sniff_override_destination": True,
             },
         ]
 
@@ -99,22 +99,26 @@ class SingBoxDriver(BaseDriver):
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
                 "uuid": cfg.get("uuid") or profile.id,
                 "flow": cfg.get("flow"),
+                "network": cfg.get("network") or cfg.get("type") or "tcp",
             }
             security = cfg.get("security") or cfg.get("transport")
             if security:
                 outbound["tls"] = {
                     "enabled": True,
                     "server_name": cfg.get("sni") or cfg.get("server_name") or outbound["server"],
-                    "utls": {"enabled": True, "fingerprint": cfg.get("fingerprint", "chrome")},
+                    "utls": {"enabled": True, "fingerprint": cfg.get("fingerprint") or cfg.get("fp") or "chrome"},
                 }
-            if cfg.get("reality_public_key") or cfg.get("public_key") or cfg.get("short_id"):
+            reality_public_key = cfg.get("reality_public_key") or cfg.get("public_key") or cfg.get("pbk")
+            short_id = cfg.get("short_id") or cfg.get("sid")
+            if reality_public_key or short_id:
                 outbound["tls"] = {
                     "enabled": True,
                     "server_name": cfg.get("sni") or cfg.get("server_name") or outbound["server"],
+                    "utls": {"enabled": True, "fingerprint": cfg.get("fingerprint") or cfg.get("fp") or "chrome"},
                     "reality": {
                         "enabled": True,
-                        "public_key": cfg.get("reality_public_key") or cfg.get("public_key"),
-                        "short_id": cfg.get("short_id"),
+                        "public_key": reality_public_key,
+                        "short_id": short_id,
                     },
                 }
             return outbound
@@ -224,14 +228,44 @@ class SingBoxDriver(BaseDriver):
         except OSError:
             return False
 
-    def _http_via_proxy(self, proxy_url: str, target_url: str, timeout: float = 3.0) -> bool:
-        opener = build_opener(ProxyHandler({"http": proxy_url, "https": proxy_url}))
-        install_opener(opener)
-        try:
-            with opener.open(Request(target_url), timeout=timeout) as response:
-                return 200 <= getattr(response, "status", 200) < 500
-        except (URLError, OSError, TimeoutError):
+    def _wait_for_proxy_port(self, timeout: float = 3.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._port_open("127.0.0.1", 2080) or self._port_open("127.0.0.1", 2081):
+                return True
+            time.sleep(0.1)
+        return False
+
+    def _http_via_proxy(self, target_url: str, timeout: int = 5) -> bool:
+        if not shutil.which("curl"):
+            with LOG_PATH.open("a", encoding="utf-8") as log_file:
+                log_file.write("health_check: curl not found\n")
             return False
+        result = subprocess.run(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--max-time",
+                str(timeout),
+                "--socks5-hostname",
+                "127.0.0.1:2080",
+                target_url,
+            ],
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            error = (result.stderr or "").strip()
+            with LOG_PATH.open("a", encoding="utf-8") as log_file:
+                log_file.write(f"health_check: curl exited {result.returncode}")
+                if error:
+                    log_file.write(f": {error}")
+                log_file.write("\n")
+        return result.returncode == 0
 
     def generate_singbox_config(self, profile: Profile) -> dict[str, Any]:
         config = {
@@ -247,19 +281,26 @@ class SingBoxDriver(BaseDriver):
         if not binary:
             return False
         self.generate_singbox_config(profile)
+        log_file = LOG_PATH.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
             [binary, "run", "-c", str(CONFIG_PATH)],
             text=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
         )
+        log_file.close()
         self._active_profile = profile
-        return self._process.poll() is None
+        if self._process.poll() is None:
+            self._connected_at = datetime.now(timezone.utc)
+            return True
+        self._connected_at = None
+        return False
 
     def disconnect(self) -> bool:
         process = self._process
         self._process = None
         self._active_profile = None
+        self._connected_at = None
         try:
             if process is not None and process.poll() is None:
                 process.terminate()
@@ -277,11 +318,13 @@ class SingBoxDriver(BaseDriver):
         if process is None or process.poll() is not None:
             return "down"
 
-        ports_ok = self._port_open("127.0.0.1", 2080) or self._port_open("127.0.0.1", 2081)
+        ports_ok = self._wait_for_proxy_port()
         if not ports_ok:
+            with LOG_PATH.open("a", encoding="utf-8") as log_file:
+                log_file.write("health_check: local proxy ports are not responding\n")
             return "degraded"
 
-        proxy_ok = self._http_via_proxy("socks5://127.0.0.1:2080", "https://example.com")
+        proxy_ok = self._http_via_proxy("https://example.com")
         if proxy_ok:
             return "ok"
         return "degraded"
@@ -294,7 +337,7 @@ class SingBoxDriver(BaseDriver):
             profile_id = self._active_profile.id if self._active_profile else ""
             return ConnectionState(
                 active_profile_id=profile_id,
-                connected_at=datetime.now(timezone.utc),
+                connected_at=self._connected_at,
                 mode="sing-box",
                 tun_active=True,
                 proxy_active=True,

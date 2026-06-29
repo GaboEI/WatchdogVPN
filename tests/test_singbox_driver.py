@@ -19,6 +19,12 @@ class SingBoxDriverBinaryTests(unittest.TestCase):
     def test_find_binary_falls_back_to_which(self, access_mock, exists_mock, which_mock) -> None:
         self.assertEqual(self.driver.find_singbox_binary(), "/usr/bin/sing-box")
 
+    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIN": "/opt/karing/sing-box"})
+    @patch("drivers.singbox_driver.os.path.exists", return_value=True)
+    @patch("drivers.singbox_driver.os.access", return_value=True)
+    def test_find_binary_accepts_env_override_for_compatible_cores(self, access_mock, exists_mock) -> None:
+        self.assertEqual(self.driver.find_singbox_binary(), "/opt/karing/sing-box")
+
     @patch("drivers.singbox_driver.shutil.which", return_value=None)
     @patch("drivers.singbox_driver.os.path.exists", return_value=False)
     @patch("drivers.singbox_driver.os.access", return_value=False)
@@ -73,8 +79,9 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             port=443,
             uuid="uuid-1",
             sni="example.com",
-            reality_public_key="pubkey",
-            short_id="abcd",
+            pbk="pubkey",
+            sid="abcd",
+            fp="firefox",
         )
         config = self.driver.generate_singbox_config(profile)
 
@@ -86,6 +93,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(outbound["server_port"], 443)
         self.assertEqual(outbound["uuid"], "uuid-1")
         self.assertTrue(outbound["tls"]["enabled"])
+        self.assertEqual(outbound["tls"]["utls"]["fingerprint"], "firefox")
         self.assertEqual(outbound["tls"]["reality"]["public_key"], "pubkey")
         self.assertEqual(outbound["tls"]["reality"]["short_id"], "abcd")
         write_mock.assert_called_once()
@@ -147,6 +155,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         popen_mock.assert_called_once()
         self.assertIs(self.driver._process, process)
         self.assertIs(self.driver._active_profile, self.profile)
+        self.assertIsNotNone(self.driver._connected_at)
         self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/sing-box", "run", "-c", "/tmp/watchdogvpn_singbox.json"])
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)
@@ -163,6 +172,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         process.poll.return_value = None
         self.driver._process = process
         self.driver._active_profile = self.profile
+        self.driver._connected_at = unittest.mock.sentinel.connected_at
 
         self.assertTrue(self.driver.disconnect())
         process.terminate.assert_called_once()
@@ -170,6 +180,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         cleanup_mock.assert_called_once()
         self.assertIsNone(self.driver._process)
         self.assertIsNone(self.driver._active_profile)
+        self.assertIsNone(self.driver._connected_at)
 
     @patch.object(SingBoxDriver, "_cleanup_config")
     def test_disconnect_kills_hung_process(self, cleanup_mock) -> None:
@@ -193,10 +204,12 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         process.poll.return_value = None
         self.driver._process = process
         self.driver._active_profile = self.profile
+        self.driver._connected_at = unittest.mock.sentinel.connected_at
 
         state = self.driver.status()
         self.assertEqual(state.status, "connected")
         self.assertEqual(state.active_profile_id, "vless-1")
+        self.assertIs(state.connected_at, unittest.mock.sentinel.connected_at)
         self.assertTrue(state.proxy_active)
         self.assertTrue(state.tun_active)
 
@@ -217,17 +230,17 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.driver._process = self.process
 
     @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
-    @patch.object(SingBoxDriver, "_port_open", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
     def test_health_check_ok(self, port_mock, http_mock) -> None:
         self.assertEqual(self.driver.health_check(), "ok")
 
     @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
-    @patch.object(SingBoxDriver, "_port_open", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
     def test_health_check_degraded_when_proxy_http_fails(self, port_mock, http_mock) -> None:
         self.assertEqual(self.driver.health_check(), "degraded")
 
     @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
-    @patch.object(SingBoxDriver, "_port_open", return_value=False)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=False)
     def test_health_check_degraded_when_ports_closed(self, port_mock, http_mock) -> None:
         self.assertEqual(self.driver.health_check(), "degraded")
 
@@ -238,6 +251,15 @@ class SingBoxDriverHealthTests(unittest.TestCase):
     def test_health_check_down_when_process_dead(self) -> None:
         self.process.poll.return_value = 1
         self.assertEqual(self.driver.health_check(), "down")
+
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/curl")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_http_via_proxy_uses_curl_socks(self, run_mock, which_mock) -> None:
+        run_mock.return_value.returncode = 0
+        self.assertTrue(self.driver._http_via_proxy("https://example.com"))
+        args = run_mock.call_args.args[0]
+        self.assertIn("--socks5-hostname", args)
+        self.assertIn("127.0.0.1:2080", args)
 
 
 if __name__ == "__main__":
