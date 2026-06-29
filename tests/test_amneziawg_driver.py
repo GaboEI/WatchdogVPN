@@ -48,17 +48,17 @@ class AmneziaWGDriverTests(unittest.TestCase):
 
     # --- Detección de binarios ---
 
-    @patch("drivers.amneziawg_driver.shutil.which", return_value="/usr/bin/amneziawg-quick")
+    @patch("drivers.amneziawg_driver.shutil.which", return_value="/usr/bin/awg-quick")
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=False)
     @patch("drivers.amneziawg_driver.os.access", return_value=False)
     def test_find_quick_tool_falls_back_to_which(self, _access, _exists, _which) -> None:
-        self.assertEqual(self.driver.find_quick_tool(), "/usr/bin/amneziawg-quick")
+        self.assertEqual(self.driver.find_quick_tool(), "/usr/bin/awg-quick")
 
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=True)
     @patch("drivers.amneziawg_driver.os.access", return_value=True)
-    def test_find_quick_tool_prefers_amneziawg(self, _access, _exists) -> None:
+    def test_find_quick_tool_prefers_awg_quick(self, _access, _exists) -> None:
         result = self.driver.find_quick_tool()
-        self.assertEqual(result, "/usr/local/bin/amneziawg-quick")
+        self.assertEqual(result, "/usr/local/bin/awg-quick")
 
     @patch("drivers.amneziawg_driver.shutil.which", side_effect=lambda n: "/usr/bin/wg-quick" if n == "wg-quick" else None)
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=False)
@@ -79,7 +79,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
     def test_find_quick_tool_none_when_missing(self, _access, _exists, _which) -> None:
         self.assertIsNone(self.driver.find_quick_tool())
 
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/amneziawg-quick")
+    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
     def test_is_available_true(self, _tool) -> None:
         self.assertTrue(self.driver.is_available())
 
@@ -141,7 +141,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
     # --- Connect ---
 
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/amneziawg-quick")
+    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
     @patch("drivers.amneziawg_driver.subprocess.run")
     def test_connect_success(self, run_mock, _tool, _iface) -> None:
         run_mock.return_value.returncode = 0
@@ -150,7 +150,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
 
         self.assertTrue(self.driver.connect(self.profile))
         run_mock.assert_called_once_with(
-            ["/usr/bin/amneziawg-quick", "up", str(CONFIG_PATH)],
+            ["/usr/bin/awg-quick", "up", str(CONFIG_PATH)],
             text=True,
             capture_output=True,
             check=False,
@@ -158,7 +158,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertIs(self.driver._active_profile, self.profile)
         self.assertIsNotNone(self.driver._connected_at)
 
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/amneziawg-quick")
+    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
     @patch("drivers.amneziawg_driver.subprocess.run")
     def test_connect_failure_cleans_up(self, run_mock, _tool) -> None:
         run_mock.return_value.returncode = 1
@@ -176,7 +176,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
     # --- Disconnect ---
 
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=False)
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/amneziawg-quick")
+    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
     @patch("drivers.amneziawg_driver.subprocess.run")
     def test_disconnect_success(self, run_mock, _tool, _iface) -> None:
         CONFIG_PATH.write_text("test", encoding="utf-8")

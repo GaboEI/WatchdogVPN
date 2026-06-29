@@ -21,7 +21,9 @@ HANDSHAKE_TIMEOUT_SECONDS = 180
 
 @dataclass(slots=True)
 class _BinaryPaths:
-    amneziawg_quick: tuple[str, ...] = (
+    awg_quick: tuple[str, ...] = (
+        "/usr/local/bin/awg-quick",
+        "/usr/bin/awg-quick",
         "/usr/local/bin/amneziawg-quick",
         "/usr/bin/amneziawg-quick",
     )
@@ -61,7 +63,7 @@ class AmneziaWGDriver(BaseDriver):
         env_binary = os.environ.get("WATCHDOGVPN_AMNEZIAWG_BIN")
         if env_binary and os.path.exists(env_binary) and os.access(env_binary, os.X_OK):
             return env_binary
-        awg_quick = self._find_binary(self.binaries.amneziawg_quick, "amneziawg-quick")
+        awg_quick = self._find_binary(self.binaries.awg_quick, "awg-quick")
         if awg_quick:
             return awg_quick
         return self._find_binary(self.binaries.wg_quick, "wg-quick")
