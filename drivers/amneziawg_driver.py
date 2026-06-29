@@ -98,13 +98,25 @@ class AmneziaWGDriver(BaseDriver):
     def is_available(self) -> bool:
         return self.find_quick_tool() is not None
 
+    def _strip_empty_keys(self, raw: str) -> str:
+        lines: list[str] = []
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if "=" in stripped and not stripped.startswith("["):
+                _, _, value = stripped.partition("=")
+                if not value.strip():
+                    continue
+            lines.append(line)
+        return "\n".join(lines)
+
     def _write_config(self, profile: Profile) -> None:
         if profile.protocol is not ProtocolType.AMNEZIAWG:
             raise ValueError(f"protocolo no soportado por AmneziaWG driver: {profile.protocol.value}")
         raw = str(profile.config.get("raw") or "").strip()
         if not raw:
             raise ValueError("perfil AmneziaWG requiere raw config")
-        CONFIG_PATH.write_text(f"{raw}\n", encoding="utf-8")
+        cleaned = self._strip_empty_keys(raw)
+        CONFIG_PATH.write_text(f"{cleaned}\n", encoding="utf-8")
         CONFIG_PATH.chmod(0o600)
 
     def _cleanup_config(self) -> None:
@@ -122,16 +134,29 @@ class AmneziaWGDriver(BaseDriver):
         )
         return result.returncode == 0
 
+    def _reset_log(self) -> None:
+        try:
+            LOG_PATH.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            LOG_PATH.write_text("", encoding="utf-8")
+        except OSError:
+            pass
+
     def _log(self, message: str) -> None:
-        with LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(f"{message}\n")
+        try:
+            with LOG_PATH.open("a", encoding="utf-8") as f:
+                f.write(f"{message}\n")
+        except OSError:
+            pass
 
     def connect(self, profile: Profile) -> bool:
         tool = self.find_quick_tool()
         if not tool:
             return False
         self._write_config(profile)
-        LOG_PATH.write_text("", encoding="utf-8")
+        self._reset_log()
         result = subprocess.run(
             [tool, "up", str(CONFIG_PATH)],
             text=True,
