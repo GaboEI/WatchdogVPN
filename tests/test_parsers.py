@@ -113,6 +113,7 @@ class UriParserTests(unittest.TestCase):
             PrivateKey = private-key
             Address = 10.0.0.2/32
             DNS = 1.1.1.1
+            MTU = 1420
 
             [Peer]
             PublicKey = public-key
@@ -126,6 +127,7 @@ class UriParserTests(unittest.TestCase):
         self.assertEqual(profile.config["public_key"], "public-key")
         self.assertEqual(profile.config["endpoint"], "wg.example.com:51820")
         self.assertEqual(profile.config["allowed_ips"], "0.0.0.0/0, ::/0")
+        self.assertEqual(profile.config["mtu"], "1420")
 
     def test_parse_amneziawg_config(self) -> None:
         profile = parse_wg_config(

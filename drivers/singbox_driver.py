@@ -105,6 +105,29 @@ class SingBoxDriver(BaseDriver):
             return int(value)
         return default
 
+    def _normalize_list(self, value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return [value]
+
+    def _split_endpoint(self, endpoint: Any) -> tuple[str | None, int | None]:
+        if not isinstance(endpoint, str) or not endpoint.strip():
+            return None, None
+        value = endpoint.strip()
+        if value.startswith("[") and "]:" in value:
+            host, port = value[1:].split("]:", 1)
+            return host, self._normalize_port(port)
+        if ":" not in value:
+            return value, None
+        host, port = value.rsplit(":", 1)
+        return host, self._normalize_port(port)
+
     def _truthy_config(self, value: Any) -> bool:
         if isinstance(value, bool):
             return value
@@ -276,16 +299,21 @@ class SingBoxDriver(BaseDriver):
                 "password": cfg.get("password") or profile.id,
             }
         if profile.protocol is ProtocolType.WIREGUARD:
-            return {
+            endpoint_host, endpoint_port = self._split_endpoint(cfg.get("endpoint"))
+            outbound = {
                 "type": "wireguard",
                 "tag": profile.name,
-                "server": cfg.get("host") or cfg.get("server"),
-                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "local_address": cfg.get("local_address") or cfg.get("address") or [],
+                "server": cfg.get("host") or cfg.get("server") or endpoint_host,
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")) or endpoint_port,
+                "local_address": self._normalize_list(cfg.get("local_address") or cfg.get("address")),
                 "private_key": cfg.get("private_key"),
-                "peer_public_key": cfg.get("public_key"),
-                "reserved": cfg.get("reserved", []),
+                "peer_public_key": cfg.get("peer_public_key") or cfg.get("public_key"),
+                "reserved": self._normalize_list(cfg.get("reserved")),
             }
+            mtu = self._normalize_port(cfg.get("mtu"))
+            if mtu is not None:
+                outbound["mtu"] = mtu
+            return outbound
         if profile.protocol is ProtocolType.SOCKS:
             return {
                 "type": "socks",

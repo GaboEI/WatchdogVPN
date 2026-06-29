@@ -86,6 +86,8 @@ def parse_wg_config(text: str) -> Profile:
         config["address"] = interface["address"]
     if "dns" in interface:
         config["dns"] = interface["dns"]
+    if "mtu" in interface:
+        config["mtu"] = interface["mtu"]
     if "persistentkeepalive" in peer:
         config["persistent_keepalive"] = peer["persistentkeepalive"]
 
@@ -97,4 +99,3 @@ def parse_wg_config(text: str) -> Profile:
         config=config,
         source=ProfileSource.MANUAL,
     )
-

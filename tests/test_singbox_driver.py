@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from drivers.singbox_driver import SingBoxDriver
 from models.profile import Profile, ProfileSource, ProtocolType
+from parsers.wg_config import parse_wg_config
 
 
 class SingBoxDriverBinaryTests(unittest.TestCase):
@@ -176,6 +177,33 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(outbound["password"], "/secret")
         self.assertEqual(outbound["tls"]["utls"]["fingerprint"], "firefox")
         self.assertEqual(outbound["tls"]["alpn"], ["http/1.1"])
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_wireguard_from_standard_conf(self, bind_mock, write_mock) -> None:
+        profile = parse_wg_config(
+            """
+            [Interface]
+            PrivateKey = private-key
+            Address = 10.0.0.2/32, fd00::2/128
+            MTU = 1420
+
+            [Peer]
+            PublicKey = public-key
+            Endpoint = wg.example.com:51820
+            AllowedIPs = 0.0.0.0/0, ::/0
+            PersistentKeepalive = 25
+            """
+        )
+        config = self.driver.generate_singbox_config(profile)
+        outbound = config["outbounds"][0]
+        self.assertEqual(outbound["type"], "wireguard")
+        self.assertEqual(outbound["server"], "wg.example.com")
+        self.assertEqual(outbound["server_port"], 51820)
+        self.assertEqual(outbound["local_address"], ["10.0.0.2/32", "fd00::2/128"])
+        self.assertEqual(outbound["private_key"], "private-key")
+        self.assertEqual(outbound["peer_public_key"], "public-key")
+        self.assertEqual(outbound["mtu"], 1420)
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIND_INTERFACE": "enp4s0"})
