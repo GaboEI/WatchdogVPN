@@ -72,7 +72,8 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         )
 
     @patch.object(SingBoxDriver, "_write_config")
-    def test_generate_singbox_config_vless_reality(self, write_mock) -> None:
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_vless_reality(self, bind_mock, write_mock) -> None:
         profile = self._profile(
             ProtocolType.VLESS,
             host="vless.example.com",
@@ -99,7 +100,8 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         write_mock.assert_called_once()
 
     @patch.object(SingBoxDriver, "_write_config")
-    def test_generate_singbox_config_covers_other_protocols(self, write_mock) -> None:
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_covers_other_protocols(self, bind_mock, write_mock) -> None:
         cases = [
             (ProtocolType.VMESS, {"host": "vmess.example.com", "port": 443, "uuid": "u1"}),
             (ProtocolType.TROJAN, {"host": "trojan.example.com", "port": 443, "password": "secret"}),
@@ -125,11 +127,36 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             self.driver.generate_singbox_config(profile)
 
     @patch.object(SingBoxDriver, "_write_config")
-    def test_config_written_is_json_serializable(self, write_mock) -> None:
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_config_written_is_json_serializable(self, bind_mock, write_mock) -> None:
         profile = self._profile(ProtocolType.TROJAN, host="trojan.example.com", port=443, password="secret")
         config = self.driver.generate_singbox_config(profile)
         json.dumps(config)
         write_mock.assert_called_once()
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIND_INTERFACE": "enp4s0"})
+    def test_generate_singbox_config_applies_env_bind_interface(self, write_mock) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(profile)
+        self.assertEqual(config["outbounds"][0]["bind_interface"], "enp4s0")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIND_INTERFACE": "off"})
+    def test_generate_singbox_config_can_disable_bind_interface(self, write_mock) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(profile)
+        self.assertNotIn("bind_interface", config["outbounds"][0])
+
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/sbin/ip")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_detect_default_interface_skips_tunnels(self, run_mock, which_mock) -> None:
+        run_mock.return_value.returncode = 0
+        run_mock.return_value.stdout = (
+            "default via 10.20.0.2 dev tun0 table 2022\n"
+            "default via 192.168.0.1 dev enp4s0 proto dhcp metric 100\n"
+        )
+        self.assertEqual(self.driver._detect_default_interface(), "enp4s0")
 
 
 class SingBoxDriverProcessTests(unittest.TestCase):

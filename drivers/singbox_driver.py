@@ -18,6 +18,21 @@ from models.profile import Profile, ProtocolType
 
 CONFIG_PATH = Path("/tmp/watchdogvpn_singbox.json")
 LOG_PATH = Path("/tmp/watchdogvpn_singbox.log")
+DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
+VIRTUAL_INTERFACE_PREFIXES = (
+    "lo",
+    "tun",
+    "tap",
+    "wg",
+    "ppp",
+    "tailscale",
+    "zt",
+    "docker",
+    "br-",
+    "veth",
+    "virbr",
+    "podman",
+)
 
 
 @dataclass(slots=True)
@@ -88,6 +103,50 @@ class SingBoxDriver(BaseDriver):
         if isinstance(value, str) and value.isdigit():
             return int(value)
         return default
+
+    def _is_physical_interface(self, name: str) -> bool:
+        return bool(name) and not name.startswith(VIRTUAL_INTERFACE_PREFIXES)
+
+    def _detect_default_interface(self) -> str | None:
+        if not shutil.which("ip"):
+            return None
+        result = subprocess.run(
+            ["ip", "route", "show", "default"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if "dev" not in parts:
+                continue
+            interface = parts[parts.index("dev") + 1]
+            if self._is_physical_interface(interface):
+                return interface
+        return None
+
+    def _outbound_bind_interface(self, profile: Profile) -> str | None:
+        configured = profile.config.get("bind_interface")
+        if isinstance(configured, str):
+            value = configured.strip()
+            if value.lower() in DISABLE_BIND_VALUES:
+                return None
+            return value
+
+        env_value = os.environ.get("WATCHDOGVPN_SINGBOX_BIND_INTERFACE", "auto").strip()
+        if env_value.lower() in DISABLE_BIND_VALUES:
+            return None
+        if env_value.lower() != "auto":
+            return env_value
+        return self._detect_default_interface()
+
+    def _apply_dialer_options(self, outbound: dict[str, Any], profile: Profile) -> dict[str, Any]:
+        bind_interface = self._outbound_bind_interface(profile)
+        if bind_interface:
+            outbound["bind_interface"] = bind_interface
+        return outbound
 
     def _protocol_to_outbound(self, profile: Profile) -> dict[str, Any]:
         cfg = profile.config
@@ -268,10 +327,12 @@ class SingBoxDriver(BaseDriver):
         return result.returncode == 0
 
     def generate_singbox_config(self, profile: Profile) -> dict[str, Any]:
+        outbound = self._protocol_to_outbound(profile)
+        self._apply_dialer_options(outbound, profile)
         config = {
             "log": {"level": "warning"},
             "inbounds": self._build_inbounds(),
-            "outbounds": [self._protocol_to_outbound(profile)],
+            "outbounds": [outbound],
         }
         self._write_config(config)
         return config
