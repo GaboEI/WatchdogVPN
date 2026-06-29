@@ -55,6 +55,14 @@ class UriParserTests(unittest.TestCase):
         self.assertEqual(profile.config["host"], "example.com")
         self.assertEqual(profile.config["password"], "secret")
 
+    def test_parse_trojan_path_authority_variant(self) -> None:
+        profile = parse_uri("trojan:///secret@example.com:443?security=tls#demo")
+        self.assertEqual(profile.protocol, ProtocolType.TROJAN)
+        self.assertEqual(profile.name, "demo")
+        self.assertEqual(profile.config["host"], "example.com")
+        self.assertEqual(profile.config["port"], 443)
+        self.assertEqual(profile.config["password"], "/secret")
+
     def test_parse_hysteria2_alias(self) -> None:
         profile = parse_uri("hy2://password@example.com:443?sni=example.com")
         self.assertEqual(profile.protocol, ProtocolType.HYSTERIA2)

@@ -159,6 +159,25 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(outbound["down_mbps"], 200)
 
     @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_trojan_tls_options(self, bind_mock, write_mock) -> None:
+        profile = self._profile(
+            ProtocolType.TROJAN,
+            host="trojan.example.com",
+            port=5222,
+            password="/secret",
+            sni="trojan.example.com",
+            fp="firefox",
+            alpn="http/1.1",
+        )
+        config = self.driver.generate_singbox_config(profile)
+        outbound = config["outbounds"][0]
+        self.assertEqual(outbound["type"], "trojan")
+        self.assertEqual(outbound["password"], "/secret")
+        self.assertEqual(outbound["tls"]["utls"]["fingerprint"], "firefox")
+        self.assertEqual(outbound["tls"]["alpn"], ["http/1.1"])
+
+    @patch.object(SingBoxDriver, "_write_config")
     @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIND_INTERFACE": "enp4s0"})
     def test_generate_singbox_config_applies_env_bind_interface(self, write_mock) -> None:
         profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")

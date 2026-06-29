@@ -50,6 +50,20 @@ def _query_dict(parsed) -> dict[str, str]:
     return result
 
 
+def _normalize_path_authority(parsed, preserve_leading_slash: bool = False):
+    if parsed.hostname or not parsed.path.startswith("/") or "@" not in parsed.path:
+        return parsed
+    authority = parsed.path.lstrip("/")
+    if preserve_leading_slash:
+        authority = f"%2F{authority}"
+    rebuilt = f"{parsed.scheme}://{authority}"
+    if parsed.query:
+        rebuilt = f"{rebuilt}?{parsed.query}"
+    if parsed.fragment:
+        rebuilt = f"{rebuilt}#{parsed.fragment}"
+    return urlparse(rebuilt)
+
+
 def _build_profile(protocol: ProtocolType, parsed, config: dict[str, Any], name: str | None = None) -> Profile:
     host = parsed.hostname or ""
     port = parsed.port
@@ -88,7 +102,7 @@ def _parse_vless(uri: str):
 
 
 def _parse_trojan(uri: str):
-    parsed = urlparse(uri)
+    parsed = _normalize_path_authority(urlparse(uri), preserve_leading_slash=True)
     if not parsed.hostname or parsed.port is None:
         raise ParseError("Trojan URI requires host and port")
     config = _query_dict(parsed)

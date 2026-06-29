@@ -202,16 +202,25 @@ class SingBoxDriver(BaseDriver):
                 "security": cfg.get("security", "auto"),
             }
         if profile.protocol is ProtocolType.TROJAN:
+            tls_options = {
+                "enabled": True,
+                "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
+            }
+            if self._truthy_config(cfg.get("insecure") or cfg.get("allow_insecure") or cfg.get("allowInsecure")):
+                tls_options["insecure"] = True
+            fingerprint = cfg.get("fingerprint") or cfg.get("fp")
+            if fingerprint:
+                tls_options["utls"] = {"enabled": True, "fingerprint": fingerprint}
+            alpn = cfg.get("alpn")
+            if alpn:
+                tls_options["alpn"] = alpn if isinstance(alpn, list) else [alpn]
             return {
                 "type": "trojan",
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
                 "password": cfg.get("password") or profile.id,
-                "tls": {
-                    "enabled": True,
-                    "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
-                },
+                "tls": tls_options,
             }
         if profile.protocol is ProtocolType.HYSTERIA2:
             tls_options: dict[str, Any] = {
