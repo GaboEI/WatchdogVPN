@@ -67,7 +67,7 @@ hardening.
 - Add mocked integration tests for `vpn_truth_check`, `vpn_rotate.sh` and
   `vpn_watchdog.sh`.
 - Split the TUI into command, parser, state and render modules.
-- Reduce `shell=True` usage.
+- Keep Python subprocess usage out of shell mode.
 - Add verified/manual installation documentation for the official VPN CLI.
 - Promote `shellcheck` and `shfmt` from advisory CI checks to required checks
   after cleanup.

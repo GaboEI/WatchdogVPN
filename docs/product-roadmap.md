@@ -179,7 +179,7 @@ Goal: reduce security and maintenance risk before stable release.
 
 Planned work:
 
-- Reduce risky `shell=True` paths in the TUI.
+- Keep TUI command execution on explicit argv wrappers and avoid shell mode.
 - Centralize command execution.
 - Improve install/update/uninstall contract tests.
 - Expand CI beyond syntax and lightweight unit checks.

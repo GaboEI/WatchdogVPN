@@ -78,8 +78,7 @@ After updating, `command -v watchdogvpn` should return:
 ## Known Limitations
 
 - This is still an alpha release, not a stable 1.0 release.
-- Some TUI command helpers still use `shell=True`; this is tracked as hardening
-  work.
+- TUI command helpers use explicit argv wrappers instead of subprocess shell mode.
 - External installer verification for the official AdGuard VPN CLI and AdGuard
   Home is not yet cryptographically pinned.
 - The first backend is AdGuard VPN CLI. WireGuard/private backend support is not
@@ -103,4 +102,3 @@ Real-machine validation recorded:
 - Arch Linux workstation.
 - Debian install flow with DNS tooling.
 - CachyOS install flow with advanced DNS and post-reboot VPN recovery.
-

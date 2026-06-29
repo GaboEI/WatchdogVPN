@@ -208,7 +208,7 @@ tests/              Syntax, unit behavior and runtime validation helpers
 
 - `v0.3.1` is the last documented alpha-line release.
 - The current TUI is functional and the gradual module split has started, but most rendering/action flow still lives in `tui/VPN`.
-- Some Python TUI command helpers still use `shell=True`; this is tracked as security hardening work.
+- Python TUI command helpers avoid subprocess shell mode; legacy shell pipelines run through explicit Bash argv wrappers.
 - The installer can guide legacy AdGuard VPN flows, but that path is no longer the product focus.
 
 ## Validation

@@ -210,7 +210,7 @@ Acceptance criteria:
 
 ### v1.0.0
 
-#### Reduce remaining TUI `shell=True` usage
+#### Keep TUI command execution out of shell mode
 
 Labels: `security`, `tui`, `v1.0.0`
 

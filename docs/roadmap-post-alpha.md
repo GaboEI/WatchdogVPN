@@ -155,7 +155,7 @@ Required before `v1.0.0`:
 - Debian validation completed or clearly maintained.
 - Persistent config implemented and tested.
 - Security reporting exists.
-- Known `shell=True` hardening work is reduced or documented.
+- TUI command execution avoids shell mode or documents any future exception.
 - CI is stronger than syntax-only validation.
 - Release notes are written for non-author users.
 

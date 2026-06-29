@@ -141,10 +141,9 @@ Planned hardening:
 
 ## Python TUI Command Execution
 
-The TUI centralizes shell execution in `tui/watchdogvpn/commands.py`. Some helper
-functions still use `subprocess.run(..., shell=True)` because the current TUI
-executes existing shell pipelines around systemd, sudo, awk and sed. This remains
-a hardening area because the product can trigger privileged actions.
+The TUI centralizes command execution in `tui/watchdogvpn/commands.py`. Existing
+shell pipelines around systemd, sudo, awk and sed run through explicit Bash argv
+wrappers with `shell=False`.
 
 Current rules:
 

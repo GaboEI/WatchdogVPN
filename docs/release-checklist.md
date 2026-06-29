@@ -170,7 +170,7 @@ git push origin v0.3.1
 - Fedora support
 - WireGuard/private backend support
 - complete TUI modularity
-- complete removal of all `shell=True` call sites
+- keep subprocess shell-mode call sites out of Python runtime code
 - cryptographically pinned verification for every external installer path
 - automatic runtime updates from the TUI
 - full TUI internationalization

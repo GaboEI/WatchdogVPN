@@ -235,7 +235,7 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   timer units, timer intervals and bypass domains.
 - Add install/security contract tests for privileged file modes, TUI package
   installation and DNS rescue ordering during uninstall.
-- Start reducing `shell=True` usage by adding argument-list subprocess helpers
+- Start reducing subprocess shell-mode usage by adding argument-list subprocess helpers
   for simple TUI command execution.
 - Add an operational audit for excessive VPN rotations and identify
   timer/restart-triggered rotations as the main suspect after real connectivity

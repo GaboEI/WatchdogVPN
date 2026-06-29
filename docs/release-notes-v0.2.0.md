@@ -147,8 +147,7 @@ VPN -> Update
 - The Update Center does not perform automatic runtime updates.
 - Timer and DNS preferences are documented in the configuration model, but
   runtime application remains read-only for now.
-- Some TUI command helpers still use `shell=True`; this remains tracked as
-  hardening work.
+- TUI command helpers use explicit argv wrappers instead of subprocess shell mode.
 - External installer verification for the official AdGuard VPN CLI and AdGuard
   Home is not yet cryptographically pinned.
 - The first backend is AdGuard VPN CLI. WireGuard/private backend support is not

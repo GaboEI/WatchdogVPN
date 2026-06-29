@@ -1,8 +1,8 @@
 """Command execution helpers for the WatchdogVPN TUI.
 
-This module centralizes shell execution used by the TUI. Most commands here are
-existing shell pipelines around systemd, sudo, awk and sed; keeping them behind
-one module makes later hardening measurable without changing the renderer.
+This module centralizes command execution used by the TUI. Some commands are
+existing Bash pipelines around systemd, sudo, awk and sed; they are executed via
+an explicit argv form instead of subprocess shell mode.
 """
 
 import re
@@ -15,12 +15,11 @@ from watchdogvpn.formatting import format_span
 def run(cmd: str, timeout: int = 8) -> str:
     try:
         out = subprocess.run(
-            cmd,
-            shell=True,
+            ["/bin/bash", "-lc", cmd],
+            shell=False,
             text=True,
             capture_output=True,
             timeout=timeout,
-            executable="/bin/bash",
         )
         text = ((out.stdout or "") + (out.stderr or "")).strip()
         return text
@@ -59,12 +58,11 @@ def run_process_args(args: list[str], timeout: int = 8):
 def run_process(cmd: str, timeout: int = 8):
     try:
         return subprocess.run(
-            cmd,
-            shell=True,
+            ["/bin/bash", "-lc", cmd],
+            shell=False,
             text=True,
             capture_output=True,
             timeout=timeout,
-            executable="/bin/bash",
         )
     except Exception:
         return None
@@ -73,13 +71,12 @@ def run_process(cmd: str, timeout: int = 8):
 def run_with_input(cmd: str, data: str, timeout: int = 8):
     try:
         return subprocess.run(
-            cmd,
-            shell=True,
+            ["/bin/bash", "-lc", cmd],
+            shell=False,
             text=True,
             input=data,
             capture_output=True,
             timeout=timeout,
-            executable="/bin/bash",
         )
     except Exception:
         return None
@@ -89,12 +86,11 @@ def run_command(cmd: str, timeout: int = 8):
     del timeout
     try:
         proc = subprocess.Popen(
-            cmd,
-            shell=True,
+            ["/bin/bash", "-lc", cmd],
+            shell=False,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            executable="/bin/bash",
         )
         return proc
     except Exception:

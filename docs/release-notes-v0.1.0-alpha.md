@@ -51,9 +51,7 @@ and CI.
 - The TUI still contains most rendering flow in `tui/VPN`, but action command
   builders, render primitives and state/command helpers are already split into
   importable modules.
-- Some TUI command helpers still use `shell=True`; this is tracked as hardening
-  work, although simple helper paths have started moving to argument-list
-  subprocess calls.
+- TUI command helpers use explicit argv wrappers instead of subprocess shell mode.
 - External installer verification for the official AdGuard VPN CLI and AdGuard
   Home is not yet cryptographically pinned.
 - The first backend is AdGuard VPN CLI. WireGuard/private backend support is not
