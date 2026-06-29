@@ -18,6 +18,7 @@ class ProtocolType(str, Enum):
     SOCKS = "socks"
     HTTP = "http"
     OPENVPN = "openvpn"
+    OPENVPN_CLOAK = "openvpn_cloak"
     ADGUARD = "adguard"
 
 
