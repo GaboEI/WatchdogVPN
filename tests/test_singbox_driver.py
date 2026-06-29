@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -121,6 +122,91 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         config = self.driver.generate_singbox_config(profile)
         json.dumps(config)
         write_mock.assert_called_once()
+
+
+class SingBoxDriverProcessTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.driver = SingBoxDriver()
+        self.profile = Profile(
+            id="vless-1",
+            name="vless-demo",
+            protocol=ProtocolType.VLESS,
+            config={"host": "vless.example.com", "port": 443, "uuid": "uuid-1"},
+            source=ProfileSource.MANUAL,
+        )
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_starts_process(self, popen_mock, generate_mock, binary_mock) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+
+        self.assertTrue(self.driver.connect(self.profile))
+        generate_mock.assert_called_once_with(self.profile)
+        popen_mock.assert_called_once()
+        self.assertIs(self.driver._process, process)
+        self.assertIs(self.driver._active_profile, self.profile)
+        self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/sing-box", "run", "-c", "/tmp/watchdogvpn_singbox.json"])
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_returns_false_when_binary_missing(self, popen_mock, generate_mock, binary_mock) -> None:
+        self.assertFalse(self.driver.connect(self.profile))
+        generate_mock.assert_not_called()
+        popen_mock.assert_not_called()
+
+    @patch.object(SingBoxDriver, "_cleanup_config")
+    def test_disconnect_terminates_and_cleans_config(self, cleanup_mock) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        self.assertTrue(self.driver.disconnect())
+        process.terminate.assert_called_once()
+        process.wait.assert_called()
+        cleanup_mock.assert_called_once()
+        self.assertIsNone(self.driver._process)
+        self.assertIsNone(self.driver._active_profile)
+
+    @patch.object(SingBoxDriver, "_cleanup_config")
+    def test_disconnect_kills_hung_process(self, cleanup_mock) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        process.wait.side_effect = [subprocess.TimeoutExpired(cmd="sing-box", timeout=5), None]
+        self.driver._process = process
+
+        self.assertTrue(self.driver.disconnect())
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
+        self.assertEqual(process.wait.call_count, 2)
+        cleanup_mock.assert_called_once()
+
+    def test_status_returns_standby_without_process(self) -> None:
+        state = self.driver.status()
+        self.assertEqual(state.status, "standby")
+
+    def test_status_returns_connected_when_process_alive(self) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        state = self.driver.status()
+        self.assertEqual(state.status, "connected")
+        self.assertEqual(state.active_profile_id, "vless-1")
+        self.assertTrue(state.proxy_active)
+        self.assertTrue(state.tun_active)
+
+    def test_status_returns_standby_when_process_dead(self) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = 1
+        self.driver._process = process
+
+        state = self.driver.status()
+        self.assertEqual(state.status, "standby")
 
 
 if __name__ == "__main__":

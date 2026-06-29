@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,8 @@ class SingBoxDriver(BaseDriver):
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
         self.binaries = binaries or _BinaryPaths()
+        self._process: subprocess.Popen[str] | None = None
+        self._active_profile: Profile | None = None
 
     def find_singbox_binary(self) -> str | None:
         for candidate in self.binaries.sing_box:
@@ -207,6 +210,10 @@ class SingBoxDriver(BaseDriver):
     def _write_config(self, config: dict[str, Any]) -> None:
         CONFIG_PATH.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
 
+    def _cleanup_config(self) -> None:
+        if CONFIG_PATH.exists():
+            CONFIG_PATH.unlink()
+
     def generate_singbox_config(self, profile: Profile) -> dict[str, Any]:
         config = {
             "log": {"level": "warning"},
@@ -217,13 +224,50 @@ class SingBoxDriver(BaseDriver):
         return config
 
     def connect(self, profile: Profile) -> bool:
-        raise NotImplementedError("Task 4.1 does not implement connect yet")
+        binary = self.find_singbox_binary()
+        if not binary:
+            return False
+        self.generate_singbox_config(profile)
+        self._process = subprocess.Popen(
+            [binary, "run", "-c", str(CONFIG_PATH)],
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self._active_profile = profile
+        return self._process.poll() is None
 
     def disconnect(self) -> bool:
-        raise NotImplementedError("Task 4.1 does not implement disconnect yet")
+        process = self._process
+        self._process = None
+        self._active_profile = None
+        try:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+        finally:
+            self._cleanup_config()
+        return True
 
     def health_check(self) -> str:
         raise NotImplementedError("Task 4.1 does not implement health_check yet")
 
     def status(self) -> ConnectionState:
-        raise NotImplementedError("Task 4.1 does not implement status yet")
+        process = self._process
+        if process is None:
+            return ConnectionState(status="standby")
+        if process.poll() is None:
+            profile_id = self._active_profile.id if self._active_profile else ""
+            return ConnectionState(
+                active_profile_id=profile_id,
+                connected_at=datetime.now(timezone.utc),
+                mode="sing-box",
+                tun_active=True,
+                proxy_active=True,
+                status="connected",
+            )
+        return ConnectionState(status="standby")
