@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from drivers.base import BaseDriver
 from models.connection_state import ConnectionState
-from models.profile import Profile
+from models.profile import Profile, ProtocolType
+
+
+CONFIG_PATH = Path("/tmp/watchdogvpn_singbox.json")
 
 
 @dataclass(slots=True)
@@ -47,6 +53,168 @@ class SingBoxDriver(BaseDriver):
 
     def is_available(self) -> bool:
         return self.find_singbox_binary() is not None
+
+    def _build_inbounds(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "socks",
+                "tag": "watchdogvpn-socks-in",
+                "listen": "127.0.0.1",
+                "listen_port": 2080,
+                "sniff": True,
+                "sniff_override_destination": True,
+            },
+            {
+                "type": "http",
+                "tag": "watchdogvpn-http-in",
+                "listen": "127.0.0.1",
+                "listen_port": 2081,
+                "sniff": True,
+                "sniff_override_destination": True,
+            },
+        ]
+
+    def _normalize_port(self, value: Any, default: int | None = None) -> int | None:
+        if value is None:
+            return default
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return default
+
+    def _protocol_to_outbound(self, profile: Profile) -> dict[str, Any]:
+        cfg = profile.config
+        if profile.protocol is ProtocolType.VLESS:
+            outbound: dict[str, Any] = {
+                "type": "vless",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "uuid": cfg.get("uuid") or profile.id,
+                "flow": cfg.get("flow"),
+            }
+            security = cfg.get("security") or cfg.get("transport")
+            if security:
+                outbound["tls"] = {
+                    "enabled": True,
+                    "server_name": cfg.get("sni") or cfg.get("server_name") or outbound["server"],
+                    "utls": {"enabled": True, "fingerprint": cfg.get("fingerprint", "chrome")},
+                }
+            if cfg.get("reality_public_key") or cfg.get("public_key") or cfg.get("short_id"):
+                outbound["tls"] = {
+                    "enabled": True,
+                    "server_name": cfg.get("sni") or cfg.get("server_name") or outbound["server"],
+                    "reality": {
+                        "enabled": True,
+                        "public_key": cfg.get("reality_public_key") or cfg.get("public_key"),
+                        "short_id": cfg.get("short_id"),
+                    },
+                }
+            return outbound
+        if profile.protocol is ProtocolType.VMESS:
+            return {
+                "type": "vmess",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "uuid": cfg.get("uuid") or profile.id,
+                "alter_id": self._normalize_port(cfg.get("alter_id"), 0) or 0,
+                "security": cfg.get("security", "auto"),
+            }
+        if profile.protocol is ProtocolType.TROJAN:
+            return {
+                "type": "trojan",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "password": cfg.get("password") or profile.id,
+                "tls": {
+                    "enabled": True,
+                    "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
+                },
+            }
+        if profile.protocol is ProtocolType.HYSTERIA2:
+            outbound = {
+                "type": "hysteria2",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "password": cfg.get("password") or profile.id,
+                "tls": {
+                    "enabled": True,
+                    "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
+                },
+            }
+            if cfg.get("obfs"):
+                outbound["obfs"] = {"type": "salamander", "password": cfg["obfs"]}
+            return outbound
+        if profile.protocol is ProtocolType.TUIC:
+            return {
+                "type": "tuic",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "uuid": cfg.get("uuid") or profile.id,
+                "password": cfg.get("password") or profile.id,
+                "congestion_control": cfg.get("congestion_control", "bbr"),
+                "tls": {
+                    "enabled": True,
+                    "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
+                },
+            }
+        if profile.protocol is ProtocolType.SHADOWSOCKS:
+            return {
+                "type": "shadowsocks",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "method": cfg.get("method", "chacha20-ietf-poly1305"),
+                "password": cfg.get("password") or profile.id,
+            }
+        if profile.protocol is ProtocolType.WIREGUARD:
+            return {
+                "type": "wireguard",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "local_address": cfg.get("local_address") or cfg.get("address") or [],
+                "private_key": cfg.get("private_key"),
+                "peer_public_key": cfg.get("public_key"),
+                "reserved": cfg.get("reserved", []),
+            }
+        if profile.protocol is ProtocolType.SOCKS:
+            return {
+                "type": "socks",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "version": cfg.get("version", "5"),
+                "username": cfg.get("username"),
+                "password": cfg.get("password"),
+            }
+        if profile.protocol is ProtocolType.HTTP:
+            return {
+                "type": "http",
+                "tag": profile.name,
+                "server": cfg.get("host") or cfg.get("server"),
+                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
+                "username": cfg.get("username"),
+                "password": cfg.get("password"),
+            }
+        raise ValueError(f"unsupported protocol for sing-box: {profile.protocol.value}")
+
+    def _write_config(self, config: dict[str, Any]) -> None:
+        CONFIG_PATH.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
+
+    def generate_singbox_config(self, profile: Profile) -> dict[str, Any]:
+        config = {
+            "log": {"level": "warning"},
+            "inbounds": self._build_inbounds(),
+            "outbounds": [self._protocol_to_outbound(profile)],
+        }
+        self._write_config(config)
+        return config
 
     def connect(self, profile: Profile) -> bool:
         raise NotImplementedError("Task 4.1 does not implement connect yet")
