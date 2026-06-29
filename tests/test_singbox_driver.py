@@ -135,6 +135,30 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         write_mock.assert_called_once()
 
     @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_hysteria2_extended_options(self, bind_mock, write_mock) -> None:
+        profile = self._profile(
+            ProtocolType.HYSTERIA2,
+            host="hy2.example.com",
+            port=44333,
+            password="secret",
+            sni="hy2.example.com",
+            alpn="h3",
+            allowInsecure="true",
+            obfsPassword="obfs-secret",
+            uploadMbps="100",
+            downloadMbps="200",
+        )
+        config = self.driver.generate_singbox_config(profile)
+        outbound = config["outbounds"][0]
+        self.assertEqual(outbound["type"], "hysteria2")
+        self.assertEqual(outbound["tls"]["alpn"], ["h3"])
+        self.assertTrue(outbound["tls"]["insecure"])
+        self.assertEqual(outbound["obfs"]["password"], "obfs-secret")
+        self.assertEqual(outbound["up_mbps"], 100)
+        self.assertEqual(outbound["down_mbps"], 200)
+
+    @patch.object(SingBoxDriver, "_write_config")
     @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIND_INTERFACE": "enp4s0"})
     def test_generate_singbox_config_applies_env_bind_interface(self, write_mock) -> None:
         profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")

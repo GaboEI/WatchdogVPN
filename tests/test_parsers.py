@@ -61,6 +61,11 @@ class UriParserTests(unittest.TestCase):
         self.assertEqual(profile.config["host"], "example.com")
         self.assertEqual(profile.config["password"], "password")
 
+    def test_parse_hysteria2_user_password_keeps_full_auth(self) -> None:
+        profile = parse_uri("hy2://user:secret@example.com:443?sni=example.com")
+        self.assertEqual(profile.protocol, ProtocolType.HYSTERIA2)
+        self.assertEqual(profile.config["password"], "user:secret")
+
     def test_parse_shadowsocks_base64(self) -> None:
         payload = base64.urlsafe_b64encode(b"chacha20-ietf-poly1305:secret@example.com:8388").decode("utf-8")
         profile = parse_uri(f"ss://{payload}#ss-demo")

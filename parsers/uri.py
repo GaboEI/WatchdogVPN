@@ -104,10 +104,10 @@ def _parse_hysteria2(uri: str):
     if not parsed.hostname or parsed.port is None:
         raise ParseError("Hysteria2 URI requires host and port")
     config = _query_dict(parsed)
-    if parsed.username:
+    if parsed.username and parsed.password:
+        config["password"] = f"{unquote(parsed.username)}:{unquote(parsed.password)}"
+    elif parsed.username:
         config["password"] = unquote(parsed.username)
-    if parsed.password:
-        config["password"] = unquote(parsed.password)
     return _build_profile(ProtocolType.HYSTERIA2, parsed, config)
 
 

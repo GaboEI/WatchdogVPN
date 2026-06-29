@@ -105,6 +105,15 @@ class SingBoxDriver(BaseDriver):
             return int(value)
         return default
 
+    def _truthy_config(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return False
+
     def _is_physical_interface(self, name: str) -> bool:
         return bool(name) and not name.startswith(VIRTUAL_INTERFACE_PREFIXES)
 
@@ -205,19 +214,34 @@ class SingBoxDriver(BaseDriver):
                 },
             }
         if profile.protocol is ProtocolType.HYSTERIA2:
+            tls_options: dict[str, Any] = {
+                "enabled": True,
+                "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
+            }
+            if self._truthy_config(cfg.get("insecure") or cfg.get("allow_insecure") or cfg.get("allowInsecure")):
+                tls_options["insecure"] = True
+            alpn = cfg.get("alpn")
+            if alpn:
+                tls_options["alpn"] = alpn if isinstance(alpn, list) else [alpn]
             outbound = {
                 "type": "hysteria2",
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
                 "password": cfg.get("password") or profile.id,
-                "tls": {
-                    "enabled": True,
-                    "server_name": cfg.get("sni") or cfg.get("server_name") or cfg.get("host") or cfg.get("server"),
-                },
+                "tls": tls_options,
             }
+            up_mbps = self._normalize_port(cfg.get("up_mbps") or cfg.get("upload_mbps") or cfg.get("uploadMbps"))
+            down_mbps = self._normalize_port(cfg.get("down_mbps") or cfg.get("download_mbps") or cfg.get("downloadMbps"))
+            if up_mbps is not None:
+                outbound["up_mbps"] = up_mbps
+            if down_mbps is not None:
+                outbound["down_mbps"] = down_mbps
             if cfg.get("obfs"):
                 outbound["obfs"] = {"type": "salamander", "password": cfg["obfs"]}
+            obfs_password = cfg.get("obfs_password") or cfg.get("obfs-password") or cfg.get("obfsPassword")
+            if obfs_password:
+                outbound["obfs"] = {"type": "salamander", "password": obfs_password}
             return outbound
         if profile.protocol is ProtocolType.TUIC:
             return {
