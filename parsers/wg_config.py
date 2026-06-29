@@ -8,8 +8,8 @@ from parsers.uri import ParseError
 
 
 _SECTION_RE = re.compile(r"^\[(?P<section>[^\]]+)\]\s*$")
-_KEYVAL_RE = re.compile(r"^(?P<key>[A-Za-z0-9_]+)\s*=\s*(?P<value>.+?)\s*$")
-_OBFUSCATION_KEYS = {"jc", "jmin", "jmax", "s1", "s2", "h1", "h2"}
+_KEYVAL_RE = re.compile(r"^(?P<key>[A-Za-z0-9_]+)\s*=\s*(?P<value>.*?)\s*$")
+_OBFUSCATION_KEYS = {"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4"}
 
 
 def _strip_quotes(value: str) -> str:
