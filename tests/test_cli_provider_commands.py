@@ -157,6 +157,18 @@ class CliProviderCommandTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("provider not found: missing", result.stderr)
 
+    def test_provider_add_invalid_url_fails_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["provider", "add", "TU_URL_REAL_DEL_PROVIDER", "--name", "netz.tg"],
+                tmp,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("invalid subscription URL: TU_URL_REAL_DEL_PROVIDER", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_provider_edit_requires_name_or_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.seed_provider(tmp)

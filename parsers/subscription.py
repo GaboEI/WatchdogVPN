@@ -20,16 +20,18 @@ DEFAULT_SUBSCRIPTION_USER_AGENT = (
 
 def _fetch_text(url: str) -> str:
     user_agent = os.environ.get("WATCHDOGVPN_SUBSCRIPTION_USER_AGENT", DEFAULT_SUBSCRIPTION_USER_AGENT)
-    request = Request(
-        url,
-        headers={
-            "User-Agent": user_agent,
-            "Accept": "text/plain, application/json, application/yaml, text/yaml, */*",
-        },
-    )
     try:
+        request = Request(
+            url,
+            headers={
+                "User-Agent": user_agent,
+                "Accept": "text/plain, application/json, application/yaml, text/yaml, */*",
+            },
+        )
         with urlopen(request) as response:  # nosec - subscription URLs are user-provided inputs
             raw = response.read()
+    except ValueError as exc:
+        raise ParseError(f"invalid subscription URL: {url}") from exc
     except URLError as exc:
         raise ParseError(f"failed to fetch subscription: {exc}") from exc
     if not raw:

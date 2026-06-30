@@ -292,6 +292,10 @@ class ClashYamlParserTests(unittest.TestCase):
 
 
 class SubscriptionParserTests(unittest.TestCase):
+    def test_fetch_and_parse_invalid_url_raises_parse_error(self) -> None:
+        with self.assertRaisesRegex(ParseError, "invalid subscription URL"):
+            fetch_and_parse("TU_URL_REAL_DEL_PROVIDER")
+
     @patch("parsers.subscription.urlopen")
     def test_fetch_uses_subscription_user_agent(self, urlopen_mock) -> None:
         urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
