@@ -27,3 +27,6 @@ vpn-stress-runs/
 # Local build/cache
 .cache/
 tmp/
+
+# IDE/editor tool configs that may land in project root
+/config.json
