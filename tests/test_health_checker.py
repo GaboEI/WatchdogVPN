@@ -118,6 +118,27 @@ class HealthCheckerTests(unittest.TestCase):
         self.assertEqual(result, "ok")
         self.assertEqual(verify_calls, [False])
 
+    def test_falls_back_to_direct_when_proxy_mode_driver_has_proxy_inactive(self) -> None:
+        # Regression: a driver whose mode IS in PROXY_BASED_MODES but is
+        # currently running without the local proxy up (proxy_active=False)
+        # - e.g. a future sing-box TUN connection mode (Phase 11) - must
+        # still fall through to direct/TUN verification instead of being
+        # short-circuited to "down".
+        driver = StubDriver(
+            "ok",
+            ConnectionState(status="connected", mode="sing-box", proxy_active=False, tun_active=True),
+        )
+        verify_calls: list[bool] = []
+
+        def verify(via_proxy: bool):
+            verify_calls.append(via_proxy)
+            return True, "8.8.4.4"
+
+        result = health_checker.check(make_profile(), driver, verify=verify)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(verify_calls, [False])
+
     def test_degraded_when_external_endpoint_unreachable(self) -> None:
         driver = StubDriver(
             "ok",

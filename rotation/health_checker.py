@@ -15,16 +15,20 @@ EXTERNAL_CHECK_URL = "https://example.com"
 PUBLIC_IP_URL = "https://api.ipify.org"
 LOCAL_SOCKS_PROXY = "127.0.0.1:2080"
 
-# Drivers whose ConnectionState.mode means "traffic exits through the local
-# SOCKS proxy at LOCAL_SOCKS_PROXY". Every other driver is treated as a
-# full system tunnel (TUN-based), verified directly instead.
+# Drivers whose ConnectionState.mode CAN mean "traffic exits through the
+# local SOCKS proxy at LOCAL_SOCKS_PROXY" when proxy_active is also True.
+# Every other driver/state is treated as a full system tunnel (TUN-based),
+# verified directly instead.
 #
 # This can't be inferred from ConnectionState.proxy_active alone: that flag
 # is not used consistently across drivers. SingBoxDriver sets it to mean
 # "the local SOCKS proxy is up", but AdGuardDriver sets it to mean "VPN
 # status is up" even though AdGuard never listens on LOCAL_SOCKS_PROXY -
 # routing it through the proxy-verification path would misreport a healthy
-# AdGuard connection as "degraded".
+# AdGuard connection as "degraded". Membership here is necessary but not
+# sufficient: a driver in PROXY_BASED_MODES with proxy_active=False (e.g. a
+# future sing-box TUN connection mode, Phase 11) still falls through to
+# direct/TUN verification below instead of being reported as "down".
 PROXY_BASED_MODES = frozenset({"sing-box"})
 
 VerifyFn = Callable[[bool], "tuple[bool, str | None]"]
@@ -59,12 +63,14 @@ def check(profile: Profile, driver: BaseDriver, verify: VerifyFn = reachable_and
         return "down"
 
     state = driver.status()
-    if state.mode in PROXY_BASED_MODES:
-        if not state.proxy_active:
-            LOGGER.warning("health_check_down profile_id=%s reason=no_active_route", profile.id)
-            return "down"
+    if state.mode in PROXY_BASED_MODES and state.proxy_active:
         reachable, public_ip = verify(True)
     elif state.tun_active:
+        # Also covers a driver whose mode is in PROXY_BASED_MODES but is
+        # currently running in TUN mode instead (proxy_active=False) - e.g.
+        # a future sing-box TUN connection mode (Phase 11). Falling through
+        # here instead of short-circuiting to "down" keeps this correct
+        # once a driver can report either transport depending on config.
         reachable, public_ip = verify(False)
     else:
         LOGGER.warning("health_check_down profile_id=%s reason=no_active_route", profile.id)
