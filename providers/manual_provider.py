@@ -36,6 +36,10 @@ class ManualProvider(BaseProvider):
         self.rotation_prompt = rotation_prompt or self._prompt_rotation_pool
         self._last_imported: list[Profile] = []
 
+    @property
+    def last_imported(self) -> list[Profile]:
+        return list(self._last_imported)
+
     def from_clipboard(self) -> Profile | None:
         text = self._read_clipboard_text()
         if not text:
