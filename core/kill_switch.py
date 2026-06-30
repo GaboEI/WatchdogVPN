@@ -163,6 +163,7 @@ class KillSwitch:
             self._nft_rule("ct", "state", "established,related", "accept"),
             self._nft_rule("oifname", "lo", "accept"),
             self._nft_rule("oifname", self.tunnel_interface, "accept"),
+            *self._nft_dns_leak_block_rules(),
         ]
         if self.allow_lan:
             commands.extend(self._nft_lan_rules())
@@ -200,6 +201,15 @@ class KillSwitch:
 
     def _nft_lan_rules(self) -> list[list[str]]:
         return [self._nft_rule("ip", "daddr", cidr, "accept") for cidr in self.lan_cidrs]
+
+    def _nft_dns_leak_block_rules(self) -> list[list[str]]:
+        return [
+            self._nft_rule("udp", "dport", str(port), "reject")
+            for port in (53, 853)
+        ] + [
+            self._nft_rule("tcp", "dport", str(port), "reject")
+            for port in (53, 853)
+        ]
 
     def _enable_iptables(self) -> bool:
         self._disable_iptables()
@@ -247,6 +257,7 @@ class KillSwitch:
                 "ACCEPT",
             ],
         ]
+        commands.extend(self._iptables_dns_leak_block_rules("iptables"))
         if self.allow_lan:
             commands.extend(self._iptables_lan_rules("iptables"))
         commands.extend(
@@ -308,8 +319,31 @@ class KillSwitch:
             for cidr in self.lan_cidrs
         ]
 
+    def _iptables_dns_leak_block_rules(self, binary: str) -> list[list[str]]:
+        commands: list[list[str]] = []
+        for protocol in ("udp", "tcp"):
+            for port in ("53", "853"):
+                commands.append(
+                    [
+                        binary,
+                        "-A",
+                        WATCHDOGVPN_IPTABLES_CHAIN,
+                        "-p",
+                        protocol,
+                        "--dport",
+                        port,
+                        "-m",
+                        "comment",
+                        "--comment",
+                        WATCHDOGVPN_COMMENT,
+                        "-j",
+                        "REJECT",
+                    ]
+                )
+        return commands
+
     def _ip6tables_enable_commands(self) -> list[list[str]]:
-        return [
+        commands = [
             ["ip6tables", "-N", WATCHDOGVPN_IPTABLES_CHAIN],
             [
                 "ip6tables",
@@ -352,19 +386,25 @@ class KillSwitch:
                 "-j",
                 "ACCEPT",
             ],
-            [
-                "ip6tables",
-                "-A",
-                WATCHDOGVPN_IPTABLES_CHAIN,
-                "-m",
-                "comment",
-                "--comment",
-                WATCHDOGVPN_COMMENT,
-                "-j",
-                "REJECT",
-            ],
-            ["ip6tables", "-I", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN],
         ]
+        commands.extend(self._iptables_dns_leak_block_rules("ip6tables"))
+        commands.extend(
+            [
+                [
+                    "ip6tables",
+                    "-A",
+                    WATCHDOGVPN_IPTABLES_CHAIN,
+                    "-m",
+                    "comment",
+                    "--comment",
+                    WATCHDOGVPN_COMMENT,
+                    "-j",
+                    "REJECT",
+                ],
+                ["ip6tables", "-I", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN],
+            ]
+        )
+        return commands
 
 
 _DEFAULT_KILL_SWITCH = KillSwitch()

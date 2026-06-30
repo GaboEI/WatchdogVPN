@@ -154,6 +154,42 @@ class NftablesKillSwitchTests(unittest.TestCase):
             recorder.commands,
         )
 
+    def test_nftables_blocks_dns_before_lan_allow_rules(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
+
+        kill_switch.enable()
+
+        dns_rule = [
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            WATCHDOGVPN_TABLE,
+            "output",
+            "udp",
+            "dport",
+            "53",
+            "reject",
+            "comment",
+            WATCHDOGVPN_NFT_COMMENT,
+        ]
+        lan_rule = [
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            WATCHDOGVPN_TABLE,
+            "output",
+            "ip",
+            "daddr",
+            "192.168.0.0/16",
+            "accept",
+            "comment",
+            WATCHDOGVPN_NFT_COMMENT,
+        ]
+        self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(lan_rule))
+
     def test_disable_deletes_nftables_table(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
@@ -210,6 +246,42 @@ class IptablesKillSwitchTests(unittest.TestCase):
 
         self.assertIn(["ip6tables", "-N", WATCHDOGVPN_IPTABLES_CHAIN], recorder.commands)
         self.assertIn(["ip6tables", "-I", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN], recorder.commands)
+
+    def test_iptables_blocks_dns_before_lan_allow_rules(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("iptables"))
+
+        kill_switch.enable()
+
+        dns_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-p",
+            "udp",
+            "--dport",
+            "53",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "REJECT",
+        ]
+        lan_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-d",
+            "192.168.0.0/16",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(lan_rule))
 
     def test_iptables_skips_ip6tables_when_ipv6_blocking_disabled(self) -> None:
         recorder = CommandRecorder()
