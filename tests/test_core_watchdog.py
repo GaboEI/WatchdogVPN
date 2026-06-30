@@ -9,8 +9,12 @@ from unittest.mock import patch
 from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
 from config.profile_store import ProfileStore
 from config.state_manager import StateManager
+from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
 from drivers.legacy.adguard_driver import AdGuardDriver
+from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
+from drivers.openvpn_driver import OpenVPNDriver
+from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 
@@ -61,6 +65,54 @@ class WatchdogCoreTests(unittest.TestCase):
     def test_select_driver_routes_to_adguard(self) -> None:
         driver = select_driver(self.profile)
         self.assertIsInstance(driver, AdGuardDriver)
+
+    def test_select_driver_routes_to_amneziawg(self) -> None:
+        profile = Profile(
+            id="awg1",
+            name="AWG",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        driver = select_driver(profile)
+        self.assertIsInstance(driver, AmneziaWGDriver)
+
+    def test_select_driver_routes_to_openvpn(self) -> None:
+        profile = Profile(
+            id="ovpn1",
+            name="OVPN",
+            protocol=ProtocolType.OPENVPN,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        driver = select_driver(profile)
+        self.assertIsInstance(driver, OpenVPNDriver)
+
+    def test_select_driver_routes_to_openvpn_cloak(self) -> None:
+        profile = Profile(
+            id="ovpncloak1",
+            name="OVPN+Cloak",
+            protocol=ProtocolType.OPENVPN_CLOAK,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        driver = select_driver(profile)
+        self.assertIsInstance(driver, OpenVPNCloakDriver)
+
+    def test_select_driver_routes_to_singbox_by_default(self) -> None:
+        profile = Profile(
+            id="vless1",
+            name="VLESS",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        driver = select_driver(profile)
+        self.assertIsInstance(driver, SingBoxDriver)
+
+    def test_select_driver_routes_to_singbox_when_no_profile(self) -> None:
+        driver = select_driver(None)
+        self.assertIsInstance(driver, SingBoxDriver)
 
     @patch.object(AdGuardDriver, "connect", return_value=True)
     @patch.object(AdGuardDriver, "disconnect", return_value=True)

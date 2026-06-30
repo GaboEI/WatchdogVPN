@@ -5,8 +5,12 @@ from dataclasses import dataclass, field
 
 from config.profile_store import ProfileStore
 from config.state_manager import StateManager
+from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
 from drivers.legacy.adguard_driver import AdGuardDriver
+from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
+from drivers.openvpn_driver import OpenVPNDriver
+from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
@@ -79,9 +83,17 @@ class WatchdogRuntime:
 
 
 def select_driver(profile: Profile | None = None) -> BaseDriver:
-    if profile is not None and profile.protocol is ProtocolType.ADGUARD:
+    if profile is None:
+        return SingBoxDriver()
+    if profile.protocol is ProtocolType.AMNEZIAWG:
+        return AmneziaWGDriver()
+    if profile.protocol is ProtocolType.ADGUARD:
         return AdGuardDriver()
-    return AdGuardDriver()
+    if profile.protocol is ProtocolType.OPENVPN:
+        return OpenVPNDriver()
+    if profile.protocol is ProtocolType.OPENVPN_CLOAK:
+        return OpenVPNCloakDriver()
+    return SingBoxDriver()
 
 
 def build_watchdog(profile: Profile | None = None) -> WatchdogRuntime:
