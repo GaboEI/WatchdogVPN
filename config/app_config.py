@@ -10,7 +10,7 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
 try:
-    import tomli_w
+    import tomli_w  # pyrefly: ignore [missing-import]
 except ModuleNotFoundError:  # pragma: no cover
     tomli_w = None  # type: ignore
 
