@@ -222,6 +222,43 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertIn("VPN manually disabled. Will not auto-reconnect.", "\n".join(logs.output))
 
+    def test_connect_calls_driver_connect_with_profile(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        self.assertTrue(runtime.connect(self.profile))
+        driver.connect_mock.assert_called_once_with(self.profile)
+
+    def test_connect_persists_desired_state_on(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        runtime.connect(self.profile)
+
+        rebooted_state_manager = StateManager(self.state_manager.path)
+        self.assertEqual(rebooted_state_manager.get("vpn_desired_state"), "on")
+
+    def test_connect_persists_desired_state_on_even_if_driver_connect_fails(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        driver.connect_mock.return_value = False
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        self.assertFalse(runtime.connect(self.profile))
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+
+    def test_connect_enables_automatic_actions_for_session(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(runtime.health_check(), "ok")
+        driver.health_check_mock.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()
