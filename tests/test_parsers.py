@@ -4,6 +4,7 @@ import base64
 import json
 import unittest
 from unittest.mock import patch
+from urllib.request import Request
 
 from parsers import (
     ParseError,
@@ -30,6 +31,11 @@ class UriParserTests(unittest.TestCase):
         self.assertEqual(profile.config["host"], "example.com")
         self.assertEqual(profile.config["port"], 443)
         self.assertEqual(profile.config["uuid"], "uuid")
+
+    def test_parse_uri_decodes_fragment_name(self) -> None:
+        profile = parse_uri("vless://uuid@example.com:443?encryption=none#Austria%2C%20Vienna%20%5B3GBIT%5D")
+        self.assertEqual(profile.name, "Austria, Vienna [3GBIT]")
+        self.assertEqual(profile.config["fragment"], "Austria, Vienna [3GBIT]")
 
     def test_parse_vmess(self) -> None:
         payload = base64.urlsafe_b64encode(
@@ -286,6 +292,27 @@ class ClashYamlParserTests(unittest.TestCase):
 
 
 class SubscriptionParserTests(unittest.TestCase):
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_uses_subscription_user_agent(self, urlopen_mock) -> None:
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                ]
+            }
+        ).encode("utf-8")
+
+        with patch.dict(
+            "os.environ",
+            {"WATCHDOGVPN_SUBSCRIPTION_USER_AGENT": "watchdog-test-agent"},
+            clear=False,
+        ):
+            fetch_and_parse("https://example.com/sub")
+
+        request = urlopen_mock.call_args.args[0]
+        self.assertIsInstance(request, Request)
+        self.assertEqual(request.get_header("User-agent"), "watchdog-test-agent")
+
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_base64_lines(self, urlopen_mock) -> None:
         payload = "\n".join(

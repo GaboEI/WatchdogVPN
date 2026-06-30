@@ -2,19 +2,33 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from typing import Any
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from models.profile import Profile
 from parsers.clash_yaml import parse_clash_yaml
 from parsers.singbox_json import parse_singbox_json
 from parsers.uri import ParseError, parse_uri
 
+DEFAULT_SUBSCRIPTION_USER_AGENT = (
+    "WatchdogVPN/2.0 "
+    "(compatible; sing-box; Clash; mihomo; v2ray-subscription)"
+)
+
 
 def _fetch_text(url: str) -> str:
+    user_agent = os.environ.get("WATCHDOGVPN_SUBSCRIPTION_USER_AGENT", DEFAULT_SUBSCRIPTION_USER_AGENT)
+    request = Request(
+        url,
+        headers={
+            "User-Agent": user_agent,
+            "Accept": "text/plain, application/json, application/yaml, text/yaml, */*",
+        },
+    )
     try:
-        with urlopen(url) as response:  # nosec - subscription URLs are user-provided inputs
+        with urlopen(request) as response:  # nosec - subscription URLs are user-provided inputs
             raw = response.read()
     except URLError as exc:
         raise ParseError(f"failed to fetch subscription: {exc}") from exc

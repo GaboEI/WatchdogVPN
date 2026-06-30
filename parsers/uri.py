@@ -67,8 +67,9 @@ def _normalize_path_authority(parsed, preserve_leading_slash: bool = False):
 def _build_profile(protocol: ProtocolType, parsed, config: dict[str, Any], name: str | None = None) -> Profile:
     host = parsed.hostname or ""
     port = parsed.port
-    profile_id = name or parsed.fragment or host or protocol.value
-    profile_name = name or parsed.fragment or host or protocol.value
+    fragment = unquote(parsed.fragment) if parsed.fragment else ""
+    profile_id = name or fragment or host or protocol.value
+    profile_name = name or fragment or host or protocol.value
     if port is not None:
         config.setdefault("port", port)
     if host:
@@ -77,8 +78,8 @@ def _build_profile(protocol: ProtocolType, parsed, config: dict[str, Any], name:
         config.setdefault("username", parsed.username)
     if parsed.password:
         config.setdefault("password", parsed.password)
-    if parsed.fragment:
-        config.setdefault("fragment", parsed.fragment)
+    if fragment:
+        config.setdefault("fragment", fragment)
     config.setdefault("raw", parsed.geturl())
     return Profile(
         id=str(profile_id),
