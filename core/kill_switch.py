@@ -13,6 +13,7 @@ WATCHDOGVPN_TABLE = "watchdogvpn"
 WATCHDOGVPN_CHAIN = "output"
 WATCHDOGVPN_IPTABLES_CHAIN = "WATCHDOGVPN-OUTPUT"
 WATCHDOGVPN_COMMENT = "WatchdogVPN kill switch"
+WATCHDOGVPN_NFT_COMMENT = f'"{WATCHDOGVPN_COMMENT}"'
 
 DEFAULT_LAN_CIDRS = (
     "10.0.0.0/8",
@@ -194,7 +195,7 @@ class KillSwitch:
             WATCHDOGVPN_CHAIN,
             *tokens,
             "comment",
-            WATCHDOGVPN_COMMENT,
+            WATCHDOGVPN_NFT_COMMENT,
         ]
 
     def _nft_lan_rules(self) -> list[list[str]]:

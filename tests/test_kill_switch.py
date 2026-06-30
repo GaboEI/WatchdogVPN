@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from core.kill_switch import KillSwitch, WATCHDOGVPN_COMMENT, WATCHDOGVPN_IPTABLES_CHAIN
+from core.kill_switch import WATCHDOGVPN_NFT_COMMENT
 from core.kill_switch import WATCHDOGVPN_TABLE, CommandResult
 
 
@@ -88,10 +89,22 @@ class NftablesKillSwitchTests(unittest.TestCase):
                 "wg0",
                 "accept",
                 "comment",
-                WATCHDOGVPN_COMMENT,
+                WATCHDOGVPN_NFT_COMMENT,
             ],
             recorder.commands,
         )
+
+    def test_nftables_comment_is_quoted_for_real_nft_syntax(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
+
+        kill_switch.enable()
+
+        rule_commands = [command for command in recorder.commands if command[:3] == ["nft", "add", "rule"]]
+        self.assertTrue(rule_commands)
+        for command in rule_commands:
+            comment_index = command.index("comment")
+            self.assertEqual(command[comment_index + 1], WATCHDOGVPN_NFT_COMMENT)
 
     def test_nftables_blocks_ipv6_by_default(self) -> None:
         recorder = CommandRecorder()
@@ -112,7 +125,7 @@ class NftablesKillSwitchTests(unittest.TestCase):
                 "::/0",
                 "accept",
                 "comment",
-                WATCHDOGVPN_COMMENT,
+                WATCHDOGVPN_NFT_COMMENT,
             ],
             recorder.commands,
         )
@@ -136,7 +149,7 @@ class NftablesKillSwitchTests(unittest.TestCase):
                 "::/0",
                 "accept",
                 "comment",
-                WATCHDOGVPN_COMMENT,
+                WATCHDOGVPN_NFT_COMMENT,
             ],
             recorder.commands,
         )
