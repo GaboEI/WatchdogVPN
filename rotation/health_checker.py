@@ -15,6 +15,18 @@ EXTERNAL_CHECK_URL = "https://example.com"
 PUBLIC_IP_URL = "https://api.ipify.org"
 LOCAL_SOCKS_PROXY = "127.0.0.1:2080"
 
+# Drivers whose ConnectionState.mode means "traffic exits through the local
+# SOCKS proxy at LOCAL_SOCKS_PROXY". Every other driver is treated as a
+# full system tunnel (TUN-based), verified directly instead.
+#
+# This can't be inferred from ConnectionState.proxy_active alone: that flag
+# is not used consistently across drivers. SingBoxDriver sets it to mean
+# "the local SOCKS proxy is up", but AdGuardDriver sets it to mean "VPN
+# status is up" even though AdGuard never listens on LOCAL_SOCKS_PROXY -
+# routing it through the proxy-verification path would misreport a healthy
+# AdGuard connection as "degraded".
+PROXY_BASED_MODES = frozenset({"sing-box"})
+
 VerifyFn = Callable[[bool], "tuple[bool, str | None]"]
 
 
@@ -47,7 +59,10 @@ def check(profile: Profile, driver: BaseDriver, verify: VerifyFn = reachable_and
         return "down"
 
     state = driver.status()
-    if state.proxy_active:
+    if state.mode in PROXY_BASED_MODES:
+        if not state.proxy_active:
+            LOGGER.warning("health_check_down profile_id=%s reason=no_active_route", profile.id)
+            return "down"
         reachable, public_ip = verify(True)
     elif state.tun_active:
         reachable, public_ip = verify(False)
