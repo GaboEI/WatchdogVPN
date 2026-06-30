@@ -30,6 +30,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
     },
     "rotation": {
         "enabled": False,
+        "health_status_cooldown_seconds": 300,
     },
     "adguard": {
         "enabled": False,
