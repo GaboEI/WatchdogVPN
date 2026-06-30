@@ -157,6 +157,23 @@ class SubscriptionProviderTests(unittest.TestCase):
             self.assertEqual(status["providers"], 1)
             self.assertEqual(status["profiles"], 1)
 
+    def test_provider_metadata_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+            stored_provider.metadata = {
+                "traffic_used": "51.6 GB",
+                "traffic_limit": "1000.0 GB",
+                "expires_at": "2026-09-17",
+            }
+            ProviderStore(Path(tmp) / "providers.json").update(stored_provider)
+
+            restored = ProviderStore(Path(tmp) / "providers.json").get(stored_provider.id)
+
+            self.assertIsNotNone(restored)
+            assert restored is not None
+            self.assertEqual(restored.metadata["traffic_used"], "51.6 GB")
+
 
 if __name__ == "__main__":
     unittest.main()

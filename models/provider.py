@@ -25,6 +25,7 @@ class Provider:
     rotation_enabled: bool = False
     auto_update: bool = True
     update_interval_hours: int = 24
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -42,5 +43,5 @@ class Provider:
             rotation_enabled=bool(data.get("rotation_enabled", False)),
             auto_update=bool(data.get("auto_update", True)),
             update_interval_hours=int(data.get("update_interval_hours", 24)),
+            metadata=dict(data.get("metadata", {})),
         )
-
