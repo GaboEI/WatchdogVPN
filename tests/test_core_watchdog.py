@@ -301,6 +301,49 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertFalse(runtime.connect(self.profile))
         self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
 
+    def test_connect_persists_active_profile_id(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        runtime.connect(self.profile)
+
+        rebooted_state_manager = StateManager(self.state_manager.path)
+        self.assertEqual(rebooted_state_manager.get("active_profile_id"), self.profile.id)
+
+    def test_connect_persists_active_profile_id_even_if_driver_connect_fails(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        driver.connect_mock.return_value = False
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        self.assertFalse(runtime.connect(self.profile))
+        self.assertEqual(self.state_manager.get("active_profile_id"), self.profile.id)
+
+    def test_connect_then_startup_reconnects_after_simulated_reboot(self) -> None:
+        self.profile_store.add(self.profile)
+        self.state_manager.set("vpn_autoconnect_enabled", True)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+
+        runtime.connect(self.profile)
+
+        rebooted_driver = FakeDriver()
+        rebooted_runtime = WatchdogRuntime(
+            driver=rebooted_driver,
+            state_manager=StateManager(self.state_manager.path),
+            profile_store=self.profile_store,
+        )
+
+        state = rebooted_runtime.startup()
+
+        self.assertNotEqual(state.status, "standby")
+        rebooted_driver.connect_mock.assert_called_once_with(self.profile)
+
     def test_connect_enables_automatic_actions_for_session(self) -> None:
         self.set_desired_state("off")
         driver = FakeDriver()

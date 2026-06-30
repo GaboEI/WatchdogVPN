@@ -65,6 +65,7 @@ class WatchdogRuntime:
 
     def connect(self, profile: Profile) -> bool:
         self.state_manager.set("vpn_desired_state", "on")
+        self.state_manager.set("active_profile_id", profile.id)
         return self.driver.connect(profile)
 
     def disconnect(self) -> bool:
