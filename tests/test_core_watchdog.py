@@ -7,6 +7,7 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
+from config.profile_store import ProfileStore
 from config.state_manager import StateManager
 from drivers.base import BaseDriver
 from drivers.legacy.adguard_driver import AdGuardDriver
@@ -49,6 +50,7 @@ class WatchdogCoreTests(unittest.TestCase):
         )
         self.tmpdir = tempfile.TemporaryDirectory()
         self.state_manager = StateManager(Path(self.tmpdir.name) / "state.toml")
+        self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
 
     def tearDown(self) -> None:
         self.tmpdir.cleanup()
@@ -102,6 +104,91 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(runtime.health_check(), "standby")
         driver.health_check_mock.assert_not_called()
+
+    def test_startup_stands_by_when_user_disabled_vpn(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "off",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+
+        state = runtime.startup()
+
+        self.assertEqual(state.status, "standby")
+        driver.connect_mock.assert_not_called()
+
+    def test_startup_stands_by_when_autoconnect_disabled(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": False,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+
+        state = runtime.startup()
+
+        self.assertEqual(state.status, "standby")
+        driver.connect_mock.assert_not_called()
+
+    def test_startup_autoconnects_last_active_profile(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+
+        state = runtime.startup()
+
+        self.assertEqual(state.status, "connected")
+        driver.connect_mock.assert_called_once_with(self.profile)
+        driver.status_mock.assert_called_once_with()
+
+    def test_startup_stands_by_when_active_profile_missing(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": "missing",
+            }
+        )
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+
+        with self.assertLogs("core.watchdog", level="WARNING"):
+            state = runtime.startup()
+
+        self.assertEqual(state.status, "standby")
+        driver.connect_mock.assert_not_called()
 
     def test_build_watchdog_returns_runtime(self) -> None:
         runtime = build_watchdog(self.profile)
