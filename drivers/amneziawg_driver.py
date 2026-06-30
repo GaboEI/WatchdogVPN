@@ -42,10 +42,10 @@ class _BinaryPaths:
 
 
 class AmneziaWGDriver(BaseDriver):
-    """Driver nativo para perfiles AmneziaWG.
+    """Native driver for AmneziaWG profiles.
 
-    Usa amneziawg-quick (preferido) o wg-quick (fallback) para gestionar
-    la interfaz WireGuard con extensiones de ofuscación AmneziaWG.
+    Uses amneziawg-quick (preferred) or wg-quick (fallback) to manage
+    the WireGuard interface with AmneziaWG obfuscation extensions.
     """
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
@@ -77,13 +77,13 @@ class AmneziaWGDriver(BaseDriver):
     def get_tool(self) -> str:
         tool = self.find_quick_tool()
         if not tool:
-            raise FileNotFoundError("amneziawg-quick ni wg-quick encontrados")
+            raise FileNotFoundError("neither amneziawg-quick nor wg-quick was found")
         return tool
 
     def check_version(self) -> str:
         wg_tool = self.find_wg_tool()
         if not wg_tool:
-            raise FileNotFoundError("awg ni wg encontrados")
+            raise FileNotFoundError("neither awg nor wg was found")
         result = subprocess.run(
             [wg_tool, "--version"],
             text=True,
@@ -111,10 +111,10 @@ class AmneziaWGDriver(BaseDriver):
 
     def _write_config(self, profile: Profile) -> None:
         if profile.protocol is not ProtocolType.AMNEZIAWG:
-            raise ValueError(f"protocolo no soportado por AmneziaWG driver: {profile.protocol.value}")
+            raise ValueError(f"unsupported protocol for AmneziaWG driver: {profile.protocol.value}")
         raw = str(profile.config.get("raw") or "").strip()
         if not raw:
-            raise ValueError("perfil AmneziaWG requiere raw config")
+            raise ValueError("AmneziaWG profile requires raw config")
         cleaned = self._strip_empty_keys(raw)
         CONFIG_PATH.write_text(f"{cleaned}\n", encoding="utf-8")
         CONFIG_PATH.chmod(0o600)
@@ -170,7 +170,7 @@ class AmneziaWGDriver(BaseDriver):
             self._log(result.stderr.rstrip())
 
         if result.returncode != 0:
-            self._log(f"connect: falló con código {result.returncode}")
+            self._log(f"connect: failed with code {result.returncode}")
             self._cleanup_config()
             return False
 

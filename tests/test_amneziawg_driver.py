@@ -46,7 +46,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
     def tearDown(self) -> None:
         CONFIG_PATH.unlink(missing_ok=True)
 
-    # --- Detección de binarios ---
+    # --- Binary detection ---
 
     @patch("drivers.amneziawg_driver.shutil.which", return_value="/usr/bin/awg-quick")
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=False)

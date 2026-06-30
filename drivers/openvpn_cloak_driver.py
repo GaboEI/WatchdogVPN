@@ -39,11 +39,11 @@ class _BinaryPaths:
 
 
 class OpenVPNCloakDriver(BaseDriver):
-    """Driver para perfiles OpenVPN envueltos en transporte Cloak.
+    """Driver for OpenVPN profiles wrapped in Cloak transport.
 
-    Gestiona dos procesos simultáneos: ck-client (túnel local) y openvpn
-    (conecta a través de ese túnel). Secuencia: ck-client primero → esperar
-    arranque → openvpn. Limpieza: openvpn primero → ck-client.
+    Manages two simultaneous processes: ck-client (local tunnel) and openvpn
+    (connected through that tunnel). Sequence: ck-client first, wait for
+    startup, then openvpn. Cleanup: openvpn first, then ck-client.
     """
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
@@ -77,25 +77,25 @@ class OpenVPNCloakDriver(BaseDriver):
     def check_version(self) -> str:
         binary = self.find_openvpn_binary()
         if not binary:
-            raise FileNotFoundError("openvpn binary no encontrado")
+            raise FileNotFoundError("openvpn binary not found")
         result = subprocess.run([binary, "--version"], text=True, capture_output=True, check=False)
         output = (result.stdout or result.stderr or "").strip()
         if not output:
-            raise RuntimeError("openvpn version output vacío")
+            raise RuntimeError("openvpn version output is empty")
         return output
 
     def _write_configs(self, profile: Profile) -> None:
         if profile.protocol is not ProtocolType.OPENVPN_CLOAK:
             raise ValueError(
-                f"protocolo no soportado por OpenVPNCloakDriver: {profile.protocol.value}"
+                f"unsupported protocol for OpenVPNCloakDriver: {profile.protocol.value}"
             )
         raw_config = str(profile.config.get("raw_config") or "").strip()
         if not raw_config:
-            raise ValueError("perfil OPENVPN_CLOAK requiere raw_config")
+            raise ValueError("OPENVPN_CLOAK profile requires raw_config")
 
         cloak_config = profile.config.get("cloak_config")
         if not cloak_config:
-            raise ValueError("perfil OPENVPN_CLOAK requiere cloak_config")
+            raise ValueError("OPENVPN_CLOAK profile requires cloak_config")
 
         if isinstance(cloak_config, dict):
             cloak_json = json.dumps(cloak_config, indent=2)
@@ -103,7 +103,7 @@ class OpenVPNCloakDriver(BaseDriver):
             try:
                 json.loads(str(cloak_config))
             except json.JSONDecodeError as exc:
-                raise ValueError(f"cloak_config no es JSON válido: {exc}") from exc
+                raise ValueError(f"cloak_config is not valid JSON: {exc}") from exc
             cloak_json = str(cloak_config)
 
         OC_OVPN_CONFIG_PATH.write_text(f"{raw_config}\n", encoding="utf-8")

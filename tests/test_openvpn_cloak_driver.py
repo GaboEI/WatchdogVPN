@@ -78,7 +78,7 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
             except OSError:
                 pass
 
-    # --- Detección de binarios ---
+    # --- Binary detection ---
 
     @patch("drivers.openvpn_cloak_driver.shutil.which", return_value="/usr/sbin/openvpn")
     @patch("drivers.openvpn_cloak_driver.os.path.exists", return_value=False)
