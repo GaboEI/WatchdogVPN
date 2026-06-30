@@ -70,9 +70,9 @@ class Recovery:
             return True
         return self.clock() >= self._next_retry_at
 
-    def handle_all_failed(self, kill_switch_enabled: bool) -> AllFailedAction:
+    def handle_all_failed(self, kill_switch_active: bool) -> AllFailedAction:
         interval = self.record_failure()
-        if kill_switch_enabled:
+        if kill_switch_active:
             message = (
                 f"all rotation candidates failed (consecutive_failures="
                 f"{self._consecutive_failures}); kill switch active, "

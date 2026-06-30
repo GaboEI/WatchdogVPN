@@ -7,6 +7,7 @@ from config.app_config import AppConfig
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager
+from core.kill_switch import KillSwitch
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
 from drivers.legacy.adguard_driver import AdGuardDriver
@@ -32,6 +33,7 @@ class WatchdogRuntime:
     app_config: AppConfig = field(default_factory=AppConfig)
     rotation_engine: RotationEngine = field(default_factory=RotationEngine)
     recovery: Recovery = field(default_factory=Recovery)
+    kill_switch: KillSwitch = field(default_factory=KillSwitch)
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
 
@@ -123,7 +125,8 @@ class WatchdogRuntime:
         if current_profile is not None and self._try_reconnect(current_profile):
             self._reconnect_failures = 0
             self.recovery.record_success()
-            return self._as_recovered(self.driver.status())
+            config = self.app_config.load()
+            return self._recovered_state_after_stable_connection(config)
 
         self._reconnect_failures += 1
         config = self.app_config.load()
@@ -160,10 +163,10 @@ class WatchdogRuntime:
                 result.profile.id,
                 result.rolled_back,
             )
-            return self._as_recovered(self.driver.status())
+            return self._recovered_state_after_stable_connection(config)
 
-        kill_switch_enabled = bool(config.get("kill_switch", {}).get("enabled", False))
-        action = self.recovery.handle_all_failed(kill_switch_enabled=kill_switch_enabled)
+        kill_switch_active = self._apply_all_failed_kill_switch(config)
+        action = self.recovery.handle_all_failed(kill_switch_active=kill_switch_active)
         status = "kill_switch_active" if action.kill_switch_active else "normal_network_temp"
         LOGGER.error(
             "watchdog_all_failed kill_switch=%s consecutive_failures=%d",
@@ -177,15 +180,57 @@ class WatchdogRuntime:
         driver_type = type(self.driver)
         return [p for p in full_pool if type(select_driver(p)) is driver_type]
 
+    def _apply_all_failed_kill_switch(self, config: dict) -> bool:
+        self._configure_kill_switch(config)
+        configured = bool(config.get("kill_switch", {}).get("enabled", False))
+        if self.kill_switch.is_active():
+            LOGGER.warning("watchdog_all_failed_kill_switch action=keep_active")
+            return True
+        if not configured:
+            return False
+        if self.kill_switch.enable():
+            LOGGER.warning("watchdog_all_failed_kill_switch action=enabled")
+            return True
+        LOGGER.error("watchdog_all_failed_kill_switch action=enable_failed")
+        return False
+
+    def _recovered_state_after_stable_connection(self, config: dict) -> ConnectionState:
+        kill_switch_active = self._restore_kill_switch_after_recovery(config)
+        return self._as_recovered(self.driver.status(), kill_switch_active=kill_switch_active)
+
+    def _restore_kill_switch_after_recovery(self, config: dict) -> bool:
+        self._configure_kill_switch(config)
+        if not self.kill_switch.is_active():
+            return False
+        if self.kill_switch.enable():
+            LOGGER.info("watchdog_kill_switch_restored_after_recovery")
+            return True
+        LOGGER.error("watchdog_kill_switch_restore_failed_after_recovery")
+        return False
+
+    def _configure_kill_switch(self, config: dict) -> None:
+        kill_switch_config = config.get("kill_switch", {})
+        if hasattr(self.kill_switch, "tunnel_interface"):
+            self.kill_switch.tunnel_interface = str(kill_switch_config.get("tunnel_interface", "tun0"))
+        if hasattr(self.kill_switch, "block_ipv6"):
+            self.kill_switch.block_ipv6 = bool(kill_switch_config.get("block_ipv6", True))
+        if hasattr(self.kill_switch, "allow_lan"):
+            self.kill_switch.allow_lan = bool(kill_switch_config.get("allow_lan", True))
+
     @staticmethod
-    def _as_recovered(state: ConnectionState) -> ConnectionState:
+    def _as_recovered(
+        state: ConnectionState,
+        kill_switch_active: bool | None = None,
+    ) -> ConnectionState:
         return ConnectionState(
             active_profile_id=state.active_profile_id,
             connected_at=state.connected_at,
             mode=state.mode,
             tun_active=state.tun_active,
             proxy_active=state.proxy_active,
-            kill_switch_active=state.kill_switch_active,
+            kill_switch_active=(
+                state.kill_switch_active if kill_switch_active is None else kill_switch_active
+            ),
             status="recovered",
         )
 

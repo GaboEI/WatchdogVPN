@@ -116,7 +116,7 @@ class AllFailedTests(unittest.TestCase):
     def test_without_kill_switch_does_not_block_traffic(self) -> None:
         recovery = make_recovery()
 
-        action = recovery.handle_all_failed(kill_switch_enabled=False)
+        action = recovery.handle_all_failed(kill_switch_active=False)
 
         self.assertFalse(action.kill_switch_active)
         self.assertTrue(action.notified)
@@ -125,7 +125,7 @@ class AllFailedTests(unittest.TestCase):
     def test_with_kill_switch_blocks_traffic(self) -> None:
         recovery = make_recovery()
 
-        action = recovery.handle_all_failed(kill_switch_enabled=True)
+        action = recovery.handle_all_failed(kill_switch_active=True)
 
         self.assertTrue(action.kill_switch_active)
         self.assertTrue(action.notified)
@@ -134,7 +134,7 @@ class AllFailedTests(unittest.TestCase):
         clock = FakeClock()
         recovery = make_recovery(clock=clock)
 
-        recovery.handle_all_failed(kill_switch_enabled=False)
+        recovery.handle_all_failed(kill_switch_active=False)
 
         self.assertFalse(recovery.can_retry_now())
         clock.advance(10.0)

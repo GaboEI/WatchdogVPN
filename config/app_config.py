@@ -24,6 +24,8 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
     "kill_switch": {
         "enabled": False,
         "block_ipv6": True,
+        "allow_lan": True,
+        "tunnel_interface": "tun0",
     },
     "dns": {
         "mode": "auto",
@@ -83,4 +85,3 @@ class AppConfig:
             return
         with self.path.open("wb") as handle:
             handle.write(tomli_w.dumps(payload).encode("utf-8"))
-
