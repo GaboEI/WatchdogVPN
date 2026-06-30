@@ -355,5 +355,254 @@ class WatchdogCoreTests(unittest.TestCase):
         driver.health_check_mock.assert_called_once_with()
 
 
+class WatchdogIntegrationTests(unittest.TestCase):
+    """Task 8.5 — integration of pool_builder, rotation_engine, health_checker, recovery."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.state_manager = StateManager(Path(self.tmpdir.name) / "state.toml")
+        self.state_manager.set("vpn_desired_state", "on")
+        self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
+        self.profile = Profile(
+            id="vless1",
+            name="VLESS",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _make_runtime(self, driver: BaseDriver) -> WatchdogRuntime:
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        return WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+        )
+
+    def test_run_iteration_healthy_resets_recovery_and_returns_connected(self) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "ok"
+        runtime = self._make_runtime(driver)
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "connected")
+
+    def test_run_iteration_standby_when_gate_off(self) -> None:
+        self.state_manager.set("vpn_desired_state", "off")
+        driver = FakeDriver()
+        runtime = self._make_runtime(driver)
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "standby")
+        driver.health_check_mock.assert_not_called()
+
+    @patch("core.watchdog.health_checker.check", return_value="ok")
+    def test_run_iteration_reconnects_current_profile_on_failure(self, _hc) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+        runtime = self._make_runtime(driver)
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "recovered")
+        driver.connect_mock.assert_called_with(self.profile)
+
+    @patch("core.watchdog.health_checker.check", return_value="down")
+    def test_run_iteration_returns_reconnecting_below_attempt_threshold(self, _hc) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {"watchdog": {"reconnect_attempts": 3}, "kill_switch": {"enabled": False}, "rotation": {}, "adguard": {}}
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+        )
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "reconnecting")
+        self.assertEqual(runtime._reconnect_failures, 1)
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    def test_run_iteration_rotates_after_threshold_crossed(self, mock_pool, mock_sel_driver) -> None:
+        alt_profile = Profile(
+            id="alt1", name="Alt", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, in_rotation_pool=True, enabled=True,
+        )
+        driver = FakeDriver()
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+
+        driver.health_check_mock.return_value = "down"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": False},
+            "rotation": {},
+            "adguard": {},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(
+                clock=clock, sleep=lambda s: None, warmup_seconds=0.0,
+                max_fails_before_rollback=99,
+            ),
+            recovery=Recovery(clock=clock),
+        )
+
+        def health_check_by_profile(profile, drv):
+            return "ok" if profile.id == alt_profile.id else "down"
+
+        with patch("core.watchdog.health_checker.check", side_effect=health_check_by_profile):
+            result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(self.state_manager.get("active_profile_id"), alt_profile.id)
+
+    @patch("core.watchdog.pool_builder.build_pool", return_value=[])
+    @patch("core.watchdog.health_checker.check", return_value="down")
+    def test_run_iteration_reports_normal_network_temp_when_all_fail(self, _hc, _pool) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": False},
+            "rotation": {},
+            "adguard": {},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+        )
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "normal_network_temp")
+
+    @patch("core.watchdog.pool_builder.build_pool", return_value=[])
+    @patch("core.watchdog.health_checker.check", return_value="down")
+    def test_run_iteration_reports_kill_switch_active_when_ks_enabled(self, _hc, _pool) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": True},
+            "rotation": {},
+            "adguard": {},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+        )
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "kill_switch_active")
+
+    def test_rotate_now_standby_when_gate_off(self) -> None:
+        self.state_manager.set("vpn_desired_state", "off")
+        runtime = self._make_runtime(FakeDriver())
+
+        result = runtime.rotate_now()
+
+        self.assertEqual(result.status, "standby")
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check", return_value="ok")
+    def test_rotate_now_returns_recovered_on_success(self, _hc, mock_pool, mock_sel_driver) -> None:
+        alt_profile = Profile(
+            id="alt2", name="Alt2", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, in_rotation_pool=True, enabled=True,
+        )
+        driver = FakeDriver()
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+
+        runtime = self._make_runtime(driver)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "watchdog": {}, "kill_switch": {"enabled": False},
+            "rotation": {}, "adguard": {},
+        }
+
+        result = runtime.rotate_now(force=True)
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(self.state_manager.get("active_profile_id"), alt_profile.id)
+
+
 if __name__ == "__main__":
     unittest.main()
