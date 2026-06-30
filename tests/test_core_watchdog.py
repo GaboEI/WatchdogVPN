@@ -304,6 +304,72 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertIn("VPN manually disabled. Will not auto-reconnect.", "\n".join(logs.output))
 
+    def test_disconnect_disables_active_kill_switch_by_default(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=True)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            kill_switch=kill_switch,
+        )
+
+        runtime.disconnect()
+
+        kill_switch.disable_mock.assert_called_once_with()
+
+    def test_disconnect_keeps_active_kill_switch_when_configured(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=True)
+        app_config = Mock()
+        app_config.load.return_value = {
+            "kill_switch": {"on_manual_disconnect": "keep"},
+        }
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            app_config=app_config,
+            kill_switch=kill_switch,
+        )
+
+        runtime.disconnect()
+
+        kill_switch.disable_mock.assert_not_called()
+
+    def test_disconnect_ignores_kill_switch_when_inactive(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=False)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            kill_switch=kill_switch,
+        )
+
+        runtime.disconnect()
+
+        kill_switch.disable_mock.assert_not_called()
+
+    def test_disconnect_invalid_kill_switch_policy_defaults_to_disable(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=True)
+        app_config = Mock()
+        app_config.load.return_value = {
+            "kill_switch": {"on_manual_disconnect": "invalid"},
+        }
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            app_config=app_config,
+            kill_switch=kill_switch,
+        )
+
+        runtime.disconnect()
+
+        kill_switch.disable_mock.assert_called_once_with()
+
     def test_connect_calls_driver_connect_with_profile(self) -> None:
         self.set_desired_state("off")
         driver = FakeDriver()

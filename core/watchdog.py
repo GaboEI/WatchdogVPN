@@ -91,6 +91,7 @@ class WatchdogRuntime:
 
     def disconnect(self) -> bool:
         result = self.driver.disconnect()
+        self._handle_manual_disconnect_kill_switch()
         self.state_manager.set("vpn_desired_state", "off")
         LOGGER.info("VPN manually disabled. Will not auto-reconnect.")
         return result
@@ -216,6 +217,28 @@ class WatchdogRuntime:
             self.kill_switch.block_ipv6 = bool(kill_switch_config.get("block_ipv6", True))
         if hasattr(self.kill_switch, "allow_lan"):
             self.kill_switch.allow_lan = bool(kill_switch_config.get("allow_lan", True))
+
+    def _handle_manual_disconnect_kill_switch(self) -> None:
+        config = self.app_config.load()
+        self._configure_kill_switch(config)
+        if not self.kill_switch.is_active():
+            return
+
+        policy = str(
+            config.get("kill_switch", {}).get("on_manual_disconnect", "disable")
+        ).strip().lower()
+        if policy == "keep":
+            LOGGER.warning("watchdog_manual_disconnect_kill_switch action=keep_active")
+            return
+        if policy != "disable":
+            LOGGER.warning(
+                "watchdog_manual_disconnect_kill_switch action=disable reason=invalid_policy policy=%s",
+                policy,
+            )
+        if self.kill_switch.disable():
+            LOGGER.info("watchdog_manual_disconnect_kill_switch action=disabled")
+            return
+        LOGGER.error("watchdog_manual_disconnect_kill_switch action=disable_failed")
 
     @staticmethod
     def _as_recovered(
