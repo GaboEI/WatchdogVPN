@@ -63,7 +63,10 @@ class WatchdogRuntime:
         return self.driver.connect(profile)
 
     def disconnect(self) -> bool:
-        return self.driver.disconnect()
+        result = self.driver.disconnect()
+        self.state_manager.set("vpn_desired_state", "off")
+        LOGGER.info("VPN manually disabled. Will not auto-reconnect.")
+        return result
 
     def health_check(self) -> str:
         if not self.automatic_actions_enabled():

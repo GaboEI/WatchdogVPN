@@ -70,8 +70,8 @@ class WatchdogCoreTests(unittest.TestCase):
         self.set_desired_state("on")
         runtime = WatchdogRuntime(driver=AdGuardDriver(), state_manager=self.state_manager)
         self.assertTrue(runtime.connect(self.profile))
-        self.assertTrue(runtime.disconnect())
         self.assertEqual(runtime.health_check(), "ok")
+        self.assertTrue(runtime.disconnect())
 
     def test_run_iteration_stands_by_when_user_disabled_vpn(self) -> None:
         self.set_desired_state("off")
@@ -193,6 +193,34 @@ class WatchdogCoreTests(unittest.TestCase):
     def test_build_watchdog_returns_runtime(self) -> None:
         runtime = build_watchdog(self.profile)
         self.assertIsInstance(runtime.driver, AdGuardDriver)
+
+    def test_disconnect_calls_driver_disconnect(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        self.assertTrue(runtime.disconnect())
+        driver.disconnect_mock.assert_called_once_with()
+
+    def test_disconnect_persists_desired_state_off(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        runtime.disconnect()
+
+        rebooted_state_manager = StateManager(self.state_manager.path)
+        self.assertEqual(rebooted_state_manager.get("vpn_desired_state"), "off")
+
+    def test_disconnect_logs_manual_disable_message(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        with self.assertLogs("core.watchdog", level="INFO") as logs:
+            runtime.disconnect()
+
+        self.assertIn("VPN manually disabled. Will not auto-reconnect.", "\n".join(logs.output))
 
 
 if __name__ == "__main__":
