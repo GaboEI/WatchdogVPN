@@ -8,6 +8,7 @@ __pycache__/
 *.swo
 
 # Local env and secrets
+.venv/
 .env
 .env.*
 *.key
