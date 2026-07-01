@@ -8,6 +8,18 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 
 ## Unreleased
 
+### Added
+
+- Add the DNS v2 system (Phase 10): resolver schema and presets, a resolver
+  tester with auto-setup recommendations, a system DNS state manager
+  (`systemd-resolved`, NetworkManager, classic `resolv.conf`) with snapshot
+  restore, sing-box DNS policy generation, TUN DNS hijack, FakeIP, ECS for
+  direct traffic, static IP mapping and DNS diversion rules.
+- Add `watchdog dns status|test|apply|reset` CLI commands and matching TUI DNS
+  controls, all backed by real behavior with no placeholders.
+- Harden the kill switch to reject DNS/DoT traffic before `established,related`
+  flows, closing a DNS leak window for already-established conntrack entries.
+
 ### Removed
 
 - AdGuard Home integrated installation and DNS management mode. Users who want

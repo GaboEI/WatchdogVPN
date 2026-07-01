@@ -142,8 +142,9 @@ systemd timer overrides.
 
 `dns.advanced_mode`
 
-Legacy v1 key retained for compatibility only. DNS v2 configuration is planned
-for Phase 10.
+Legacy v1 key retained for compatibility only. The DNS v2 system (Phase 10)
+uses its own policy file (`dns-policy.json`, managed through `watchdog dns
+status|test|apply|reset`) and does not read this key.
 
 `dns.profile`
 

@@ -35,7 +35,7 @@ hardening.
 | Public IP lookup fails | State can be unknown or degraded | multiple IP providers are attempted; degraded state is explicit |
 | Provider session expires | Recovery loops cannot fix auth | `vpn_auth_check` detects auth state; watchdog notifies and pauses useful recovery |
 | Bad VPN location or endpoint | Rotation may land on unusable node | `vpn_rotate.sh` validates state and has rollback logic |
-| DNS profile breaks resolution | User may lose name resolution | DNS v2 restore behavior is planned; `vpn_dns_rescue` remains available during the transition |
+| DNS profile breaks resolution | User may lose name resolution | DNS v2 `apply`/`reset` snapshot the prior resolver state and restore it on request; `vpn_dns_rescue` remains available as a manual fallback |
 | Uninstall breaks DNS | Host may remain offline after removal | `vpn_dns_rescue` restores fallback DNS behavior |
 | Repeated timer executions overlap | Race conditions and route churn | rotation uses `flock`; timers are one-shot services |
 | User-specific bypass domains leak into new installs | New users inherit irrelevant routing policy | default bypass example starts empty |

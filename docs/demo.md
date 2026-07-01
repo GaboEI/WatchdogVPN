@@ -121,9 +121,12 @@ and public IP checks are the operational source of truth.
 
 ## Example: DNS
 
-DNS v2 is planned for Phase 10. The old guided third-party DNS integration is
-removed; users who prefer AdGuard DNS resolvers will be able to configure them
-as custom DNS servers in the v2 DNS system.
+DNS v2 ships with the Phase 10 system: `watchdog dns status|test|apply|reset`,
+with `auto`, `off`, `custom` and `advanced` modes, FakeIP, ECS, static IP
+mapping and diversion rules. The old guided third-party DNS integration is
+removed; users who prefer AdGuard DNS resolvers configure them as ordinary
+custom DNS servers in the v2 DNS system. See `docs/dns-cli.md` and
+`docs/phase-10-design.md` for details.
 
 ## Example: Timers
 

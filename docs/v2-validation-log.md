@@ -235,7 +235,37 @@
     ordering fix.
   - Cleanup left no firewall residue.
 
-## Validation Gaps To Keep Honest
+## Phase 10G - DNS v2 Audit and Debt Closure (Task 10.14)
+
+- **Date:** 2026-07-02
+- **Audit report:** `docs/qa-audit-2026-07-02-dns-v2.md`
+- **HIGH finding fixed (AUD-DNS-001):** the DNS v2 policy was never passed
+  into a live `SingBoxDriver.connect()` call, so `custom`/`advanced` mode,
+  FakeIP, ECS, static IP mapping and DNS diversion rules never actually
+  reached a running sing-box process, even though each was fully unit-tested
+  in isolation. Fixed by threading `dns_policy` through `BaseDriver.connect()`,
+  every driver implementation, `WatchdogRuntime` (`connect`, `startup`,
+  `_try_reconnect`, rotation), and `RotationEngine.rotate()`.
+- **MEDIUM finding accepted (AUD-DNS-002):** system DNS state is not
+  automatically restored on VPN disconnect, only via `watchdog dns reset
+  --yes` or `vpn_dns_rescue`. Accepted with rationale in the audit report;
+  tracked for Phase 11/12 connect/disconnect lifecycle work.
+- **LOW findings fixed (AUD-DNS-003):** refreshed stale "planned for Phase
+  10" language in `docs/demo.md`, `docs/configuration.md`,
+  `docs/threat-model.md`, and added the missing `CHANGELOG.md` entry for the
+  DNS v2 feature set.
+- **Automated validation:**
+  - `python3 -m unittest discover tests` passed: 429 tests.
+  - `bash tests/unit.sh` passed.
+  - `.venv/bin/pytest tests` passed: 445 tests.
+  - `git diff --check` passed.
+- **Not yet re-validated on real hardware:** the AUD-DNS-001 fix (DNS policy
+  now reaching the live sing-box process) is covered by unit tests with a
+  mocked subprocess, but has not yet been exercised against a real VPS
+  profile with a real `dns-policy.json` and a real `watchdog dns apply`. See
+  the workstation commands below.
+
+
 
 - No full real-hardware validation log exists yet for every compatibility
   protocol in the parser/provider matrix.
@@ -248,3 +278,6 @@
   408 tests after creating a local `.venv`.
 - Phase 10F real validation did not run a full interactive TUI session; TUI DNS
   controls were covered by unit tests and command mapping smoke checks.
+- Phase 10G's AUD-DNS-001 fix (DNS policy now reaching the live sing-box
+  process) is unit-tested but not yet re-validated end-to-end against a real
+  VPS profile with a real `dns-policy.json` in `custom` mode.
