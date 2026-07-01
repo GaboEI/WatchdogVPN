@@ -212,12 +212,19 @@ def _build_channel_rules(
     direct_server = _first_tag(channel_servers, DNSChannelName.DIRECT)
     proxy_server = _first_tag(channel_servers, DNSChannelName.PROXY)
     if direct_server:
-        rules.append({"outbound": "direct", "server": direct_server})
+        rules.append(_direct_dns_rule(policy, direct_server))
     if _fakeip_enabled(policy, channel_servers):
         rules.append({"outbound": proxy_outbound_tag, "server": FAKEIP_SERVER_TAG})
     elif proxy_server:
         rules.append({"outbound": proxy_outbound_tag, "server": proxy_server})
     return rules
+
+
+def _direct_dns_rule(policy: DNSPolicy, direct_server: str) -> dict[str, Any]:
+    rule: dict[str, Any] = {"outbound": "direct", "server": direct_server}
+    if policy.ecs_direct_enabled and policy.ecs_direct_subnet:
+        rule["client_subnet"] = policy.ecs_direct_subnet
+    return rule
 
 
 def _final_server(channel_servers: dict[DNSChannelName, tuple[str, ...]]) -> str:

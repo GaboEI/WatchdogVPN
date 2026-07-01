@@ -147,6 +147,59 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             {"outbound": "vless-demo", "server": "watchdogvpn-proxy-1"},
         ])
 
+    def test_adds_ecs_client_subnet_only_to_direct_rule_when_enabled(self) -> None:
+        policy = DNSPolicy(
+            ecs_direct_enabled=True,
+            ecs_direct_subnet="203.0.113.0/24",
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="tcp://8.8.8.8")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.config["rules"], [
+            {
+                "outbound": "direct",
+                "server": "watchdogvpn-direct-1",
+                "client_subnet": "203.0.113.0/24",
+            },
+            {"outbound": "vless-demo", "server": FAKEIP_SERVER_TAG},
+        ])
+        self.assertNotIn("client_subnet", result.config)
+
+    def test_does_not_add_ecs_client_subnet_when_disabled(self) -> None:
+        policy = DNSPolicy(
+            ecs_direct_subnet="203.0.113.0/24",
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.config["rules"], [
+            {"outbound": "direct", "server": "watchdogvpn-direct-1"},
+        ])
+
     def test_builds_dns_hijack_inbounds_when_enabled(self) -> None:
         inbounds = build_dns_hijack_inbounds(DNSPolicy(tun_hijack=True))
 

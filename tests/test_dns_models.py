@@ -43,6 +43,7 @@ class DNSModelTests(unittest.TestCase):
             static_ip_enabled=True,
             rules_enabled=True,
             ecs_direct_enabled=True,
+            ecs_direct_subnet="203.0.113.0/24",
             fakeip_inet4_range="198.18.0.0/15",
             fakeip_inet6_range="fc00::/18",
         )
@@ -95,6 +96,8 @@ class DNSModelTests(unittest.TestCase):
         self.assertEqual(policy.fakeip_inet4_range, DEFAULT_FAKEIP_INET4_RANGE)
         self.assertEqual(policy.fakeip_inet6_range, DEFAULT_FAKEIP_INET6_RANGE)
         self.assertEqual(policy.proxy_resolution_channel, "fakeip")
+        self.assertFalse(policy.ecs_direct_enabled)
+        self.assertIsNone(policy.ecs_direct_subnet)
 
     def test_dns_policy_rejects_invalid_proxy_resolution_channel(self) -> None:
         with self.assertRaises(ValueError):
@@ -105,6 +108,14 @@ class DNSModelTests(unittest.TestCase):
             DNSPolicy(fakeip_inet4_range="fc00::/18")
         with self.assertRaises(ValueError):
             DNSPolicy(fakeip_inet6_range="198.18.0.0/15")
+
+    def test_dns_policy_requires_subnet_when_ecs_is_enabled(self) -> None:
+        with self.assertRaises(ValueError):
+            DNSPolicy(ecs_direct_enabled=True)
+
+    def test_dns_policy_rejects_invalid_ecs_subnet(self) -> None:
+        with self.assertRaises(ValueError):
+            DNSPolicy(ecs_direct_subnet="not-a-subnet")
 
 
 if __name__ == "__main__":

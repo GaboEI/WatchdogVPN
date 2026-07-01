@@ -108,6 +108,16 @@ Phase 10 includes design and implementation for:
 These features must be real behavior before any TUI control is exposed. No TUI
 placeholder screens.
 
+### ECS Privacy Boundary
+
+ECS sends an EDNS Client Subnet hint with DNS queries. This can improve CDN or
+regional answers for direct traffic, but it also shares an approximate network
+location with the resolver and sometimes the upstream authoritative path.
+WatchdogVPN therefore keeps ECS disabled by default and only allows it on the
+direct DNS channel with an explicit subnet. ECS must never be sent through
+proxy, final, FakeIP, bootstrap, or system resolver paths unless a later phase
+adds and validates a narrower policy.
+
 ## Linux Resolver Strategy
 
 DNS v2 must detect the active system resolver manager:

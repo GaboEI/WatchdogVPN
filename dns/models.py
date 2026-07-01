@@ -180,6 +180,7 @@ class DNSPolicy:
     static_ip_enabled: bool = False
     rules_enabled: bool = False
     ecs_direct_enabled: bool = False
+    ecs_direct_subnet: str | None = None
     proxy_resolution_channel: str = "fakeip"
     fakeip_inet4_range: str = DEFAULT_FAKEIP_INET4_RANGE
     fakeip_inet6_range: str = DEFAULT_FAKEIP_INET6_RANGE
@@ -206,6 +207,8 @@ class DNSPolicy:
         self.test_domain = str(self.test_domain).strip().lower().rstrip(".")
         self.ttl = str(self.ttl).strip()
         self.proxy_resolution_channel = str(self.proxy_resolution_channel).strip()
+        if self.ecs_direct_subnet is not None:
+            self.ecs_direct_subnet = str(self.ecs_direct_subnet).strip() or None
         self.fakeip_inet4_range = str(self.fakeip_inet4_range).strip()
         self.fakeip_inet6_range = str(self.fakeip_inet6_range).strip()
         if not self.test_domain:
@@ -214,6 +217,10 @@ class DNSPolicy:
             raise ValueError("dns ttl must not be empty")
         if self.proxy_resolution_channel not in ALLOWED_PROXY_RESOLUTION_CHANNELS:
             raise ValueError("unsupported proxy resolution channel")
+        if self.ecs_direct_enabled and self.ecs_direct_subnet is None:
+            raise ValueError("ecs direct subnet is required when ECS is enabled")
+        if self.ecs_direct_subnet is not None:
+            self._validate_ecs_subnet(self.ecs_direct_subnet)
         self._validate_ip_network(self.fakeip_inet4_range, version=4)
         self._validate_ip_network(self.fakeip_inet6_range, version=6)
 
@@ -232,6 +239,7 @@ class DNSPolicy:
             "static_ip_enabled": self.static_ip_enabled,
             "rules_enabled": self.rules_enabled,
             "ecs_direct_enabled": self.ecs_direct_enabled,
+            "ecs_direct_subnet": self.ecs_direct_subnet,
             "proxy_resolution_channel": self.proxy_resolution_channel,
             "fakeip_inet4_range": self.fakeip_inet4_range,
             "fakeip_inet6_range": self.fakeip_inet6_range,
@@ -258,6 +266,7 @@ class DNSPolicy:
             static_ip_enabled=bool(data.get("static_ip_enabled", False)),
             rules_enabled=bool(data.get("rules_enabled", False)),
             ecs_direct_enabled=bool(data.get("ecs_direct_enabled", False)),
+            ecs_direct_subnet=data.get("ecs_direct_subnet"),
             proxy_resolution_channel=str(
                 data.get("proxy_resolution_channel", "fakeip")
             ),
@@ -277,3 +286,10 @@ class DNSPolicy:
             raise ValueError("invalid FakeIP range") from exc
         if network.version != version:
             raise ValueError("FakeIP range IP version mismatch")
+
+    @staticmethod
+    def _validate_ecs_subnet(value: str) -> None:
+        try:
+            ipaddress.ip_network(value, strict=False)
+        except ValueError as exc:
+            raise ValueError("invalid ECS direct subnet") from exc
