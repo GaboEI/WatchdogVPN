@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
@@ -12,6 +13,7 @@ MAX_RESOLVERS_PER_CHANNEL = 4
 DEFAULT_FAKEIP_INET4_RANGE = "198.18.0.0/15"
 DEFAULT_FAKEIP_INET6_RANGE = "fc00::/18"
 ALLOWED_PROXY_RESOLUTION_CHANNELS = {"fakeip", "proxy", "direct", "final"}
+DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 class DNSMode(str, Enum):
@@ -110,6 +112,11 @@ class StaticIPEntry:
             raise ValueError("static ip domain must not be empty")
         if not self.ip:
             raise ValueError("static ip address must not be empty")
+        _validate_domain_name(self.domain)
+        try:
+            ipaddress.ip_address(self.ip)
+        except ValueError as exc:
+            raise ValueError("static ip address must be a valid IP address") from exc
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -293,3 +300,13 @@ class DNSPolicy:
             ipaddress.ip_network(value, strict=False)
         except ValueError as exc:
             raise ValueError("invalid ECS direct subnet") from exc
+
+
+def _validate_domain_name(domain: str) -> None:
+    if len(domain) > 253:
+        raise ValueError("domain name is too long")
+    labels = domain.split(".")
+    if len(labels) < 2:
+        raise ValueError("domain name must be fully qualified")
+    if any(not label or not DOMAIN_LABEL_RE.match(label) for label in labels):
+        raise ValueError("invalid domain name")

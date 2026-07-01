@@ -117,6 +117,20 @@ class DNSModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DNSPolicy(ecs_direct_subnet="not-a-subnet")
 
+    def test_static_ip_entry_normalizes_domain_and_validates_ip(self) -> None:
+        entry = StaticIPEntry(domain="Example.COM.", ip="2001:db8::1")
+
+        self.assertEqual(entry.domain, "example.com")
+        self.assertEqual(entry.ip, "2001:db8::1")
+
+    def test_static_ip_entry_rejects_invalid_domain_or_ip(self) -> None:
+        with self.assertRaises(ValueError):
+            StaticIPEntry(domain="localhost", ip="127.0.0.1")
+        with self.assertRaises(ValueError):
+            StaticIPEntry(domain="-bad.example.com", ip="127.0.0.1")
+        with self.assertRaises(ValueError):
+            StaticIPEntry(domain="example.com", ip="not-an-ip")
+
 
 if __name__ == "__main__":
     unittest.main()

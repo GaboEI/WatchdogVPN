@@ -118,6 +118,15 @@ direct DNS channel with an explicit subnet. ECS must never be sent through
 proxy, final, FakeIP, bootstrap, or system resolver paths unless a later phase
 adds and validates a narrower policy.
 
+### Static IP Map Boundary
+
+Static IP mappings behave like a small WatchdogVPN-owned hosts file. They are
+disabled by default and, when enabled, are emitted before upstream DNS routing
+so an exact configured domain resolves to the configured IP address first. In
+sing-box-backed DNS this uses a `hosts` DNS server with `predefined` records and
+a first-position DNS rule for the mapped domains. Static mappings do not mutate
+`/etc/hosts` or the host system resolver state.
+
 ## Linux Resolver Strategy
 
 DNS v2 must detect the active system resolver manager:

@@ -21,6 +21,7 @@ DNS_HIJACK_INBOUND_TAGS = (
     "watchdogvpn-dns-tcp-in",
 )
 FAKEIP_SERVER_TAG = "watchdogvpn-fakeip"
+STATIC_IP_SERVER_TAG = "watchdogvpn-static-ip"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,8 @@ def build_singbox_dns_config(
     if not servers:
         return None
 
+    if _static_ip_enabled(policy):
+        servers.insert(0, _static_ip_server(policy))
     if _fakeip_enabled(policy, channel_servers):
         servers.append(_fakeip_server(policy))
 
@@ -193,6 +196,31 @@ def _fakeip_server(policy: DNSPolicy) -> dict[str, Any]:
     }
 
 
+def _static_ip_enabled(policy: DNSPolicy) -> bool:
+    return policy.mode != DNSMode.OFF and policy.static_ip_enabled and any(
+        entry.enabled for entry in policy.static_ips
+    )
+
+
+def _static_ip_server(policy: DNSPolicy) -> dict[str, Any]:
+    predefined: dict[str, str | list[str]] = {}
+    for entry in policy.static_ips:
+        if not entry.enabled:
+            continue
+        existing = predefined.get(entry.domain)
+        if existing is None:
+            predefined[entry.domain] = entry.ip
+        elif isinstance(existing, list):
+            existing.append(entry.ip)
+        else:
+            predefined[entry.domain] = [existing, entry.ip]
+    return {
+        "type": "hosts",
+        "tag": STATIC_IP_SERVER_TAG,
+        "predefined": predefined,
+    }
+
+
 def _resolver_needs_domain_resolver(parsed: ParsedResolver) -> bool:
     if parsed.host is None:
         return False
@@ -209,6 +237,8 @@ def _build_channel_rules(
     proxy_outbound_tag: str,
 ) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
+    if _static_ip_enabled(policy):
+        rules.append(_static_ip_rule(policy))
     direct_server = _first_tag(channel_servers, DNSChannelName.DIRECT)
     proxy_server = _first_tag(channel_servers, DNSChannelName.PROXY)
     if direct_server:
@@ -218,6 +248,20 @@ def _build_channel_rules(
     elif proxy_server:
         rules.append({"outbound": proxy_outbound_tag, "server": proxy_server})
     return rules
+
+
+def _static_ip_rule(policy: DNSPolicy) -> dict[str, Any]:
+    domains = []
+    seen: set[str] = set()
+    for entry in policy.static_ips:
+        if not entry.enabled or entry.domain in seen:
+            continue
+        domains.append(entry.domain)
+        seen.add(entry.domain)
+    return {
+        "domain": domains,
+        "server": STATIC_IP_SERVER_TAG,
+    }
 
 
 def _direct_dns_rule(policy: DNSPolicy, direct_server: str) -> dict[str, Any]:

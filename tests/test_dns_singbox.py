@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import unittest
 
-from dns.models import DNSChannel, DNSChannelName, DNSMode, DNSPolicy, Resolver
+from dns.models import (
+    DNSChannel,
+    DNSChannelName,
+    DNSMode,
+    DNSPolicy,
+    Resolver,
+    StaticIPEntry,
+)
 from dns.singbox import (
     DNS_HIJACK_INBOUND_TAGS,
     FAKEIP_SERVER_TAG,
+    STATIC_IP_SERVER_TAG,
     build_dns_hijack_inbounds,
     build_dns_hijack_route,
     build_singbox_dns_config,
@@ -199,6 +207,98 @@ class SingBoxDNSConfigTests(unittest.TestCase):
         self.assertEqual(result.config["rules"], [
             {"outbound": "direct", "server": "watchdogvpn-direct-1"},
         ])
+
+    def test_static_ip_map_resolves_before_upstream_dns(self) -> None:
+        policy = DNSPolicy(
+            static_ip_enabled=True,
+            static_ips=[
+                StaticIPEntry(domain="Example.COM.", ip="203.0.113.10"),
+                StaticIPEntry(domain="api.example.com", ip="2001:db8::10"),
+                StaticIPEntry(
+                    domain="disabled.example.com",
+                    ip="203.0.113.20",
+                    enabled=False,
+                ),
+            ],
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="tcp://8.8.8.8")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.config["rules"][0], {
+            "domain": ["example.com", "api.example.com"],
+            "server": STATIC_IP_SERVER_TAG,
+        })
+        servers = {server["tag"]: server for server in result.config["servers"]}
+        self.assertEqual(servers[STATIC_IP_SERVER_TAG], {
+            "type": "hosts",
+            "tag": STATIC_IP_SERVER_TAG,
+            "predefined": {
+                "example.com": "203.0.113.10",
+                "api.example.com": "2001:db8::10",
+            },
+        })
+
+    def test_static_ip_map_supports_multiple_ips_per_domain(self) -> None:
+        policy = DNSPolicy(
+            static_ip_enabled=True,
+            static_ips=[
+                StaticIPEntry(domain="example.com", ip="203.0.113.10"),
+                StaticIPEntry(domain="example.com", ip="2001:db8::10"),
+            ],
+            channels={
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="tcp://8.8.8.8")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        servers = {server["tag"]: server for server in result.config["servers"]}
+        self.assertEqual(
+            servers[STATIC_IP_SERVER_TAG]["predefined"]["example.com"],
+            ["203.0.113.10", "2001:db8::10"],
+        )
+
+    def test_static_ip_map_is_not_emitted_when_disabled(self) -> None:
+        policy = DNSPolicy(
+            static_ip_enabled=False,
+            static_ips=[StaticIPEntry(domain="example.com", ip="203.0.113.10")],
+            channels={
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="tcp://8.8.8.8")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        servers = {server["tag"]: server for server in result.config["servers"]}
+        self.assertNotIn(STATIC_IP_SERVER_TAG, servers)
+        self.assertFalse(
+            any(
+                rule.get("server") == STATIC_IP_SERVER_TAG
+                for rule in result.config["rules"]
+            )
+        )
 
     def test_builds_dns_hijack_inbounds_when_enabled(self) -> None:
         inbounds = build_dns_hijack_inbounds(DNSPolicy(tun_hijack=True))
