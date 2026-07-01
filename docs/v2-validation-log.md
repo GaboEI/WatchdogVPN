@@ -170,5 +170,6 @@
   VPS profile.
 - Exact terminal transcripts for Phase 4, Phase 5, and Phase 5.5 manual
   commands were not preserved.
-- `pytest` is not installed in the current local environment; validation has
-  used `unittest` and project shell runners.
+- Local pytest validation is now reproducible through `requirements-dev.txt`
+  and `pytest.ini`; both `pytest tests` and `python -m pytest tests` passed with
+  408 tests after creating a local `.venv`.

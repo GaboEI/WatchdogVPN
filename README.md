@@ -211,9 +211,20 @@ tests/              Syntax, unit behavior and runtime validation helpers
 
 ## Validation
 
+Development test dependencies are installed in a local virtual environment:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+```
+
 Current validation commands:
 
 ```sh
+pytest tests
+python -m pytest tests
 python3 -m compileall -q tui tests/unit/test_tui_modules.py
 bash tests/syntax.sh
 bash tests/unit.sh
