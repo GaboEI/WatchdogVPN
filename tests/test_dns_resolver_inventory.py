@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from dns.resolver_inventory import ResolverManager, detect_resolver_manager
+
+
+def runner_with(active_services: set[str]):
+    def run(command: list[str]) -> str:
+        if command[:2] == ["systemctl", "is-active"] and len(command) == 3:
+            return "active" if command[2] in active_services else "inactive"
+        return ""
+
+    return run
+
+
+class ResolverInventoryTests(unittest.TestCase):
+    def test_detects_systemd_resolved_from_active_service(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 127.0.0.53\nsearch lan\n", encoding="utf-8")
+
+            inventory = detect_resolver_manager(
+                resolv_conf_path=resolv_conf,
+                runner=runner_with({"systemd-resolved.service"}),
+            )
+
+            self.assertEqual(inventory.manager, ResolverManager.SYSTEMD_RESOLVED)
+            self.assertEqual(inventory.nameservers, ["127.0.0.53"])
+            self.assertEqual(inventory.search_domains, ["lan"])
+            self.assertTrue(inventory.systemd_resolved_active)
+
+    def test_detects_network_manager_when_resolved_is_inactive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 192.0.2.1\n", encoding="utf-8")
+
+            inventory = detect_resolver_manager(
+                resolv_conf_path=resolv_conf,
+                runner=runner_with({"NetworkManager.service"}),
+            )
+
+            self.assertEqual(inventory.manager, ResolverManager.NETWORK_MANAGER)
+            self.assertEqual(inventory.nameservers, ["192.0.2.1"])
+            self.assertTrue(inventory.network_manager_active)
+
+    def test_detects_classic_resolv_conf_without_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("domain example.test\nnameserver 203.0.113.53\n", encoding="utf-8")
+
+            inventory = detect_resolver_manager(
+                resolv_conf_path=resolv_conf,
+                runner=runner_with(set()),
+            )
+
+            self.assertEqual(inventory.manager, ResolverManager.RESOLV_CONF)
+            self.assertEqual(inventory.nameservers, ["203.0.113.53"])
+            self.assertEqual(inventory.search_domains, ["example.test"])
+
+    def test_unknown_when_resolv_conf_is_missing_and_services_are_inactive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inventory = detect_resolver_manager(
+                resolv_conf_path=Path(tmp) / "missing.conf",
+                runner=runner_with(set()),
+            )
+
+            self.assertEqual(inventory.manager, ResolverManager.UNKNOWN)
+            self.assertIn("resolv.conf missing", inventory.notes)
+            self.assertIn("no supported resolver manager detected", inventory.notes)
+
+    def test_inventory_to_dict_is_serializable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 198.51.100.53\n", encoding="utf-8")
+            inventory = detect_resolver_manager(resolv_conf, runner=runner_with(set()))
+
+            data = inventory.to_dict()
+
+            self.assertEqual(data["manager"], "resolv_conf")
+            self.assertEqual(data["resolv_conf_path"], str(resolv_conf))
+            self.assertEqual(data["nameservers"], ["198.51.100.53"])
+
+
+if __name__ == "__main__":
+    unittest.main()
