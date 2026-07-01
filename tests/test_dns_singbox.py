@@ -7,6 +7,8 @@ from dns.models import (
     DNSChannelName,
     DNSMode,
     DNSPolicy,
+    DNSRule,
+    DNSRuleAction,
     Resolver,
     StaticIPEntry,
 )
@@ -299,6 +301,154 @@ class SingBoxDNSConfigTests(unittest.TestCase):
                 for rule in result.config["rules"]
             )
         )
+
+    def test_dns_diversion_rules_route_to_selected_channels_by_priority(self) -> None:
+        policy = DNSPolicy(
+            rules_enabled=True,
+            rules=[
+                DNSRule(
+                    id="proxy-last",
+                    pattern="suffix:proxy.example.com",
+                    channel=DNSChannelName.PROXY,
+                    priority=20,
+                ),
+                DNSRule(
+                    id="direct-first",
+                    pattern="domain:Direct.Example.COM.",
+                    channel=DNSChannelName.DIRECT,
+                    priority=10,
+                ),
+                DNSRule(
+                    id="disabled",
+                    pattern="keyword:disabled",
+                    channel=DNSChannelName.FINAL,
+                    enabled=False,
+                    priority=5,
+                ),
+            ],
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="tcp://8.8.8.8")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.config["rules"][:2], [
+            {
+                "domain": ["direct.example.com"],
+                "server": "watchdogvpn-direct-1",
+            },
+            {
+                "domain_suffix": ["proxy.example.com"],
+                "server": "watchdogvpn-proxy-1",
+            },
+        ])
+        self.assertNotIn(
+            {"domain_keyword": ["disabled"], "server": "watchdogvpn-final-1"},
+            result.config["rules"],
+        )
+
+    def test_dns_diversion_rules_are_after_static_ip_and_before_base_rules(self) -> None:
+        policy = DNSPolicy(
+            static_ip_enabled=True,
+            static_ips=[StaticIPEntry(domain="static.example.com", ip="203.0.113.10")],
+            rules_enabled=True,
+            rules=[
+                DNSRule(
+                    id="proxy",
+                    pattern="keyword:proxy",
+                    channel=DNSChannelName.PROXY,
+                )
+            ],
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.config["rules"][:4], [
+            {
+                "domain": ["static.example.com"],
+                "server": STATIC_IP_SERVER_TAG,
+            },
+            {
+                "domain_keyword": ["proxy"],
+                "server": "watchdogvpn-proxy-1",
+            },
+            {"outbound": "direct", "server": "watchdogvpn-direct-1"},
+            {"outbound": "vless-demo", "server": FAKEIP_SERVER_TAG},
+        ])
+
+    def test_dns_diversion_reject_rule_emits_reject_action(self) -> None:
+        policy = DNSPolicy(
+            rules_enabled=True,
+            rules=[
+                DNSRule(
+                    id="reject-ads",
+                    pattern="suffix:ads.example.com",
+                    action=DNSRuleAction.REJECT,
+                )
+            ],
+            channels={
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="tcp://8.8.8.8")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.config["rules"][0], {
+            "domain_suffix": ["ads.example.com"],
+            "action": "reject",
+        })
+
+    def test_dns_diversion_rule_fails_when_selected_channel_has_no_server(self) -> None:
+        policy = DNSPolicy(
+            rules_enabled=True,
+            rules=[
+                DNSRule(
+                    id="missing-channel",
+                    pattern="domain:example.com",
+                    channel=DNSChannelName.PROXY,
+                )
+            ],
+            channels={
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="tcp://8.8.8.8")],
+                ),
+            },
+        )
+
+        with self.assertRaises(ValueError):
+            build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
 
     def test_builds_dns_hijack_inbounds_when_enabled(self) -> None:
         inbounds = build_dns_hijack_inbounds(DNSPolicy(tun_hijack=True))

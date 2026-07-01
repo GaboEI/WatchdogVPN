@@ -127,6 +127,16 @@ sing-box-backed DNS this uses a `hosts` DNS server with `predefined` records and
 a first-position DNS rule for the mapped domains. Static mappings do not mutate
 `/etc/hosts` or the host system resolver state.
 
+### DNS Diversion Rule Boundary
+
+DNS diversion rules route DNS decisions to DNS channels; they are not Phase 11
+traffic routing rules. They are disabled by default and, when enabled, are
+emitted after static IP mappings but before the base direct/proxy DNS rules.
+Supported match patterns are explicit and portable: exact domain, domain
+suffix, keyword, regex, geosite, and sing-box rule-set. A rule that points to a
+channel without a configured resolver must fail during config generation rather
+than silently falling back to another channel.
+
 ## Linux Resolver Strategy
 
 DNS v2 must detect the active system resolver manager:

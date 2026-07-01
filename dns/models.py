@@ -14,6 +14,14 @@ DEFAULT_FAKEIP_INET4_RANGE = "198.18.0.0/15"
 DEFAULT_FAKEIP_INET6_RANGE = "fc00::/18"
 ALLOWED_PROXY_RESOLUTION_CHANNELS = {"fakeip", "proxy", "direct", "final"}
 DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+DNS_RULE_PATTERN_TYPES = {
+    "domain",
+    "suffix",
+    "keyword",
+    "regex",
+    "geosite",
+    "rule_set",
+}
 
 
 class DNSMode(str, Enum):
@@ -151,6 +159,7 @@ class DNSRule:
             raise ValueError("dns rule pattern must not be empty")
         if self.action == DNSRuleAction.USE_CHANNEL and self.channel is None:
             raise ValueError("dns rule channel is required for use_channel action")
+        _validate_dns_rule_pattern(self.pattern)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -310,3 +319,22 @@ def _validate_domain_name(domain: str) -> None:
         raise ValueError("domain name must be fully qualified")
     if any(not label or not DOMAIN_LABEL_RE.match(label) for label in labels):
         raise ValueError("invalid domain name")
+
+
+def _validate_dns_rule_pattern(pattern: str) -> None:
+    if ":" not in pattern:
+        raise ValueError("dns rule pattern must include a type prefix")
+    pattern_type, value = pattern.split(":", 1)
+    pattern_type = pattern_type.strip()
+    value = value.strip()
+    if pattern_type not in DNS_RULE_PATTERN_TYPES:
+        raise ValueError("unsupported dns rule pattern type")
+    if not value:
+        raise ValueError("dns rule pattern value must not be empty")
+    if pattern_type in {"domain", "suffix"}:
+        _validate_domain_name(value.lower().rstrip("."))
+    elif pattern_type == "regex":
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError("invalid dns rule regex pattern") from exc

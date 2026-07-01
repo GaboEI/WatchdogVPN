@@ -10,6 +10,7 @@ from dns.models import (
     DNSMode,
     DNSPolicy,
     DNSRule,
+    DNSRuleAction,
     Resolver,
     StaticIPEntry,
 )
@@ -79,6 +80,15 @@ class DNSModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DNSRule(id="missing-channel", pattern="domain:example.com")
 
+    def test_dns_rule_accepts_reject_without_channel(self) -> None:
+        rule = DNSRule(
+            id="reject-ads",
+            pattern="suffix:ads.example.com",
+            action=DNSRuleAction.REJECT,
+        )
+
+        self.assertIsNone(rule.channel)
+
     def test_dns_policy_rejects_channel_key_mismatch(self) -> None:
         with self.assertRaises(ValueError):
             DNSPolicy(
@@ -130,6 +140,24 @@ class DNSModelTests(unittest.TestCase):
             StaticIPEntry(domain="-bad.example.com", ip="127.0.0.1")
         with self.assertRaises(ValueError):
             StaticIPEntry(domain="example.com", ip="not-an-ip")
+
+    def test_dns_rule_rejects_invalid_patterns(self) -> None:
+        invalid_patterns = [
+            "example.com",
+            "unsupported:example.com",
+            "domain:localhost",
+            "suffix:-bad.example.com",
+            "regex:[",
+            "geosite:",
+        ]
+        for pattern in invalid_patterns:
+            with self.subTest(pattern=pattern):
+                with self.assertRaises(ValueError):
+                    DNSRule(
+                        id=f"rule-{pattern}",
+                        pattern=pattern,
+                        channel=DNSChannelName.DIRECT,
+                    )
 
 
 if __name__ == "__main__":

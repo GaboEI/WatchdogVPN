@@ -4,7 +4,14 @@ import ipaddress
 from dataclasses import dataclass
 from typing import Any
 
-from .models import DNSChannelName, DNSMode, DNSPolicy, Resolver
+from .models import (
+    DNSChannelName,
+    DNSMode,
+    DNSPolicy,
+    DNSRule,
+    DNSRuleAction,
+    Resolver,
+)
 from .resolver_parser import ParsedResolver, ResolverTransport, parse_resolver_uri
 
 
@@ -239,6 +246,7 @@ def _build_channel_rules(
     rules: list[dict[str, Any]] = []
     if _static_ip_enabled(policy):
         rules.append(_static_ip_rule(policy))
+    rules.extend(_dns_diversion_rules(policy, channel_servers))
     direct_server = _first_tag(channel_servers, DNSChannelName.DIRECT)
     proxy_server = _first_tag(channel_servers, DNSChannelName.PROXY)
     if direct_server:
@@ -262,6 +270,58 @@ def _static_ip_rule(policy: DNSPolicy) -> dict[str, Any]:
         "domain": domains,
         "server": STATIC_IP_SERVER_TAG,
     }
+
+
+def _dns_diversion_rules(
+    policy: DNSPolicy,
+    channel_servers: dict[DNSChannelName, tuple[str, ...]],
+) -> list[dict[str, Any]]:
+    if policy.mode == DNSMode.OFF or not policy.rules_enabled:
+        return []
+    rules: list[dict[str, Any]] = []
+    indexed_rules = enumerate(policy.rules)
+    for _, rule in sorted(indexed_rules, key=lambda item: (item[1].priority, item[0])):
+        if not rule.enabled:
+            continue
+        rules.append(_dns_diversion_rule(rule, channel_servers))
+    return rules
+
+
+def _dns_diversion_rule(
+    rule: DNSRule,
+    channel_servers: dict[DNSChannelName, tuple[str, ...]],
+) -> dict[str, Any]:
+    singbox_rule = _dns_rule_match_fields(rule.pattern)
+    if rule.action == DNSRuleAction.REJECT:
+        singbox_rule["action"] = "reject"
+        return singbox_rule
+    if rule.channel is None:
+        raise ValueError("dns diversion rule channel is required")
+    server = _first_tag(channel_servers, rule.channel)
+    if server is None:
+        raise ValueError(
+            f"dns diversion rule channel has no server: {rule.channel.value}"
+        )
+    singbox_rule["server"] = server
+    return singbox_rule
+
+
+def _dns_rule_match_fields(pattern: str) -> dict[str, Any]:
+    pattern_type, value = pattern.split(":", 1)
+    value = value.strip()
+    if pattern_type == "domain":
+        return {"domain": [value.lower().rstrip(".")]}
+    if pattern_type == "suffix":
+        return {"domain_suffix": [value.lower().rstrip(".")]}
+    if pattern_type == "keyword":
+        return {"domain_keyword": [value]}
+    if pattern_type == "regex":
+        return {"domain_regex": [value]}
+    if pattern_type == "geosite":
+        return {"geosite": [value]}
+    if pattern_type == "rule_set":
+        return {"rule_set": [value]}
+    raise ValueError("unsupported dns rule pattern type")
 
 
 def _direct_dns_rule(policy: DNSPolicy, direct_server: str) -> dict[str, Any]:
