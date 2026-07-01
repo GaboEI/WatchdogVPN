@@ -66,6 +66,10 @@ class DNSModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Resolver(uri=" ")
 
+    def test_resolver_rejects_invalid_uri(self) -> None:
+        with self.assertRaises(ValueError):
+            Resolver(uri="udp://dns.example.com")
+
     def test_dns_rule_requires_channel_for_use_channel_action(self) -> None:
         with self.assertRaises(ValueError):
             DNSRule(id="missing-channel", pattern="domain:example.com")

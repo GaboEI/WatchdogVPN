@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+from .resolver_parser import validate_resolver_uri
+
 
 MAX_RESOLVERS_PER_CHANNEL = 4
 
@@ -40,6 +42,7 @@ class Resolver:
         self.uri = str(self.uri).strip()
         if not self.uri:
             raise ValueError("resolver uri must not be empty")
+        validate_resolver_uri(self.uri)
         if self.label is not None:
             self.label = str(self.label).strip() or None
 
