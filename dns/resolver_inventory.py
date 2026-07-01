@@ -42,6 +42,23 @@ class ResolverInventory:
             "notes": list(self.notes),
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "ResolverInventory":
+        return cls(
+            manager=ResolverManager(str(data["manager"])),
+            resolv_conf_path=Path(str(data["resolv_conf_path"])),
+            resolv_conf_target=(
+                str(data["resolv_conf_target"])
+                if data.get("resolv_conf_target") is not None
+                else None
+            ),
+            nameservers=[str(item) for item in data.get("nameservers", [])],
+            search_domains=[str(item) for item in data.get("search_domains", [])],
+            systemd_resolved_active=bool(data.get("systemd_resolved_active", False)),
+            network_manager_active=bool(data.get("network_manager_active", False)),
+            notes=[str(item) for item in data.get("notes", [])],
+        )
+
 
 def _run(command: list[str]) -> str:
     try:

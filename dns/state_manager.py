@@ -43,6 +43,18 @@ class NetworkManagerConnectionState:
             "ipv6_dns_search": self.ipv6_dns_search,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "NetworkManagerConnectionState":
+        return cls(
+            name=str(data["name"]),
+            ipv4_dns=str(data.get("ipv4_dns", "")),
+            ipv4_ignore_auto_dns=str(data.get("ipv4_ignore_auto_dns", "no")),
+            ipv4_dns_search=str(data.get("ipv4_dns_search", "")),
+            ipv6_dns=str(data.get("ipv6_dns", "")),
+            ipv6_ignore_auto_dns=str(data.get("ipv6_ignore_auto_dns", "no")),
+            ipv6_dns_search=str(data.get("ipv6_dns_search", "")),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class DNSStateSnapshot:
@@ -63,6 +75,38 @@ class DNSStateSnapshot:
             ],
             "systemd_link": self.systemd_link,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "DNSStateSnapshot":
+        raw_inventory = data.get("inventory")
+        if not isinstance(raw_inventory, dict):
+            raise ValueError("dns state snapshot requires inventory")
+        raw_connections = data.get("network_manager_connections", [])
+        if not isinstance(raw_connections, list):
+            raise ValueError("dns state snapshot connections must be a list")
+        return cls(
+            inventory=ResolverInventory.from_dict(raw_inventory),
+            resolv_conf_content=(
+                str(data["resolv_conf_content"])
+                if data.get("resolv_conf_content") is not None
+                else None
+            ),
+            resolv_conf_target=(
+                str(data["resolv_conf_target"])
+                if data.get("resolv_conf_target") is not None
+                else None
+            ),
+            network_manager_connections=tuple(
+                NetworkManagerConnectionState.from_dict(item)
+                for item in raw_connections
+                if isinstance(item, dict)
+            ),
+            systemd_link=(
+                str(data["systemd_link"])
+                if data.get("systemd_link") is not None
+                else None
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

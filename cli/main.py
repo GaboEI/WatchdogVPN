@@ -3,19 +3,34 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import NoReturn
 
+from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
+from dns.hijack import DNSHijackController, DNSHijackError
+from dns.models import DNSChannelName, DNSMode, DNSPolicy
+from dns.resolver_inventory import detect_resolver_manager
+from dns.state_manager import (
+    DNSStateError,
+    DNSStateSnapshot,
+    LocalDNSEntryPoint,
+    SystemDNSStateManager,
+)
+from dns.tester import DNSTester
 from models.profile import Profile
 from models.provider import Provider
 from parsers import ParseError
 from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
+
+
+DEFAULT_DNS_SNAPSHOT_FILE = Path.home() / ".config" / "watchdogvpn" / "dns-state.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,6 +50,9 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as exc:
         _error(str(exc))
         return 66
+    except (DNSHijackError, DNSStateError, OSError, ValueError) as exc:
+        _error(str(exc))
+        return 70
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -126,6 +144,49 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_node_group.add_argument("--enable", action="store_true", help="Enable node rotation")
     provider_node_group.add_argument("--disable", action="store_true", help="Disable node rotation")
     provider_node_parser.set_defaults(handler=_provider_node)
+
+    dns_parser = subparsers.add_parser("dns", help="Manage DNS v2 policy and state")
+    dns_subparsers = dns_parser.add_subparsers(dest="dns_command")
+
+    dns_status_parser = dns_subparsers.add_parser("status", help="Show DNS v2 status")
+    _add_dns_common_paths(dns_status_parser)
+    dns_status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_status_parser.set_defaults(handler=_dns_status)
+
+    dns_test_parser = dns_subparsers.add_parser("test", help="Test DNS v2 resolvers")
+    _add_dns_common_paths(dns_test_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_test_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_test_parser.add_argument("--auto", action="store_true", help="Test default auto setup candidates")
+    dns_test_parser.add_argument("--domain", help="Override the policy test domain")
+    dns_test_parser.add_argument("--timeout", type=float, default=3.0, help="Resolver probe timeout in seconds")
+    dns_test_parser.set_defaults(handler=_dns_test)
+
+    dns_apply_parser = dns_subparsers.add_parser("apply", help="Apply DNS v2 local entrypoint")
+    _add_dns_common_paths(dns_apply_parser)
+    dns_apply_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_apply_parser.add_argument("--dry-run", action="store_true", help="Print the apply plan without changing DNS")
+    dns_apply_parser.add_argument("--yes", action="store_true", help="Confirm system DNS mutation")
+    dns_apply_parser.add_argument("--systemd-link", help="systemd-resolved link name, for example tun0")
+    dns_apply_parser.add_argument("--entrypoint-address", default="127.0.0.1", help="Local DNS entrypoint address")
+    dns_apply_parser.add_argument("--entrypoint-port", type=int, default=53, help="Local DNS entrypoint port")
+    dns_apply_parser.add_argument(
+        "--skip-entrypoint-check",
+        action="store_true",
+        help="Skip local DNS entrypoint reachability check",
+    )
+    dns_apply_parser.add_argument(
+        "--entrypoint-timeout",
+        type=float,
+        default=1.0,
+        help="Local DNS entrypoint TCP check timeout in seconds",
+    )
+    dns_apply_parser.set_defaults(handler=_dns_apply)
+
+    dns_reset_parser = dns_subparsers.add_parser("reset", help="Restore DNS from the saved v2 snapshot")
+    _add_dns_common_paths(dns_reset_parser)
+    dns_reset_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_reset_parser.add_argument("--yes", action="store_true", help="Confirm DNS restore")
+    dns_reset_parser.set_defaults(handler=_dns_reset)
 
     return parser
 
@@ -339,6 +400,231 @@ def _provider_node(args: argparse.Namespace) -> int:
     state = "enabled" if profile.in_rotation_pool else "disabled"
     print(f"Provider node rotation {state}: {profile.id}")
     return 0
+
+
+def _dns_status(args: argparse.Namespace) -> int:
+    policy = _load_dns_policy(args)
+    inventory = detect_resolver_manager(resolv_conf_path=Path(args.resolv_conf_path))
+    data = _dns_status_data(policy, inventory.to_dict(), _dns_snapshot_path(args))
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"DNS mode: {policy.mode.value}")
+    print(f"TUN hijack: {_on_off(policy.tun_hijack)}")
+    print(f"Resolver manager: {data['resolver_manager']['manager']}")
+    print(f"Nameservers: {', '.join(data['resolver_manager']['nameservers']) or '-'}")
+    print(f"Channels: {data['channels']['configured']}/{data['channels']['total']}")
+    print(f"Static IP: {_on_off(policy.static_ip_enabled)} ({len(policy.static_ips)} entries)")
+    print(f"Rules: {_on_off(policy.rules_enabled)} ({len(policy.rules)} rules)")
+    print(f"FakeIP: {policy.fakeip_inet4_range}, {policy.fakeip_inet6_range}")
+    print(f"ECS direct: {_on_off(policy.ecs_direct_enabled)}")
+    print(f"Snapshot: {data['snapshot']['path']} ({data['snapshot']['status']})")
+    return 0
+
+
+def _dns_test(args: argparse.Namespace) -> int:
+    policy = _load_dns_policy(args)
+    domain = args.domain or policy.test_domain
+    tester = DNSTester(timeout=args.timeout)
+    if args.auto or not policy.channels:
+        recommendation = tester.recommend_auto_setup(test_domain=domain)
+        data: dict[str, object] = {
+            "mode": "auto",
+            "test_domain": domain,
+            "recommendation": recommendation.to_dict(),
+        }
+    else:
+        channel_results = {
+            name.value: tester.test_channel(channel, domain).to_dict()
+            for name, channel in sorted(policy.channels.items(), key=lambda item: item[0].value)
+        }
+        data = {
+            "mode": policy.mode.value,
+            "test_domain": domain,
+            "channel_results": channel_results,
+        }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"DNS test domain: {domain}")
+    for channel, result in _dns_channel_results(data).items():
+        ok_count = sum(1 for item in result["results"] if item["ok"])
+        total = len(result["results"])
+        print(f"{channel}: {ok_count}/{total} resolver(s) passed")
+    return 0
+
+
+def _dns_apply(args: argparse.Namespace) -> int:
+    policy = _load_dns_policy(args)
+    snapshot_path = _dns_snapshot_path(args)
+    entrypoint = LocalDNSEntryPoint(
+        address=args.entrypoint_address,
+        port=int(args.entrypoint_port),
+        systemd_link=args.systemd_link,
+    )
+    inventory = detect_resolver_manager(resolv_conf_path=Path(args.resolv_conf_path))
+    plan = {
+        "policy_mode": policy.mode.value,
+        "tun_hijack": policy.tun_hijack,
+        "resolver_manager": inventory.to_dict(),
+        "entrypoint": {
+            "address": entrypoint.address,
+            "port": entrypoint.port,
+            "systemd_link": entrypoint.systemd_link,
+        },
+        "snapshot_path": str(snapshot_path),
+        "would_apply": policy.mode != DNSMode.OFF and policy.tun_hijack,
+        "rollback_plan": "restore saved DNS state from snapshot",
+    }
+    if args.dry_run:
+        return _dns_apply_output(args, {**plan, "status": "dry-run"})
+    if not args.yes:
+        raise ParseError("dns apply requires --yes or --dry-run")
+    if plan["would_apply"] and not args.skip_entrypoint_check:
+        _require_dns_entrypoint(entrypoint, timeout=float(args.entrypoint_timeout))
+
+    manager = SystemDNSStateManager(resolv_conf_path=Path(args.resolv_conf_path))
+    controller = DNSHijackController(manager, entrypoint=entrypoint)
+    result = controller.apply(policy, systemd_link=args.systemd_link)
+    if result.snapshot is not None:
+        _save_dns_snapshot(snapshot_path, result.snapshot)
+    data = {
+        **plan,
+        "status": "applied" if result.applied else "skipped",
+        "reason": result.reason,
+        "snapshot_saved": result.snapshot is not None,
+    }
+    return _dns_apply_output(args, data)
+
+
+def _dns_reset(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise ParseError("dns reset requires --yes")
+    snapshot_path = _dns_snapshot_path(args)
+    snapshot = _load_dns_snapshot(snapshot_path)
+    manager = SystemDNSStateManager(resolv_conf_path=Path(args.resolv_conf_path))
+    manager.restore_state(snapshot)
+    try:
+        snapshot_path.unlink()
+    except FileNotFoundError:
+        pass
+    data = {
+        "status": "restored",
+        "snapshot_path": str(snapshot_path),
+        "resolver_manager": snapshot.inventory.manager.value,
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print("DNS state restored.")
+        print(f"Snapshot: {snapshot_path}")
+    return 0
+
+
+def _add_dns_common_paths(
+    parser: argparse.ArgumentParser,
+    include_resolv_conf: bool = True,
+    include_snapshot: bool = True,
+) -> None:
+    parser.add_argument("--policy-file", help="DNS policy JSON file")
+    if include_snapshot:
+        parser.add_argument("--snapshot-file", help="DNS state snapshot JSON file")
+    if include_resolv_conf:
+        parser.add_argument("--resolv-conf-path", default="/etc/resolv.conf", help="resolv.conf path")
+
+
+def _load_dns_policy(args: argparse.Namespace) -> DNSPolicy:
+    path = Path(args.policy_file) if getattr(args, "policy_file", None) else None
+    return DNSPolicyStore(path).load()
+
+
+def _dns_snapshot_path(args: argparse.Namespace) -> Path:
+    if getattr(args, "snapshot_file", None):
+        return Path(args.snapshot_file)
+    return Path(os.environ.get("WATCHDOGVPN_DNS_SNAPSHOT_FILE", DEFAULT_DNS_SNAPSHOT_FILE))
+
+
+def _dns_status_data(
+    policy: DNSPolicy,
+    resolver_manager: dict[str, object],
+    snapshot_path: Path,
+) -> dict[str, object]:
+    return {
+        "policy": policy.to_dict(),
+        "resolver_manager": resolver_manager,
+        "channels": {
+            "configured": len(policy.channels),
+            "total": len(DNSChannelName),
+            "names": sorted(name.value for name in policy.channels),
+        },
+        "features": {
+            "tun_hijack": policy.tun_hijack,
+            "resolve_inbound_domains": policy.resolve_inbound_domains,
+            "static_ip_enabled": policy.static_ip_enabled,
+            "rules_enabled": policy.rules_enabled,
+            "ecs_direct_enabled": policy.ecs_direct_enabled,
+            "proxy_resolution_channel": policy.proxy_resolution_channel,
+        },
+        "snapshot": {
+            "path": str(snapshot_path),
+            "status": "present" if snapshot_path.exists() else "missing",
+        },
+    }
+
+
+def _dns_channel_results(data: dict[str, object]) -> dict[str, dict]:
+    if "channel_results" in data:
+        return dict(data["channel_results"])
+    recommendation = data.get("recommendation", {})
+    if not isinstance(recommendation, dict):
+        return {}
+    return dict(recommendation.get("channel_results", {}))
+
+
+def _dns_apply_output(args: argparse.Namespace, data: dict[str, object]) -> int:
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"DNS apply status: {data['status']}")
+        print(f"Policy mode: {data['policy_mode']}")
+        print(f"Would apply: {_on_off(bool(data['would_apply']))}")
+        print(f"Entrypoint: {data['entrypoint']['address']}:{data['entrypoint']['port']}")
+        print(f"Snapshot: {data['snapshot_path']}")
+        if data.get("reason"):
+            print(f"Reason: {data['reason']}")
+    return 0
+
+
+def _require_dns_entrypoint(entrypoint: LocalDNSEntryPoint, timeout: float) -> None:
+    try:
+        with socket.create_connection((entrypoint.address, entrypoint.port), timeout=timeout):
+            return
+    except OSError as exc:
+        raise DNSStateError(
+            "local DNS entrypoint is not reachable; start the DNS runtime first "
+            "or use --dry-run"
+        ) from exc
+
+
+def _save_dns_snapshot(path: Path, snapshot: DNSStateSnapshot) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(snapshot.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _load_dns_snapshot(path: Path) -> DNSStateSnapshot:
+    if not path.exists():
+        raise FileNotFoundError(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("dns snapshot file must contain a JSON object")
+    return DNSStateSnapshot.from_dict(data)
+
+
+def _print_json(data: object) -> None:
+    print(json.dumps(data, indent=2, sort_keys=True))
 
 
 def _require_profile(store: ProfileStore, profile_id: str) -> Profile:
