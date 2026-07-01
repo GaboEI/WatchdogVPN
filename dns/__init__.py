@@ -17,6 +17,13 @@ from .resolver_parser import (
     validate_resolver_uri,
 )
 from .resolver_inventory import ResolverInventory, ResolverManager, detect_resolver_manager
+from .state_manager import (
+    DNSStateError,
+    DNSStateSnapshot,
+    LocalDNSEntryPoint,
+    NetworkManagerConnectionState,
+    SystemDNSStateManager,
+)
 from .tester import (
     DEFAULT_TEST_DOMAIN,
     AutoSetupRecommendation,
@@ -35,10 +42,14 @@ __all__ = [
     "DNSPolicy",
     "DNSRule",
     "DNSRuleAction",
+    "DNSStateError",
+    "DNSStateSnapshot",
     "ParsedResolver",
     "RESOLVER_PRESETS",
     "DEFAULT_TEST_DOMAIN",
     "DNSTester",
+    "LocalDNSEntryPoint",
+    "NetworkManagerConnectionState",
     "Resolver",
     "ResolverInventory",
     "ResolverManager",
@@ -47,6 +58,7 @@ __all__ = [
     "ResolverTestResult",
     "ResolverTransport",
     "StaticIPEntry",
+    "SystemDNSStateManager",
     "default_auto_channel_candidates",
     "detect_resolver_manager",
     "get_resolver_preset",
