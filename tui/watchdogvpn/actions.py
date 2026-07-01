@@ -80,18 +80,6 @@ def add_bypass_domain_command(domain: str) -> str:
     return f"sudo -n {shlex.quote(NO_VPN)} {shlex.quote(domain)}"
 
 
-def dns_current_command() -> str:
-    return "echo 'DNS v2 management is pending Phase 10.'"
-
-
-def dns_apply_command(profile: str) -> str:
-    return "echo 'DNS v2 management is pending Phase 10.'"
-
-
-def dns_rollback_command() -> str:
-    return "echo 'DNS v2 management is pending Phase 10.'"
-
-
 def set_timer_interval_command(unit: str, value: str) -> str:
     if unit not in ALLOWED_TIMER_UNITS:
         return "echo 'ERROR: timer no permitido.'"

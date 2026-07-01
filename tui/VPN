@@ -48,7 +48,6 @@ from watchdogvpn.commands import (
 from watchdogvpn.actions import (
     add_bypass_domain_command,
     disconnect_vpn_command,
-    dns_current_command,
     list_bypass_domains_command,
     real_status_command,
     remove_bypass_domain_command,
@@ -217,11 +216,6 @@ def menu_help(label: str):
         "Exclusiones": [
             "Gestiona dominios fuera de la VPN usando no_vpn."
         ],
-        "DNS": [
-            "DNS v2 se implementa en Phase 10.",
-            "",
-            "La integracion DNS guiada anterior fue retirada en Phase 9.5.",
-        ],
         "Ver logs": [
             "Acceso rapido a trazabilidad, rotate, watchdog, dispatcher, journal y housekeeping."
         ],
@@ -249,7 +243,7 @@ def menu_overview(label: str):
     data = {
         "Dashboard": [
             ("Rol", "Centro de mando en tiempo real"),
-            ("Uso", "Ver VPN, tunel, DNS, timers y exclusiones de un vistazo"),
+            ("Uso", "Ver VPN, tunel, timers y exclusiones de un vistazo"),
             ("Riesgo", "Solo lectura"),
         ],
         "Cambiar ubicacion": [
@@ -266,11 +260,6 @@ def menu_overview(label: str):
             ("Rol", "Intervencion manual inmediata"),
             ("Uso", "Reiniciar, desconectar, rotar o forzar watchdog"),
             ("Riesgo", "Puede cortar sesiones activas durante segundos"),
-        ],
-        "DNS": [
-            ("Rol", "Estado DNS v2"),
-            ("Uso", "Ver estado hasta que Phase 10 implemente gestion DNS"),
-            ("Riesgo", "Solo lectura"),
         ],
         "Exclusiones": [
             ("Rol", "Dominios fuera del tunel"),
@@ -392,7 +381,6 @@ def build_installation_text() -> str:
                 "Acciones rapidas: intervenciones directas sobre la VPN.",
                 "Timers: control de rotacion y watchdog.",
                 "Exclusiones: dominios que salen por la red normal.",
-                "DNS: estado temporal hasta Phase 10.",
                 "Ver logs: auditoria rapida.",
                 "Pool de rotacion: control de TOP_N.",
             ],
@@ -1036,7 +1024,6 @@ def render(selected: int, dashboard_cache):
             "Acciones rapidas": ["Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog", "Estado real"],
             "Timers": ["Activar rotacion", "Parar rotacion", "Cambiar intervalo de rotacion", "Activar watchdog", "Parar watchdog", "Cambiar intervalo del watchdog"],
             "Exclusiones": ["Ver lista", "Agregar dominio", "Quitar dominio"],
-            "DNS": ["Estado DNS"],
             "Ver logs": ["Resumen trazabilidad", "Housekeeping logs", "vpn-watchdog.log", "vpn-rotate.log", "vpn-dispatcher.log", "journal adguardvpn.service"],
         }
         hints = action_hints.get(selected_section, [])
@@ -1842,17 +1829,6 @@ def section_meta(section: str, label: str):
         }
         return data.get(label, [])
 
-    if section == "DNS":
-        data = {
-            "Estado DNS": [
-                ("Tipo", "Solo lectura"),
-                ("Comando", "pendiente Phase 10"),
-                ("Impacto", "No cambia el sistema"),
-                ("Riesgo", "Ninguno"),
-            ],
-        }
-        return data.get(label, [])
-
     if section == "Ver logs":
         data = {
             "Resumen trazabilidad": [
@@ -2014,7 +1990,6 @@ def section_intro(section: str) -> str:
         "Acciones rapidas": "Intervenciones manuales. Algunas cortan o cambian la conexion durante segundos.",
         "Timers": "Controla automatizacion de rotacion y watchdog sin tocar scripts a mano.",
         "Exclusiones": "Gestiona dominios que salen por ruta directa, fuera del tunel VPN.",
-        "DNS": "DNS v2 se implementa en Phase 10. Esta vista no cambia el sistema.",
         "Backend": "Muestra backend activo, modo instalado y preparacion no secreta de Custom VPS.",
         "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
         "Pool de rotacion": "Ajusta cuantos nodos entran al pool antes de validar bloqueo y salud real.",
@@ -2036,7 +2011,6 @@ def action_progress_text(section: str, label: str) -> str:
         ("Timers", "Activar watchdog"): "Activando timer del watchdog",
         ("Timers", "Parar watchdog"): "Deteniendo timer del watchdog",
         ("Exclusiones", "Ver lista"): "Leyendo dominios configurados fuera del tunel",
-        ("DNS", "Estado DNS"): "Mostrando estado DNS v2 pendiente",
         ("Settings", "Ver configuracion"): "Leyendo configuracion persistente",
         ("Settings", "Cambiar idioma"): "Actualizando idioma persistente",
         ("Settings", "Cambiar tema"): "Actualizando tema persistente",
@@ -2123,11 +2097,6 @@ def section_panel(section: str, items):
             "Exclusiones": [
                 "Las exclusiones siguen usando no_vpn y el servicio vpn-domain-bypass.service.",
                 "No modifica la arquitectura del VPN; solo rutas por dominio.",
-            ],
-            "DNS": [
-                "DNS v2 se implementa en Phase 10.",
-                "La integracion DNS guiada anterior fue retirada en Phase 9.5.",
-                "Los resolvers de AdGuard podran usarse luego como DNS custom.",
             ],
             "Backend": [
                 "Custom VPS controla un servicio systemd local configurado por el usuario.",
@@ -2436,9 +2405,6 @@ def handle_menu(label: str):
                 ("Agregar dominio", "__ADD_BYPASS__"),
                 ("Quitar dominio", "__REMOVE_BYPASS__"),
             ],
-            "DNS": [
-                ("Estado DNS", dns_current_command()),
-            ],
             "Backend": [
                 ("Ver backend", "__BACKEND_VIEW__"),
                 ("Estado runtime", f"{shlex.quote(WATCHDOGVPN_CLI)} backend status"),
@@ -2735,7 +2701,7 @@ def handle_menu(label: str):
                     continue
                 set_status(action_label)
                 show_output(action_label, run_with_progress(action_label, action_progress_text(label, action_label), action, 50))
-                if label in ("Acciones rapidas", "Timers", "Exclusiones", "DNS", "Pool de rotacion"):
+                if label in ("Acciones rapidas", "Timers", "Exclusiones", "Pool de rotacion"):
                     set_status(f"Listo: {action_label}")
                     return True
     except Exception:

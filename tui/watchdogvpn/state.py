@@ -258,10 +258,6 @@ def rotate_setting(name: str) -> str:
     return defaults.get(name, "?")
 
 
-def dns_profile() -> str:
-    return "pending-v2"
-
-
 def dashboard_data():
     truth = truth_data()
     auth = auth_data()
@@ -299,7 +295,6 @@ def dashboard_data():
         ("IP", ip if ip != "none" else "no disponible"),
         ("Country", country),
         ("Location", current_location(country)),
-        ("DNS", dns_profile()),
         ("Rotate", f"{rotate_state} · {rotate_interval}" + (f" · {rotate_eta}" if rotate_eta else "")),
         ("Watchdog", f"{watchdog_state} · {watchdog_interval}" + (f" · {watchdog_eta}" if watchdog_eta else "")),
         ("Event", f"{event_urgency} · {event_title}: {event_body}"),

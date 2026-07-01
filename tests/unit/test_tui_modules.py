@@ -93,8 +93,8 @@ class TuiModuleTests(unittest.TestCase):
         self.assertEqual(actions.disconnect_vpn_command(), "/usr/local/bin/vpnctl disconnect")
         self.assertIn("VPN_ROTATE_FORCE=1", actions.rotate_now_command())
         self.assertEqual(actions.real_status_command(), "/usr/local/bin/vpnctl status")
-        self.assertIn("DNS v2 management is pending Phase 10", actions.dns_current_command())
-        self.assertIn("DNS v2 management is pending Phase 10", actions.dns_apply_command("quad9-doh"))
+        self.assertFalse(hasattr(actions, "dns_current_command"))
+        self.assertFalse(hasattr(actions, "dns_apply_command"))
         self.assertEqual(actions.add_bypass_domain_command("example.com"), "sudo -n /usr/local/bin/no_vpn example.com")
         self.assertIn("sin rutas", actions.add_bypass_domain_command("bad/domain"))
 

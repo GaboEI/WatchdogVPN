@@ -48,7 +48,6 @@ MENU_ITEMS = [
     {"id": "backend", "label": "Backend", "section": "Backend", "group": "OPERACION"},
     {"id": "location", "label": "Ubicacion", "section": "Cambiar ubicacion", "group": "OPERACION"},
     {"id": "actions", "label": "Acciones", "section": "Acciones rapidas", "group": "OPERACION"},
-    {"id": "dns", "label": "DNS", "section": "DNS", "group": "OPERACION"},
     {"id": "bypass", "label": "Exclusiones", "section": "Exclusiones", "group": "OPERACION"},
     {"id": "timers", "label": "Timers", "section": "Timers", "group": "AUTOMATIZACION"},
     {"id": "pool", "label": "Pool", "section": "Pool de rotacion", "group": "AUTOMATIZACION"},
