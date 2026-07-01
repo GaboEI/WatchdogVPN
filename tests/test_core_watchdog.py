@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.state_manager import StateManager
 from dns.models import DNSMode, DNSPolicy
+from dns.state_manager import SystemDNSStateManager
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
 from drivers.legacy.adguard_driver import AdGuardDriver
@@ -75,6 +77,20 @@ class FakeKillSwitch:
 
     def status(self) -> dict:
         return self.status_mock()
+
+
+class FakeDNSRunner:
+    def __init__(self, active_services: set[str] | None = None) -> None:
+        self.active_services = active_services or set()
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command: list[str]) -> str:
+        self.commands.append(command)
+        if command[:2] == ["systemctl", "is-active"] and len(command) == 3:
+            return "active" if command[2] in self.active_services else "inactive"
+        if command == ["nmcli", "-t", "-f", "NAME", "con", "show", "--active"]:
+            return ""
+        return ""
 
 
 class WatchdogCoreTests(unittest.TestCase):
@@ -373,6 +389,65 @@ class WatchdogCoreTests(unittest.TestCase):
         runtime.disconnect()
 
         kill_switch.disable_mock.assert_called_once_with()
+
+    def test_disconnect_restores_dns_snapshot_when_present(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        resolv_conf = Path(self.tmpdir.name) / "resolv.conf"
+        resolv_conf.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+        runner = FakeDNSRunner(active_services={"systemd-resolved.service"})
+        dns_state_manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+        snapshot = dns_state_manager.save_state(systemd_link="tun0")
+        snapshot_path = Path(self.tmpdir.name) / "dns-state.json"
+        snapshot_path.write_text(json.dumps(snapshot.to_dict()), encoding="utf-8")
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            dns_state_manager=dns_state_manager,
+            dns_snapshot_path=snapshot_path,
+        )
+
+        runtime.disconnect()
+
+        self.assertIn(["resolvectl", "revert", "tun0"], runner.commands)
+        self.assertFalse(snapshot_path.exists())
+
+    def test_disconnect_does_nothing_when_no_dns_snapshot(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        runner = FakeDNSRunner()
+        dns_state_manager = SystemDNSStateManager(
+            resolv_conf_path=Path(self.tmpdir.name) / "resolv.conf",
+            runner=runner,
+        )
+        snapshot_path = Path(self.tmpdir.name) / "missing-dns-state.json"
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            dns_state_manager=dns_state_manager,
+            dns_snapshot_path=snapshot_path,
+        )
+
+        runtime.disconnect()
+
+        self.assertEqual(runner.commands, [])
+
+    def test_disconnect_survives_dns_restore_failure(self) -> None:
+        self.set_desired_state("on")
+        driver = FakeDriver()
+        snapshot_path = Path(self.tmpdir.name) / "corrupt-dns-state.json"
+        snapshot_path.write_text("not valid json", encoding="utf-8")
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            dns_snapshot_path=snapshot_path,
+        )
+
+        with self.assertLogs("core.watchdog", level="WARNING"):
+            result = runtime.disconnect()
+
+        self.assertTrue(result)
+        self.assertTrue(snapshot_path.exists())
 
     def test_connect_calls_driver_connect_with_profile(self) -> None:
         self.set_desired_state("off")

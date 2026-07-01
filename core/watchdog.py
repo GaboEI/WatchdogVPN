@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
@@ -15,6 +16,7 @@ from drivers.legacy.adguard_driver import AdGuardDriver
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
+from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 from rotation import health_checker, pool_builder
@@ -36,6 +38,8 @@ class WatchdogRuntime:
     recovery: Recovery = field(default_factory=Recovery)
     kill_switch: KillSwitch = field(default_factory=KillSwitch)
     dns_policy_store: DNSPolicyStore = field(default_factory=DNSPolicyStore)
+    dns_state_manager: SystemDNSStateManager = field(default_factory=SystemDNSStateManager)
+    dns_snapshot_path: Path = field(default_factory=default_snapshot_path)
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
 
@@ -94,6 +98,7 @@ class WatchdogRuntime:
     def disconnect(self) -> bool:
         result = self.driver.disconnect()
         self._handle_manual_disconnect_kill_switch()
+        self._restore_dns_snapshot_if_present()
         self.state_manager.set("vpn_desired_state", "off")
         LOGGER.info("VPN manually disabled. Will not auto-reconnect.")
         return result
@@ -281,6 +286,22 @@ class WatchdogRuntime:
             LOGGER.info("watchdog_manual_disconnect_kill_switch action=disabled")
             return
         LOGGER.error("watchdog_manual_disconnect_kill_switch action=disable_failed")
+
+    def _restore_dns_snapshot_if_present(self) -> None:
+        try:
+            snapshot = load_snapshot(self.dns_snapshot_path)
+        except Exception:
+            LOGGER.warning("watchdog_dns_restore_on_disconnect status=load_failed", exc_info=True)
+            return
+        if snapshot is None:
+            return
+        try:
+            self.dns_state_manager.restore_state(snapshot)
+            self.dns_snapshot_path.unlink()
+        except Exception:
+            LOGGER.warning("watchdog_dns_restore_on_disconnect status=restore_failed", exc_info=True)
+            return
+        LOGGER.info("watchdog_dns_restore_on_disconnect status=restored")
 
     @staticmethod
     def _as_recovered(

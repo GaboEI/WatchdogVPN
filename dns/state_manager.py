@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -15,6 +16,22 @@ from .resolver_inventory import (
 
 class DNSStateError(RuntimeError):
     pass
+
+
+DEFAULT_DNS_SNAPSHOT_FILE = Path.home() / ".config" / "watchdogvpn" / "dns-state.json"
+
+
+def default_snapshot_path() -> Path:
+    return Path(os.environ.get("WATCHDOGVPN_DNS_SNAPSHOT_FILE", DEFAULT_DNS_SNAPSHOT_FILE))
+
+
+def load_snapshot(path: Path) -> "DNSStateSnapshot | None":
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise DNSStateError("dns snapshot file must contain a JSON object")
+    return DNSStateSnapshot.from_dict(data)
 
 
 class DNSCommandRunner(Protocol):

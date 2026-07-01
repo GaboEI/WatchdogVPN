@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from subprocess import CompletedProcess
@@ -12,6 +13,8 @@ from dns.state_manager import (
     LocalDNSEntryPoint,
     SystemDNSStateManager,
     _run_command,
+    default_snapshot_path,
+    load_snapshot,
 )
 
 
@@ -210,6 +213,47 @@ class DNSStateManagerTests(unittest.TestCase):
             result = _run_command(["systemctl", "is-active", "NetworkManager.service"])
 
             self.assertEqual(result, "inactive")
+
+
+class DNSSnapshotHelperTests(unittest.TestCase):
+    def test_default_snapshot_path_respects_env_override(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"WATCHDOGVPN_DNS_SNAPSHOT_FILE": "/tmp/custom-dns-state.json"},
+        ):
+            self.assertEqual(default_snapshot_path(), Path("/tmp/custom-dns-state.json"))
+
+    def test_load_snapshot_returns_none_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing.json"
+            self.assertIsNone(load_snapshot(missing))
+
+    def test_load_snapshot_round_trips_a_saved_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+            runner = FakeRunner(active_services={"systemd-resolved.service"})
+            manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+            snapshot = manager.save_state(systemd_link="tun0")
+            snapshot_path = Path(tmp) / "dns-state.json"
+            snapshot_path.write_text(
+                json.dumps(snapshot.to_dict()),
+                encoding="utf-8",
+            )
+
+            loaded = load_snapshot(snapshot_path)
+
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.inventory.manager, ResolverManager.SYSTEMD_RESOLVED)
+            self.assertEqual(loaded.systemd_link, "tun0")
+
+    def test_load_snapshot_raises_on_invalid_json_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "dns-state.json"
+            snapshot_path.write_text("[]", encoding="utf-8")
+
+            with self.assertRaises(DNSStateError):
+                load_snapshot(snapshot_path)
 
 
 if __name__ == "__main__":
