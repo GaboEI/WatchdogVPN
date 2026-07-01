@@ -542,11 +542,11 @@ class SingBoxDriver(BaseDriver):
         self._write_config(config)
         return config
 
-    def connect(self, profile: Profile) -> bool:
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
         binary = self.find_singbox_binary()
         if not binary:
             return False
-        self.generate_singbox_config(profile)
+        self.generate_singbox_config(profile, dns_policy=dns_policy)
         config_path, log_path = self._ensure_runtime_paths()
         log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dns.models import DNSPolicy
 from drivers.base import BaseDriver
 from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
@@ -185,7 +186,7 @@ class AmneziaWGDriver(BaseDriver):
         except OSError:
             pass
 
-    def connect(self, profile: Profile) -> bool:
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
         tool = self.find_quick_tool()
         if not tool:
             return False

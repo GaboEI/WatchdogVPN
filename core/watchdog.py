@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 
 from config.app_config import AppConfig
+from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager
@@ -34,6 +35,7 @@ class WatchdogRuntime:
     rotation_engine: RotationEngine = field(default_factory=RotationEngine)
     recovery: Recovery = field(default_factory=Recovery)
     kill_switch: KillSwitch = field(default_factory=KillSwitch)
+    dns_policy_store: DNSPolicyStore = field(default_factory=DNSPolicyStore)
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
 
@@ -81,13 +83,13 @@ class WatchdogRuntime:
             LOGGER.warning("standby mode - active profile not found: %s", active_profile_id)
             return self.standby_state()
 
-        self.driver.connect(profile)
+        self.driver.connect(profile, dns_policy=self.dns_policy_store.load())
         return self.driver.status()
 
     def connect(self, profile: Profile) -> bool:
         self.state_manager.set("vpn_desired_state", "on")
         self.state_manager.set("active_profile_id", profile.id)
-        return self.driver.connect(profile)
+        return self.driver.connect(profile, dns_policy=self.dns_policy_store.load())
 
     def disconnect(self) -> bool:
         result = self.driver.disconnect()
@@ -113,7 +115,7 @@ class WatchdogRuntime:
     def _try_reconnect(self, profile: Profile) -> bool:
         LOGGER.info("watchdog_reconnect_attempt profile_id=%s", profile.id)
         self.driver.disconnect()
-        if not self.driver.connect(profile):
+        if not self.driver.connect(profile, dns_policy=self.dns_policy_store.load()):
             return False
         return health_checker.check(profile, self.driver) == "ok"
 
@@ -158,7 +160,13 @@ class WatchdogRuntime:
         pool = self._compatible_pool(config)
         if exclude_profile_id:
             pool = [p for p in pool if p.id != exclude_profile_id]
-        result = self.rotation_engine.rotate(pool, self.driver, health_checker.check, force=force)
+        result = self.rotation_engine.rotate(
+            pool,
+            self.driver,
+            health_checker.check,
+            force=force,
+            dns_policy=self.dns_policy_store.load(),
+        )
 
         if result.success and result.profile is not None:
             self._reconnect_failures = 0

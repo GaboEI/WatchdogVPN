@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dns.models import DNSPolicy
 from drivers.base import BaseDriver
 from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
@@ -119,7 +120,7 @@ class OpenVPNDriver(BaseDriver):
                 return True
         return False
 
-    def connect(self, profile: Profile) -> bool:
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
         binary = self.find_openvpn_binary()
         if not binary:
             return False

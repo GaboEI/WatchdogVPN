@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from dns.models import DNSPolicy
 from drivers.base import BaseDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -35,11 +36,13 @@ class ScriptedDriver(BaseDriver):
     def __init__(self) -> None:
         self.connect_results: dict[str, bool] = {}
         self.connect_calls: list[str] = []
+        self.connect_dns_policies: list[DNSPolicy | None] = []
         self.disconnect_calls = 0
         self.connected_profile_id: str | None = None
 
-    def connect(self, profile: Profile) -> bool:
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
         self.connect_calls.append(profile.id)
+        self.connect_dns_policies.append(dns_policy)
         ok = self.connect_results.get(profile.id, True)
         self.connected_profile_id = profile.id if ok else None
         return ok
@@ -108,6 +111,16 @@ class RotationEngineSingleNodeTests(unittest.TestCase):
         self.assertEqual(result.category, "single")
         self.assertEqual(result.profile.id, "a")
         self.assertEqual(driver.connect_calls, ["a"])
+
+    def test_single_node_forwards_dns_policy_to_driver_connect(self) -> None:
+        engine = make_engine()
+        driver = ScriptedDriver()
+        profile = make_profile("a")
+        policy = DNSPolicy()
+
+        engine.rotate([profile], driver, health_check_from({"a": "ok"}), dns_policy=policy)
+
+        self.assertEqual(driver.connect_dns_policies, [policy])
 
     def test_single_node_failure(self) -> None:
         engine = make_engine()

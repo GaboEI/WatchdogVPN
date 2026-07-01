@@ -7,8 +7,10 @@ from unittest.mock import Mock
 from unittest.mock import patch
 
 from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
+from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.state_manager import StateManager
+from dns.models import DNSMode, DNSPolicy
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
 from drivers.legacy.adguard_driver import AdGuardDriver
@@ -26,8 +28,10 @@ class FakeDriver(BaseDriver):
         self.health_check_mock = Mock(return_value="ok")
         self.status_mock = Mock(return_value=ConnectionState(status="connected", mode="rules"))
         self.is_available_mock = Mock(return_value=True)
+        self.last_dns_policy: DNSPolicy | None = "unset"
 
-    def connect(self, profile: Profile) -> bool:
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+        self.last_dns_policy = dns_policy
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -377,6 +381,47 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertTrue(runtime.connect(self.profile))
         driver.connect_mock.assert_called_once_with(self.profile)
+
+    def test_connect_forwards_the_stored_dns_policy_to_the_driver(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        dns_policy_path = Path(self.tmpdir.name) / "dns-policy.json"
+        dns_policy_store = DNSPolicyStore(dns_policy_path)
+        policy = DNSPolicy(mode=DNSMode.CUSTOM)
+        dns_policy_store.save(policy)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            dns_policy_store=dns_policy_store,
+        )
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_dns_policy.mode, DNSMode.CUSTOM)
+
+    def test_startup_forwards_the_stored_dns_policy_to_the_driver(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        dns_policy_path = Path(self.tmpdir.name) / "dns-policy.json"
+        dns_policy_store = DNSPolicyStore(dns_policy_path)
+        dns_policy_store.save(DNSPolicy(mode=DNSMode.CUSTOM))
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            dns_policy_store=dns_policy_store,
+        )
+
+        runtime.startup()
+
+        self.assertEqual(driver.last_dns_policy.mode, DNSMode.CUSTOM)
 
     def test_connect_persists_desired_state_on(self) -> None:
         self.set_desired_state("off")

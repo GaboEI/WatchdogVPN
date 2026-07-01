@@ -418,7 +418,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
         with patch.object(SingBoxDriver, "health_check", return_value="ok"):
             self.assertTrue(self.driver.connect(self.profile))
-            generate_mock.assert_called_once_with(self.profile)
+            generate_mock.assert_called_once_with(self.profile, dns_policy=None)
             popen_mock.assert_called_once()
             self.assertIs(self.driver._process, process)
             self.assertIs(self.driver._active_profile, self.profile)
@@ -426,6 +426,27 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             args = popen_mock.call_args.args[0]
             self.assertEqual(args[:3], ["/usr/bin/sing-box", "run", "-c"])
             self.assertEqual(args[3], str(self.driver._config_path))
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_forwards_dns_policy_to_generated_config(
+        self, popen_mock, generate_mock, binary_mock
+    ) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+        policy = DNSPolicy(
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="udp://1.1.1.1")],
+                ),
+            }
+        )
+
+        with patch.object(SingBoxDriver, "health_check", return_value="ok"):
+            self.assertTrue(self.driver.connect(self.profile, dns_policy=policy))
+            generate_mock.assert_called_once_with(self.profile, dns_policy=policy)
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)
     @patch.object(SingBoxDriver, "generate_singbox_config")

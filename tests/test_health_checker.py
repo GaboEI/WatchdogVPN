@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from dns.models import DNSPolicy
 from drivers.base import BaseDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -25,7 +26,7 @@ class StubDriver(BaseDriver):
         self.state = state
         self.health_check_calls = 0
 
-    def connect(self, profile: Profile) -> bool:
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
         return True
 
     def disconnect(self) -> bool:

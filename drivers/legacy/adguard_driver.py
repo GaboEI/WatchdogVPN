@@ -5,6 +5,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+from dns.models import DNSPolicy
 from drivers.base import BaseDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
@@ -74,7 +75,7 @@ class AdGuardDriver(BaseDriver):
                 return value.strip()
         return profile.name.strip()
 
-    def connect(self, profile: Profile) -> bool:
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
         if profile.protocol is not ProtocolType.ADGUARD:
             return False
         location = self._location_from_profile(profile)

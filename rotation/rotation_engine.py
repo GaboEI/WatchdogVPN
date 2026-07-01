@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
+from dns.models import DNSPolicy
 from drivers.base import BaseDriver
 from models.profile import Profile
 
@@ -81,9 +82,15 @@ class RotationEngine:
         items = [profile_id] + [pid for pid in self._recent_profile_ids if pid != profile_id]
         self._recent_profile_ids = items[: self.recent_keep]
 
-    def _try_profile(self, profile: Profile, driver: BaseDriver, health_check: HealthCheckFn) -> str:
+    def _try_profile(
+        self,
+        profile: Profile,
+        driver: BaseDriver,
+        health_check: HealthCheckFn,
+        dns_policy: DNSPolicy | None = None,
+    ) -> str:
         driver.disconnect()
-        connected = driver.connect(profile)
+        connected = driver.connect(profile, dns_policy=dns_policy)
         if not connected:
             return "down"
         if self.warmup_seconds > 0:
@@ -95,6 +102,7 @@ class RotationEngine:
         pool: list[Profile],
         driver: BaseDriver,
         health_check: HealthCheckFn,
+        dns_policy: DNSPolicy | None = None,
     ) -> Profile | None:
         if not self._last_good_profile_id:
             LOGGER.info("rollback_skip reason=no_known_good")
@@ -104,7 +112,7 @@ class RotationEngine:
             LOGGER.info("rollback_skip reason=last_good_not_in_pool profile_id=%s", self._last_good_profile_id)
             return None
         LOGGER.info("rollback_start profile_id=%s", target.id)
-        status = self._try_profile(target, driver, health_check)
+        status = self._try_profile(target, driver, health_check, dns_policy=dns_policy)
         if status == "ok":
             LOGGER.info("rollback_ok profile_id=%s", target.id)
             self._remember(target.id)
@@ -112,9 +120,15 @@ class RotationEngine:
         LOGGER.warning("rollback_fail profile_id=%s status=%s", target.id, status)
         return None
 
-    def _single_node_check(self, profile: Profile, driver: BaseDriver, health_check: HealthCheckFn) -> RotationResult:
+    def _single_node_check(
+        self,
+        profile: Profile,
+        driver: BaseDriver,
+        health_check: HealthCheckFn,
+        dns_policy: DNSPolicy | None = None,
+    ) -> RotationResult:
         LOGGER.info("rotation_single_node_check profile_id=%s", profile.id)
-        status = self._try_profile(profile, driver, health_check)
+        status = self._try_profile(profile, driver, health_check, dns_policy=dns_policy)
         success = status == "ok"
         if success:
             self._remember(profile.id)
@@ -135,6 +149,7 @@ class RotationEngine:
         driver: BaseDriver,
         health_check: HealthCheckFn,
         force: bool = False,
+        dns_policy: DNSPolicy | None = None,
     ) -> RotationResult:
         category = self.pool_size_category(len(pool))
 
@@ -143,7 +158,7 @@ class RotationEngine:
             return RotationResult(profile=None, success=False, attempts=0, category=category)
 
         if category == "single":
-            return self._single_node_check(pool[0], driver, health_check)
+            return self._single_node_check(pool[0], driver, health_check, dns_policy=dns_policy)
 
         if not self.can_rotate_now(category=category, force=force):
             LOGGER.info("rotation_skip reason=anti_loop_time category=%s", category)
@@ -167,7 +182,7 @@ class RotationEngine:
                 category,
             )
 
-            status = self._try_profile(profile, driver, health_check)
+            status = self._try_profile(profile, driver, health_check, dns_policy=dns_policy)
 
             if status == "ok":
                 LOGGER.info("rotation_try_ok profile_id=%s", profile.id)
@@ -184,7 +199,7 @@ class RotationEngine:
                 or elapsed >= self.max_degraded_seconds_before_rollback
             ):
                 rollback_attempted = True
-                rollback_target = self._rollback(pool, driver, health_check)
+                rollback_target = self._rollback(pool, driver, health_check, dns_policy=dns_policy)
                 if rollback_target is not None:
                     self._last_rotation_at = self.clock()
                     return RotationResult(
@@ -197,7 +212,7 @@ class RotationEngine:
 
         final_rollback_target = None
         if not rollback_attempted:
-            final_rollback_target = self._rollback(pool, driver, health_check)
+            final_rollback_target = self._rollback(pool, driver, health_check, dns_policy=dns_policy)
 
         self._last_rotation_at = self.clock()
 
