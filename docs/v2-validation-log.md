@@ -246,18 +246,23 @@
   in isolation. Fixed by threading `dns_policy` through `BaseDriver.connect()`,
   every driver implementation, `WatchdogRuntime` (`connect`, `startup`,
   `_try_reconnect`, rotation), and `RotationEngine.rotate()`.
-- **MEDIUM finding accepted (AUD-DNS-002):** system DNS state is not
+- **MEDIUM finding fixed (AUD-DNS-002):** system DNS state was not
   automatically restored on VPN disconnect, only via `watchdog dns reset
-  --yes` or `vpn_dns_rescue`. Accepted with rationale in the audit report;
-  tracked for Phase 11/12 connect/disconnect lifecycle work.
+  --yes` or `vpn_dns_rescue`. Initially triaged as "accepted risk, needs
+  Phase 11/12", then re-assessed as fixable now since
+  `WatchdogRuntime.disconnect()` already exists. Fixed by adding
+  `dns/state_manager.py::default_snapshot_path()`/`load_snapshot()` and
+  wiring `WatchdogRuntime._restore_dns_snapshot_if_present()` into
+  `disconnect()`: restores and removes the snapshot if one exists, no-ops if
+  none exists, and logs a warning without raising if restore fails.
 - **LOW findings fixed (AUD-DNS-003):** refreshed stale "planned for Phase
   10" language in `docs/demo.md`, `docs/configuration.md`,
   `docs/threat-model.md`, and added the missing `CHANGELOG.md` entry for the
   DNS v2 feature set.
 - **Automated validation:**
-  - `python3 -m unittest discover tests` passed: 429 tests.
+  - `python3 -m unittest discover tests` passed: 436 tests.
   - `bash tests/unit.sh` passed.
-  - `.venv/bin/pytest tests` passed: 445 tests.
+  - `.venv/bin/pytest tests` passed: 452 tests.
   - `git diff --check` passed.
 - **Real workstation re-validation:** ran `SingBoxDriver.generate_singbox_config()`
   directly with a real VLESS+Reality profile (same VPS/profile validated in

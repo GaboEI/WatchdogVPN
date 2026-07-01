@@ -73,25 +73,36 @@ Resolution:
 | Description | System DNS state (`SystemDNSStateManager` snapshot applied via `watchdog dns apply`) is never automatically restored on VPN disconnect, only via the explicit `watchdog dns reset --yes` command. |
 | Scenario | A user runs `watchdog dns apply --yes` while connected, then disconnects the VPN (`WatchdogRuntime.disconnect()`) without also running `watchdog dns reset --yes`. |
 | Impact | System DNS keeps pointing at the local entrypoint (`127.0.0.1:53`) with nothing behind it once the tunnel is gone, breaking name resolution until the user manually runs `watchdog dns reset --yes` or `vpn_dns_rescue auto`. `docs/phase-10-design.md:153` states the design intent as "Restore state on disconnect, VPN-off, uninstall, and failed apply," which this does not fully satisfy for the "disconnect" case. |
-| Status | ACCEPTED RISK 2026-07-02 |
+| Status | RESOLVED 2026-07-02 |
 
-Rationale for accepting rather than auto-wiring now:
-- DNS v2 `apply`/`reset` is, by design, an explicit opt-in action in this
-  phase (mirrors the kill switch's own "off by default, explicit toggle"
-  philosophy) — there is intentionally no CLI-level automatic apply-on-connect
-  either, so making restore automatic on disconnect while apply stays manual
-  on connect would be an asymmetric, surprising behavior change on its own,
-  not a bug fix.
-- The user always has a working, tested recovery path: `watchdog dns reset
-  --yes` (validated in Task 10.13) or `vpn_dns_rescue auto` (wired into
-  `uninstall.sh` and the "unknown resolver manager" fallback).
-- Automatically wiring restore into disconnect/rotation would need its own
-  real-workstation validation pass (does it also need to run before a
-  rotation reconnect switches profiles? before kill switch toggles?) that is
-  out of scope for a DNS audit/debt-closure task.
-- Tracked for Phase 11/12 (routing modes, full CLI connect/disconnect
-  commands), where the connect/disconnect lifecycle is being built out
-  properly and this can be wired in deliberately with its own validation.
+Resolution:
+- Re-assessed after initial "accepted risk" triage: `WatchdogRuntime.disconnect()`
+  already exists today and does not require any Phase 11/12 CLI work to reach,
+  so deferring this was unnecessarily conservative — it is fixed in this same
+  audit pass instead.
+- Added `dns/state_manager.py::default_snapshot_path()` and `load_snapshot()`
+  (shared, `WATCHDOGVPN_DNS_SNAPSHOT_FILE`-aware helpers around the same
+  `DNSStateSnapshot` model the CLI already uses for `dns apply`/`dns reset`).
+- `WatchdogRuntime` gained `dns_state_manager: SystemDNSStateManager` and
+  `dns_snapshot_path: Path` fields. `disconnect()` now calls
+  `_restore_dns_snapshot_if_present()`, which loads the snapshot (if any),
+  restores it through `SystemDNSStateManager.restore_state()`, and removes the
+  snapshot file — mirroring exactly what `watchdog dns reset --yes` does.
+- If no snapshot exists, this is a silent no-op (matches "DNS was never
+  applied" / already-reset states). If loading or restoring the snapshot
+  raises, `disconnect()` logs a warning and still completes — a broken
+  snapshot never blocks disconnect, and `watchdog dns reset --yes` /
+  `vpn_dns_rescue auto` remain available as manual fallbacks.
+- `cli/main.py`'s own `_dns_snapshot_path`/`_load_dns_snapshot` were left
+  untouched (different, intentional semantics: the CLI's `dns reset` command
+  should error loudly if asked to restore a snapshot that does not exist,
+  while `disconnect()` should silently no-op) — not unified to avoid an
+  unrelated behavior change in already-tested CLI code.
+- Added regression coverage:
+  `tests/test_core_watchdog.py::test_disconnect_restores_dns_snapshot_when_present`,
+  `tests/test_core_watchdog.py::test_disconnect_does_nothing_when_no_dns_snapshot`,
+  `tests/test_core_watchdog.py::test_disconnect_survives_dns_restore_failure`,
+  `tests/test_dns_state_manager.py::DNSSnapshotHelperTests` (4 tests).
 
 ### AUD-DNS-003
 
@@ -168,33 +179,29 @@ every control to the real CLI handlers with no stub/placeholder paths found.
 1. AUD-DNS-001 (HIGH) — fixed: wire `DNSPolicy` into the live sing-box
    connect path across direct connect, startup autoconnect, reconnect, and
    rotation.
-2. AUD-DNS-003 (LOW) — fixed: refresh stale "planned for Phase 10" docs and
+2. AUD-DNS-002 (MEDIUM) — fixed: restore system DNS state automatically on
+   `WatchdogRuntime.disconnect()` when a snapshot exists.
+3. AUD-DNS-003 (LOW) — fixed: refresh stale "planned for Phase 10" docs and
    add the missing CHANGELOG entry.
-3. AUD-DNS-002 (MEDIUM) — accepted risk, tracked for Phase 11/12 when the
-   full connect/disconnect CLI lifecycle is built out.
 
 ## Closure — 2026-07-02
 
-All HIGH and LOW findings from this audit were fixed in this same pass.
-The one MEDIUM finding (AUD-DNS-002) is explicitly accepted with a
-documented rationale and working manual recovery path, per the master
-plan's own Phase 10G exit criterion ("Any LOW findings are fixed or
-explicitly accepted with rationale" — extended here to this MEDIUM finding
-since fixing it correctly requires connect/disconnect lifecycle work that
-belongs to Phase 11/12, not this DNS-focused audit).
+All HIGH, MEDIUM, and LOW findings from this audit were fixed in this same
+pass — no findings remain open or accepted-risk.
 
 Validation:
-- `python3 -m unittest discover tests` — PASS, 429 tests.
+- `python3 -m unittest discover tests` — PASS, 436 tests.
 - `bash tests/unit.sh` — PASS.
-- `.venv/bin/pytest tests` — PASS, 445 tests.
+- `.venv/bin/pytest tests` — PASS, 452 tests.
 - `git diff --check` — PASS.
 
 ## Notes For Future Work
 
-- Phase 11/12: consider wiring `dns/hijack.py` restore automatically into
-  `WatchdogRuntime.disconnect()` (and evaluate whether rotation profile
-  switches should also re-`apply` rather than only re-embed the policy in the
-  new sing-box config) once the full connect/disconnect CLI lifecycle lands.
+- Phase 11/12: once the full connect/disconnect CLI lifecycle lands, evaluate
+  whether rotation profile switches should also re-`apply` system DNS state
+  (not just re-embed the policy in the new sing-box config), and whether
+  `WatchdogRuntime.connect()` should offer an equivalent auto-apply path
+  symmetric to the new auto-restore-on-disconnect behavior.
 - There is currently no CLI/TUI command to mutate `DNSPolicy.channels`,
   `rules`, `static_ips`, or FakeIP/ECS settings — only `dns-policy.json` is
   hand-edited. This matches Task 10.11's documented scope (status/test/apply/

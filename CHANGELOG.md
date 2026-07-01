@@ -19,6 +19,11 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   controls, all backed by real behavior with no placeholders.
 - Harden the kill switch to reject DNS/DoT traffic before `established,related`
   flows, closing a DNS leak window for already-established conntrack entries.
+- Wire the DNS v2 policy into the live sing-box connect path (direct connect,
+  startup autoconnect, reconnect, and rotation) so `custom`/`advanced` mode,
+  FakeIP, ECS, static IP mapping and DNS diversion rules actually take effect
+  on a running connection, and automatically restore system DNS state on VPN
+  disconnect when a `watchdog dns apply` snapshot exists.
 
 ### Removed
 
