@@ -5,7 +5,6 @@ VERSION="v0.3.1"
 REPORT_DIR="${WATCHDOGVPN_REPORT_DIR:-$HOME}"
 TRUTH_BIN="${WATCHDOGVPN_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
 AUTH_BIN="${WATCHDOGVPN_AUTH_BIN:-/usr/local/bin/vpn_auth_check}"
-DNSCTL_BIN="${WATCHDOGVPN_DNSCTL_BIN:-/usr/local/bin/vpn_dnsctl}"
 VPNCTL_BIN="${WATCHDOGVPN_VPNCTL_BIN:-/usr/local/bin/vpnctl}"
 BACKEND_BIN="${WATCHDOGVPN_BACKEND_BIN:-/usr/local/bin/vpn_backend}"
 DOCTOR_BIN="${WATCHDOGVPN_DOCTOR_BIN:-./doctor.sh}"
@@ -678,8 +677,6 @@ generate_report() {
     run_report_command "Backend status" "$BACKEND_BIN" status
     run_report_command "VPN auth" "$AUTH_BIN"
     run_report_command "VPN status" "$VPNCTL_BIN" status
-    run_report_command "DNS current" "$DNSCTL_BIN" current
-    run_report_command "DNS local test" "$DNSCTL_BIN" local-test
 
     run_shell_report_command "Systemd units" \
       "systemctl --no-pager --plain status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer"

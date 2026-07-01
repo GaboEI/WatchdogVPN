@@ -5,7 +5,7 @@ operations.
 
 The goal is not to hide the existing low-level commands. The goal is to give
 users and maintainers one stable command surface while keeping `VPN`, `vpnctl`,
-`vpn_truth_check`, `vpn_dnsctl` and other lower-level tools available for
+`vpn_truth_check` and other lower-level tools available for
 automation and troubleshooting.
 
 ## Current CLI Surface

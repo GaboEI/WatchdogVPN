@@ -41,6 +41,5 @@ only in installation and dependency detection.
 
 ## Optional Integrations
 
-- AdGuard Home for advanced DNS profiles
 - Conky desktop status
 - `.desktop` launcher

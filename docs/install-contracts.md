@@ -17,7 +17,6 @@ This document defines how the product scripts should behave.
 
 `install.sh` may ask:
 
-- Enable advanced DNS with AdGuard Home?
 - Install desktop launcher?
 - Install Conky integration?
 - Select VPN backend: AdGuard VPN, Custom VPS or both.
@@ -55,7 +54,6 @@ It should check:
 - AdGuard VPN session/auth state, when the selected backend mode uses `adguard`
 - basic DNS
 - previous installation state
-- optional AdGuard Home
 - optional Conky
 - optional desktop launcher
 
@@ -96,7 +94,6 @@ It must preserve:
 - `/etc/vpn-domain-bypass.conf`
 - `/var/lib/vpn-rotate/`
 - logs
-- user AdGuard Home configuration
 - user Conky configuration
 
 It should replace only product-managed runtime files after validation and backup.
@@ -121,7 +118,6 @@ It must ask before deleting:
 - `/etc/vpn-domain-bypass.conf`
 - `/var/log/myvpn/`
 - `/var/lib/vpn-rotate/`
-- AdGuard Home configuration
 - Conky configuration
 
 It must not remove:

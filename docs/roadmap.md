@@ -62,7 +62,7 @@ Implement `install.sh`.
 
 The installer should ask only product-level choices:
 
-- advanced DNS with AdGuard Home
+- DNS v2 management without the old guided third-party DNS integration
 - desktop launcher
 - Conky integration
 
@@ -93,7 +93,6 @@ It should update the product without deleting:
 - `/etc/vpn-domain-bypass.conf`
 - `/var/lib/vpn-rotate/`
 - logs
-- user AdGuard Home configuration
 - user Conky configuration
 
 Acceptance criteria:

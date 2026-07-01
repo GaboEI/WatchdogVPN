@@ -130,7 +130,6 @@ print_preservation_contract() {
   printf '/etc/vpn-domain-bypass.conf\n'
   printf '/var/lib/vpn-rotate/\n'
   printf '/var/log/myvpn/\n'
-  printf 'user AdGuard Home configuration\n'
   printf 'user Conky configuration\n'
   printf '\nOnly product-managed runtime files are replaced after validation and backup.\n'
 }
@@ -145,7 +144,6 @@ final_report() {
   print_section "Recommended checks"
   printf './doctor.sh\n'
   printf 'vpnctl status\n'
-  printf 'vpn_dnsctl local-test\n'
   printf 'VPN\n'
 }
 

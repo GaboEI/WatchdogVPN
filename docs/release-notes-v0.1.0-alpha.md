@@ -21,8 +21,7 @@ and CI.
 - Watchdog service for automatic recovery when the tunnel, route or public IP
   state is unhealthy.
 - Controlled VPN location rotation with validation and anti-loop behavior.
-- Optional AdGuard Home DNS profile management with backup, preflight and
-  rollback.
+- Optional legacy DNS profile management with backup, preflight and rollback.
 - Domain exclusions that start empty by default for new users.
 - Guided install/update/uninstall flows with backups and preservation contracts.
 - Read-only `doctor.sh` preflight diagnostics.
@@ -87,7 +86,7 @@ git pull
 ./update.sh
 ```
 
-The updater preserves user configuration, logs, rotation state, AdGuard Home
+The updater preserves user configuration, logs, rotation state, legacy DNS
 configuration and Conky files.
 
 ## Fresh Install

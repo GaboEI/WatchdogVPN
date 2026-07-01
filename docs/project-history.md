@@ -28,7 +28,7 @@ machine details.
 | 2026-01 to 2026-02 | Loose local scripts, manual fixes and unstable experiments around one VPN workstation |
 | 2026-02-02 | Inflection point: first long-form replication document for rebuilding the stack step by step |
 | 2026-04-25 to 2026-04-27 | Routing investigation, first TUI state capture, truth-layer hardening |
-| 2026-04-28 to 2026-04-30 | Product planning, DNS diagnostics, rollback, AdGuard Home direction |
+| 2026-04-28 to 2026-04-30 | Product planning, DNS diagnostics, rollback, legacy DNS direction |
 | 2026-05-01 to 2026-05-02 | TUI polish, mouse navigation, sudo keepalive, log traceability, auth watchdog |
 | 2026-05-07 | Decision to migrate from local prototype into a product repository |
 | 2026-05-07 to 2026-05-09 | WatchdogVPN repository, installer/update/uninstall, CI, security docs, demo |
@@ -80,7 +80,7 @@ Representative milestones:
 2026-04-28  Add formal vpn truth check modes
 2026-04-28  Document desktop launcher plan
 2026-04-28  Document future private VPN backend
-2026-04-28  Document optional AdGuard Home integration
+2026-04-28  Document optional legacy DNS integration
 2026-04-29  Document audit and harden VPN stack
 2026-04-29  Stabilize DNS and domain bypass refresh
 2026-04-29  Add VPN stress test tool
@@ -124,7 +124,7 @@ Representative milestones:
 2026-05-08  Implement core installer flow
 2026-05-08  Implement safe update flow
 2026-05-08  Implement careful uninstall flow
-2026-05-08  Implement AdGuard Home advanced DNS setup
+2026-05-08  Implement legacy advanced DNS setup
 2026-05-08  Harden installer product flow
 2026-05-08  Guide clean install through AdGuard VPN CLI setup
 2026-05-08  Add DNS rescue for uninstall flow

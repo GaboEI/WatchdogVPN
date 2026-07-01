@@ -17,7 +17,6 @@ from watchdogvpn.constants import (
     AG,
     AUTH_BIN,
     BACKEND_BIN,
-    DNSCTL,
     LOGROTATE_CONF,
     LOGROTATE_TIMER,
     MANUAL_STATE_BIN,
@@ -260,8 +259,7 @@ def rotate_setting(name: str) -> str:
 
 
 def dns_profile() -> str:
-    raw = run(f"sudo -n {shlex.quote(DNSCTL)} current 2>/dev/null | awk -F= '/^profile_guess=/{{print $2; exit}}'", 4).strip()
-    return raw or "locked"
+    return "pending-v2"
 
 
 def dashboard_data():

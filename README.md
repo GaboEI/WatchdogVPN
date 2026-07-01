@@ -140,7 +140,6 @@ git clone git@github.com:GaboEI/WatchdogVPN.git
 
 `install.sh` is guided but conservative. It asks only product-level choices:
 
-- Enable advanced DNS?
 - Install desktop launcher?
 - Install Conky integration?
 
@@ -188,7 +187,6 @@ lib/                Installer shared functions
 distros/            Ubuntu/Debian/Arch adapters
 conky/              Optional Conky integration
 desktop/            Optional desktop launcher
-adguard-home/       Optional legacy DNS integration
 docs/               Architecture, validation and operating notes
 tests/              Syntax, unit behavior and runtime validation helpers
 ```
@@ -198,7 +196,7 @@ tests/              Syntax, unit behavior and runtime validation helpers
 - **Real-state validation:** the project checks tunnel, route and public IP state instead of relying only on provider status text.
 - **Fail-safe recovery:** the watchdog distinguishes normal failures, unknown IP states and authentication problems.
 - **One runtime, distro adapters:** Ubuntu, Debian and Arch use the same runtime. Only installation and package checks differ.
-- **Optional advanced DNS:** DNS management is useful but not mandatory and is protected by preflight, backup and rollback.
+- **DNS v2 ownership:** DNS management is handled by the WatchdogVPN v2 DNS system, with AdGuard DNS resolvers available later as custom DNS choices.
 - **No duplicate repos by distro:** multi-distro support stays in one repository to avoid divergent behavior.
 - **Traceable logs:** operational events are written in a parseable format for future diagnostics.
 - **User-owned exclusions:** new installations start without personal bypass domains. Each user chooses which domains should leave through the normal network route.

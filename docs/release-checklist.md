@@ -148,7 +148,7 @@ systemd-analyze verify systemd/*.service systemd/*.timer
 ./doctor.sh
 watchdogvpn report
 vpnctl status
-vpn_dnsctl local-test
+./doctor.sh
 systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager
 ```
 

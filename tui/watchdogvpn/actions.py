@@ -10,8 +10,6 @@ import shlex
 
 from watchdogvpn.commands import run
 from watchdogvpn.constants import (
-    DNSCTL,
-    DNS_PROFILE_LABELS,
     NO_VPN,
     ROTATE_FIRSTBOOT_TIMER,
     ROTATE_TIMER,
@@ -83,17 +81,15 @@ def add_bypass_domain_command(domain: str) -> str:
 
 
 def dns_current_command() -> str:
-    return f"sudo -n {shlex.quote(DNSCTL)} current"
+    return "echo 'DNS v2 management is pending Phase 10.'"
 
 
 def dns_apply_command(profile: str) -> str:
-    if profile not in DNS_PROFILE_LABELS:
-        return "echo 'ERROR: perfil DNS invalido.'"
-    return f"sudo -n {shlex.quote(DNSCTL)} apply {shlex.quote(profile)}"
+    return "echo 'DNS v2 management is pending Phase 10.'"
 
 
 def dns_rollback_command() -> str:
-    return f"sudo -n {shlex.quote(DNSCTL)} rollback"
+    return "echo 'DNS v2 management is pending Phase 10.'"
 
 
 def set_timer_interval_command(unit: str, value: str) -> str:

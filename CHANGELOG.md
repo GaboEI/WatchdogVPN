@@ -8,6 +8,16 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 
 ## Unreleased
 
+### Removed
+
+- AdGuard Home integrated installation and DNS management mode. Users who want
+  to keep using AdGuard DNS resolvers can configure them as custom DNS servers
+  in the v2 DNS system. The standalone AdGuard Home installation is unaffected
+  and continues to work independently — this only removes the WatchdogVPN-guided
+  setup and integration layer.
+
+### Changed
+
 - Start the `v2.0.0` documentation reorientation with the new Linux
   resilience-layer identity.
 - Mark AdGuard VPN compatibility as legacy support in the public product
@@ -172,12 +182,12 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 
 ### DNS and Exclusions
 
-- Implement advanced DNS installation with AdGuard Home provisioning, local
-  starter config, DNS profile application and `vpn_dnsctl` path detection.
+- Implement legacy advanced DNS installation with third-party DNS provisioning,
+  local starter config and DNS profile application.
 - Add a DNS rescue helper and run it during uninstall so removing local DNS
   services does not leave the host without name resolution.
-- Let DNS profile apply continue with rollback protection when the current
-  system resolver is broken before AdGuard Home is configured.
+- Let legacy DNS profile apply continue with rollback protection when the
+  current system resolver is broken before the local resolver is configured.
 - Block advanced DNS installation early when required download domains cannot be
   resolved.
 - Strengthen DNS rescue on systems without `systemd-resolved` by writing
@@ -229,8 +239,8 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   remediation decisions.
 - Add security and threat-model documentation covering privileges, DNS safety,
   external installer risk and current hardening gaps.
-- Add explicit runtime warnings for remote vendor installers used by AdGuard VPN
-  CLI and AdGuard Home, including the manual-install-first security path.
+- Add explicit runtime warnings for remote vendor installers, including the
+  manual-install-first security path.
 - Harden TUI action command builders with defensive validation for DNS profiles,
   timer units, timer intervals and bypass domains.
 - Add install/security contract tests for privileged file modes, TUI package

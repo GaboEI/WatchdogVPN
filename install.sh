@@ -23,8 +23,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/desktop.sh"
 # shellcheck source=lib/conky.sh
 . "$ROOT_DIR/lib/conky.sh"
-# shellcheck source=lib/adguard_home.sh
-. "$ROOT_DIR/lib/adguard_home.sh"
 # shellcheck source=lib/singbox.sh
 . "$ROOT_DIR/lib/singbox.sh"
 
@@ -32,7 +30,6 @@ ASSUME_YES=0
 RUN_DOCTOR=1
 INSTALL_DESKTOP=""
 INSTALL_CONKY=""
-ENABLE_ADVANCED_DNS=""
 BACKEND_MODE="adguard"
 BACKEND_ACTIVE="adguard"
 CUSTOM_VPS_ENABLED="false"
@@ -57,7 +54,7 @@ Usage:
 
 Options:
   --dry-run       Show what would be installed without changing the system.
-  --yes           Use product defaults: backend AdGuard, DNS off, desktop on, Conky off.
+  --yes           Use product defaults: backend AdGuard, desktop on, Conky off.
   --skip-doctor   Do not run the read-only preflight first.
   --help          Show this help.
 
@@ -65,7 +62,6 @@ What this installer manages:
   - WatchdogVPN runtime commands and privileged scripts.
   - WatchdogVPN systemd units and timers.
   - Backend selection for AdGuard VPN, Custom VPS or both.
-  - Optional AdGuard Home DNS integration.
   - Optional desktop launcher and Conky integration.
 
 It does not remove the official AdGuard VPN CLI or account/license state.
@@ -382,10 +378,6 @@ ensure_adguard_service_login() {
 }
 
 install_optional_integrations() {
-  if [[ "$ENABLE_ADVANCED_DNS" == "1" ]]; then
-    install_adguard_home_integration
-  fi
-
   if [[ "$INSTALL_CONKY" == "1" ]]; then
     if [[ -n "${DISTRO_CONKY_PACKAGE:-}" ]] && ! have_cmd conky; then
       install_package_set "$DISTRO_CONKY_PACKAGE"
@@ -465,7 +457,7 @@ settle_vpn_after_install() {
 }
 
 post_install_validation() {
-  local doctor_rc=0 dns_rc=0
+  local doctor_rc=0
 
   if [[ "$ENABLE_ADGUARD_BACKEND" != "1" ]]; then
     printf '\n== Final validation ==\n'
@@ -476,25 +468,18 @@ post_install_validation() {
 
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] ./doctor.sh\n'
-    [[ "$ENABLE_ADVANCED_DNS" == "1" ]] && printf '[DRY-RUN] vpn_dnsctl local-test\n'
     return 0
   fi
 
   printf '\n== Final validation ==\n'
   "$ROOT_DIR/doctor.sh" || doctor_rc=$?
 
-  if [[ "$ENABLE_ADVANCED_DNS" == "1" ]]; then
-    printf '\n== DNS validation ==\n'
-    /usr/local/bin/vpn_dnsctl local-test || dns_rc=$?
-  fi
-
-  if ((doctor_rc != 0 || dns_rc != 0)); then
+  if ((doctor_rc != 0)); then
     fail "installation finished with validation errors"
     printf 'Review the output above. You can rerun diagnostics with:\n'
     printf '  cd %s\n' "$ROOT_DIR"
     printf '  ./doctor.sh\n'
     printf '  vpnctl status\n'
-    printf '  vpn_dnsctl local-test\n'
     exit 1
   fi
 }
@@ -504,7 +489,6 @@ final_report() {
   print_field "TUI command" "VPN"
   print_field "Diagnostics" "./doctor.sh"
   print_field "Runtime status" "vpnctl status"
-  print_field "DNS test" "vpn_dnsctl local-test"
   if [[ "$ENABLE_ADGUARD_BACKEND" == "1" ]]; then
     print_field "Service status" "systemctl status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer --no-pager"
   else
@@ -534,7 +518,6 @@ print_install_plan() {
   print_field "Systemd units" "enabled"
   print_field "Backend mode" "$BACKEND_MODE"
   print_field "Active backend" "$BACKEND_ACTIVE"
-  print_field "Advanced DNS" "$(yes_no_word "$ENABLE_ADVANCED_DNS")"
   print_field "Desktop launcher" "$(yes_no_word "$INSTALL_DESKTOP")"
   print_field "Conky integration" "$(yes_no_word "$INSTALL_CONKY")"
   print_field "Backups" "$BACKUP_ROOT"
@@ -566,14 +549,6 @@ fi
 
 if [[ "$CUSTOM_VPS_ENABLED" == "true" ]]; then
   install_official_singbox
-fi
-
-printf '\nAdvanced DNS with AdGuard Home is optional. It enables DNS profile management\n'
-printf 'with preflight checks, backup and rollback. You can skip it and enable it later.\n'
-if prompt_yes_no "Enable advanced DNS mode with AdGuard Home?" no; then
-  ENABLE_ADVANCED_DNS=1
-else
-  ENABLE_ADVANCED_DNS=0
 fi
 
 printf '\nThe desktop launcher adds WatchdogVPN to the applications menu and user desktop.\n'

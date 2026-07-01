@@ -50,7 +50,7 @@ watchdogvpn report
 VPN
 ```
 
-The updater preserves user configuration, logs, rotation state, AdGuard Home
+The updater preserves user configuration, logs, rotation state, legacy DNS
 configuration and Conky files.
 
 ## Important Fix

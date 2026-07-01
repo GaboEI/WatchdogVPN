@@ -26,7 +26,6 @@ from watchdogvpn.constants import (
     AG,
     AUTO_REFRESH_SECONDS,
     DASHBOARD_REFRESH_SECONDS,
-    DNS_PROFILE_LABELS,
     LOGROTATE_CONF,
     LOGROTATE_TIMER,
     MENU,
@@ -49,9 +48,7 @@ from watchdogvpn.commands import (
 from watchdogvpn.actions import (
     add_bypass_domain_command,
     disconnect_vpn_command,
-    dns_apply_command,
     dns_current_command,
-    dns_rollback_command,
     list_bypass_domains_command,
     real_status_command,
     remove_bypass_domain_command,
@@ -220,10 +217,10 @@ def menu_help(label: str):
         "Exclusiones": [
             "Gestiona dominios fuera de la VPN usando no_vpn."
         ],
-        "DNS / AdGuard": [
-            "Selector real de DNS local y perfiles DoH de AdGuard Home.",
+        "DNS": [
+            "DNS v2 se implementa en Phase 10.",
             "",
-            "Puede aplicar perfiles reales con backup y rollback automatico.",
+            "La integracion DNS guiada anterior fue retirada en Phase 9.5.",
         ],
         "Ver logs": [
             "Acceso rapido a trazabilidad, rotate, watchdog, dispatcher, journal y housekeeping."
@@ -270,10 +267,10 @@ def menu_overview(label: str):
             ("Uso", "Reiniciar, desconectar, rotar o forzar watchdog"),
             ("Riesgo", "Puede cortar sesiones activas durante segundos"),
         ],
-        "DNS / AdGuard": [
-            ("Rol", "Selector DNS real con rollback"),
-            ("Uso", "Cambiar entre Cloudflare, Quad9, Google, AdGuard DoQ u OpenDNS"),
-            ("Riesgo", "Bajo: crea backup y valida DNS local"),
+        "DNS": [
+            ("Rol", "Estado DNS v2"),
+            ("Uso", "Ver estado hasta que Phase 10 implemente gestion DNS"),
+            ("Riesgo", "Solo lectura"),
         ],
         "Exclusiones": [
             ("Rol", "Dominios fuera del tunel"),
@@ -357,7 +354,6 @@ def build_installation_text() -> str:
         (
             "Preguntas del instalador",
             [
-                "DNS avanzado con AdGuard Home: opcional, con prueba previa, backup y rollback.",
                 "Acceso directo de escritorio: opcional, se instala en el menu de aplicaciones y en el escritorio del usuario.",
                 "Conky: opcional, copia la integracion si el usuario la quiere usar.",
                 "Los intervalos esenciales no se preguntan en la instalacion: se instalan con valores seguros y se controlan desde Timers.",
@@ -373,7 +369,6 @@ def build_installation_text() -> str:
                 "vpn_watchdog.sh: comprueba sesion, salud, tunel y derivaciones de red.",
                 "no_vpn: gestiona dominios que deben salir por la red normal.",
                 "vpn_domain_bypass_apply.sh: mantiene exclusiones por dominio fuera de la VPN.",
-                "vpn_dnsctl: diagnostica DNS local y prepara cambios DoH con backup/rollback.",
                 "99-vpn-rotate: valida eventos de NetworkManager antes de rotar.",
                 "vpn_notify: emite notificaciones y deja eventos en /var/log/myvpn/vpn-events.log.",
                 "Timers y servicios systemd: mantienen el stack vivo y recuperable.",
@@ -397,7 +392,7 @@ def build_installation_text() -> str:
                 "Acciones rapidas: intervenciones directas sobre la VPN.",
                 "Timers: control de rotacion y watchdog.",
                 "Exclusiones: dominios que salen por la red normal.",
-                "DNS / AdGuard: diagnostico DNS y planes DoH seguros.",
+                "DNS: estado temporal hasta Phase 10.",
                 "Ver logs: auditoria rapida.",
                 "Pool de rotacion: control de TOP_N.",
             ],
@@ -1041,7 +1036,7 @@ def render(selected: int, dashboard_cache):
             "Acciones rapidas": ["Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog", "Estado real"],
             "Timers": ["Activar rotacion", "Parar rotacion", "Cambiar intervalo de rotacion", "Activar watchdog", "Parar watchdog", "Cambiar intervalo del watchdog"],
             "Exclusiones": ["Ver lista", "Agregar dominio", "Quitar dominio"],
-            "DNS / AdGuard": ["DNS actual", "Aplicar Quad9", "Aplicar Cloudflare", "Aplicar Google", "Aplicar AdGuard DoQ", "Aplicar OpenDNS", "Aplicar AdGuard sin filtro", "Aplicar AdGuard filtrado", "Rollback DNS"],
+            "DNS": ["Estado DNS"],
             "Ver logs": ["Resumen trazabilidad", "Housekeeping logs", "vpn-watchdog.log", "vpn-rotate.log", "vpn-dispatcher.log", "journal adguardvpn.service"],
         }
         hints = action_hints.get(selected_section, [])
@@ -1427,28 +1422,6 @@ def confirm_exit() -> bool:
             return True
         if key in ("esc", "left", "q", "char:q", "char:Q", "char:n", "char:N"):
             return False
-
-
-def confirm_dns_apply(profile: str) -> bool:
-    label = DNS_PROFILE_LABELS.get(profile, profile)
-    prompt = f"Esto cambiara DNS real a {label}. Escribe APLICAR para confirmar."
-    value = prompt_input("Confirmar cambio DNS", prompt)
-    if value is None:
-        return False
-    if value.strip().upper() == "APLICAR":
-        return True
-    alert("Confirmacion invalida", "No se aplico ningun cambio. Para cambiar DNS debes escribir exactamente APLICAR.")
-    return False
-
-
-def confirm_dns_rollback() -> bool:
-    value = prompt_input("Confirmar rollback DNS", "Esto restaura el ultimo backup DNS. Escribe ROLLBACK para confirmar.")
-    if value is None:
-        return False
-    if value.strip().upper() == "ROLLBACK":
-        return True
-    alert("Confirmacion invalida", "No se hizo rollback. Para restaurar DNS debes escribir exactamente ROLLBACK.")
-    return False
 
 
 def prompt_secret(title: str, prompt: str):
@@ -1869,103 +1842,13 @@ def section_meta(section: str, label: str):
         }
         return data.get(label, [])
 
-    if section == "DNS / AdGuard":
+    if section == "DNS":
         data = {
-            "DNS actual": [
+            "Estado DNS": [
                 ("Tipo", "Solo lectura"),
-                ("Comando", "vpn_dnsctl current"),
-                ("Impacto", "Muestra perfil activo"),
+                ("Comando", "pendiente Phase 10"),
+                ("Impacto", "No cambia el sistema"),
                 ("Riesgo", "Ninguno"),
-            ],
-            "Probar DNS local": [
-                ("Tipo", "Diagnostico"),
-                ("Comando", "vpn_dnsctl local-test"),
-                ("Impacto", "Consulta dominios reales"),
-                ("Riesgo", "Ninguno"),
-            ],
-            "Probar perfiles DNS": [
-                ("Tipo", "Diagnostico"),
-                ("Comando", "vpn_dnsctl test-all"),
-                ("Impacto", "Prueba perfiles DoH candidatos"),
-                ("Riesgo", "Ninguno"),
-            ],
-            "Aplicar Quad9": [
-                ("Perfil", "quad9-doh"),
-                ("Tipo", "Aplicar"),
-                ("Impacto", "Cambia DNS real"),
-                ("Rollback", "Automatico si falla"),
-            ],
-            "Aplicar Cloudflare": [
-                ("Perfil", "cloudflare-doh"),
-                ("Tipo", "Aplicar"),
-                ("Impacto", "Cambia DNS real"),
-                ("Rollback", "Automatico si falla"),
-            ],
-            "Aplicar Google": [
-                ("Perfil", "google-doh"),
-                ("Tipo", "Aplicar"),
-                ("Impacto", "Cambia DNS real"),
-                ("Rollback", "Automatico si falla"),
-            ],
-            "Aplicar AdGuard DoQ": [
-                ("Perfil", "adguard-doq"),
-                ("Tipo", "Aplicar"),
-                ("Impacto", "Cambia DNS real"),
-                ("Uso", "Fallback duro para bloqueo DNS"),
-            ],
-            "Aplicar OpenDNS": [
-                ("Perfil", "opendns-doh"),
-                ("Tipo", "Aplicar"),
-                ("Impacto", "Cambia DNS real"),
-                ("Rollback", "Automatico si falla"),
-            ],
-            "Aplicar AdGuard sin filtro": [
-                ("Perfil", "adguard-unfiltered-doh"),
-                ("Tipo", "Aplicar"),
-                ("Impacto", "Cambia DNS real"),
-                ("Rollback", "Automatico si falla"),
-            ],
-            "Aplicar AdGuard filtrado": [
-                ("Perfil", "adguard-doh"),
-                ("Tipo", "Aplicar"),
-                ("Impacto", "Cambia DNS real"),
-                ("Riesgo", "No recomendado inicial"),
-            ],
-            "Rollback DNS": [
-                ("Tipo", "Restaurar"),
-                ("Comando", "vpn_dnsctl rollback"),
-                ("Impacto", "Restaura ultimo backup"),
-                ("Uso", "Si un cambio DNS sale mal"),
-            ],
-            "Plan Quad9": [
-                ("Perfil", "quad9-doh"),
-                ("Tipo", "Plan"),
-                ("Impacto", "Valida config candidata"),
-                ("Riesgo", "No aplica cambios"),
-            ],
-            "Plan Cloudflare": [
-                ("Perfil", "cloudflare-doh"),
-                ("Tipo", "Plan"),
-                ("Impacto", "Valida config candidata"),
-                ("Riesgo", "No aplica cambios"),
-            ],
-            "Plan Google": [
-                ("Perfil", "google-doh"),
-                ("Tipo", "Plan"),
-                ("Impacto", "Valida config candidata"),
-                ("Riesgo", "No aplica cambios"),
-            ],
-            "Plan AdGuard sin filtro": [
-                ("Perfil", "adguard-unfiltered-doh"),
-                ("Tipo", "Plan"),
-                ("Impacto", "Valida config candidata"),
-                ("Riesgo", "No aplica cambios"),
-            ],
-            "Plan AdGuard filtrado": [
-                ("Perfil", "adguard-doh"),
-                ("Tipo", "Plan"),
-                ("Impacto", "Valida config candidata"),
-                ("Riesgo", "No recomendado inicial"),
             ],
         }
         return data.get(label, [])
@@ -2131,7 +2014,7 @@ def section_intro(section: str) -> str:
         "Acciones rapidas": "Intervenciones manuales. Algunas cortan o cambian la conexion durante segundos.",
         "Timers": "Controla automatizacion de rotacion y watchdog sin tocar scripts a mano.",
         "Exclusiones": "Gestiona dominios que salen por ruta directa, fuera del tunel VPN.",
-        "DNS / AdGuard": "Cambia DNS real con backup, validacion local y rollback de emergencia.",
+        "DNS": "DNS v2 se implementa en Phase 10. Esta vista no cambia el sistema.",
         "Backend": "Muestra backend activo, modo instalado y preparacion no secreta de Custom VPS.",
         "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
         "Pool de rotacion": "Ajusta cuantos nodos entran al pool antes de validar bloqueo y salud real.",
@@ -2153,7 +2036,7 @@ def action_progress_text(section: str, label: str) -> str:
         ("Timers", "Activar watchdog"): "Activando timer del watchdog",
         ("Timers", "Parar watchdog"): "Deteniendo timer del watchdog",
         ("Exclusiones", "Ver lista"): "Leyendo dominios configurados fuera del tunel",
-        ("DNS / AdGuard", "DNS actual"): "Leyendo perfil DNS activo",
+        ("DNS", "Estado DNS"): "Mostrando estado DNS v2 pendiente",
         ("Settings", "Ver configuracion"): "Leyendo configuracion persistente",
         ("Settings", "Cambiar idioma"): "Actualizando idioma persistente",
         ("Settings", "Cambiar tema"): "Actualizando tema persistente",
@@ -2241,11 +2124,10 @@ def section_panel(section: str, items):
                 "Las exclusiones siguen usando no_vpn y el servicio vpn-domain-bypass.service.",
                 "No modifica la arquitectura del VPN; solo rutas por dominio.",
             ],
-            "DNS / AdGuard": [
-                "Esta vista cambia DNS real cuando usas Aplicar.",
-                "Cada aplicacion crea backup, reinicia solo AdGuard Home y valida DNS local.",
-                "Si la validacion falla, vpn_dnsctl intenta rollback automatico al backup anterior.",
-                "Comando manual de emergencia: sudo /usr/local/bin/vpn_dnsctl rollback",
+            "DNS": [
+                "DNS v2 se implementa en Phase 10.",
+                "La integracion DNS guiada anterior fue retirada en Phase 9.5.",
+                "Los resolvers de AdGuard podran usarse luego como DNS custom.",
             ],
             "Backend": [
                 "Custom VPS controla un servicio systemd local configurado por el usuario.",
@@ -2554,16 +2436,8 @@ def handle_menu(label: str):
                 ("Agregar dominio", "__ADD_BYPASS__"),
                 ("Quitar dominio", "__REMOVE_BYPASS__"),
             ],
-            "DNS / AdGuard": [
-                ("DNS actual", dns_current_command()),
-                ("Aplicar Quad9", "__DNS_APPLY__:quad9-doh"),
-                ("Aplicar Cloudflare", "__DNS_APPLY__:cloudflare-doh"),
-                ("Aplicar Google", "__DNS_APPLY__:google-doh"),
-                ("Aplicar AdGuard DoQ", "__DNS_APPLY__:adguard-doq"),
-                ("Aplicar OpenDNS", "__DNS_APPLY__:opendns-doh"),
-                ("Aplicar AdGuard sin filtro", "__DNS_APPLY__:adguard-unfiltered-doh"),
-                ("Aplicar AdGuard filtrado", "__DNS_APPLY__:adguard-doh"),
-                ("Rollback DNS", "__DNS_ROLLBACK__"),
+            "DNS": [
+                ("Estado DNS", dns_current_command()),
             ],
             "Backend": [
                 ("Ver backend", "__BACKEND_VIEW__"),
@@ -2856,42 +2730,12 @@ def handle_menu(label: str):
                     show_output(action_label, run_with_progress(action_label, f"Ajustando TOP_N a {value}", set_rotate_top_n_command(value), 30))
                     set_status(f"TOP_N aplicado: {value}")
                     return True
-            elif isinstance(action, str) and action.startswith("__DNS_APPLY__:"):
-                profile = action.split(":", 1)[1]
-                if not ensure_sudo():
-                    continue
-                if not confirm_dns_apply(profile):
-                    set_status("Cambio DNS cancelado")
-                    continue
-                set_status(f"Aplicando DNS {profile}")
-                output = run_with_progress(
-                    action_label,
-                    f"Aplicando DNS {DNS_PROFILE_LABELS.get(profile, profile)}",
-                    dns_apply_command(profile),
-                    100,
-                )
-                show_output(action_label, output)
-                set_status(f"DNS aplicado: {profile}")
-                return True
-            elif action == "__DNS_ROLLBACK__":
-                if not ensure_sudo():
-                    continue
-                if not confirm_dns_rollback():
-                    set_status("Rollback DNS cancelado")
-                    continue
-                set_status("Restaurando DNS")
-                show_output(
-                    action_label,
-                    run_with_progress(action_label, "Restaurando ultimo DNS bueno", dns_rollback_command(), 70),
-                )
-                set_status("Rollback DNS listo")
-                return True
             else:
                 if "sudo" in action and not ensure_sudo():
                     continue
                 set_status(action_label)
                 show_output(action_label, run_with_progress(action_label, action_progress_text(label, action_label), action, 50))
-                if label in ("Acciones rapidas", "Timers", "Exclusiones", "DNS / AdGuard", "Pool de rotacion"):
+                if label in ("Acciones rapidas", "Timers", "Exclusiones", "DNS", "Pool de rotacion"):
                     set_status(f"Listo: {action_label}")
                     return True
     except Exception:

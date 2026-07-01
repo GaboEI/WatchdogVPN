@@ -142,7 +142,6 @@ TRUTH_LOG="$RUN_DIR/truth.log"
 DNS_LOG="$RUN_DIR/dns.log"
 HTTP_LOG="$RUN_DIR/http.log"
 SYSTEM_LOG="$RUN_DIR/system.log"
-ADGUARD_LOG="$RUN_DIR/adguard.log"
 COMMAND_LOG="$RUN_DIR/commands.log"
 SUMMARY="$RUN_DIR/summary.txt"
 
@@ -217,10 +216,10 @@ write_metadata() {
     sed -n '1,80p' /etc/resolv.conf 2>&1
     echo
     echo "active units:"
-    systemctl is-active adguardvpn.service vpn-rotate.timer vpn-watchdog.timer vpn-domain-bypass.timer AdGuardHome.service 2>&1
+    systemctl is-active adguardvpn.service vpn-rotate.timer vpn-watchdog.timer vpn-domain-bypass.timer 2>&1
     echo
     echo "enabled units:"
-    systemctl is-enabled adguardvpn.service vpn-rotate.timer vpn-watchdog.timer vpn-domain-bypass.timer AdGuardHome.service 2>&1
+    systemctl is-enabled adguardvpn.service vpn-rotate.timer vpn-watchdog.timer vpn-domain-bypass.timer 2>&1
     echo
     if git -C "$(pwd)" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       echo
@@ -287,20 +286,12 @@ system_loop() {
   while (( "$(date +%s)" < END_EPOCH )) && [[ ! -e "$STOP_FILE" ]]; do
     {
       printf '[%s] SYSTEM\n' "$(ts)"
-      timeout 8s systemctl is-active adguardvpn.service vpn-rotate.timer vpn-watchdog.timer vpn-domain-bypass.timer AdGuardHome.service 2>&1 | sed 's/^/active: /'
+      timeout 8s systemctl is-active adguardvpn.service vpn-rotate.timer vpn-watchdog.timer vpn-domain-bypass.timer 2>&1 | sed 's/^/active: /'
       timeout 8s systemctl list-timers --all 'vpn-*' 'adguard*' 2>&1 | sed 's/^/timer: /'
       timeout 8s python3 -m py_compile "$TUI_BIN" 2>&1 | sed 's/^/tui: /'
       echo
     } >> "$SYSTEM_LOG"
 
-    {
-      printf '[%s] ADGUARD_ERRORS_LAST_MINUTE\n' "$(ts)"
-      timeout 8s journalctl -u AdGuardHome.service --since '1 min ago' --no-pager 2>&1 \
-        | grep -Ei 'error|failed|timeout|unexpected|reset|upstream' \
-        | tail -n 40 \
-        | sed 's/^/adguard: /' || true
-      echo
-    } >> "$ADGUARD_LOG"
     sleep "$SYSTEM_INTERVAL"
   done
 }
@@ -390,8 +381,6 @@ generate_summary() {
     grep -c ' FAIL domain=' "$DNS_LOG" 2>/dev/null || true
     printf 'http_failures: '
     grep -c ' FAIL url=' "$HTTP_LOG" 2>/dev/null || true
-    printf 'adguard_error_lines: '
-    grep -c 'adguard:' "$ADGUARD_LOG" 2>/dev/null || true
     printf 'events_started: '
     grep -c 'START ' "$EVENTS_LOG" 2>/dev/null || true
     printf 'events_skipped: '
@@ -406,8 +395,6 @@ generate_summary() {
     echo "Last DNS failures:"
     grep ' FAIL domain=' "$DNS_LOG" 2>/dev/null | tail -n 20 || true
     echo
-    echo "Last AdGuard errors:"
-    grep 'adguard:' "$ADGUARD_LOG" 2>/dev/null | tail -n 30 || true
   } > "$SUMMARY"
 }
 
@@ -429,7 +416,7 @@ write_metadata
 log_event "started run_dir=$RUN_DIR mode=$MODE duration=$DURATION_RAW events=$EVENTS disruptive=$DISRUPTIVE"
 start_sudo_keepalive
 append_cmd "initial-truth" 10 "$TRUTH_BIN"
-append_cmd "initial-status" 10 systemctl status adguardvpn.service vpn-rotate.timer vpn-watchdog.timer vpn-domain-bypass.timer AdGuardHome.service --no-pager -n 12
+append_cmd "initial-status" 10 systemctl status adguardvpn.service vpn-rotate.timer vpn-watchdog.timer vpn-domain-bypass.timer --no-pager -n 12
 
 monitor_loop &
 CHILD_PIDS+=("$!")

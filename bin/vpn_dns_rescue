@@ -16,8 +16,8 @@ Modes:
   fallback  Set public fallback DNS on active NetworkManager connections.
   status    Show resolver and NetworkManager DNS state.
 
-This tool is independent from AdGuard Home. Use it when DNS was left pointing
-at a local resolver that is no longer running.
+Use this when DNS was left pointing at a local resolver that is no longer
+running.
 USAGE
 }
 

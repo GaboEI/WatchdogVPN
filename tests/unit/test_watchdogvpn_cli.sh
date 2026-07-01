@@ -140,8 +140,6 @@ make_cmd "$TMP_DIR/vpnctl" \
   'printf "VPN STATUS: UP\npublic ip: 198.51.100.10\n"'
 make_cmd "$TMP_DIR/backend" \
   'case "${1:-}" in status) printf "MODE=adguard\nBACKEND=adguard\nCUSTOM_VPS_ENABLED=false\nIMPLEMENTED=true\nSUPPORTS_ROTATION=true\nTRUTH_INTERFACE=tun0\n";; active) printf "adguard\n";; mode) printf "adguard\n";; validate) exit 0;; *) exit 64;; esac'
-make_cmd "$TMP_DIR/dnsctl" \
-  'case "${1:-}" in current) printf "profile_guess=quad9-doh\n";; local-test) printf "OK example.com 198.51.100.20\n";; esac'
 
 cat >"$TMP_DIR/config.toml" <<'EOF'
 [language]
@@ -174,7 +172,6 @@ output="$(
   WATCHDOGVPN_AUTH_BIN="$TMP_DIR/auth" \
   WATCHDOGVPN_BACKEND_BIN="$TMP_DIR/backend" \
   WATCHDOGVPN_VPNCTL_BIN="$TMP_DIR/vpnctl" \
-  WATCHDOGVPN_DNSCTL_BIN="$TMP_DIR/dnsctl" \
   "$SCRIPT" report
 )"
 
@@ -184,7 +181,6 @@ report="$(printf '%s\n' "$output" | sed -n 's/^Report written: //p')"
 grep -Fq "WatchdogVPN diagnostic report" "$report"
 grep -Fq "== VPN truth ==" "$report"
 grep -Fq "== Backend status ==" "$report"
-grep -Fq "== DNS local test ==" "$report"
 grep -Fq "<redacted-email>" "$report"
 grep -Fq "<redacted-ip>" "$report"
 if grep -Eq '198\.51\.100|203\.0\.113|user@example\.com' "$report"; then

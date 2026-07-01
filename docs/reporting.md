@@ -48,7 +48,7 @@ Good reports include:
 - WatchdogVPN version or commit.
 - Distribution and version.
 - Install method: fresh install, update or manual copy.
-- Whether advanced DNS is enabled.
+- Current DNS/resolver state if the issue is DNS-related.
 - Whether Conky or desktop launcher integration is enabled.
 - Exact command or TUI action that failed.
 - Expected behavior.

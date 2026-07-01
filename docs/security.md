@@ -34,7 +34,7 @@ The privileged layer is required because WatchdogVPN controls:
 - `systemd` services and timers.
 - VPN service restarts.
 - Network route and domain exclusion rules.
-- DNS profile application through AdGuard Home.
+- DNS safety and rescue tooling.
 - logrotate policy installation.
 - files under `/etc`, `/var/lib` and `/var/log`.
 
@@ -49,7 +49,6 @@ Product-managed runtime files include:
 - `/usr/local/bin/vpn_backend`
 - `/usr/local/bin/vpn_truth_check`
 - `/usr/local/bin/vpn_auth_check`
-- `/usr/local/bin/vpn_dnsctl`
 - `/usr/local/bin/vpn_dns_rescue`
 - `/usr/local/bin/vpn_manual_state`
 - `/usr/local/bin/vpn_notify`
@@ -73,7 +72,6 @@ User configuration and state that must be preserved by default:
 - `/var/lib/vpn-rotate/`
 - `/var/lib/watchdogvpn/`
 - `/var/log/myvpn/`
-- AdGuard Home user configuration
 - Conky user configuration
 - provider installation and account/license state
 
@@ -90,17 +88,11 @@ and Conky files are removed only when the user explicitly asks for purge options
 
 ## DNS Safety
 
-Advanced DNS mode is optional. When enabled, WatchdogVPN uses AdGuard Home and
-`vpn_dnsctl` to apply DNS profiles with preflight checks, backups and rollback.
-
-Known DNS safety behavior:
-
-- DNS profiles are tested before application.
-- The current AdGuard Home config is backed up before replacement.
-- Local DNS health is validated after application.
-- Rollback is attempted if validation fails.
-- `vpn_dns_rescue` exists to recover name resolution when local DNS services are
-  removed or broken during uninstall/recovery work.
+The old guided third-party DNS integration was removed before Phase 10. DNS v2
+will own resolver selection and custom DNS behavior without depending on an
+external DNS service. `vpn_dns_rescue` remains as a fallback helper to recover
+name resolution when local DNS services are removed or broken during
+uninstall/recovery work.
 
 ## External Installer Risk
 
@@ -114,23 +106,18 @@ Current risk:
   cryptographic signature inside this repository.
 - If the remote endpoint changes or is unavailable, automated installation may
   fail.
-- Advanced DNS can also install AdGuard Home through the vendor installer. That
-  path has the same remote-script trust model.
-
 Current mitigation:
 
 - The installer is explicit about what it is doing.
 - The project does not bundle credentials or licensing bypasses.
 - Users may install the selected provider manually before running WatchdogVPN.
-- Users may answer "no" to advanced DNS and install AdGuard Home manually later.
 
 Manual-first path:
 
 1. Install the selected provider from the vendor documentation.
 2. Confirm the provider CLI works.
 3. Run `./install.sh` and let WatchdogVPN configure its service user and runtime.
-4. For DNS, either skip advanced DNS during install or install AdGuard Home
-   manually first, then use `vpn_dnsctl` for profile application.
+4. Configure DNS through the WatchdogVPN v2 DNS system when Phase 10 lands.
 
 Planned hardening:
 

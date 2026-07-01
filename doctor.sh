@@ -204,7 +204,6 @@ check_repo_file "bin/vpn_truth_check" exec
 check_repo_file "bin/vpn_backend" exec
 check_repo_file "bin/vpn_auth_check" exec
 check_repo_file "bin/vpn_dns_rescue" exec
-check_repo_file "bin/vpn_dnsctl" exec
 check_repo_file "bin/vpn_manual_state" exec
 check_repo_file "bin/vpn_notify" exec
 check_repo_file "bin/vpnctl" exec
@@ -223,7 +222,6 @@ for path in \
   /usr/local/bin/vpn_backend \
   /usr/local/bin/vpn_auth_check \
   /usr/local/bin/vpn_dns_rescue \
-  /usr/local/bin/vpn_dnsctl \
   /usr/local/bin/vpn_manual_state \
   /usr/local/bin/vpn_notify \
   /usr/local/bin/vpnctl \
@@ -306,12 +304,6 @@ section "Optional Integrations"
 for cmd in $(optional_commands); do
   check_optional_command "$cmd"
 done
-
-if systemd_unit_known AdGuardHome.service; then
-  info "AdGuardHome.service: active=$(systemd_active_state AdGuardHome.service) enabled=$(systemd_enabled_state AdGuardHome.service)"
-else
-  mark_warn "AdGuard Home not detected"
-fi
 
 if [[ -f "$HOME/.local/share/applications/watchdogvpn.desktop" || -f "$HOME/.local/share/applications/vpn-control-center.desktop" ]]; then
   mark_ok "desktop launcher detected"

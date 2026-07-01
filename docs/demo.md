@@ -119,24 +119,11 @@ CLI status: VPN is disconnected (not authoritative)
 The CLI line is intentionally treated as non-authoritative. The tunnel, route
 and public IP checks are the operational source of truth.
 
-## Example: DNS Profile
+## Example: DNS
 
-```text
-$ vpn_dnsctl current
-== AdGuard Home DNS current ==
-config=/opt/AdGuardHome/AdGuardHome.yaml
-profile_guess=quad9-doh
-
-upstream_dns:
-  - https://dns10.quad9.net/dns-query
-  - https://dns11.quad9.net/dns-query
-bootstrap_dns:
-  - 9.9.9.10
-  - 149.112.112.10
-fallback_dns:
-  - https://cloudflare-dns.com/dns-query
-  - https://dns.google/dns-query
-```
+DNS v2 is planned for Phase 10. The old guided third-party DNS integration is
+removed; users who prefer AdGuard DNS resolvers will be able to configure them
+as custom DNS servers in the v2 DNS system.
 
 ## Example: Timers
 

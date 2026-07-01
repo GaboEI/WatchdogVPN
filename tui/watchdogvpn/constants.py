@@ -12,7 +12,6 @@ AUTH_BIN = "/usr/local/bin/vpn_auth_check"
 MANUAL_STATE_BIN = "/usr/local/bin/vpn_manual_state"
 VPN_SET = "/usr/local/sbin/vpn_set"
 NO_VPN = "/usr/local/bin/no_vpn"
-DNSCTL = "/usr/local/bin/vpn_dnsctl"
 WATCHDOGVPN_CLI = "/usr/local/bin/watchdogvpn"
 WATCHDOGVPN_CONFIG = "/etc/watchdogvpn/config.toml"
 
@@ -44,22 +43,12 @@ AUTO_REFRESH_SECONDS = 12
 DASHBOARD_REFRESH_SECONDS = 1
 SUDO_KEEPALIVE_SECONDS = 45
 
-DNS_PROFILE_LABELS = {
-    "quad9-doh": "Quad9",
-    "cloudflare-doh": "Cloudflare",
-    "google-doh": "Google",
-    "adguard-unfiltered-doh": "AdGuard sin filtro",
-    "adguard-doh": "AdGuard filtrado",
-    "adguard-doq": "AdGuard DoQ",
-    "opendns-doh": "OpenDNS",
-}
-
 MENU_ITEMS = [
     {"id": "dashboard", "label": "Dashboard", "section": "Dashboard", "group": "OPERACION"},
     {"id": "backend", "label": "Backend", "section": "Backend", "group": "OPERACION"},
     {"id": "location", "label": "Ubicacion", "section": "Cambiar ubicacion", "group": "OPERACION"},
     {"id": "actions", "label": "Acciones", "section": "Acciones rapidas", "group": "OPERACION"},
-    {"id": "dns", "label": "DNS", "section": "DNS / AdGuard", "group": "OPERACION"},
+    {"id": "dns", "label": "DNS", "section": "DNS", "group": "OPERACION"},
     {"id": "bypass", "label": "Exclusiones", "section": "Exclusiones", "group": "OPERACION"},
     {"id": "timers", "label": "Timers", "section": "Timers", "group": "AUTOMATIZACION"},
     {"id": "pool", "label": "Pool", "section": "Pool de rotacion", "group": "AUTOMATIZACION"},

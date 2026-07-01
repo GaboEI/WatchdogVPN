@@ -121,7 +121,6 @@ print_contract() {
   printf '/var/log/myvpn/\n'
   printf '/var/lib/vpn-rotate/\n'
   printf '/var/lib/watchdogvpn/\n'
-  printf 'AdGuard Home configuration\n'
   printf 'Conky configuration\n'
 
   print_section "Never removed"
@@ -133,7 +132,6 @@ remove_runtime_files() {
   remove_root_path /usr/local/bin/no_vpn
   remove_root_path /usr/local/bin/vpn_auth_check
   remove_root_path /usr/local/bin/vpn_dns_rescue
-  remove_root_path /usr/local/bin/vpn_dnsctl
   remove_root_path /usr/local/bin/vpn_backend
   remove_root_path /usr/local/bin/vpn_manual_state
   remove_root_path /usr/local/bin/vpn_notify
