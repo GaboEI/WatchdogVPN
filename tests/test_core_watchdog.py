@@ -571,7 +571,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         app_config.load.return_value = {
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
-            "rotation": {},
+            "rotation": {"enabled": True},
             "adguard": {},
         }
 
@@ -603,7 +603,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
     @patch("core.watchdog.health_checker.check", return_value="down")
-    def test_run_iteration_reports_normal_network_temp_when_all_fail(self, _hc, _pool) -> None:
+    def test_run_iteration_reports_rotation_unavailable_when_pool_empty(self, _hc, _pool) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
 
@@ -613,7 +613,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         app_config.load.return_value = {
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
-            "rotation": {},
+            "rotation": {"enabled": True},
             "adguard": {},
         }
 
@@ -633,7 +633,118 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         result = runtime.run_iteration()
 
-        self.assertEqual(result.status, "normal_network_temp")
+        self.assertEqual(result.status, "rotation_unavailable")
+
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check", return_value="down")
+    def test_run_iteration_does_not_rotate_when_rotation_disabled(self, _hc, pool_mock) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": False},
+            "adguard": {},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+        )
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "rotation_unavailable")
+        pool_mock.assert_not_called()
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check", return_value="down")
+    def test_run_iteration_reports_all_failed_when_candidates_fail(self, _hc, mock_pool, mock_sel_driver) -> None:
+        alt_profile = Profile(
+            id="alt-down", name="Alt down", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, in_rotation_pool=True, enabled=True,
+        )
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": True},
+            "adguard": {},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+        )
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "all_failed")
+
+    def test_run_iteration_applies_recovery_backoff_config(self) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1, "reconnect_backoff_seconds": 7},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": False, "max_backoff_interval_seconds": 8},
+            "adguard": {},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+        )
+
+        runtime.run_iteration()
+        runtime.run_iteration()
+
+        self.assertEqual(runtime.recovery.base_interval_seconds, 7.0)
+        self.assertEqual(runtime.recovery.max_interval_seconds, 8.0)
+        self.assertEqual(runtime.recovery.backoff_interval(2), 8.0)
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
     @patch("core.watchdog.health_checker.check", return_value="down")
@@ -648,7 +759,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         app_config.load.return_value = {
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": True},
-            "rotation": {},
+            "rotation": {"enabled": True},
             "adguard": {},
         }
 
@@ -684,7 +795,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         app_config.load.return_value = {
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
-            "rotation": {},
+            "rotation": {"enabled": True},
             "adguard": {},
         }
 
@@ -720,7 +831,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         app_config.load.return_value = {
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": True},
-            "rotation": {},
+            "rotation": {"enabled": True},
             "adguard": {},
         }
 
@@ -740,7 +851,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         result = runtime.run_iteration()
 
-        self.assertEqual(result.status, "normal_network_temp")
+        self.assertEqual(result.status, "rotation_unavailable")
         kill_switch.enable_mock.assert_called_once_with()
 
     def test_rotate_now_standby_when_gate_off(self) -> None:
@@ -770,7 +881,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         runtime.app_config = MagicMock(spec=AppConfig)
         runtime.app_config.load.return_value = {
             "watchdog": {}, "kill_switch": {"enabled": False},
-            "rotation": {}, "adguard": {},
+            "rotation": {"enabled": True}, "adguard": {},
         }
 
         result = runtime.rotate_now(force=True)
@@ -805,7 +916,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
                 "block_ipv6": False,
                 "allow_lan": False,
             },
-            "rotation": {},
+            "rotation": {"enabled": True},
             "adguard": {},
         }
 

@@ -12,6 +12,7 @@ ALLOWED_STATUSES = {
     "normal_network_temp",
     "kill_switch_active",
     "waiting_retry",
+    "rotation_unavailable",
     "recovered",
     "standby",
 }
@@ -57,4 +58,3 @@ class ConnectionState:
             kill_switch_active=bool(data.get("kill_switch_active", False)),
             status=str(data.get("status", "standby")),
         )
-

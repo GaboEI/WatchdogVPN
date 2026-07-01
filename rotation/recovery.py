@@ -88,3 +88,21 @@ class Recovery:
         )
         LOGGER.error("recovery_all_failed kill_switch=off %s", message)
         return AllFailedAction(kill_switch_active=False, notified=True, message=message)
+
+    def handle_rotation_unavailable(self, kill_switch_active: bool, reason: str) -> AllFailedAction:
+        interval = self.record_failure()
+        if kill_switch_active:
+            message = (
+                f"rotation unavailable (reason={reason}, consecutive_failures="
+                f"{self._consecutive_failures}); kill switch active, "
+                f"blocking traffic outside the tunnel, retrying in {interval:.1f}s"
+            )
+            LOGGER.error("recovery_rotation_unavailable kill_switch=on %s", message)
+            return AllFailedAction(kill_switch_active=True, notified=True, message=message)
+
+        message = (
+            f"rotation unavailable (reason={reason}, consecutive_failures="
+            f"{self._consecutive_failures}); retrying in {interval:.1f}s"
+        )
+        LOGGER.error("recovery_rotation_unavailable kill_switch=off %s", message)
+        return AllFailedAction(kill_switch_active=False, notified=True, message=message)

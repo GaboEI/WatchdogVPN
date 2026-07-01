@@ -118,6 +118,8 @@ class WatchdogRuntime:
         return health_checker.check(profile, self.driver) == "ok"
 
     def _recover_from_failure(self) -> ConnectionState:
+        config = self.app_config.load()
+        self._configure_recovery(config)
         if not self.recovery.can_retry_now():
             LOGGER.info("watchdog_recovery_skip reason=backoff_window")
             return ConnectionState(status="waiting_retry", mode=self.driver.status().mode)
@@ -126,11 +128,9 @@ class WatchdogRuntime:
         if current_profile is not None and self._try_reconnect(current_profile):
             self._reconnect_failures = 0
             self.recovery.record_success()
-            config = self.app_config.load()
             return self._recovered_state_after_stable_connection(config)
 
         self._reconnect_failures += 1
-        config = self.app_config.load()
         reconnect_attempts = int(config.get("watchdog", {}).get("reconnect_attempts", 3))
         if self._reconnect_failures < reconnect_attempts:
             LOGGER.info(
@@ -150,6 +150,11 @@ class WatchdogRuntime:
         force: bool = False,
         exclude_profile_id: str | None = None,
     ) -> ConnectionState:
+        self._configure_recovery(config)
+        if not force and not self._rotation_enabled(config):
+            LOGGER.warning("rotation_unavailable reason=disabled")
+            return self._handle_rotation_unavailable(config, reason="disabled")
+
         pool = self._compatible_pool(config)
         if exclude_profile_id:
             pool = [p for p in pool if p.id != exclude_profile_id]
@@ -166,11 +171,32 @@ class WatchdogRuntime:
             )
             return self._recovered_state_after_stable_connection(config)
 
+        if result.category == "unavailable" or result.attempts == 0:
+            return self._handle_rotation_unavailable(config, reason=result.category)
+
         kill_switch_active = self._apply_all_failed_kill_switch(config)
         action = self.recovery.handle_all_failed(kill_switch_active=kill_switch_active)
-        status = "kill_switch_active" if action.kill_switch_active else "normal_network_temp"
+        status = "kill_switch_active" if action.kill_switch_active else "all_failed"
         LOGGER.error(
             "watchdog_all_failed kill_switch=%s consecutive_failures=%d",
+            "on" if action.kill_switch_active else "off",
+            self.recovery.consecutive_failures,
+        )
+        return ConnectionState(status=status, mode=self.driver.status().mode)
+
+    def _rotation_enabled(self, config: dict) -> bool:
+        return bool(config.get("rotation", {}).get("enabled", False))
+
+    def _handle_rotation_unavailable(self, config: dict, reason: str) -> ConnectionState:
+        kill_switch_active = self._apply_all_failed_kill_switch(config)
+        action = self.recovery.handle_rotation_unavailable(
+            kill_switch_active=kill_switch_active,
+            reason=reason,
+        )
+        status = "kill_switch_active" if action.kill_switch_active else "rotation_unavailable"
+        LOGGER.error(
+            "watchdog_rotation_unavailable reason=%s kill_switch=%s consecutive_failures=%d",
+            reason,
             "on" if action.kill_switch_active else "off",
             self.recovery.consecutive_failures,
         )
@@ -180,6 +206,14 @@ class WatchdogRuntime:
         full_pool = pool_builder.build_pool(self.profile_store, self.provider_store, config)
         driver_type = type(self.driver)
         return [p for p in full_pool if type(select_driver(p)) is driver_type]
+
+    def _configure_recovery(self, config: dict) -> None:
+        watchdog_config = config.get("watchdog", {})
+        rotation_config = config.get("rotation", {})
+        if "reconnect_backoff_seconds" in watchdog_config:
+            self.recovery.base_interval_seconds = float(watchdog_config["reconnect_backoff_seconds"])
+        if "max_backoff_interval_seconds" in rotation_config:
+            self.recovery.max_interval_seconds = float(rotation_config["max_backoff_interval_seconds"])
 
     def _apply_all_failed_kill_switch(self, config: dict) -> bool:
         self._configure_kill_switch(config)

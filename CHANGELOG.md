@@ -18,6 +18,9 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 
 ### Changed
 
+- Respect the global rotation enable flag during automatic recovery, report
+  unavailable rotation separately from failed candidates, and apply configured
+  recovery backoff limits at runtime.
 - Harden driver process management with private per-run runtime config paths,
   version-checked availability, readiness-gated connect success, stale
   AmneziaWG interface reconciliation, and guarded forced process cleanup.

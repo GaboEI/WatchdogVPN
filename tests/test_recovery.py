@@ -140,6 +140,17 @@ class AllFailedTests(unittest.TestCase):
         clock.advance(10.0)
         self.assertTrue(recovery.can_retry_now())
 
+    def test_rotation_unavailable_schedules_backoff(self) -> None:
+        clock = FakeClock()
+        recovery = make_recovery(clock=clock)
+
+        action = recovery.handle_rotation_unavailable(kill_switch_active=False, reason="disabled")
+
+        self.assertFalse(action.kill_switch_active)
+        self.assertTrue(action.notified)
+        self.assertEqual(recovery.consecutive_failures, 1)
+        self.assertFalse(recovery.can_retry_now())
+
 
 if __name__ == "__main__":
     unittest.main()
