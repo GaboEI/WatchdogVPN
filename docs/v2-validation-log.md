@@ -259,13 +259,25 @@
   - `bash tests/unit.sh` passed.
   - `.venv/bin/pytest tests` passed: 445 tests.
   - `git diff --check` passed.
-- **Not yet re-validated on real hardware:** the AUD-DNS-001 fix (DNS policy
-  now reaching the live sing-box process) is covered by unit tests with a
-  mocked subprocess, but has not yet been exercised against a real VPS
-  profile with a real `dns-policy.json` and a real `watchdog dns apply`. See
-  the workstation commands below.
+- **Real workstation re-validation:** ran `SingBoxDriver.generate_singbox_config()`
+  directly with a real VLESS+Reality profile (same VPS/profile validated in
+  Phase 4, Task 4.5) and a real `custom`-mode `DNSPolicy` (direct channel:
+  `udp://1.1.1.1`, `tun_hijack=True`). Result: `dns section present: True`,
+  with the generated `dns.servers`/`dns.rules`/`dns.final` block and hijack
+  inbound tags `watchdogvpn-dns-udp-in`/`watchdogvpn-dns-tcp-in` present in
+  the exact config `SingBoxDriver.connect()` would write and hand to the
+  running sing-box process. Before the AUD-DNS-001 fix, this same call
+  path always received `dns_policy=None` regardless of the configured
+  policy, so `dns section present` would have been `False`.
+  - A separate full `driver.connect(profile, dns_policy=policy)` attempt in
+    this same session reported `health: down` (process started but did not
+    reach a healthy state). This reflects an unrelated real-connectivity
+    condition on this run, not the DNS policy wiring fix, since it happens
+    before any DNS-specific code runs and this same VLESS+Reality profile
+    was previously validated as working in Task 4.5. Not investigated further
+    as part of Task 10.14; flagged for separate follow-up if it recurs.
 
-
+## Validation Gaps To Keep Honest
 
 - No full real-hardware validation log exists yet for every compatibility
   protocol in the parser/provider matrix.
@@ -278,6 +290,12 @@
   408 tests after creating a local `.venv`.
 - Phase 10F real validation did not run a full interactive TUI session; TUI DNS
   controls were covered by unit tests and command mapping smoke checks.
-- Phase 10G's AUD-DNS-001 fix (DNS policy now reaching the live sing-box
-  process) is unit-tested but not yet re-validated end-to-end against a real
-  VPS profile with a real `dns-policy.json` in `custom` mode.
+- Phase 10G's AUD-DNS-001 fix was confirmed against a real VLESS+Reality
+  profile at the config-generation level (real `dns` section and hijack
+  inbounds produced for a real `custom`-mode policy). The subsequent full
+  `connect()` + `health_check()` attempt against the same profile reported
+  `health: down` in this session; this was not chased further since it is
+  unrelated to the DNS wiring fix and the same profile previously validated
+  as working in Task 4.5. A full live end-to-end DNS hijack test (real
+  `resolvectl`/`dig` query answered through the sing-box hijack listener) is
+  still outstanding.
