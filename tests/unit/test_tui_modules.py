@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "tui"))
 
 from watchdogvpn import actions
 from watchdogvpn import commands
+from watchdogvpn import dns
 from watchdogvpn import render
 from watchdogvpn import state
 from watchdogvpn.constants import MENU, MENU_ITEMS
@@ -24,6 +25,7 @@ class TuiModuleTests(unittest.TestCase):
         self.assertIn("Dashboard", MENU)
         self.assertIn("Backend", MENU)
         self.assertIn("Exclusiones", MENU)
+        self.assertIn("DNS", MENU)
         self.assertIn("Settings", MENU)
         self.assertIn("Update", MENU)
 
@@ -108,6 +110,70 @@ class TuiModuleTests(unittest.TestCase):
         self.assertIn("ERROR: TOP_N", actions.set_rotate_top_n_command("0"))
         self.assertIn("dominio invalido", actions.remove_bypass_domain_command("bad/domain"))
         self.assertIn("Quitado: example.com", actions.remove_bypass_domain_command("example.com"))
+
+    def test_dns_tui_helpers_read_policy_and_build_real_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_dir = pathlib.Path(tmp) / "config"
+            policy_path = config_dir / "dns-policy.json"
+            snapshot_path = config_dir / "dns-state.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_path.write_text(
+                """
+{
+  "mode": "advanced",
+  "test_domain": "example.com",
+  "ttl": "6h",
+  "tun_hijack": true,
+  "channels": {
+    "direct": {
+      "name": "direct",
+      "resolvers": [
+        {"uri": "local", "enabled": true},
+        {"uri": "https://1.1.1.1/dns-query", "enabled": false}
+      ]
+    }
+  },
+  "static_ip_enabled": true,
+  "static_ips": [{"domain": "example.com", "ip": "203.0.113.10"}],
+  "rules_enabled": true,
+  "rules": [{"id": "r1", "pattern": "suffix:example.com", "channel": "direct"}],
+  "ecs_direct_enabled": true,
+  "ecs_direct_subnet": "203.0.113.0/24"
+}
+""",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                "os.environ",
+                {
+                    "WATCHDOGVPN_DNS_POLICY_FILE": str(policy_path),
+                    "WATCHDOGVPN_DNS_SNAPSHOT_FILE": str(snapshot_path),
+                    "WATCHDOGVPN_REPO": str(ROOT),
+                },
+            ):
+                rows = dict(dns.policy_rows())
+                channels = dict(dns.channel_rows())
+                status_cmd = dns.status_command(json_output=True)
+                apply_cmd = dns.apply_command("tun0")
+
+            self.assertEqual(rows["Mode"], "advanced")
+            self.assertEqual(rows["Test domain"], "example.com")
+            self.assertEqual(rows["TTL"], "6h")
+            self.assertEqual(rows["Static IP"], "on (1 entries)")
+            self.assertEqual(rows["Rules"], "on (1 rules)")
+            self.assertEqual(rows["ECS direct"], "on (203.0.113.0/24)")
+            self.assertEqual(channels["direct"], "1/2 enabled")
+            self.assertIn("bin/watchdog dns status --json", status_cmd)
+            self.assertIn("sudo -n env", apply_cmd)
+            self.assertIn("--systemd-link tun0", apply_cmd)
+
+    def test_dns_tui_helpers_report_missing_core_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"WATCHDOGVPN_REPO": tmp}), \
+                 patch.object(dns.os, "getcwd", return_value=tmp), \
+                 patch.object(dns.Path, "home", return_value=pathlib.Path(tmp)):
+                self.assertFalse(dns.core_available())
+                self.assertIn("core CLI not found", dns.test_command())
 
     def test_systemd_helpers_parse_mocked_output(self):
         with patch.object(commands, "run_args", return_value="active"):

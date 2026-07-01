@@ -21,6 +21,7 @@ elif os.path.isdir(os.path.join(INSTALLED_SUPPORT_DIR, "watchdogvpn")):
 
 import watchdogvpn.render as render_module
 import watchdogvpn.styles as styles_module
+from watchdogvpn import dns as dns_tui
 
 from watchdogvpn.constants import (
     AG,
@@ -216,6 +217,11 @@ def menu_help(label: str):
         "Exclusiones": [
             "Gestiona dominios fuera de la VPN usando no_vpn."
         ],
+        "DNS": [
+            "Control DNS v2 basado en politica WatchdogVPN.",
+            "",
+            "Muestra modo, canales, FakeIP, ECS, reglas, static IP y snapshot.",
+        ],
         "Ver logs": [
             "Acceso rapido a trazabilidad, rotate, watchdog, dispatcher, journal y housekeeping."
         ],
@@ -265,6 +271,11 @@ def menu_overview(label: str):
             ("Rol", "Dominios fuera del tunel"),
             ("Uso", "Enviar sitios concretos por conexion directa"),
             ("Riesgo", "El dominio elegido deja de pasar por VPN"),
+        ],
+        "DNS": [
+            ("Rol", "Politica DNS v2"),
+            ("Uso", "Ver, probar y aplicar DNS con rollback"),
+            ("Riesgo", "Apply/reset requieren confirmacion"),
         ],
         "Timers": [
             ("Rol", "Automatizacion programada"),
@@ -507,6 +518,34 @@ def build_backend_text() -> str:
             "  Selecciona AdGuard VPN, Custom VPS o Both.",
             "",
             "Nota: si active=custom-vps, se requiere custom_vps.service_name.",
+            "Pulsa q para volver.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def build_dns_text() -> str:
+    lines = [
+        "DNS v2",
+        "------",
+        "WatchdogVPN DNS policy and local rollback state.",
+        "",
+    ]
+    for key, value in dns_tui.policy_rows():
+        lines.append(f"{key:<18} {value}")
+    lines.extend(["", "Channels", "--------"])
+    for key, value in dns_tui.channel_rows():
+        lines.append(f"{key:<18} {value}")
+    lines.extend(
+        [
+            "",
+            "Commands:",
+            "  watchdog dns status --json",
+            "  watchdog dns test --json",
+            "  watchdog dns apply --dry-run --json",
+            "  watchdog dns apply --yes",
+            "  watchdog dns reset --yes",
+            "",
             "Pulsa q para volver.",
         ]
     )
@@ -983,6 +1022,19 @@ def render(selected: int, dashboard_cache):
         if y < head_h + body_h:
             y += 1
             write(y, right_x + 4, "Enter abre acciones de Backend.", FG["gray"])
+    elif selected_id == "dns":
+        y = head_h + 2
+        write(y, right_x + 2, "DNS v2", FG["cyan"] + BOLD)
+        y += 2
+        for key, value in dns_tui.policy_rows():
+            if y >= head_h + body_h:
+                break
+            write(y, right_x + 4, f"{key:<16}", FG["magenta"] + BOLD)
+            write(y, right_x + 22, fit(value or "-", right_w - 24), semantic_style(key, value or "-"))
+            y += 1
+        if y < head_h + body_h:
+            y += 1
+            write(y, right_x + 4, "Enter abre acciones DNS reales.", FG["gray"])
     elif selected_id == "update":
         y = head_h + 2
         write(y, right_x + 2, "Update Center", FG["cyan"] + BOLD)
@@ -1024,6 +1076,7 @@ def render(selected: int, dashboard_cache):
             "Acciones rapidas": ["Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog", "Estado real"],
             "Timers": ["Activar rotacion", "Parar rotacion", "Cambiar intervalo de rotacion", "Activar watchdog", "Parar watchdog", "Cambiar intervalo del watchdog"],
             "Exclusiones": ["Ver lista", "Agregar dominio", "Quitar dominio"],
+            "DNS": ["Ver estado", "Ver canales", "Test resolvers", "Apply dry-run", "Apply DNS", "Reset DNS"],
             "Ver logs": ["Resumen trazabilidad", "Housekeeping logs", "vpn-watchdog.log", "vpn-rotate.log", "vpn-dispatcher.log", "journal adguardvpn.service"],
         }
         hints = action_hints.get(selected_section, [])
@@ -1956,6 +2009,42 @@ def section_meta(section: str, label: str):
         }
         return data.get(label, [])
 
+    if section == "DNS":
+        snapshot = dict(dns_tui.policy_rows())
+        data = {
+            "Ver estado": [
+                ("Modo", snapshot.get("Mode", "-")),
+                ("CLI", snapshot.get("Core CLI", "-")),
+                ("Riesgo", "Solo lectura"),
+            ],
+            "Ver canales": [
+                ("Canales", snapshot.get("Channels", "-")),
+                ("FakeIP", snapshot.get("FakeIP", "-")),
+                ("Riesgo", "Solo lectura"),
+            ],
+            "Test resolvers": [
+                ("Dominio", snapshot.get("Test domain", "-")),
+                ("Accion", "watchdog dns test"),
+                ("Riesgo", "Solo lectura; usa red"),
+            ],
+            "Apply dry-run": [
+                ("Accion", "watchdog dns apply --dry-run"),
+                ("Rollback", "No muta DNS"),
+                ("Riesgo", "Solo lectura"),
+            ],
+            "Apply DNS": [
+                ("Accion", "watchdog dns apply --yes"),
+                ("Rollback", "Snapshot antes de mutar"),
+                ("Riesgo", "Cambia DNS del sistema"),
+            ],
+            "Reset DNS": [
+                ("Accion", "watchdog dns reset --yes"),
+                ("Snapshot", snapshot.get("Snapshot", "-")),
+                ("Riesgo", "Restaura DNS del sistema"),
+            ],
+        }
+        return data.get(label, [])
+
     if section == "Update Center":
         snapshot = dict(update_center_snapshot())
         data = {
@@ -1991,6 +2080,7 @@ def section_intro(section: str) -> str:
         "Timers": "Controla automatizacion de rotacion y watchdog sin tocar scripts a mano.",
         "Exclusiones": "Gestiona dominios que salen por ruta directa, fuera del tunel VPN.",
         "Backend": "Muestra backend activo, modo instalado y preparacion no secreta de Custom VPS.",
+        "DNS": "Control DNS v2: estado, pruebas, dry-run, apply confirmado y reset desde snapshot.",
         "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
         "Pool de rotacion": "Ajusta cuantos nodos entran al pool antes de validar bloqueo y salud real.",
         "Settings": "Preferencias persistentes. Los cambios usan watchdogvpn config set y crean backup.",
@@ -2017,6 +2107,12 @@ def action_progress_text(section: str, label: str) -> str:
         ("Settings", "Cambiar color"): "Actualizando preferencia de color",
         ("Settings", "Cambiar unicode"): "Actualizando preferencia unicode",
         ("Settings", "Reset Settings"): "Restaurando idioma y preferencias TUI",
+        ("DNS", "Ver estado"): "Leyendo politica DNS v2 y estado del resolver",
+        ("DNS", "Ver canales"): "Mostrando resumen de canales DNS configurados",
+        ("DNS", "Test resolvers"): "Probando resolvers DNS configurados",
+        ("DNS", "Apply dry-run"): "Calculando plan DNS sin cambiar el sistema",
+        ("DNS", "Apply DNS"): "Aplicando DNS con snapshot de rollback",
+        ("DNS", "Reset DNS"): "Restaurando DNS desde snapshot",
         ("Update Center", "Ver estado"): "Leyendo estado local de version y repositorio",
         ("Update Center", "Comprobar remoto"): "Comprobando metadata remota sin instalar cambios",
         ("Update Center", "Actualizar runtime"): "Mostrando guia contextual de update runtime",
@@ -2102,6 +2198,11 @@ def section_panel(section: str, items):
                 "Custom VPS controla un servicio systemd local configurado por el usuario.",
                 "Usa ./install.sh para elegir AdGuard, Custom VPS o Both en una instalacion guiada.",
                 "watchdogvpn backend status es el diagnostico CLI equivalente.",
+            ],
+            "DNS": [
+                "La pantalla lee la politica DNS v2 local y el snapshot de rollback.",
+                "Test y dry-run no cambian DNS del sistema.",
+                "Apply y reset requieren confirmacion explicita y usan el CLI DNS v2 real.",
             ],
             "Ver logs": [
                 "Estos visores son solo lectura.",
@@ -2410,6 +2511,14 @@ def handle_menu(label: str):
                 ("Estado runtime", f"{shlex.quote(WATCHDOGVPN_CLI)} backend status"),
                 ("Config Custom VPS", "__BACKEND_VIEW__"),
             ],
+            "DNS": [
+                ("Ver estado", "__DNS_VIEW__"),
+                ("Ver canales", "__DNS_CHANNELS__"),
+                ("Test resolvers", dns_tui.test_command(json_output=True)),
+                ("Apply dry-run", dns_tui.apply_dry_run_command(json_output=True)),
+                ("Apply DNS", "__DNS_APPLY__"),
+                ("Reset DNS", "__DNS_RESET__"),
+            ],
             "Ver logs": [
                 ("Resumen trazabilidad", "__TRACE_SUMMARY__"),
                 ("Housekeeping logs", "__HOUSEKEEPING__"),
@@ -2470,6 +2579,62 @@ def handle_menu(label: str):
                 show_output("Backend", build_backend_text())
                 set_status("Backend visto")
                 continue
+            if action == "__DNS_VIEW__":
+                set_status("Abriendo DNS v2")
+                show_output("DNS v2", build_dns_text())
+                set_status("DNS v2 visto")
+                continue
+            if action == "__DNS_CHANNELS__":
+                set_status("Mostrando canales DNS")
+                lines = ["DNS channels", "------------", ""]
+                for channel, value in dns_tui.channel_rows():
+                    lines.append(f"{channel:<18} {value}")
+                lines.extend(["", "Pulsa q para volver."])
+                show_output("DNS channels", "\n".join(lines))
+                set_status("Canales DNS vistos")
+                continue
+            if action == "__DNS_APPLY__":
+                confirm = prompt_input(
+                    "Apply DNS",
+                    "Cambia DNS del sistema con snapshot de rollback. Escribe APPLY DNS para confirmar.",
+                )
+                if confirm != "APPLY DNS":
+                    set_status("Apply DNS cancelado")
+                    continue
+                systemd_link = prompt_input(
+                    "systemd link",
+                    "Opcional. Escribe tun0 si usas systemd-resolved sobre tun0; Enter para omitir.",
+                )
+                if not ensure_sudo():
+                    continue
+                output = run_with_progress(
+                    action_label,
+                    "Aplicando DNS v2 con rollback snapshot",
+                    dns_tui.apply_command(systemd_link or ""),
+                    45,
+                )
+                show_output(action_label, output)
+                set_status("Apply DNS terminado")
+                return True
+            if action == "__DNS_RESET__":
+                confirm = prompt_input(
+                    "Reset DNS",
+                    "Restaura DNS desde el snapshot guardado. Escribe RESET DNS para confirmar.",
+                )
+                if confirm != "RESET DNS":
+                    set_status("Reset DNS cancelado")
+                    continue
+                if not ensure_sudo():
+                    continue
+                output = run_with_progress(
+                    action_label,
+                    "Restaurando DNS desde snapshot",
+                    dns_tui.reset_command(),
+                    45,
+                )
+                show_output(action_label, output)
+                set_status("Reset DNS terminado")
+                return True
             if action == "__UPDATE_VIEW__":
                 set_status("Abriendo Update Center")
                 show_output("Update Center", build_update_center_text())
