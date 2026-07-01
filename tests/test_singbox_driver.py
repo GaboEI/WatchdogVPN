@@ -327,10 +327,64 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             {"outbound": "direct", "server": "watchdogvpn-direct-1"},
             {"outbound": "vless-demo", "server": "watchdogvpn-proxy-1"},
         ])
+        dns_inbounds = {
+            inbound["tag"]: inbound
+            for inbound in config["inbounds"]
+            if inbound["tag"].startswith("watchdogvpn-dns-")
+        }
+        self.assertEqual(set(dns_inbounds), {
+            "watchdogvpn-dns-udp-in",
+            "watchdogvpn-dns-tcp-in",
+        })
+        self.assertEqual(dns_inbounds["watchdogvpn-dns-udp-in"]["network"], "udp")
+        self.assertEqual(dns_inbounds["watchdogvpn-dns-tcp-in"]["network"], "tcp")
+        self.assertEqual(config["route"]["rules"], [
+            {
+                "inbound": [
+                    "watchdogvpn-dns-udp-in",
+                    "watchdogvpn-dns-tcp-in",
+                ],
+                "action": "hijack-dns",
+            }
+        ])
         dns_servers = {server["tag"]: server for server in config["dns"]["servers"]}
         self.assertEqual(dns_servers["watchdogvpn-direct-1"]["type"], "local")
         self.assertEqual(dns_servers["watchdogvpn-proxy-1"]["detour"], "vless-demo")
         self.assertEqual(dns_servers["watchdogvpn-final-1"]["server"], "9.9.9.9")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_skips_dns_hijack_when_disabled(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+        dns_policy = DNSPolicy(
+            tun_hijack=False,
+            channels={
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+            },
+        )
+
+        config = self.driver.generate_singbox_config(profile, dns_policy=dns_policy)
+
+        self.assertIn("dns", config)
+        self.assertNotIn("route", config)
+        self.assertFalse(
+            any(
+                inbound["tag"].startswith("watchdogvpn-dns-")
+                for inbound in config["inbounds"]
+            )
+        )
 
     @patch("drivers.singbox_driver.shutil.which", return_value="/usr/sbin/ip")
     @patch("drivers.singbox_driver.subprocess.run")

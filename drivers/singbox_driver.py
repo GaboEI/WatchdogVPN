@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from dns.models import DNSPolicy
-from dns.singbox import build_singbox_dns_config
+from dns.singbox import (
+    build_dns_hijack_inbounds,
+    build_dns_hijack_route,
+    build_singbox_dns_config,
+)
 from drivers.base import BaseDriver
 from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
@@ -38,6 +42,12 @@ VIRTUAL_INTERFACE_PREFIXES = (
     "virbr",
     "podman",
 )
+
+
+def _merge_route_config(config: dict[str, Any], route_config: dict[str, Any]) -> None:
+    route = config.setdefault("route", {})
+    route.setdefault("rules", [])
+    route["rules"].extend(route_config.get("rules", []))
 
 
 @dataclass(slots=True)
@@ -525,6 +535,10 @@ class SingBoxDriver(BaseDriver):
             dns_config = build_singbox_dns_config(dns_policy, outbound["tag"])
             if dns_config is not None:
                 config["dns"] = dns_config.config
+                config["inbounds"].extend(build_dns_hijack_inbounds(dns_policy))
+                hijack_route = build_dns_hijack_route(dns_policy)
+                if hijack_route is not None:
+                    _merge_route_config(config, hijack_route)
         self._write_config(config)
         return config
 

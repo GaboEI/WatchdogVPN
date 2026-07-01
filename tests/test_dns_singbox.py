@@ -3,7 +3,12 @@ from __future__ import annotations
 import unittest
 
 from dns.models import DNSChannel, DNSChannelName, DNSMode, DNSPolicy, Resolver
-from dns.singbox import build_singbox_dns_config
+from dns.singbox import (
+    DNS_HIJACK_INBOUND_TAGS,
+    build_dns_hijack_inbounds,
+    build_dns_hijack_route,
+    build_singbox_dns_config,
+)
 
 
 class SingBoxDNSConfigTests(unittest.TestCase):
@@ -86,6 +91,40 @@ class SingBoxDNSConfigTests(unittest.TestCase):
         self.assertEqual(len(result.config["servers"]), 1)
         self.assertEqual(result.config["servers"][0]["type"], "tcp")
         self.assertEqual(result.config["servers"][0]["server"], "8.8.8.8")
+
+    def test_builds_dns_hijack_inbounds_when_enabled(self) -> None:
+        inbounds = build_dns_hijack_inbounds(DNSPolicy(tun_hijack=True))
+
+        self.assertEqual(
+            [inbound["tag"] for inbound in inbounds],
+            list(DNS_HIJACK_INBOUND_TAGS),
+        )
+        self.assertEqual([inbound["network"] for inbound in inbounds], ["udp", "tcp"])
+        for inbound in inbounds:
+            self.assertEqual(inbound["type"], "direct")
+            self.assertEqual(inbound["listen"], "127.0.0.1")
+            self.assertEqual(inbound["listen_port"], 53)
+            self.assertEqual(inbound["override_port"], 53)
+
+    def test_dns_hijack_inbounds_are_disabled_for_off_or_non_hijack_policy(self) -> None:
+        self.assertEqual(build_dns_hijack_inbounds(DNSPolicy(mode=DNSMode.OFF)), [])
+        self.assertEqual(build_dns_hijack_inbounds(DNSPolicy(tun_hijack=False)), [])
+
+    def test_builds_dns_hijack_route_when_enabled(self) -> None:
+        route = build_dns_hijack_route(DNSPolicy(tun_hijack=True))
+
+        self.assertEqual(route, {
+            "rules": [
+                {
+                    "inbound": list(DNS_HIJACK_INBOUND_TAGS),
+                    "action": "hijack-dns",
+                }
+            ]
+        })
+
+    def test_dns_hijack_route_is_disabled_for_off_or_non_hijack_policy(self) -> None:
+        self.assertIsNone(build_dns_hijack_route(DNSPolicy(mode=DNSMode.OFF)))
+        self.assertIsNone(build_dns_hijack_route(DNSPolicy(tun_hijack=False)))
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from .models import (
     Resolver,
     StaticIPEntry,
 )
+from .hijack import DNSHijackApplyResult, DNSHijackController, DNSHijackError
 from .presets import RESOLVER_PRESETS, ResolverPreset, get_resolver_preset
 from .resolver_parser import (
     ParsedResolver,
@@ -38,6 +39,9 @@ __all__ = [
     "ChannelTestResult",
     "DNSChannel",
     "DNSChannelName",
+    "DNSHijackApplyResult",
+    "DNSHijackController",
+    "DNSHijackError",
     "DNSMode",
     "DNSPolicy",
     "DNSRule",

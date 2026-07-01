@@ -16,6 +16,10 @@ CHANNEL_TAGS = {
     DNSChannelName.PROXY: "proxy",
     DNSChannelName.FINAL: "final",
 }
+DNS_HIJACK_INBOUND_TAGS = (
+    "watchdogvpn-dns-udp-in",
+    "watchdogvpn-dns-tcp-in",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +65,44 @@ def build_singbox_dns_config(
         "final": _final_server(channel_servers),
     }
     return SingBoxDNSConfig(config=dns_config, channel_servers=channel_servers)
+
+
+def build_dns_hijack_inbounds(policy: DNSPolicy) -> list[dict[str, Any]]:
+    if policy.mode == DNSMode.OFF or not policy.tun_hijack:
+        return []
+    return [
+        {
+            "type": "direct",
+            "tag": DNS_HIJACK_INBOUND_TAGS[0],
+            "listen": "127.0.0.1",
+            "listen_port": 53,
+            "network": "udp",
+            "override_address": "1.1.1.1",
+            "override_port": 53,
+        },
+        {
+            "type": "direct",
+            "tag": DNS_HIJACK_INBOUND_TAGS[1],
+            "listen": "127.0.0.1",
+            "listen_port": 53,
+            "network": "tcp",
+            "override_address": "1.1.1.1",
+            "override_port": 53,
+        },
+    ]
+
+
+def build_dns_hijack_route(policy: DNSPolicy) -> dict[str, Any] | None:
+    if policy.mode == DNSMode.OFF or not policy.tun_hijack:
+        return None
+    return {
+        "rules": [
+            {
+                "inbound": list(DNS_HIJACK_INBOUND_TAGS),
+                "action": "hijack-dns",
+            }
+        ]
+    }
 
 
 def _server_tag(channel_name: DNSChannelName, index: int) -> str:
