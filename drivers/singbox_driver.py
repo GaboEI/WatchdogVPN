@@ -539,6 +539,14 @@ class SingBoxDriver(BaseDriver):
                 hijack_route = build_dns_hijack_route(dns_policy)
                 if hijack_route is not None:
                     _merge_route_config(config, hijack_route)
+                if dns_config.proxy_domain_resolver is not None:
+                    outbound["domain_resolver"] = dns_config.proxy_domain_resolver
+                if dns_config.direct_domain_resolver is not None:
+                    config["outbounds"].append({
+                        "type": "direct",
+                        "tag": "direct",
+                        "domain_resolver": dns_config.direct_domain_resolver,
+                    })
         self._write_config(config)
         return config
 

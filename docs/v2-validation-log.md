@@ -264,7 +264,7 @@
   - `bash tests/unit.sh` passed.
   - `.venv/bin/pytest tests` passed: 452 tests.
   - `git diff --check` passed.
-- **Real workstation re-validation:** ran `SingBoxDriver.generate_singbox_config()`
+- **Real workstation re-validation (AUD-DNS-001):** ran `SingBoxDriver.generate_singbox_config()`
   directly with a real VLESS+Reality profile (same VPS/profile validated in
   Phase 4, Task 4.5) and a real `custom`-mode `DNSPolicy` (direct channel:
   `udp://1.1.1.1`, `tun_hijack=True`). Result: `dns section present: True`,
@@ -274,13 +274,10 @@
   running sing-box process. Before the AUD-DNS-001 fix, this same call
   path always received `dns_policy=None` regardless of the configured
   policy, so `dns section present` would have been `False`.
-  - A separate full `driver.connect(profile, dns_policy=policy)` attempt in
-    this same session reported `health: down` (process started but did not
-    reach a healthy state). This reflects an unrelated real-connectivity
-    condition on this run, not the DNS policy wiring fix, since it happens
-    before any DNS-specific code runs and this same VLESS+Reality profile
-    was previously validated as working in Task 4.5. Not investigated further
-    as part of Task 10.14; flagged for separate follow-up if it recurs.
+- **Real workstation re-validation (AUD-DNS-004):** full `driver.connect(profile, dns_policy=policy)` with the same VLESS+Reality profile and a `custom`-mode `DNSPolicy` (`tun_hijack=False`, direct channel: `udp://1.1.1.1`, proxy channel: `https://1.1.1.1/dns-query`, final: `udp://9.9.9.9`) against Paris VPS `138.124.58.47`. Before the AUD-DNS-004 fix, this call caused sing-box 1.13.14 to exit immediately with `FATAL: outbound DNS rule item is deprecated`. After the fix:
+  - sing-box log inspection confirmed: no FATAL exit, config loaded cleanly, only expected inbound/outbound startup messages.
+  - `connect: True`, `health: ok`.
+  - Generated config confirmed: `dns.rules` contains no `outbound` matcher; proxy outbound carries `"domain_resolver": "watchdogvpn-fakeip"`; a `{"type": "direct", "tag": "direct", "domain_resolver": "watchdogvpn-direct-1"}` outbound is present.
 
 ## Validation Gaps To Keep Honest
 

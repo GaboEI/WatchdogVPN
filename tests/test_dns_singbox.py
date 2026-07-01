@@ -55,10 +55,9 @@ class SingBoxDNSConfigTests(unittest.TestCase):
         assert result is not None
         config = result.config
         self.assertEqual(config["final"], "watchdogvpn-final-1")
-        self.assertEqual(config["rules"], [
-            {"outbound": "direct", "server": "watchdogvpn-direct-1"},
-            {"outbound": "vless-demo", "server": FAKEIP_SERVER_TAG},
-        ])
+        self.assertEqual(config["rules"], [])
+        self.assertEqual(result.direct_domain_resolver, "watchdogvpn-direct-1")
+        self.assertEqual(result.proxy_domain_resolver, FAKEIP_SERVER_TAG)
         self.assertEqual(result.channel_servers[DNSChannelName.DIRECT], (
             "watchdogvpn-direct-1",
             "watchdogvpn-direct-2",
@@ -131,10 +130,7 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             "inet4_range": "198.18.0.0/15",
             "inet6_range": "fc00::/18",
         })
-        self.assertIn(
-            {"outbound": "vless-demo", "server": FAKEIP_SERVER_TAG},
-            result.config["rules"],
-        )
+        self.assertEqual(result.proxy_domain_resolver, FAKEIP_SERVER_TAG)
 
     def test_skips_fakeip_when_proxy_resolution_uses_proxy_dns(self) -> None:
         policy = DNSPolicy(
@@ -153,9 +149,9 @@ class SingBoxDNSConfigTests(unittest.TestCase):
         assert result is not None
         servers = {server["tag"]: server for server in result.config["servers"]}
         self.assertNotIn(FAKEIP_SERVER_TAG, servers)
-        self.assertEqual(result.config["rules"], [
-            {"outbound": "vless-demo", "server": "watchdogvpn-proxy-1"},
-        ])
+        self.assertIsNone(result.direct_domain_resolver)
+        self.assertEqual(result.proxy_domain_resolver, "watchdogvpn-proxy-1")
+        self.assertEqual(result.config["rules"], [])
 
     def test_adds_ecs_client_subnet_only_to_direct_rule_when_enabled(self) -> None:
         policy = DNSPolicy(
@@ -181,14 +177,12 @@ class SingBoxDNSConfigTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.config["rules"], [
-            {
-                "outbound": "direct",
-                "server": "watchdogvpn-direct-1",
-                "client_subnet": "203.0.113.0/24",
-            },
-            {"outbound": "vless-demo", "server": FAKEIP_SERVER_TAG},
-        ])
+        self.assertEqual(result.config["rules"], [])
+        self.assertEqual(result.direct_domain_resolver, {
+            "server": "watchdogvpn-direct-1",
+            "client_subnet": "203.0.113.0/24",
+        })
+        self.assertEqual(result.proxy_domain_resolver, FAKEIP_SERVER_TAG)
         self.assertNotIn("client_subnet", result.config)
 
     def test_does_not_add_ecs_client_subnet_when_disabled(self) -> None:
@@ -206,9 +200,9 @@ class SingBoxDNSConfigTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.config["rules"], [
-            {"outbound": "direct", "server": "watchdogvpn-direct-1"},
-        ])
+        self.assertEqual(result.config["rules"], [])
+        self.assertEqual(result.direct_domain_resolver, "watchdogvpn-direct-1")
+        self.assertIsNone(result.proxy_domain_resolver)
 
     def test_static_ip_map_resolves_before_upstream_dns(self) -> None:
         policy = DNSPolicy(
@@ -389,7 +383,7 @@ class SingBoxDNSConfigTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.config["rules"][:4], [
+        self.assertEqual(result.config["rules"], [
             {
                 "domain": ["static.example.com"],
                 "server": STATIC_IP_SERVER_TAG,
@@ -398,9 +392,9 @@ class SingBoxDNSConfigTests(unittest.TestCase):
                 "domain_keyword": ["proxy"],
                 "server": "watchdogvpn-proxy-1",
             },
-            {"outbound": "direct", "server": "watchdogvpn-direct-1"},
-            {"outbound": "vless-demo", "server": FAKEIP_SERVER_TAG},
         ])
+        self.assertEqual(result.direct_domain_resolver, "watchdogvpn-direct-1")
+        self.assertEqual(result.proxy_domain_resolver, FAKEIP_SERVER_TAG)
 
     def test_dns_diversion_reject_rule_emits_reject_action(self) -> None:
         policy = DNSPolicy(

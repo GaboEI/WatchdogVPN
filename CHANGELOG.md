@@ -24,6 +24,10 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   FakeIP, ECS, static IP mapping and DNS diversion rules actually take effect
   on a running connection, and automatically restore system DNS state on VPN
   disconnect when a `watchdog dns apply` snapshot exists.
+- Migrate `dns/singbox.py` away from the deprecated sing-box 1.12.0 `outbound`
+  DNS rule matcher (`dns.rules[].outbound`) to the current `domain_resolver`
+  field on outbound objects, fixing a FATAL exit on sing-box 1.13.14 whenever
+  any DNS channel was configured.
 
 ### Removed
 

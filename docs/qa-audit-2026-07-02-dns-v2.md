@@ -174,14 +174,38 @@ mentions, accepted as LOW/cosmetic since the tool is discoverable through
 `cli/main.py` `dns status|test|apply|reset` and `tui/watchdogvpn/dns.py` map
 every control to the real CLI handlers with no stub/placeholder paths found.
 
+### AUD-DNS-004
+
+| Field | Value |
+|---|---|
+| ID | AUD-DNS-004 |
+| Severity | HIGH |
+| Description | `dns/singbox.py` generated DNS rules with a deprecated `"outbound"` matcher (`{"outbound": "direct", "server": ...}` and `{"outbound": "<proxy-tag>", "server": ...}`). sing-box 1.12.0 deprecated this pattern; sing-box 1.13.14 treats it as a FATAL error and exits immediately. |
+| Scenario | A user connects a profile through `SingBoxDriver` with any non-`OFF` `DNSPolicy` that has a `DIRECT` or `PROXY` channel configured. sing-box 1.13.14 exits before binding the SOCKS/HTTP proxy ports, so `health_check()` returns `"down"` and `connect()` returns `False`. |
+| Impact | Any configured DNS policy silently breaks VPN connectivity on sing-box 1.13.14+. `connect()` always returns `False` when `dns_policy` is provided with channel servers, even though the AUD-DNS-001 fix correctly wired the policy through the call chain. Discovered during real workstation connect test following the AUD-DNS-001 fix. |
+| Root cause | `dns/singbox.py::_direct_dns_rule()` returned `{"outbound": "direct", "server": ...}` and `_build_channel_rules()` appended `{"outbound": proxy_outbound_tag, "server": ...}` rules. The sing-box 1.12.0 migration replaced `outbound` matchers in `dns.rules` with `domain_resolver` fields on outbound objects. |
+| Status | RESOLVED 2026-07-02 |
+
+Resolution:
+- Removed the deprecated `"outbound"` matcher rules from `_build_channel_rules()` and deleted `_direct_dns_rule()`.
+- `SingBoxDNSConfig` gained two new fields: `direct_domain_resolver: dict | str | None` (carries ECS settings when enabled) and `proxy_domain_resolver: str | None`.
+- `build_singbox_dns_config()` computes these from the same channel-server data that previously fed the deprecated rules.
+- `SingBoxDriver.generate_singbox_config()` now applies `dns_config.proxy_domain_resolver` to the proxy outbound dict and, when `direct_domain_resolver` is set, appends an explicit `{"type": "direct", "tag": "direct", "domain_resolver": ...}` outbound.
+- ECS (`client_subnet`) migrates from the old `dns.rules[].client_subnet` field to the `domain_resolver` object on the direct outbound, which is the correct location in the sing-box 1.12.0+ schema.
+- All existing `test_dns_singbox.py` and `test_singbox_driver.py` tests updated to verify the new structure instead of the deprecated one.
+- Real workstation validation: `driver.connect(profile, dns_policy=policy)` with `tun_hijack=False` returned `connect: True`, `health: ok` against the Paris VPS VLESS+Reality profile. Before this fix, the same call produced a sing-box FATAL exit.
+
 ## Priority Order
 
 1. AUD-DNS-001 (HIGH) — fixed: wire `DNSPolicy` into the live sing-box
    connect path across direct connect, startup autoconnect, reconnect, and
    rotation.
-2. AUD-DNS-002 (MEDIUM) — fixed: restore system DNS state automatically on
+2. AUD-DNS-004 (HIGH) — fixed: remove deprecated `outbound` DNS rule
+   matchers from `dns/singbox.py`; migrate to `domain_resolver` on outbound
+   objects per sing-box 1.12.0+ schema.
+3. AUD-DNS-002 (MEDIUM) — fixed: restore system DNS state automatically on
    `WatchdogRuntime.disconnect()` when a snapshot exists.
-3. AUD-DNS-003 (LOW) — fixed: refresh stale "planned for Phase 10" docs and
+4. AUD-DNS-003 (LOW) — fixed: refresh stale "planned for Phase 10" docs and
    add the missing CHANGELOG entry.
 
 ## Closure — 2026-07-02

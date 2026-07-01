@@ -35,6 +35,8 @@ STATIC_IP_SERVER_TAG = "watchdogvpn-static-ip"
 class SingBoxDNSConfig:
     config: dict[str, Any]
     channel_servers: dict[DNSChannelName, tuple[str, ...]]
+    direct_domain_resolver: dict[str, Any] | str | None = None
+    proxy_domain_resolver: str | None = None
 
 
 def build_singbox_dns_config(
@@ -73,12 +75,33 @@ def build_singbox_dns_config(
     if _fakeip_enabled(policy, channel_servers):
         servers.append(_fakeip_server(policy))
 
+    direct_server = _first_tag(channel_servers, DNSChannelName.DIRECT)
+    proxy_server = _first_tag(channel_servers, DNSChannelName.PROXY)
+
+    direct_dr: dict[str, Any] | str | None = None
+    if direct_server:
+        if policy.ecs_direct_enabled and policy.ecs_direct_subnet:
+            direct_dr = {"server": direct_server, "client_subnet": policy.ecs_direct_subnet}
+        else:
+            direct_dr = direct_server
+
+    proxy_dr: str | None = None
+    if _fakeip_enabled(policy, channel_servers):
+        proxy_dr = FAKEIP_SERVER_TAG
+    elif proxy_server:
+        proxy_dr = proxy_server
+
     dns_config: dict[str, Any] = {
         "servers": servers,
-        "rules": _build_channel_rules(policy, channel_servers, proxy_outbound_tag),
+        "rules": _build_channel_rules(policy, channel_servers),
         "final": _final_server(channel_servers),
     }
-    return SingBoxDNSConfig(config=dns_config, channel_servers=channel_servers)
+    return SingBoxDNSConfig(
+        config=dns_config,
+        channel_servers=channel_servers,
+        direct_domain_resolver=direct_dr,
+        proxy_domain_resolver=proxy_dr,
+    )
 
 
 def build_dns_hijack_inbounds(policy: DNSPolicy) -> list[dict[str, Any]]:
@@ -241,20 +264,11 @@ def _resolver_needs_domain_resolver(parsed: ParsedResolver) -> bool:
 def _build_channel_rules(
     policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
-    proxy_outbound_tag: str,
 ) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
     if _static_ip_enabled(policy):
         rules.append(_static_ip_rule(policy))
     rules.extend(_dns_diversion_rules(policy, channel_servers))
-    direct_server = _first_tag(channel_servers, DNSChannelName.DIRECT)
-    proxy_server = _first_tag(channel_servers, DNSChannelName.PROXY)
-    if direct_server:
-        rules.append(_direct_dns_rule(policy, direct_server))
-    if _fakeip_enabled(policy, channel_servers):
-        rules.append({"outbound": proxy_outbound_tag, "server": FAKEIP_SERVER_TAG})
-    elif proxy_server:
-        rules.append({"outbound": proxy_outbound_tag, "server": proxy_server})
     return rules
 
 
@@ -322,13 +336,6 @@ def _dns_rule_match_fields(pattern: str) -> dict[str, Any]:
     if pattern_type == "rule_set":
         return {"rule_set": [value]}
     raise ValueError("unsupported dns rule pattern type")
-
-
-def _direct_dns_rule(policy: DNSPolicy, direct_server: str) -> dict[str, Any]:
-    rule: dict[str, Any] = {"outbound": "direct", "server": direct_server}
-    if policy.ecs_direct_enabled and policy.ecs_direct_subnet:
-        rule["client_subnet"] = policy.ecs_direct_subnet
-    return rule
 
 
 def _final_server(channel_servers: dict[DNSChannelName, tuple[str, ...]]) -> str:
