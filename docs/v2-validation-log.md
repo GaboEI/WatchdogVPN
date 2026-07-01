@@ -162,6 +162,79 @@
     because DNS resolution was explicitly observed via `tun0` and no DNS leak
     was observed.
 
+## Phase 10F - DNS v2 Real Workstation Validation
+
+- **Date:** 2026-07-02
+- **Local environment:** workstation with `tun0` active during validation.
+- **Resolver manager observed:** `systemd-resolved`.
+- **Firewall backend observed:** nftables.
+- **Initial DNS policy:** default DNS v2 `auto` policy.
+- **Observed resolver state before apply:**
+  - `watchdog dns status --json` reported `systemd-resolved`.
+  - `/etc/resolv.conf` inventory included `192.168.0.1`.
+  - `tun0` existed and was up.
+- **DNS tester validation:**
+  - `watchdog dns test --json` ran against real resolvers.
+  - Local/DHCP candidates passed for bootstrap, DNS server, proxy server and
+    direct channels.
+  - Public proxy/final candidates passed for Cloudflare DoH, Cloudflare TLS and
+    AdGuard TLS.
+  - Quad9 DoH returned HTTP 505 in this environment and was not selected.
+- **Apply dry-run validation:**
+  - `watchdog dns apply --dry-run --json` produced a rollback plan.
+  - Planned entrypoint was `127.0.0.1:53`.
+  - Planned snapshot path was
+    `/home/gabodev/.config/watchdogvpn/dns-state.json`.
+  - No snapshot was created during dry-run.
+- **Real apply/reset validation:**
+  - `watchdog dns apply --yes --systemd-link tun0` applied DNS state.
+  - A rollback snapshot was created at
+    `/home/gabodev/.config/watchdogvpn/dns-state.json`.
+  - `resolvectl query example.com` succeeded after apply.
+  - `resolvectl query openai.com` succeeded after apply.
+  - `resolvectl query github.com` succeeded after apply.
+  - `watchdog dns reset --yes` restored DNS state.
+  - The rollback snapshot was removed after reset.
+- **Failed apply validation:**
+  - `watchdog dns apply --yes --entrypoint-address 127.0.0.1
+    --entrypoint-port 9 --entrypoint-timeout 0.2` failed before mutation.
+  - Error observed: local DNS entrypoint was not reachable.
+  - No rollback snapshot was created.
+- **Kill switch validation before hardening fix:**
+  - First Phase 10F kill switch validation found an important leak risk:
+    `openai.com` resolved with `link: enp4s0` while kill switch was active.
+  - Root cause was rule ordering: `ct state established,related accept` was
+    before DNS/DoT reject rules, so an already established DNS conntrack flow
+    could bypass later DNS blocks.
+- **Fix validated:**
+  - Commit `0669c0f` moved DNS/DoT reject rules before
+    `established,related` while keeping loopback and tunnel-interface allow
+    rules first.
+  - The validated nftables order after the fix was:
+    `lo` allow, `tun0` allow, UDP/TCP `53` reject, UDP/TCP `853` reject,
+    `established,related` allow, LAN CIDR allow.
+  - `resolvectl flush-caches` was run before protected DNS queries.
+  - `resolvectl query example.com` resolved through `link: tun0`.
+  - `resolvectl query openai.com` resolved through `link: tun0`.
+  - `resolvectl query github.com` resolved through `link: tun0`.
+  - Cleanup removed the `inet watchdogvpn` nftables table.
+  - Cleanup left no `WATCHDOGVPN-OUTPUT` chains in iptables/ip6tables.
+- **Automated validation at closure:**
+  - `python3 -m py_compile core/kill_switch.py tests/test_kill_switch.py`
+    passed.
+  - `python3 -m unittest tests.test_kill_switch` passed: 20 tests.
+  - `python3 -m unittest discover tests` passed: 425 tests after the
+    hardening fix.
+  - `bash tests/unit.sh` passed.
+  - `.venv/bin/pytest tests` passed: 441 tests after the hardening fix.
+  - `git diff --check` passed.
+- **Conclusion:**
+  - DNS v2 CLI/TUI controls are backed by real behavior.
+  - DNS apply/reset snapshot behavior was validated on the workstation.
+  - Kill switch DNS/DoT leak behavior was revalidated after the conntrack
+    ordering fix.
+  - Cleanup left no firewall residue.
+
 ## Validation Gaps To Keep Honest
 
 - No full real-hardware validation log exists yet for every compatibility
@@ -173,3 +246,5 @@
 - Local pytest validation is now reproducible through `requirements-dev.txt`
   and `pytest.ini`; both `pytest tests` and `python -m pytest tests` passed with
   408 tests after creating a local `.venv`.
+- Phase 10F real validation did not run a full interactive TUI session; TUI DNS
+  controls were covered by unit tests and command mapping smoke checks.
