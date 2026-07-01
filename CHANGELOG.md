@@ -18,6 +18,9 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 
 ### Changed
 
+- Harden driver process management with private per-run runtime config paths,
+  version-checked availability, readiness-gated connect success, stale
+  AmneziaWG interface reconciliation, and guarded forced process cleanup.
 - Start the `v2.0.0` documentation reorientation with the new Linux
   resilience-layer identity.
 - Mark AdGuard VPN compatibility as legacy support in the public product

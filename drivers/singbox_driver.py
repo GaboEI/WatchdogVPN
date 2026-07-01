@@ -12,12 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from drivers.base import BaseDriver
+from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
 
-CONFIG_PATH = Path("/tmp/watchdogvpn_singbox.json")
-LOG_PATH = Path("/tmp/watchdogvpn_singbox.log")
+RUNTIME_PREFIX = "watchdogvpn-singbox-"
+CONFIG_NAME = "singbox.json"
+LOG_NAME = "singbox.log"
 PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
 DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
 VIRTUAL_INTERFACE_PREFIXES = (
@@ -48,8 +50,8 @@ class _BinaryPaths:
 class SingBoxDriver(BaseDriver):
     """sing-box integration entry point.
 
-    Task 4.1 only covers binary detection and version inspection. Process
-    management and connectivity logic are intentionally deferred to later tasks.
+    Handles binary/version checks, per-run config generation, process lifecycle,
+    and proxy readiness validation for sing-box backed profiles.
     """
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
@@ -57,6 +59,10 @@ class SingBoxDriver(BaseDriver):
         self._process: subprocess.Popen[str] | None = None
         self._active_profile: Profile | None = None
         self._connected_at: datetime | None = None
+        self._runtime_dir: Path | None = None
+        self._config_path: Path | None = None
+        self._log_path: Path | None = None
+        cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def find_singbox_binary(self) -> str | None:
         env_binary = os.environ.get("WATCHDOGVPN_SINGBOX_BIN")
@@ -78,7 +84,10 @@ class SingBoxDriver(BaseDriver):
         return output
 
     def is_available(self) -> bool:
-        return self.find_singbox_binary() is not None
+        try:
+            return bool(self.check_version())
+        except (FileNotFoundError, RuntimeError):
+            return False
 
     def _build_inbounds(self) -> list[dict[str, Any]]:
         return [
@@ -399,12 +408,28 @@ class SingBoxDriver(BaseDriver):
             return outbound
         raise ValueError(f"unsupported protocol for sing-box: {profile.protocol.value}")
 
-    def _write_config(self, config: dict[str, Any]) -> None:
-        CONFIG_PATH.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
+    def _ensure_runtime_paths(self) -> tuple[Path, Path]:
+        if self._runtime_dir is None:
+            self._runtime_dir = make_runtime_dir(RUNTIME_PREFIX)
+            self._config_path = self._runtime_dir / CONFIG_NAME
+            self._log_path = self._runtime_dir / LOG_NAME
+        return self._config_path, self._log_path  # type: ignore[return-value]
 
-    def _cleanup_config(self) -> None:
-        if CONFIG_PATH.exists():
-            CONFIG_PATH.unlink()
+    def _write_config(self, config: dict[str, Any]) -> None:
+        config_path, _ = self._ensure_runtime_paths()
+        write_private_file(config_path, json.dumps(config, indent=2, sort_keys=True))
+
+    def _cleanup_runtime(self) -> None:
+        if self._runtime_dir is not None and self._runtime_dir.exists():
+            shutil.rmtree(self._runtime_dir, ignore_errors=True)
+        self._runtime_dir = None
+        self._config_path = None
+        self._log_path = None
+
+    def _append_log(self, message: str) -> None:
+        _, log_path = self._ensure_runtime_paths()
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(message)
 
     def _port_open(self, host: str, port: int, timeout: float = 1.0) -> bool:
         try:
@@ -423,8 +448,7 @@ class SingBoxDriver(BaseDriver):
 
     def _http_via_proxy(self, target_url: str, timeout: int = 5) -> bool:
         if not shutil.which("curl"):
-            with LOG_PATH.open("a", encoding="utf-8") as log_file:
-                log_file.write("health_check: curl not found\n")
+            self._append_log("health_check: curl not found\n")
             return False
         result = subprocess.run(
             [
@@ -445,17 +469,15 @@ class SingBoxDriver(BaseDriver):
         )
         if result.returncode != 0:
             error = (result.stderr or "").strip()
-            with LOG_PATH.open("a", encoding="utf-8") as log_file:
-                log_file.write(f"health_check: curl exited {result.returncode}")
-                if error:
-                    log_file.write(f": {error}")
-                log_file.write("\n")
+            message = f"health_check: curl exited {result.returncode}"
+            if error:
+                message += f": {error}"
+            self._append_log(f"{message}\n")
         return result.returncode == 0
 
     def _public_ip_via_proxy(self, timeout: int = 5) -> str | None:
         if not shutil.which("curl"):
-            with LOG_PATH.open("a", encoding="utf-8") as log_file:
-                log_file.write("health_check: curl not found for public IP check\n")
+            self._append_log("health_check: curl not found for public IP check\n")
             return None
         result = subprocess.run(
             [
@@ -476,14 +498,13 @@ class SingBoxDriver(BaseDriver):
         )
         output = (result.stdout or "").strip()
         error = (result.stderr or "").strip()
-        with LOG_PATH.open("a", encoding="utf-8") as log_file:
-            if result.returncode == 0 and output:
-                log_file.write(f"health_check: public_ip_via_proxy={output}\n")
-                return output
-            log_file.write(f"health_check: public IP check exited {result.returncode}")
-            if error:
-                log_file.write(f": {error}")
-            log_file.write("\n")
+        if result.returncode == 0 and output:
+            self._append_log(f"health_check: public_ip_via_proxy={output}\n")
+            return output
+        message = f"health_check: public IP check exited {result.returncode}"
+        if error:
+            message += f": {error}"
+        self._append_log(f"{message}\n")
         return None
 
     def generate_singbox_config(self, profile: Profile) -> dict[str, Any]:
@@ -502,19 +523,22 @@ class SingBoxDriver(BaseDriver):
         if not binary:
             return False
         self.generate_singbox_config(profile)
-        log_file = LOG_PATH.open("w", encoding="utf-8")
+        config_path, log_path = self._ensure_runtime_paths()
+        log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
-            [binary, "run", "-c", str(CONFIG_PATH)],
+            [binary, "run", "-c", str(config_path)],
             text=True,
             stdout=log_file,
             stderr=subprocess.STDOUT,
         )
         log_file.close()
         self._active_profile = profile
-        if self._process.poll() is None:
+        if self._process.poll() is None and self.health_check() == "ok":
             self._connected_at = datetime.now(timezone.utc)
             return True
         self._connected_at = None
+        self._active_profile = None
+        self.disconnect()
         return False
 
     def disconnect(self) -> bool:
@@ -522,6 +546,7 @@ class SingBoxDriver(BaseDriver):
         self._process = None
         self._active_profile = None
         self._connected_at = None
+        stopped = True
         try:
             if process is not None and process.poll() is None:
                 process.terminate()
@@ -529,10 +554,14 @@ class SingBoxDriver(BaseDriver):
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait(timeout=5)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        stopped = False
+                        return False
         finally:
-            self._cleanup_config()
-        return True
+            self._cleanup_runtime()
+        return stopped
 
     def health_check(self) -> str:
         process = self._process
@@ -541,8 +570,7 @@ class SingBoxDriver(BaseDriver):
 
         ports_ok = self._wait_for_proxy_port()
         if not ports_ok:
-            with LOG_PATH.open("a", encoding="utf-8") as log_file:
-                log_file.write("health_check: local proxy ports are not responding\n")
+            self._append_log("health_check: local proxy ports are not responding\n")
             return "degraded"
 
         proxy_ok = self._http_via_proxy("https://example.com")
@@ -561,7 +589,7 @@ class SingBoxDriver(BaseDriver):
                 active_profile_id=profile_id,
                 connected_at=self._connected_at,
                 mode="sing-box",
-                tun_active=True,
+                tun_active=False,
                 proxy_active=True,
                 status="connected",
             )

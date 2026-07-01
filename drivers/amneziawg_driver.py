@@ -9,12 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from drivers.base import BaseDriver
+from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
 
-CONFIG_PATH = Path("/tmp/watchdogvpn_awg.conf")
-LOG_PATH = Path("/tmp/watchdogvpn_awg.log")
+RUNTIME_PREFIX = "watchdogvpn-awg-"
+CONFIG_NAME = "awg.conf"
+LOG_NAME = "awg.log"
 INTERFACE_NAME = "watchdogvpn_awg"
 HANDSHAKE_TIMEOUT_SECONDS = 180
 
@@ -52,6 +54,10 @@ class AmneziaWGDriver(BaseDriver):
         self.binaries = binaries or _BinaryPaths()
         self._active_profile: Profile | None = None
         self._connected_at: datetime | None = None
+        self._runtime_dir: Path | None = None
+        self._config_path: Path | None = None
+        self._log_path: Path | None = None
+        cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def _find_binary(self, candidates: tuple[str, ...], which_name: str) -> str | None:
         for candidate in candidates:
@@ -96,7 +102,12 @@ class AmneziaWGDriver(BaseDriver):
         return output
 
     def is_available(self) -> bool:
-        return self.find_quick_tool() is not None
+        if self.find_quick_tool() is None:
+            return False
+        try:
+            return bool(self.check_version())
+        except (FileNotFoundError, RuntimeError):
+            return False
 
     def _strip_empty_keys(self, raw: str) -> str:
         lines: list[str] = []
@@ -109,6 +120,13 @@ class AmneziaWGDriver(BaseDriver):
             lines.append(line)
         return "\n".join(lines)
 
+    def _ensure_runtime_paths(self) -> tuple[Path, Path]:
+        if self._runtime_dir is None:
+            self._runtime_dir = make_runtime_dir(RUNTIME_PREFIX)
+            self._config_path = self._runtime_dir / CONFIG_NAME
+            self._log_path = self._runtime_dir / LOG_NAME
+        return self._config_path, self._log_path  # type: ignore[return-value]
+
     def _write_config(self, profile: Profile) -> None:
         if profile.protocol is not ProtocolType.AMNEZIAWG:
             raise ValueError(f"unsupported protocol for AmneziaWG driver: {profile.protocol.value}")
@@ -116,12 +134,15 @@ class AmneziaWGDriver(BaseDriver):
         if not raw:
             raise ValueError("AmneziaWG profile requires raw config")
         cleaned = self._strip_empty_keys(raw)
-        CONFIG_PATH.write_text(f"{cleaned}\n", encoding="utf-8")
-        CONFIG_PATH.chmod(0o600)
+        config_path, _ = self._ensure_runtime_paths()
+        write_private_file(config_path, f"{cleaned}\n")
 
-    def _cleanup_config(self) -> None:
-        if CONFIG_PATH.exists():
-            CONFIG_PATH.unlink()
+    def _cleanup_runtime(self) -> None:
+        if self._runtime_dir is not None and self._runtime_dir.exists():
+            shutil.rmtree(self._runtime_dir, ignore_errors=True)
+        self._runtime_dir = None
+        self._config_path = None
+        self._log_path = None
 
     def _interface_exists(self) -> bool:
         if not shutil.which("ip"):
@@ -134,19 +155,32 @@ class AmneziaWGDriver(BaseDriver):
         )
         return result.returncode == 0
 
+    def _delete_interface(self) -> bool:
+        if not shutil.which("ip"):
+            return False
+        result = subprocess.run(
+            ["ip", "link", "delete", INTERFACE_NAME],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0 or not self._interface_exists()
+
     def _reset_log(self) -> None:
+        _, log_path = self._ensure_runtime_paths()
         try:
-            LOG_PATH.unlink(missing_ok=True)
+            log_path.unlink(missing_ok=True)
         except OSError:
             pass
         try:
-            LOG_PATH.write_text("", encoding="utf-8")
+            write_private_file(log_path, "")
         except OSError:
             pass
 
     def _log(self, message: str) -> None:
+        _, log_path = self._ensure_runtime_paths()
         try:
-            with LOG_PATH.open("a", encoding="utf-8") as f:
+            with log_path.open("a", encoding="utf-8") as f:
                 f.write(f"{message}\n")
         except OSError:
             pass
@@ -155,15 +189,18 @@ class AmneziaWGDriver(BaseDriver):
         tool = self.find_quick_tool()
         if not tool:
             return False
+        if self._interface_exists() and not self._delete_interface():
+            return False
         self._write_config(profile)
         self._reset_log()
+        config_path, _ = self._ensure_runtime_paths()
         result = subprocess.run(
-            [tool, "up", str(CONFIG_PATH)],
+            [tool, "up", str(config_path)],
             text=True,
             capture_output=True,
             check=False,
         )
-        self._log(f"connect: {tool} up {CONFIG_PATH}")
+        self._log(f"connect: {tool} up {config_path}")
         if result.stdout:
             self._log(result.stdout.rstrip())
         if result.stderr:
@@ -171,19 +208,25 @@ class AmneziaWGDriver(BaseDriver):
 
         if result.returncode != 0:
             self._log(f"connect: failed with code {result.returncode}")
-            self._cleanup_config()
+            self._cleanup_runtime()
             return False
 
         self._active_profile = profile
-        self._connected_at = datetime.now(timezone.utc)
-        return self._interface_exists()
+        if self._interface_exists():
+            self._connected_at = datetime.now(timezone.utc)
+            return True
+        self._active_profile = None
+        self._connected_at = None
+        self.disconnect()
+        return False
 
     def disconnect(self) -> bool:
         try:
             tool = self.find_quick_tool()
-            if tool and CONFIG_PATH.exists():
+            config_path = self._config_path
+            if tool and config_path is not None and config_path.exists():
                 result = subprocess.run(
-                    [tool, "down", str(CONFIG_PATH)],
+                    [tool, "down", str(config_path)],
                     text=True,
                     capture_output=True,
                     check=False,
@@ -191,10 +234,12 @@ class AmneziaWGDriver(BaseDriver):
                 self._log(f"disconnect: {tool} down")
                 if result.stderr:
                     self._log(result.stderr.rstrip())
+            if self._interface_exists():
+                self._delete_interface()
         finally:
             self._active_profile = None
             self._connected_at = None
-            self._cleanup_config()
+            self._cleanup_runtime()
         return not self._interface_exists()
 
     def _latest_handshake_age(self) -> int | None:
@@ -233,6 +278,8 @@ class AmneziaWGDriver(BaseDriver):
         return result.returncode == 0
 
     def health_check(self) -> str:
+        if self._active_profile is None:
+            return "down"
         if not self._interface_exists():
             return "down"
         age = self._latest_handshake_age()
@@ -243,11 +290,10 @@ class AmneziaWGDriver(BaseDriver):
         return "degraded"
 
     def status(self) -> ConnectionState:
-        if not self._interface_exists():
+        if self._active_profile is None or not self._interface_exists():
             return ConnectionState(status="standby")
-        profile_id = self._active_profile.id if self._active_profile else ""
         return ConnectionState(
-            active_profile_id=profile_id,
+            active_profile_id=self._active_profile.id,
             connected_at=self._connected_at,
             mode="amneziawg",
             tun_active=True,

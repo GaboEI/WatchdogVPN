@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from drivers.amneziawg_driver import (
-    CONFIG_PATH,
+    CONFIG_NAME,
     HANDSHAKE_TIMEOUT_SECONDS,
     INTERFACE_NAME,
     AmneziaWGDriver,
@@ -44,7 +44,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        CONFIG_PATH.unlink(missing_ok=True)
+        self.driver._cleanup_runtime()
 
     # --- Binary detection ---
 
@@ -79,8 +79,9 @@ class AmneziaWGDriverTests(unittest.TestCase):
     def test_find_quick_tool_none_when_missing(self, _access, _exists, _which) -> None:
         self.assertIsNone(self.driver.find_quick_tool())
 
+    @patch.object(AmneziaWGDriver, "check_version", return_value="amneziawg-tools v1.0.0")
     @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
-    def test_is_available_true(self, _tool) -> None:
+    def test_is_available_true(self, _tool, _version) -> None:
         self.assertTrue(self.driver.is_available())
 
     @patch.object(AmneziaWGDriver, "find_quick_tool", return_value=None)
@@ -114,8 +115,10 @@ class AmneziaWGDriverTests(unittest.TestCase):
 
     def test_write_config_creates_temp_file(self) -> None:
         self.driver._write_config(self.profile)
-        self.assertTrue(CONFIG_PATH.exists())
-        content = CONFIG_PATH.read_text(encoding="utf-8")
+        self.assertIsNotNone(self.driver._config_path)
+        self.assertEqual(self.driver._config_path.name, CONFIG_NAME)
+        self.assertTrue(self.driver._config_path.exists())
+        content = self.driver._config_path.read_text(encoding="utf-8")
         self.assertIn("[Interface]", content)
         self.assertIn("Jc = 4", content)
 
@@ -129,18 +132,19 @@ class AmneziaWGDriverTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.driver._write_config(profile)
 
-    def test_cleanup_config_removes_file(self) -> None:
-        CONFIG_PATH.write_text("test", encoding="utf-8")
-        self.driver._cleanup_config()
-        self.assertFalse(CONFIG_PATH.exists())
+    def test_cleanup_runtime_removes_file(self) -> None:
+        self.driver._write_config(self.profile)
+        config_path = self.driver._config_path
+        self.driver._cleanup_runtime()
+        self.assertIsNotNone(config_path)
+        self.assertFalse(config_path.exists())
 
-    def test_cleanup_config_no_error_when_missing(self) -> None:
-        CONFIG_PATH.unlink(missing_ok=True)
-        self.driver._cleanup_config()
+    def test_cleanup_runtime_no_error_when_missing(self) -> None:
+        self.driver._cleanup_runtime()
 
     # --- Connect ---
 
-    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
+    @patch.object(AmneziaWGDriver, "_interface_exists", side_effect=[False, True])
     @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
     @patch("drivers.amneziawg_driver.subprocess.run")
     def test_connect_success(self, run_mock, _tool, _iface) -> None:
@@ -149,8 +153,9 @@ class AmneziaWGDriverTests(unittest.TestCase):
         run_mock.return_value.stderr = ""
 
         self.assertTrue(self.driver.connect(self.profile))
+        self.assertIsNotNone(self.driver._config_path)
         run_mock.assert_called_once_with(
-            ["/usr/bin/awg-quick", "up", str(CONFIG_PATH)],
+            ["/usr/bin/awg-quick", "up", str(self.driver._config_path)],
             text=True,
             capture_output=True,
             check=False,
@@ -166,7 +171,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
         run_mock.return_value.stderr = "error"
 
         self.assertFalse(self.driver.connect(self.profile))
-        self.assertFalse(CONFIG_PATH.exists())
+        self.assertIsNone(self.driver._config_path)
         self.assertIsNone(self.driver._active_profile)
 
     @patch.object(AmneziaWGDriver, "find_quick_tool", return_value=None)
@@ -179,7 +184,8 @@ class AmneziaWGDriverTests(unittest.TestCase):
     @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
     @patch("drivers.amneziawg_driver.subprocess.run")
     def test_disconnect_success(self, run_mock, _tool, _iface) -> None:
-        CONFIG_PATH.write_text("test", encoding="utf-8")
+        self.driver._write_config(self.profile)
+        config_path = self.driver._config_path
         self.driver._active_profile = self.profile
         self.driver._connected_at = Mock()
 
@@ -190,7 +196,17 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertTrue(self.driver.disconnect())
         self.assertIsNone(self.driver._active_profile)
         self.assertIsNone(self.driver._connected_at)
-        self.assertFalse(CONFIG_PATH.exists())
+        self.assertIsNotNone(config_path)
+        self.assertFalse(config_path.exists())
+
+    @patch.object(AmneziaWGDriver, "_delete_interface", return_value=False)
+    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
+    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
+    @patch("drivers.amneziawg_driver.subprocess.run")
+    def test_connect_refuses_stale_interface_when_delete_fails(self, run_mock, _tool, _iface, delete_mock) -> None:
+        self.assertFalse(self.driver.connect(self.profile))
+        delete_mock.assert_called_once()
+        run_mock.assert_not_called()
 
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=False)
     def test_disconnect_without_connect_no_crash(self, _iface) -> None:
@@ -206,22 +222,26 @@ class AmneziaWGDriverTests(unittest.TestCase):
     @patch.object(AmneziaWGDriver, "_latest_handshake_age", return_value=30)
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
     def test_health_check_ok(self, _iface, _hs, _ping) -> None:
+        self.driver._active_profile = self.profile
         self.assertEqual(self.driver.health_check(), "ok")
 
     @patch.object(AmneziaWGDriver, "_latest_handshake_age", return_value=None)
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
     def test_health_check_degraded_no_handshake(self, _iface, _hs) -> None:
+        self.driver._active_profile = self.profile
         self.assertEqual(self.driver.health_check(), "degraded")
 
     @patch.object(AmneziaWGDriver, "_latest_handshake_age", return_value=HANDSHAKE_TIMEOUT_SECONDS + 10)
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
     def test_health_check_degraded_old_handshake(self, _iface, _hs) -> None:
+        self.driver._active_profile = self.profile
         self.assertEqual(self.driver.health_check(), "degraded")
 
     @patch.object(AmneziaWGDriver, "_ping_through_interface", return_value=False)
     @patch.object(AmneziaWGDriver, "_latest_handshake_age", return_value=10)
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
     def test_health_check_degraded_no_ping(self, _iface, _hs, _ping) -> None:
+        self.driver._active_profile = self.profile
         self.assertEqual(self.driver.health_check(), "degraded")
 
     # --- Status ---

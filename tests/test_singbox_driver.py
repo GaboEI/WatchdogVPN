@@ -50,8 +50,8 @@ class SingBoxDriverBinaryTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.driver.check_version()
 
-    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
-    def test_is_available_uses_binary_presence(self, binary_mock) -> None:
+    @patch.object(SingBoxDriver, "check_version", return_value="sing-box version 1.10.0")
+    def test_is_available_checks_version(self, version_mock) -> None:
         self.assertTrue(self.driver.is_available())
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)
@@ -316,13 +316,16 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         process = popen_mock.return_value
         process.poll.return_value = None
 
-        self.assertTrue(self.driver.connect(self.profile))
-        generate_mock.assert_called_once_with(self.profile)
-        popen_mock.assert_called_once()
-        self.assertIs(self.driver._process, process)
-        self.assertIs(self.driver._active_profile, self.profile)
-        self.assertIsNotNone(self.driver._connected_at)
-        self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/sing-box", "run", "-c", "/tmp/watchdogvpn_singbox.json"])
+        with patch.object(SingBoxDriver, "health_check", return_value="ok"):
+            self.assertTrue(self.driver.connect(self.profile))
+            generate_mock.assert_called_once_with(self.profile)
+            popen_mock.assert_called_once()
+            self.assertIs(self.driver._process, process)
+            self.assertIs(self.driver._active_profile, self.profile)
+            self.assertIsNotNone(self.driver._connected_at)
+            args = popen_mock.call_args.args[0]
+            self.assertEqual(args[:3], ["/usr/bin/sing-box", "run", "-c"])
+            self.assertEqual(args[3], str(self.driver._config_path))
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)
     @patch.object(SingBoxDriver, "generate_singbox_config")
@@ -332,8 +335,8 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         generate_mock.assert_not_called()
         popen_mock.assert_not_called()
 
-    @patch.object(SingBoxDriver, "_cleanup_config")
-    def test_disconnect_terminates_and_cleans_config(self, cleanup_mock) -> None:
+    @patch.object(SingBoxDriver, "_cleanup_runtime")
+    def test_disconnect_terminates_and_cleans_runtime(self, cleanup_mock) -> None:
         process = unittest.mock.Mock()
         process.poll.return_value = None
         self.driver._process = process
@@ -348,7 +351,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertIsNone(self.driver._active_profile)
         self.assertIsNone(self.driver._connected_at)
 
-    @patch.object(SingBoxDriver, "_cleanup_config")
+    @patch.object(SingBoxDriver, "_cleanup_runtime")
     def test_disconnect_kills_hung_process(self, cleanup_mock) -> None:
         process = unittest.mock.Mock()
         process.poll.return_value = None
@@ -359,6 +362,21 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         process.terminate.assert_called_once()
         process.kill.assert_called_once()
         self.assertEqual(process.wait.call_count, 2)
+        cleanup_mock.assert_called_once()
+
+    @patch.object(SingBoxDriver, "_cleanup_runtime")
+    def test_disconnect_reports_failed_kill(self, cleanup_mock) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired(cmd="sing-box", timeout=5),
+            subprocess.TimeoutExpired(cmd="sing-box", timeout=5),
+        ]
+        self.driver._process = process
+
+        self.assertFalse(self.driver.disconnect())
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
         cleanup_mock.assert_called_once()
 
     def test_status_returns_standby_without_process(self) -> None:
@@ -377,7 +395,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertEqual(state.active_profile_id, "vless-1")
         self.assertIs(state.connected_at, unittest.mock.sentinel.connected_at)
         self.assertTrue(state.proxy_active)
-        self.assertTrue(state.tun_active)
+        self.assertFalse(state.tun_active)
 
     def test_status_returns_standby_when_process_dead(self) -> None:
         process = unittest.mock.Mock()

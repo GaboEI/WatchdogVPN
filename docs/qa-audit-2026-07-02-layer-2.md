@@ -3,6 +3,8 @@
 > Date: 2026-07-02  
 > Protocol: `/home/gabodev/Escritorio/temporales/WatchdogVPN_QA_AUDIT_PROTOCOL.md`  
 > Scope: detection and documentation only. No fixes were made during this audit.
+> Follow-up: all findings were fixed in the Layer 2 hardening closure before
+> Phase 10 work started.
 
 ## Audited Surface
 
@@ -29,13 +31,19 @@
 | Description | Temporary runtime config files can remain in `/tmp` with sensitive profile data if the process crashes mid-connect or the host loses power. |
 | Scenario | sing-box, AmneziaWG, OpenVPN, or OpenVPN+Cloak writes a temp config under `/tmp`, then WatchdogVPN or the machine crashes before `disconnect()` or cleanup runs. |
 | Impact | Server addresses, private keys, proxy passwords, OpenVPN material, or Cloak config can remain on disk. This is a security exposure, especially for `singbox` and plain `openvpn` temp files that are not explicitly chmodded after writing. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-02 |
 
 Evidence:
 - `drivers/singbox_driver.py`: `CONFIG_PATH = Path("/tmp/watchdogvpn_singbox.json")`; `_write_config()` writes JSON but does not chmod; cleanup only happens in `disconnect()`.
 - `drivers/amneziawg_driver.py`: `CONFIG_PATH = Path("/tmp/watchdogvpn_awg.conf")`; file is chmod `0600`, but still persists after a crash before cleanup.
 - `drivers/openvpn_driver.py`: `CONFIG_PATH = Path("/tmp/watchdogvpn_openvpn.conf")`; config is written without explicit chmod and cleanup only happens in `disconnect()`.
 - `drivers/openvpn_cloak_driver.py`: `/tmp/watchdogvpn_oc.conf` and `/tmp/watchdogvpn_cloak.json` are chmod `0600`, but still persist after crash before cleanup.
+
+Resolution:
+- Added per-run private runtime directories through `drivers/runtime_paths.py`.
+- Moved sing-box, AmneziaWG, OpenVPN, and OpenVPN+Cloak sensitive configs and logs out of fixed `/tmp/watchdogvpn_*` paths.
+- Wrote runtime config files with explicit `0600` permissions.
+- Added stale runtime directory cleanup on driver initialization and cleanup on disconnect/failure paths.
 
 ### AUD-002
 
@@ -47,7 +55,7 @@ Evidence:
 | Description | Drivers can report a successful connection before real readiness is established. |
 | Scenario | `connect()` starts a subprocess and immediately returns `True` because `poll()` is still `None`, before proxy ports, tunnel interfaces, or real traffic are verified. |
 | Impact | Manual connect/startup paths can briefly or incorrectly surface `connected` status even when the backend will fail moments later. This is most visible in `SingBoxDriver.connect()` and `OpenVPNDriver.connect()`, and partially applies to `OpenVPNCloakDriver.connect()` after both processes start but before a TUN device exists. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-02 |
 
 Evidence:
 - `SingBoxDriver.connect()` returns `True` immediately when the process is alive; readiness is deferred to `health_check()`.
@@ -55,6 +63,12 @@ Evidence:
 - `OpenVPNDriver.connect()` returns `True` when the process is alive, before `_vpn_interface_active()` is checked.
 - `OpenVPNCloakDriver.connect()` waits for initial `ck-client` survival, then returns `True` when OpenVPN is alive, before `_vpn_interface_active()` confirms the tunnel.
 - `WatchdogRuntime.startup()` calls `driver.connect(profile)` and then returns `driver.status()` without a health gate.
+
+Resolution:
+- `SingBoxDriver.connect()` now returns success only after the process is alive and the proxy health check returns `ok`.
+- `OpenVPNDriver.connect()` waits for the configured TUN/TAP interface before reporting success.
+- `OpenVPNCloakDriver.connect()` waits for both processes to remain alive and for a TUN/TAP interface before reporting success.
+- `SingBoxDriver.status()` no longer reports `tun_active=True` for proxy-mode connections.
 
 ### AUD-003
 
@@ -66,13 +80,17 @@ Evidence:
 | Description | `is_available()` checks binary presence but not version or runtime compatibility. |
 | Scenario | A binary exists and is executable, but is too old, incompatible, or the wrong implementation with the expected name. |
 | Impact | The driver can be selected as available and fail later during `connect()` or health checks. For OpenVPN+Cloak, `check_version()` only checks OpenVPN; `ck-client` version compatibility is not validated. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-02 |
 
 Evidence:
 - `SingBoxDriver.is_available()` returns true when `find_singbox_binary()` finds a path.
 - `AmneziaWGDriver.is_available()` checks only quick-tool presence.
 - `OpenVPNDriver.is_available()` checks only OpenVPN binary presence.
 - `OpenVPNCloakDriver.is_available()` checks OpenVPN and `ck-client` presence, but `check_version()` reads only OpenVPN.
+
+Resolution:
+- `SingBoxDriver.is_available()`, `AmneziaWGDriver.is_available()`, `OpenVPNDriver.is_available()`, and `OpenVPNCloakDriver.is_available()` now require successful version checks.
+- `OpenVPNCloakDriver.check_version()` now validates both OpenVPN and `ck-client`.
 
 ### AUD-004
 
@@ -84,12 +102,17 @@ Evidence:
 | Description | A stale `watchdogvpn_awg` interface from a previous crash can be interpreted as a live AmneziaWG connection. |
 | Scenario | The host already has `watchdogvpn_awg` up before `AmneziaWGDriver.connect()` is called, or after a previous crash left the interface behind. |
 | Impact | `awg-quick up` may fail because the interface already exists, but `status()` still reports `connected` whenever `_interface_exists()` returns true, even with no active profile. A stale interface can create misleading state and recovery decisions. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-02 |
 
 Evidence:
 - `AmneziaWGDriver.connect()` does not pre-clean or reconcile an existing `watchdogvpn_awg` interface before running `awg-quick up`.
 - `AmneziaWGDriver.status()` returns `status="connected"` whenever `_interface_exists()` is true, regardless of `_active_profile`.
 - `AmneziaWGDriver.health_check()` also starts from `_interface_exists()` and then checks handshake/ping on the fixed interface name.
+
+Resolution:
+- `AmneziaWGDriver.connect()` now detects an existing `watchdogvpn_awg` interface and refuses to continue unless it can delete the stale interface first.
+- `AmneziaWGDriver.status()` and `health_check()` require an active profile before reporting connected or degraded state.
+- `AmneziaWGDriver.disconnect()` now attempts forced interface deletion when the interface remains after quick-tool shutdown.
 
 ### AUD-005
 
@@ -101,13 +124,17 @@ Evidence:
 | Description | Forced process cleanup assumes `kill()` followed by `wait(timeout=5)` succeeds. |
 | Scenario | A subprocess ignores termination, `kill()` is issued, and the second `wait(timeout=5)` also times out or raises. |
 | Impact | `disconnect()` can raise instead of returning a clean failure state, leaving the watchdog/recovery caller to handle an unexpected exception path. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-02 |
 
 Evidence:
 - `SingBoxDriver.disconnect()` catches the first `TimeoutExpired`, calls `process.kill()`, then calls `process.wait(timeout=5)` without a second guard.
 - `OpenVPNDriver.disconnect()` has the same pattern.
 - `OpenVPNCloakDriver._stop_process()` has the same pattern for both OpenVPN and `ck-client`.
 - Existing tests cover the successful kill-after-timeout path, but not a second timeout after `kill()`.
+
+Resolution:
+- `SingBoxDriver.disconnect()`, `OpenVPNDriver.disconnect()`, and `OpenVPNCloakDriver._stop_process()` now catch a second timeout after `kill()` and return a clean failure value.
+- Added tests for failed kill waits.
 
 ### AUD-006
 
@@ -119,12 +146,16 @@ Evidence:
 | Description | `ck-client` crash after the fixed warmup window is detected later, not during connect readiness. |
 | Scenario | `ck-client` survives the 1.5 second warmup, OpenVPN starts, then `ck-client` crashes 1-2 seconds later before OpenVPN has a usable tunnel through it. |
 | Impact | `connect()` can return `True` for a connection that is about to become `down` or `degraded`. Later `health_check()` catches dead `ck-client`, but startup/manual status can be temporarily misleading. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-02 |
 
 Evidence:
 - `OpenVPNCloakDriver.connect()` waits `_CLOAK_STARTUP_WAIT = 1.5`, checks `ck_process.poll()`, starts OpenVPN, and returns true if OpenVPN is alive.
 - `OpenVPNCloakDriver.health_check()` correctly returns `down` if `ck-client` or OpenVPN later dies.
 - Tests cover `ck-client` crash during the initial warmup, not a crash immediately after OpenVPN starts.
+
+Resolution:
+- `OpenVPNCloakDriver.connect()` now waits for both `ck-client` and OpenVPN to remain alive until a TUN/TAP interface is active.
+- Added readiness-focused connect tests that patch `_wait_for_ready()` explicitly.
 
 ## Checked Scenarios Without Findings
 
@@ -164,7 +195,7 @@ and tests cover the first timeout followed by successful `kill()` cleanup.
 The remaining exception path after a failed `kill()` wait is tracked as
 AUD-005.
 
-## Recommended Priority Order
+## Original Recommended Priority Order
 
 ### HIGH
 
@@ -183,9 +214,28 @@ AUD-005.
    doctor diagnostics, including `ck-client`.
 6. AUD-005 — Harden forced cleanup when `kill()` plus second wait still fails.
 
+## Hardening Closure — 2026-07-02
+
+All Layer 2 findings listed above were fixed before Phase 10 work started.
+
+Implemented closure:
+- Added secure per-run runtime paths for driver configs and logs.
+- Removed fixed sensitive `/tmp/watchdogvpn_*` driver config paths.
+- Required version checks for driver availability.
+- Made sing-box, OpenVPN, and OpenVPN+Cloak connect readiness truthful before returning success.
+- Prevented stale AmneziaWG interfaces from being treated as active sessions.
+- Hardened disconnect cleanup when terminate and kill paths fail.
+- Added focused regression coverage for the changed contracts.
+
+Validation:
+- `python3 -m unittest tests.test_runtime_paths tests.test_singbox_driver tests.test_amneziawg_driver tests.test_openvpn_driver tests.test_openvpn_cloak_driver` passed: 117 tests.
+- `python3 -m unittest discover tests` passed: 347 tests.
+- `bash tests/syntax.sh` passed.
+- `bash tests/unit.sh` passed.
+- `python3 -m pytest tests` could not run because `pytest` is not installed in this environment.
+
 ## Notes For Future Work
 
-- No code changes were made during this audit.
-- The findings should feed a future hardening task before or alongside Phase 10,
-  depending on priority. They should not be silently fixed inside Phase 10 DNS
-  work unless explicitly scheduled.
+- No code changes were made during the audit commit itself.
+- The follow-up hardening closure resolved every recorded Layer 2 finding before
+  Phase 10 DNS work started.

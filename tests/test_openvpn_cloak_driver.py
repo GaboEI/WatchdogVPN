@@ -6,10 +6,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from drivers.openvpn_cloak_driver import (
-    CLOAK_CONFIG_PATH,
-    CLOAK_LOG_PATH,
-    OC_OVPN_CONFIG_PATH,
-    OC_OVPN_LOG_PATH,
+    CLOAK_CONFIG_NAME,
+    OC_OVPN_CONFIG_NAME,
     OpenVPNCloakDriver,
 )
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -72,11 +70,7 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.profile = _make_profile()
 
     def tearDown(self) -> None:
-        for p in (OC_OVPN_CONFIG_PATH, CLOAK_CONFIG_PATH, OC_OVPN_LOG_PATH, CLOAK_LOG_PATH):
-            try:
-                p.unlink(missing_ok=True)
-            except OSError:
-                pass
+        self.driver._cleanup_configs()
 
     # --- Binary detection ---
 
@@ -104,9 +98,8 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     def test_find_ck_client_env_override(self, _access, _exists) -> None:
         self.assertEqual(self.driver.find_ck_client_binary(), "/opt/ck-client")
 
-    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
-    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
-    def test_is_available_true_when_both_present(self, _ck, _ovpn) -> None:
+    @patch.object(OpenVPNCloakDriver, "check_version", return_value="OpenVPN 2.6.0\nck-client 2.8.0")
+    def test_is_available_true_when_versions_pass(self, _version) -> None:
         self.assertTrue(self.driver.is_available())
 
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value=None)
@@ -119,12 +112,16 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     def test_is_available_false_when_ck_missing(self, _ck, _ovpn) -> None:
         self.assertFalse(self.driver.is_available())
 
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch("drivers.openvpn_cloak_driver.subprocess.run")
-    def test_check_version_returns_output(self, run_mock, _bin) -> None:
-        run_mock.return_value.stdout = "OpenVPN 2.6.0"
-        run_mock.return_value.stderr = ""
-        self.assertEqual(self.driver.check_version(), "OpenVPN 2.6.0")
+    def test_check_version_returns_output(self, run_mock, _ovpn, _ck) -> None:
+        openvpn_result = Mock(stdout="OpenVPN 2.6.0", stderr="")
+        ck_result = Mock(stdout="ck-client 2.8.0", stderr="")
+        run_mock.side_effect = [openvpn_result, ck_result]
+        self.assertEqual(self.driver.check_version(), "OpenVPN 2.6.0\nck-client 2.8.0")
+        self.assertEqual(run_mock.call_args_list[0].args[0], ["/usr/sbin/openvpn", "--version"])
+        self.assertEqual(run_mock.call_args_list[1].args[0], ["/usr/bin/ck-client", "-v"])
 
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value=None)
     def test_check_version_raises_when_missing(self, _bin) -> None:
@@ -135,17 +132,22 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
 
     def test_write_configs_creates_both_files(self) -> None:
         self.driver._write_configs(self.profile)
-        self.assertTrue(OC_OVPN_CONFIG_PATH.exists())
-        self.assertTrue(CLOAK_CONFIG_PATH.exists())
-        ovpn_content = OC_OVPN_CONFIG_PATH.read_text(encoding="utf-8")
+        self.assertIsNotNone(self.driver._ovpn_config_path)
+        self.assertIsNotNone(self.driver._cloak_config_path)
+        self.assertEqual(self.driver._ovpn_config_path.name, OC_OVPN_CONFIG_NAME)
+        self.assertEqual(self.driver._cloak_config_path.name, CLOAK_CONFIG_NAME)
+        self.assertTrue(self.driver._ovpn_config_path.exists())
+        self.assertTrue(self.driver._cloak_config_path.exists())
+        ovpn_content = self.driver._ovpn_config_path.read_text(encoding="utf-8")
         self.assertIn("remote 127.0.0.1 1984", ovpn_content)
-        cloak_data = json.loads(CLOAK_CONFIG_PATH.read_text(encoding="utf-8"))
+        cloak_data = json.loads(self.driver._cloak_config_path.read_text(encoding="utf-8"))
         self.assertEqual(cloak_data["RemoteHost"], "138.124.58.47")
 
     def test_write_configs_accepts_cloak_as_json_string(self) -> None:
         profile = _make_profile(config_overrides={"cloak_config": json.dumps(_CLOAK_CONFIG_DICT)})
         self.driver._write_configs(profile)
-        self.assertTrue(CLOAK_CONFIG_PATH.exists())
+        self.assertIsNotNone(self.driver._cloak_config_path)
+        self.assertTrue(self.driver._cloak_config_path.exists())
 
     def test_write_configs_rejects_wrong_protocol(self) -> None:
         profile = _make_profile(protocol=ProtocolType.OPENVPN)
@@ -172,8 +174,9 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     @patch("drivers.openvpn_cloak_driver.time.sleep")
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_wait_for_ready", return_value=True)
     @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
-    def test_connect_success(self, popen_mock, _ck, _ovpn, _sleep) -> None:
+    def test_connect_success(self, popen_mock, _ready, _ck, _ovpn, _sleep) -> None:
         ck_process = Mock()
         ck_process.poll.return_value = None
         ovpn_process = Mock()
@@ -188,7 +191,7 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.assertEqual(popen_mock.call_count, 2)
         ck_call_args = popen_mock.call_args_list[0].args[0]
         self.assertEqual(ck_call_args[0], "/usr/bin/ck-client")
-        self.assertIn(str(CLOAK_CONFIG_PATH), ck_call_args)
+        self.assertIn(str(self.driver._cloak_config_path), ck_call_args)
         ovpn_call_args = popen_mock.call_args_list[1].args[0]
         self.assertEqual(ovpn_call_args[0], "/usr/sbin/openvpn")
 
@@ -257,6 +260,24 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.assertTrue(self.driver.disconnect())
         ck_process.terminate.assert_called_once()
         ck_process.kill.assert_called_once()
+
+    @patch.object(OpenVPNCloakDriver, "_cleanup_configs")
+    def test_disconnect_reports_failed_kill(self, _cleanup) -> None:
+        ovpn_process = Mock()
+        ovpn_process.poll.return_value = None
+        ovpn_process.wait.side_effect = [
+            subprocess.TimeoutExpired(cmd="openvpn", timeout=5),
+            subprocess.TimeoutExpired(cmd="openvpn", timeout=5),
+        ]
+        ck_process = Mock()
+        ck_process.poll.return_value = None
+        self.driver._openvpn_process = ovpn_process
+        self.driver._ck_process = ck_process
+
+        self.assertFalse(self.driver.disconnect())
+        ovpn_process.terminate.assert_called_once()
+        ovpn_process.kill.assert_called_once()
+        ck_process.terminate.assert_called_once()
 
     # --- Health Check ---
 

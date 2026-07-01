@@ -11,16 +11,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from drivers.base import BaseDriver
+from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
 
-OC_OVPN_CONFIG_PATH = Path("/tmp/watchdogvpn_oc.conf")
-CLOAK_CONFIG_PATH = Path("/tmp/watchdogvpn_cloak.json")
-OC_OVPN_LOG_PATH = Path("/tmp/watchdogvpn_oc_ovpn.log")
-CLOAK_LOG_PATH = Path("/tmp/watchdogvpn_oc_cloak.log")
+RUNTIME_PREFIX = "watchdogvpn-openvpn-cloak-"
+OC_OVPN_CONFIG_NAME = "openvpn.conf"
+CLOAK_CONFIG_NAME = "cloak.json"
+OC_OVPN_LOG_NAME = "openvpn.log"
+CLOAK_LOG_NAME = "cloak.log"
 
 _CLOAK_STARTUP_WAIT = 1.5
+CONNECT_READY_TIMEOUT_SECONDS = 15.0
 
 
 @dataclass(slots=True)
@@ -52,6 +55,12 @@ class OpenVPNCloakDriver(BaseDriver):
         self._openvpn_process: subprocess.Popen[str] | None = None
         self._active_profile: Profile | None = None
         self._connected_at: datetime | None = None
+        self._runtime_dir: Path | None = None
+        self._ovpn_config_path: Path | None = None
+        self._cloak_config_path: Path | None = None
+        self._ovpn_log_path: Path | None = None
+        self._cloak_log_path: Path | None = None
+        cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def _find_binary(self, candidates: tuple[str, ...], which_name: str) -> str | None:
         for candidate in candidates:
@@ -72,17 +81,52 @@ class OpenVPNCloakDriver(BaseDriver):
         return self._find_binary(self.binaries.ck_client, "ck-client")
 
     def is_available(self) -> bool:
-        return self.find_openvpn_binary() is not None and self.find_ck_client_binary() is not None
+        try:
+            return bool(self.check_version())
+        except (FileNotFoundError, RuntimeError):
+            return False
 
     def check_version(self) -> str:
-        binary = self.find_openvpn_binary()
-        if not binary:
+        openvpn_binary = self.find_openvpn_binary()
+        ck_binary = self.find_ck_client_binary()
+        if not openvpn_binary:
             raise FileNotFoundError("openvpn binary not found")
-        result = subprocess.run([binary, "--version"], text=True, capture_output=True, check=False)
-        output = (result.stdout or result.stderr or "").strip()
-        if not output:
+        if not ck_binary:
+            raise FileNotFoundError("ck-client binary not found")
+        openvpn_version = self._version_output(openvpn_binary, ("--version",))
+        ck_version = self._version_output(ck_binary, ("-v",), ("--version",))
+        if not openvpn_version:
             raise RuntimeError("openvpn version output is empty")
-        return output
+        if not ck_version:
+            raise RuntimeError("ck-client version output is empty")
+        return f"{openvpn_version}\n{ck_version}"
+
+    def _version_output(self, binary: str, *arg_sets: tuple[str, ...]) -> str:
+        for args in arg_sets:
+            result = subprocess.run(
+                [binary, *args],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            output = (result.stdout or result.stderr or "").strip()
+            if output:
+                return output
+        return ""
+
+    def _ensure_runtime_paths(self) -> tuple[Path, Path, Path, Path]:
+        if self._runtime_dir is None:
+            self._runtime_dir = make_runtime_dir(RUNTIME_PREFIX)
+            self._ovpn_config_path = self._runtime_dir / OC_OVPN_CONFIG_NAME
+            self._cloak_config_path = self._runtime_dir / CLOAK_CONFIG_NAME
+            self._ovpn_log_path = self._runtime_dir / OC_OVPN_LOG_NAME
+            self._cloak_log_path = self._runtime_dir / CLOAK_LOG_NAME
+        return (
+            self._ovpn_config_path,
+            self._cloak_config_path,
+            self._ovpn_log_path,
+            self._cloak_log_path,
+        )  # type: ignore[return-value]
 
     def _write_configs(self, profile: Profile) -> None:
         if profile.protocol is not ProtocolType.OPENVPN_CLOAK:
@@ -106,17 +150,22 @@ class OpenVPNCloakDriver(BaseDriver):
                 raise ValueError(f"cloak_config is not valid JSON: {exc}") from exc
             cloak_json = str(cloak_config)
 
-        OC_OVPN_CONFIG_PATH.write_text(f"{raw_config}\n", encoding="utf-8")
-        OC_OVPN_CONFIG_PATH.chmod(0o600)
-        CLOAK_CONFIG_PATH.write_text(cloak_json, encoding="utf-8")
-        CLOAK_CONFIG_PATH.chmod(0o600)
+        ovpn_config_path, cloak_config_path, _, _ = self._ensure_runtime_paths()
+        write_private_file(ovpn_config_path, f"{raw_config}\n")
+        write_private_file(cloak_config_path, cloak_json)
 
     def _cleanup_configs(self) -> None:
-        OC_OVPN_CONFIG_PATH.unlink(missing_ok=True)
-        CLOAK_CONFIG_PATH.unlink(missing_ok=True)
+        if self._runtime_dir is not None and self._runtime_dir.exists():
+            shutil.rmtree(self._runtime_dir, ignore_errors=True)
+        self._runtime_dir = None
+        self._ovpn_config_path = None
+        self._cloak_config_path = None
+        self._ovpn_log_path = None
+        self._cloak_log_path = None
 
     def _reset_logs(self) -> None:
-        for path in (CLOAK_LOG_PATH, OC_OVPN_LOG_PATH):
+        _, _, ovpn_log_path, cloak_log_path = self._ensure_runtime_paths()
+        for path in (cloak_log_path, ovpn_log_path):
             try:
                 path.unlink(missing_ok=True)
             except OSError:
@@ -126,15 +175,20 @@ class OpenVPNCloakDriver(BaseDriver):
             except OSError:
                 pass
 
-    def _stop_process(self, process: subprocess.Popen[str] | None) -> None:
+    def _stop_process(self, process: subprocess.Popen[str] | None) -> bool:
         if process is None or process.poll() is not None:
-            return
+            return True
         process.terminate()
         try:
             process.wait(timeout=5)
+            return True
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=5)
+            try:
+                process.wait(timeout=5)
+                return True
+            except subprocess.TimeoutExpired:
+                return False
 
     def _vpn_interface_active(self) -> bool:
         if not shutil.which("ip"):
@@ -160,13 +214,14 @@ class OpenVPNCloakDriver(BaseDriver):
 
         self._write_configs(profile)
         self._reset_logs()
+        ovpn_config_path, cloak_config_path, ovpn_log_path, cloak_log_path = self._ensure_runtime_paths()
 
         try:
-            ck_log = CLOAK_LOG_PATH.open("w", encoding="utf-8")
+            ck_log = cloak_log_path.open("w", encoding="utf-8")
         except OSError:
             ck_log = open(os.devnull, "w")
         self._ck_process = subprocess.Popen(
-            [ck_bin, "-c", str(CLOAK_CONFIG_PATH)],
+            [ck_bin, "-c", str(cloak_config_path)],
             text=True,
             stdout=ck_log,
             stderr=subprocess.STDOUT,
@@ -180,11 +235,11 @@ class OpenVPNCloakDriver(BaseDriver):
             return False
 
         try:
-            ovpn_log = OC_OVPN_LOG_PATH.open("w", encoding="utf-8")
+            ovpn_log = ovpn_log_path.open("w", encoding="utf-8")
         except OSError:
             ovpn_log = open(os.devnull, "w")
         self._openvpn_process = subprocess.Popen(
-            [openvpn_bin, "--config", str(OC_OVPN_CONFIG_PATH)],
+            [openvpn_bin, "--config", str(ovpn_config_path)],
             text=True,
             stdout=ovpn_log,
             stderr=subprocess.STDOUT,
@@ -192,11 +247,25 @@ class OpenVPNCloakDriver(BaseDriver):
         ovpn_log.close()
 
         self._active_profile = profile
-        if self._openvpn_process.poll() is None:
+        if self._wait_for_ready():
             self._connected_at = datetime.now(timezone.utc)
             return True
 
         self._cleanup_all()
+        return False
+
+    def _wait_for_ready(self) -> bool:
+        deadline = time.monotonic() + CONNECT_READY_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            ck = self._ck_process
+            ovpn = self._openvpn_process
+            if ck is None or ovpn is None:
+                return False
+            if ck.poll() is not None or ovpn.poll() is not None:
+                return False
+            if self._vpn_interface_active():
+                return True
+            time.sleep(0.25)
         return False
 
     def _cleanup_all(self) -> None:
@@ -209,16 +278,18 @@ class OpenVPNCloakDriver(BaseDriver):
         self._cleanup_configs()
 
     def disconnect(self) -> bool:
+        openvpn_stopped = True
+        ck_stopped = True
         try:
-            self._stop_process(self._openvpn_process)
-            self._stop_process(self._ck_process)
+            openvpn_stopped = self._stop_process(self._openvpn_process)
+            ck_stopped = self._stop_process(self._ck_process)
         finally:
             self._openvpn_process = None
             self._ck_process = None
             self._active_profile = None
             self._connected_at = None
             self._cleanup_configs()
-        return True
+        return openvpn_stopped and ck_stopped
 
     def health_check(self) -> str:
         ck = self._ck_process

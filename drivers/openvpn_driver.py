@@ -3,17 +3,21 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from drivers.base import BaseDriver
+from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
 
-CONFIG_PATH = Path("/tmp/watchdogvpn_openvpn.conf")
-LOG_PATH = Path("/tmp/watchdogvpn_openvpn.log")
+RUNTIME_PREFIX = "watchdogvpn-openvpn-"
+CONFIG_NAME = "openvpn.conf"
+LOG_NAME = "openvpn.log"
+CONNECT_READY_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(slots=True)
@@ -38,6 +42,10 @@ class OpenVPNDriver(BaseDriver):
         self._process: subprocess.Popen[str] | None = None
         self._active_profile: Profile | None = None
         self._connected_at: datetime | None = None
+        self._runtime_dir: Path | None = None
+        self._config_path: Path | None = None
+        self._log_path: Path | None = None
+        cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def find_openvpn_binary(self) -> str | None:
         env_binary = os.environ.get("WATCHDOGVPN_OPENVPN_BIN")
@@ -59,7 +67,17 @@ class OpenVPNDriver(BaseDriver):
         return output
 
     def is_available(self) -> bool:
-        return self.find_openvpn_binary() is not None
+        try:
+            return bool(self.check_version())
+        except (FileNotFoundError, RuntimeError):
+            return False
+
+    def _ensure_runtime_paths(self) -> tuple[Path, Path]:
+        if self._runtime_dir is None:
+            self._runtime_dir = make_runtime_dir(RUNTIME_PREFIX)
+            self._config_path = self._runtime_dir / CONFIG_NAME
+            self._log_path = self._runtime_dir / LOG_NAME
+        return self._config_path, self._log_path  # type: ignore[return-value]
 
     def generate_openvpn_config(self, profile: Profile) -> str:
         if profile.protocol is not ProtocolType.OPENVPN:
@@ -70,12 +88,16 @@ class OpenVPNDriver(BaseDriver):
         raw_config = str(profile.config.get("raw_config") or "").strip()
         if not raw_config:
             raise ValueError("OpenVPN profile requires raw_config")
-        CONFIG_PATH.write_text(f"{raw_config}\n", encoding="utf-8")
+        config_path, _ = self._ensure_runtime_paths()
+        write_private_file(config_path, f"{raw_config}\n")
         return raw_config
 
-    def _cleanup_config(self) -> None:
-        if CONFIG_PATH.exists():
-            CONFIG_PATH.unlink()
+    def _cleanup_runtime(self) -> None:
+        if self._runtime_dir is not None and self._runtime_dir.exists():
+            shutil.rmtree(self._runtime_dir, ignore_errors=True)
+        self._runtime_dir = None
+        self._config_path = None
+        self._log_path = None
 
     def _vpn_interface_active(self, profile: Profile | None = None) -> bool:
         if not shutil.which("ip"):
@@ -102,19 +124,33 @@ class OpenVPNDriver(BaseDriver):
         if not binary:
             return False
         self.generate_openvpn_config(profile)
-        log_file = LOG_PATH.open("w", encoding="utf-8")
+        config_path, log_path = self._ensure_runtime_paths()
+        log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
-            [binary, "--config", str(CONFIG_PATH)],
+            [binary, "--config", str(config_path)],
             text=True,
             stdout=log_file,
             stderr=subprocess.STDOUT,
         )
         log_file.close()
         self._active_profile = profile
-        if self._process.poll() is None:
+        if self._wait_for_ready(profile):
             self._connected_at = datetime.now(timezone.utc)
             return True
         self._connected_at = None
+        self._active_profile = None
+        self.disconnect()
+        return False
+
+    def _wait_for_ready(self, profile: Profile) -> bool:
+        deadline = time.monotonic() + CONNECT_READY_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            process = self._process
+            if process is None or process.poll() is not None:
+                return False
+            if self._vpn_interface_active(profile):
+                return True
+            time.sleep(0.25)
         return False
 
     def disconnect(self) -> bool:
@@ -122,6 +158,7 @@ class OpenVPNDriver(BaseDriver):
         self._process = None
         self._active_profile = None
         self._connected_at = None
+        stopped = True
         try:
             if process is not None and process.poll() is None:
                 process.terminate()
@@ -129,10 +166,14 @@ class OpenVPNDriver(BaseDriver):
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait(timeout=5)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        stopped = False
+                        return False
         finally:
-            self._cleanup_config()
-        return True
+            self._cleanup_runtime()
+        return stopped
 
     def health_check(self) -> str:
         process = self._process
