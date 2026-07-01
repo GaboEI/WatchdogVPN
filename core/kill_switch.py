@@ -160,10 +160,10 @@ class KillSwitch:
                 "drop;",
                 "}",
             ],
-            self._nft_rule("ct", "state", "established,related", "accept"),
             self._nft_rule("oifname", "lo", "accept"),
             self._nft_rule("oifname", self.tunnel_interface, "accept"),
             *self._nft_dns_leak_block_rules(),
+            self._nft_rule("ct", "state", "established,related", "accept"),
         ]
         if self.allow_lan:
             commands.extend(self._nft_lan_rules())
@@ -219,21 +219,6 @@ class KillSwitch:
                 "iptables",
                 "-A",
                 WATCHDOGVPN_IPTABLES_CHAIN,
-                "-m",
-                "conntrack",
-                "--ctstate",
-                "ESTABLISHED,RELATED",
-                "-m",
-                "comment",
-                "--comment",
-                WATCHDOGVPN_COMMENT,
-                "-j",
-                "ACCEPT",
-            ],
-            [
-                "iptables",
-                "-A",
-                WATCHDOGVPN_IPTABLES_CHAIN,
                 "-o",
                 "lo",
                 "-m",
@@ -258,6 +243,23 @@ class KillSwitch:
             ],
         ]
         commands.extend(self._iptables_dns_leak_block_rules("iptables"))
+        commands.append(
+            [
+                "iptables",
+                "-A",
+                WATCHDOGVPN_IPTABLES_CHAIN,
+                "-m",
+                "conntrack",
+                "--ctstate",
+                "ESTABLISHED,RELATED",
+                "-m",
+                "comment",
+                "--comment",
+                WATCHDOGVPN_COMMENT,
+                "-j",
+                "ACCEPT",
+            ]
+        )
         if self.allow_lan:
             commands.extend(self._iptables_lan_rules("iptables"))
         commands.extend(
@@ -349,21 +351,6 @@ class KillSwitch:
                 "ip6tables",
                 "-A",
                 WATCHDOGVPN_IPTABLES_CHAIN,
-                "-m",
-                "conntrack",
-                "--ctstate",
-                "ESTABLISHED,RELATED",
-                "-m",
-                "comment",
-                "--comment",
-                WATCHDOGVPN_COMMENT,
-                "-j",
-                "ACCEPT",
-            ],
-            [
-                "ip6tables",
-                "-A",
-                WATCHDOGVPN_IPTABLES_CHAIN,
                 "-o",
                 "lo",
                 "-m",
@@ -388,6 +375,23 @@ class KillSwitch:
             ],
         ]
         commands.extend(self._iptables_dns_leak_block_rules("ip6tables"))
+        commands.append(
+            [
+                "ip6tables",
+                "-A",
+                WATCHDOGVPN_IPTABLES_CHAIN,
+                "-m",
+                "conntrack",
+                "--ctstate",
+                "ESTABLISHED,RELATED",
+                "-m",
+                "comment",
+                "--comment",
+                WATCHDOGVPN_COMMENT,
+                "-j",
+                "ACCEPT",
+            ]
+        )
         commands.extend(
             [
                 [
