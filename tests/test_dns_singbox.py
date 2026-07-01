@@ -5,6 +5,7 @@ import unittest
 from dns.models import DNSChannel, DNSChannelName, DNSMode, DNSPolicy, Resolver
 from dns.singbox import (
     DNS_HIJACK_INBOUND_TAGS,
+    FAKEIP_SERVER_TAG,
     build_dns_hijack_inbounds,
     build_dns_hijack_route,
     build_singbox_dns_config,
@@ -46,7 +47,7 @@ class SingBoxDNSConfigTests(unittest.TestCase):
         self.assertEqual(config["final"], "watchdogvpn-final-1")
         self.assertEqual(config["rules"], [
             {"outbound": "direct", "server": "watchdogvpn-direct-1"},
-            {"outbound": "vless-demo", "server": "watchdogvpn-proxy-1"},
+            {"outbound": "vless-demo", "server": FAKEIP_SERVER_TAG},
         ])
         self.assertEqual(result.channel_servers[DNSChannelName.DIRECT], (
             "watchdogvpn-direct-1",
@@ -58,6 +59,7 @@ class SingBoxDNSConfigTests(unittest.TestCase):
         self.assertEqual(servers["watchdogvpn-proxy-1"]["type"], "https")
         self.assertEqual(servers["watchdogvpn-proxy-1"]["detour"], "vless-demo")
         self.assertEqual(servers["watchdogvpn-proxy-1"]["path"], "/dns-query")
+        self.assertEqual(servers[FAKEIP_SERVER_TAG]["type"], "fakeip")
         self.assertEqual(servers["watchdogvpn-proxy-2"]["type"], "tls")
         self.assertEqual(servers["watchdogvpn-proxy-2"]["server_port"], 853)
         self.assertEqual(
@@ -91,6 +93,59 @@ class SingBoxDNSConfigTests(unittest.TestCase):
         self.assertEqual(len(result.config["servers"]), 1)
         self.assertEqual(result.config["servers"][0]["type"], "tcp")
         self.assertEqual(result.config["servers"][0]["server"], "8.8.8.8")
+
+    def test_adds_fakeip_server_for_proxy_resolution_channel(self) -> None:
+        policy = DNSPolicy(
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+            },
+            fakeip_inet4_range="198.18.0.0/15",
+            fakeip_inet6_range="fc00::/18",
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        servers = {server["tag"]: server for server in result.config["servers"]}
+        self.assertEqual(servers[FAKEIP_SERVER_TAG], {
+            "type": "fakeip",
+            "tag": FAKEIP_SERVER_TAG,
+            "inet4_range": "198.18.0.0/15",
+            "inet6_range": "fc00::/18",
+        })
+        self.assertIn(
+            {"outbound": "vless-demo", "server": FAKEIP_SERVER_TAG},
+            result.config["rules"],
+        )
+
+    def test_skips_fakeip_when_proxy_resolution_uses_proxy_dns(self) -> None:
+        policy = DNSPolicy(
+            proxy_resolution_channel="proxy",
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        servers = {server["tag"]: server for server in result.config["servers"]}
+        self.assertNotIn(FAKEIP_SERVER_TAG, servers)
+        self.assertEqual(result.config["rules"], [
+            {"outbound": "vless-demo", "server": "watchdogvpn-proxy-1"},
+        ])
 
     def test_builds_dns_hijack_inbounds_when_enabled(self) -> None:
         inbounds = build_dns_hijack_inbounds(DNSPolicy(tun_hijack=True))

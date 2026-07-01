@@ -325,7 +325,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(config["dns"]["final"], "watchdogvpn-final-1")
         self.assertEqual(config["dns"]["rules"], [
             {"outbound": "direct", "server": "watchdogvpn-direct-1"},
-            {"outbound": "vless-demo", "server": "watchdogvpn-proxy-1"},
+            {"outbound": "vless-demo", "server": "watchdogvpn-fakeip"},
         ])
         dns_inbounds = {
             inbound["tag"]: inbound
@@ -348,6 +348,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             }
         ])
         dns_servers = {server["tag"]: server for server in config["dns"]["servers"]}
+        self.assertEqual(dns_servers["watchdogvpn-fakeip"]["type"], "fakeip")
         self.assertEqual(dns_servers["watchdogvpn-direct-1"]["type"], "local")
         self.assertEqual(dns_servers["watchdogvpn-proxy-1"]["detour"], "vless-demo")
         self.assertEqual(dns_servers["watchdogvpn-final-1"]["server"], "9.9.9.9")

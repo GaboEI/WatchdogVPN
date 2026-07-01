@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
@@ -8,6 +9,9 @@ from .resolver_parser import validate_resolver_uri
 
 
 MAX_RESOLVERS_PER_CHANNEL = 4
+DEFAULT_FAKEIP_INET4_RANGE = "198.18.0.0/15"
+DEFAULT_FAKEIP_INET6_RANGE = "fc00::/18"
+ALLOWED_PROXY_RESOLUTION_CHANNELS = {"fakeip", "proxy", "direct", "final"}
 
 
 class DNSMode(str, Enum):
@@ -177,6 +181,8 @@ class DNSPolicy:
     rules_enabled: bool = False
     ecs_direct_enabled: bool = False
     proxy_resolution_channel: str = "fakeip"
+    fakeip_inet4_range: str = DEFAULT_FAKEIP_INET4_RANGE
+    fakeip_inet6_range: str = DEFAULT_FAKEIP_INET6_RANGE
 
     def __post_init__(self) -> None:
         self.mode = DNSMode(self.mode)
@@ -200,10 +206,16 @@ class DNSPolicy:
         self.test_domain = str(self.test_domain).strip().lower().rstrip(".")
         self.ttl = str(self.ttl).strip()
         self.proxy_resolution_channel = str(self.proxy_resolution_channel).strip()
+        self.fakeip_inet4_range = str(self.fakeip_inet4_range).strip()
+        self.fakeip_inet6_range = str(self.fakeip_inet6_range).strip()
         if not self.test_domain:
             raise ValueError("dns test domain must not be empty")
         if not self.ttl:
             raise ValueError("dns ttl must not be empty")
+        if self.proxy_resolution_channel not in ALLOWED_PROXY_RESOLUTION_CHANNELS:
+            raise ValueError("unsupported proxy resolution channel")
+        self._validate_ip_network(self.fakeip_inet4_range, version=4)
+        self._validate_ip_network(self.fakeip_inet6_range, version=6)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -221,6 +233,8 @@ class DNSPolicy:
             "rules_enabled": self.rules_enabled,
             "ecs_direct_enabled": self.ecs_direct_enabled,
             "proxy_resolution_channel": self.proxy_resolution_channel,
+            "fakeip_inet4_range": self.fakeip_inet4_range,
+            "fakeip_inet6_range": self.fakeip_inet6_range,
         }
 
     @classmethod
@@ -247,4 +261,19 @@ class DNSPolicy:
             proxy_resolution_channel=str(
                 data.get("proxy_resolution_channel", "fakeip")
             ),
+            fakeip_inet4_range=str(
+                data.get("fakeip_inet4_range", DEFAULT_FAKEIP_INET4_RANGE)
+            ),
+            fakeip_inet6_range=str(
+                data.get("fakeip_inet6_range", DEFAULT_FAKEIP_INET6_RANGE)
+            ),
         )
+
+    @staticmethod
+    def _validate_ip_network(value: str, version: int) -> None:
+        try:
+            network = ipaddress.ip_network(value, strict=True)
+        except ValueError as exc:
+            raise ValueError("invalid FakeIP range") from exc
+        if network.version != version:
+            raise ValueError("FakeIP range IP version mismatch")

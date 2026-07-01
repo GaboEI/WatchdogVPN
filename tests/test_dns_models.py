@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 
 from dns.models import (
+    DEFAULT_FAKEIP_INET4_RANGE,
+    DEFAULT_FAKEIP_INET6_RANGE,
     DNSChannel,
     DNSChannelName,
     DNSMode,
@@ -41,6 +43,8 @@ class DNSModelTests(unittest.TestCase):
             static_ip_enabled=True,
             rules_enabled=True,
             ecs_direct_enabled=True,
+            fakeip_inet4_range="198.18.0.0/15",
+            fakeip_inet6_range="fc00::/18",
         )
 
         restored = DNSPolicy.from_dict(policy.to_dict())
@@ -84,6 +88,23 @@ class DNSModelTests(unittest.TestCase):
                     )
                 }
             )
+
+    def test_dns_policy_has_default_fakeip_ranges(self) -> None:
+        policy = DNSPolicy()
+
+        self.assertEqual(policy.fakeip_inet4_range, DEFAULT_FAKEIP_INET4_RANGE)
+        self.assertEqual(policy.fakeip_inet6_range, DEFAULT_FAKEIP_INET6_RANGE)
+        self.assertEqual(policy.proxy_resolution_channel, "fakeip")
+
+    def test_dns_policy_rejects_invalid_proxy_resolution_channel(self) -> None:
+        with self.assertRaises(ValueError):
+            DNSPolicy(proxy_resolution_channel="ecs")
+
+    def test_dns_policy_rejects_invalid_fakeip_ranges(self) -> None:
+        with self.assertRaises(ValueError):
+            DNSPolicy(fakeip_inet4_range="fc00::/18")
+        with self.assertRaises(ValueError):
+            DNSPolicy(fakeip_inet6_range="198.18.0.0/15")
 
 
 if __name__ == "__main__":

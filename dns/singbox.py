@@ -20,6 +20,7 @@ DNS_HIJACK_INBOUND_TAGS = (
     "watchdogvpn-dns-udp-in",
     "watchdogvpn-dns-tcp-in",
 )
+FAKEIP_SERVER_TAG = "watchdogvpn-fakeip"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,9 +60,12 @@ def build_singbox_dns_config(
     if not servers:
         return None
 
+    if _fakeip_enabled(policy, channel_servers):
+        servers.append(_fakeip_server(policy))
+
     dns_config: dict[str, Any] = {
         "servers": servers,
-        "rules": _build_channel_rules(channel_servers, proxy_outbound_tag),
+        "rules": _build_channel_rules(policy, channel_servers, proxy_outbound_tag),
         "final": _final_server(channel_servers),
     }
     return SingBoxDNSConfig(config=dns_config, channel_servers=channel_servers)
@@ -169,6 +173,26 @@ def _network_server(
     }
 
 
+def _fakeip_enabled(
+    policy: DNSPolicy,
+    channel_servers: dict[DNSChannelName, tuple[str, ...]],
+) -> bool:
+    return (
+        policy.mode != DNSMode.OFF
+        and policy.proxy_resolution_channel == "fakeip"
+        and DNSChannelName.PROXY in channel_servers
+    )
+
+
+def _fakeip_server(policy: DNSPolicy) -> dict[str, Any]:
+    return {
+        "type": "fakeip",
+        "tag": FAKEIP_SERVER_TAG,
+        "inet4_range": policy.fakeip_inet4_range,
+        "inet6_range": policy.fakeip_inet6_range,
+    }
+
+
 def _resolver_needs_domain_resolver(parsed: ParsedResolver) -> bool:
     if parsed.host is None:
         return False
@@ -180,6 +204,7 @@ def _resolver_needs_domain_resolver(parsed: ParsedResolver) -> bool:
 
 
 def _build_channel_rules(
+    policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
     proxy_outbound_tag: str,
 ) -> list[dict[str, Any]]:
@@ -188,7 +213,9 @@ def _build_channel_rules(
     proxy_server = _first_tag(channel_servers, DNSChannelName.PROXY)
     if direct_server:
         rules.append({"outbound": "direct", "server": direct_server})
-    if proxy_server:
+    if _fakeip_enabled(policy, channel_servers):
+        rules.append({"outbound": proxy_outbound_tag, "server": FAKEIP_SERVER_TAG})
+    elif proxy_server:
         rules.append({"outbound": proxy_outbound_tag, "server": proxy_server})
     return rules
 
