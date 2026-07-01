@@ -319,6 +319,24 @@ Exit criteria:
 - Full regression passes.
 - Real workstation validation is recorded in `docs/v2-validation-log.md`.
 
+### Phase 10G - DNS v2 audit and debt closure
+
+Goal: audit all Phase 10 subphases before Phase 10 is considered closed.
+
+Tasks:
+- Task 10.14 - Phase 10 audit and debt closure.
+
+Exit criteria:
+- DNS v2 audit report exists.
+- Kill switch DNS/DoT leak behavior is re-audited.
+- Resolver restore and failed-apply cleanup are re-audited.
+- TUI/CLI DNS controls are re-audited for placeholder-free behavior.
+- Docs are re-audited for stale AdGuard Home or legacy DNS claims.
+- No HIGH or MEDIUM findings remain open.
+- Any LOW findings are either fixed or explicitly accepted with rationale.
+- Full regression passes.
+- Real validation log is up to date.
+
 ## Phase 10 Task Details
 
 ### Task 10.1 - DNS inventory and schema
@@ -424,6 +442,22 @@ Exit criteria:
 - Validate cleanup after failed apply.
 - Record results in `docs/v2-validation-log.md`.
 
+### Task 10.14 - Phase 10 audit and debt closure
+
+- Run a DNS-focused QA audit after all Phase 10 implementation subphases.
+- Check DNS behavior across:
+  - `auto`
+  - `off`
+  - `custom`
+  - `advanced`
+  - kill switch active
+  - failed apply
+  - disconnect
+  - uninstall/rescue path
+- Check CLI/TUI output and controls.
+- Check docs and examples.
+- Fix all HIGH/MEDIUM findings before Phase 10 is closed.
+
 ## Acceptance Criteria
 
 - [ ] `auto` mode works without asking user for DNS knowledge.
@@ -443,6 +477,7 @@ Exit criteria:
 - [ ] TUI exposes no DNS control until the underlying behavior exists.
 - [ ] `vpn_dns_rescue` remains available for recovery.
 - [ ] Real validation is added to `docs/v2-validation-log.md`.
+- [ ] Phase 10G audit completed with no open HIGH/MEDIUM findings.
 
 ## Open Questions Before Implementation
 
