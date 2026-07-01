@@ -5,6 +5,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
+from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
 from drivers.singbox_driver import SingBoxDriver
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.wg_config import parse_wg_config
@@ -286,6 +287,50 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
         config = self.driver.generate_singbox_config(profile)
         self.assertNotIn("bind_interface", config["outbounds"][0])
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_adds_dns_policy_without_changing_outbound(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+        dns_policy = DNSPolicy(
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="local")],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+            }
+        )
+
+        config = self.driver.generate_singbox_config(profile, dns_policy=dns_policy)
+
+        self.assertEqual(config["outbounds"][0]["type"], "vless")
+        self.assertEqual(config["outbounds"][0]["tag"], "vless-demo")
+        self.assertEqual(config["dns"]["final"], "watchdogvpn-final-1")
+        self.assertEqual(config["dns"]["rules"], [
+            {"outbound": "direct", "server": "watchdogvpn-direct-1"},
+            {"outbound": "vless-demo", "server": "watchdogvpn-proxy-1"},
+        ])
+        dns_servers = {server["tag"]: server for server in config["dns"]["servers"]}
+        self.assertEqual(dns_servers["watchdogvpn-direct-1"]["type"], "local")
+        self.assertEqual(dns_servers["watchdogvpn-proxy-1"]["detour"], "vless-demo")
+        self.assertEqual(dns_servers["watchdogvpn-final-1"]["server"], "9.9.9.9")
 
     @patch("drivers.singbox_driver.shutil.which", return_value="/usr/sbin/ip")
     @patch("drivers.singbox_driver.subprocess.run")

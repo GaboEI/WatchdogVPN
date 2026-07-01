@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from dns.models import DNSPolicy
+from dns.singbox import build_singbox_dns_config
 from drivers.base import BaseDriver
 from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
@@ -507,7 +509,11 @@ class SingBoxDriver(BaseDriver):
         self._append_log(f"{message}\n")
         return None
 
-    def generate_singbox_config(self, profile: Profile) -> dict[str, Any]:
+    def generate_singbox_config(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+    ) -> dict[str, Any]:
         outbound = self._protocol_to_outbound(profile)
         self._apply_dialer_options(outbound, profile)
         config = {
@@ -515,6 +521,10 @@ class SingBoxDriver(BaseDriver):
             "inbounds": self._build_inbounds(),
             "outbounds": [outbound],
         }
+        if dns_policy is not None:
+            dns_config = build_singbox_dns_config(dns_policy, outbound["tag"])
+            if dns_config is not None:
+                config["dns"] = dns_config.config
         self._write_config(config)
         return config
 
