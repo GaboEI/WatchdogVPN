@@ -1,16 +1,8 @@
-"""Persistent configuration helpers for WatchdogVPN."""
+"""Persistent configuration helpers for WatchdogVPN.
 
-from .app_config import AppConfig, DEFAULT_CONFIG
-from .profile_store import ProfileStore
-from .provider_store import ProviderLimitError, ProviderStore
-from .state_manager import DEFAULT_STATE, StateManager
+Import concrete helpers from their modules, for example
+`config.state_manager.StateManager`. Keeping this package initializer light
+prevents circular imports between data models and persistence helpers.
+"""
 
-__all__ = [
-    "AppConfig",
-    "DEFAULT_CONFIG",
-    "DEFAULT_STATE",
-    "ProfileStore",
-    "ProviderLimitError",
-    "ProviderStore",
-    "StateManager",
-]
+__all__: list[str] = []
