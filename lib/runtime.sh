@@ -5,11 +5,11 @@ install_runtime_files() {
   create_service_user adgvpn /var/lib/adguardvpn
   create_root_dir /var/log/myvpn 0755
   create_root_dir /var/lib/vpn-rotate 0700
-  create_root_dir /var/lib/watchdogvpn 0755
 
   create_config_if_missing "$ROOT_DIR/examples/adguardvpn.env.example" /etc/adguardvpn.env 0644
   create_config_if_missing "$ROOT_DIR/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
   install_config_defaults
+  migrate_watchdogvpn_shared_state
 
   install_root_file "$ROOT_DIR/bin/no_vpn" /usr/local/bin/no_vpn 0755
   install_root_file "$ROOT_DIR/bin/vpn_auth_check" /usr/local/bin/vpn_auth_check 0755
@@ -32,6 +32,41 @@ install_runtime_files() {
   install_root_file "$ROOT_DIR/networkmanager/dispatcher.d/99-vpn-rotate" /etc/NetworkManager/dispatcher.d/99-vpn-rotate 0755
   install_root_file "$ROOT_DIR/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
   install_systemd_units
+}
+
+migrate_watchdogvpn_shared_state() {
+  local source_dir="${WATCHDOGVPN_LEGACY_CONFIG_DIR:-$HOME/.config/watchdogvpn}"
+  local target_dir="${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}"
+  local marker="$target_dir/.migrated"
+  local source_uid source_gid
+
+  if [[ -e "$marker" ]]; then
+    printf '[KEEP] WatchdogVPN shared state already migrated: %s\n' "$target_dir"
+    return 0
+  fi
+  if [[ ! -d "$source_dir" ]]; then
+    printf '[SKIP] no legacy WatchdogVPN user state: %s\n' "$source_dir"
+    return 0
+  fi
+  if [[ -z "$(find "$source_dir" -mindepth 1 ! -name .migrated -print -quit)" ]]; then
+    printf '[SKIP] legacy WatchdogVPN user state is empty: %s\n' "$source_dir"
+    return 0
+  fi
+  if [[ -e "$target_dir" && ! -d "$target_dir" ]]; then
+    printf 'ERROR: WatchdogVPN shared state target is not a directory: %s\n' "$target_dir" >&2
+    return 1
+  fi
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] migrate WatchdogVPN state %s -> %s\n' "$source_dir" "$target_dir"
+    return 0
+  fi
+
+  source_uid="$(stat -c '%u' "$source_dir")"
+  source_gid="$(stat -c '%g' "$source_dir")"
+  run_step sudo install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"
+  run_step sudo cp -a --update=none "$source_dir/." "$target_dir/"
+  run_step sudo touch "$marker"
+  printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
 }
 
 refresh_installed_desktop_launcher() {
