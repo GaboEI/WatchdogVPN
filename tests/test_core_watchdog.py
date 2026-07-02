@@ -15,7 +15,6 @@ from dns.models import DNSMode, DNSPolicy
 from dns.state_manager import SystemDNSStateManager
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
-from drivers.legacy.adguard_driver import AdGuardDriver
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
@@ -157,7 +156,7 @@ class WatchdogCoreTests(unittest.TestCase):
         self.profile = Profile(
             id="ad1",
             name="DK",
-            protocol=ProtocolType.ADGUARD,
+            protocol=ProtocolType.VLESS,
             config={"location": "DK"},
             source=ProfileSource.MANUAL,
         )
@@ -170,10 +169,6 @@ class WatchdogCoreTests(unittest.TestCase):
 
     def set_desired_state(self, desired_state: str) -> None:
         self.state_manager.set("vpn_desired_state", desired_state)
-
-    def test_select_driver_routes_to_adguard(self) -> None:
-        driver = select_driver(self.profile)
-        self.assertIsInstance(driver, AdGuardDriver)
 
     def test_select_driver_routes_to_amneziawg(self) -> None:
         profile = Profile(
@@ -223,13 +218,13 @@ class WatchdogCoreTests(unittest.TestCase):
         driver = select_driver(None)
         self.assertIsInstance(driver, SingBoxDriver)
 
-    @patch.object(AdGuardDriver, "connect", return_value=True)
-    @patch.object(AdGuardDriver, "disconnect", return_value=True)
-    @patch.object(AdGuardDriver, "health_check", return_value="ok")
-    @patch.object(AdGuardDriver, "status", return_value=None)
+    @patch.object(SingBoxDriver, "connect", return_value=True)
+    @patch.object(SingBoxDriver, "disconnect", return_value=True)
+    @patch.object(SingBoxDriver, "health_check", return_value="ok")
+    @patch.object(SingBoxDriver, "status", return_value=None)
     def test_runtime_delegates_to_driver_interface(self, status_mock, health_mock, disconnect_mock, connect_mock) -> None:
         self.set_desired_state("on")
-        runtime = WatchdogRuntime(driver=AdGuardDriver(), state_manager=self.state_manager)
+        runtime = WatchdogRuntime(driver=SingBoxDriver(), state_manager=self.state_manager)
         self.assertTrue(runtime.connect(self.profile))
         self.assertEqual(runtime.health_check(), "ok")
         self.assertTrue(runtime.disconnect())
@@ -377,7 +372,7 @@ class WatchdogCoreTests(unittest.TestCase):
 
     def test_build_watchdog_returns_runtime(self) -> None:
         runtime = build_watchdog(self.profile)
-        self.assertIsInstance(runtime.driver, AdGuardDriver)
+        self.assertIsInstance(runtime.driver, SingBoxDriver)
 
     def test_disconnect_calls_driver_disconnect(self) -> None:
         self.set_desired_state("on")

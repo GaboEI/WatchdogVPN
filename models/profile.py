@@ -21,7 +21,6 @@ class ProtocolType(str, Enum):
     HTTP = "http"
     OPENVPN = "openvpn"
     OPENVPN_CLOAK = "openvpn_cloak"
-    ADGUARD = "adguard"
 
 
 class ProfileSource(str, Enum):

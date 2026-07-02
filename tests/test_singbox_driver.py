@@ -125,7 +125,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     def test_generate_singbox_config_rejects_unsupported(self, write_mock) -> None:
-        profile = self._profile(ProtocolType.ADGUARD)
+        profile = self._profile(ProtocolType.AMNEZIAWG)
         with self.assertRaises(ValueError):
             self.driver.generate_singbox_config(profile)
 

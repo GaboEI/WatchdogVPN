@@ -22,13 +22,13 @@ LOCAL_SOCKS_PROXY = "127.0.0.1:2080"
 #
 # This can't be inferred from ConnectionState.proxy_active alone: that flag
 # is not used consistently across drivers. SingBoxDriver sets it to mean
-# "the local SOCKS proxy is up", but AdGuardDriver sets it to mean "VPN
-# status is up" even though AdGuard never listens on LOCAL_SOCKS_PROXY -
-# routing it through the proxy-verification path would misreport a healthy
-# AdGuard connection as "degraded". Membership here is necessary but not
-# sufficient: a driver in PROXY_BASED_MODES with proxy_active=False (e.g. a
-# future sing-box TUN connection mode, Phase 11) still falls through to
-# direct/TUN verification below instead of being reported as "down".
+# "the local SOCKS proxy is up", but a TUN-based driver (OpenVPN,
+# OpenVPN+Cloak, AmneziaWG) could in principle set it to mean something else
+# entirely - routing those through the proxy-verification path would
+# misreport a healthy connection as "degraded". Membership here is necessary
+# but not sufficient: a driver in PROXY_BASED_MODES with proxy_active=False
+# (e.g. a future sing-box TUN connection mode, Phase 11) still falls through
+# to direct/TUN verification below instead of being reported as "down".
 PROXY_BASED_MODES = frozenset({"sing-box"})
 
 VerifyFn = Callable[[bool], "tuple[bool, str | None]"]

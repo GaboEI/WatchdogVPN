@@ -27,7 +27,6 @@ class DNSCapabilitiesTests(unittest.TestCase):
             ProtocolType.AMNEZIAWG,
             ProtocolType.OPENVPN,
             ProtocolType.OPENVPN_CLOAK,
-            ProtocolType.ADGUARD,
         ):
             with self.subTest(protocol=protocol):
                 self.assertFalse(supports_fakeip(protocol))

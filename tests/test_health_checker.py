@@ -109,12 +109,13 @@ class HealthCheckerTests(unittest.TestCase):
         self.assertEqual(verify_calls, [False])
 
     def test_uses_direct_verification_for_non_singbox_mode_even_if_proxy_active_flag_is_set(self) -> None:
-        # Regression: AdGuardDriver.status() sets proxy_active=True to mean
-        # "VPN is up", not "a local SOCKS proxy is listening" - only
-        # mode == "sing-box" should trigger proxy-based verification.
+        # Regression: a non-sing-box driver could in principle set
+        # proxy_active=True to mean "VPN is up" rather than "a local SOCKS
+        # proxy is listening" - only mode == "sing-box" should trigger
+        # proxy-based verification.
         driver = StubDriver(
             "ok",
-            ConnectionState(status="connected", mode="adguard", proxy_active=True, tun_active=True),
+            ConnectionState(status="connected", mode="openvpn", proxy_active=True, tun_active=True),
         )
         verify_calls: list[bool] = []
 
@@ -187,21 +188,6 @@ class HealthCheckerTests(unittest.TestCase):
             driver,
             verify=lambda via_proxy: (True, None),
         )
-
-        self.assertEqual(result, "ok")
-
-    def test_real_adguard_driver_healthy_connection_reports_ok(self) -> None:
-        from drivers.legacy.adguard_driver import AdGuardDriver
-
-        driver = AdGuardDriver()
-        with patch.object(AdGuardDriver, "health_check", return_value="ok"), patch.object(
-            AdGuardDriver, "_truth_data", return_value={"STATUS": "UP", "TUN": "UP"}
-        ):
-            result = health_checker.check(
-                make_profile(),
-                driver,
-                verify=lambda via_proxy: (True, "203.0.113.9"),
-            )
 
         self.assertEqual(result, "ok")
 

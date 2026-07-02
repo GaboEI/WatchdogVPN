@@ -14,7 +14,6 @@ from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager
 from core.kill_switch import KillSwitch
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
-from drivers.legacy.adguard_driver import AdGuardDriver
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
@@ -31,7 +30,6 @@ from rules.rule_store import RuleStore
 LOGGER = logging.getLogger(__name__)
 MANAGED_DRIVER_TYPES = (
     AmneziaWGDriver,
-    AdGuardDriver,
     OpenVPNCloakDriver,
     OpenVPNDriver,
     SingBoxDriver,
@@ -43,8 +41,6 @@ def select_driver(profile: Profile | None = None) -> BaseDriver:
         return SingBoxDriver()
     if profile.protocol is ProtocolType.AMNEZIAWG:
         return AmneziaWGDriver()
-    if profile.protocol is ProtocolType.ADGUARD:
-        return AdGuardDriver()
     if profile.protocol is ProtocolType.OPENVPN:
         return OpenVPNDriver()
     if profile.protocol is ProtocolType.OPENVPN_CLOAK:

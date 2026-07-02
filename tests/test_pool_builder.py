@@ -18,7 +18,6 @@ class PoolBuilderTests(unittest.TestCase):
         self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
         self.provider_store = ProviderStore(Path(self.tmpdir.name) / "providers.json")
         self.config = {
-            "adguard": {"enabled": False},
             "rotation": {"health_status_cooldown_seconds": 300},
         }
 
@@ -64,24 +63,6 @@ class PoolBuilderTests(unittest.TestCase):
         pool = build_pool(self.profile_store, self.provider_store, self.config)
 
         self.assertEqual(pool, [])
-
-    def test_adguard_profile_excluded_when_global_switch_off(self) -> None:
-        profile = self._manual_profile(protocol=ProtocolType.ADGUARD)
-        self.profile_store.add(profile)
-        self.config["adguard"]["enabled"] = False
-
-        pool = build_pool(self.profile_store, self.provider_store, self.config)
-
-        self.assertEqual(pool, [])
-
-    def test_adguard_profile_included_when_global_switch_on_and_opted_in(self) -> None:
-        profile = self._manual_profile(protocol=ProtocolType.ADGUARD)
-        self.profile_store.add(profile)
-        self.config["adguard"]["enabled"] = True
-
-        pool = build_pool(self.profile_store, self.provider_store, self.config)
-
-        self.assertEqual([p.id for p in pool], [profile.id])
 
     def test_subscription_node_excluded_when_provider_rotation_disabled(self) -> None:
         provider = Provider(id="prov1", name="Prov", url="https://example.test/sub", rotation_enabled=False)
