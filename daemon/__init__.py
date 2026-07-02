@@ -1,0 +1,1 @@
+"""WatchdogVPN daemon package."""
