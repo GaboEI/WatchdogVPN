@@ -2,8 +2,8 @@
 set -euo pipefail
 
 CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}"
-DEFAULT_BACKEND="adguard"
-DEFAULT_MODE="adguard"
+DEFAULT_BACKEND="custom-vps"
+DEFAULT_MODE="custom-vps"
 
 usage() {
   cat <<'USAGE'
@@ -19,9 +19,12 @@ Uso:
   vpn_backend configured
 
 Contrato:
-  "adguard" usa AdGuard VPN CLI.
-  "custom-vps" es experimental y controla un servicio local configurado por el
-  usuario. No guarda secretos ni instala protocolos por si solo.
+  "custom-vps" es el backend por defecto para instalaciones nuevas: es
+  experimental y controla un servicio local configurado por el usuario. No
+  guarda secretos ni instala protocolos por si solo.
+  "adguard" sigue siendo un valor aceptado solo por compatibilidad con
+  instalaciones existentes que ya lo tenian configurado; el instalador ya no
+  lo ofrece ni lo instala.
 USAGE
 }
 

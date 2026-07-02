@@ -9,8 +9,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/distro.sh"
 # shellcheck source=lib/packages.sh
 . "$ROOT_DIR/lib/packages.sh"
-# shellcheck source=lib/adguard_vpn_cli.sh
-. "$ROOT_DIR/lib/adguard_vpn_cli.sh"
 # shellcheck source=lib/install_files.sh
 . "$ROOT_DIR/lib/install_files.sh"
 # shellcheck source=lib/config.sh
@@ -30,9 +28,9 @@ ASSUME_YES=0
 RUN_DOCTOR=1
 INSTALL_DESKTOP=""
 INSTALL_CONKY=""
-BACKEND_MODE="adguard"
-BACKEND_ACTIVE="adguard"
-CUSTOM_VPS_ENABLED="false"
+BACKEND_MODE="custom-vps"
+BACKEND_ACTIVE="custom-vps"
+CUSTOM_VPS_ENABLED="true"
 CUSTOM_VPS_NAME=""
 CUSTOM_VPS_HOST=""
 CUSTOM_VPS_SSH_USER=""
@@ -41,8 +39,7 @@ CUSTOM_VPS_PROTOCOL=""
 CUSTOM_VPS_PROFILE_PATH=""
 CUSTOM_VPS_SERVICE_NAME=""
 CUSTOM_VPS_INTERFACE=""
-ENABLE_ADGUARD_BACKEND=1
-ENABLE_VPN_AUTOMATION=1
+ENABLE_VPN_AUTOMATION=0
 PATH_UPDATED=0
 
 usage() {
@@ -54,17 +51,15 @@ Usage:
 
 Options:
   --dry-run       Show what would be installed without changing the system.
-  --yes           Use product defaults: backend AdGuard, desktop on, Conky off.
+  --yes           Use product defaults: Custom VPS backend, desktop on, Conky off.
   --skip-doctor   Do not run the read-only preflight first.
   --help          Show this help.
 
 What this installer manages:
   - WatchdogVPN runtime commands and privileged scripts.
   - WatchdogVPN systemd units and timers.
-  - Backend selection for AdGuard VPN, Custom VPS or both.
+  - Custom VPS backend configuration.
   - Optional desktop launcher and Conky integration.
-
-It does not remove the official AdGuard VPN CLI or account/license state.
 USAGE
 }
 
@@ -121,56 +116,17 @@ prompt_yes_no() {
 }
 
 prompt_backend_mode() {
-  local answer
+  BACKEND_MODE="custom-vps"
+  BACKEND_ACTIVE="custom-vps"
+  CUSTOM_VPS_ENABLED="true"
+  ENABLE_VPN_AUTOMATION=0
 
   if ((ASSUME_YES == 1)); then
-    BACKEND_MODE="adguard"
-    BACKEND_ACTIVE="adguard"
-    CUSTOM_VPS_ENABLED="false"
-    ENABLE_ADGUARD_BACKEND=1
-    ENABLE_VPN_AUTOMATION=1
     return 0
   fi
 
-  printf '\nSelect VPN backend:\n'
-  printf '  1. AdGuard VPN\n'
-  printf '  2. Custom VPS\n'
-  printf '  3. Both\n'
-  printf '\n'
-
-  while true; do
-    read -r -p "Backend choice [1/2/3, default 1]: " answer
-    answer="${answer:-1}"
-    case "$answer" in
-      1|adguard|AdGuard|ADGUARD)
-        BACKEND_MODE="adguard"
-        BACKEND_ACTIVE="adguard"
-        CUSTOM_VPS_ENABLED="false"
-        ENABLE_ADGUARD_BACKEND=1
-        ENABLE_VPN_AUTOMATION=1
-        return 0
-        ;;
-      2|custom-vps|custom|vps|VPS)
-        BACKEND_MODE="custom-vps"
-        BACKEND_ACTIVE="custom-vps"
-        CUSTOM_VPS_ENABLED="true"
-        ENABLE_ADGUARD_BACKEND=0
-        ENABLE_VPN_AUTOMATION=0
-        printf 'Custom VPS backend setup is experimental and uses a user-configured local service.\n'
-        printf 'No passwords, private keys or server secrets will be requested.\n'
-        return 0
-        ;;
-      3|both|Both|BOTH)
-        BACKEND_MODE="both"
-        BACKEND_ACTIVE="adguard"
-        CUSTOM_VPS_ENABLED="true"
-        ENABLE_ADGUARD_BACKEND=1
-        ENABLE_VPN_AUTOMATION=1
-        printf 'Both mode keeps AdGuard active now and prepares Custom VPS config for later.\n'
-        return 0
-        ;;
-    esac
-  done
+  printf '\nWatchdogVPN backend: Custom VPS (a user-configured local service).\n'
+  printf 'No passwords, private keys or server secrets will be requested.\n'
 }
 
 prompt_text() {
@@ -328,55 +284,6 @@ validate_repo_runtime() {
   ok "repository runtime validated"
 }
 
-auth_state() {
-  local raw
-  raw="$(ADGUARDVPN_CLI="${ADGUARDVPN_CLI:-/usr/local/bin/adguardvpn-cli}" "$ROOT_DIR/bin/vpn_auth_check" 2>/dev/null || true)"
-  printf '%s\n' "$raw" | awk -F= '$1 == "AUTH" {print $2; exit}'
-}
-
-auth_detail() {
-  local raw
-  raw="$(ADGUARDVPN_CLI="${ADGUARDVPN_CLI:-/usr/local/bin/adguardvpn-cli}" "$ROOT_DIR/bin/vpn_auth_check" 2>/dev/null || true)"
-  printf '%s\n' "$raw"
-}
-
-ensure_adguard_service_login() {
-  local state
-  state="$(auth_state)"
-
-  if [[ "$state" == "OK" ]]; then
-    ok "AdGuard VPN service user authenticated"
-    return 0
-  fi
-
-  warn "AdGuard VPN service user is not authenticated"
-  printf 'WatchdogVPN runs AdGuard VPN as user: adgvpn\n'
-  printf 'The service user must log in once before automatic VPN recovery can work.\n'
-
-  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] sudo -u adgvpn -H /usr/local/bin/adguardvpn-cli login\n'
-    return 0
-  fi
-
-  if prompt_yes_no "Log in to AdGuard VPN now as adgvpn?" yes; then
-    sudo -u adgvpn -H "${ADGUARDVPN_CLI:-/usr/local/bin/adguardvpn-cli}" login
-  else
-    fail "AdGuard VPN login for adgvpn is required"
-    printf 'Run manually:\n'
-    printf '  sudo -u adgvpn -H /usr/local/bin/adguardvpn-cli login\n'
-    exit 1
-  fi
-
-  state="$(auth_state)"
-  if [[ "$state" != "OK" ]]; then
-    fail "AdGuard VPN service user is still not authenticated"
-    auth_detail
-    exit 1
-  fi
-
-  ok "AdGuard VPN service user authenticated"
-}
-
 install_optional_integrations() {
   if [[ "$INSTALL_CONKY" == "1" ]]; then
     if [[ -n "${DISTRO_CONKY_PACKAGE:-}" ]] && ! have_cmd conky; then
@@ -400,56 +307,8 @@ wait_for_services() {
   sleep 8
 }
 
-truth_status() {
-  /usr/local/bin/vpn_truth_check 2>/dev/null | awk -F= '$1 == "STATUS" {print $2; exit}'
-}
-
-wait_for_vpn_truth() {
-  local timeout="${1:-30}" elapsed=0 status=""
-
-  while ((elapsed < timeout)); do
-    status="$(truth_status || true)"
-    [[ "$status" == "UP" ]] && return 0
-    sleep 3
-    elapsed=$((elapsed + 3))
-  done
-
-  [[ -n "$status" ]] && printf '%s\n' "$status"
-  return 1
-}
-
 settle_vpn_after_install() {
-  local status=""
-
-  if [[ "$ENABLE_ADGUARD_BACKEND" != "1" ]]; then
-    printf '[SKIP] AdGuard VPN settle check; selected backend is %s\n' "$BACKEND_MODE"
-    return 0
-  fi
-
-  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] validate VPN tunnel after install\n'
-    return 0
-  fi
-
-  print_section "VPN settle check"
-  if wait_for_vpn_truth 30 >/dev/null; then
-    ok "VPN truth state is UP"
-    return 0
-  fi
-
-  status="$(truth_status || true)"
-  if [[ "$status" == "DEGRADED" ]]; then
-    warn "VPN truth state is DEGRADED after initial service start"
-    warn "restarting adguardvpn.service once before final validation"
-    sudo systemctl restart adguardvpn.service || true
-    if wait_for_vpn_truth 30 >/dev/null; then
-      ok "VPN truth state recovered after service restart"
-      return 0
-    fi
-    status="$(truth_status || true)"
-  fi
-
-  warn "VPN truth state after install: ${status:-UNKNOWN}"
+  printf '[SKIP] automatic VPN settle check; selected backend is %s\n' "$BACKEND_MODE"
   printf 'If the dashboard stays degraded, reboot once and rerun:\n'
   printf '  cd %s\n' "$ROOT_DIR"
   printf '  ./doctor.sh\n'
@@ -457,31 +316,9 @@ settle_vpn_after_install() {
 }
 
 post_install_validation() {
-  local doctor_rc=0
-
-  if [[ "$ENABLE_ADGUARD_BACKEND" != "1" ]]; then
-    printf '\n== Final validation ==\n'
-    printf '[SKIP] AdGuard runtime validation; selected backend is %s\n' "$BACKEND_MODE"
-    printf '[INFO] Custom VPS backend is experimental and controlled through custom_vps.service_name.\n'
-    return 0
-  fi
-
-  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] ./doctor.sh\n'
-    return 0
-  fi
-
   printf '\n== Final validation ==\n'
-  "$ROOT_DIR/doctor.sh" || doctor_rc=$?
-
-  if ((doctor_rc != 0)); then
-    fail "installation finished with validation errors"
-    printf 'Review the output above. You can rerun diagnostics with:\n'
-    printf '  cd %s\n' "$ROOT_DIR"
-    printf '  ./doctor.sh\n'
-    printf '  vpnctl status\n'
-    exit 1
-  fi
+  printf '[SKIP] automatic runtime validation; selected backend is %s\n' "$BACKEND_MODE"
+  printf '[INFO] Custom VPS backend is experimental and controlled through custom_vps.service_name.\n'
 }
 
 final_report() {
@@ -489,11 +326,7 @@ final_report() {
   print_field "TUI command" "VPN"
   print_field "Diagnostics" "./doctor.sh"
   print_field "Runtime status" "vpnctl status"
-  if [[ "$ENABLE_ADGUARD_BACKEND" == "1" ]]; then
-    print_field "Service status" "systemctl status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer --no-pager"
-  else
-    print_field "Backend status" "watchdogvpn backend status"
-  fi
+  print_field "Backend status" "watchdogvpn backend status"
 
   print_section "Next steps"
   printf '1. Open the TUI with: VPN\n'
@@ -541,12 +374,6 @@ validate_required_commands
 prompt_backend_mode
 prompt_custom_vps_config
 
-if [[ "$ENABLE_ADGUARD_BACKEND" == "1" ]]; then
-  install_official_adguard_vpn_cli
-else
-  printf '[SKIP] AdGuard VPN CLI installation; selected backend is %s\n' "$BACKEND_MODE"
-fi
-
 if [[ "$CUSTOM_VPS_ENABLED" == "true" ]]; then
   install_official_singbox
 fi
@@ -579,12 +406,6 @@ validate_repo_runtime
 print_section "Install runtime"
 install_runtime_files
 apply_backend_install_selection
-print_section "AdGuard VPN login"
-if [[ "$ENABLE_ADGUARD_BACKEND" == "1" ]]; then
-  ensure_adguard_service_login
-else
-  printf '[SKIP] AdGuard VPN login; selected backend is %s\n' "$BACKEND_MODE"
-fi
 print_section "Systemd verification"
 verify_systemd_units
 print_section "Optional integrations"

@@ -69,9 +69,17 @@ make_cmd "$tmpdir/vpn_notify" \
 
 STATE_FILE="$tmpdir/runtime-state"
 
+BACKEND_CONFIG_FILE="$tmpdir/config.toml"
+cat >"$BACKEND_CONFIG_FILE" <<'EOF'
+[backend]
+mode = "adguard"
+active = "adguard"
+EOF
+
 run_vpnctl() {
   PATH="$tmpdir:$PATH" \
   WATCHDOGVPN_MANUAL_STATE_FILE="$STATE_FILE" \
+  WATCHDOGVPN_CONFIG_FILE="$BACKEND_CONFIG_FILE" \
   VPNCTL_MANUAL_STATE_BIN="$MANUAL_STATE" \
   VPNCTL_TRUTH_BIN="$tmpdir/truth_down" \
   VPNCTL_BACKEND_BIN="$ROOT_DIR/bin/vpn_backend" \

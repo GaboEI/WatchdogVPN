@@ -17,12 +17,12 @@ assert_contains() {
 }
 
 output="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/missing.toml" "$SCRIPT" status)"
-assert_contains "$output" "MODE=adguard"
-assert_contains "$output" "BACKEND=adguard"
+assert_contains "$output" "MODE=custom-vps"
+assert_contains "$output" "BACKEND=custom-vps"
 assert_contains "$output" "CUSTOM_VPS_ENABLED=false"
-assert_contains "$output" "IMPLEMENTED=true"
-assert_contains "$output" "SUPPORTS_ROTATION=true"
-assert_contains "$output" "TRUTH_INTERFACE=tun0"
+assert_contains "$output" "IMPLEMENTED=false"
+assert_contains "$output" "SUPPORTS_ROTATION=false"
+assert_contains "$output" "TRUTH_INTERFACE=unknown"
 
 cat >"$tmpdir/config.toml" <<'EOF'
 [backend]

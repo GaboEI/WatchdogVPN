@@ -15,9 +15,10 @@ Uso:
   vpn_auth_check --help
 
 Estados:
-  AUTH=OK       La sesion de AdGuard VPN del usuario de servicio esta vigente.
+  AUTH=OK       La sesion del backend VPN del usuario de servicio esta vigente.
   AUTH=EXPIRED  El CLI pide login o devuelve error de autenticacion.
-  AUTH=UNKNOWN  No se pudo comprobar de forma confiable.
+  AUTH=UNKNOWN  No se pudo comprobar de forma confiable (o el backend activo
+                no usa un CLI de terceros con sesion propia).
 USAGE
 }
 
