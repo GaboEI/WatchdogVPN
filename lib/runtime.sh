@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PYTHON_PACKAGE_DIR="${PYTHON_PACKAGE_DIR:-/usr/local/lib/watchdogvpn}"
+PYTHON_RUNTIME_PACKAGES=(
+  cli
+  config
+  core
+  daemon
+  dns
+  drivers
+  models
+  parsers
+  providers
+  rotation
+  rules
+)
+
 install_runtime_files() {
   create_service_user adgvpn /var/lib/adguardvpn
   create_system_user_no_home watchdogvpn
@@ -11,6 +26,7 @@ install_runtime_files() {
   create_config_if_missing "$ROOT_DIR/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
   install_config_defaults
   migrate_watchdogvpn_shared_state
+  install_python_package_tree
 
   install_root_file "$ROOT_DIR/bin/no_vpn" /usr/local/bin/no_vpn 0755
   install_root_file "$ROOT_DIR/bin/vpn_auth_check" /usr/local/bin/vpn_auth_check 0755
@@ -20,9 +36,9 @@ install_runtime_files() {
   install_root_file "$ROOT_DIR/bin/vpn_notify" /usr/local/bin/vpn_notify 0755
   install_root_file "$ROOT_DIR/bin/vpn_truth_check" /usr/local/bin/vpn_truth_check 0755
   install_root_file "$ROOT_DIR/bin/vpnctl" /usr/local/bin/vpnctl 0755
-  install_root_file "$ROOT_DIR/bin/watchdog" /usr/local/bin/watchdog 0755
+  install_python_module_wrapper /usr/local/bin/watchdog cli.main
   install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
-  install_root_file "$ROOT_DIR/bin/watchdogvpn-daemon" /usr/local/bin/watchdogvpn-daemon 0755
+  install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main
 
   install_root_file "$ROOT_DIR/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
   install_root_file "$ROOT_DIR/sbin/vpn_rotate.sh" /usr/local/sbin/vpn_rotate.sh 0700
@@ -35,6 +51,38 @@ install_runtime_files() {
   install_root_file "$ROOT_DIR/networkmanager/dispatcher.d/99-vpn-rotate" /etc/NetworkManager/dispatcher.d/99-vpn-rotate 0755
   install_root_file "$ROOT_DIR/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
   install_systemd_units
+}
+
+install_python_module_wrapper() {
+  local dest="$1" module="$2" tmp quoted_root
+  tmp="$(mktemp)"
+  printf -v quoted_root '%q' "$PYTHON_PACKAGE_DIR"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n\n'
+    printf 'ROOT_DIR=%s\n' "$quoted_root"
+    printf 'export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"\n'
+    printf 'exec python3 -m %s "$@"\n' "$module"
+  } >"$tmp"
+  install_root_file "$tmp" "$dest" 0755
+  rm -f "$tmp"
+}
+
+install_python_package_tree() {
+  local dest="${1:-$PYTHON_PACKAGE_DIR}" package
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] install Python runtime packages to %s\n' "$dest"
+    return 0
+  fi
+  backup_path "$dest"
+  run_step sudo rm -rf -- "$dest"
+  run_step sudo install -d -m 0755 -o root -g root "$dest"
+  for package in "${PYTHON_RUNTIME_PACKAGES[@]}"; do
+    run_step sudo cp -a "$ROOT_DIR/$package" "$dest/"
+  done
+  run_step sudo chown -R root:root "$dest"
+  run_step sudo find "$dest" -type d -exec chmod 0755 {} +
+  run_step sudo find "$dest" -type f -exec chmod 0644 {} +
 }
 
 migrate_watchdogvpn_shared_state() {

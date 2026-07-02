@@ -73,6 +73,8 @@ class WatchdogIPCClient:
                 raise UnexpectedDaemonResponseError() from exc
             except EOFError as exc:
                 raise UnexpectedDaemonResponseError() from exc
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                raise UnexpectedDaemonResponseError() from exc
 
     def events(self) -> Iterator[Event]:
         with self._connect(self.event_socket_path) as sock:
