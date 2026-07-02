@@ -109,6 +109,32 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("profile not found: missing", result.stderr)
 
+    def test_profile_list_persistent_validation_error_has_no_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profiles_file = Path(tmp) / "profiles.json"
+            profiles_file.write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "bad",
+                            "name": "bad",
+                            "protocol": "vless",
+                            "config": {},
+                            "source": "manual",
+                            "failure_count": 1,
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(["profile", "list", "--json"], tmp, check=False)
+
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(result.returncode, 70)
+            self.assertIn("profile contains unsupported fields: failure_count", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_profile_add_clipboard_uses_manual_provider(self) -> None:
         profile = Profile(
             id="clip-demo",

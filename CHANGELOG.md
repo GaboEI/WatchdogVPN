@@ -47,6 +47,9 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   URI port errors, explicit loopback endpoint rejection, HTML subscription
   detection, clearer zero-node subscription errors, explicit empty sing-box/Clash
   parser failures, and WireGuard runtime-validation metadata.
+- Harden CLI persistent validation error handling before Phase 11 so malformed
+  persisted stores report stable `error: ...` output instead of Python
+  tracebacks, including JSON command paths.
 - Respect the global rotation enable flag during automatic recovery, report
   unavailable rotation separately from failed candidates, and apply configured
   recovery backoff limits at runtime.

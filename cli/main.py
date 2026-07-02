@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from config.dns_policy_store import DNSPolicyStore
+from config.persistence import PersistentStoreError
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
 from dns.hijack import DNSHijackController, DNSHijackError
@@ -50,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as exc:
         _error(str(exc))
         return 66
+    except PersistentStoreError as exc:
+        _error(str(exc))
+        return 70
     except (DNSHijackError, DNSStateError, OSError, ValueError) as exc:
         _error(str(exc))
         return 70
