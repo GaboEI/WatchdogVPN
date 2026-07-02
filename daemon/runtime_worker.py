@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import queue
+import threading
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from daemon.event_bus import EventBus
+from daemon.protocol import (
+    COMMAND_CONNECT,
+    COMMAND_DISCONNECT,
+    COMMAND_ROTATE,
+    COMMAND_STATUS,
+    EVENT_ROTATION,
+    EVENT_STATE_CHANGED,
+    ALLOWED_COMMANDS,
+    Event,
+    Response,
+    UnknownCommandError,
+)
+from models.connection_state import ConnectionState
+from models.profile import Profile
+
+
+class RuntimeLike(Protocol):
+    profile_store: Any
+
+    def connect(self, profile: Profile) -> bool:
+        ...
+
+    def disconnect(self) -> bool:
+        ...
+
+    def status(self) -> ConnectionState:
+        ...
+
+    def rotate_now(self, force: bool = False) -> ConnectionState:
+        ...
+
+
+_STOP = object()
+
+
+@dataclass(slots=True)
+class WorkerRequest:
+    command: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    response_queue: "queue.Queue[Response]" = field(default_factory=queue.Queue)
+
+
+class RuntimeWorker:
+    def __init__(self, runtime: RuntimeLike, event_bus: EventBus | None = None) -> None:
+        self.runtime = runtime
+        self.event_bus = event_bus or EventBus()
+        self._queue: "queue.Queue[WorkerRequest | object]" = queue.Queue()
+        self._thread = threading.Thread(target=self._run, name="watchdogvpn-runtime-worker", daemon=True)
+        self._started = threading.Event()
+        self._stopped = threading.Event()
+
+    def start(self) -> None:
+        if self._thread.is_alive():
+            return
+        self._thread.start()
+        self._started.wait(timeout=5.0)
+
+    def stop(self, timeout: float | None = 5.0) -> None:
+        if not self._thread.is_alive():
+            return
+        self._queue.put(_STOP)
+        self._thread.join(timeout=timeout)
+
+    def submit(
+        self,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        timeout: float | None = 30.0,
+    ) -> Response:
+        request = WorkerRequest(command=command, payload=dict(payload or {}))
+        self.submit_request(request)
+        return request.response_queue.get(timeout=timeout)
+
+    def submit_request(self, request: WorkerRequest) -> None:
+        if not self._thread.is_alive():
+            raise RuntimeError("runtime worker is not running")
+        self._queue.put(request)
+
+    def is_running(self) -> bool:
+        return self._thread.is_alive() and not self._stopped.is_set()
+
+    def _run(self) -> None:
+        self._started.set()
+        try:
+            while True:
+                item = self._queue.get()
+                if item is _STOP:
+                    return
+                if not isinstance(item, WorkerRequest):
+                    continue
+                item.response_queue.put(self._handle_request(item))
+        finally:
+            self._stopped.set()
+
+    def _handle_request(self, request: WorkerRequest) -> Response:
+        try:
+            if request.command not in ALLOWED_COMMANDS:
+                raise UnknownCommandError(f"unknown command: {request.command}")
+            if request.command == COMMAND_CONNECT:
+                return self._handle_connect(request.payload)
+            if request.command == COMMAND_DISCONNECT:
+                return self._handle_disconnect()
+            if request.command == COMMAND_STATUS:
+                return self._handle_status()
+            if request.command == COMMAND_ROTATE:
+                return self._handle_rotate(request.payload)
+            raise UnknownCommandError(f"unknown command: {request.command}")
+        except Exception as exc:
+            return Response(ok=False, error=str(exc))
+
+    def _handle_connect(self, payload: dict[str, Any]) -> Response:
+        profile_id = _require_string(payload.get("profile_id"), "profile_id")
+        profile = self.runtime.profile_store.get(profile_id)
+        if profile is None:
+            return Response(ok=False, error=f"profile not found: {profile_id}")
+        connected = self.runtime.connect(profile)
+        state = self.runtime.status()
+        state_payload = _state_payload(state)
+        self._broadcast_state(state_payload)
+        return Response(
+            ok=connected,
+            payload={
+                "connected": connected,
+                "profile_id": profile.id,
+                "state": state_payload,
+            },
+            error=None if connected else "connect failed",
+        )
+
+    def _handle_disconnect(self) -> Response:
+        disconnected = self.runtime.disconnect()
+        state = self.runtime.status()
+        state_payload = _state_payload(state)
+        self._broadcast_state(state_payload)
+        return Response(
+            ok=disconnected,
+            payload={
+                "disconnected": disconnected,
+                "state": state_payload,
+            },
+            error=None if disconnected else "disconnect failed",
+        )
+
+    def _handle_status(self) -> Response:
+        return Response(ok=True, payload={"state": _state_payload(self.runtime.status())})
+
+    def _handle_rotate(self, payload: dict[str, Any]) -> Response:
+        force = payload.get("force", False)
+        if not isinstance(force, bool):
+            return Response(ok=False, error="force must be a boolean")
+        state = self.runtime.rotate_now(force=force)
+        state_payload = _state_payload(state)
+        self.event_bus.broadcast(Event(EVENT_ROTATION, state_payload))
+        self._broadcast_state(state_payload)
+        return Response(ok=True, payload={"state": state_payload})
+
+    def _broadcast_state(self, state_payload: dict[str, Any]) -> None:
+        self.event_bus.broadcast(Event(EVENT_STATE_CHANGED, state_payload))
+
+
+def _state_payload(state: ConnectionState) -> dict[str, Any]:
+    return state.to_dict()
+
+
+def _require_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value.strip()
