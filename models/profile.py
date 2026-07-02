@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from config.persistence import reject_unknown_keys, strict_bool
+
 
 class ProtocolType(str, Enum):
     VLESS = "vless"
@@ -25,6 +27,22 @@ class ProtocolType(str, Enum):
 class ProfileSource(str, Enum):
     MANUAL = "manual"
     SUBSCRIPTION = "subscription"
+
+
+PROFILE_FIELDS = {
+    "id",
+    "name",
+    "protocol",
+    "config",
+    "source",
+    "provider_id",
+    "in_rotation_pool",
+    "enabled",
+    "created_at",
+    "last_used",
+    "last_health_check",
+    "health_status",
+}
 
 
 def _dt_to_iso(value: datetime | None) -> str | None:
@@ -63,15 +81,19 @@ class Profile:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Profile":
+        reject_unknown_keys(data, PROFILE_FIELDS, "profile")
+        config = data.get("config", {})
+        if not isinstance(config, dict):
+            raise ValueError("profile config must be an object")
         return cls(
             id=str(data["id"]),
             name=str(data["name"]),
             protocol=ProtocolType(data["protocol"]),
-            config=dict(data.get("config", {})),
+            config=dict(config),
             source=ProfileSource(data["source"]),
             provider_id=data.get("provider_id"),
-            in_rotation_pool=bool(data.get("in_rotation_pool", False)),
-            enabled=bool(data.get("enabled", True)),
+            in_rotation_pool=strict_bool(data.get("in_rotation_pool", False), "profile.in_rotation_pool"),
+            enabled=strict_bool(data.get("enabled", True), "profile.enabled"),
             created_at=_dt_from_iso(data.get("created_at")) or datetime.utcnow(),
             last_used=_dt_from_iso(data.get("last_used")),
             last_health_check=_dt_from_iso(data.get("last_health_check")),

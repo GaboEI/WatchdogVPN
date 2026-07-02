@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+from config.persistence import reject_unknown_keys, strict_bool, strict_int
+
 from .resolver_parser import validate_resolver_uri
 
 
@@ -21,6 +23,27 @@ DNS_RULE_PATTERN_TYPES = {
     "regex",
     "geosite",
     "rule_set",
+}
+RESOLVER_FIELDS = {"uri", "label", "enabled", "metadata"}
+DNS_CHANNEL_FIELDS = {"name", "resolvers", "strategy"}
+STATIC_IP_ENTRY_FIELDS = {"domain", "ip", "enabled"}
+DNS_RULE_FIELDS = {"id", "pattern", "action", "channel", "enabled", "priority"}
+DNS_POLICY_FIELDS = {
+    "mode",
+    "channels",
+    "static_ips",
+    "rules",
+    "test_domain",
+    "ttl",
+    "tun_hijack",
+    "resolve_inbound_domains",
+    "static_ip_enabled",
+    "rules_enabled",
+    "ecs_direct_enabled",
+    "ecs_direct_subnet",
+    "proxy_resolution_channel",
+    "fakeip_inet4_range",
+    "fakeip_inet6_range",
 }
 
 
@@ -67,11 +90,15 @@ class Resolver:
     def from_dict(cls, data: dict[str, Any] | str) -> "Resolver":
         if isinstance(data, str):
             return cls(uri=data)
+        reject_unknown_keys(data, RESOLVER_FIELDS, "resolver")
+        metadata = data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise ValueError("resolver metadata must be an object")
         return cls(
             uri=str(data["uri"]),
             label=data.get("label"),
-            enabled=bool(data.get("enabled", True)),
-            metadata=dict(data.get("metadata", {})),
+            enabled=strict_bool(data.get("enabled", True), "resolver.enabled"),
+            metadata=dict(metadata),
         )
 
 
@@ -100,9 +127,13 @@ class DNSChannel:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DNSChannel":
+        reject_unknown_keys(data, DNS_CHANNEL_FIELDS, "dns channel")
+        resolvers = data.get("resolvers", [])
+        if not isinstance(resolvers, list):
+            raise ValueError("dns channel resolvers must be a list")
         return cls(
             name=DNSChannelName(data["name"]),
-            resolvers=[Resolver.from_dict(item) for item in data.get("resolvers", [])],
+            resolvers=[Resolver.from_dict(item) for item in resolvers],
             strategy=str(data.get("strategy", "auto")),
         )
 
@@ -131,10 +162,11 @@ class StaticIPEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StaticIPEntry":
+        reject_unknown_keys(data, STATIC_IP_ENTRY_FIELDS, "static ip entry")
         return cls(
             domain=str(data["domain"]),
             ip=str(data["ip"]),
-            enabled=bool(data.get("enabled", True)),
+            enabled=strict_bool(data.get("enabled", True), "static_ip.enabled"),
         )
 
 
@@ -173,13 +205,14 @@ class DNSRule:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DNSRule":
+        reject_unknown_keys(data, DNS_RULE_FIELDS, "dns rule")
         return cls(
             id=str(data["id"]),
             pattern=str(data["pattern"]),
             action=DNSRuleAction(data.get("action", DNSRuleAction.USE_CHANNEL.value)),
             channel=data.get("channel"),
-            enabled=bool(data.get("enabled", True)),
-            priority=int(data.get("priority", 100)),
+            enabled=strict_bool(data.get("enabled", True), "dns_rule.enabled"),
+            priority=strict_int(data.get("priority", 100), "dns_rule.priority"),
         )
 
 
@@ -263,7 +296,16 @@ class DNSPolicy:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DNSPolicy":
+        reject_unknown_keys(data, DNS_POLICY_FIELDS, "dns policy")
         raw_channels = data.get("channels", {})
+        if not isinstance(raw_channels, dict):
+            raise ValueError("dns policy channels must be an object")
+        static_ips = data.get("static_ips", [])
+        rules = data.get("rules", [])
+        if not isinstance(static_ips, list):
+            raise ValueError("dns policy static_ips must be a list")
+        if not isinstance(rules, list):
+            raise ValueError("dns policy rules must be a list")
         channels = {
             DNSChannelName(name): DNSChannel.from_dict({**dict(value), "name": name})
             for name, value in raw_channels.items()
@@ -272,16 +314,25 @@ class DNSPolicy:
             mode=DNSMode(data.get("mode", DNSMode.AUTO.value)),
             channels=channels,
             static_ips=[
-                StaticIPEntry.from_dict(item) for item in data.get("static_ips", [])
+                StaticIPEntry.from_dict(item) for item in static_ips
             ],
-            rules=[DNSRule.from_dict(item) for item in data.get("rules", [])],
+            rules=[DNSRule.from_dict(item) for item in rules],
             test_domain=str(data.get("test_domain", "gstatic.com")),
             ttl=str(data.get("ttl", "12h")),
-            tun_hijack=bool(data.get("tun_hijack", True)),
-            resolve_inbound_domains=bool(data.get("resolve_inbound_domains", False)),
-            static_ip_enabled=bool(data.get("static_ip_enabled", False)),
-            rules_enabled=bool(data.get("rules_enabled", False)),
-            ecs_direct_enabled=bool(data.get("ecs_direct_enabled", False)),
+            tun_hijack=strict_bool(data.get("tun_hijack", True), "dns_policy.tun_hijack"),
+            resolve_inbound_domains=strict_bool(
+                data.get("resolve_inbound_domains", False),
+                "dns_policy.resolve_inbound_domains",
+            ),
+            static_ip_enabled=strict_bool(
+                data.get("static_ip_enabled", False),
+                "dns_policy.static_ip_enabled",
+            ),
+            rules_enabled=strict_bool(data.get("rules_enabled", False), "dns_policy.rules_enabled"),
+            ecs_direct_enabled=strict_bool(
+                data.get("ecs_direct_enabled", False),
+                "dns_policy.ecs_direct_enabled",
+            ),
             ecs_direct_subnet=data.get("ecs_direct_subnet"),
             proxy_resolution_channel=str(
                 data.get("proxy_resolution_channel", "fakeip")

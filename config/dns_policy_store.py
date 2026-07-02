@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
+from config.persistence import dump_json, file_lock, load_json, require_mapping
 from dns.models import DNSPolicy
 
 
@@ -25,17 +25,13 @@ class DNSPolicyStore:
         self.path = path or _dns_policy_path()
 
     def load(self) -> DNSPolicy:
-        if not self.path.exists():
-            return DNSPolicy()
-        data = json.loads(self.path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError("dns policy file must contain a JSON object")
-        return DNSPolicy.from_dict(data)
+        with file_lock(self.path):
+            data = require_mapping(load_json(self.path, {}), self.path)
+            if not data:
+                return DNSPolicy()
+            return DNSPolicy.from_dict(data)
 
     def save(self, policy: DNSPolicy) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(policy.to_dict(), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-
+        with file_lock(self.path):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            dump_json(self.path, policy.to_dict())

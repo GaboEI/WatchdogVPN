@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
-from dataclasses import asdict
 from pathlib import Path
 
+from config.persistence import dump_json, file_lock, load_json, require_list
 from models.profile import Profile
 
 
@@ -18,36 +17,38 @@ class ProfileStore:
         self.path = path or _profiles_path()
 
     def _load_raw(self) -> list[dict]:
-        if not self.path.exists():
-            return []
-        return json.loads(self.path.read_text(encoding="utf-8"))
+        items = require_list(load_json(self.path, []), self.path)
+        return [dict(item) for item in items]
 
     def _save_raw(self, items: list[dict]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(items, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        dump_json(self.path, items)
 
     def add(self, profile: Profile) -> None:
-        items = self._load_raw()
-        items = [item for item in items if item.get("id") != profile.id]
-        items.append(profile.to_dict())
-        self._save_raw(items)
+        with file_lock(self.path):
+            items = self._load_raw()
+            items = [item for item in items if item.get("id") != profile.id]
+            items.append(profile.to_dict())
+            self._save_raw(items)
 
     def get(self, profile_id: str) -> Profile | None:
-        for item in self._load_raw():
-            if item.get("id") == profile_id:
-                return Profile.from_dict(item)
+        with file_lock(self.path):
+            for item in self._load_raw():
+                if item.get("id") == profile_id:
+                    return Profile.from_dict(item)
         return None
 
     def list(self) -> list[Profile]:
-        return [Profile.from_dict(item) for item in self._load_raw()]
+        with file_lock(self.path):
+            return [Profile.from_dict(item) for item in self._load_raw()]
 
     def update(self, profile: Profile) -> None:
         self.add(profile)
 
     def remove(self, profile_id: str) -> None:
-        items = [item for item in self._load_raw() if item.get("id") != profile_id]
-        self._save_raw(items)
+        with file_lock(self.path):
+            items = [item for item in self._load_raw() if item.get("id") != profile_id]
+            self._save_raw(items)
 
     def get_rotation_pool(self) -> list[Profile]:
         return [p for p in self.list() if p.enabled and p.in_rotation_pool]
-

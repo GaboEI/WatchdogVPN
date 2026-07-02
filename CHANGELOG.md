@@ -39,6 +39,10 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 
 ### Changed
 
+- Harden persistent state and config storage before Phase 11 with locked atomic
+  writes, controlled corrupt-file errors, strict boolean/type validation,
+  fail-closed invalid `vpn_desired_state` handling, and rotation cooldown
+  protection for future health-check timestamps.
 - Respect the global rotation enable flag during automatic recovery, report
   unavailable rotation separately from failed candidates, and apply configured
   recovery backoff limits at runtime.

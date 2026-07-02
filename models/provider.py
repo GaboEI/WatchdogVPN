@@ -4,6 +4,21 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
+from config.persistence import reject_unknown_keys, strict_bool, strict_int
+
+
+PROVIDER_FIELDS = {
+    "id",
+    "name",
+    "url",
+    "last_updated",
+    "profiles",
+    "rotation_enabled",
+    "auto_update",
+    "update_interval_hours",
+    "metadata",
+}
+
 
 def _dt_to_iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
@@ -34,14 +49,27 @@ class Provider:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Provider":
+        reject_unknown_keys(data, PROVIDER_FIELDS, "provider")
+        profiles = data.get("profiles", [])
+        metadata = data.get("metadata", {})
+        if not isinstance(profiles, list):
+            raise ValueError("provider profiles must be a list")
+        if not isinstance(metadata, dict):
+            raise ValueError("provider metadata must be an object")
         return cls(
             id=str(data["id"]),
             name=str(data["name"]),
             url=str(data["url"]),
             last_updated=_dt_from_iso(data.get("last_updated")),
-            profiles=list(data.get("profiles", [])),
-            rotation_enabled=bool(data.get("rotation_enabled", False)),
-            auto_update=bool(data.get("auto_update", True)),
-            update_interval_hours=int(data.get("update_interval_hours", 24)),
-            metadata=dict(data.get("metadata", {})),
+            profiles=[str(profile_id) for profile_id in profiles],
+            rotation_enabled=strict_bool(
+                data.get("rotation_enabled", False),
+                "provider.rotation_enabled",
+            ),
+            auto_update=strict_bool(data.get("auto_update", True), "provider.auto_update"),
+            update_interval_hours=strict_int(
+                data.get("update_interval_hours", 24),
+                "provider.update_interval_hours",
+            ),
+            metadata=dict(metadata),
         )

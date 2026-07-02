@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from config.persistence import strict_bool
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -10,7 +11,7 @@ from models.profile import Profile, ProfileSource, ProtocolType
 
 def _origin_enabled(profile: Profile, provider_store: ProviderStore, config: dict[str, Any]) -> bool:
     if profile.protocol is ProtocolType.ADGUARD:
-        return bool(config.get("adguard", {}).get("enabled", False))
+        return strict_bool(config.get("adguard", {}).get("enabled", False), "adguard.enabled")
     if profile.source is ProfileSource.SUBSCRIPTION:
         provider = provider_store.get(profile.provider_id) if profile.provider_id else None
         return provider is not None and provider.rotation_enabled
@@ -25,7 +26,10 @@ def _recently_failed(profile: Profile, cooldown_seconds: float) -> bool:
         return False
     if last_check.tzinfo is None:
         last_check = last_check.replace(tzinfo=timezone.utc)
-    elapsed = (datetime.now(timezone.utc) - last_check).total_seconds()
+    now = datetime.now(timezone.utc)
+    if last_check > now:
+        return False
+    elapsed = (now - last_check).total_seconds()
     return elapsed < cooldown_seconds
 
 

@@ -36,7 +36,7 @@
 | Description | Persistent state and store writes are direct, unlocked, and non-atomic, so concurrent WatchdogVPN processes or a crash during write can corrupt user state. |
 | Scenario | Two processes update `state.toml`, `profiles.json`, `providers.json`, or `dns-policy.json` at the same time, or the process/host crashes while `write_text()` or `open("wb")` is truncating and rewriting the file. |
 | Impact | The next startup, CLI command, or watchdog iteration can read a truncated TOML/JSON file and crash, lose a profile/provider/DNS setting, or overwrite another process's update. This is exactly the class of persistence failure Phase 11 would amplify by adding more state. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `StateManager.save()` writes directly to `state.toml`.
@@ -57,7 +57,7 @@ Evidence:
 | Description | Invalid `vpn_desired_state` values are treated as automatic-actions-enabled instead of fail-closed standby. |
 | Scenario | `state.toml` contains `vpn_desired_state = "maybe"`, an empty string, or any value other than `"off"` after manual edit, partial migration, or corrupted state recovery. |
 | Impact | `WatchdogRuntime.automatic_actions_enabled()` only blocks exactly `"off"`, so any other invalid value permits health checks, reconnect, recovery, and rotation. A corrupted user-decision field can therefore turn automation on silently. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `core/watchdog.py::automatic_actions_enabled()` returns `False` only for
@@ -77,7 +77,7 @@ Evidence:
 | Description | Corrupted persistent files raise raw parser/schema exceptions instead of surfacing a controlled fallback or repair path. |
 | Scenario | `state.toml` is truncated, `profiles.json` contains partial JSON, `providers.json` contains a JSON object instead of a list, or `dns-policy.json` is invalid JSON. |
 | Impact | First run is safe when files are absent, but once a file exists and becomes malformed, callers crash through `tomllib.load()`, `json.loads()`, `Profile.from_dict()`, `Provider.from_dict()`, or `DNSPolicy.from_dict()`. The user gets a traceback rather than a clear "state file is corrupt; backup/repair/reset" status. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `StateManager.load()` does not catch `TOMLDecodeError` or validate the loaded
@@ -98,7 +98,7 @@ Evidence:
 | Description | Wrong-type values in state, config, profiles, providers, and DNS policy can be coerced into dangerous truthy values instead of rejected. |
 | Scenario | A future version, manual edit, or broken tool writes strings like `"false"` or `"0"` into boolean fields such as `enabled`, `in_rotation_pool`, `rotation_enabled`, `kill_switch.enabled`, `tun_hijack`, or `ecs_direct_enabled`. |
 | Impact | Python `bool("false")` is `True`, so a field that visually says false can enable a profile, include it in rotation, enable provider rotation, activate kill-switch behavior, or enable DNS behavior. This is silent state corruption and can cause the live runtime to do the opposite of what the stored config appears to request. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `Profile.from_dict()` uses `bool(data.get("in_rotation_pool", False))` and
@@ -119,7 +119,7 @@ Evidence:
 | Description | Forward-version or manually added unknown fields are silently discarded on load-save round trips for profiles, providers, DNS policy, and app config. |
 | Scenario | A future WatchdogVPN version adds a field to `dns-policy.json` or `profiles.json`, or a user stores local metadata in a supported JSON file, then the current CLI/TUI loads and saves the same object. |
 | Impact | Unknown fields are not preserved and may be lost without warning. This is recoverable from backups, but it creates migration risk as Phase 11 adds routing rules and more persistent state. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `Profile.from_dict()` and `Provider.from_dict()` reconstruct only known
@@ -139,7 +139,7 @@ Evidence:
 | Description | Profile health cooldown uses wall-clock timestamps without clamping future `last_health_check` values. |
 | Scenario | The system clock jumps backward after NTP resync, or `profiles.json` contains a future `last_health_check` timestamp for a `health_status = "down"` profile. |
 | Impact | `pool_builder.build_pool()` can exclude a profile for much longer than the configured cooldown because `now - last_health_check` becomes negative and remains below the cooldown threshold. Rotation can appear unavailable even after the intended cooldown should have expired. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `rotation/pool_builder.py::_recently_failed()` compares
@@ -231,3 +231,36 @@ user-facing state file, trace whether data reaches the live runtime intact.
   boolean parsing, atomic write behavior, and future health timestamps.
 - The closure should update this audit report with resolution notes after fixes
   land.
+
+## Hardening Closure - 2026-07-03
+
+All Layer 1 findings listed above were fixed before Phase 11 work started.
+
+Implemented closure:
+- Added `config/persistence.py` with shared file locking, atomic temp-file +
+  `os.replace` writes, controlled persistent-store exceptions, top-level JSON
+  shape checks, strict boolean/integer parsing, and unknown-field rejection.
+- Updated `StateManager`, `AppConfig`, `ProfileStore`, `ProviderStore`, and
+  `DNSPolicyStore` to use locked atomic writes and controlled load errors.
+- Added strict validation for `state.toml`, including `vpn_desired_state`,
+  `active_mode`, language fields, and boolean fields.
+- Updated `WatchdogRuntime` so invalid persistent state fails closed to
+  standby and never enables automatic recovery/rotation.
+- Updated profile, provider, and DNS policy deserialization to reject
+  unsupported fields and string booleans instead of silently coercing them.
+- Updated kill-switch and rotation config reads to require real booleans on
+  runtime paths.
+- Updated rotation pool cooldown handling so future `last_health_check`
+  timestamps do not keep profiles excluded indefinitely.
+
+Validation:
+- `python3 -m py_compile config/persistence.py config/state_manager.py config/app_config.py config/profile_store.py config/provider_store.py config/dns_policy_store.py models/profile.py models/provider.py dns/models.py core/watchdog.py rotation/pool_builder.py tests/test_config_storage.py tests/test_core_watchdog.py tests/test_pool_builder.py` passed.
+- `python3 -m unittest tests.test_config_storage tests.test_core_watchdog tests.test_pool_builder tests.test_dns_models` passed: 97 tests.
+- `python3 -m unittest discover tests` passed: 452 tests.
+- `bash tests/unit.sh` passed.
+- `.venv/bin/pytest tests` passed: 468 tests.
+- `git diff --check` passed.
+
+Remaining debt:
+- None from Layer 1. All HIGH and MEDIUM findings are resolved before Phase
+  11.

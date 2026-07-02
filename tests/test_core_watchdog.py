@@ -188,6 +188,18 @@ class WatchdogCoreTests(unittest.TestCase):
         driver.health_check_mock.assert_not_called()
         driver.status_mock.assert_not_called()
 
+    def test_run_iteration_stands_by_when_state_file_is_invalid(self) -> None:
+        self.state_manager.path.write_text('vpn_desired_state = "maybe"\n', encoding="utf-8")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        with self.assertLogs("core.watchdog", level="ERROR") as logs:
+            state = runtime.run_iteration()
+
+        self.assertEqual(state.status, "standby")
+        self.assertIn("invalid persistent state", "\n".join(logs.output))
+        driver.health_check_mock.assert_not_called()
+
     def test_run_iteration_checks_health_when_user_enabled_vpn(self) -> None:
         self.set_desired_state("on")
         driver = FakeDriver()
@@ -226,6 +238,18 @@ class WatchdogCoreTests(unittest.TestCase):
         state = runtime.startup()
 
         self.assertEqual(state.status, "standby")
+        driver.connect_mock.assert_not_called()
+
+    def test_startup_stands_by_when_state_file_is_invalid(self) -> None:
+        self.state_manager.path.write_text('vpn_desired_state = "maybe"\n', encoding="utf-8")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        with self.assertLogs("core.watchdog", level="ERROR") as logs:
+            state = runtime.startup()
+
+        self.assertEqual(state.status, "standby")
+        self.assertIn("invalid persistent state", "\n".join(logs.output))
         driver.connect_mock.assert_not_called()
 
     def test_startup_stands_by_when_autoconnect_disabled(self) -> None:

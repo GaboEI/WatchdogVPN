@@ -6,6 +6,7 @@ from pathlib import Path
 
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
+from config.persistence import PersistentStoreError, PersistentValidationError, strict_bool
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager
@@ -44,9 +45,16 @@ class WatchdogRuntime:
     _reconnect_failures: int = field(default=0, init=False, repr=False)
 
     def automatic_actions_enabled(self) -> bool:
-        desired_state = self.state_manager.get("vpn_desired_state", "off")
+        try:
+            desired_state = self.state_manager.get("vpn_desired_state", "off")
+        except (PersistentStoreError, PersistentValidationError):
+            LOGGER.error("standby mode - invalid persistent state", exc_info=True)
+            return False
         if desired_state == "off":
             LOGGER.info("standby mode - user disabled VPN")
+            return False
+        if desired_state != "on":
+            LOGGER.error("standby mode - invalid vpn_desired_state: %r", desired_state)
             return False
         return True
 
@@ -68,9 +76,16 @@ class WatchdogRuntime:
         return self._attempt_rotation(config, force=force)
 
     def startup(self) -> ConnectionState:
-        state = self.state_manager.load()
+        try:
+            state = self.state_manager.load()
+        except (PersistentStoreError, PersistentValidationError):
+            LOGGER.error("standby mode - invalid persistent state", exc_info=True)
+            return self.standby_state()
         if state.get("vpn_desired_state", "off") == "off":
             LOGGER.info("standby mode - user disabled VPN")
+            return self.standby_state()
+        if state.get("vpn_desired_state") != "on":
+            LOGGER.error("standby mode - invalid vpn_desired_state: %r", state.get("vpn_desired_state"))
             return self.standby_state()
 
         if not state.get("vpn_autoconnect_enabled", False):
@@ -198,7 +213,7 @@ class WatchdogRuntime:
         return ConnectionState(status=status, mode=self.driver.status().mode)
 
     def _rotation_enabled(self, config: dict) -> bool:
-        return bool(config.get("rotation", {}).get("enabled", False))
+        return strict_bool(config.get("rotation", {}).get("enabled", False), "rotation.enabled")
 
     def _handle_rotation_unavailable(self, config: dict, reason: str) -> ConnectionState:
         kill_switch_active = self._apply_all_failed_kill_switch(config)
@@ -230,7 +245,7 @@ class WatchdogRuntime:
 
     def _apply_all_failed_kill_switch(self, config: dict) -> bool:
         self._configure_kill_switch(config)
-        configured = bool(config.get("kill_switch", {}).get("enabled", False))
+        configured = strict_bool(config.get("kill_switch", {}).get("enabled", False), "kill_switch.enabled")
         if self.kill_switch.is_active():
             LOGGER.warning("watchdog_all_failed_kill_switch action=keep_active")
             return True
@@ -261,9 +276,15 @@ class WatchdogRuntime:
         if hasattr(self.kill_switch, "tunnel_interface"):
             self.kill_switch.tunnel_interface = str(kill_switch_config.get("tunnel_interface", "tun0"))
         if hasattr(self.kill_switch, "block_ipv6"):
-            self.kill_switch.block_ipv6 = bool(kill_switch_config.get("block_ipv6", True))
+            self.kill_switch.block_ipv6 = strict_bool(
+                kill_switch_config.get("block_ipv6", True),
+                "kill_switch.block_ipv6",
+            )
         if hasattr(self.kill_switch, "allow_lan"):
-            self.kill_switch.allow_lan = bool(kill_switch_config.get("allow_lan", True))
+            self.kill_switch.allow_lan = strict_bool(
+                kill_switch_config.get("allow_lan", True),
+                "kill_switch.allow_lan",
+            )
 
     def _handle_manual_disconnect_kill_switch(self) -> None:
         config = self.app_config.load()

@@ -146,6 +146,15 @@ class PoolBuilderTests(unittest.TestCase):
 
         self.assertEqual([p.id for p in pool], [profile.id])
 
+    def test_includes_profile_with_future_last_health_check(self) -> None:
+        profile = self._manual_profile(health_status="down")
+        profile.last_health_check = datetime.now(timezone.utc) + timedelta(days=1)
+        self.profile_store.add(profile)
+
+        pool = build_pool(self.profile_store, self.provider_store, self.config)
+
+        self.assertEqual([p.id for p in pool], [profile.id])
+
 
 if __name__ == "__main__":
     unittest.main()
