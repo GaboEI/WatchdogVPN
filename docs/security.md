@@ -117,7 +117,7 @@ Manual-first path:
 1. Install the selected provider from the vendor documentation.
 2. Confirm the provider CLI works.
 3. Run `./install.sh` and let WatchdogVPN configure its service user and runtime.
-4. Configure DNS through the WatchdogVPN v2 DNS system when Phase 10 lands.
+4. Configure DNS through the WatchdogVPN v2 DNS system.
 
 Planned hardening:
 

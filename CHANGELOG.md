@@ -58,6 +58,8 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   AmneziaWG interface reconciliation, and guarded forced process cleanup.
 - Start the `v2.0.0` documentation reorientation with the new Linux
   resilience-layer identity.
+- Refresh Pre-Phase 11 repo documentation coherence for DNS v2 shipped state,
+  AdGuard Home removal wording and recent v2 phase status.
 - Mark AdGuard VPN compatibility as legacy support in the public product
   narrative while preserving existing compatibility paths.
 - Add installer backend selection for `adguard`, experimental `custom-vps` and

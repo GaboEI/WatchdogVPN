@@ -37,6 +37,21 @@ The v3.0.0 line is future-facing and reserved for a GUI expansion across additio
 - Do not let roadmap work imply runtime features that are not yet implemented.
 - Preserve compatibility where possible, but prefer the v2 architecture direction.
 
+## Recent v2 Phase Status
+
+The root roadmap tracks current public direction. Detailed task sequencing lives
+in the local v2 master plan, but these completed phase markers keep the public
+repo narrative aligned with the current codebase:
+
+- Phase 5.5 - Manual-off runtime state: completed.
+- Phase 7 - Rotation/recovery state handling: completed.
+- Phase 8 - Driver and process hardening: completed.
+- Phase 9 - Profile/provider/parser foundation: completed.
+- Phase 9.5 - AdGuard Home integration removal: completed.
+- Phase 10 - DNS v2 system: completed and wired into live sing-box connect paths.
+- Pre-Phase 11 QA audits for Layers 1, 4 and 5: completed with no open HIGH or
+  MEDIUM debt.
+
 ## Reference Docs
 
 - [Architecture](docs/architecture.md)

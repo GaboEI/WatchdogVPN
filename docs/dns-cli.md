@@ -6,8 +6,9 @@ The DNS v2 CLI is exposed through the v2 core command:
 ./bin/watchdog dns --help
 ```
 
-It is intentionally separate from the historical `watchdogvpn` runtime wrapper
-while Phase 10 is still being validated.
+It is intentionally separate from the historical `watchdogvpn` runtime wrapper.
+Phase 10 shipped the DNS v2 command set with real status, test, apply and reset
+behavior.
 
 ## Status
 
@@ -89,4 +90,3 @@ WATCHDOGVPN_DNS_POLICY_FILE=/path/to/dns-policy.json ./bin/watchdog dns status
 WATCHDOGVPN_DNS_SNAPSHOT_FILE=/path/to/dns-state.json ./bin/watchdog dns reset --yes
 WATCHDOGVPN_CONFIG_DIR=/tmp/watchdogvpn ./bin/watchdog dns status
 ```
-

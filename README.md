@@ -196,7 +196,7 @@ tests/              Syntax, unit behavior and runtime validation helpers
 - **Real-state validation:** the project checks tunnel, route and public IP state instead of relying only on provider status text.
 - **Fail-safe recovery:** the watchdog distinguishes normal failures, unknown IP states and authentication problems.
 - **One runtime, distro adapters:** Ubuntu, Debian and Arch use the same runtime. Only installation and package checks differ.
-- **DNS v2 ownership:** DNS management is handled by the WatchdogVPN v2 DNS system, with AdGuard DNS resolvers available later as custom DNS choices.
+- **DNS v2 ownership:** DNS management is handled by the WatchdogVPN v2 DNS system. AdGuard public DNS can be configured as normal custom resolvers; the removed AdGuard Home integration is not part of the current product.
 - **No duplicate repos by distro:** multi-distro support stays in one repository to avoid divergent behavior.
 - **Traceable logs:** operational events are written in a parseable format for future diagnostics.
 - **User-owned exclusions:** new installations start without personal bypass domains. Each user chooses which domains should leave through the normal network route.
