@@ -31,7 +31,15 @@ SIMPLE_RULE_ACTIONS = {"direct", "current_profile", "auto_select", "block"}
 GROUP_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _GROUP_ACTION_RE = re.compile(r"^group:(?P<group_id>.+)$")
 
-DEFAULT_RULE_GROUPS = ("recommended", "direct", "proxy", "block", "custom", "imported")
+DEFAULT_RULE_GROUPS = (
+    "recommended",
+    "direct",
+    "proxy",
+    "block",
+    "custom",
+    "app",
+    "imported",
+)
 
 
 def _validate_rule_action(action: Any) -> str:
