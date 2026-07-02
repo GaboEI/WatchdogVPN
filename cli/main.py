@@ -10,6 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import NoReturn
 
+from cli.ipc.client import WatchdogIPCClient
+from cli.ipc.errors import WatchdogIPCError
 from config.dns_policy_store import DNSPolicyStore
 from config.paths import resolve_config_dir
 from config.persistence import PersistentStoreError
@@ -26,6 +28,7 @@ from dns.state_manager import (
     SystemDNSStateManager,
 )
 from dns.tester import DNSTester
+from daemon.protocol import Response
 from models.profile import Profile
 from models.provider import Provider
 from parsers import ParseError
@@ -56,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
     except PersistentStoreError as exc:
         _error(str(exc))
         return 70
+    except WatchdogIPCError as exc:
+        _error(str(exc))
+        return exc.exit_code
     except (DNSHijackError, DNSStateError, OSError, ValueError) as exc:
         _error(str(exc))
         return 70
@@ -64,6 +70,24 @@ def main(argv: list[str] | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="watchdog", description="WatchdogVPN command line")
     subparsers = parser.add_subparsers(dest="command")
+
+    connect_parser = subparsers.add_parser("connect", help="Connect through the WatchdogVPN daemon")
+    connect_parser.add_argument("profile_id", help="Profile ID to connect")
+    connect_parser.add_argument("--json", action="store_true", help="Print JSON")
+    connect_parser.set_defaults(handler=_connection_connect)
+
+    disconnect_parser = subparsers.add_parser("disconnect", help="Disconnect through the WatchdogVPN daemon")
+    disconnect_parser.add_argument("--json", action="store_true", help="Print JSON")
+    disconnect_parser.set_defaults(handler=_connection_disconnect)
+
+    status_parser = subparsers.add_parser("status", help="Show daemon connection status")
+    status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    status_parser.set_defaults(handler=_connection_status)
+
+    rotate_parser = subparsers.add_parser("rotate", help="Rotate connection through the WatchdogVPN daemon")
+    rotate_parser.add_argument("--force", action="store_true", help="Force rotation even if conservative checks apply")
+    rotate_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rotate_parser.set_defaults(handler=_connection_rotate)
 
     profile_parser = subparsers.add_parser("profile", help="Manage local profiles")
     profile_subparsers = profile_parser.add_subparsers(dest="profile_command")
@@ -210,6 +234,70 @@ def _build_parser() -> argparse.ArgumentParser:
     config_set_mode_parser.set_defaults(handler=_config_set_mode)
 
     return parser
+
+
+def _connection_connect(args: argparse.Namespace) -> int:
+    response = WatchdogIPCClient().connect(args.profile_id)
+    return _connection_response_output(
+        response,
+        json_output=bool(args.json),
+        success_label="Connected",
+    )
+
+
+def _connection_disconnect(args: argparse.Namespace) -> int:
+    response = WatchdogIPCClient().disconnect()
+    return _connection_response_output(
+        response,
+        json_output=bool(args.json),
+        success_label="Disconnected",
+    )
+
+
+def _connection_status(args: argparse.Namespace) -> int:
+    response = WatchdogIPCClient().status()
+    if args.json:
+        _print_json(response.to_dict())
+        return 0 if response.ok else 70
+    if not response.ok:
+        _error(response.error or "daemon command failed")
+        return 70
+    _print_connection_state(response.payload.get("state", {}))
+    return 0
+
+
+def _connection_rotate(args: argparse.Namespace) -> int:
+    response = WatchdogIPCClient().rotate(force=bool(args.force))
+    return _connection_response_output(
+        response,
+        json_output=bool(args.json),
+        success_label="Rotation requested",
+    )
+
+
+def _connection_response_output(response: Response, json_output: bool, success_label: str) -> int:
+    if json_output:
+        _print_json(response.to_dict())
+        return 0 if response.ok else 70
+    if not response.ok:
+        _error(response.error or "daemon command failed")
+        return 70
+    print(success_label)
+    if "profile_id" in response.payload:
+        print(f"Profile: {response.payload['profile_id']}")
+    if "state" in response.payload:
+        _print_connection_state(response.payload["state"])
+    return 0
+
+
+def _print_connection_state(state: dict) -> None:
+    print(f"Status: {state.get('status', 'unknown')}")
+    print(f"Mode: {state.get('mode', '-')}")
+    active_profile_id = state.get("active_profile_id") or "-"
+    print(f"Active profile: {active_profile_id}")
+    print(f"TUN: {_on_off(bool(state.get('tun_active', False)))}")
+    print(f"Proxy: {_on_off(bool(state.get('proxy_active', False)))}")
+    print(f"Kill switch: {_on_off(bool(state.get('kill_switch_active', False)))}")
 
 
 def _profile_add(args: argparse.Namespace) -> int:
