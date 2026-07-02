@@ -11,7 +11,6 @@
 - **Status:** `v2.0.0` planning line
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 - **Primary direction:** Linux VPN/proxy resilience layer
-- **Legacy compatibility:** AdGuard VPN integration remains available in v2, but it is not the product center
 
 WatchdogVPN is a terminal-first resilience layer for VPN and proxy connections on Linux. It focuses on real-state verification, automatic recovery, safe rotation, optional kill switch handling, DNS control, routing rules, profile management and traceable diagnostics.
 
@@ -90,7 +89,7 @@ WatchdogVPN is not designed around the fantasy that a VPN or proxy is always fas
 
 The goal is resilience for people who cannot afford to stop working because the tunnel silently died: journalists, researchers, developers, students, remote workers and users living under network censorship or unreliable routing. The product does not promise the fastest possible connection. It tries to keep the connection observable, recoverable and boring in the best sense: when something fails, the system should detect it, repair it when possible and keep the user informed only when attention is needed.
 
-AdGuard VPN remains available as a legacy compatibility path in v2.0.0. The v2 product direction is broader than one vendor and is centered on reusable connection handling, profile management and safe recovery.
+The v2 product direction is not tied to any single vendor. It is centered on reusable connection handling, profile management and safe recovery across protocols and providers.
 
 ## What It Does
 
@@ -206,14 +205,12 @@ tests/              Syntax, unit behavior and runtime validation helpers
 - **No duplicate repos by distro:** multi-distro support stays in one repository to avoid divergent behavior.
 - **Traceable logs:** operational events are written in a parseable format for future diagnostics.
 - **User-owned exclusions:** new installations start without personal bypass domains. Each user chooses which domains should leave through the normal network route.
-- **Legacy compatibility:** AdGuard support remains isolated so v2 can move forward without depending on it as the product center.
 
 ## Known Limitations
 
 - `v0.3.1` is the last documented alpha-line release.
 - The current TUI is functional and the gradual module split has started, but most rendering/action flow still lives in `tui/VPN`.
 - Python TUI command helpers avoid subprocess shell mode; legacy shell pipelines run through explicit Bash argv wrappers.
-- The installer can guide legacy AdGuard VPN flows, but that path is no longer the product focus.
 
 ## Validation
 
@@ -286,7 +283,6 @@ WatchdogVPN is system tooling that can modify VPN services, DNS configuration, N
 ## Roadmap
 
 - Complete the v2.0.0 CLI and TUI stable line.
-- Keep AdGuard compatibility isolated as legacy support.
 - Expand profile, provider, parser and driver coverage in controlled phases.
 - Harden the runtime and tests before any v3 GUI work.
 - Treat multiplatform GUI work as a future v3.0.0 direction, not the next immediate step.
