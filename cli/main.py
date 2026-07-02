@@ -14,6 +14,7 @@ from config.dns_policy_store import DNSPolicyStore
 from config.persistence import PersistentStoreError
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
+from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager
 from dns.hijack import DNSHijackController, DNSHijackError
 from dns.models import DNSChannelName, DNSMode, DNSPolicy
 from dns.resolver_inventory import detect_resolver_manager
@@ -191,6 +192,21 @@ def _build_parser() -> argparse.ArgumentParser:
     dns_reset_parser.add_argument("--json", action="store_true", help="Print JSON")
     dns_reset_parser.add_argument("--yes", action="store_true", help="Confirm DNS restore")
     dns_reset_parser.set_defaults(handler=_dns_reset)
+
+    config_parser = subparsers.add_parser("config", help="Manage WatchdogVPN connection mode")
+    config_subparsers = config_parser.add_subparsers(dest="config_command")
+
+    config_set_parser = config_subparsers.add_parser("set", help="Set a configuration value")
+    config_set_subparsers = config_set_parser.add_subparsers(dest="config_set_target")
+
+    config_set_mode_parser = config_set_subparsers.add_parser(
+        "mode", help="Set the active connection mode"
+    )
+    config_set_mode_parser.add_argument(
+        "mode", choices=sorted(ALLOWED_ACTIVE_MODES), help="New connection mode"
+    )
+    config_set_mode_parser.add_argument("--json", action="store_true", help="Print JSON")
+    config_set_mode_parser.set_defaults(handler=_config_set_mode)
 
     return parser
 
@@ -403,6 +419,17 @@ def _provider_node(args: argparse.Namespace) -> int:
     profile_store.update(profile)
     state = "enabled" if profile.in_rotation_pool else "disabled"
     print(f"Provider node rotation {state}: {profile.id}")
+    return 0
+
+
+def _config_set_mode(args: argparse.Namespace) -> int:
+    manager = StateManager()
+    manager.set("active_mode", args.mode)
+    data = {"active_mode": args.mode}
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Active mode set to: {args.mode}")
     return 0
 
 
