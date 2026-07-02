@@ -3,6 +3,7 @@ set -euo pipefail
 
 install_runtime_files() {
   create_service_user adgvpn /var/lib/adguardvpn
+  create_system_user_no_home watchdogvpn
   create_root_dir /var/log/myvpn 0755
   create_root_dir /var/lib/vpn-rotate 0700
 
@@ -19,7 +20,9 @@ install_runtime_files() {
   install_root_file "$ROOT_DIR/bin/vpn_notify" /usr/local/bin/vpn_notify 0755
   install_root_file "$ROOT_DIR/bin/vpn_truth_check" /usr/local/bin/vpn_truth_check 0755
   install_root_file "$ROOT_DIR/bin/vpnctl" /usr/local/bin/vpnctl 0755
+  install_root_file "$ROOT_DIR/bin/watchdog" /usr/local/bin/watchdog 0755
   install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
+  install_root_file "$ROOT_DIR/bin/watchdogvpn-daemon" /usr/local/bin/watchdogvpn-daemon 0755
 
   install_root_file "$ROOT_DIR/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
   install_root_file "$ROOT_DIR/sbin/vpn_rotate.sh" /usr/local/sbin/vpn_rotate.sh 0700
@@ -38,7 +41,6 @@ migrate_watchdogvpn_shared_state() {
   local source_dir="${WATCHDOGVPN_LEGACY_CONFIG_DIR:-$HOME/.config/watchdogvpn}"
   local target_dir="${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}"
   local marker="$target_dir/.migrated"
-  local source_uid source_gid
 
   if [[ -e "$marker" ]]; then
     printf '[KEEP] WatchdogVPN shared state already migrated: %s\n' "$target_dir"
@@ -56,17 +58,51 @@ migrate_watchdogvpn_shared_state() {
     printf 'ERROR: WatchdogVPN shared state target is not a directory: %s\n' "$target_dir" >&2
     return 1
   fi
+  if [[ ! -d "$target_dir" ]]; then
+    prepare_watchdogvpn_state_directory "$target_dir"
+  fi
+  if [[ ! -d "$target_dir" ]]; then
+    printf '[SKIP] WatchdogVPN shared state target is not available yet: %s\n' "$target_dir"
+    return 0
+  fi
+  if [[ -e "$marker" ]]; then
+    printf '[KEEP] WatchdogVPN shared state already migrated: %s\n' "$target_dir"
+    return 0
+  fi
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] migrate WatchdogVPN state %s -> %s\n' "$source_dir" "$target_dir"
     return 0
   fi
 
-  source_uid="$(stat -c '%u' "$source_dir")"
-  source_gid="$(stat -c '%g' "$source_dir")"
-  run_step sudo install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"
   run_step sudo cp -a --update=none "$source_dir/." "$target_dir/"
   run_step sudo touch "$marker"
   printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
+}
+
+prepare_watchdogvpn_state_directory() {
+  local target_dir="$1"
+  if [[ "$target_dir" != "/var/lib/watchdogvpn" ]]; then
+    printf '[SKIP] non-default WatchdogVPN shared state target is not managed by systemd: %s\n' "$target_dir"
+    return 0
+  fi
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] ask systemd to create StateDirectory=watchdogvpn\n'
+    return 0
+  fi
+  if ! command -v systemd-run >/dev/null 2>&1; then
+    printf 'ERROR: systemd-run is required to prepare StateDirectory=watchdogvpn\n' >&2
+    return 1
+  fi
+  run_step sudo systemd-run \
+    --wait \
+    --collect \
+    --quiet \
+    --unit=watchdogvpn-state-directory \
+    --property=User=watchdogvpn \
+    --property=Group=watchdogvpn \
+    --property=StateDirectory=watchdogvpn \
+    --property=StateDirectoryMode=0750 \
+    /bin/true
 }
 
 refresh_installed_desktop_launcher() {

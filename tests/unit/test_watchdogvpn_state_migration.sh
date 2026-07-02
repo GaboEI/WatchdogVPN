@@ -37,6 +37,12 @@ make_legacy_state "$source_dir"
 WATCHDOGVPN_LEGACY_CONFIG_DIR="$source_dir" \
 WATCHDOGVPN_SHARED_STATE_DIR="$target_dir" \
   migrate_watchdogvpn_shared_state
+[[ ! -e "$target_dir" ]]
+
+install -d -m 0750 "$target_dir"
+WATCHDOGVPN_LEGACY_CONFIG_DIR="$source_dir" \
+WATCHDOGVPN_SHARED_STATE_DIR="$target_dir" \
+  migrate_watchdogvpn_shared_state
 [[ -f "$target_dir/.migrated" ]]
 [[ -w "$target_dir" ]]
 [[ "$(cat "$target_dir/state.toml")" == "legacy-state" ]]
@@ -72,11 +78,12 @@ WATCHDOGVPN_SHARED_STATE_DIR="$empty_source_target" \
 dry_source="$TMP_DIR/dry-source"
 dry_target="$TMP_DIR/dry-target"
 make_legacy_state "$dry_source"
+install -d -m 0750 "$dry_target"
 INSTALL_DRY_RUN=1 \
 WATCHDOGVPN_LEGACY_CONFIG_DIR="$dry_source" \
 WATCHDOGVPN_SHARED_STATE_DIR="$dry_target" \
   migrate_watchdogvpn_shared_state
-[[ ! -e "$dry_target" ]]
+[[ ! -e "$dry_target/.migrated" ]]
 
 INSTALL_DRY_RUN=0
 bad_source="$TMP_DIR/bad-source"

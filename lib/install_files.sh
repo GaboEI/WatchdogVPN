@@ -104,6 +104,18 @@ create_service_user() {
   create_owned_dir "$home" "$user" "$user" 0755
 }
 
+create_system_user_no_home() {
+  local user="$1" shell
+  if getent passwd "$user" >/dev/null 2>&1; then
+    printf '[KEEP] service user exists: %s\n' "$user"
+    return 0
+  fi
+  shell="/usr/sbin/nologin"
+  [[ -x "$shell" ]] || shell="/usr/bin/nologin"
+  [[ -x "$shell" ]] || shell="/bin/false"
+  run_step sudo useradd --system --no-create-home --shell "$shell" "$user"
+}
+
 remove_root_path() {
   local path="$1"
   if [[ ! -e "$path" && ! -L "$path" ]]; then

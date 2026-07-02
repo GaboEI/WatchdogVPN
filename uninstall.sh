@@ -137,6 +137,9 @@ remove_runtime_files() {
   remove_root_path /usr/local/bin/vpn_notify
   remove_root_path /usr/local/bin/vpn_truth_check
   remove_root_path /usr/local/bin/vpnctl
+  remove_root_path /usr/local/bin/watchdog
+  remove_root_path /usr/local/bin/watchdogvpn
+  remove_root_path /usr/local/bin/watchdogvpn-daemon
 
   remove_root_path /usr/local/sbin/vpn_domain_bypass_apply.sh
   remove_root_path /usr/local/sbin/vpn_rotate.sh

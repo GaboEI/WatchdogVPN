@@ -37,8 +37,12 @@ jobs:
           if ! getent passwd adgvpn >/dev/null; then
             sudo useradd --system --home-dir /var/lib/adguardvpn --create-home --shell /usr/sbin/nologin adgvpn
           fi
+          if ! getent passwd watchdogvpn >/dev/null; then
+            sudo useradd --system --no-create-home --shell /usr/sbin/nologin watchdogvpn
+          fi
           sudo install -m 0755 -d /usr/local/bin /usr/local/sbin /etc/logrotate.d /var/log/myvpn /var/lib/vpn-rotate
           sudo install -m 0755 /bin/true /usr/local/bin/adguardvpn-cli
+          sudo install -m 0755 /bin/true /usr/local/bin/watchdogvpn-daemon
           sudo install -m 0700 sbin/vpn_watchdog.sh /usr/local/sbin/vpn_watchdog.sh
           sudo install -m 0700 sbin/vpn_rotate.sh /usr/local/sbin/vpn_rotate.sh
           sudo install -m 0700 sbin/vpn_domain_bypass_apply.sh /usr/local/sbin/vpn_domain_bypass_apply.sh

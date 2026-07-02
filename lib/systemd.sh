@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SYSTEMD_UNITS=(
+  watchdogvpn.service
   adguardvpn.service
   vpn-rotate.service
   vpn-rotate.timer
@@ -16,6 +17,7 @@ SYSTEMD_UNITS=(
 )
 
 SYSTEMD_ENABLE_UNITS=(
+  watchdogvpn.service
   adguardvpn.service
   vpn-rotate.timer
   vpn-watchdog.timer

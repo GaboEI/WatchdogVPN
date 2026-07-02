@@ -54,12 +54,22 @@ if grep -Fq 'create_root_dir /var/lib/watchdogvpn 0755' "$ROOT_DIR/lib/runtime.s
 fi
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/vpn_backend" /usr/local/bin/vpn_backend 0755' "backend helper must be installed as user command"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755' "manual-off state helper must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/watchdog" /usr/local/bin/watchdog 0755' "v2 watchdog CLI wrapper must be installed as user command"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755' "watchdogvpn CLI must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/watchdogvpn-daemon" /usr/local/bin/watchdogvpn-daemon 0755' "daemon wrapper must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'create_system_user_no_home watchdogvpn' "runtime install must create watchdogvpn as a system user without a home directory"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'prepare_watchdogvpn_state_directory "$target_dir"' "migration must prepare default daemon state through systemd when needed"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'StateDirectory=watchdogvpn' "state directory preparation must use systemd StateDirectory"
+if grep -Fq 'install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"' "$ROOT_DIR/lib/runtime.sh"; then
+  printf 'FAIL: migration must not create /var/lib/watchdogvpn with install -d\n' >&2
+  exit 1
+fi
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_file "$ROOT_DIR/tui/VPN" "$HOME/.local/bin/VPN" 0755' "TUI launcher must be user executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_user_path "$HOME/.local/bin/watchdogvpn"' "legacy TUI package path must be removed so watchdogvpn CLI is not shadowed"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$ROOT_DIR/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"' "TUI package must be installed outside PATH"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_user_path "$HOME/.local/share/watchdogvpn"' "uninstall must remove installed TUI support package"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/vpn_backend' "uninstall must remove backend helper"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/watchdogvpn-daemon' "uninstall must remove daemon wrapper"
 assert_contains "$ROOT_DIR/lib/desktop.sh" 'desktop folder not detected; application-menu launcher was installed only' "desktop launcher should skip missing desktop folder cleanly"
 assert_contains "$ROOT_DIR/lib/desktop.sh" '"$desktop_dir" == "$HOME"' "desktop launcher should reject HOME as Desktop directory"
 assert_contains "$ROOT_DIR/install.sh" "settle_vpn_after_install" "installer must run VPN settle check before final validation"
