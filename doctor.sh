@@ -66,6 +66,11 @@ systemd_enabled_state() {
   systemctl is-enabled "$unit" 2>/dev/null || true
 }
 
+systemd_show_value() {
+  local unit="$1" property="$2"
+  systemctl show "$unit" -p "$property" --value 2>/dev/null || true
+}
+
 read_key_value() {
   local key="$1"
   awk -F= -v wanted="$key" '$1 == wanted {sub(/^[[:space:]]+/, "", $2); sub(/[[:space:]]+$/, "", $2); print $2; exit}'
@@ -99,6 +104,40 @@ check_repo_file() {
       [[ -f "$ROOT_DIR/$path" ]] && mark_ok "repo file: $path" || mark_fail "repo file missing: $path"
       ;;
   esac
+}
+
+socket_reachable() {
+  local socket_path="$1"
+  python3 - "$socket_path" <<'PY'
+import socket
+import sys
+
+path = sys.argv[1]
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(1.0)
+try:
+    sock.connect(path)
+except PermissionError:
+    sys.exit(13)
+except (FileNotFoundError, ConnectionRefusedError, TimeoutError, OSError):
+    sys.exit(1)
+finally:
+    sock.close()
+sys.exit(0)
+PY
+}
+
+cap_eff_has_bind_service() {
+  local pid="$1" cap_eff
+  [[ -n "$pid" && "$pid" != "0" && -r "/proc/$pid/status" ]] || return 1
+  cap_eff="$(awk '/^CapEff:/ {print $2; exit}' "/proc/$pid/status")"
+  [[ -n "$cap_eff" ]] || return 1
+  (( (16#$cap_eff & (1 << 10)) != 0 ))
+}
+
+capability_list_has() {
+  local haystack="$1" needle="$2"
+  [[ " $haystack " == *" $needle "* ]]
 }
 
 printf '%s - Doctor\n' "$PROJECT_NAME"
@@ -207,10 +246,13 @@ check_repo_file "bin/vpn_dns_rescue" exec
 check_repo_file "bin/vpn_manual_state" exec
 check_repo_file "bin/vpn_notify" exec
 check_repo_file "bin/vpnctl" exec
+check_repo_file "bin/watchdog" exec
 check_repo_file "bin/watchdogvpn" exec
+check_repo_file "bin/watchdogvpn-daemon" exec
 check_repo_file "sbin/vpn_set" exec
 check_repo_file "sbin/vpn_rotate.sh" exec
 check_repo_file "sbin/vpn_watchdog.sh" exec
+check_repo_file "systemd/watchdogvpn.service"
 check_repo_file "systemd/vpn-watchdog.timer"
 check_repo_file "systemd/vpn-rotate.timer"
 check_repo_file "etc/logrotate.d/myvpn"
@@ -225,7 +267,10 @@ for path in \
   /usr/local/bin/vpn_manual_state \
   /usr/local/bin/vpn_notify \
   /usr/local/bin/vpnctl \
+  /usr/local/bin/watchdog \
   /usr/local/bin/watchdogvpn \
+  /usr/local/bin/watchdogvpn-daemon \
+  /usr/local/lib/watchdogvpn \
   /usr/local/sbin/vpn_set \
   /usr/local/sbin/vpn_rotate.sh \
   /usr/local/sbin/vpn_watchdog.sh \
@@ -264,6 +309,65 @@ if [[ -d "$HOME/.local/share/watchdogvpn/watchdogvpn" ]]; then
   done
 fi
 
+section "WatchdogVPN Daemon"
+daemon_unit="${WATCHDOGVPN_DAEMON_UNIT:-watchdogvpn.service}"
+daemon_socket="${WATCHDOGVPN_SOCKET_PATH:-/run/watchdogvpn/control.sock}"
+
+if getent passwd watchdogvpn >/dev/null 2>&1; then
+  mark_ok "service user: watchdogvpn"
+else
+  mark_warn "service user missing: watchdogvpn"
+fi
+
+if systemd_unit_known "$daemon_unit"; then
+  mark_ok "daemon unit known: $daemon_unit"
+  daemon_state="$(systemd_active_state "$daemon_unit")"
+  if [[ "$daemon_state" == "active" ]]; then
+    mark_ok "daemon active: $daemon_unit"
+  else
+    mark_warn "daemon state: ${daemon_state:-unknown}"
+  fi
+  info "$daemon_unit: enabled=$(systemd_enabled_state "$daemon_unit")"
+
+  ambient_caps="$(systemd_show_value "$daemon_unit" AmbientCapabilities)"
+  bounding_caps="$(systemd_show_value "$daemon_unit" CapabilityBoundingSet)"
+  if capability_list_has "$ambient_caps" cap_net_bind_service && capability_list_has "$bounding_caps" cap_net_bind_service; then
+    mark_ok "daemon port 53 capability configured"
+  else
+    mark_warn "daemon missing CAP_NET_BIND_SERVICE in systemd capability sets"
+  fi
+
+  daemon_pid="$(systemd_show_value "$daemon_unit" MainPID)"
+  if [[ "$daemon_state" == "active" ]]; then
+    if cap_eff_has_bind_service "$daemon_pid"; then
+      mark_ok "daemon process can inherit privileged-port bind capability"
+    else
+      mark_warn "daemon process effective capabilities do not include CAP_NET_BIND_SERVICE"
+    fi
+  else
+    info "daemon process capability check skipped; service is not active"
+  fi
+else
+  mark_warn "daemon unit not found: $daemon_unit"
+fi
+
+if socket_reachable "$daemon_socket"; then
+  mark_ok "daemon socket reachable: $daemon_socket"
+else
+  socket_rc=$?
+  if ((socket_rc == 13)); then
+    mark_warn "daemon socket permission denied: $daemon_socket"
+    info "add your user to the watchdogvpn group, then log out and back in"
+  elif [[ -S "$daemon_socket" ]]; then
+    mark_warn "daemon socket not reachable: $daemon_socket"
+  elif [[ "${daemon_state:-}" == "active" ]]; then
+    mark_fail "daemon socket missing while service is active: $daemon_socket"
+  else
+    mark_warn "daemon socket missing: $daemon_socket"
+  fi
+fi
+
+section "Legacy Systemd Units"
 for unit in adguardvpn.service vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer; do
   if systemd_unit_known "$unit"; then
     info "$unit: active=$(systemd_active_state "$unit") enabled=$(systemd_enabled_state "$unit")"
