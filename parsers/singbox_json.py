@@ -81,4 +81,6 @@ def parse_singbox_json(data: str | dict[str, Any]) -> list[Profile]:
         profile = _build_profile(outbound)
         if profile is not None:
             profiles.append(profile)
+    if not profiles:
+        raise ParseError("sing-box JSON contains no supported profiles")
     return profiles

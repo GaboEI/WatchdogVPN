@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 from typing import Any
 from urllib.parse import parse_qs, urlparse, unquote
@@ -22,6 +23,7 @@ SUPPORTED_SCHEMES = {
     "tuic": ProtocolType.TUIC,
     "wg": ProtocolType.WIREGUARD,
 }
+LOCAL_HOSTNAMES = {"localhost"}
 
 
 def detect_scheme(uri: str) -> str:
@@ -50,6 +52,40 @@ def _query_dict(parsed) -> dict[str, str]:
     return result
 
 
+def _safe_port(parsed, label: str) -> int | None:
+    try:
+        return parsed.port
+    except ValueError as exc:
+        raise ParseError(f"{label} URI has invalid port") from exc
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower().rstrip(".")
+    if normalized in LOCAL_HOSTNAMES:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _reject_loopback_host(host: str, label: str, allow_local: bool = False) -> None:
+    if allow_local:
+        return
+    if _is_loopback_host(host):
+        raise ParseError(
+            f"{label} URI uses a local endpoint; add allow_local=true only for intentional local testing"
+        )
+
+
+def _allow_local_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() == "true"
+    return False
+
+
 def _normalize_path_authority(parsed, preserve_leading_slash: bool = False):
     if parsed.hostname or not parsed.path.startswith("/") or "@" not in parsed.path:
         return parsed
@@ -66,7 +102,7 @@ def _normalize_path_authority(parsed, preserve_leading_slash: bool = False):
 
 def _build_profile(protocol: ProtocolType, parsed, config: dict[str, Any], name: str | None = None) -> Profile:
     host = parsed.hostname or ""
-    port = parsed.port
+    port = _safe_port(parsed, protocol.value)
     fragment = unquote(parsed.fragment) if parsed.fragment else ""
     profile_id = name or fragment or host or protocol.value
     profile_name = name or fragment or host or protocol.value
@@ -92,9 +128,11 @@ def _build_profile(protocol: ProtocolType, parsed, config: dict[str, Any], name:
 
 def _parse_vless(uri: str):
     parsed = urlparse(uri)
-    if not parsed.hostname or parsed.port is None:
+    port = _safe_port(parsed, "VLESS")
+    if not parsed.hostname or port is None:
         raise ParseError("VLESS URI requires host and port")
     config = _query_dict(parsed)
+    _reject_loopback_host(parsed.hostname, "VLESS", config.get("allow_local") == "true")
     if parsed.username:
         config["uuid"] = unquote(parsed.username)
     if parsed.password:
@@ -104,9 +142,11 @@ def _parse_vless(uri: str):
 
 def _parse_trojan(uri: str):
     parsed = _normalize_path_authority(urlparse(uri), preserve_leading_slash=True)
-    if not parsed.hostname or parsed.port is None:
+    port = _safe_port(parsed, "Trojan")
+    if not parsed.hostname or port is None:
         raise ParseError("Trojan URI requires host and port")
     config = _query_dict(parsed)
+    _reject_loopback_host(parsed.hostname, "Trojan", config.get("allow_local") == "true")
     if parsed.username:
         config["password"] = unquote(parsed.username)
     if parsed.password:
@@ -116,9 +156,11 @@ def _parse_trojan(uri: str):
 
 def _parse_hysteria2(uri: str):
     parsed = urlparse(uri)
-    if not parsed.hostname or parsed.port is None:
+    port = _safe_port(parsed, "Hysteria2")
+    if not parsed.hostname or port is None:
         raise ParseError("Hysteria2 URI requires host and port")
     config = _query_dict(parsed)
+    _reject_loopback_host(parsed.hostname, "Hysteria2", config.get("allow_local") == "true")
     if parsed.username and parsed.password:
         config["password"] = f"{unquote(parsed.username)}:{unquote(parsed.password)}"
     elif parsed.username:
@@ -128,9 +170,11 @@ def _parse_hysteria2(uri: str):
 
 def _parse_tuic(uri: str):
     parsed = urlparse(uri)
-    if not parsed.hostname or parsed.port is None:
+    port = _safe_port(parsed, "TUIC")
+    if not parsed.hostname or port is None:
         raise ParseError("TUIC URI requires host and port")
     config = _query_dict(parsed)
+    _reject_loopback_host(parsed.hostname, "TUIC", config.get("allow_local") == "true")
     if parsed.username:
         config["uuid"] = unquote(parsed.username)
     if parsed.password:
@@ -143,8 +187,10 @@ def _parse_wireguard(uri: str):
     if not parsed.hostname:
         raise ParseError("WireGuard URI requires host")
     config = _query_dict(parsed)
-    if parsed.port is not None:
-        config["port"] = parsed.port
+    _reject_loopback_host(parsed.hostname, "WireGuard", config.get("allow_local") == "true")
+    port = _safe_port(parsed, "WireGuard")
+    if port is not None:
+        config["port"] = port
     if parsed.username:
         config["public_key"] = unquote(parsed.username)
     if parsed.password:
@@ -175,6 +221,7 @@ def _parse_shadowsocks(uri: str):
     if not port.isdigit():
         raise ParseError("invalid Shadowsocks port")
     config = _query_dict(parsed)
+    _reject_loopback_host(host, "Shadowsocks", config.get("allow_local") == "true")
     config.update(
         {
             "method": method,
@@ -202,6 +249,7 @@ def _parse_vmess(uri: str):
     port = data.get("port")
     if not host or port is None:
         raise ParseError("VMess payload requires add and port")
+    _reject_loopback_host(str(host), "VMess", _allow_local_value(data.get("allow_local")))
     config = {"raw_payload": data}
     config.update(_query_dict(parsed))
     try:

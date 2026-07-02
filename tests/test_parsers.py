@@ -32,6 +32,23 @@ class UriParserTests(unittest.TestCase):
         self.assertEqual(profile.config["port"], 443)
         self.assertEqual(profile.config["uuid"], "uuid")
 
+    def test_invalid_uri_port_raises_parse_error(self) -> None:
+        with self.assertRaisesRegex(ParseError, "invalid port"):
+            parse_uri("vless://uuid@example.com:notaport?encryption=none")
+        with self.assertRaisesRegex(ParseError, "invalid port"):
+            parse_uri("vless://uuid@example.com:99999?encryption=none")
+
+    def test_remote_uri_rejects_loopback_endpoint(self) -> None:
+        with self.assertRaisesRegex(ParseError, "local endpoint"):
+            parse_uri("vless://uuid@127.0.0.1:443?encryption=none")
+        with self.assertRaisesRegex(ParseError, "local endpoint"):
+            parse_uri("trojan://secret@localhost:443?security=tls")
+
+    def test_remote_uri_allows_explicit_local_testing(self) -> None:
+        profile = parse_uri("vless://uuid@127.0.0.1:443?encryption=none&allow_local=true")
+        self.assertEqual(profile.protocol, ProtocolType.VLESS)
+        self.assertEqual(profile.config["host"], "127.0.0.1")
+
     def test_parse_uri_decodes_fragment_name(self) -> None:
         profile = parse_uri("vless://uuid@example.com:443?encryption=none#Austria%2C%20Vienna%20%5B3GBIT%5D")
         self.assertEqual(profile.name, "Austria, Vienna [3GBIT]")
@@ -151,6 +168,7 @@ class UriParserTests(unittest.TestCase):
         self.assertEqual(profile.config["endpoint"], "wg.example.com:51820")
         self.assertEqual(profile.config["allowed_ips"], "0.0.0.0/0, ::/0")
         self.assertEqual(profile.config["mtu"], "1420")
+        self.assertEqual(profile.config["runtime_validation"]["private_key_reuse"], "checked_at_connect_time")
 
     def test_parse_amneziawg_config(self) -> None:
         profile = parse_wg_config(
@@ -227,6 +245,8 @@ class SingboxJsonParserTests(unittest.TestCase):
             parse_singbox_json("not json")
         with self.assertRaises(ParseError):
             parse_singbox_json(json.dumps(["invalid", "shape"]))
+        with self.assertRaisesRegex(ParseError, "no supported profiles"):
+            parse_singbox_json(json.dumps({"outbounds": [{"type": "direct", "tag": "bypass"}]}))
 
 
 class OpenVPNConfigParserTests(unittest.TestCase):
@@ -289,6 +309,8 @@ class ClashYamlParserTests(unittest.TestCase):
             parse_clash_yaml("foo: bar")
         with self.assertRaises(ParseError):
             parse_clash_yaml("proxies:\n  name: bad")
+        with self.assertRaisesRegex(ParseError, "no supported profiles"):
+            parse_clash_yaml("proxies:\n  - name: bypass\n    type: direct\n")
 
 
 class SubscriptionParserTests(unittest.TestCase):
@@ -368,6 +390,23 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertEqual(len(profiles), 1)
         self.assertEqual(profiles[0].name, "clash1")
         self.assertEqual(profiles[0].protocol, ProtocolType.TROJAN)
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_and_parse_rejects_html_response(self, urlopen_mock) -> None:
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = (
+            "<!doctype html><html><body>login required</body></html>"
+        ).encode("utf-8")
+
+        with self.assertRaisesRegex(ParseError, "looks like HTML"):
+            fetch_and_parse("https://example.com/sub")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_and_parse_base64_without_supported_profiles(self, urlopen_mock) -> None:
+        encoded = base64.b64encode(b"ftp://example.com\nnot-a-profile").decode("utf-8")
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = encoded.encode("utf-8")
+
+        with self.assertRaisesRegex(ParseError, "no supported profiles"):
+            fetch_and_parse("https://example.com/sub")
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_errors(self, urlopen_mock) -> None:

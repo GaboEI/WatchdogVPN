@@ -37,7 +37,7 @@
 | Description | URI parser port errors can escape as raw `ValueError` instead of the parser contract's `ParseError`. |
 | Scenario | A user imports `vless://uuid@example.com:99999` or `vless://uuid@example.com:notaport`, and the parser accesses `parsed.port`. |
 | Impact | CLI catches `ValueError` as a generic internal error path, and non-CLI callers see an unexpected exception type. This violates the parser contract that malformed user inputs should fail as clear `ParseError` messages. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `parsers/uri.py` reads `parsed.port` directly in VLESS, Trojan, Hysteria2,
@@ -57,7 +57,7 @@ Evidence:
 | Description | Remote proxy/VPN URI imports accept loopback and localhost endpoints silently. |
 | Scenario | A manual profile or provider subscription contains `vless://uuid@127.0.0.1:443`, `trojan://secret@localhost:443`, or equivalent loopback hostnames. |
 | Impact | WatchdogVPN can store and later attempt to connect to a local endpoint as if it were a normal remote node. That can create confusing failures, provider-fed dead nodes, or accidental traffic to local services. If local endpoints are ever intentionally allowed, the profile should be explicit rather than silently accepted. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `parsers/uri.py` validates that host and port exist, but does not classify or
@@ -75,7 +75,7 @@ Evidence:
 | Description | Subscription responses that are HTML/captive portal pages are not detected explicitly, producing misleading parser errors. |
 | Scenario | A provider URL returns HTTP 200 with an HTML login page or captive portal body instead of a VPN subscription. |
 | Impact | The parser may route the body through YAML detection because HTML often contains colons, then report `YAML missing proxies section` or a generic unsupported format. The error is recoverable, but it is not actionable for users trying to add a provider. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `parsers/subscription.py::_looks_like_yaml()` returns true for the first
@@ -94,7 +94,7 @@ Evidence:
 | Description | Valid base64 subscription bodies with zero parseable profile URIs produce a generic unsupported-format error instead of a clean no-nodes result. |
 | Scenario | A subscription endpoint returns base64 text that decodes successfully, but every decoded line is unsupported, blank after filtering, or not a profile URI. |
 | Impact | Users and provider integrations cannot distinguish "the URL is not a subscription format" from "the subscription is valid but currently contains no supported nodes." This weakens provider debugging and onboarding. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `fetch_and_parse()` catches any `ParseError` from base64 line parsing and
@@ -114,7 +114,7 @@ Evidence:
 | Description | sing-box JSON and Clash YAML parsers silently ignore unsupported outbound/proxy entries and may return an empty list without context. |
 | Scenario | A user imports a syntactically valid sing-box or Clash config whose entries are all unsupported by WatchdogVPN. |
 | Impact | ManualProvider and SubscriptionProvider wrap empty results into clearer errors, so the common user path is recoverable. Direct parser callers still receive `[]` with no reason, which can hide why a config imported no profiles. |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `parse_singbox_json()` appends only supported outbound types and returns the
@@ -134,7 +134,7 @@ Evidence:
 | Description | WireGuard private-key reuse is not detectable at import time and is not documented as a deferred runtime validation. |
 | Scenario | A user imports a syntactically valid WireGuard `.conf` whose private key is already active in another local interface. |
 | Impact | The parser cannot reliably detect this without querying live system state. The eventual driver/runtime path must surface the conflict clearly, but the import layer currently has no note or validation boundary documenting that limitation. |
-| Status | DEFERRED |
+| Status | RESOLVED 2026-07-03 |
 
 Evidence:
 - `parse_wg_config()` parses static config text only and has no system
@@ -218,3 +218,44 @@ confirm invalid URL input fails without traceback.
   nodes.
 - The closure should update this audit report with resolution notes after fixes
   land.
+
+## Hardening Closure - 2026-07-03
+
+### Implemented fixes
+
+- AUD-L4-001: URI port parsing now catches `urllib.parse` port `ValueError`
+  and raises the parser contract's `ParseError` with a stable invalid-port
+  message.
+- AUD-L4-002: Remote URI imports now reject loopback and `localhost` endpoints
+  by default. Intentional local testing must opt in with `allow_local=true`.
+- AUD-L4-003: Subscription responses that look like HTML are detected before
+  base64/JSON/YAML probing and fail with an actionable HTML response error.
+- AUD-L4-004: Valid base64 subscriptions with zero supported profile URIs now
+  fail with `subscription contains no supported profiles` and retain parse
+  details when available.
+- AUD-L4-005: Direct sing-box JSON and Clash YAML parser calls now raise
+  `ParseError` when the input shape is valid but contains no supported profiles.
+- AUD-L4-006: WireGuard config imports now record
+  `runtime_validation.private_key_reuse = checked_at_connect_time`, documenting
+  that private-key reuse is a live runtime concern rather than static parser
+  validation.
+
+### Regression coverage
+
+- Added parser regression tests for invalid URI ports, loopback URI endpoints,
+  explicit local testing opt-in, HTML subscription responses, base64
+  subscriptions with no supported profiles, empty supported sing-box/Clash
+  imports, and WireGuard runtime validation metadata.
+
+### Validation
+
+- `python3 -m py_compile parsers/uri.py parsers/subscription.py parsers/singbox_json.py parsers/clash_yaml.py parsers/wg_config.py tests/test_parsers.py` passed.
+- `python3 -m unittest tests.test_parsers tests.test_manual_provider tests.test_subscription_provider tests.test_cli_provider_commands tests.test_cli_profile_commands` passed: 70 tests.
+- `python3 -m unittest discover tests` passed: 457 tests.
+- `bash tests/unit.sh` passed.
+- `.venv/bin/pytest tests` passed: 473 tests.
+
+### Remaining debt
+
+- None from QA Audit Layer 4. All recorded HIGH and MEDIUM findings are closed
+  before Phase 11 can resume.

@@ -44,6 +44,16 @@ def _looks_like_json(text: str) -> bool:
     return stripped.startswith("{") or stripped.startswith("[")
 
 
+def _looks_like_html(text: str) -> bool:
+    stripped = text.lstrip().lower()
+    return (
+        stripped.startswith("<!doctype html")
+        or stripped.startswith("<html")
+        or "<body" in stripped[:500]
+        or "</html>" in stripped[:1000]
+    )
+
+
 def _looks_like_yaml(text: str) -> bool:
     for line in text.splitlines():
         stripped = line.strip()
@@ -75,18 +85,29 @@ def _decode_base64_lines(text: str) -> list[str]:
 
 def fetch_and_parse(url: str) -> list[Profile]:
     text = _fetch_text(url)
+    if _looks_like_html(text):
+        raise ParseError("subscription response looks like HTML, not a VPN subscription")
     if _looks_like_json(text):
         return parse_singbox_json(text)
     if _looks_like_yaml(text):
         return parse_clash_yaml(text)
 
-    profiles: list[Profile] = []
     try:
-        for line in _decode_base64_lines(text):
-            profiles.append(parse_uri(line))
-        return profiles
+        decoded_lines = _decode_base64_lines(text)
     except ParseError:
-        pass
+        decoded_lines = []
+    if decoded_lines:
+        profiles: list[Profile] = []
+        parse_errors: list[str] = []
+        for line in decoded_lines:
+            try:
+                profiles.append(parse_uri(line))
+            except ParseError as exc:
+                parse_errors.append(str(exc))
+        if not profiles:
+            detail = f" ({'; '.join(parse_errors[:3])})" if parse_errors else ""
+            raise ParseError(f"subscription contains no supported profiles{detail}")
+        return profiles
 
     if "outbounds" in text:
         try:

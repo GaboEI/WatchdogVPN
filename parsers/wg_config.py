@@ -79,6 +79,9 @@ def parse_wg_config(text: str) -> Profile:
         "public_key": public_key,
         "endpoint": endpoint,
         "raw": (text or "").strip(),
+        "runtime_validation": {
+            "private_key_reuse": "checked_at_connect_time",
+        },
     }
     if allowed_ips:
         config["allowed_ips"] = allowed_ips

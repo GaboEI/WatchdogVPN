@@ -167,4 +167,6 @@ def parse_clash_yaml(text: str) -> list[Profile]:
                 source=ProfileSource.MANUAL,
             )
         )
+    if not profiles:
+        raise ParseError("Clash YAML contains no supported profiles")
     return profiles

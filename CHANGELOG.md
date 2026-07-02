@@ -43,6 +43,10 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   writes, controlled corrupt-file errors, strict boolean/type validation,
   fail-closed invalid `vpn_desired_state` handling, and rotation cooldown
   protection for future health-check timestamps.
+- Harden profile and provider input validation before Phase 11 with controlled
+  URI port errors, explicit loopback endpoint rejection, HTML subscription
+  detection, clearer zero-node subscription errors, explicit empty sing-box/Clash
+  parser failures, and WireGuard runtime-validation metadata.
 - Respect the global rotation enable flag during automatic recovery, report
   unavailable rotation separately from failed candidates, and apply configured
   recovery backoff limits at runtime.
