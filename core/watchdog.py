@@ -25,6 +25,7 @@ from models.profile import Profile, ProtocolType
 from rotation import health_checker, pool_builder
 from rotation.recovery import Recovery
 from rotation.rotation_engine import RotationEngine
+from rules.rule_store import RuleStore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class WatchdogRuntime:
     dns_policy_store: DNSPolicyStore = field(default_factory=DNSPolicyStore)
     dns_state_manager: SystemDNSStateManager = field(default_factory=SystemDNSStateManager)
     dns_snapshot_path: Path = field(default_factory=default_snapshot_path)
+    rule_store: RuleStore = field(default_factory=RuleStore)
     driver_selector: DriverSelector = field(default_factory=lambda: select_driver)
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
@@ -137,7 +139,7 @@ class WatchdogRuntime:
         self._driver_for_profile(profile).connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
-            mode=self._active_mode(),
+            **self._connect_options(),
         )
         return self.driver.status()
 
@@ -147,7 +149,7 @@ class WatchdogRuntime:
         return self._driver_for_profile(profile).connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
-            mode=self._active_mode(),
+            **self._connect_options(),
         )
 
     def disconnect(self) -> bool:
@@ -178,11 +180,22 @@ class WatchdogRuntime:
             raise PersistentValidationError("active_mode must be one of: rules, global, direct, tun, proxy")
         return mode
 
+    def _connect_options(self) -> dict[str, object]:
+        mode = self._active_mode()
+        options: dict[str, object] = {"mode": mode}
+        if mode == "rules":
+            options["groups"] = self.rule_store.list_groups()
+        return options
+
     def _try_reconnect(self, profile: Profile) -> bool:
         LOGGER.info("watchdog_reconnect_attempt profile_id=%s", profile.id)
         driver = self._driver_for_profile(profile)
         driver.disconnect()
-        if not driver.connect(profile, dns_policy=self.dns_policy_store.load(), mode=self._active_mode()):
+        if not driver.connect(
+            profile,
+            dns_policy=self.dns_policy_store.load(),
+            **self._connect_options(),
+        ):
             return False
         return health_checker.check(profile, driver) == "ok"
 
@@ -414,8 +427,7 @@ class _RuntimeDriverRouter(BaseDriver):
         return driver.connect(
             profile,
             dns_policy=dns_policy,
-            mode=self.runtime._active_mode(),
-            groups=groups,
+            **self.runtime._connect_options(),
             final_policy=final_policy,
         )
 

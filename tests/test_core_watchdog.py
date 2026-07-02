@@ -21,6 +21,8 @@ from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
+from rules.models import Rule, RuleGroup
+from rules.rule_store import RuleStore
 
 
 class FakeDriver(BaseDriver):
@@ -32,6 +34,7 @@ class FakeDriver(BaseDriver):
         self.is_available_mock = Mock(return_value=True)
         self.last_dns_policy: DNSPolicy | None = "unset"
         self.last_mode: str | None = None
+        self.last_groups = "unset"
 
     def connect(
         self,
@@ -44,6 +47,7 @@ class FakeDriver(BaseDriver):
     ) -> bool:
         self.last_dns_policy = dns_policy
         self.last_mode = mode
+        self.last_groups = groups
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -563,6 +567,49 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(driver.last_mode, "tun")
 
+    def test_connect_forwards_persisted_rule_groups_when_rules_mode(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("active_mode", "rules")
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        group = RuleGroup(
+            name="block",
+            rules=[Rule(id="ads", action="block", conditions={"domain_suffix": [".ads.example"]})],
+        )
+        rule_store.add_group(group)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            rule_store=rule_store,
+        )
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_mode, "rules")
+        self.assertEqual(driver.last_groups, [group])
+
+    def test_connect_does_not_forward_rule_groups_outside_rules_mode(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("active_mode", "global")
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        rule_store.add_group(
+            RuleGroup(
+                name="block",
+                rules=[Rule(id="ads", action="block", conditions={"domain_suffix": [".ads.example"]})],
+            )
+        )
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            rule_store=rule_store,
+        )
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_mode, "global")
+        self.assertIsNone(driver.last_groups)
+
     def test_startup_forwards_the_stored_dns_policy_to_the_driver(self) -> None:
         self.state_manager.save(
             {
@@ -607,6 +654,84 @@ class WatchdogCoreTests(unittest.TestCase):
         runtime.startup()
 
         self.assertEqual(driver.last_mode, "tun")
+
+    def test_startup_forwards_persisted_rule_groups_when_rules_mode(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+                "active_mode": "rules",
+            }
+        )
+        self.profile_store.add(self.profile)
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        group = RuleGroup(
+            name="app",
+            rules=[Rule(id="steam", action="direct", conditions={"process_name": ["steam"]})],
+        )
+        rule_store.add_group(group)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            rule_store=rule_store,
+        )
+
+        runtime.startup()
+
+        self.assertEqual(driver.last_mode, "rules")
+        self.assertEqual(driver.last_groups, [group])
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "health_check", return_value="ok")
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_runtime_rules_mode_groups_reach_generated_singbox_config(
+        self, popen_mock, bind_mock, binary_mock, health_mock, write_mock
+    ) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+        self.set_desired_state("off")
+        self.state_manager.set("active_mode", "rules")
+        profile = Profile(
+            id="vless-runtime",
+            name="Runtime VLESS",
+            protocol=ProtocolType.VLESS,
+            config={
+                "server": "vless.example.com",
+                "port": 443,
+                "uuid": "00000000-0000-4000-8000-000000000001",
+                "security": "none",
+            },
+            source=ProfileSource.MANUAL,
+        )
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        rule_store.add_group(
+            RuleGroup(
+                name="block",
+                rules=[Rule(id="ads", action="block", conditions={"domain_suffix": [".ads.example"]})],
+            )
+        )
+        driver = SingBoxDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            rule_store=rule_store,
+        )
+
+        self.assertTrue(runtime.connect(profile))
+
+        config = write_mock.call_args.args[0]
+        self.assertEqual(
+            config["route"]["rules"],
+            [
+                {"domain_suffix": [".ads.example"], "action": "reject"},
+                {"outbound": "Runtime VLESS"},
+            ],
+        )
 
     def test_connect_persists_desired_state_on(self) -> None:
         self.set_desired_state("off")
@@ -814,7 +939,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmpdir.cleanup()
 
-    def _make_runtime(self, driver: BaseDriver) -> WatchdogRuntime:
+    def _make_runtime(self, driver: BaseDriver, rule_store: RuleStore | None = None) -> WatchdogRuntime:
         from rotation.recovery import Recovery
         from rotation.rotation_engine import RotationEngine
 
@@ -827,6 +952,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
             rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
             recovery=Recovery(clock=clock),
             kill_switch=FakeKillSwitch(),
+            rule_store=rule_store or RuleStore(Path(self.tmpdir.name) / "rules"),
         )
 
     def test_run_iteration_healthy_resets_recovery_and_returns_connected(self) -> None:
@@ -860,6 +986,27 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "recovered")
         driver.connect_mock.assert_called_with(self.profile)
+
+    @patch("core.watchdog.health_checker.check", return_value="ok")
+    def test_reconnect_forwards_persisted_rule_groups_when_rules_mode(self, _hc) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.state_manager.set("active_mode", "rules")
+        self.profile_store.add(self.profile)
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        group = RuleGroup(
+            name="custom",
+            rules=[Rule(id="site", action="current_profile", conditions={"domain": ["example.com"]})],
+        )
+        rule_store.add_group(group)
+        runtime = self._make_runtime(driver, rule_store=rule_store)
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(driver.last_mode, "rules")
+        self.assertEqual(driver.last_groups, [group])
 
     @patch("core.watchdog.health_checker.check", return_value="down")
     def test_run_iteration_returns_reconnecting_below_attempt_threshold(self, _hc) -> None:
@@ -1331,6 +1478,49 @@ class WatchdogIntegrationTests(unittest.TestCase):
         runtime.rotate_now(force=True)
 
         self.assertEqual(driver.last_mode, "tun")
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check", return_value="ok")
+    def test_rotate_now_forwards_persisted_rule_groups_when_rules_mode(
+        self, _hc, mock_pool, mock_sel_driver
+    ) -> None:
+        alt_profile = Profile(
+            id="alt-rules",
+            name="Alt Rules",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        driver = FakeDriver()
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+        self.state_manager.set("active_mode", "rules")
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        group = RuleGroup(
+            name="direct",
+            rules=[Rule(id="apt", action="direct", conditions={"process_name": ["apt"]})],
+        )
+        rule_store.add_group(group)
+
+        runtime = self._make_runtime(driver, rule_store=rule_store)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "watchdog": {},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": True},
+            "adguard": {},
+        }
+
+        runtime.rotate_now(force=True)
+
+        self.assertEqual(driver.last_mode, "rules")
+        self.assertEqual(driver.last_groups, [group])
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
