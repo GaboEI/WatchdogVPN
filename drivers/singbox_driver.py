@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from config.state_manager import ALLOWED_ACTIVE_MODES
 from dns.models import DNSPolicy
 from dns.singbox import (
     build_dns_hijack_inbounds,
@@ -21,6 +22,8 @@ from drivers.base import BaseDriver
 from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from rules.models import SIMPLE_RULE_ACTIONS, RuleGroup
+from rules.singbox import build_singbox_route_rules
 
 
 RUNTIME_PREFIX = "watchdogvpn-singbox-"
@@ -116,6 +119,30 @@ class SingBoxDriver(BaseDriver):
                 "listen_port": 2081,
             },
         ]
+
+    def _build_tun_inbound(self) -> dict[str, Any]:
+        return {
+            "type": "tun",
+            "tag": "watchdogvpn-tun-in",
+            "interface_name": "wdvpn-tun0",
+            "address": ["172.19.0.1/30"],
+            "auto_route": True,
+            "stack": "system",
+        }
+
+    def _ensure_direct_outbound(
+        self, config: dict[str, Any], domain_resolver: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        for outbound in config["outbounds"]:
+            if outbound.get("tag") == "direct":
+                if domain_resolver is not None:
+                    outbound["domain_resolver"] = domain_resolver
+                return outbound
+        direct_outbound: dict[str, Any] = {"type": "direct", "tag": "direct"}
+        if domain_resolver is not None:
+            direct_outbound["domain_resolver"] = domain_resolver
+        config["outbounds"].append(direct_outbound)
+        return direct_outbound
 
     def _normalize_port(self, value: Any, default: int | None = None) -> int | None:
         if value is None:
@@ -523,14 +550,25 @@ class SingBoxDriver(BaseDriver):
         self,
         profile: Profile,
         dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups: list[RuleGroup] | None = None,
+        final_policy: str = "current_profile",
     ) -> dict[str, Any]:
+        if mode not in ALLOWED_ACTIVE_MODES:
+            raise ValueError(f"unsupported connection mode: {mode!r}")
+        if final_policy not in SIMPLE_RULE_ACTIONS:
+            raise ValueError(f"unsupported final_policy: {final_policy!r}")
+
         outbound = self._protocol_to_outbound(profile)
         self._apply_dialer_options(outbound, profile)
-        config = {
+        config: dict[str, Any] = {
             "log": {"level": "warning"},
             "inbounds": self._build_inbounds(),
             "outbounds": [outbound],
         }
+        if mode == "tun":
+            config["inbounds"].append(self._build_tun_inbound())
         if dns_policy is not None:
             dns_config = build_singbox_dns_config(dns_policy, outbound["tag"])
             if dns_config is not None:
@@ -542,19 +580,52 @@ class SingBoxDriver(BaseDriver):
                 if dns_config.proxy_domain_resolver is not None:
                     outbound["domain_resolver"] = dns_config.proxy_domain_resolver
                 if dns_config.direct_domain_resolver is not None:
-                    config["outbounds"].append({
-                        "type": "direct",
-                        "tag": "direct",
-                        "domain_resolver": dns_config.direct_domain_resolver,
-                    })
+                    self._ensure_direct_outbound(config, dns_config.direct_domain_resolver)
+
+        # "rules" mode evaluates the loaded rule groups; every other mode
+        # routes everything to the current outbound ("direct" mode further
+        # overrides the effective final policy to "direct" instead of
+        # whatever final_policy the caller passed). Merged AFTER the DNS
+        # hijack route above so the hijack rule (scoped to its own inbound
+        # tags) is checked before this block's unconditional catch-all rule
+        # — reversing that order would make the hijack rule unreachable.
+        if mode == "rules":
+            effective_groups = groups or []
+            effective_final_policy = final_policy
+        else:
+            effective_groups = []
+            effective_final_policy = "direct" if mode == "direct" else "current_profile"
+        if mode in {"rules", "direct"}:
+            self._ensure_direct_outbound(config)
+        mode_route_rules = build_singbox_route_rules(
+            effective_groups,
+            current_outbound_tag=outbound["tag"],
+            final_policy=effective_final_policy,
+        )
+        _merge_route_config(config, {"rules": mode_route_rules})
+
         self._write_config(config)
         return config
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups: list[RuleGroup] | None = None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         binary = self.find_singbox_binary()
         if not binary:
             return False
-        self.generate_singbox_config(profile, dns_policy=dns_policy)
+        self.generate_singbox_config(
+            profile,
+            dns_policy=dns_policy,
+            mode=mode,
+            groups=groups,
+            final_policy=final_policy,
+        )
         config_path, log_path = self._ensure_runtime_paths()
         log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(

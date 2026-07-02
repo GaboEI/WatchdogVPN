@@ -153,7 +153,7 @@ def rule_matches(rule: Rule, traffic: TrafficInfo) -> bool:
     )
 
 
-def _group_by_tier(groups: list[RuleGroup]) -> dict[str, list[RuleGroup]]:
+def group_by_tier(groups: list[RuleGroup]) -> dict[str, list[RuleGroup]]:
     tiers: dict[str, list[RuleGroup]] = {name: [] for name in PRIORITY_TIER_ORDER}
     for group in groups:
         if group.name == "imported" or group.name.startswith("imported-"):
@@ -173,7 +173,7 @@ class RuleEngine:
             raise ValueError(f"unsupported final_policy: {self.final_policy!r}")
 
     def evaluate(self, traffic: TrafficInfo, groups: list[RuleGroup]) -> RuleMatch:
-        tiers = _group_by_tier(groups)
+        tiers = group_by_tier(groups)
         for tier in PRIORITY_TIER_ORDER:
             for group in tiers[tier]:
                 if not group.enabled:

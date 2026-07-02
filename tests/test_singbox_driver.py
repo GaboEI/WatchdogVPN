@@ -9,6 +9,7 @@ from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
 from drivers.singbox_driver import SingBoxDriver
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.wg_config import parse_wg_config
+from rules.models import Rule, RuleGroup
 
 
 class SingBoxDriverBinaryTests(unittest.TestCase):
@@ -290,6 +291,127 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_default_mode_is_global(self, bind_mock, write_mock) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(profile)
+        self.assertEqual(config["route"]["rules"], [{"outbound": "vless-demo"}])
+        self.assertNotIn("direct", [o.get("tag") for o in config["outbounds"]])
+        self.assertFalse(any(i["type"] == "tun" for i in config["inbounds"]))
+        # base SOCKS+HTTP inbound must stay present regardless of mode —
+        # health_check() depends on it (see Task 11.5 validation notes).
+        self.assertTrue(any(i["tag"] == "watchdogvpn-socks-in" for i in config["inbounds"]))
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_direct_mode_routes_to_direct_outbound(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(profile, mode="direct")
+        self.assertEqual(config["route"]["rules"], [{"outbound": "direct"}])
+        direct_outbounds = [o for o in config["outbounds"] if o.get("tag") == "direct"]
+        self.assertEqual(len(direct_outbounds), 1)
+        self.assertEqual(direct_outbounds[0]["type"], "direct")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_tun_mode_adds_tun_inbound_and_routes_global(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(profile, mode="tun")
+        tun_inbounds = [i for i in config["inbounds"] if i["type"] == "tun"]
+        self.assertEqual(len(tun_inbounds), 1)
+        self.assertEqual(tun_inbounds[0]["tag"], "watchdogvpn-tun-in")
+        self.assertEqual(config["route"]["rules"], [{"outbound": "vless-demo"}])
+        # SOCKS+HTTP inbound stays present alongside TUN.
+        self.assertTrue(any(i["tag"] == "watchdogvpn-socks-in" for i in config["inbounds"]))
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_proxy_mode_routes_global_no_extra_inbound(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(profile, mode="proxy")
+        self.assertEqual(config["route"]["rules"], [{"outbound": "vless-demo"}])
+        self.assertFalse(any(i["type"] == "tun" for i in config["inbounds"]))
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_rules_mode_generates_route_from_groups(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        groups = [
+            RuleGroup(
+                name="block",
+                rules=[Rule(id="b1", action="block", conditions={"domain_suffix": [".ads.com"]})],
+            ),
+            RuleGroup(
+                name="app",
+                rules=[Rule(id="a1", action="direct", conditions={"process_name": ["steam"]})],
+            ),
+        ]
+        config = self.driver.generate_singbox_config(profile, mode="rules", groups=groups)
+        self.assertEqual(
+            config["route"]["rules"],
+            [
+                {"domain_suffix": [".ads.com"], "action": "reject"},
+                {"process_name": ["steam"], "outbound": "direct"},
+                {"outbound": "vless-demo"},
+            ],
+        )
+        direct_outbounds = [o for o in config["outbounds"] if o.get("tag") == "direct"]
+        self.assertEqual(len(direct_outbounds), 1)
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_rules_mode_with_no_groups_falls_back_to_final_policy(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(
+            profile, mode="rules", groups=None, final_policy="block"
+        )
+        self.assertEqual(config["route"]["rules"], [{"action": "reject"}])
+
+    @patch.object(SingBoxDriver, "_write_config")
+    def test_generate_singbox_config_rejects_unsupported_mode(self, write_mock) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        with self.assertRaises(ValueError):
+            self.driver.generate_singbox_config(profile, mode="bogus")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_direct_mode_reuses_dns_direct_outbound(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        dns_policy = DNSPolicy(
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+            }
+        )
+        config = self.driver.generate_singbox_config(profile, dns_policy=dns_policy, mode="direct")
+        direct_outbounds = [o for o in config["outbounds"] if o.get("tag") == "direct"]
+        # DNS policy and "direct" mode both want a "direct" outbound — must
+        # not be added twice, and the DNS domain_resolver must survive.
+        self.assertEqual(len(direct_outbounds), 1)
+        self.assertEqual(direct_outbounds[0]["domain_resolver"], "watchdogvpn-direct-1")
+        self.assertEqual(config["route"]["rules"][-1], {"outbound": "direct"})
+
+    @patch.object(SingBoxDriver, "_write_config")
+    def test_generate_singbox_config_rejects_unsupported_final_policy(self, write_mock) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        with self.assertRaises(ValueError):
+            self.driver.generate_singbox_config(profile, mode="rules", final_policy="group:x")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_adds_dns_policy_without_changing_outbound(
         self,
         bind_mock,
@@ -348,7 +470,8 @@ class SingBoxDriverConfigTests(unittest.TestCase):
                     "watchdogvpn-dns-tcp-in",
                 ],
                 "action": "hijack-dns",
-            }
+            },
+            {"outbound": "vless-demo"},
         ])
         dns_servers = {server["tag"]: server for server in config["dns"]["servers"]}
         self.assertEqual(dns_servers["watchdogvpn-fakeip"]["type"], "fakeip")
@@ -382,7 +505,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         config = self.driver.generate_singbox_config(profile, dns_policy=dns_policy)
 
         self.assertIn("dns", config)
-        self.assertNotIn("route", config)
+        self.assertEqual(config["route"]["rules"], [{"outbound": "vless-demo"}])
         self.assertFalse(
             any(
                 inbound["tag"].startswith("watchdogvpn-dns-")
@@ -421,7 +544,13 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
         with patch.object(SingBoxDriver, "health_check", return_value="ok"):
             self.assertTrue(self.driver.connect(self.profile))
-            generate_mock.assert_called_once_with(self.profile, dns_policy=None)
+            generate_mock.assert_called_once_with(
+                self.profile,
+                dns_policy=None,
+                mode="global",
+                groups=None,
+                final_policy="current_profile",
+            )
             popen_mock.assert_called_once()
             self.assertIs(self.driver._process, process)
             self.assertIs(self.driver._active_profile, self.profile)
@@ -449,7 +578,13 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
         with patch.object(SingBoxDriver, "health_check", return_value="ok"):
             self.assertTrue(self.driver.connect(self.profile, dns_policy=policy))
-            generate_mock.assert_called_once_with(self.profile, dns_policy=policy)
+            generate_mock.assert_called_once_with(
+                self.profile,
+                dns_policy=policy,
+                mode="global",
+                groups=None,
+                final_policy="current_profile",
+            )
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)
     @patch.object(SingBoxDriver, "generate_singbox_config")

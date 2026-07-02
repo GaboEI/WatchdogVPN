@@ -6,7 +6,14 @@ from .models import (
     SIMPLE_RULE_ACTIONS,
     validate_group_name,
 )
-from .rule_engine import PRIORITY_TIER_ORDER, RuleEngine, RuleMatch, TrafficInfo, rule_matches
+from .rule_engine import (
+    PRIORITY_TIER_ORDER,
+    RuleEngine,
+    RuleMatch,
+    TrafficInfo,
+    group_by_tier,
+    rule_matches,
+)
 from .rule_parser import (
     RuleParseError,
     export_watchdogvpn_json,
@@ -16,6 +23,7 @@ from .rule_parser import (
     parse_watchdogvpn_json,
 )
 from .rule_store import RuleStore, RuleStoreError
+from .singbox import build_singbox_route_rules
 
 __all__ = [
     "ALLOWED_RULE_CONDITIONS",
@@ -30,7 +38,9 @@ __all__ = [
     "RuleStoreError",
     "SIMPLE_RULE_ACTIONS",
     "TrafficInfo",
+    "build_singbox_route_rules",
     "export_watchdogvpn_json",
+    "group_by_tier",
     "parse_clash_yaml_rules",
     "parse_singbox_ruleset_json",
     "parse_singbox_ruleset_srs",
