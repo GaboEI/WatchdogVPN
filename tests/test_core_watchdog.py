@@ -49,6 +49,37 @@ class FakeDriver(BaseDriver):
         return bool(self.is_available_mock())
 
 
+class FakeSingBoxDriver(FakeDriver):
+    pass
+
+
+class FakeAWGDriver(FakeDriver):
+    pass
+
+
+class EventDriver(FakeDriver):
+    def __init__(self, name: str, events: list[str]) -> None:
+        super().__init__()
+        self.name = name
+        self.events = events
+
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+        self.events.append(f"{self.name}:connect:{profile.id}")
+        return super().connect(profile, dns_policy=dns_policy)
+
+    def disconnect(self) -> bool:
+        self.events.append(f"{self.name}:disconnect")
+        return super().disconnect()
+
+
+class EventSingBoxDriver(EventDriver):
+    pass
+
+
+class EventAWGDriver(EventDriver):
+    pass
+
+
 class FakeKillSwitch:
     def __init__(self, active: bool = False, enable_result: bool = True) -> None:
         self.active = active
@@ -594,6 +625,118 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertEqual(runtime.health_check(), "ok")
         driver.health_check_mock.assert_called_once_with()
 
+    def test_connect_switches_driver_when_profile_requires_different_driver_type(self) -> None:
+        self.set_desired_state("off")
+        current_driver = FakeSingBoxDriver()
+        next_driver = FakeAWGDriver()
+        awg_profile = Profile(
+            id="awg1",
+            name="AWG",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+
+        def selector(profile: Profile | None = None) -> BaseDriver:
+            return next_driver if profile and profile.id == awg_profile.id else current_driver
+
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            driver_selector=selector,
+        )
+
+        self.assertTrue(runtime.connect(awg_profile))
+
+        current_driver.disconnect_mock.assert_called_once_with()
+        next_driver.connect_mock.assert_called_once_with(awg_profile)
+        self.assertIs(runtime.driver, next_driver)
+        self.assertEqual(self.state_manager.get("active_profile_id"), awg_profile.id)
+
+    def test_connect_reuses_current_driver_for_same_driver_type(self) -> None:
+        self.set_desired_state("off")
+        current_driver = FakeSingBoxDriver()
+        replacement_same_type = FakeSingBoxDriver()
+        profile = Profile(
+            id="vless1",
+            name="VLESS",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            driver_selector=lambda _profile=None: replacement_same_type,
+        )
+
+        self.assertTrue(runtime.connect(profile))
+
+        current_driver.disconnect_mock.assert_not_called()
+        current_driver.connect_mock.assert_called_once_with(profile)
+        replacement_same_type.connect_mock.assert_not_called()
+        self.assertIs(runtime.driver, current_driver)
+
+    def test_startup_switches_to_driver_for_active_profile(self) -> None:
+        awg_profile = Profile(
+            id="awg-start",
+            name="AWG",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": awg_profile.id,
+            }
+        )
+        self.profile_store.add(awg_profile)
+        current_driver = FakeSingBoxDriver()
+        next_driver = FakeAWGDriver()
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            driver_selector=lambda _profile=None: next_driver,
+        )
+
+        state = runtime.startup()
+
+        self.assertEqual(state.status, "connected")
+        current_driver.disconnect_mock.assert_called_once_with()
+        next_driver.connect_mock.assert_called_once_with(awg_profile)
+        self.assertIs(runtime.driver, next_driver)
+
+    def test_status_uses_current_driver_after_driver_switch(self) -> None:
+        self.set_desired_state("off")
+        current_driver = FakeSingBoxDriver()
+        current_driver.status_mock.return_value = ConnectionState(status="connected", mode="old-driver")
+        next_driver = FakeAWGDriver()
+        next_driver.status_mock.return_value = ConnectionState(status="recovered", mode="new-driver")
+        awg_profile = Profile(
+            id="awg-status",
+            name="AWG",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            driver_selector=lambda _profile=None: next_driver,
+        )
+
+        runtime.connect(awg_profile)
+
+        state = runtime.status()
+        self.assertEqual(state.status, "recovered")
+        self.assertEqual(state.mode, "new-driver")
+        current_driver.status_mock.assert_not_called()
+        next_driver.status_mock.assert_called_once_with()
+
 
 class WatchdogIntegrationTests(unittest.TestCase):
     """Task 8.5 — integration of pool_builder, rotation_engine, health_checker, recovery."""
@@ -744,6 +887,73 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "recovered")
         self.assertEqual(self.state_manager.get("active_profile_id"), alt_profile.id)
+
+    @patch("core.watchdog.pool_builder.build_pool")
+    def test_run_iteration_rotates_across_driver_type_boundary(self, mock_pool) -> None:
+        alt_profile = Profile(
+            id="awg-alt",
+            name="AWG Alt",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        events: list[str] = []
+        current_driver = EventSingBoxDriver("singbox", events)
+        current_driver.health_check_mock.return_value = "down"
+        next_driver = EventAWGDriver("awg", events)
+        mock_pool.return_value = [alt_profile]
+
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": True},
+            "adguard": {},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+
+        def selector(profile: Profile | None = None) -> BaseDriver:
+            return next_driver if profile and profile.id == alt_profile.id else current_driver
+
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(
+                clock=clock,
+                sleep=lambda s: None,
+                warmup_seconds=0.0,
+                max_fails_before_rollback=99,
+            ),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+            driver_selector=selector,
+        )
+
+        def health_check_by_profile(profile: Profile, driver: BaseDriver) -> str:
+            return "ok" if profile.id == alt_profile.id else "down"
+
+        with patch("core.watchdog.health_checker.check", side_effect=health_check_by_profile):
+            result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(self.state_manager.get("active_profile_id"), alt_profile.id)
+        self.assertIs(runtime.driver, next_driver)
+        self.assertIn("singbox:disconnect", events)
+        self.assertIn("awg:connect:awg-alt", events)
+        self.assertLess(events.index("singbox:disconnect"), events.index("awg:connect:awg-alt"))
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
     @patch("core.watchdog.health_checker.check", return_value="down")

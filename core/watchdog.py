@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
@@ -17,6 +18,7 @@ from drivers.legacy.adguard_driver import AdGuardDriver
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
+from dns.models import DNSPolicy
 from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
@@ -26,6 +28,31 @@ from rotation.rotation_engine import RotationEngine
 
 
 LOGGER = logging.getLogger(__name__)
+MANAGED_DRIVER_TYPES = (
+    AmneziaWGDriver,
+    AdGuardDriver,
+    OpenVPNCloakDriver,
+    OpenVPNDriver,
+    SingBoxDriver,
+)
+
+
+def select_driver(profile: Profile | None = None) -> BaseDriver:
+    if profile is None:
+        return SingBoxDriver()
+    if profile.protocol is ProtocolType.AMNEZIAWG:
+        return AmneziaWGDriver()
+    if profile.protocol is ProtocolType.ADGUARD:
+        return AdGuardDriver()
+    if profile.protocol is ProtocolType.OPENVPN:
+        return OpenVPNDriver()
+    if profile.protocol is ProtocolType.OPENVPN_CLOAK:
+        return OpenVPNCloakDriver()
+    return SingBoxDriver()
+
+
+ORIGINAL_SELECT_DRIVER = select_driver
+DriverSelector = Callable[[Profile | None], BaseDriver]
 
 
 @dataclass
@@ -41,8 +68,13 @@ class WatchdogRuntime:
     dns_policy_store: DNSPolicyStore = field(default_factory=DNSPolicyStore)
     dns_state_manager: SystemDNSStateManager = field(default_factory=SystemDNSStateManager)
     dns_snapshot_path: Path = field(default_factory=default_snapshot_path)
+    driver_selector: DriverSelector = field(default_factory=lambda: select_driver)
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.driver_selector is ORIGINAL_SELECT_DRIVER and type(self.driver) not in MANAGED_DRIVER_TYPES:
+            self.driver_selector = lambda _profile=None: self.driver
 
     def automatic_actions_enabled(self) -> bool:
         try:
@@ -102,13 +134,13 @@ class WatchdogRuntime:
             LOGGER.warning("standby mode - active profile not found: %s", active_profile_id)
             return self.standby_state()
 
-        self.driver.connect(profile, dns_policy=self.dns_policy_store.load())
+        self._driver_for_profile(profile).connect(profile, dns_policy=self.dns_policy_store.load())
         return self.driver.status()
 
     def connect(self, profile: Profile) -> bool:
         self.state_manager.set("vpn_desired_state", "on")
         self.state_manager.set("active_profile_id", profile.id)
-        return self.driver.connect(profile, dns_policy=self.dns_policy_store.load())
+        return self._driver_for_profile(profile).connect(profile, dns_policy=self.dns_policy_store.load())
 
     def disconnect(self) -> bool:
         result = self.driver.disconnect()
@@ -134,10 +166,11 @@ class WatchdogRuntime:
 
     def _try_reconnect(self, profile: Profile) -> bool:
         LOGGER.info("watchdog_reconnect_attempt profile_id=%s", profile.id)
-        self.driver.disconnect()
-        if not self.driver.connect(profile, dns_policy=self.dns_policy_store.load()):
+        driver = self._driver_for_profile(profile)
+        driver.disconnect()
+        if not driver.connect(profile, dns_policy=self.dns_policy_store.load()):
             return False
-        return health_checker.check(profile, self.driver) == "ok"
+        return health_checker.check(profile, driver) == "ok"
 
     def _recover_from_failure(self) -> ConnectionState:
         config = self.app_config.load()
@@ -180,9 +213,10 @@ class WatchdogRuntime:
         pool = self._compatible_pool(config)
         if exclude_profile_id:
             pool = [p for p in pool if p.id != exclude_profile_id]
+        rotation_driver = _RuntimeDriverRouter(self)
         result = self.rotation_engine.rotate(
             pool,
-            self.driver,
+            rotation_driver,
             health_checker.check,
             force=force,
             dns_policy=self.dns_policy_store.load(),
@@ -231,9 +265,16 @@ class WatchdogRuntime:
         return ConnectionState(status=status, mode=self.driver.status().mode)
 
     def _compatible_pool(self, config: dict) -> list[Profile]:
-        full_pool = pool_builder.build_pool(self.profile_store, self.provider_store, config)
-        driver_type = type(self.driver)
-        return [p for p in full_pool if type(select_driver(p)) is driver_type]
+        return pool_builder.build_pool(self.profile_store, self.provider_store, config)
+
+    def _driver_for_profile(self, profile: Profile, disconnect_current: bool = True) -> BaseDriver:
+        selected_driver = self.driver_selector(profile)
+        if type(selected_driver) is type(self.driver):
+            return self.driver
+        if disconnect_current:
+            self.driver.disconnect()
+        self.driver = selected_driver
+        return self.driver
 
     def _configure_recovery(self, config: dict) -> None:
         watchdog_config = config.get("watchdog", {})
@@ -342,18 +383,25 @@ class WatchdogRuntime:
         )
 
 
-def select_driver(profile: Profile | None = None) -> BaseDriver:
-    if profile is None:
-        return SingBoxDriver()
-    if profile.protocol is ProtocolType.AMNEZIAWG:
-        return AmneziaWGDriver()
-    if profile.protocol is ProtocolType.ADGUARD:
-        return AdGuardDriver()
-    if profile.protocol is ProtocolType.OPENVPN:
-        return OpenVPNDriver()
-    if profile.protocol is ProtocolType.OPENVPN_CLOAK:
-        return OpenVPNCloakDriver()
-    return SingBoxDriver()
+class _RuntimeDriverRouter(BaseDriver):
+    def __init__(self, runtime: WatchdogRuntime) -> None:
+        self.runtime = runtime
+
+    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+        driver = self.runtime._driver_for_profile(profile, disconnect_current=False)
+        return driver.connect(profile, dns_policy=dns_policy)
+
+    def disconnect(self) -> bool:
+        return self.runtime.driver.disconnect()
+
+    def health_check(self) -> str:
+        return self.runtime.driver.health_check()
+
+    def status(self) -> ConnectionState:
+        return self.runtime.driver.status()
+
+    def is_available(self) -> bool:
+        return self.runtime.driver.is_available()
 
 
 def build_watchdog(profile: Profile | None = None) -> WatchdogRuntime:
