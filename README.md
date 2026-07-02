@@ -1,5 +1,13 @@
 # WatchdogVPN
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/branding/logo-horizontal-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/branding/logo-horizontal-light.png">
+    <img alt="WatchdogVPN" src="docs/assets/branding/logo-horizontal-light.png" width="480">
+  </picture>
+</p>
+
 [![CI](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml/badge.svg)](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml)
 
 - **Status:** `v2.0.0` planning line
