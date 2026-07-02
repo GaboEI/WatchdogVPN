@@ -31,9 +31,19 @@ class FakeDriver(BaseDriver):
         self.status_mock = Mock(return_value=ConnectionState(status="connected", mode="rules"))
         self.is_available_mock = Mock(return_value=True)
         self.last_dns_policy: DNSPolicy | None = "unset"
+        self.last_mode: str | None = None
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         self.last_dns_policy = dns_policy
+        self.last_mode = mode
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -63,9 +73,23 @@ class EventDriver(FakeDriver):
         self.name = name
         self.events = events
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         self.events.append(f"{self.name}:connect:{profile.id}")
-        return super().connect(profile, dns_policy=dns_policy)
+        return super().connect(
+            profile,
+            dns_policy=dns_policy,
+            mode=mode,
+            groups=groups,
+            final_policy=final_policy,
+        )
 
     def disconnect(self) -> bool:
         self.events.append(f"{self.name}:disconnect")
@@ -529,6 +553,16 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(driver.last_dns_policy.mode, DNSMode.CUSTOM)
 
+    def test_connect_forwards_the_stored_active_mode_to_the_driver(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("active_mode", "tun")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_mode, "tun")
+
     def test_startup_forwards_the_stored_dns_policy_to_the_driver(self) -> None:
         self.state_manager.save(
             {
@@ -552,6 +586,27 @@ class WatchdogCoreTests(unittest.TestCase):
         runtime.startup()
 
         self.assertEqual(driver.last_dns_policy.mode, DNSMode.CUSTOM)
+
+    def test_startup_forwards_the_stored_active_mode_to_the_driver(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+                "active_mode": "tun",
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+
+        runtime.startup()
+
+        self.assertEqual(driver.last_mode, "tun")
 
     def test_connect_persists_desired_state_on(self) -> None:
         self.set_desired_state("off")
@@ -1242,6 +1297,40 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "recovered")
         self.assertEqual(self.state_manager.get("active_profile_id"), alt_profile.id)
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check", return_value="ok")
+    def test_rotate_now_forwards_the_stored_active_mode_to_the_driver(self, _hc, mock_pool, mock_sel_driver) -> None:
+        alt_profile = Profile(
+            id="alt-tun",
+            name="Alt Tun",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        driver = FakeDriver()
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+        self.state_manager.set("active_mode", "tun")
+
+        runtime = self._make_runtime(driver)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "watchdog": {},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": True},
+            "adguard": {},
+        }
+
+        runtime.rotate_now(force=True)
+
+        self.assertEqual(driver.last_mode, "tun")
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")

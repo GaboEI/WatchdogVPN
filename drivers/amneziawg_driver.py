@@ -186,7 +186,15 @@ class AmneziaWGDriver(BaseDriver):
         except OSError:
             pass
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         tool = self.find_quick_tool()
         if not tool:
             return False

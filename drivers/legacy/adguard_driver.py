@@ -75,7 +75,15 @@ class AdGuardDriver(BaseDriver):
                 return value.strip()
         return profile.name.strip()
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         if profile.protocol is not ProtocolType.ADGUARD:
             return False
         location = self._location_from_profile(profile)

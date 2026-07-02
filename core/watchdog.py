@@ -10,7 +10,7 @@ from config.dns_policy_store import DNSPolicyStore
 from config.persistence import PersistentStoreError, PersistentValidationError, strict_bool
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
-from config.state_manager import StateManager
+from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager
 from core.kill_switch import KillSwitch
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
@@ -134,13 +134,21 @@ class WatchdogRuntime:
             LOGGER.warning("standby mode - active profile not found: %s", active_profile_id)
             return self.standby_state()
 
-        self._driver_for_profile(profile).connect(profile, dns_policy=self.dns_policy_store.load())
+        self._driver_for_profile(profile).connect(
+            profile,
+            dns_policy=self.dns_policy_store.load(),
+            mode=self._active_mode(),
+        )
         return self.driver.status()
 
     def connect(self, profile: Profile) -> bool:
         self.state_manager.set("vpn_desired_state", "on")
         self.state_manager.set("active_profile_id", profile.id)
-        return self._driver_for_profile(profile).connect(profile, dns_policy=self.dns_policy_store.load())
+        return self._driver_for_profile(profile).connect(
+            profile,
+            dns_policy=self.dns_policy_store.load(),
+            mode=self._active_mode(),
+        )
 
     def disconnect(self) -> bool:
         result = self.driver.disconnect()
@@ -164,11 +172,17 @@ class WatchdogRuntime:
             return None
         return self.profile_store.get(active_profile_id)
 
+    def _active_mode(self) -> str:
+        mode = str(self.state_manager.get("active_mode", "rules"))
+        if mode not in ALLOWED_ACTIVE_MODES:
+            raise PersistentValidationError("active_mode must be one of: rules, global, direct, tun, proxy")
+        return mode
+
     def _try_reconnect(self, profile: Profile) -> bool:
         LOGGER.info("watchdog_reconnect_attempt profile_id=%s", profile.id)
         driver = self._driver_for_profile(profile)
         driver.disconnect()
-        if not driver.connect(profile, dns_policy=self.dns_policy_store.load()):
+        if not driver.connect(profile, dns_policy=self.dns_policy_store.load(), mode=self._active_mode()):
             return False
         return health_checker.check(profile, driver) == "ok"
 
@@ -387,9 +401,23 @@ class _RuntimeDriverRouter(BaseDriver):
     def __init__(self, runtime: WatchdogRuntime) -> None:
         self.runtime = runtime
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         driver = self.runtime._driver_for_profile(profile, disconnect_current=False)
-        return driver.connect(profile, dns_policy=dns_policy)
+        return driver.connect(
+            profile,
+            dns_policy=dns_policy,
+            mode=self.runtime._active_mode(),
+            groups=groups,
+            final_policy=final_policy,
+        )
 
     def disconnect(self) -> bool:
         return self.runtime.driver.disconnect()

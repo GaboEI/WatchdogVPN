@@ -120,7 +120,15 @@ class OpenVPNDriver(BaseDriver):
                 return True
         return False
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         binary = self.find_openvpn_binary()
         if not binary:
             return False

@@ -9,12 +9,21 @@ from models.profile import Profile
 
 class BaseDriver(ABC):
     @abstractmethod
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         """Connect the given profile.
 
-        dns_policy is only consumed by drivers that embed DNS behavior in
-        their own runtime config (currently sing-box); other drivers accept
-        and ignore it to keep a single BaseDriver contract.
+        dns_policy, mode, groups, and final_policy are only consumed by
+        drivers that embed DNS and routing behavior in their own runtime
+        config (currently sing-box); other drivers accept and ignore them
+        to keep a single BaseDriver contract.
         """
 
     @abstractmethod
@@ -32,4 +41,3 @@ class BaseDriver(ABC):
     @abstractmethod
     def is_available(self) -> bool:
         """Return whether the driver dependencies are present."""
-

@@ -14,7 +14,15 @@ class BaseDriverContractTests(unittest.TestCase):
 
     def test_subclass_must_implement_contract(self) -> None:
         class IncompleteDriver(BaseDriver):
-            def connect(self, profile: Profile) -> bool:
+            def connect(
+                self,
+                profile: Profile,
+                dns_policy=None,
+                *,
+                mode: str = "global",
+                groups=None,
+                final_policy: str = "current_profile",
+            ) -> bool:
                 return True
 
             def disconnect(self) -> bool:

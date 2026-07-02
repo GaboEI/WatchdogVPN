@@ -207,7 +207,15 @@ class OpenVPNCloakDriver(BaseDriver):
                     return True
         return False
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         openvpn_bin = self.find_openvpn_binary()
         ck_bin = self.find_ck_client_binary()
         if not openvpn_bin or not ck_bin:

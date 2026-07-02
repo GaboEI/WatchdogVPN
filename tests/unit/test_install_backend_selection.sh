@@ -23,7 +23,11 @@ contains "$custom_output" "Select VPN backend:"
 contains "$custom_output" "Custom VPS backend setup is experimental and uses a user-configured local service."
 contains "$custom_output" "Custom VPS configuration stores only non-secret local metadata."
 contains "$custom_output" "[SKIP] AdGuard VPN CLI installation; selected backend is custom-vps"
-contains "$custom_output" "[DRY-RUN] install sing-box to /usr/local/bin/sing-box"
+if ! contains "$custom_output" "[DRY-RUN] install sing-box to /usr/local/bin/sing-box" \
+  && ! contains "$custom_output" "[KEEP] sing-box detected:"; then
+  printf 'FAIL: custom-vps dry-run must validate sing-box availability or install plan\n' >&2
+  exit 1
+fi
 contains "$custom_output" "Backend mode:"
 contains "$custom_output" "Active backend:"
 contains "$custom_output" "custom-vps"

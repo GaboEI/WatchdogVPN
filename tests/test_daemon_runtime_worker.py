@@ -33,7 +33,15 @@ class FakeWorkerDriver(BaseDriver):
         self.connect_result = True
         self.disconnect_result = True
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         self.connect_calls.append(profile.id)
         if self.connect_result:
             self.connected_profile_id = profile.id

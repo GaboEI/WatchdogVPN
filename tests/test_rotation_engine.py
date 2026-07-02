@@ -40,7 +40,15 @@ class ScriptedDriver(BaseDriver):
         self.disconnect_calls = 0
         self.connected_profile_id: str | None = None
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         self.connect_calls.append(profile.id)
         self.connect_dns_policies.append(dns_policy)
         ok = self.connect_results.get(profile.id, True)

@@ -26,7 +26,15 @@ class StubDriver(BaseDriver):
         self.state = state
         self.health_check_calls = 0
 
-    def connect(self, profile: Profile, dns_policy: DNSPolicy | None = None) -> bool:
+    def connect(
+        self,
+        profile: Profile,
+        dns_policy: DNSPolicy | None = None,
+        *,
+        mode: str = "global",
+        groups=None,
+        final_policy: str = "current_profile",
+    ) -> bool:
         return True
 
     def disconnect(self) -> bool:

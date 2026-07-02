@@ -74,6 +74,7 @@ class SingBoxDriver(BaseDriver):
         self._process: subprocess.Popen[str] | None = None
         self._active_profile: Profile | None = None
         self._connected_at: datetime | None = None
+        self._active_mode: str = "global"
         self._runtime_dir: Path | None = None
         self._config_path: Path | None = None
         self._log_path: Path | None = None
@@ -485,6 +486,25 @@ class SingBoxDriver(BaseDriver):
             time.sleep(0.1)
         return False
 
+    def _tun_interface_active(self) -> bool:
+        if not shutil.which("ip"):
+            return False
+        result = subprocess.run(
+            ["ip", "-o", "link", "show", "wdvpn-tun0"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0 and "UP" in result.stdout
+
+    def _wait_for_tun_interface(self, timeout: float = 3.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._tun_interface_active():
+                return True
+            time.sleep(0.1)
+        return False
+
     def _http_via_proxy(self, target_url: str, timeout: int = 5) -> bool:
         if not shutil.which("curl"):
             self._append_log("health_check: curl not found\n")
@@ -636,6 +656,7 @@ class SingBoxDriver(BaseDriver):
         )
         log_file.close()
         self._active_profile = profile
+        self._active_mode = mode
         if self._process.poll() is None and self.health_check() == "ok":
             self._connected_at = datetime.now(timezone.utc)
             return True
@@ -649,6 +670,7 @@ class SingBoxDriver(BaseDriver):
         self._process = None
         self._active_profile = None
         self._connected_at = None
+        self._active_mode = "global"
         stopped = True
         try:
             if process is not None and process.poll() is None:
@@ -676,6 +698,12 @@ class SingBoxDriver(BaseDriver):
             self._append_log("health_check: local proxy ports are not responding\n")
             return "degraded"
 
+        if self._active_mode == "tun":
+            if self._wait_for_tun_interface():
+                return "ok"
+            self._append_log("health_check: TUN interface is not active\n")
+            return "degraded"
+
         proxy_ok = self._http_via_proxy("https://example.com")
         public_ip = self._public_ip_via_proxy() if proxy_ok else None
         if proxy_ok and public_ip:
@@ -688,12 +716,13 @@ class SingBoxDriver(BaseDriver):
             return ConnectionState(status="standby")
         if process.poll() is None:
             profile_id = self._active_profile.id if self._active_profile else ""
+            tun_active = self._active_mode == "tun" and self._tun_interface_active()
             return ConnectionState(
                 active_profile_id=profile_id,
                 connected_at=self._connected_at,
                 mode="sing-box",
-                tun_active=False,
-                proxy_active=True,
+                tun_active=tun_active,
+                proxy_active=self._active_mode != "tun",
                 status="connected",
             )
         return ConnectionState(status="standby")

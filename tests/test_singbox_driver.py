@@ -594,6 +594,25 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         generate_mock.assert_not_called()
         popen_mock.assert_not_called()
 
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_accepts_tun_readiness_without_proxy_http(self, popen_mock, generate_mock, binary_mock) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+
+        with (
+            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
+            patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
+            patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
+        ):
+            self.assertTrue(self.driver.connect(self.profile, mode="tun"))
+
+        self.assertEqual(self.driver._active_mode, "tun")
+        http_mock.assert_not_called()
+        ip_mock.assert_not_called()
+
     @patch.object(SingBoxDriver, "_cleanup_runtime")
     def test_disconnect_terminates_and_cleans_runtime(self, cleanup_mock) -> None:
         process = unittest.mock.Mock()
@@ -656,6 +675,20 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertTrue(state.proxy_active)
         self.assertFalse(state.tun_active)
 
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
+    def test_status_reports_tun_mode_without_proxy_route(self, tun_mock) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+        self.driver._active_mode = "tun"
+
+        state = self.driver.status()
+
+        self.assertEqual(state.status, "connected")
+        self.assertTrue(state.tun_active)
+        self.assertFalse(state.proxy_active)
+
     def test_status_returns_standby_when_process_dead(self) -> None:
         process = unittest.mock.Mock()
         process.poll.return_value = 1
@@ -677,6 +710,25 @@ class SingBoxDriverHealthTests(unittest.TestCase):
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
     def test_health_check_ok(self, port_mock, http_mock, ip_mock) -> None:
         self.assertEqual(self.driver.health_check(), "ok")
+
+    @patch.object(SingBoxDriver, "_public_ip_via_proxy")
+    @patch.object(SingBoxDriver, "_http_via_proxy")
+    @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_ok_for_tun_mode_without_proxy_http(self, port_mock, tun_mock, http_mock, ip_mock) -> None:
+        self.driver._active_mode = "tun"
+
+        self.assertEqual(self.driver.health_check(), "ok")
+
+        http_mock.assert_not_called()
+        ip_mock.assert_not_called()
+
+    @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=False)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_degraded_when_tun_interface_missing(self, port_mock, tun_mock) -> None:
+        self.driver._active_mode = "tun"
+
+        self.assertEqual(self.driver.health_check(), "degraded")
 
     @patch.object(SingBoxDriver, "_public_ip_via_proxy", return_value=None)
     @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
