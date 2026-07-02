@@ -4,12 +4,13 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from config.paths import resolve_config_dir
 from config.persistence import dump_json, file_lock, load_json, require_mapping
 from rules.models import DEFAULT_RULE_GROUPS, Rule, RuleGroup, validate_group_name
 
 
 def _rules_dir() -> Path:
-    base = Path(os.environ.get("WATCHDOGVPN_CONFIG_DIR", Path.home() / ".config" / "watchdogvpn"))
+    base = resolve_config_dir()
     return Path(os.environ.get("WATCHDOGVPN_RULES_DIR", base / "rules"))
 
 

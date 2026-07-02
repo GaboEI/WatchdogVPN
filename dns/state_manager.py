@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from config.paths import resolve_config_dir
 from .resolver_inventory import (
     ResolverInventory,
     ResolverManager,
@@ -18,11 +19,16 @@ class DNSStateError(RuntimeError):
     pass
 
 
-DEFAULT_DNS_SNAPSHOT_FILE = Path.home() / ".config" / "watchdogvpn" / "dns-state.json"
+DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
 
 
 def default_snapshot_path() -> Path:
-    return Path(os.environ.get("WATCHDOGVPN_DNS_SNAPSHOT_FILE", DEFAULT_DNS_SNAPSHOT_FILE))
+    return Path(
+        os.environ.get(
+            "WATCHDOGVPN_DNS_SNAPSHOT_FILE",
+            resolve_config_dir() / DEFAULT_DNS_SNAPSHOT_NAME,
+        )
+    )
 
 
 def load_snapshot(path: Path) -> "DNSStateSnapshot | None":

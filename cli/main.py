@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from config.dns_policy_store import DNSPolicyStore
+from config.paths import resolve_config_dir
 from config.persistence import PersistentStoreError
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
@@ -32,7 +33,7 @@ from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 
 
-DEFAULT_DNS_SNAPSHOT_FILE = Path.home() / ".config" / "watchdogvpn" / "dns-state.json"
+DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -572,7 +573,12 @@ def _load_dns_policy(args: argparse.Namespace) -> DNSPolicy:
 def _dns_snapshot_path(args: argparse.Namespace) -> Path:
     if getattr(args, "snapshot_file", None):
         return Path(args.snapshot_file)
-    return Path(os.environ.get("WATCHDOGVPN_DNS_SNAPSHOT_FILE", DEFAULT_DNS_SNAPSHOT_FILE))
+    return Path(
+        os.environ.get(
+            "WATCHDOGVPN_DNS_SNAPSHOT_FILE",
+            resolve_config_dir() / DEFAULT_DNS_SNAPSHOT_NAME,
+        )
+    )
 
 
 def _dns_status_data(

@@ -3,12 +3,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from config.paths import resolve_config_dir
 from config.persistence import dump_json, file_lock, load_json, require_list
 from models.provider import Provider
 
 
 def _providers_path() -> Path:
-    base = Path(os.environ.get("WATCHDOGVPN_CONFIG_DIR", Path.home() / ".config" / "watchdogvpn"))
+    base = resolve_config_dir()
     return Path(os.environ.get("WATCHDOGVPN_PROVIDERS_FILE", base / "providers.json"))
 
 

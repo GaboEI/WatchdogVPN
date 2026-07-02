@@ -3,17 +3,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from config.paths import resolve_config_dir
 from config.persistence import dump_json, file_lock, load_json, require_mapping
 from dns.models import DNSPolicy
 
 
 def _config_dir() -> Path:
-    return Path(
-        os.environ.get(
-            "WATCHDOGVPN_CONFIG_DIR",
-            Path.home() / ".config" / "watchdogvpn",
-        )
-    )
+    return resolve_config_dir()
 
 
 def _dns_policy_path() -> Path:

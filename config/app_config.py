@@ -14,6 +14,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     tomli_w = None  # type: ignore
 
+from config.paths import resolve_config_dir
 from config.persistence import (
     PersistentStoreError,
     PersistentValidationError,
@@ -74,7 +75,7 @@ CONFIG_STRING_FIELDS = {
 
 
 def _config_path() -> Path:
-    base = Path(os.environ.get("WATCHDOGVPN_CONFIG_DIR", Path.home() / ".config" / "watchdogvpn"))
+    base = resolve_config_dir()
     return Path(os.environ.get("WATCHDOGVPN_CONFIG_FILE", base / "config.toml"))
 
 
