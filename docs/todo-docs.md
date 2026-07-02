@@ -24,3 +24,18 @@ Candidate files for a dedicated cleanup pass:
 
 Keep this as a separate docs task. Do not rewrite those documents as part of
 small repo maintenance passes unless the scope is explicitly approved.
+
+## TUI/CLI UX polish from Pre-Phase 11
+
+QA Audit Layer 5 deferred these LOW UX items. They are intentionally assigned
+to the future TUI/UX polish work, not to Phase 11 routing rules:
+
+- AUD-L5-002: improve human-readable CLI list output for very long profile and
+  provider names, or define an explicit width/truncation policy while keeping
+  `--json` as the automation path.
+- AUD-L5-003: make TUI text fitting display-width-aware for wide Unicode glyphs
+  such as emoji, CJK characters and flags.
+- AUD-L5-004: auto-disable color for `TERM=dumb` or equivalent limited
+  terminals while preserving explicit user preferences.
+
+The corresponding master-plan task is Phase 12.5.9.

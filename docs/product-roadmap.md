@@ -199,6 +199,9 @@ Planned work:
 - Polish Settings.
 - Polish Update Center.
 - Keep technical details separate from user-facing flows.
+- Close deferred Pre-Phase 11 Layer 5 UX debt: long CLI list names,
+  display-width-aware TUI fitting for wide Unicode glyphs, and automatic
+  no-color fallback for `TERM=dumb` or equivalent limited terminals.
 
 ## v0.9.0: Release Candidate
 
