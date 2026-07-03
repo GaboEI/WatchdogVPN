@@ -41,6 +41,9 @@ CUSTOM_VPS_SERVICE_NAME=""
 CUSTOM_VPS_INTERFACE=""
 ENABLE_VPN_AUTOMATION=0
 PATH_UPDATED=0
+PRESERVE_BACKEND_CONFIG=0
+EXISTING_BACKEND_ACTIVE=""
+EXISTING_BACKEND_MODE=""
 
 usage() {
   cat <<'USAGE'
@@ -115,7 +118,26 @@ prompt_yes_no() {
   done
 }
 
+detect_existing_backend_config() {
+  [[ -f "$WATCHDOGVPN_CONFIG_FILE" ]] || return 0
+
+  EXISTING_BACKEND_ACTIVE="$(config_value backend.active "$WATCHDOGVPN_CONFIG_FILE" 2>/dev/null || true)"
+  EXISTING_BACKEND_MODE="$(config_value backend.mode "$WATCHDOGVPN_CONFIG_FILE" 2>/dev/null || true)"
+
+  [[ -n "$EXISTING_BACKEND_ACTIVE" ]] || return 0
+
+  PRESERVE_BACKEND_CONFIG=1
+}
+
 prompt_backend_mode() {
+  if ((PRESERVE_BACKEND_CONFIG == 1)); then
+    BACKEND_MODE="$EXISTING_BACKEND_MODE"
+    BACKEND_ACTIVE="$EXISTING_BACKEND_ACTIVE"
+    printf '\nExisting backend configuration detected: %s (mode: %s).\n' "$BACKEND_ACTIVE" "$BACKEND_MODE"
+    printf 'The installer will not change it. Edit %s directly to switch backends.\n' "$WATCHDOGVPN_CONFIG_FILE"
+    return 0
+  fi
+
   BACKEND_MODE="custom-vps"
   BACKEND_ACTIVE="custom-vps"
   CUSTOM_VPS_ENABLED="true"
@@ -143,6 +165,7 @@ prompt_text() {
 prompt_custom_vps_config() {
   local port
 
+  ((PRESERVE_BACKEND_CONFIG == 0)) || return 0
   [[ "$CUSTOM_VPS_ENABLED" == "true" ]] || return 0
 
   if ((ASSUME_YES == 1)); then
@@ -205,6 +228,12 @@ config_write_installed_key() {
 
 apply_backend_install_selection() {
   print_section "Backend configuration"
+
+  if ((PRESERVE_BACKEND_CONFIG == 1)); then
+    printf 'Preserving existing backend configuration (active = "%s"); no keys were overwritten.\n' "$BACKEND_ACTIVE"
+    return 0
+  fi
+
   config_write_installed_key backend.mode "$BACKEND_MODE"
   config_write_installed_key backend.active "$BACKEND_ACTIVE"
   config_write_installed_key custom_vps.enabled "$CUSTOM_VPS_ENABLED"
@@ -371,6 +400,7 @@ fi
 print_section "Prerequisites"
 validate_required_commands
 
+detect_existing_backend_config
 prompt_backend_mode
 prompt_custom_vps_config
 

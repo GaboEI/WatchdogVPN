@@ -66,6 +66,29 @@ backup_config_file() {
   backup_path "$WATCHDOGVPN_CONFIG_FILE"
 }
 
+config_value() {
+  local key="$1" file="${2:-$WATCHDOGVPN_CONFIG_FILE}" section name
+  section="${key%%.*}"
+  name="${key#*.}"
+
+  [[ "$section" != "$key" && -n "$section" && -n "$name" ]] || return 2
+  [[ -r "$file" ]] || return 1
+
+  awk -v section="$section" -v name="$name" '
+    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; next}
+    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
+    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+      sub(/^[^=]*=[[:space:]]*/, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      gsub(/^"|"$/, "")
+      print
+      found=1
+      exit
+    }
+    END {exit found ? 0 : 1}
+  ' "$file"
+}
+
 config_has_key() {
   local key="$1" file="${2:-$WATCHDOGVPN_CONFIG_FILE}" section name
   section="${key%%.*}"

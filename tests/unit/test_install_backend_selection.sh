@@ -19,7 +19,12 @@ not_contains() {
   fi
 }
 
-yes_output="$("$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
+# Every invocation below points WATCHDOGVPN_CONFIG_DIR/FILE at an isolated
+# temp path so this test never reads or depends on the real
+# /etc/watchdogvpn/config.toml on the machine running it.
+fresh_yes_dir="$TMP_DIR/fresh-yes/etc/watchdogvpn"
+mkdir -p "$fresh_yes_dir"
+yes_output="$(WATCHDOGVPN_CONFIG_DIR="$fresh_yes_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_yes_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
 contains "$yes_output" "Backend mode:"
 contains "$yes_output" "Active backend:"
 contains "$yes_output" "custom-vps"
@@ -28,7 +33,9 @@ not_contains "$yes_output" "AdGuard VPN CLI installation"
 not_contains "$yes_output" "AdGuard VPN login"
 
 mkdir -p "$TMP_DIR/home"
-custom_output="$(printf '\n\n\n\n\n\n\n\nn\nn\n' | HOME="$TMP_DIR/home" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$INSTALLER" --dry-run --skip-doctor 2>&1)"
+fresh_custom_dir="$TMP_DIR/fresh-custom/etc/watchdogvpn"
+mkdir -p "$fresh_custom_dir"
+custom_output="$(printf '\n\n\n\n\n\n\n\nn\nn\n' | HOME="$TMP_DIR/home" WATCHDOGVPN_CONFIG_DIR="$fresh_custom_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_custom_dir/config.toml" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$INSTALLER" --dry-run --skip-doctor 2>&1)"
 contains "$custom_output" "WatchdogVPN backend: Custom VPS"
 contains "$custom_output" "Custom VPS configuration stores only non-secret local metadata."
 if ! contains "$custom_output" "[DRY-RUN] install sing-box to /usr/local/bin/sing-box" \
@@ -48,5 +55,41 @@ contains "$custom_output" "[SKIP] automatic runtime validation; selected backend
 not_contains "$custom_output" "select vpn backend"
 not_contains "$custom_output" "AdGuard VPN CLI installation"
 not_contains "$custom_output" "AdGuard VPN login"
+
+# Re-run scenario: an already-configured backend must be detected and left
+# alone, not silently overwritten with the fresh-install default. Regression
+# test for the real incident where a re-run installer force-overwrote a
+# working "adguard" backend.active to an unconfigured "custom-vps".
+existing_dir="$TMP_DIR/existing/etc/watchdogvpn"
+mkdir -p "$existing_dir"
+cat >"$existing_dir/config.toml" <<'CFG'
+[backend]
+mode = "adguard"
+active = "adguard"
+
+[custom_vps]
+enabled = false
+name = ""
+host = ""
+ssh_user = ""
+ssh_port = 22
+protocol = ""
+profile_path = ""
+service_name = ""
+interface = ""
+CFG
+existing_hash_before="$(md5sum "$existing_dir/config.toml" | awk '{print $1}')"
+preserve_output="$(WATCHDOGVPN_CONFIG_DIR="$existing_dir" WATCHDOGVPN_CONFIG_FILE="$existing_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
+existing_hash_after="$(md5sum "$existing_dir/config.toml" | awk '{print $1}')"
+
+contains "$preserve_output" "Existing backend configuration detected: adguard"
+contains "$preserve_output" "Preserving existing backend configuration (active = \"adguard\")"
+not_contains "$preserve_output" "[DRY-RUN] set backend.mode"
+not_contains "$preserve_output" "[DRY-RUN] set backend.active"
+not_contains "$preserve_output" "[DRY-RUN] set custom_vps."
+if [[ "$existing_hash_before" != "$existing_hash_after" ]]; then
+  printf 'FAIL: existing config.toml must not be modified when a backend is already configured\n' >&2
+  exit 1
+fi
 
 echo "install backend selection checks passed"
