@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from app_policy.models import AppPolicy, AppPolicyRule
 from rules.models import Rule, RuleGroup
 from rules.singbox import build_singbox_route_rules
 
@@ -9,7 +10,7 @@ from rules.singbox import build_singbox_route_rules
 class BuildSingboxRouteRulesTests(unittest.TestCase):
     def test_empty_groups_yields_only_final_rule(self) -> None:
         rules = build_singbox_route_rules([], current_outbound_tag="vps")
-        self.assertEqual(rules, [{"outbound": "vps"}])
+        self.assertEqual(rules, [{"action": "route", "outbound": "vps"}])
 
     def test_block_action_becomes_reject(self) -> None:
         group = RuleGroup(
@@ -25,7 +26,10 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
             rules=[Rule(id="a1", action="direct", conditions={"process_name": ["steam"]})],
         )
         rules = build_singbox_route_rules([group], current_outbound_tag="vps")
-        self.assertEqual(rules[0], {"process_name": ["steam"], "outbound": "direct"})
+        self.assertEqual(
+            rules[0],
+            {"process_name": ["steam"], "action": "route", "outbound": "direct"},
+        )
 
     def test_current_profile_auto_select_and_group_all_target_current_outbound(self) -> None:
         group = RuleGroup(
@@ -61,7 +65,7 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
         rules = build_singbox_route_rules(
             [disabled_group, disabled_rule_group], current_outbound_tag="vps"
         )
-        self.assertEqual(rules, [{"outbound": "vps"}])
+        self.assertEqual(rules, [{"action": "route", "outbound": "vps"}])
 
     def test_priority_order_preserved(self) -> None:
         block = RuleGroup(
@@ -88,7 +92,10 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
         # r1 is skipped entirely (not translated with a wrong/partial match),
         # only r2 and the trailing final rule remain.
         self.assertEqual(len(rules), 2)
-        self.assertEqual(rules[0], {"domain": ["a.com"], "outbound": "direct"})
+        self.assertEqual(
+            rules[0],
+            {"domain": ["a.com"], "action": "route", "outbound": "direct"},
+        )
 
     def test_imported_family_included_in_priority_order(self) -> None:
         imported = RuleGroup(
@@ -111,7 +118,7 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
 
     def test_final_policy_direct(self) -> None:
         rules = build_singbox_route_rules([], current_outbound_tag="vps", final_policy="direct")
-        self.assertEqual(rules, [{"outbound": "direct"}])
+        self.assertEqual(rules, [{"action": "route", "outbound": "direct"}])
 
     def test_multi_value_conditions_preserved_as_lists(self) -> None:
         group = RuleGroup(
@@ -127,6 +134,105 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
         rules = build_singbox_route_rules([group], current_outbound_tag="vps")
         self.assertEqual(rules[0]["domain"], ["a.com", "b.com"])
         self.assertEqual(rules[0]["port"], ["80", "443"])
+
+    def test_app_policy_is_inserted_at_start_of_app_tier(self) -> None:
+        custom = RuleGroup(
+            name="custom",
+            rules=[Rule(id="custom", action="direct", conditions={"domain": ["custom.example"]})],
+        )
+        app_group = RuleGroup(
+            name="app",
+            rules=[Rule(id="app", action="direct", conditions={"process_name": ["legacy-app"]})],
+        )
+        imported = RuleGroup(
+            name="imported-20260703",
+            rules=[Rule(id="imported", action="block", conditions={"domain": ["imported.example"]})],
+        )
+        policy = AppPolicy(
+            enabled=True,
+            mode="blacklist",
+            rules=[
+                AppPolicyRule(
+                    id="curl",
+                    action="current",
+                    match={"process_path": ["/usr/bin/curl"], "user_id": [1000]},
+                )
+            ],
+        )
+
+        rules = build_singbox_route_rules(
+            [imported, app_group, custom],
+            current_outbound_tag="vps",
+            app_policy=policy,
+        )
+
+        self.assertEqual(rules[0]["domain"], ["custom.example"])
+        self.assertEqual(
+            rules[1],
+            {
+                "process_path": ["/usr/bin/curl"],
+                "user_id": [1000],
+                "action": "route",
+                "outbound": "vps",
+            },
+        )
+        self.assertEqual(rules[2]["process_name"], ["legacy-app"])
+        self.assertEqual(rules[3]["domain"], ["imported.example"])
+
+    def test_app_policy_whitelist_adds_catch_all_default(self) -> None:
+        policy = AppPolicy(
+            enabled=True,
+            mode="whitelist",
+            default_action="block",
+            rules=[
+                AppPolicyRule(
+                    id="browser",
+                    action="direct",
+                    match={"process_path_regex": ["^/usr/lib/firefox/.+"]},
+                )
+            ],
+        )
+
+        rules = build_singbox_route_rules(
+            [],
+            current_outbound_tag="vps",
+            app_policy=policy,
+        )
+
+        self.assertEqual(
+            rules,
+            [
+                {
+                    "process_path_regex": ["^/usr/lib/firefox/.+"],
+                    "action": "route",
+                    "outbound": "direct",
+                },
+                {"action": "reject"},
+                {"action": "route", "outbound": "vps"},
+            ],
+        )
+
+    def test_disabled_app_policy_does_not_change_rules(self) -> None:
+        policy = AppPolicy(
+            enabled=False,
+            mode="blacklist",
+            default_action="block",
+            rules=[
+                AppPolicyRule(
+                    id="blocked",
+                    action="block",
+                    match={"process_name": ["curl"]},
+                )
+            ],
+        )
+
+        rules = build_singbox_route_rules(
+            [],
+            current_outbound_tag="vps",
+            app_policy=policy,
+        )
+
+        self.assertEqual(rules, [{"action": "route", "outbound": "vps"}])
 
 
 if __name__ == "__main__":

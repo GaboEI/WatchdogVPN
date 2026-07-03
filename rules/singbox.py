@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode
 from rules.models import Rule, RuleGroup
 from rules.rule_engine import PRIORITY_TIER_ORDER, UNEVALUABLE_CONDITIONS, group_by_tier
 
@@ -32,6 +33,7 @@ def _rule_to_singbox_rule(
     if rule.action == "block":
         singbox_rule["action"] = "reject"
     else:
+        singbox_rule["action"] = "route"
         singbox_rule["outbound"] = resolve_outbound(rule.action)
     return singbox_rule
 
@@ -39,19 +41,71 @@ def _rule_to_singbox_rule(
 def _final_rule(final_policy: str, resolve_outbound: Callable[[str], str]) -> dict[str, Any]:
     if final_policy == "block":
         return {"action": "reject"}
-    return {"outbound": resolve_outbound(final_policy)}
+    return {"action": "route", "outbound": resolve_outbound(final_policy)}
+
+
+def _app_policy_action(value: AppPolicyAction | str) -> str:
+    action = value.value if isinstance(value, AppPolicyAction) else str(value)
+    if action == AppPolicyAction.CURRENT.value:
+        return "current_profile"
+    return action
+
+
+def _app_policy_rule_to_singbox_rule(
+    rule,
+    resolve_outbound: Callable[[str], str],
+) -> dict[str, Any] | None:
+    if not rule.enabled:
+        return None
+    singbox_rule: dict[str, Any] = {
+        key: list(values) for key, values in rule.match.items()
+    }
+    action = _app_policy_action(rule.action)
+    if action == "block":
+        singbox_rule["action"] = "reject"
+    else:
+        singbox_rule["action"] = "route"
+        singbox_rule["outbound"] = resolve_outbound(action)
+    return singbox_rule
+
+
+def _app_policy_rules(
+    policy: AppPolicy | None,
+    resolve_outbound: Callable[[str], str],
+) -> list[dict[str, Any]]:
+    if policy is None or not policy.enabled:
+        return []
+    rules = [
+        singbox_rule
+        for rule in policy.rules
+        if (singbox_rule := _app_policy_rule_to_singbox_rule(rule, resolve_outbound))
+        is not None
+    ]
+    default_action = _app_policy_action(policy.default_action)
+    if policy.mode == AppPolicyMode.WHITELIST or default_action != "current_profile":
+        rules.append(_final_rule(default_action, resolve_outbound))
+    return rules
 
 
 def build_singbox_route_rules(
     groups: list[RuleGroup],
     *,
     current_outbound_tag: str,
+    app_policy: AppPolicy | None = None,
     final_policy: str = "current_profile",
 ) -> list[dict[str, Any]]:
     """Translate rule groups into sing-box route.rules, in priority order.
 
+    Priority stays aligned with RuleEngine: block -> custom -> app ->
+    imported -> recommended -> final. First-class app policy is inserted at
+    the start of the "app" tier, before persisted RuleStore "app" groups.
+    In whitelist mode, app policy emits a catch-all default action at that
+    tier; in blacklist mode it emits a catch-all only when default_action is
+    not "current", so existing imported/recommended/final rules are not
+    shadowed by a redundant current-profile rule.
+
     "direct" always resolves to the "direct" outbound tag. "current_profile",
-    "auto_select", and "group:<id>" all resolve to current_outbound_tag:
+    "current", "auto_select", and "group:<id>" all resolve to current_outbound_tag:
     SingBoxDriver only ever configures one active outbound at a time (the
     connecting profile), so auto_select/group:<id> have no multi-outbound
     selector to route to yet — this is documented, deferred debt for a
@@ -68,6 +122,8 @@ def build_singbox_route_rules(
     rules: list[dict[str, Any]] = []
     tiers = group_by_tier(groups)
     for tier in PRIORITY_TIER_ORDER:
+        if tier == "app":
+            rules.extend(_app_policy_rules(app_policy, resolve_outbound))
         for group in tiers[tier]:
             if not group.enabled:
                 continue

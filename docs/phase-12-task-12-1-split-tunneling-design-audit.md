@@ -342,6 +342,44 @@ Task 12.2 deliberately did not wire runtime, DNS, kill switch, TUN hardening, or
 daemon cleanup. Those remain owned by Task 12.3 and Task 12.5 in the matrix
 above.
 
+## Task 12.3 Resolution Notes
+
+Task 12.3 wired app-policy into the runtime and sing-box generation path:
+
+- Runtime now loads `AppPolicyStore` in `rules` mode and passes the loaded
+  policy to the driver alongside persisted `RuleStore` groups and DNS policy.
+- Invalid or corrupt app-policy persistence fails closed for runtime use:
+  WatchdogVPN logs `app_policy_invalid action=fail_closed` and passes a
+  whitelist policy with `default_action = block` to sing-box instead of
+  silently falling back to normal routing.
+- App-policy route rules are inserted at the start of the existing `app` tier:
+  `block -> custom -> app-policy -> RuleStore app -> imported -> recommended
+  -> final`. This keeps existing RuleStore priority semantics while making the
+  first-class app-policy feature explicit.
+- App-policy in `rules` mode enables the sing-box TUN inbound
+  `wdvpn-tun0`. Without TUN, process rules would only apply to traffic already
+  entering sing-box through explicit proxy inbounds, which is not sufficient for
+  transparent Linux app split tunneling.
+- TUN hardening is enabled in generated configs with `strict_route: true` and
+  `auto_redirect: true`. The local `sing-box 1.13.14` binary accepted the
+  generated config with `sing-box check`.
+- Kill-switch defaults now align to the sing-box TUN interface:
+  `wdvpn-tun0` instead of `tun0`.
+- Generated route rules now use explicit `action: route` for routed traffic
+  instead of the deprecated outbound shorthand.
+
+Finding status after Task 12.3:
+
+- AUD-P12-003 is resolved for implementation alignment; Task 12.5 still owns
+  real leak validation with the active kill switch.
+- AUD-P12-004 is resolved for implementation decision and generated-config
+  validation; Task 12.5 still owns real-machine route behavior validation.
+- AUD-P12-007 is resolved.
+- AUD-P12-002 is explicitly not claimed as fully resolved. Task 12.3 preserves
+  DNS v2 generation and DNS hijack ordering, but per-app DNS behavior still
+  needs real traffic proof in Task 12.5, especially for browser DoH, helper
+  processes, package managers, and apps that bypass system DNS.
+
 ## Recommended Design
 
 1. Keep sing-box as the first implementation mechanism.

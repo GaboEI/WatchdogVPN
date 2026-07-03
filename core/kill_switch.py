@@ -68,7 +68,7 @@ def _default_run(command: list[str]) -> CommandResult:
 class KillSwitch:
     """Firewall kill switch with nftables preferred and iptables fallback."""
 
-    tunnel_interface: str = "tun0"
+    tunnel_interface: str = "wdvpn-tun0"
     block_ipv6: bool = True
     allow_lan: bool = True
     lan_cidrs: tuple[str, ...] = DEFAULT_LAN_CIDRS

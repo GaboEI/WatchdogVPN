@@ -214,6 +214,7 @@ class OpenVPNCloakDriver(BaseDriver):
         *,
         mode: str = "global",
         groups=None,
+        app_policy=None,
         final_policy: str = "current_profile",
     ) -> bool:
         openvpn_bin = self.find_openvpn_binary()

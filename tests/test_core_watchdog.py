@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import Mock
 from unittest.mock import patch
 
+from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPolicyRule
+from app_policy.store import AppPolicyStore
 from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
@@ -34,6 +36,7 @@ class FakeDriver(BaseDriver):
         self.last_dns_policy: DNSPolicy | None = "unset"
         self.last_mode: str | None = None
         self.last_groups = "unset"
+        self.last_app_policy = "unset"
 
     def connect(
         self,
@@ -42,11 +45,13 @@ class FakeDriver(BaseDriver):
         *,
         mode: str = "global",
         groups=None,
+        app_policy=None,
         final_policy: str = "current_profile",
     ) -> bool:
         self.last_dns_policy = dns_policy
         self.last_mode = mode
         self.last_groups = groups
+        self.last_app_policy = app_policy
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -83,6 +88,7 @@ class EventDriver(FakeDriver):
         *,
         mode: str = "global",
         groups=None,
+        app_policy=None,
         final_policy: str = "current_profile",
     ) -> bool:
         self.events.append(f"{self.name}:connect:{profile.id}")
@@ -91,6 +97,7 @@ class EventDriver(FakeDriver):
             dns_policy=dns_policy,
             mode=mode,
             groups=groups,
+            app_policy=app_policy,
             final_policy=final_policy,
         )
 
@@ -583,6 +590,55 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertEqual(driver.last_mode, "rules")
         self.assertEqual(driver.last_groups, [group])
 
+    def test_connect_forwards_app_policy_when_rules_mode(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("active_mode", "rules")
+        app_policy_store = AppPolicyStore(Path(self.tmpdir.name) / "app-policy.json")
+        policy = AppPolicy(
+            enabled=True,
+            mode="blacklist",
+            rules=[
+                AppPolicyRule(
+                    id="curl",
+                    action="block",
+                    match={"process_path": ["/usr/bin/curl"]},
+                )
+            ],
+        )
+        app_policy_store.save(policy)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            app_policy_store=app_policy_store,
+        )
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_mode, "rules")
+        self.assertEqual(driver.last_app_policy, policy)
+
+    def test_connect_fails_closed_when_app_policy_is_invalid(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("active_mode", "rules")
+        app_policy_path = Path(self.tmpdir.name) / "app-policy.json"
+        app_policy_path.write_text("{", encoding="utf-8")
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            app_policy_store=AppPolicyStore(app_policy_path),
+        )
+
+        with self.assertLogs("core.watchdog", level="ERROR") as logs:
+            runtime.connect(self.profile)
+
+        self.assertIn("app_policy_invalid action=fail_closed", "\n".join(logs.output))
+        self.assertTrue(driver.last_app_policy.enabled)
+        self.assertEqual(driver.last_app_policy.mode, AppPolicyMode.WHITELIST)
+        self.assertEqual(driver.last_app_policy.default_action, AppPolicyAction.BLOCK)
+        self.assertEqual(driver.last_app_policy.rules, [])
+
     def test_connect_does_not_forward_rule_groups_outside_rules_mode(self) -> None:
         self.set_desired_state("off")
         self.state_manager.set("active_mode", "global")
@@ -604,6 +660,7 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(driver.last_mode, "global")
         self.assertIsNone(driver.last_groups)
+        self.assertIsNone(driver.last_app_policy)
 
     def test_startup_forwards_the_stored_dns_policy_to_the_driver(self) -> None:
         self.state_manager.save(
@@ -679,6 +736,41 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertEqual(driver.last_mode, "rules")
         self.assertEqual(driver.last_groups, [group])
 
+    def test_startup_forwards_app_policy_when_rules_mode(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+                "active_mode": "rules",
+            }
+        )
+        self.profile_store.add(self.profile)
+        app_policy_store = AppPolicyStore(Path(self.tmpdir.name) / "app-policy.json")
+        policy = AppPolicy(
+            enabled=True,
+            mode="blacklist",
+            rules=[
+                AppPolicyRule(
+                    id="browser",
+                    action="direct",
+                    match={"process_name": ["firefox"]},
+                )
+            ],
+        )
+        app_policy_store.save(policy)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_policy_store=app_policy_store,
+        )
+
+        runtime.startup()
+
+        self.assertEqual(driver.last_app_policy, policy)
+
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "health_check", return_value="ok")
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
@@ -724,7 +816,7 @@ class WatchdogCoreTests(unittest.TestCase):
             config["route"]["rules"],
             [
                 {"domain_suffix": [".ads.example"], "action": "reject"},
-                {"outbound": "Runtime VLESS"},
+                {"action": "route", "outbound": "Runtime VLESS"},
             ],
         )
 

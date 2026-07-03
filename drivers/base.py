@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from app_policy.models import AppPolicy
 from dns.models import DNSPolicy
 from models.connection_state import ConnectionState
 from models.profile import Profile
@@ -16,11 +17,12 @@ class BaseDriver(ABC):
         *,
         mode: str = "global",
         groups=None,
+        app_policy: AppPolicy | None = None,
         final_policy: str = "current_profile",
     ) -> bool:
         """Connect the given profile.
 
-        dns_policy, mode, groups, and final_policy are only consumed by
+        dns_policy, mode, groups, app_policy, and final_policy are only consumed by
         drivers that embed DNS and routing behavior in their own runtime
         config (currently sing-box); other drivers accept and ignore them
         to keep a single BaseDriver contract.

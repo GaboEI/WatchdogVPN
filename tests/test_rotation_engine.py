@@ -47,6 +47,7 @@ class ScriptedDriver(BaseDriver):
         *,
         mode: str = "global",
         groups=None,
+        app_policy=None,
         final_policy: str = "current_profile",
     ) -> bool:
         self.connect_calls.append(profile.id)

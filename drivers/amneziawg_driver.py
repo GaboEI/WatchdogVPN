@@ -193,6 +193,7 @@ class AmneziaWGDriver(BaseDriver):
         *,
         mode: str = "global",
         groups=None,
+        app_policy=None,
         final_policy: str = "current_profile",
     ) -> bool:
         tool = self.find_quick_tool()

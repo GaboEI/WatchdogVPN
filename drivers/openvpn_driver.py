@@ -127,6 +127,7 @@ class OpenVPNDriver(BaseDriver):
         *,
         mode: str = "global",
         groups=None,
+        app_policy=None,
         final_policy: str = "current_profile",
     ) -> bool:
         binary = self.find_openvpn_binary()

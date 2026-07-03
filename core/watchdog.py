@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode
+from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
 from config.persistence import PersistentStoreError, PersistentValidationError, strict_bool
@@ -66,6 +68,7 @@ class WatchdogRuntime:
     dns_state_manager: SystemDNSStateManager = field(default_factory=SystemDNSStateManager)
     dns_snapshot_path: Path = field(default_factory=default_snapshot_path)
     rule_store: RuleStore = field(default_factory=RuleStore)
+    app_policy_store: AppPolicyStore = field(default_factory=AppPolicyStore)
     driver_selector: DriverSelector = field(default_factory=lambda: select_driver)
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
@@ -181,7 +184,20 @@ class WatchdogRuntime:
         options: dict[str, object] = {"mode": mode}
         if mode == "rules":
             options["groups"] = self.rule_store.list_groups()
+            options["app_policy"] = self._runtime_app_policy()
         return options
+
+    def _runtime_app_policy(self) -> AppPolicy:
+        result = self.app_policy_store.load_or_disabled()
+        if result.valid:
+            return result.policy
+        LOGGER.error("app_policy_invalid action=fail_closed error=%s", result.error)
+        return AppPolicy(
+            enabled=True,
+            mode=AppPolicyMode.WHITELIST,
+            default_action=AppPolicyAction.BLOCK,
+            rules=[],
+        )
 
     def _try_reconnect(self, profile: Profile) -> bool:
         LOGGER.info("watchdog_reconnect_attempt profile_id=%s", profile.id)
@@ -338,7 +354,9 @@ class WatchdogRuntime:
     def _configure_kill_switch(self, config: dict) -> None:
         kill_switch_config = config.get("kill_switch", {})
         if hasattr(self.kill_switch, "tunnel_interface"):
-            self.kill_switch.tunnel_interface = str(kill_switch_config.get("tunnel_interface", "tun0"))
+            self.kill_switch.tunnel_interface = str(
+                kill_switch_config.get("tunnel_interface", "wdvpn-tun0")
+            )
         if hasattr(self.kill_switch, "block_ipv6"):
             self.kill_switch.block_ipv6 = strict_bool(
                 kill_switch_config.get("block_ipv6", True),
@@ -417,6 +435,7 @@ class _RuntimeDriverRouter(BaseDriver):
         *,
         mode: str = "global",
         groups=None,
+        app_policy=None,
         final_policy: str = "current_profile",
     ) -> bool:
         driver = self.runtime._driver_for_profile(profile, disconnect_current=False)

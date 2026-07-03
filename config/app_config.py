@@ -35,7 +35,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "enabled": False,
         "block_ipv6": True,
         "allow_lan": True,
-        "tunnel_interface": "tun0",
+        "tunnel_interface": "wdvpn-tun0",
         "on_manual_disconnect": "disable",
     },
     "dns": {

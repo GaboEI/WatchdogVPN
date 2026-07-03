@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app_policy.models import AppPolicy
 from config.state_manager import ALLOWED_ACTIVE_MODES
 from dns.models import DNSPolicy
 from dns.singbox import (
@@ -75,6 +76,7 @@ class SingBoxDriver(BaseDriver):
         self._active_profile: Profile | None = None
         self._connected_at: datetime | None = None
         self._active_mode: str = "global"
+        self._tun_expected: bool = False
         self._runtime_dir: Path | None = None
         self._config_path: Path | None = None
         self._log_path: Path | None = None
@@ -128,8 +130,13 @@ class SingBoxDriver(BaseDriver):
             "interface_name": "wdvpn-tun0",
             "address": ["172.19.0.1/30"],
             "auto_route": True,
+            "strict_route": True,
+            "auto_redirect": True,
             "stack": "system",
         }
+
+    def _mode_requires_tun(self, mode: str, app_policy: AppPolicy | None = None) -> bool:
+        return mode == "tun" or (mode == "rules" and app_policy is not None and app_policy.enabled)
 
     def _ensure_direct_outbound(
         self, config: dict[str, Any], domain_resolver: dict[str, Any] | None = None
@@ -573,6 +580,7 @@ class SingBoxDriver(BaseDriver):
         *,
         mode: str = "global",
         groups: list[RuleGroup] | None = None,
+        app_policy: AppPolicy | None = None,
         final_policy: str = "current_profile",
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
@@ -587,7 +595,7 @@ class SingBoxDriver(BaseDriver):
             "inbounds": self._build_inbounds(),
             "outbounds": [outbound],
         }
-        if mode == "tun":
+        if self._mode_requires_tun(mode, app_policy):
             config["inbounds"].append(self._build_tun_inbound())
         if dns_policy is not None:
             dns_config = build_singbox_dns_config(dns_policy, outbound["tag"])
@@ -620,6 +628,7 @@ class SingBoxDriver(BaseDriver):
         mode_route_rules = build_singbox_route_rules(
             effective_groups,
             current_outbound_tag=outbound["tag"],
+            app_policy=app_policy if mode == "rules" else None,
             final_policy=effective_final_policy,
         )
         _merge_route_config(config, {"rules": mode_route_rules})
@@ -634,6 +643,7 @@ class SingBoxDriver(BaseDriver):
         *,
         mode: str = "global",
         groups: list[RuleGroup] | None = None,
+        app_policy: AppPolicy | None = None,
         final_policy: str = "current_profile",
     ) -> bool:
         binary = self.find_singbox_binary()
@@ -644,6 +654,7 @@ class SingBoxDriver(BaseDriver):
             dns_policy=dns_policy,
             mode=mode,
             groups=groups,
+            app_policy=app_policy,
             final_policy=final_policy,
         )
         config_path, log_path = self._ensure_runtime_paths()
@@ -657,6 +668,7 @@ class SingBoxDriver(BaseDriver):
         log_file.close()
         self._active_profile = profile
         self._active_mode = mode
+        self._tun_expected = self._mode_requires_tun(mode, app_policy)
         if self._process.poll() is None and self.health_check() == "ok":
             self._connected_at = datetime.now(timezone.utc)
             return True
@@ -671,6 +683,7 @@ class SingBoxDriver(BaseDriver):
         self._active_profile = None
         self._connected_at = None
         self._active_mode = "global"
+        self._tun_expected = False
         stopped = True
         try:
             if process is not None and process.poll() is None:
@@ -698,7 +711,7 @@ class SingBoxDriver(BaseDriver):
             self._append_log("health_check: local proxy ports are not responding\n")
             return "degraded"
 
-        if self._active_mode == "tun":
+        if self._tun_expected:
             if self._wait_for_tun_interface():
                 return "ok"
             self._append_log("health_check: TUN interface is not active\n")
@@ -716,7 +729,7 @@ class SingBoxDriver(BaseDriver):
             return ConnectionState(status="standby")
         if process.poll() is None:
             profile_id = self._active_profile.id if self._active_profile else ""
-            tun_active = self._active_mode == "tun" and self._tun_interface_active()
+            tun_active = self._tun_expected and self._tun_interface_active()
             return ConnectionState(
                 active_profile_id=profile_id,
                 connected_at=self._connected_at,
