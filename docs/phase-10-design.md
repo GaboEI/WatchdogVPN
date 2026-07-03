@@ -3,8 +3,9 @@
 > Status: Design accepted for implementation planning.  
 > Date: 2026-07-02  
 > Implementation status: Not started.  
-> Inspiration: Karing DNS and DNS-server model, adapted to WatchdogVPN's Linux
-> CLI/TUI, kill switch, sing-box, native tunnel, and system resolver constraints.
+> Inspiration: comparable DNS and DNS-server models, adapted to WatchdogVPN's
+> Linux CLI/TUI, kill switch, sing-box, native tunnel, and system resolver
+> constraints.
 
 ## Goal
 
@@ -13,19 +14,16 @@ advanced users, and powerful enough to support per-channel DNS behavior,
 FakeIP, ECS, static IP mappings, DNS diversion rules, TTL/cache policy, DNS
 testing, and clean system restore.
 
-Phase 10 must not recreate the removed AdGuard Home integration. AdGuard public
-DNS resolvers may exist only as normal custom or preset resolvers.
+Phase 10 must not recreate the removed guided third-party DNS integration.
 
 ## References
 
-- Karing DNS manual: https://karing.app/en/app-manual/dns
-- Karing DNS-server manual: https://karing.app/en/app-manual/dns-server
-- ADR-0001: `docs/decisions/0001-remove-adguard-home-integration.md`
+- ADR-0001: guided third-party DNS integration removal decision.
 - Phase 9 kill switch validation: `docs/v2-validation-log.md`
 
-Karing's useful product idea is not a single global DNS setting. It separates
-DNS behavior by resolution channel and lets users pick multiple resolvers per
-channel, auto-configure, reset, set TTL, use FakeIP, configure static IPs, and
+The useful product idea is not a single global DNS setting. DNS behavior is
+separated by resolution channel, with multiple resolvers per channel,
+auto-configure, reset, TTL, FakeIP, static IPs, and
 enable DNS diversion rules. WatchdogVPN should adopt that product model while
 respecting Linux system resolver safety.
 
@@ -39,7 +37,7 @@ Current repository state before Phase 10 implementation:
 - `config/app_config.py` has a minimal `dns.mode = "auto"` placeholder.
 - `docs/configuration.md` documents DNS keys as read-only until runtime DNS
   apply flows exist.
-- No active AdGuard Home DNS integration remains.
+- No removed guided third-party DNS integration remains.
 - No DNS v2 engine exists yet.
 
 ## Product Model
@@ -88,8 +86,8 @@ Supported resolver URI forms:
 - `https://host-or-ip/path`
 - IPv6 literal variants where the transport supports them
 
-Preset resolvers should include neutral public options and may include AdGuard
-public DNS as ordinary presets. Presets are data, not dependencies.
+Preset resolvers should include neutral public options. Presets are data, not
+dependencies.
 
 ### Advanced Features
 
@@ -317,7 +315,7 @@ Exit criteria:
 
 ### Phase 10E - Advanced DNS features
 
-Goal: implement the advanced Karing-inspired behavior after the DNS foundation
+Goal: implement advanced channel-based behavior after the DNS foundation
 is safe.
 
 Tasks:
@@ -360,7 +358,7 @@ Exit criteria:
 - Kill switch DNS/DoT leak behavior is re-audited.
 - Resolver restore and failed-apply cleanup are re-audited.
 - TUI/CLI DNS controls are re-audited for placeholder-free behavior.
-- Docs are re-audited for stale AdGuard Home or legacy DNS claims.
+- Docs are re-audited for stale third-party DNS integration or legacy DNS claims.
 - No HIGH or MEDIUM findings remain open.
 - Any LOW findings are either fixed or explicitly accepted with rationale.
 - Full regression passes.
@@ -386,7 +384,7 @@ Exit criteria:
 - Parse resolver URIs.
 - Validate transports and IPv4/IPv6 hosts.
 - Add preset resolver catalog.
-- Include AdGuard public DNS only as normal presets.
+- Include neutral public DNS presets only.
 - Unit-test invalid resolver forms.
 
 ### Task 10.3 - DNS tester and auto setup
@@ -522,7 +520,7 @@ Exit criteria:
 
 ## Non-Goals
 
-- Reintroducing AdGuard Home.
+- Reintroducing the removed guided third-party DNS integration.
 - Installing third-party DNS services during WatchdogVPN install.
 - Exposing TUI placeholders before engine behavior exists.
 - Claiming FakeIP/ECS/rules support for drivers where it is not actually wired

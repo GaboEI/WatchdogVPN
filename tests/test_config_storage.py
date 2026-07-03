@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
+import stat
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
 from config.app_config import AppConfig, DEFAULT_CONFIG
 from config.dns_policy_store import DNSPolicyStore
-from config.persistence import PersistentStoreError, PersistentValidationError
+from config.persistence import PersistentStoreError, PersistentValidationError, atomic_write_text
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
 from config.state_manager import DEFAULT_STATE, StateManager
@@ -97,6 +99,21 @@ class ConfigStorageTests(unittest.TestCase):
             self.assertEqual(app_config.path, Path(env["WATCHDOGVPN_CONFIG_FILE"]))
             self.assertEqual(profile_store.path, Path(env["WATCHDOGVPN_PROFILES_FILE"]))
             self.assertEqual(provider_store.path, Path(env["WATCHDOGVPN_PROVIDERS_FILE"]))
+
+    def test_shared_state_writes_ignore_restrictive_umask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            shared_dir = Path(tmp) / "watchdogvpn"
+            target = shared_dir / "rules" / "custom.json"
+            old_umask = os.umask(0o077)
+            try:
+                with patch("config.paths.SYSTEM_CONFIG_DIR", shared_dir):
+                    atomic_write_text(target, "{}\n")
+            finally:
+                os.umask(old_umask)
+
+            self.assertEqual(stat.S_IMODE(shared_dir.stat().st_mode), 0o2770)
+            self.assertEqual(stat.S_IMODE(target.parent.stat().st_mode), 0o2770)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o660)
 
     def test_profile_store_crud_and_rotation_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

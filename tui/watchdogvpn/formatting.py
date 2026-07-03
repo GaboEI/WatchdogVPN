@@ -28,17 +28,3 @@ def display_vpn_status(status: str) -> str:
         "DOWN": "DESACTIVADO",
     }
     return mapping.get((status or "").strip().upper(), status or "DESCONOCIDO")
-
-
-def display_auth_status(status: str, reason: str = "") -> str:
-    status = (status or "").strip().upper()
-    reason = (reason or "").strip().lower()
-    if status == "OK":
-        return "OK"
-    if status == "EXPIRED":
-        return "SESION EXPIRADA"
-    if reason == "sudo_required":
-        return "SIN SUDO"
-    if reason == "helper_unavailable":
-        return "SIN HELPER"
-    return "DESCONOCIDA"

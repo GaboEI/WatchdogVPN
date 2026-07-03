@@ -159,7 +159,7 @@ EOF
 
 printf '%s\n' \
   '2026-05-16T00:00:00Z | vpn_notify | info | sample | user@example.com 198.51.100.11 /home/tester' \
-  '2026-05-16T00:01:00Z | vpn_watchdog | warn | sample | 203.0.113.22' \
+  '2026-05-16T00:01:00Z | watchdogvpn | warn | sample | 203.0.113.22' \
   >"$LOG_DIR/vpn-events.log"
 
 init_runtime_update_repo "$UPDATE_REPO" "$UPDATE_REMOTE"
@@ -195,10 +195,10 @@ contains "$help_output" 'update-plan   Print safe manual update steps for the cu
 contains "$help_output" 'Configuration commands:'
 contains "$help_output" 'Interactive commands:'
 contains "$help_output" 'config set    Update a validated safe configuration key.'
-contains "$help_output" 'update, connect, disconnect and rotate are intentionally not product CLI'
+contains "$help_output" 'daemon-backed connect, disconnect, status and rotate live in the Python'
 dash_help_output="$("$SCRIPT" --help)"
 [[ "$dash_help_output" == "$help_output" ]]
-contains "$("$SCRIPT" help logs)" 'watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]'
+contains "$("$SCRIPT" help logs)" 'watchdogvpn logs [events|dispatcher] [lines]'
 contains "$("$SCRIPT" help update-check)" 'watchdogvpn update-check'
 contains "$("$SCRIPT" help update-plan)" 'watchdogvpn update-plan'
 contains "$("$SCRIPT" help runtime-update)" 'watchdogvpn runtime-update --preflight'

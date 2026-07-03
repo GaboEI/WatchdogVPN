@@ -25,6 +25,7 @@ class CliProfileCommandTests(unittest.TestCase):
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         env = {
+            "WATCHDOGVPN_CONFIG_DIR": tmp,
             "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
             "PYTHONPATH": str(ROOT_DIR),
         }

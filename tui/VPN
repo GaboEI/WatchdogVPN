@@ -24,23 +24,18 @@ import watchdogvpn.styles as styles_module
 from watchdogvpn import dns as dns_tui
 
 from watchdogvpn.constants import (
-    AG,
     AUTO_REFRESH_SECONDS,
     DASHBOARD_REFRESH_SECONDS,
     LOGROTATE_CONF,
     LOGROTATE_TIMER,
     MENU,
     MENU_ITEMS,
-    ROTATE_TIMER,
     SUDO_KEEPALIVE_SECONDS,
-    VPN_SET,
     WATCHDOGVPN_CLI,
-    WATCHDOG_TIMER,
 )
 from watchdogvpn.commands import (
     run,
     run_command,
-    run_process,
     run_with_input,
     service_state,
     sudo_probe,
@@ -54,23 +49,14 @@ from watchdogvpn.actions import (
     remove_bypass_domain_command,
     restart_vpn_command,
     rotate_now_command,
-    run_watchdog_command,
-    set_rotate_top_n_command,
-    set_timer_interval_command,
-    start_rotate_timer_command,
-    start_watchdog_timer_command,
-    stop_rotate_timer_command,
-    stop_watchdog_timer_command,
 )
 from watchdogvpn.parsers import parse_event_line
-from watchdogvpn.formatting import strip_ansi
 from watchdogvpn.render import (
     box,
     clear,
     display_label,
     display_value,
     fit,
-    flag_from_iso,
     get_size,
     semantic_style,
     write,
@@ -80,17 +66,15 @@ from watchdogvpn.state import (
     backend_snapshot,
     bypass_count,
     bypass_domains,
-    cli_status,
     country_code,
     current_location,
     dashboard_data,
     housekeeping_snapshot,
-    rotate_setting,
     settings_snapshot,
     truth_data,
     trace_snapshot,
 )
-from watchdogvpn.validators import valid_domain, valid_timer_interval
+from watchdogvpn.validators import valid_domain
 
 STATUS_LINE = "Listo"
 SUDO_KEEPALIVE_STOP = threading.Event()
@@ -201,18 +185,8 @@ def menu_help(label: str):
             "",
             "Muestra la cola reciente de /var/log/myvpn/vpn-events.log.",
         ],
-        "Cambiar ubicacion": [
-            "Selector de ubicaciones del CLI.",
-            "",
-            "Carga ubicaciones reales y aplica sudo vpn_set <ISO>.",
-        ],
         "Acciones rapidas": [
-            "Reiniciar, desconectar, rotar o ejecutar watchdog manualmente."
-        ],
-        "Timers": [
-            "Control de rotacion y watchdog.",
-            "",
-            "Permite iniciar, parar y cambiar intervalos.",
+            "Reiniciar, desconectar, rotar via daemon o consultar estado real."
         ],
         "Exclusiones": [
             "Gestiona dominios fuera de la VPN usando no_vpn."
@@ -224,11 +198,6 @@ def menu_help(label: str):
         ],
         "Ver logs": [
             "Acceso rapido a trazabilidad, rotate, watchdog, dispatcher, journal y housekeeping."
-        ],
-        "Pool de rotacion": [
-            "Configuracion del subconjunto que usa vpn_rotate.sh para elegir nodos.",
-            "",
-            "Aqui controlas cuantas ubicaciones entran al pool antes del filtro por bloqueo y validacion real.",
         ],
         "Settings": [
             "Configuracion persistente de WatchdogVPN.",
@@ -249,22 +218,17 @@ def menu_overview(label: str):
     data = {
         "Dashboard": [
             ("Rol", "Centro de mando en tiempo real"),
-            ("Uso", "Ver VPN, tunel, timers y exclusiones de un vistazo"),
+            ("Uso", "Ver VPN, tunel, backend y exclusiones de un vistazo"),
             ("Riesgo", "Solo lectura"),
-        ],
-        "Cambiar ubicacion": [
-            ("Rol", "Mover la VPN a otro pais o ciudad"),
-            ("Uso", "Cuando una app falla, un nodo va lento o quieres otra IP"),
-            ("Riesgo", "Microcorte mientras cambia el tunel"),
         ],
         "Backend": [
             ("Rol", "Seleccion y diagnostico de backend"),
-            ("Uso", "Ver si estas en AdGuard, Custom VPS o modo mixto"),
+            ("Uso", "Ver el estado del backend configurado"),
             ("Riesgo", "Solo lectura"),
         ],
         "Acciones rapidas": [
             ("Rol", "Intervencion manual inmediata"),
-            ("Uso", "Reiniciar, desconectar, rotar o forzar watchdog"),
+            ("Uso", "Reiniciar, desconectar, rotar via daemon o ver estado"),
             ("Riesgo", "Puede cortar sesiones activas durante segundos"),
         ],
         "Exclusiones": [
@@ -277,19 +241,9 @@ def menu_overview(label: str):
             ("Uso", "Ver, probar y aplicar DNS con rollback"),
             ("Riesgo", "Apply/reset requieren confirmacion"),
         ],
-        "Timers": [
-            ("Rol", "Automatizacion programada"),
-            ("Uso", "Activar/parar o cambiar intervalos de rotacion y watchdog"),
-            ("Riesgo", "Intervalos agresivos pueden causar microcortes"),
-        ],
-        "Pool de rotacion": [
-            ("Rol", "Control del universo de nodos"),
-            ("Uso", "Ajustar cuantos candidatos toma la rotacion"),
-            ("Riesgo", "Pool muy pequeno puede repetir o bloquearse mas"),
-        ],
         "Ver logs": [
             ("Rol", "Auditoria tecnica reciente"),
-            ("Uso", "Diagnosticar trazabilidad, rotacion, watchdog, dispatcher, servicio y retencion"),
+            ("Uso", "Diagnosticar trazabilidad, dispatcher, DNS, bypass y retencion"),
             ("Riesgo", "Solo lectura"),
         ],
         "Historial": [
@@ -315,7 +269,7 @@ def menu_overview(label: str):
         "Salir": [
             ("Rol", "Cerrar la TUI"),
             ("Uso", "Los servicios siguen corriendo en segundo plano"),
-            ("Riesgo", "No apaga VPN, watchdog ni rotacion"),
+            ("Riesgo", "No apaga VPN ni el daemon"),
         ],
     }
     return data.get(label, [])
@@ -326,7 +280,7 @@ def build_installation_text() -> str:
         (
             "WatchdogVPN",
             [
-                "Centro de control TUI para mantener AdGuard VPN estable, auditable y recuperable.",
+                "Centro de control TUI para mantener la VPN estable, auditable y recuperable.",
                 "El punto de entrada instalado es: VPN",
                 "Soporte actual del instalador: Ubuntu, Debian y Arch Linux con systemd.",
             ],
@@ -337,7 +291,7 @@ def build_installation_text() -> str:
                 "WatchdogVPN parte de una idea simple: la conexion VPN tarde o temprano puede fallar.",
                 "El objetivo no es prometer la VPN mas rapida, sino una conexion observable y recuperable para usuarios que no pueden detener su trabajo cuando el tunel se cae.",
                 "Esta capa es util para trabajo remoto, investigacion, desarrollo y contextos donde hay censura, rutas inestables o control de la informacion.",
-                "Hoy usa AdGuard VPN CLI; la arquitectura queda preparada para futuros backends como tuneles WireGuard privados.",
+                "El backend custom-vps controla un servicio local que vos configuras (sing-box, AmneziaWG, OpenVPN+Cloak u otro tunel propio).",
             ],
         ),
         (
@@ -346,32 +300,28 @@ def build_installation_text() -> str:
                 "1. Clona el repositorio privado de WatchdogVPN.",
                 "2. Ejecuta ./doctor.sh para una revision de solo lectura.",
                 "3. Ejecuta ./install.sh y responde las preguntas del asistente.",
-                "4. Si AdGuard VPN CLI no existe, el instalador guia su instalacion oficial.",
-                "5. Inicia sesion cuando el instalador lo pida para el usuario de servicio adgvpn.",
-                "6. Abre la TUI con VPN.",
+                "4. Configura tu servicio VPS/local (custom_vps.service_name) en /etc/watchdogvpn/config.toml.",
+                "5. Abre la TUI con VPN.",
             ],
         ),
         (
             "Preguntas del instalador",
             [
                 "Acceso directo de escritorio: opcional, se instala en el menu de aplicaciones y en el escritorio del usuario.",
-                "Conky: opcional, copia la integracion si el usuario la quiere usar.",
-                "Los intervalos esenciales no se preguntan en la instalacion: se instalan con valores seguros y se controlan desde Timers.",
+                "La automatizacion principal vive en el daemon systemd v2.",
             ],
         ),
         (
             "Piezas del stack",
             [
-                "vpnctl: inspeccion rapida del estado real.",
-                "vpn_auth_check: valida si la sesion de AdGuard VPN sigue vigente.",
-                "vpn_set: aplica ubicacion sobre el cliente.",
-                "vpn_rotate.sh: selecciona nodo desde el pool, filtra recencia y valida la ruta real.",
-                "vpn_watchdog.sh: comprueba sesion, salud, tunel y derivaciones de red.",
+                "vpnctl: inspeccion e intervencion rapida del backend custom-vps configurado.",
+                "vpn_backend: contrato de backend activo (custom-vps) que consumen vpnctl, doctor.sh y la TUI.",
                 "no_vpn: gestiona dominios que deben salir por la red normal.",
                 "vpn_domain_bypass_apply.sh: mantiene exclusiones por dominio fuera de la VPN.",
-                "99-vpn-rotate: valida eventos de NetworkManager antes de rotar.",
                 "vpn_notify: emite notificaciones y deja eventos en /var/log/myvpn/vpn-events.log.",
-                "Timers y servicios systemd: mantienen el stack vivo y recuperable.",
+                "vpn_dns_rescue: restaura el DNS del sistema si algo lo deja en mal estado.",
+                "watchdogvpn.service (daemon v2): conecta perfiles/proveedores reales via sing-box, AmneziaWG u OpenVPN+Cloak.",
+                "Servicios systemd: mantienen el daemon, DNS/bypass y housekeeping vivos.",
             ],
         ),
         (
@@ -379,21 +329,17 @@ def build_installation_text() -> str:
             [
                 "La pantalla principal se auto refresca cada 12 segundos si no hay entrada del usuario.",
                 "Las rotaciones y recuperaciones relevantes emiten notificaciones si existe una sesion grafica disponible.",
-                "El watchdog no notifica si todo va bien; solo cuando entra en remedio real.",
             ],
         ),
         (
             "Pantallas",
             [
-                "Dashboard: estado real, sesion de AdGuard VPN y ultimo evento.",
+                "Dashboard: estado real del backend custom-vps y ultimo evento.",
                 "Historial: cola reciente de eventos de notificacion.",
                 "Instalacion: guia de despliegue, piezas instaladas y operacion diaria.",
-                "Cambiar ubicacion: selector con banderas y detalle del nodo.",
                 "Acciones rapidas: intervenciones directas sobre la VPN.",
-                "Timers: control de rotacion y watchdog.",
                 "Exclusiones: dominios que salen por la red normal.",
                 "Ver logs: auditoria rapida.",
-                "Pool de rotacion: control de TOP_N.",
             ],
         ),
         (
@@ -402,7 +348,7 @@ def build_installation_text() -> str:
                 "1. ./doctor.sh",
                 "2. ./install.sh",
                 "3. VPN",
-                "4. Revisa Dashboard, DNS y Timers.",
+                "4. Revisa Dashboard, Backend y DNS.",
                 "5. Agrega dominios propios en Exclusiones solo si necesitas sacarlos de la VPN.",
             ],
         ),
@@ -410,7 +356,7 @@ def build_installation_text() -> str:
             "Actualizacion y retiro",
             [
                 "./update.sh refresca archivos administrados por el producto y conserva configuracion, logs y estado.",
-                "./uninstall.sh retira WatchdogVPN sin borrar la cuenta ni el cliente oficial de AdGuard VPN.",
+                "./uninstall.sh retira los archivos de WatchdogVPN; el backend custom-vps configurado se preserva salvo --purge-config.",
                 "Los backups administrados se guardan bajo /var/backups/watchdogvpn.",
             ],
         ),
@@ -418,8 +364,8 @@ def build_installation_text() -> str:
             "Notas operativas",
             [
                 "Las instalaciones nuevas empiezan sin dominios personales en bypass.",
-                "El watchdog no notifica si todo va bien; solo interviene ante sesion expirada o fallo real.",
-                "La rotacion valida el estado real antes de aceptar un nodo y evita repetir nodos recientes.",
+                "El daemon v2 centraliza conexion, rotacion y estado persistente.",
+                "La TUI actual conserva vistas operativas basicas; la experiencia premium completa esta secuenciada para una fase posterior.",
             ],
         ),
     ]
@@ -515,7 +461,7 @@ def build_backend_text() -> str:
             "",
             "Instalacion:",
             "  ./install.sh",
-            "  Selecciona AdGuard VPN, Custom VPS o Both.",
+            "  Configura el backend custom-vps de forma guiada.",
             "",
             "Nota: si active=custom-vps, se requiere custom_vps.service_name.",
             "Pulsa q para volver.",
@@ -1073,11 +1019,10 @@ def render(selected: int, dashboard_cache):
                 y += 1
 
         action_hints = {
-            "Acciones rapidas": ["Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog", "Estado real"],
-            "Timers": ["Activar rotacion", "Parar rotacion", "Cambiar intervalo de rotacion", "Activar watchdog", "Parar watchdog", "Cambiar intervalo del watchdog"],
+            "Acciones rapidas": ["Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Estado real"],
             "Exclusiones": ["Ver lista", "Agregar dominio", "Quitar dominio"],
             "DNS": ["Ver estado", "Ver canales", "Test resolvers", "Apply dry-run", "Apply DNS", "Reset DNS"],
-            "Ver logs": ["Resumen trazabilidad", "Housekeeping logs", "vpn-watchdog.log", "vpn-rotate.log", "vpn-dispatcher.log", "journal adguardvpn.service"],
+            "Ver logs": ["Resumen trazabilidad", "Housekeeping logs", "vpn-dispatcher.log"],
         }
         hints = action_hints.get(selected_section, [])
         if hints and y < head_h + body_h:
@@ -1547,57 +1492,6 @@ def initialize_sudo() -> bool:
     return False
 
 
-def can_list_locations_without_prompt() -> bool:
-    probe = run_process(
-        f"timeout 4s sudo -n -u adgvpn -H {shlex.quote(AG)} version >/dev/null 2>&1",
-        5,
-    )
-    return bool(probe and probe.returncode == 0)
-
-
-def load_locations():
-    raw = run(
-        r"""timeout 10s sudo -n -u adgvpn -H """
-        + shlex.quote(AG)
-        + r""" list-locations 2>/dev/null | sed -E $'s/\x1B\[[0-9;]*[[:alpha:]]//g'""",
-        12,
-    )
-    lower = raw.lower()
-    if "timed out" in lower:
-        return []
-    if "sudo:" in lower or "password" in lower:
-        return None
-    if "please log in" in lower or "you can log in" in lower:
-        return []
-    out = strip_ansi(raw)
-    items = []
-    for raw_line in out.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if not re.match(r"^[A-Z][A-Z]\s", line):
-            continue
-        cols = re.split(r"\s{2,}", line)
-        if not cols or not re.match(r"^[A-Z]{2}$", cols[0]):
-            continue
-        iso = cols[0]
-        country = cols[1] if len(cols) > 1 else ""
-        city = cols[2] if len(cols) > 2 else ""
-        ping = cols[3] if len(cols) > 3 else ""
-        desc = f"{flag_from_iso(iso)} {iso}  {country}  {city}  {ping}ms".strip()
-        items.append(
-            {
-                "iso": iso,
-                "country": country,
-                "city": city,
-                "ping": ping,
-                "raw": line,
-                "desc": re.sub(r"\s+", " ", desc).strip(),
-            }
-        )
-    return items
-
-
 def housekeeping_panel():
     while True:
         data = housekeeping_snapshot()
@@ -1801,62 +1695,15 @@ def section_meta(section: str, label: str):
                 ("Riesgo", "Todo el trafico sale directo"),
             ],
             "Rotar ahora": [
-                ("Tipo", "Rotacion forzada"),
-                ("Impacto", "Busca y valida otro nodo"),
-                ("Uso", "Buscar otro nodo sin tocar scripts"),
+                ("Tipo", "Rotacion daemon"),
+                ("Impacto", "Pide al daemon v2 rotar conexion"),
+                ("Uso", "Buscar otro perfil/nodo desde el runtime v2"),
                 ("Riesgo", "Cambio de IP y posible microcorte"),
-            ],
-            "Ejecutar watchdog": [
-                ("Tipo", "Chequeo forzado"),
-                ("Impacto", "Ejecuta recuperacion inmediata"),
-                ("Uso", "Validar salud sin esperar al timer"),
-                ("Riesgo", "Puede remediar si detecta fallo"),
             ],
             "Estado real": [
                 ("Tipo", "Solo lectura"),
                 ("Impacto", "Muestra estado fuerte por red real"),
                 ("Uso", "Confirmar tun, ruta e IP publica"),
-            ],
-        }
-        return data.get(label, [])
-
-    if section == "Timers":
-        data = {
-            "Activar rotacion": [
-                ("Timer", ROTATE_TIMER),
-                ("Estado", service_state(ROTATE_TIMER)),
-                ("Intervalo", timer_interval(ROTATE_TIMER)),
-                ("Rol", "Rotacion periodica"),
-            ],
-            "Parar rotacion": [
-                ("Timer", ROTATE_TIMER),
-                ("Estado", service_state(ROTATE_TIMER)),
-                ("Intervalo", timer_interval(ROTATE_TIMER)),
-                ("Rol", "Rotacion periodica"),
-            ],
-            "Intervalo rotacion": [
-                ("Timer", ROTATE_TIMER),
-                ("Actual", timer_interval(ROTATE_TIMER)),
-                ("Rol", "Rotacion periodica"),
-                ("Efecto", "Cambia intervalo del timer"),
-            ],
-            "Activar watchdog": [
-                ("Timer", WATCHDOG_TIMER),
-                ("Estado", service_state(WATCHDOG_TIMER)),
-                ("Intervalo", timer_interval(WATCHDOG_TIMER)),
-                ("Rol", "Watchdog de recuperacion"),
-            ],
-            "Parar watchdog": [
-                ("Timer", WATCHDOG_TIMER),
-                ("Estado", service_state(WATCHDOG_TIMER)),
-                ("Intervalo", timer_interval(WATCHDOG_TIMER)),
-                ("Rol", "Watchdog de recuperacion"),
-            ],
-            "Intervalo watchdog": [
-                ("Timer", WATCHDOG_TIMER),
-                ("Actual", timer_interval(WATCHDOG_TIMER)),
-                ("Rol", "Recuperacion automatica"),
-                ("Efecto", "Cambia intervalo del timer"),
             ],
         }
         return data.get(label, [])
@@ -1894,60 +1741,10 @@ def section_meta(section: str, label: str):
                 ("Uso", "Ver timer, politica y tamanos"),
                 ("Ruta", LOGROTATE_CONF),
             ],
-            "vpn-watchdog.log": [
-                ("Contenido", "Politica y recuperacion"),
-                ("Uso", "Ver DOWN, UNKNOWN_IP, RU"),
-                ("Ruta", "/var/log/myvpn/vpn-watchdog.log"),
-            ],
-            "vpn-rotate.log": [
-                ("Contenido", "Seleccion de nodos y snapshots"),
-                ("Uso", "Auditar rotacion real"),
-                ("Ruta", "/var/log/myvpn/vpn-rotate.log"),
-            ],
             "vpn-dispatcher.log": [
                 ("Contenido", "Eventos de NetworkManager"),
                 ("Uso", "Ver NO ACTION vs ROTATE"),
                 ("Ruta", "/var/log/vpn-dispatcher.log"),
-            ],
-            "journal adguardvpn.service": [
-                ("Contenido", "Servicio principal"),
-                ("Uso", "Inspeccionar arranques y fallos"),
-                ("Ruta", "journalctl -u adguardvpn.service"),
-            ],
-        }
-        return data.get(label, [])
-
-    if section == "Pool de rotacion":
-        data = {
-            "Ver configuracion": [
-                ("TOP_N", rotate_setting("TOP_N")),
-                ("RECENT_KEEP", rotate_setting("RECENT_KEEP")),
-                ("Rol", "Subconjunto de ubicaciones para rotate"),
-            ],
-            "TOP_N = 10": [
-                ("TOP_N", "10"),
-                ("Impacto", "Pool corto, mas conservador"),
-                ("Uso", "Cuando quieres priorizar latencia muy baja"),
-            ],
-            "TOP_N = 15": [
-                ("TOP_N", "15"),
-                ("Impacto", "Pool corto-medio"),
-                ("Uso", "Configuracion historica previa"),
-            ],
-            "TOP_N = 20": [
-                ("TOP_N", "20"),
-                ("Impacto", "Pool medio"),
-                ("Uso", "Balance entre variedad y control"),
-            ],
-            "TOP_N = 30": [
-                ("TOP_N", "30"),
-                ("Impacto", "Pool amplio actual"),
-                ("Uso", "Mas margen para nodos no bloqueados"),
-            ],
-            "TOP_N custom": [
-                ("TOP_N", rotate_setting("TOP_N")),
-                ("Impacto", "Valor numerico definido manualmente"),
-                ("Uso", "Control fino del pool"),
             ],
         }
         return data.get(label, [])
@@ -2077,12 +1874,10 @@ def section_meta(section: str, label: str):
 def section_intro(section: str) -> str:
     data = {
         "Acciones rapidas": "Intervenciones manuales. Algunas cortan o cambian la conexion durante segundos.",
-        "Timers": "Controla automatizacion de rotacion y watchdog sin tocar scripts a mano.",
         "Exclusiones": "Gestiona dominios que salen por ruta directa, fuera del tunel VPN.",
         "Backend": "Muestra backend activo, modo instalado y preparacion no secreta de Custom VPS.",
         "DNS": "Control DNS v2: estado, pruebas, dry-run, apply confirmado y reset desde snapshot.",
         "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
-        "Pool de rotacion": "Ajusta cuantos nodos entran al pool antes de validar bloqueo y salud real.",
         "Settings": "Preferencias persistentes. Los cambios usan watchdogvpn config set y crean backup.",
         "Update Center": "Estado de version y actualizacion. Esta vista no instala ni reinicia servicios.",
     }
@@ -2093,13 +1888,8 @@ def action_progress_text(section: str, label: str) -> str:
     data = {
         ("Acciones rapidas", "Reiniciar VPN"): "Reaplicando ubicacion actual y verificando salida real",
         ("Acciones rapidas", "Desconectar VPN"): "Deteniendo tunel y comprobando estado real",
-        ("Acciones rapidas", "Rotar ahora"): "Buscando nodo valido; puede tardar si varios nodos fallan",
-        ("Acciones rapidas", "Ejecutar watchdog"): "Ejecutando watchdog y reiniciando su timer",
+        ("Acciones rapidas", "Rotar ahora"): "Solicitando rotacion al daemon v2",
         ("Acciones rapidas", "Estado real"): "Consultando tunel, ruta e IP publica",
-        ("Timers", "Activar rotacion"): "Activando timer de rotacion",
-        ("Timers", "Parar rotacion"): "Deteniendo timer de rotacion",
-        ("Timers", "Activar watchdog"): "Activando timer del watchdog",
-        ("Timers", "Parar watchdog"): "Deteniendo timer del watchdog",
         ("Exclusiones", "Ver lista"): "Leyendo dominios configurados fuera del tunel",
         ("Settings", "Ver configuracion"): "Leyendo configuracion persistente",
         ("Settings", "Cambiar idioma"): "Actualizando idioma persistente",
@@ -2119,11 +1909,7 @@ def action_progress_text(section: str, label: str) -> str:
         ("Update Center", "Detalles tecnicos"): "Mostrando detalles tecnicos del checkout",
         ("Ver logs", "Resumen trazabilidad"): "Parseando niveles y eventos recientes de logs",
         ("Ver logs", "Housekeeping logs"): "Leyendo estado de rotacion y retencion de logs",
-        ("Ver logs", "vpn-watchdog.log"): "Leyendo eventos recientes del watchdog",
-        ("Ver logs", "vpn-rotate.log"): "Leyendo eventos recientes de rotacion",
         ("Ver logs", "vpn-dispatcher.log"): "Leyendo eventos recientes de NetworkManager",
-        ("Ver logs", "journal adguardvpn.service"): "Leyendo journal reciente de AdGuard VPN",
-        ("Pool de rotacion", "Ver configuracion"): "Leyendo configuracion actual del pool",
     }
     return data.get((section, label), f"Ejecutando {label}")
 
@@ -2186,17 +1972,13 @@ def section_panel(section: str, items):
                 "Usa estas acciones para intervenir sin tocar scripts base.",
                 "Las acciones que cambian estado refrescan el dashboard al volver.",
             ],
-            "Timers": [
-                "Los cambios de intervalo editan solo el .timer correspondiente.",
-                "Despues hacen daemon-reload y reinician el timer afectado.",
-            ],
             "Exclusiones": [
                 "Las exclusiones siguen usando no_vpn y el servicio vpn-domain-bypass.service.",
                 "No modifica la arquitectura del VPN; solo rutas por dominio.",
             ],
             "Backend": [
                 "Custom VPS controla un servicio systemd local configurado por el usuario.",
-                "Usa ./install.sh para elegir AdGuard, Custom VPS o Both en una instalacion guiada.",
+                "Usa ./install.sh para configurar el backend de forma guiada.",
                 "watchdogvpn backend status es el diagnostico CLI equivalente.",
             ],
             "DNS": [
@@ -2206,13 +1988,9 @@ def section_panel(section: str, items):
             ],
             "Ver logs": [
                 "Estos visores son solo lectura.",
-                "Sirven para auditar recuperacion, rotacion y dispatcher.",
+                "Sirven para auditar eventos, dispatcher, DNS/bypass y housekeeping.",
                 "Resumen trazabilidad interpreta logs nuevos con formato estandar.",
                 "Housekeeping muestra el estado del timer y la politica de retencion.",
-            ],
-            "Pool de rotacion": [
-                "TOP_N define cuantas ubicaciones entran al pool base antes del filtro por bloqueo y validacion real.",
-                "Cambiar TOP_N no toca watchdog ni vpn_set; solo el alcance inicial de vpn_rotate.sh.",
             ],
             "Settings": [
                 "Esta vista edita solo preferencias seguras: idioma, tema, color y unicode.",
@@ -2277,158 +2055,6 @@ def section_panel(section: str, items):
             idx = len(items) - 1
 
 
-def location_panel(items):
-    idx = 0
-    offset = 0
-    query = ""
-    while True:
-        filtered = [
-            item for item in items
-            if not query
-            or query.lower() in item["iso"].lower()
-            or query.lower() in item["country"].lower()
-            or query.lower() in item["city"].lower()
-            or query.lower() in item["raw"].lower()
-        ]
-        if filtered:
-            idx = max(0, min(idx, len(filtered) - 1))
-        else:
-            idx = 0
-            offset = 0
-        rows, cols = get_size()
-        clear()
-        head_h = 3
-        foot_h = 2
-        body_h = max(12, min(rows - head_h - foot_h - 1, 18))
-        left_w = 36
-        right_x = left_w + 2
-        right_w = cols - right_x - 1
-        help_y = head_h + body_h + 2
-
-        box(1, 1, head_h, cols - 2, "Cambiar ubicacion")
-        box(head_h + 1, 1, body_h, left_w, "Nodos")
-        box(head_h + 1, right_x, body_h, right_w, "Detalle")
-        box(help_y, 1, foot_h + 1, cols - 2, "Ayuda")
-
-        write(2, 3, "Escribe ISO, pais o ciudad para filtrar. Enter aplica vpn_set sobre el nodo elegido.", FG["gray"])
-        write(head_h + 2, 3, fit(f"Filtro: {query or '-'}", left_w - 4), FG["yellow"] + BOLD)
-
-        visible_h = min(14, max(1, body_h - 5))
-        if idx < offset:
-            offset = idx
-        if idx >= offset + visible_h:
-            offset = idx - visible_h + 1
-        visible = filtered[offset : offset + visible_h]
-
-        flag_w = 2
-        iso_w = 2
-        ping_w = 5
-        city_w = 12
-        country_w = max(7, left_w - 3 - 2 - flag_w - iso_w - ping_w - city_w - 8)
-
-        header = (
-            "FG "
-            + "ISO".ljust(iso_w + 1)
-            + "Pais".ljust(country_w + 1)
-            + "Ciudad".ljust(city_w + 1)
-            + "Ping".rjust(ping_w)
-        )
-        write(head_h + 3, 3, fit(header, left_w - 4), FG["blue"] + BOLD)
-
-        for i, item in enumerate(visible):
-            selected = (offset + i) == idx
-            style = BG["cyan"] + FG["black"] + BOLD if selected else FG["gray"]
-            prefix = "›" if selected else " "
-            line = (
-                f"{prefix} "
-                f"{fit(flag_from_iso(item['iso']) or '', flag_w):<{flag_w}} "
-                f"{item['iso']:<{iso_w}} "
-                f"{fit(item['country'], country_w):<{country_w}} "
-                f"{fit(item['city'], city_w):<{city_w}} "
-                f"{(item['ping'] + 'ms') if item['ping'] else '-':>{ping_w}}"
-            )
-            write(head_h + 4 + i, 2, line.ljust(left_w - 2), style)
-
-        y = head_h + 2
-        if filtered:
-            node = filtered[idx]
-            title = f'{flag_from_iso(node["iso"])} {node["iso"]} · {node["country"]}'
-            if node["city"]:
-                title += f" · {node['city']}"
-            write(y, right_x + 2, fit(title, right_w - 4), FG["cyan"] + BOLD)
-            y += 2
-
-            meta = [
-                ("ISO", node["iso"]),
-                ("Pais", node["country"] or "-"),
-                ("Ciudad", node["city"] or "-"),
-                ("Ping", f'{node["ping"]} ms' if node["ping"] else "-"),
-                ("Perfil", "Pool de rotacion"),
-                ("Accion", f'vpn_set {node["iso"]}'),
-            ]
-            for key, value in meta:
-                if y >= head_h + body_h:
-                    break
-                write(y, right_x + 2, f"{key:<10}", FG["magenta"] + BOLD)
-                write(y, right_x + 14, fit(value, right_w - 16), semantic_style(key, value))
-                y += 1
-
-            if y < head_h + body_h:
-                y += 1
-                write(y, right_x + 2, "Notas", FG["blue"] + BOLD)
-                y += 2
-                notes = [
-                    "Escribe para buscar por ISO, pais o ciudad.",
-                    "Este selector no toca la logica del stack; solo aplica vpn_set sobre el ISO.",
-                    "La ubicacion final sigue sujeta al comportamiento real del cliente y del servicio.",
-                ]
-                for note in notes:
-                    for wrapped in textwrap.wrap(note, max(20, right_w - 6)) or [""]:
-                        if y >= head_h + body_h:
-                            break
-                        write(y, right_x + 4, f"• {fit(wrapped, right_w - 8)}", FG["gray"])
-                        y += 1
-        else:
-            write(y, right_x + 2, "Sin coincidencias", FG["yellow"] + BOLD)
-            write(y + 2, right_x + 2, "Ajusta el filtro o usa Backspace para borrar.", FG["gray"])
-
-        write(help_y + 1, 3, "↑↓", FG["cyan"] + BOLD)
-        write(help_y + 1, 6, "mover", FG["yellow"] + BOLD)
-        write(help_y + 1, 14, "Enter", FG["cyan"] + BOLD)
-        write(help_y + 1, 21, "aplicar", FG["yellow"] + BOLD)
-        write(help_y + 1, 31, "texto", FG["cyan"] + BOLD)
-        write(help_y + 1, 37, "filtrar", FG["yellow"] + BOLD)
-        write(help_y + 1, 47, "Esc/←", FG["cyan"] + BOLD)
-        write(help_y + 1, 54, "volver", FG["yellow"] + BOLD)
-        sys.stdout.flush()
-
-        key = read_key(text_mode=True)
-        if is_mouse_click(key):
-            x, y = mouse_xy(key)
-            row = y - (head_h + 4)
-            if x is not None and filtered and 0 <= row < len(visible) and 1 <= x <= left_w:
-                return visible[row]["iso"]
-            if x is not None and filtered and right_x <= x <= right_x + right_w and head_h + 1 <= y <= head_h + body_h:
-                return filtered[idx]["iso"]
-            continue
-        if key in ("esc", "left"):
-            return None
-        if key in ("enter", "right") and filtered:
-            return filtered[idx]["iso"]
-        if key == "down" and idx < len(filtered) - 1:
-            idx += 1
-        if key == "up" and idx > 0:
-            idx -= 1
-        if key == "backspace":
-            query = query[:-1]
-            idx = 0
-            offset = 0
-        if isinstance(key, str) and key.startswith("char:"):
-            query += key.split(":", 1)[1]
-            idx = 0
-            offset = 0
-
-
 def handle_menu(label: str):
     try:
         if label == "Instalacion":
@@ -2443,45 +2069,6 @@ def handle_menu(label: str):
             set_status("Historial visto")
             return False
 
-        if label == "Cambiar ubicacion":
-            if not can_list_locations_without_prompt():
-                set_status("Sudo requerido para ubicaciones")
-                if not ensure_sudo():
-                    return False
-            set_status("Cargando ubicaciones")
-            center_message("Cargando ubicaciones...")
-            items = load_locations()
-            if items is None:
-                set_status("Problema de sudo o sesion")
-                show_output("Cambiar ubicacion", "No pude usar sudo -u adgvpn para cargar ubicaciones.")
-                return False
-            if items == []:
-                set_status("No se pudieron cargar ubicaciones")
-                raw_msg = run(
-                    r"""timeout 8s sudo -n -u adgvpn -H """
-                    + shlex.quote(AG)
-                    + r""" list-locations 2>&1 | head -n 40""",
-                    10,
-                )
-                show_output("Cambiar ubicacion", raw_msg or "No pude cargar ubicaciones.")
-                return False
-            iso = location_panel(items)
-            if iso:
-                if not ensure_sudo():
-                    return False
-                set_status(f"Aplicando {iso}")
-                output = run_with_progress(
-                    f"Aplicando {iso}",
-                    f"Cambiando ubicacion a {iso}",
-                    f"sudo {shlex.quote(VPN_SET)} {shlex.quote(iso)}",
-                    45,
-                )
-                show_output(f"Aplicando {iso}", output)
-                set_status(f"Aplicado {iso}")
-                return True
-            set_status("Cambio de ubicacion cancelado")
-            return False
-
         truth = truth_data()
         loc_hint = current_location(country_code(truth.get("IP_ADDR", "none")))
 
@@ -2490,16 +2077,7 @@ def handle_menu(label: str):
                 ("Reiniciar VPN", restart_vpn_command(loc_hint)),
                 ("Desconectar VPN", disconnect_vpn_command()),
                 ("Rotar ahora", rotate_now_command()),
-                ("Ejecutar watchdog", run_watchdog_command()),
                 ("Estado real", real_status_command()),
-            ],
-            "Timers": [
-                ("Activar rotacion", start_rotate_timer_command()),
-                ("Parar rotacion", stop_rotate_timer_command()),
-                ("Intervalo rotacion", "__SET_ROTATE__"),
-                ("Activar watchdog", start_watchdog_timer_command()),
-                ("Parar watchdog", stop_watchdog_timer_command()),
-                ("Intervalo watchdog", "__SET_WATCHDOG__"),
             ],
             "Exclusiones": [
                 ("Ver lista", list_bypass_domains_command()),
@@ -2522,18 +2100,7 @@ def handle_menu(label: str):
             "Ver logs": [
                 ("Resumen trazabilidad", "__TRACE_SUMMARY__"),
                 ("Housekeeping logs", "__HOUSEKEEPING__"),
-                ("vpn-watchdog.log", "sudo tac /var/log/myvpn/vpn-watchdog.log 2>/dev/null | head -n 120"),
-                ("vpn-rotate.log", "sudo tac /var/log/myvpn/vpn-rotate.log 2>/dev/null | head -n 120"),
                 ("vpn-dispatcher.log", "sudo tac /var/log/vpn-dispatcher.log 2>/dev/null | head -n 120"),
-                ("journal adguardvpn.service", "sudo journalctl -r -u adguardvpn.service -n 120 --no-pager"),
-            ],
-            "Pool de rotacion": [
-                ("Ver configuracion", "sudo grep -E '^(TOP_N|RECENT_KEEP)=' /usr/local/sbin/vpn_rotate.sh"),
-                ("TOP_N = 10", "__TOPN_10__"),
-                ("TOP_N = 15", "__TOPN_15__"),
-                ("TOP_N = 20", "__TOPN_20__"),
-                ("TOP_N = 30", "__TOPN_30__"),
-                ("TOP_N custom", "__TOPN_CUSTOM__"),
             ],
             "Settings": [
                 ("Ver configuracion", "__SETTINGS_VIEW__"),
@@ -2554,7 +2121,7 @@ def handle_menu(label: str):
         if label not in actions:
             return False
 
-        if label in ("Pool de rotacion", "Exclusiones"):
+        if label == "Exclusiones":
             if not ensure_sudo():
                 set_status(f"Cancelado: {label}")
                 return False
@@ -2566,7 +2133,7 @@ def handle_menu(label: str):
                 return False
             idx = int(pick) - 1
             action_label, action = actions[label][idx]
-            if label == "Acciones rapidas" and action_label in ("Reiniciar VPN", "Desconectar VPN", "Rotar ahora", "Ejecutar watchdog"):
+            if label == "Acciones rapidas" and action_label in ("Reiniciar VPN", "Desconectar VPN"):
                 if not ensure_sudo():
                     continue
             if action == "__SETTINGS_VIEW__":
@@ -2800,73 +2367,12 @@ def handle_menu(label: str):
                     show_output(action_label, output)
                     set_status(f"Exclusion eliminada: {domain}")
                     return True
-            elif action == "__SET_ROTATE__":
-                if not ensure_sudo():
-                    continue
-                val = select_list("Intervalo de rotacion", [(x, x) for x in ["1h", "2h", "3h", "4h", "6h", "12h"]] + [("custom", "Custom")])
-                if val == "custom":
-                    raw = prompt_input("Intervalo de rotacion", "Ejemplo: 45min, 3h, 1d")
-                    ok, value_or_error = valid_timer_interval(raw)
-                    if not ok:
-                        alert("Intervalo invalido", value_or_error)
-                        set_status("Intervalo invalido")
-                        continue
-                    val = value_or_error
-                if val:
-                    set_status(f"Ajustando rotacion a {val}")
-                    show_output(action_label, run_with_progress(action_label, f"Ajustando rotacion a {val}", set_timer_interval_command(ROTATE_TIMER, val), 30))
-                    set_status(f"Rotacion: {val}")
-                    return True
-            elif action == "__SET_WATCHDOG__":
-                if not ensure_sudo():
-                    continue
-                val = select_list("Intervalo del watchdog", [(x, x) for x in ["1min", "2min", "3min", "5min", "10min"]] + [("custom", "Custom")])
-                if val == "custom":
-                    raw = prompt_input("Intervalo del watchdog", "Ejemplo: 30s, 2min, 5min")
-                    ok, value_or_error = valid_timer_interval(raw)
-                    if not ok:
-                        alert("Intervalo invalido", value_or_error)
-                        set_status("Intervalo invalido")
-                        continue
-                    val = value_or_error
-                if val:
-                    set_status(f"Ajustando watchdog a {val}")
-                    show_output(action_label, run_with_progress(action_label, f"Ajustando watchdog a {val}", set_timer_interval_command(WATCHDOG_TIMER, val), 30))
-                    set_status(f"Watchdog: {val}")
-                    return True
-            elif action in ("__TOPN_10__", "__TOPN_15__", "__TOPN_20__", "__TOPN_30__"):
-                if not ensure_sudo():
-                    continue
-                value_map = {
-                    "__TOPN_10__": "10",
-                    "__TOPN_15__": "15",
-                    "__TOPN_20__": "20",
-                    "__TOPN_30__": "30",
-                }
-                value = value_map[action]
-                set_status(f"Ajustando TOP_N a {value}")
-                show_output(action_label, run_with_progress(action_label, f"Ajustando TOP_N a {value}", set_rotate_top_n_command(value), 30))
-                set_status(f"TOP_N aplicado: {value}")
-                return True
-            elif action == "__TOPN_CUSTOM__":
-                if not ensure_sudo():
-                    continue
-                value = prompt_input("TOP_N custom", "Escribe un numero entre 1 y 100.")
-                if value:
-                    if not re.match(r"^[0-9]+$", value.strip()) or not (1 <= int(value.strip()) <= 100):
-                        alert("TOP_N invalido", "TOP_N debe ser un numero entero entre 1 y 100.")
-                        set_status("TOP_N invalido")
-                        continue
-                    set_status(f"Ajustando TOP_N a {value}")
-                    show_output(action_label, run_with_progress(action_label, f"Ajustando TOP_N a {value}", set_rotate_top_n_command(value), 30))
-                    set_status(f"TOP_N aplicado: {value}")
-                    return True
             else:
                 if "sudo" in action and not ensure_sudo():
                     continue
                 set_status(action_label)
                 show_output(action_label, run_with_progress(action_label, action_progress_text(label, action_label), action, 50))
-                if label in ("Acciones rapidas", "Timers", "Exclusiones", "Pool de rotacion"):
+                if label in ("Acciones rapidas", "Exclusiones"):
                     set_status(f"Listo: {action_label}")
                     return True
     except Exception:

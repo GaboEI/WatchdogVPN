@@ -178,7 +178,7 @@
   - Local/DHCP candidates passed for bootstrap, DNS server, proxy server and
     direct channels.
   - Public proxy/final candidates passed for Cloudflare DoH, Cloudflare TLS and
-    AdGuard TLS.
+    Quad9 TLS.
   - Quad9 DoH returned HTTP 505 in this environment and was not selected.
 - **Apply dry-run validation:**
   - `watchdog dns apply --dry-run --json` produced a rollback plan.

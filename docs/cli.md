@@ -15,7 +15,7 @@ watchdogvpn status
 watchdogvpn backend status
 watchdogvpn doctor
 watchdogvpn report
-watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]
+watchdogvpn logs [events|dispatcher] [lines]
 watchdogvpn update-check
 watchdogvpn update-plan
 watchdogvpn runtime-update --preflight
@@ -75,9 +75,9 @@ Shows the active backend contract without changing runtime state.
 watchdogvpn backend status
 ```
 
-The legacy compatibility backend is `adguard`. `custom-vps` is experimental and
-can control a local systemd service configured by the user. It fails closed if
-required configuration, such as `custom_vps.service_name`, is missing.
+The legacy bash backend contract is custom-vps-only. It controls a local
+systemd service configured by the user and fails closed if required
+configuration, such as `custom_vps.service_name`, is missing.
 
 ### `watchdogvpn doctor`
 
@@ -137,8 +137,8 @@ watchdogvpn help backend
 ```
 
 The help output separates read-only commands, configuration-write commands and
-interactive commands. State-changing runtime commands such as update, connect,
-disconnect and rotate are intentionally not part of the product CLI yet.
+interactive commands. The Python `watchdog` CLI owns daemon-backed connect,
+disconnect, status and rotate commands for the v2 runtime.
 
 ## Diagnostic Reports
 
@@ -158,7 +158,7 @@ Rules:
 - Sensitive sample data is sanitized where possible.
 
 The report may include runtime status, doctor-adjacent checks, VPN truth state,
-auth state, DNS test output and recent troubleshooting context. See
+daemon state, DNS test output and recent troubleshooting context. See
 [Reporting Issues](reporting.md) for safe sharing guidance.
 
 ## Local Logs
@@ -170,8 +170,6 @@ Reads recent local WatchdogVPN logs without using `sudo`.
 ```sh
 watchdogvpn logs
 watchdogvpn logs events 80
-watchdogvpn logs watchdog 120
-watchdogvpn logs rotate 120
 watchdogvpn logs dispatcher 80
 ```
 
@@ -179,8 +177,6 @@ Supported targets:
 
 ```text
 events      /var/log/myvpn/vpn-events.log
-watchdog    /var/log/myvpn/vpn-watchdog.log
-rotate      /var/log/myvpn/vpn-rotate.log
 dispatcher  /var/log/myvpn/vpn-dispatcher.log
 ```
 

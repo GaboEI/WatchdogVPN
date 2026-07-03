@@ -59,6 +59,26 @@ class ConfigPathResolutionTests(unittest.TestCase):
             ), patch("config.paths._running_as_service_user", return_value=False):
                 self.assertEqual(resolve_config_dir(), system_dir)
 
+    def test_inaccessible_migration_marker_reports_actionable_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            system_dir = Path(tmp) / "system"
+            user_dir = Path(tmp) / "user"
+
+            with self._patched_dirs(system_dir, user_dir), patch.dict(
+                "os.environ",
+                {},
+                clear=True,
+            ), patch("config.paths._running_as_service_user", return_value=False), patch.object(
+                Path,
+                "exists",
+                side_effect=PermissionError("denied"),
+            ):
+                with self.assertRaises(PermissionError) as ctx:
+                    resolve_config_dir()
+
+            self.assertIn("watchdogvpn' group", str(ctx.exception))
+            self.assertIn("./install.sh", str(ctx.exception))
+
     def test_empty_system_dir_does_not_shadow_user_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             system_dir = Path(tmp) / "system"

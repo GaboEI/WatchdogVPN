@@ -137,7 +137,7 @@ def semantic_style(key: str, value: str) -> str:
             return FG["red"] + BOLD
         return FG["yellow"] + BOLD
 
-    if key in ("Entradas", "TOP_N", "RECENT_KEEP", "Actual", "Intervalo"):
+    if key in ("Entradas", "Actual", "Intervalo"):
         return FG["blue"] + BOLD
 
     return FG["white"]

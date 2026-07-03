@@ -52,11 +52,8 @@ Current manually reported validation status:
 | CachyOS | Passed with observation | Real install flow including DNS tooling; VPN recovered after reboot. |
 
 The CachyOS result confirms that the Arch adapter works for a real install flow
-with advanced DNS. During the first post-install validation, `adguardvpn.service`
-was still `activating` and `vpn_truth_check` reported `DEGRADED`; after reboot,
-the system came up healthy without manual repair. The installer now performs an
-extra post-install VPN settle check and gives reboot guidance if the tunnel
-remains degraded.
+with advanced DNS. The installer gives reboot guidance if the tunnel remains
+degraded after setup.
 
 On tiling/minimal environments such as Hyprland setups where `xdg-user-dir
 DESKTOP` resolves to `$HOME` or no real Desktop folder exists, the installer
@@ -104,9 +101,8 @@ Recorded result:
 - `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
 - `vpnctl status` reported real VPN state `UP`.
 - `vpnctl connect US` completed and kept real VPN state `UP`.
-- AdGuard VPN CLI text still reported disconnected, but WatchdogVPN correctly
-  treated that provider CLI text as non-authoritative because tunnel, route and
-  public IP truth checks were healthy.
+- Provider CLI text is not treated as authoritative; tunnel, route and public
+  IP truth checks are the operational source of truth.
 
 ## TUI Settings Runtime Validation
 
@@ -250,9 +246,7 @@ Recorded result:
   showed the confirmed-execution preflight text for commit `36618ae`.
 - `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
 - Installed service state after update:
-  - `adguardvpn.service`: active and enabled
-  - `vpn-watchdog.timer`: active and enabled
-  - `vpn-rotate.timer`: active and enabled
+  - `watchdogvpn.service`: active and enabled
   - `vpn-domain-bypass.timer`: active and enabled
   - `myvpn-logrotate.timer`: active and enabled
 - Network truth state was `UP`.
@@ -270,11 +264,10 @@ Current coverage:
   - `DEGRADED` when the tunnel exists but route or public IP is unhealthy
   - `DOWN` when the tunnel is absent
   - `--shell`, `--quiet` and `--json` output behavior
-- `vpn_watchdog.sh` decision behavior:
-  - healthy VPN state does not trigger rotation
-  - hard `DOWN` state triggers remediation
-  - unknown public IP is treated as a soft failure until the configured
-    threshold is reached
+- daemon/runtime behavior:
+  - standby state is explicit
+  - connect, disconnect, status and rotate go through daemon IPC
+  - runtime state is persisted in the shared WatchdogVPN state directory
 - TUI module behavior:
   - extracted action command builders, command helpers, state collectors,
     render helpers, constants, formatters, parsers and validators keep stable
@@ -295,10 +288,8 @@ sudo logrotate -d etc/logrotate.d/myvpn
 
 ```sh
 vpn_truth_check
-vpn_auth_check
 watchdogvpn report
-systemctl status vpn-watchdog.timer
-systemctl status vpn-rotate.timer
+watchdog status --json
 VPN
 ```
 
@@ -308,9 +299,10 @@ A clean install is considered valid when:
 
 - `doctor.sh` reports no blocking failures.
 - The TUI opens with `VPN`.
-- Dashboard shows VPN, session, tunnel, location and DNS state.
+- Dashboard shows VPN, backend, tunnel, route and DNS state.
 - `vpn_truth_check` returns parseable state.
-- `vpn_auth_check` returns `AUTH=OK` or a clear non-OK state.
-- watchdog and rotation timers are enabled and active.
+- `watchdog status --json` returns daemon state.
+- `watchdogvpn.service` is enabled and active.
 - logrotate config validates.
-- uninstall can remove product files without deleting AdGuard VPN itself.
+- uninstall can remove product files without deleting user-owned provider
+  software, profiles, private keys or account state.

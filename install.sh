@@ -19,15 +19,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/runtime.sh"
 # shellcheck source=lib/desktop.sh
 . "$ROOT_DIR/lib/desktop.sh"
-# shellcheck source=lib/conky.sh
-. "$ROOT_DIR/lib/conky.sh"
 # shellcheck source=lib/singbox.sh
 . "$ROOT_DIR/lib/singbox.sh"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
 INSTALL_DESKTOP=""
-INSTALL_CONKY=""
 BACKEND_MODE="custom-vps"
 BACKEND_ACTIVE="custom-vps"
 CUSTOM_VPS_ENABLED="true"
@@ -54,7 +51,7 @@ Usage:
 
 Options:
   --dry-run       Show what would be installed without changing the system.
-  --yes           Use product defaults: Custom VPS backend, desktop on, Conky off.
+  --yes           Use product defaults: Custom VPS backend and desktop launcher on.
   --skip-doctor   Do not run the read-only preflight first.
   --help          Show this help.
 
@@ -62,7 +59,7 @@ What this installer manages:
   - WatchdogVPN runtime commands and privileged scripts.
   - WatchdogVPN systemd units and timers.
   - Custom VPS backend configuration.
-  - Optional desktop launcher and Conky integration.
+  - Optional desktop launcher.
 USAGE
 }
 
@@ -314,13 +311,6 @@ validate_repo_runtime() {
 }
 
 install_optional_integrations() {
-  if [[ "$INSTALL_CONKY" == "1" ]]; then
-    if [[ -n "${DISTRO_CONKY_PACKAGE:-}" ]] && ! have_cmd conky; then
-      install_package_set "$DISTRO_CONKY_PACKAGE"
-    fi
-    install_conky_files
-  fi
-
   if [[ "$INSTALL_DESKTOP" == "1" ]]; then
     install_desktop_launcher
   fi
@@ -381,7 +371,6 @@ print_install_plan() {
   print_field "Backend mode" "$BACKEND_MODE"
   print_field "Active backend" "$BACKEND_ACTIVE"
   print_field "Desktop launcher" "$(yes_no_word "$INSTALL_DESKTOP")"
-  print_field "Conky integration" "$(yes_no_word "$INSTALL_CONKY")"
   print_field "Backups" "$BACKUP_ROOT"
   print_field "Dry run" "$(yes_no_word "${INSTALL_DRY_RUN:-0}")"
 }
@@ -413,13 +402,6 @@ if prompt_yes_no "Install desktop launcher for this user?" yes; then
   INSTALL_DESKTOP=1
 else
   INSTALL_DESKTOP=0
-fi
-
-printf '\nConky integration is optional and only useful if this desktop uses Conky widgets.\n'
-if prompt_yes_no "Install Conky integration for this user?" no; then
-  INSTALL_CONKY=1
-else
-  INSTALL_CONKY=0
 fi
 
 print_install_plan

@@ -127,35 +127,34 @@ if [[ -s "$tmpdir/systemctl.calls" ]]; then
   exit 1
 fi
 
-# An "adguard" active backend (leftover from a pre-removal install) must be
-# rejected outright, not silently treated as valid.
-cat >"$tmpdir/backend_adguard" <<'EOF'
+# Unknown active backends must be rejected outright, not silently treated as valid.
+cat >"$tmpdir/backend_legacy" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
-  active) printf "adguard\n" ;;
+  active) printf "legacy-vpn\n" ;;
   validate)
-    printf "unsupported backend: adguard\n" >&2
+    printf "unsupported backend: legacy-vpn\n" >&2
     printf "implemented backends: custom-vps\n" >&2
     exit 65
     ;;
   *) exit 65 ;;
 esac
 EOF
-chmod +x "$tmpdir/backend_adguard"
+chmod +x "$tmpdir/backend_legacy"
 set +e
 PATH="$tmpdir:$PATH" \
 WATCHDOGVPN_MANUAL_STATE_FILE="$STATE_FILE" \
 VPNCTL_MANUAL_STATE_BIN="$MANUAL_STATE" \
 VPNCTL_TRUTH_BIN="$tmpdir/truth_down" \
-VPNCTL_BACKEND_BIN="$tmpdir/backend_adguard" \
+VPNCTL_BACKEND_BIN="$tmpdir/backend_legacy" \
 VPNCTL_NOTIFY_BIN="$tmpdir/vpn_notify" \
-"$VPNCTL" status >"$tmpdir/vpnctl-adguard.out" 2>&1
-adguard_rc=$?
+"$VPNCTL" status >"$tmpdir/vpnctl-legacy.out" 2>&1
+legacy_rc=$?
 set -e
-if ((adguard_rc != 65)); then
-  printf 'FAIL: adguard backend should be rejected with rc 65, got %s\n' "$adguard_rc" >&2
-  cat "$tmpdir/vpnctl-adguard.out" >&2
+if ((legacy_rc != 65)); then
+  printf 'FAIL: legacy backend should be rejected with rc 65, got %s\n' "$legacy_rc" >&2
+  cat "$tmpdir/vpnctl-legacy.out" >&2
   exit 1
 fi
 

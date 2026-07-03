@@ -68,8 +68,6 @@ Supported targets:
 
 ```text
 events      /var/log/myvpn/vpn-events.log
-watchdog    /var/log/myvpn/vpn-watchdog.log
-rotate      /var/log/myvpn/vpn-rotate.log
 dispatcher  /var/log/myvpn/vpn-dispatcher.log
 ```
 

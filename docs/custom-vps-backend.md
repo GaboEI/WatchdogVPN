@@ -12,7 +12,7 @@ does not provision servers and does not store secrets.
 
 That means:
 
-- the installer can prepare `backend.mode = "custom-vps"` or `backend.mode = "both"`;
+- the installer prepares `backend.mode = "custom-vps"`;
 - `watchdogvpn backend status` reports the selected mode and active backend;
 - the TUI has a Backend view for status and configuration review;
 - `vpnctl connect`, `vpnctl disconnect`, `vpnctl restart` and `vpnctl status`
@@ -29,22 +29,14 @@ Run:
 ./install.sh
 ```
 
-The installer asks:
+The installer asks for Custom VPS metadata when the user chooses to configure
+that service-control path:
 
 ```text
-Select VPN backend:
-  1. AdGuard VPN
-  2. Custom VPS
-  3. Both
+Custom VPS display name
+Systemd service name
+Tunnel interface
 ```
-
-`AdGuard VPN` keeps the current working backend.
-
-`Custom VPS` prepares WatchdogVPN for a user-owned server and skips AdGuard CLI
-installation and login.
-
-`Both` keeps AdGuard active and stores Custom VPS metadata for experimental
-service-control use.
 
 ## Non-Secret Fields
 

@@ -93,7 +93,8 @@ The v2 product direction is not tied to any single vendor. It is centered on reu
 
 ## What It Does
 
-- Shows a terminal dashboard for connection state, session, tunnel, route, IP, DNS, timers and exclusions.
+- Shows a terminal dashboard for connection state, tunnel, route, IP, DNS,
+  backend and exclusions.
 - Uses `vpn_truth_check` as the source of truth instead of trusting only provider text output.
 - Detects tunnel, route, public IP and country state.
 - Rotates connection targets safely with validation and anti-loop behavior.
@@ -102,7 +103,7 @@ The v2 product direction is not tied to any single vendor. It is centered on reu
 - Provides optional DNS management with backup and rollback behavior.
 - Keeps logs under rotation with a dedicated logrotate policy.
 - Emits traceable events through `vpn_notify`.
-- Offers optional Conky and desktop launcher integrations.
+- Offers an optional desktop launcher.
 
 ## What It Does Not Do
 
@@ -146,9 +147,9 @@ git clone git@github.com:GaboEI/WatchdogVPN.git
 `install.sh` is guided but conservative. It asks only product-level choices:
 
 - Install desktop launcher?
-- Install Conky integration?
 
-It does not ask internal technical defaults such as watchdog interval, rotation interval, log housekeeping or internal installation paths. Those defaults are part of the product and can be adjusted later from the TUI.
+It does not ask internal technical defaults such as daemon internals, log
+housekeeping or internal installation paths.
 
 ## Update
 
@@ -158,7 +159,8 @@ git pull
 ./update.sh
 ```
 
-The updater validates the repository, backs up managed files and preserves user configuration, logs, rotation state, DNS configuration and Conky files.
+The updater validates the repository, backs up managed files and preserves user
+configuration, logs, shared runtime state and DNS configuration.
 
 ## Uninstall
 
@@ -173,7 +175,7 @@ Full product purge:
 
 ```sh
 cd WatchdogVPN
-./uninstall.sh --purge-config --purge-logs --purge-state --purge-conky
+./uninstall.sh --purge-config --purge-logs --purge-state
 ```
 
 This does not remove the user's underlying VPN/proxy provider state unless the selected backend contract explicitly says otherwise.
@@ -190,7 +192,6 @@ etc/                Product configuration templates
 examples/           Safe example configs
 lib/                Installer shared functions
 distros/            Ubuntu/Debian/Arch adapters
-conky/              Optional Conky integration
 desktop/            Optional desktop launcher
 docs/               Architecture, validation and operating notes
 tests/              Syntax, unit behavior and runtime validation helpers
@@ -201,7 +202,9 @@ tests/              Syntax, unit behavior and runtime validation helpers
 - **Real-state validation:** the project checks tunnel, route and public IP state instead of relying only on provider status text.
 - **Fail-safe recovery:** the watchdog distinguishes normal failures, unknown IP states and authentication problems.
 - **One runtime, distro adapters:** Ubuntu, Debian and Arch use the same runtime. Only installation and package checks differ.
-- **DNS v2 ownership:** DNS management is handled by the WatchdogVPN v2 DNS system. AdGuard public DNS can be configured as normal custom resolvers; the removed AdGuard Home integration is not part of the current product.
+- **DNS v2 ownership:** DNS management is handled by the WatchdogVPN v2 DNS
+  system; the removed guided third-party DNS integration is not part of the
+  current product.
 - **No duplicate repos by distro:** multi-distro support stays in one repository to avoid divergent behavior.
 - **Traceable logs:** operational events are written in a parseable format for future diagnostics.
 - **User-owned exclusions:** new installations start without personal bypass domains. Each user chooses which domains should leave through the normal network route.

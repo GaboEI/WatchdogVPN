@@ -50,8 +50,8 @@ watchdogvpn report
 VPN
 ```
 
-The updater preserves user configuration, logs, rotation state, legacy DNS
-configuration and Conky files.
+The updater preserves user configuration, logs, rotation state and legacy DNS
+configuration.
 
 ## Important Fix
 
@@ -79,10 +79,10 @@ After updating, `command -v watchdogvpn` should return:
 
 - This is still an alpha release, not a stable 1.0 release.
 - TUI command helpers use explicit argv wrappers instead of subprocess shell mode.
-- External installer verification for the official AdGuard VPN CLI and AdGuard
-  Home is not yet cryptographically pinned.
-- The first backend is AdGuard VPN CLI. WireGuard/private backend support is not
-  implemented yet.
+- External installer verification for the initial provider CLI and optional DNS
+  component is not yet cryptographically pinned.
+- The first backend is provider-CLI based. WireGuard/private backend support is
+  not implemented yet.
 - Fedora support remains a future target.
 
 ## Validation

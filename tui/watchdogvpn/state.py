@@ -10,24 +10,19 @@ from watchdogvpn.commands import (
     service_state,
     timer_countdown,
     timer_enabled,
-    timer_interval,
     timer_trigger,
 )
 from watchdogvpn.constants import (
-    AG,
-    AUTH_BIN,
     BACKEND_BIN,
     LOGROTATE_CONF,
     LOGROTATE_TIMER,
     MANUAL_STATE_BIN,
-    ROTATE_TIMER,
     TRACE_LOG_PATHS,
     TRUTH_BIN,
     VPN_LOG_PATHS,
     WATCHDOGVPN_CONFIG,
-    WATCHDOG_TIMER,
 )
-from watchdogvpn.formatting import display_auth_status, display_vpn_status
+from watchdogvpn.formatting import display_vpn_status
 from watchdogvpn.parsers import parse_event_line, parse_trace_line
 
 COUNTRY_CACHE = {}
@@ -93,8 +88,8 @@ def backend_snapshot():
     return [
         ("Archivo", path),
         ("Estado", values.get("_status", "unavailable")),
-        ("Modo", runtime.get("MODE", values.get("backend.mode", "adguard"))),
-        ("Activo", runtime.get("BACKEND", values.get("backend.active", "adguard"))),
+        ("Modo", runtime.get("MODE", values.get("backend.mode", "custom-vps"))),
+        ("Activo", runtime.get("BACKEND", values.get("backend.active", "custom-vps"))),
         ("Implementado", runtime.get("IMPLEMENTED", "unknown")),
         ("Rotacion", runtime.get("SUPPORTS_ROTATION", "unknown")),
         ("Interfaz", runtime.get("TRUTH_INTERFACE", "unknown")),
@@ -129,33 +124,16 @@ def truth_data():
     return data
 
 
-def auth_data():
-    raw = run(f"{shlex.quote(AUTH_BIN)} 2>/dev/null || true", 2)
-    data = {
-        "AUTH": "UNKNOWN",
-        "REASON": "helper_unavailable",
-        "CLI_RC": "",
-        "DETAIL": "",
-    }
-    for line in raw.splitlines():
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip().upper()
-        if key in data:
-            data[key] = value.strip()
-    return data
-
-
 def backend_data():
     raw = run(f"{shlex.quote(BACKEND_BIN)} status 2>/dev/null || true", 4)
     data = {
-        "MODE": "adguard",
-        "BACKEND": "adguard",
+        "MODE": "custom-vps",
+        "BACKEND": "custom-vps",
         "CUSTOM_VPS_ENABLED": "false",
-        "IMPLEMENTED": "true",
-        "SUPPORTS_ROTATION": "true",
-        "TRUTH_INTERFACE": "tun0",
+        "CUSTOM_VPS_SERVICE_NAME": "",
+        "IMPLEMENTED": "false",
+        "SUPPORTS_ROTATION": "false",
+        "TRUTH_INTERFACE": "unknown",
     }
     for line in raw.splitlines():
         if "=" not in line:
@@ -201,19 +179,9 @@ def country_code(ip: str) -> str:
 
 
 def current_location(fallback_country: str = "") -> str:
-    env_loc = run(r"""sudo -n sed -n 's/^LOCATION="\?\([^"]*\)"\?/\1/p' /etc/adguardvpn.env 2>/dev/null | head -n1 || true""", 4).strip()
-    if env_loc:
-        return env_loc
-    rotate_loc = run(r"""sudo -n awk -F'|' 'NF>=2 {print $2; exit}' /var/lib/vpn-rotate/state.txt 2>/dev/null || true""", 4).strip()
-    if rotate_loc:
-        return rotate_loc.upper()
     if re.match(r"^[A-Z]{2}$", (fallback_country or "").strip().upper()):
         return fallback_country.strip().upper()
     return "sin valor"
-
-
-def cli_status() -> str:
-    return run(f"sudo -n -u adgvpn -H {shlex.quote(AG)} status 2>/dev/null | sed -n '1p' || true", 6) or "sin respuesta"
 
 
 def bypass_count() -> str:
@@ -243,24 +211,8 @@ def last_event():
     return ("VPN", "low", raw[:60])
 
 
-def rotate_setting(name: str) -> str:
-    cmd = (
-        "sudo -n awk -F= "
-        + shlex.quote(f'/^[[:space:]]*{name}=/' + r'{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}')
-        + " /usr/local/sbin/vpn_rotate.sh 2>/dev/null || true"
-    )
-    value = run(cmd, 4).strip()
-    if value:
-        return value
-    defaults = {
-        "RECENT_KEEP": "5",
-    }
-    return defaults.get(name, "?")
-
-
 def dashboard_data():
     truth = truth_data()
-    auth = auth_data()
     backend = backend_data()
     manual_state = manual_state_data()
     ip = truth.get("IP_ADDR", "none")
@@ -269,13 +221,7 @@ def dashboard_data():
     route = truth.get("ROUTE", "UNKNOWN")
     event_title, event_urgency, event_body = last_event()
     country = country_code(ip)
-    vpn_age = service_age("adguardvpn.service")
-    rotate_state = service_state(ROTATE_TIMER)
-    rotate_interval = timer_interval(ROTATE_TIMER)
-    rotate_eta = timer_countdown(ROTATE_TIMER)
-    watchdog_state = service_state(WATCHDOG_TIMER)
-    watchdog_interval = timer_interval(WATCHDOG_TIMER)
-    watchdog_eta = timer_countdown(WATCHDOG_TIMER)
+    vpn_age = service_age(backend.get("CUSTOM_VPS_SERVICE_NAME") or "")
     route_label = {
         "TUN": "tun0",
         "DEFAULT": "default",
@@ -287,16 +233,13 @@ def dashboard_data():
 
     return [
         ("VPN", vpn_label),
-        ("Backend mode", backend.get("MODE", "adguard")),
-        ("Backend", backend.get("BACKEND", "adguard")),
-        ("Auth", display_auth_status(auth.get("AUTH", "UNKNOWN"), auth.get("REASON", ""))),
+        ("Backend mode", backend.get("MODE", "custom-vps")),
+        ("Backend", backend.get("BACKEND", "custom-vps")),
         ("Tun", tun),
         ("Route", route_label),
         ("IP", ip if ip != "none" else "no disponible"),
         ("Country", country),
         ("Location", current_location(country)),
-        ("Rotate", f"{rotate_state} · {rotate_interval}" + (f" · {rotate_eta}" if rotate_eta else "")),
-        ("Watchdog", f"{watchdog_state} · {watchdog_interval}" + (f" · {watchdog_eta}" if watchdog_eta else "")),
         ("Event", f"{event_urgency} · {event_title}: {event_body}"),
         ("Bypass", f"{bypass_count()} dominios"),
     ]

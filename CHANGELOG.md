@@ -4,7 +4,7 @@ All notable product-facing changes are documented here.
 
 WatchdogVPN is moving toward a stable `v2.0.0` Linux CLI + TUI line. The
 current documentation and implementation work are reorienting the product from
-an AdGuard-centered tool into a broader VPN/proxy resilience layer.
+a provider-specific tool into a broader VPN/proxy resilience layer.
 
 ## Unreleased
 
@@ -31,11 +31,9 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 
 ### Removed
 
-- AdGuard Home integrated installation and DNS management mode. Users who want
-  to keep using AdGuard DNS resolvers can configure them as custom DNS servers
-  in the v2 DNS system. The standalone AdGuard Home installation is unaffected
-  and continues to work independently — this only removes the WatchdogVPN-guided
-  setup and integration layer.
+- Guided third-party DNS installation and DNS management mode. Users who want
+  custom DNS resolvers can configure them explicitly in the v2 DNS system.
+  Standalone DNS services remain outside WatchdogVPN scope.
 
 ### Changed
 
@@ -59,11 +57,12 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 - Start the `v2.0.0` documentation reorientation with the new Linux
   resilience-layer identity.
 - Refresh Pre-Phase 11 repo documentation coherence for DNS v2 shipped state,
-  AdGuard Home removal wording and recent v2 phase status.
-- Mark AdGuard VPN compatibility as legacy support in the public product
+  guided DNS removal wording and recent v2 phase status.
+- Mark provider-specific compatibility as legacy support in the public product
   narrative while preserving existing compatibility paths.
-- Add installer backend selection for `adguard`, experimental `custom-vps` and
-  `both` mode, with AdGuard kept as the default for compatibility.
+- Add installer backend selection for the legacy provider backend,
+  experimental `custom-vps` and `both` mode, with the legacy backend kept as
+  the default for compatibility.
 - Add guided non-secret Custom VPS metadata prompts to the installer and a TUI
   Backend view for status/configuration review.
 - Add `docs/custom-vps-backend.md` as the public product guide for the
@@ -72,14 +71,14 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   a configured local systemd service.
 - Add non-secret `custom_vps` configuration placeholders and fail-closed
   validation while required Custom VPS fields are missing.
-- Add a backend contract helper with stable `adguard` support, experimental
+- Add a backend contract helper with stable legacy-provider support, experimental
   `custom-vps` support and fail-closed validation for unsupported backend names.
 - Add backend visibility to `watchdogvpn backend status`, reports, truth-check
   output and the TUI dashboard without integrating new providers yet.
 - Add a manual-off runtime state for user-requested VPN shutdowns.
 - Make `vpnctl disconnect` pause watchdog and rotation automation before
-  stopping AdGuard VPN, so recovery paths do not immediately reconnect against
-  the user's intent.
+  stopping the active VPN, so recovery paths do not immediately reconnect
+  against the user's intent.
 - Teach watchdog, rotation and NetworkManager dispatcher paths to skip
   remediation while manual-off is active.
 - Route the TUI disconnect action through `vpnctl disconnect`.
@@ -188,36 +187,35 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
 ### Install, Update and Uninstall
 
 - Add the first real `install.sh` flow with dry-run support, distro adapters,
-  backups, runtime installation, systemd enablement and optional desktop/Conky
-  hooks.
+  backups, runtime installation, systemd enablement and optional desktop hooks.
 - Add the first real `update.sh` flow for backed-up runtime refreshes that
   preserve user configuration, state and logs.
 - Add the first real `uninstall.sh` flow that removes product-managed files
   while preserving configuration, logs and state unless explicitly purged.
 - Add final installer validation for doctor checks, DNS local health and service
   settlement.
-- Keep `/var/lib/adguardvpn` owned by the `adgvpn` service user during
+- Keep legacy provider state owned by the dedicated service user during
   install/update.
-- Guide first-time `adgvpn` service-user login during installation and add
-  `~/.local/bin` to the user's shell PATH when needed.
+- Guide first-time service-user login during installation and add `~/.local/bin`
+  to the user's shell PATH when needed.
 - Install the optional launcher both in the application menu and on the user's
   desktop directory.
 - Rename the desktop launcher source file to `watchdogvpn.desktop`.
 
-### AdGuard VPN and Recovery
+### VPN and Recovery
 
 - Add read-only `doctor.sh` preflight checks.
-- Add guided installation of the official AdGuard VPN CLI when a clean system
-  does not have `adguardvpn-cli`.
-- Add timeout and visible progress around the official AdGuard VPN CLI installer
+- Add guided installation of the initial provider CLI when a clean system does
+  not have it.
+- Add timeout and visible progress around the initial provider CLI installer
   download.
 - Add GitHub raw IPv4 fallbacks for networks that resolve
   `raw.githubusercontent.com` poorly.
 - Make service-user authentication checks tolerate fresh CLI logins by falling
-  back to `adguardvpn-cli status`.
-- Treat `adguardvpn-cli license` output that includes `Logged in as` as
+  back to provider CLI status.
+- Treat provider CLI license output that includes a logged-in account as
   authenticated even if the CLI does not exit before timeout.
-- Try AdGuard VPN CLI `status` before reporting a license timeout as unknown
+- Try provider CLI status before reporting a license timeout as unknown
   authentication.
 
 ### DNS and Exclusions
@@ -244,9 +242,9 @@ an AdGuard-centered tool into a broader VPN/proxy resilience layer.
   timer scheduling fix.
 - Update TUI timer interval changes to write `OnUnitInactiveSec`, including
   custom rotation/watchdog intervals.
-- Remove the 5-minute activation trigger from `vpn-rotate.timer` so automatic
-  location rotation only runs after boot, on the stable interval, or through
-  real remediation paths.
+- Remove the 5-minute activation trigger from the legacy rotation timer so
+  automatic location rotation only runs after boot, on the stable interval, or
+  through real remediation paths.
 
 ### TUI and Notifications
 

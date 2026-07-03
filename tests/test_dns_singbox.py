@@ -39,7 +39,7 @@ class SingBoxDNSConfigTests(unittest.TestCase):
                     name=DNSChannelName.PROXY,
                     resolvers=[
                         Resolver(uri="https://1.1.1.1/dns-query"),
-                        Resolver(uri="tls://dns.adguard-dns.com"),
+                        Resolver(uri="tls://dns.quad9.net"),
                     ],
                 ),
                 DNSChannelName.FINAL: DNSChannel(

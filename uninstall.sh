@@ -16,7 +16,6 @@ ASSUME_YES=0
 PURGE_CONFIG=0
 PURGE_LOGS=0
 PURGE_STATE=0
-PURGE_CONKY=0
 RUN_DNS_RESCUE=1
 
 usage() {
@@ -24,7 +23,7 @@ usage() {
 WatchdogVPN uninstaller
 
 Usage:
-  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--purge-conky] [--skip-dns-rescue]
+  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--skip-dns-rescue]
 
 Options:
   --dry-run       Show what would be removed without changing the system.
@@ -32,7 +31,6 @@ Options:
   --purge-config  Also remove WatchdogVPN config files.
   --purge-logs    Also remove WatchdogVPN logs.
   --purge-state   Also remove WatchdogVPN rotation state.
-  --purge-conky   Also remove WatchdogVPN Conky files.
   --skip-dns-rescue
                   Do not reset system DNS before removing product files.
   --help          Show this help.
@@ -55,9 +53,6 @@ while (($#)); do
       ;;
     --purge-state)
       PURGE_STATE=1
-      ;;
-    --purge-conky)
-      PURGE_CONKY=1
       ;;
     --skip-dns-rescue)
       RUN_DNS_RESCUE=0
@@ -116,14 +111,11 @@ print_contract() {
   printf '/etc/vpn-domain-bypass.conf\n'
   printf '/etc/watchdogvpn/\n'
   printf '/var/log/myvpn/\n'
-  printf '/var/lib/vpn-rotate/\n'
   printf '/var/lib/watchdogvpn/\n'
-  printf 'Conky configuration\n'
 }
 
 remove_runtime_files() {
   remove_root_path /usr/local/bin/no_vpn
-  remove_root_path /usr/local/bin/vpn_auth_check
   remove_root_path /usr/local/bin/vpn_dns_rescue
   remove_root_path /usr/local/bin/vpn_backend
   remove_root_path /usr/local/bin/vpn_manual_state
@@ -135,9 +127,6 @@ remove_runtime_files() {
   remove_root_path /usr/local/bin/watchdogvpn-daemon
 
   remove_root_path /usr/local/sbin/vpn_domain_bypass_apply.sh
-  remove_root_path /usr/local/sbin/vpn_rotate.sh
-  remove_root_path /usr/local/sbin/vpn_set
-  remove_root_path /usr/local/sbin/vpn_watchdog.sh
 
   remove_user_path "$HOME/.local/bin/VPN"
   remove_user_path "$HOME/.local/bin/watchdogvpn"
@@ -148,17 +137,14 @@ remove_runtime_files() {
   [[ -n "$desktop_dir" ]] || desktop_dir="$HOME/Desktop"
   remove_user_path "$desktop_dir/watchdogvpn.desktop"
 
-  remove_root_path /etc/NetworkManager/dispatcher.d/99-vpn-rotate
   remove_root_path /etc/logrotate.d/myvpn
 }
 
 remove_optional_user_data() {
   if ((PURGE_CONFIG == 1)); then
-    remove_root_path /etc/adguardvpn.env
     remove_root_path /etc/vpn-domain-bypass.conf
     remove_root_path "$WATCHDOGVPN_CONFIG_DIR"
   else
-    printf '[KEEP] config: /etc/adguardvpn.env\n'
     printf '[KEEP] config: /etc/vpn-domain-bypass.conf\n'
     printf '[KEEP] config: %s\n' "$WATCHDOGVPN_CONFIG_DIR"
   fi
@@ -170,33 +156,11 @@ remove_optional_user_data() {
   fi
 
   if ((PURGE_STATE == 1)); then
-    remove_root_path /var/lib/vpn-rotate
     remove_root_path /var/lib/watchdogvpn
   else
-    printf '[KEEP] state: /var/lib/vpn-rotate\n'
     printf '[KEEP] state: /var/lib/watchdogvpn\n'
   fi
 
-  if ((PURGE_CONKY == 1)); then
-    remove_user_path "$HOME/.conky/WatchdogVPN"
-  else
-    printf '[KEEP] conky: %s\n' "$HOME/.conky/WatchdogVPN"
-  fi
-}
-
-remove_legacy_adguard_units() {
-  local unit
-  for unit in adguardvpn.service vpn-watchdog.service vpn-watchdog.timer \
-    vpn-rotate.service vpn-rotate.timer vpn-rotate-firstboot.timer \
-    vpn-rotate-onboot.service; do
-    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-      run_step sudo systemctl disable --now "$unit"
-    else
-      sudo systemctl disable --now "$unit" >/dev/null 2>&1 || true
-    fi
-    remove_root_path "/etc/systemd/system/$unit"
-  done
-  run_step sudo systemctl daemon-reload
 }
 
 rescue_system_dns() {
@@ -231,7 +195,6 @@ final_report() {
   print_field "Config purged" "$(yes_no_word "$PURGE_CONFIG")"
   print_field "Logs purged" "$(yes_no_word "$PURGE_LOGS")"
   print_field "Rotation state purged" "$(yes_no_word "$PURGE_STATE")"
-  print_field "Conky files purged" "$(yes_no_word "$PURGE_CONKY")"
 
   print_section "Recovery"
   printf 'To reinstall, run: ./install.sh\n'
@@ -246,7 +209,6 @@ print_uninstall_plan() {
   print_field "Purge config" "$(yes_no_word "$PURGE_CONFIG")"
   print_field "Purge logs" "$(yes_no_word "$PURGE_LOGS")"
   print_field "Purge state" "$(yes_no_word "$PURGE_STATE")"
-  print_field "Purge Conky" "$(yes_no_word "$PURGE_CONKY")"
   print_field "Dry run" "$(yes_no_word "${INSTALL_DRY_RUN:-0}")"
   print_field "Backups" "$BACKUP_ROOT"
 }
@@ -282,10 +244,6 @@ if ((PURGE_STATE == 0)) && prompt_yes_no "Also remove WatchdogVPN rotation state
   PURGE_STATE=1
 fi
 
-if ((PURGE_CONKY == 0)) && prompt_yes_no "Also remove WatchdogVPN Conky files?" no; then
-  PURGE_CONKY=1
-fi
-
 print_uninstall_plan
 print_section "Disable services"
 disable_systemd_units
@@ -293,8 +251,6 @@ print_section "DNS rescue"
 rescue_system_dns
 print_section "Remove systemd units"
 remove_systemd_units
-print_section "Remove legacy AdGuard-era units"
-remove_legacy_adguard_units
 print_section "Remove product files"
 remove_runtime_files
 print_section "Remove optional user data"

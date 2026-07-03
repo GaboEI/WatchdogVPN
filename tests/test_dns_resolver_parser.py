@@ -62,20 +62,15 @@ class ResolverParserTests(unittest.TestCase):
                 with self.assertRaises(ResolverParseError):
                     parse_resolver_uri(uri)
 
-    def test_presets_are_valid_and_adguard_is_ordinary_preset(self) -> None:
+    def test_presets_are_valid(self) -> None:
         preset_ids = {preset.id for preset in RESOLVER_PRESETS}
 
-        self.assertIn("adguard-doh", preset_ids)
-        self.assertIn("adguard-tls", preset_ids)
+        self.assertIn("cloudflare-doh", preset_ids)
+        self.assertIn("quad9-doh", preset_ids)
         for preset in RESOLVER_PRESETS:
             self.assertGreater(len(preset.resolvers), 0)
             for resolver in preset.resolvers:
                 parse_resolver_uri(resolver.uri)
-
-        adguard = get_resolver_preset("adguard-doh")
-        self.assertIsNotNone(adguard)
-        self.assertIn("public", adguard.tags if adguard else ())
-        self.assertNotIn("service", adguard.tags if adguard else ())
 
     def test_missing_preset_returns_none(self) -> None:
         self.assertIsNone(get_resolver_preset("missing"))

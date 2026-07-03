@@ -57,8 +57,14 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/l
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755' "watchdogvpn CLI must be installed as user command"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main' "daemon wrapper must be installed with checkout PYTHONPATH"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'create_system_user_no_home watchdogvpn' "runtime install must create watchdogvpn as a system user without a home directory"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'add_installing_user_to_watchdogvpn_group' "runtime install must grant the desktop CLI user access to shared daemon state"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'usermod -a -G watchdogvpn "$target_user"' "runtime install must add the invoking user to watchdogvpn group"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'prepare_watchdogvpn_state_directory "$target_dir"' "migration must prepare default daemon state through systemd when needed"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'StateDirectory=watchdogvpn' "state directory preparation must use systemd StateDirectory"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'StateDirectoryMode=2770' "state directory preparation must be group-writable and setgid"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'repair_watchdogvpn_shared_state_permissions' "runtime install must normalize shared state permissions after migration"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'find "$target_dir" -type d -exec chmod 2770 {} +' "shared state directories must retain watchdogvpn group inheritance"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'find "$target_dir" -type f -exec chmod 0660 {} +' "shared state files must be readable and writable by the watchdogvpn group"
 if grep -Fq 'install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"' "$ROOT_DIR/lib/runtime.sh"; then
   printf 'FAIL: migration must not create /var/lib/watchdogvpn with install -d\n' >&2
   exit 1
@@ -77,8 +83,6 @@ assert_contains "$ROOT_DIR/install.sh" "If the dashboard stays degraded, reboot 
 
 assert_runtime_order "$ROOT_DIR/uninstall.sh" "rescue_system_dns" "remove_runtime_files" "uninstall must run DNS rescue before removing runtime files"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''/etc/watchdogvpn/\n'\''' "uninstall preservation contract must mention WatchdogVPN config directory"
-assert_contains "$ROOT_DIR/uninstall.sh" 'remove_legacy_adguard_units' "uninstall must clean up orphaned AdGuard-era systemd units from pre-removal installs"
-assert_contains "$ROOT_DIR/uninstall.sh" 'adguardvpn.service vpn-watchdog.service vpn-watchdog.timer' "legacy unit cleanup must target the removed AdGuard-era units"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$WATCHDOGVPN_CONFIG_DIR"' "purge-config must remove WatchdogVPN config directory"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] config: %s\n'\'' "$WATCHDOGVPN_CONFIG_DIR"' "uninstall must preserve WatchdogVPN config by default"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /var/lib/watchdogvpn' "purge-state must remove WatchdogVPN runtime state"

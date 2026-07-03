@@ -18,12 +18,13 @@ PYTHON_RUNTIME_PACKAGES=(
 
 install_runtime_files() {
   create_system_user_no_home watchdogvpn
+  add_installing_user_to_watchdogvpn_group
   create_root_dir /var/log/myvpn 0755
-  create_root_dir /var/lib/vpn-rotate 0700
 
   create_config_if_missing "$ROOT_DIR/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
   install_config_defaults
   migrate_watchdogvpn_shared_state
+  repair_watchdogvpn_shared_state_permissions
   install_python_package_tree
 
   install_root_file "$ROOT_DIR/bin/no_vpn" /usr/local/bin/no_vpn 0755
@@ -117,6 +118,7 @@ migrate_watchdogvpn_shared_state() {
 
   run_step sudo cp -a --update=none "$source_dir/." "$target_dir/"
   run_step sudo touch "$marker"
+  repair_watchdogvpn_shared_state_permissions "$target_dir"
   printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
 }
 
@@ -142,8 +144,37 @@ prepare_watchdogvpn_state_directory() {
     --property=User=watchdogvpn \
     --property=Group=watchdogvpn \
     --property=StateDirectory=watchdogvpn \
-    --property=StateDirectoryMode=0750 \
+    --property=StateDirectoryMode=2770 \
     /bin/true
+}
+
+add_installing_user_to_watchdogvpn_group() {
+  local target_user="${SUDO_USER:-${USER:-}}"
+  if [[ -z "$target_user" || "$target_user" == "root" ]]; then
+    printf '[SKIP] no non-root installing user to add to watchdogvpn group\n'
+    return 0
+  fi
+  if id -nG "$target_user" 2>/dev/null | tr ' ' '\n' | grep -Fxq watchdogvpn; then
+    printf '[KEEP] user already in watchdogvpn group: %s\n' "$target_user"
+    return 0
+  fi
+  run_step sudo usermod -a -G watchdogvpn "$target_user"
+  warn "added $target_user to watchdogvpn group; open a new login session before using the v2 CLI"
+}
+
+repair_watchdogvpn_shared_state_permissions() {
+  local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}}"
+  if [[ "$target_dir" != "/var/lib/watchdogvpn" ]]; then
+    printf '[SKIP] non-default WatchdogVPN shared state permissions are caller-managed: %s\n' "$target_dir"
+    return 0
+  fi
+  if [[ ! -d "$target_dir" ]]; then
+    printf '[SKIP] WatchdogVPN shared state directory not present: %s\n' "$target_dir"
+    return 0
+  fi
+  run_step sudo chown -R watchdogvpn:watchdogvpn "$target_dir"
+  run_step sudo find "$target_dir" -type d -exec chmod 2770 {} +
+  run_step sudo find "$target_dir" -type f -exec chmod 0660 {} +
 }
 
 refresh_installed_desktop_launcher() {

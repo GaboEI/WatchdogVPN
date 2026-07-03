@@ -26,7 +26,6 @@ bash
 python
 devops
 dns
-adguard-vpn
 automation
 resilience
 ```

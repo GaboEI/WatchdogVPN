@@ -64,16 +64,14 @@ Safety:
   update-plan prints commands only; it does not execute them.
   runtime-update requires explicit confirmation before executing updates.
   config set/reset creates a backup before modifying configuration.
-  update, connect, disconnect and rotate are intentionally not product CLI
-  commands yet.
+  daemon-backed connect, disconnect, status and rotate live in the Python
+  watchdog CLI.
 USAGE
 }
 
 log_path() {
   case "$1" in
     events) printf '%s/vpn-events.log\n' "$LOG_DIR" ;;
-    watchdog) printf '%s/vpn-watchdog.log\n' "$LOG_DIR" ;;
-    rotate) printf '%s/vpn-rotate.log\n' "$LOG_DIR" ;;
     dispatcher) printf '%s/vpn-dispatcher.log\n' "$LOG_DIR" ;;
     *) return 1 ;;
   esac
@@ -82,7 +80,7 @@ log_path() {
 logs_usage() {
   cat <<'USAGE'
 Usage:
-  watchdogvpn logs [events|watchdog|rotate|dispatcher] [lines]
+  watchdogvpn logs [events|dispatcher] [lines]
 
 Reads recent local WatchdogVPN logs without sudo and sanitizes obvious
 sensitive values. Defaults to:

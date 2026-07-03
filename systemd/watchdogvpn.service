@@ -14,7 +14,7 @@ WorkingDirectory=/var/lib/watchdogvpn
 RuntimeDirectory=watchdogvpn
 RuntimeDirectoryMode=0750
 StateDirectory=watchdogvpn
-StateDirectoryMode=0750
+StateDirectoryMode=2770
 ConfigurationDirectory=watchdogvpn
 ConfigurationDirectoryMode=0750
 

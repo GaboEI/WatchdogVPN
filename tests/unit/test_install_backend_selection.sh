@@ -29,8 +29,6 @@ contains "$yes_output" "Backend mode:"
 contains "$yes_output" "Active backend:"
 contains "$yes_output" "custom-vps"
 not_contains "$yes_output" "select vpn backend"
-not_contains "$yes_output" "AdGuard VPN CLI installation"
-not_contains "$yes_output" "AdGuard VPN login"
 
 mkdir -p "$TMP_DIR/home"
 fresh_custom_dir="$TMP_DIR/fresh-custom/etc/watchdogvpn"
@@ -53,37 +51,33 @@ contains "$custom_output" "[DRY-RUN] set custom_vps.interface = \"\""
 contains "$custom_output" "[SKIP] automatic VPN settle check; selected backend is custom-vps"
 contains "$custom_output" "[SKIP] automatic runtime validation; selected backend is custom-vps"
 not_contains "$custom_output" "select vpn backend"
-not_contains "$custom_output" "AdGuard VPN CLI installation"
-not_contains "$custom_output" "AdGuard VPN login"
 
 # Re-run scenario: an already-configured backend must be detected and left
-# alone, not silently overwritten with the fresh-install default. Regression
-# test for the real incident where a re-run installer force-overwrote a
-# working "adguard" backend.active to an unconfigured "custom-vps".
+# alone, not silently overwritten with the fresh-install default.
 existing_dir="$TMP_DIR/existing/etc/watchdogvpn"
 mkdir -p "$existing_dir"
 cat >"$existing_dir/config.toml" <<'CFG'
 [backend]
-mode = "adguard"
-active = "adguard"
+mode = "custom-vps"
+active = "custom-vps"
 
 [custom_vps]
-enabled = false
-name = ""
-host = ""
-ssh_user = ""
+enabled = true
+name = "existing-vps"
+host = "vpn.example.test"
+ssh_user = "watchdog"
 ssh_port = 22
 protocol = ""
 profile_path = ""
-service_name = ""
-interface = ""
+service_name = "wg-quick@existing.service"
+interface = "wg-existing"
 CFG
 existing_hash_before="$(md5sum "$existing_dir/config.toml" | awk '{print $1}')"
 preserve_output="$(WATCHDOGVPN_CONFIG_DIR="$existing_dir" WATCHDOGVPN_CONFIG_FILE="$existing_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
 existing_hash_after="$(md5sum "$existing_dir/config.toml" | awk '{print $1}')"
 
-contains "$preserve_output" "Existing backend configuration detected: adguard"
-contains "$preserve_output" "Preserving existing backend configuration (active = \"adguard\")"
+contains "$preserve_output" "Existing backend configuration detected: custom-vps"
+contains "$preserve_output" "Preserving existing backend configuration (active = \"custom-vps\")"
 not_contains "$preserve_output" "[DRY-RUN] set backend.mode"
 not_contains "$preserve_output" "[DRY-RUN] set backend.active"
 not_contains "$preserve_output" "[DRY-RUN] set custom_vps."

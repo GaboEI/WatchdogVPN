@@ -89,7 +89,11 @@ class WatchdogIPCClient:
                     return
 
     def _connect(self, path: Path) -> socket.socket:
-        if not path.exists():
+        try:
+            exists = path.exists()
+        except PermissionError as exc:
+            raise DaemonPermissionError() from exc
+        if not exists:
             raise DaemonNotRunningError()
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(self.timeout)

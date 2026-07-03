@@ -44,8 +44,8 @@ It should validate:
 - systemd
 - NetworkManager
 - required commands
-- AdGuard VPN CLI presence
-- AdGuard VPN auth/session state
+- WatchdogVPN daemon user/unit/socket health
+- Installed runtime command availability
 - basic DNS
 - previous installation state
 - optional integrations
@@ -64,7 +64,6 @@ The installer should ask only product-level choices:
 
 - DNS v2 management without the old guided third-party DNS integration
 - desktop launcher
-- Conky integration
 
 It should configure safe defaults for:
 
@@ -89,11 +88,9 @@ Implement `update.sh`.
 
 It should update the product without deleting:
 
-- `/etc/adguardvpn.env`
 - `/etc/vpn-domain-bypass.conf`
-- `/var/lib/vpn-rotate/`
+- `/var/lib/watchdogvpn/`
 - logs
-- user Conky configuration
 
 Acceptance criteria:
 
@@ -106,7 +103,8 @@ Acceptance criteria:
 
 Implement `uninstall.sh`.
 
-It should remove product-managed files without removing the official AdGuard VPN CLI or user data by default.
+It should remove product-managed files without removing user-owned provider
+software, private keys, profiles or account state by default.
 
 Acceptance criteria:
 
@@ -128,9 +126,8 @@ Acceptance criteria:
 - `./install.sh`
 - `VPN`
 - `vpn_truth_check`
-- `vpn_auth_check`
-- watchdog timer active
-- rotation timer active
+- `watchdog status --json`
+- watchdogvpn daemon active
 - logrotate validates
 
 ## Future Work

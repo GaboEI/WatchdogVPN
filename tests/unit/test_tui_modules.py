@@ -14,7 +14,7 @@ from watchdogvpn import dns
 from watchdogvpn import render
 from watchdogvpn import state
 from watchdogvpn.constants import MENU, MENU_ITEMS
-from watchdogvpn.formatting import display_auth_status, display_vpn_status, format_span, strip_ansi
+from watchdogvpn.formatting import display_vpn_status, format_span, strip_ansi
 from watchdogvpn.parsers import parse_event_line, parse_trace_line
 from watchdogvpn.validators import valid_domain, valid_location_hint, valid_timer_interval
 
@@ -35,8 +35,6 @@ class TuiModuleTests(unittest.TestCase):
         self.assertEqual(format_span(3661), "1h 01m 01s")
         self.assertEqual(display_vpn_status("up"), "ACTIVO")
         self.assertEqual(display_vpn_status("degraded"), "DEGRADADO")
-        self.assertEqual(display_auth_status("expired"), "SESION EXPIRADA")
-        self.assertEqual(display_auth_status("unknown", "sudo_required"), "SIN SUDO")
 
     def test_render_helpers(self):
         self.assertEqual(render.fit("abcdef", 4), "abc…")
@@ -93,21 +91,19 @@ class TuiModuleTests(unittest.TestCase):
         self.assertEqual(actions.restart_vpn_command("DK"), "/usr/local/bin/vpnctl restart")
         self.assertEqual(actions.restart_vpn_command("sin valor"), "/usr/local/bin/vpnctl restart")
         self.assertEqual(actions.disconnect_vpn_command(), "/usr/local/bin/vpnctl disconnect")
-        self.assertIn("VPN_ROTATE_FORCE=1", actions.rotate_now_command())
+        self.assertIn("/usr/local/bin/watchdogvpn rotate --force", actions.rotate_now_command())
         self.assertEqual(actions.real_status_command(), "/usr/local/bin/vpnctl status")
         self.assertFalse(hasattr(actions, "dns_current_command"))
         self.assertFalse(hasattr(actions, "dns_apply_command"))
         self.assertEqual(actions.add_bypass_domain_command("example.com"), "sudo -n /usr/local/bin/no_vpn example.com")
         self.assertIn("sin rutas", actions.add_bypass_domain_command("bad/domain"))
 
-        timer_cmd = actions.set_timer_interval_command("vpn-rotate.timer", "3h")
+        timer_cmd = actions.set_timer_interval_command("myvpn-logrotate.timer", "3h")
         self.assertIn("OnUnitInactiveSec=", timer_cmd)
-        self.assertIn("systemctl restart vpn-rotate.timer", timer_cmd)
+        self.assertIn("systemctl restart myvpn-logrotate.timer", timer_cmd)
         self.assertIn("timer no permitido", actions.set_timer_interval_command("bad.timer", "3h"))
-        self.assertIn("Usa formato", actions.set_timer_interval_command("vpn-rotate.timer", "bad"))
+        self.assertIn("Usa formato", actions.set_timer_interval_command("myvpn-logrotate.timer", "bad"))
 
-        self.assertIn('-v val="15"', actions.set_rotate_top_n_command("15"))
-        self.assertIn("ERROR: TOP_N", actions.set_rotate_top_n_command("0"))
         self.assertIn("dominio invalido", actions.remove_bypass_domain_command("bad/domain"))
         self.assertIn("Quitado: example.com", actions.remove_bypass_domain_command("example.com"))
 
@@ -177,23 +173,18 @@ class TuiModuleTests(unittest.TestCase):
 
     def test_systemd_helpers_parse_mocked_output(self):
         with patch.object(commands, "run_args", return_value="active"):
-            self.assertEqual(commands.service_state("vpn-watchdog.timer"), "active")
+            self.assertEqual(commands.service_state("myvpn-logrotate.timer"), "active")
         with patch.object(commands, "run", return_value="3h"):
-            self.assertEqual(commands.timer_interval("vpn-rotate.timer"), "3h")
+            self.assertEqual(commands.timer_interval("myvpn-logrotate.timer"), "3h")
         with patch.object(commands, "run", return_value="2h"):
-            self.assertEqual(commands.timer_countdown("vpn-rotate.timer"), "2h")
+            self.assertEqual(commands.timer_countdown("myvpn-logrotate.timer"), "2h")
 
     def test_state_key_value_parsing(self):
         truth_raw = "STATUS=UP\nTUN=UP\nROUTE=TUN\nIP=OK\nIP_ADDR=198.51.100.10\n"
-        auth_raw = "AUTH=OK\nREASON=ok\nCLI_RC=0\nDETAIL=\n"
         with patch.object(state, "run", return_value=truth_raw):
             parsed = state.truth_data()
             self.assertEqual(parsed["STATUS"], "UP")
             self.assertEqual(parsed["ROUTE"], "TUN")
-        with patch.object(state, "run", return_value=auth_raw):
-            parsed = state.auth_data()
-            self.assertEqual(parsed["AUTH"], "OK")
-            self.assertEqual(parsed["REASON"], "ok")
 
     def test_settings_snapshot_reads_persistent_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -233,8 +224,8 @@ class TuiModuleTests(unittest.TestCase):
                 "\n".join(
                     [
                         "[backend]",
-                        'mode = "both"',
-                        'active = "adguard"',
+                        'mode = "custom-vps"',
+                        'active = "custom-vps"',
                         "",
                         "[custom_vps]",
                         "enabled = true",
@@ -251,18 +242,18 @@ class TuiModuleTests(unittest.TestCase):
                 encoding="utf-8",
             )
             runtime = {
-                "MODE": "both",
-                "BACKEND": "adguard",
+                "MODE": "custom-vps",
+                "BACKEND": "custom-vps",
                 "CUSTOM_VPS_ENABLED": "true",
                 "IMPLEMENTED": "true",
-                "SUPPORTS_ROTATION": "true",
+                "SUPPORTS_ROTATION": "false",
                 "TRUTH_INTERFACE": "tun0",
                 "CUSTOM_VPS_INTERFACE": "awg0",
             }
             with patch.dict("os.environ", {"WATCHDOGVPN_CONFIG_FILE": str(path)}), \
                  patch.object(state, "backend_data", return_value=runtime):
                 snapshot = dict(state.backend_snapshot())
-            self.assertEqual(snapshot["Modo"], "both")
+            self.assertEqual(snapshot["Modo"], "custom-vps")
             self.assertEqual(snapshot["Custom VPS"], "true")
             self.assertEqual(snapshot["Host"], "203.0.113.10")
             self.assertEqual(snapshot["Interfaz VPS"], "awg0")
@@ -287,8 +278,8 @@ class TuiModuleTests(unittest.TestCase):
             "legacy line",
         ]):
             snapshot = state.trace_snapshot()
-            self.assertEqual(snapshot["counts"]["WARN"], 4)
-            self.assertEqual(snapshot["legacy"], 4)
+            self.assertEqual(snapshot["counts"]["WARN"], 2)
+            self.assertEqual(snapshot["legacy"], 2)
 
 
 if __name__ == "__main__":

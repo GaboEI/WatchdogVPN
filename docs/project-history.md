@@ -41,14 +41,13 @@ were still experiments. The first major inflection point was 2026-02-02, when
 the work became documented as a repeatable reconstruction process instead of
 only a collection of local fixes.
 
-That 2026-02-02 reference document described how to replicate the current
-AdGuard VPN behavior on another Ubuntu host without simply copying the original
-machine.
+That 2026-02-02 reference document described how to replicate the current VPN
+behavior on another Ubuntu host without simply copying the original machine.
 
 That document covered:
 
-- dedicated `adgvpn` service user;
-- `adguardvpn.service` as an always-on systemd service;
+- dedicated service user;
+- always-on systemd service;
 - rotation service and timer;
 - firstboot rotation;
 - location setting helper;
@@ -72,7 +71,7 @@ Representative milestones:
 ```text
 2026-04-25  Baseline before routing investigation
 2026-04-25  Update dispatcher and restore watchdog to 2 minutes
-2026-04-26  Add TUI and Conky user-layer state
+2026-04-26  Add TUI user-layer state
 2026-04-27  Unify VPN truth layer and harden TUI
 2026-04-27  Harden bypass actions in TUI
 2026-04-27  Show newest VPN logs first in TUI
@@ -89,7 +88,7 @@ Representative milestones:
 2026-04-30  Add manual DNS profile apply and rollback
 2026-04-30  Add safe DNS panel to TUI
 2026-04-30  Make DNS panel apply real profiles
-2026-04-30  Add AdGuard DoQ and OpenDNS DNS profiles
+2026-04-30  Add public DNS profiles
 2026-04-30  Improve TUI safety and long-action feedback
 2026-05-01  Refine TUI navigation hierarchy
 2026-05-01  Polish TUI section copy and status labels
@@ -101,7 +100,7 @@ Representative milestones:
 2026-05-02  Add TUI traceability summary
 2026-05-02  Document safe update path
 2026-05-02  Refine installer decisions and defaults
-2026-05-02  Add AdGuard VPN auth watchdog
+2026-05-02  Add VPN auth watchdog
 2026-05-02  Expand TUI dashboard visible area
 2026-05-02  Make VPN notifications traceable
 2026-05-07  Make TUI dashboard refresh nonblocking
@@ -126,7 +125,7 @@ Representative milestones:
 2026-05-08  Implement careful uninstall flow
 2026-05-08  Implement legacy advanced DNS setup
 2026-05-08  Harden installer product flow
-2026-05-08  Guide clean install through AdGuard VPN CLI setup
+2026-05-08  Guide clean install through the initial VPN CLI setup
 2026-05-08  Add DNS rescue for uninstall flow
 2026-05-08  Polish timer controls notifications and desktop shortcut
 2026-05-08  Refine product messaging and TUI labels

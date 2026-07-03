@@ -12,15 +12,7 @@ The screenshots are captured from the real TUI, not a web mockup.
 ![WatchdogVPN dashboard](assets/tui-dashboard.png)
 
 The dashboard is the first operational view. It shows the real VPN state,
-session health, tunnel state, selected location, route, public IP, DNS profile,
-active exclusions and automation timers.
-
-### Location Selection
-
-![WatchdogVPN location selector](assets/tui-location.png)
-
-The location view lists candidate VPN locations with country, city and ping. It
-lets the user choose a location without touching `adguardvpn-cli` directly.
+tunnel state, backend, route, public IP, DNS profile and active exclusions.
 
 ### Recovery Actions
 
@@ -42,14 +34,6 @@ rollback support.
 
 Exclusions are user-owned domain rules for services that should leave through
 the normal network route instead of the VPN route.
-
-### Timers
-
-![WatchdogVPN timers](assets/tui-timers.png)
-
-The TUI exposes only user-relevant automation controls. Watchdog interval and
-rotation interval are product preferences; internal housekeeping timers remain
-implementation details.
 
 ### Logs
 
@@ -85,11 +69,10 @@ Read-only preflight. No system changes will be made.
 [OK] command: logrotate
 [OK] NetworkManager active
 
-== AdGuard VPN ==
-[OK] adguardvpn-cli detected: /usr/local/bin/adguardvpn-cli
-[INFO] version: AdGuard VPN CLI v1.7.12
-[OK] service user: adgvpn
-[OK] auth: OK
+== WatchdogVPN daemon ==
+[OK] service user: watchdogvpn
+[OK] daemon unit: active
+[OK] daemon socket: /run/watchdogvpn/control.sock
 
 == Network And DNS ==
 [OK] truth state: UP
@@ -113,10 +96,10 @@ tun0: UP
 route: TUN
 public ip: 185.174.159.38
 
-CLI status: VPN is disconnected (not authoritative)
+provider status: not authoritative
 ```
 
-The CLI line is intentionally treated as non-authoritative. The tunnel, route
+Provider status is intentionally treated as non-authoritative. The tunnel, route
 and public IP checks are the operational source of truth.
 
 ## Example: DNS
@@ -124,24 +107,19 @@ and public IP checks are the operational source of truth.
 DNS v2 ships with the Phase 10 system: `watchdog dns status|test|apply|reset`,
 with `auto`, `off`, `custom` and `advanced` modes, FakeIP, ECS, static IP
 mapping and diversion rules. The old guided third-party DNS integration is
-removed; users who prefer AdGuard DNS resolvers configure them as ordinary
-custom DNS servers in the v2 DNS system. See `docs/dns-cli.md` and
-`docs/phase-10-design.md` for details.
+removed. See `docs/dns-cli.md` and `docs/phase-10-design.md` for details.
 
 ## Example: Timers
 
 ```text
-$ systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager
+$ systemctl list-timers --all vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager
 NEXT                         LEFT    LAST                         PASSED  UNIT                    ACTIVATES
-20:04:09 MSK                 2min    20:02:06 MSK                 5s ago  vpn-watchdog.timer      vpn-watchdog.service
 20:10:02 MSK                 7min    20:00:01 MSK                 2min    vpn-domain-bypass.timer vpn-domain-bypass.service
 21:00:00 MSK                 57min   20:00:00 MSK                 2min    myvpn-logrotate.timer   myvpn-logrotate.service
-22:40:59 MSK                 2h 38m  19:40:48 MSK                 21min   vpn-rotate.timer        vpn-rotate.service
 ```
 
-`vpn-rotate.timer` is intentionally slower than the watchdog and bypass timers.
-It changes the VPN location and restarts the provider service, so it should not
-run aggressively during normal use.
+The daemon owns connection lifecycle; these timers cover supporting housekeeping
+tasks outside the daemon process.
 
 ## Install, Update and Uninstall
 
@@ -164,15 +142,14 @@ cd WatchdogVPN
 ./uninstall.sh
 ```
 
-For full removal of WatchdogVPN-managed files, logs, state and optional Conky
-files:
+For full removal of WatchdogVPN-managed files, logs and state:
 
 ```sh
-./uninstall.sh --purge-config --purge-logs --purge-state --purge-conky
+./uninstall.sh --purge-config --purge-logs --purge-state
 ```
 
-The official AdGuard VPN CLI and the user's AdGuard account/license state are
-not removed by WatchdogVPN uninstall.
+User-owned provider software, profiles, private keys and account state are not
+removed by WatchdogVPN uninstall.
 
 ## Example: Installer UX
 
@@ -187,7 +164,6 @@ Privileged scripts:    /usr/local/sbin
 Systemd units:         enabled
 Advanced DNS:          no
 Desktop launcher:      yes
-Conky integration:     no
 Backups:               /var/backups/watchdogvpn
 Dry run:               yes
 ```

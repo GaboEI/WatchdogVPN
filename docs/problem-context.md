@@ -6,24 +6,24 @@ In unstable network environments, endpoints can fail, routes can change, public 
 
 The project starts from the assumption that the connection will eventually fail. That matters for users who cannot treat connectivity as a convenience: journalists, researchers, developers, students, remote workers and people living under network censorship or unreliable routing. WatchdogVPN does not promise a perfect or fastest VPN; it provides an operating layer that can detect failure, recover when possible and keep the user informed without requiring constant terminal work.
 
-The implemented compatibility path includes AdGuard VPN CLI, but the long-term
-operating model is broader: the same truth-check, watchdog, DNS safety, logging
-and TUI concepts should be reusable for future provider backends and private
-tunnels.
+The operating model is provider-agnostic: the same truth-check, daemon,
+rotation, DNS safety, logging and TUI concepts should be reusable for supported
+provider backends and private tunnels.
 
 ## Goals
 
 - Keep VPN state observable from a terminal interface.
 - Detect whether the tunnel and route are actually working.
 - Recover automatically from common failure states.
-- Avoid endless recovery loops when authentication is the real problem.
+- Avoid endless recovery loops when provider or profile configuration is the
+  real problem.
 - Keep logs readable and parseable.
 - Preserve user configuration during installation and updates.
 - Make the product usable for a normal Linux user, not only for the developer who built it.
 
 ## Non-Goals
 
-- Replace the official AdGuard VPN client.
+- Replace user-owned provider software.
 - Provide VPN credentials.
 - Circumvent licensing.
 - Hide malicious or illegal traffic.
@@ -34,7 +34,7 @@ tunnels.
 The project prioritizes operational resilience over unnecessary complexity. Its main engineering value is the coordination of:
 
 - state checks
-- systemd timers
+- systemd daemon and timers
 - safe rotation
 - watchdog recovery
 - DNS rollback

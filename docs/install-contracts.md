@@ -10,16 +10,15 @@ This document defines how the product scripts should behave.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.
 - Existing user configuration must not be overwritten without backup.
-- AdGuard VPN CLI is required only when the selected backend mode uses
-  `adguard`; it is not removed or replaced by this project.
+- The installer configures WatchdogVPN's own runtime and does not depend on a
+  third-party commercial VPN CLI.
 
 ## User-Facing Questions
 
 `install.sh` may ask:
 
 - Install desktop launcher?
-- Install Conky integration?
-- Select VPN backend: AdGuard VPN, Custom VPS or both.
+- Configure the Custom VPS backend metadata when needed.
 
 `install.sh` should not ask:
 
@@ -50,11 +49,9 @@ It should check:
 - iproute2
 - awk/sed/coreutils
 - logrotate
-- AdGuard VPN CLI, when the selected backend mode uses `adguard`
-- AdGuard VPN session/auth state, when the selected backend mode uses `adguard`
+- WatchdogVPN daemon user, unit, IPC socket and installed runtime
 - basic DNS
 - previous installation state
-- optional Conky
 - optional desktop launcher
 
 Result levels:
@@ -70,8 +67,8 @@ Role: install a new system or complete a partial installation.
 Expected flow:
 
 1. Run preflight checks.
-2. Explain that the product can control AdGuard VPN or prepare a Custom VPS
-   backend, depending on the selected mode.
+2. Explain that the product installs the WatchdogVPN runtime and can configure
+   the custom-vps service-control path.
 3. Detect distro and load its adapter.
 4. Validate dependencies.
 5. Ask product-level options.
@@ -90,18 +87,17 @@ Role: update an existing installation without reinstalling from zero.
 
 It must preserve:
 
-- `/etc/adguardvpn.env`
 - `/etc/vpn-domain-bypass.conf`
-- `/var/lib/vpn-rotate/`
+- `/var/lib/watchdogvpn/`
 - logs
-- user Conky configuration
 
 It should replace only product-managed runtime files after validation and backup.
 It should show a preservation contract and update plan before replacing files.
 
 ## uninstall.sh
 
-Role: remove the product without breaking the official AdGuard VPN installation.
+Role: remove WatchdogVPN without deleting user-owned VPN/proxy software or
+account state.
 
 It should remove:
 
@@ -114,16 +110,13 @@ It should remove:
 
 It must ask before deleting:
 
-- `/etc/adguardvpn.env`
 - `/etc/vpn-domain-bypass.conf`
 - `/var/log/myvpn/`
-- `/var/lib/vpn-rotate/`
-- Conky configuration
+- `/var/lib/watchdogvpn/`
 
 It must not remove:
 
-- official AdGuard VPN CLI
-- AdGuard account/license state
+- user-owned provider software, profiles, private keys or account state
 - unrelated user files
 
 It should show a removal plan before disabling units or removing files.

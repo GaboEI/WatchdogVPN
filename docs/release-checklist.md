@@ -122,13 +122,13 @@ repository public, configure these fields manually in GitHub.
 Suggested description:
 
 ```text
-Terminal-first resilience layer for AdGuard VPN CLI on Linux: truth checks, watchdog recovery, rotation, DNS safety and TUI control center.
+Terminal-first resilience layer for VPN/proxy connections on Linux: daemon-backed runtime, truth checks, rotation, DNS safety and TUI control center.
 ```
 
 Suggested topics:
 
 ```text
-linux vpn tui systemd networkmanager bash python devops dns adguard-vpn automation resilience
+linux vpn tui systemd networkmanager bash python devops dns sing-box wireguard openvpn automation resilience
 ```
 
 Suggested website/demo link:
@@ -149,7 +149,7 @@ systemd-analyze verify systemd/*.service systemd/*.timer
 watchdogvpn report
 vpnctl status
 ./doctor.sh
-systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager
+systemctl list-timers --all vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager
 ```
 
 ## Tagging Command

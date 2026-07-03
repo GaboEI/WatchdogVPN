@@ -24,30 +24,28 @@ assert_contains "$output" "IMPLEMENTED=false"
 assert_contains "$output" "SUPPORTS_ROTATION=false"
 assert_contains "$output" "TRUTH_INTERFACE=unknown"
 
-# "adguard" is no longer a supported backend value (full removal, no
-# back-compat): an existing config still carrying it must fail validate,
-# not silently succeed.
+# Unknown backend values must fail validation, not silently succeed.
 cat >"$tmpdir/config.toml" <<'EOF'
 [backend]
-mode = "adguard"
-active = "adguard"
+mode = "legacy-vpn"
+active = "legacy-vpn"
 EOF
 
 mode="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" mode)"
 active="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" active)"
-[[ "$mode" == "adguard" ]]
-[[ "$active" == "adguard" ]]
+[[ "$mode" == "legacy-vpn" ]]
+[[ "$active" == "legacy-vpn" ]]
 
 set +e
-adguard_output="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" validate 2>&1)"
-adguard_rc=$?
+legacy_output="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" validate 2>&1)"
+legacy_rc=$?
 set -e
-if ((adguard_rc != 65)); then
-  printf 'expected adguard backend to be rejected with rc 65, got %s\n%s\n' "$adguard_rc" "$adguard_output" >&2
+if ((legacy_rc != 65)); then
+  printf 'expected legacy backend to be rejected with rc 65, got %s\n%s\n' "$legacy_rc" "$legacy_output" >&2
   exit 1
 fi
-assert_contains "$adguard_output" "unsupported backend: adguard"
-assert_contains "$adguard_output" "implemented backends: custom-vps"
+assert_contains "$legacy_output" "unsupported backend: legacy-vpn"
+assert_contains "$legacy_output" "implemented backends: custom-vps"
 
 cat >"$tmpdir/config.toml" <<'EOF'
 [backend]

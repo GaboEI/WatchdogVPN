@@ -11,15 +11,11 @@ import shlex
 from watchdogvpn.commands import run
 from watchdogvpn.constants import (
     NO_VPN,
-    ROTATE_FIRSTBOOT_TIMER,
-    ROTATE_TIMER,
     TRUTH_BIN,
     VPNCTL,
-    WATCHDOG_TIMER,
+    WATCHDOGVPN_CLI,
 )
 from watchdogvpn.validators import valid_domain, valid_timer_interval
-
-ALLOWED_TIMER_UNITS = {ROTATE_TIMER, WATCHDOG_TIMER}
 
 
 def restart_vpn_command(loc_hint: str) -> str:
@@ -31,41 +27,11 @@ def disconnect_vpn_command() -> str:
 
 
 def rotate_now_command() -> str:
-    return f"sudo env VPN_ROTATE_FORCE=1 {shlex.quote('/usr/local/sbin/vpn_rotate.sh')}; {TRUTH_BIN}"
-
-
-def run_watchdog_command() -> str:
-    return (
-        f"sudo systemctl restart {WATCHDOG_TIMER}; "
-        "sudo env VPN_WATCHDOG_FORCE=1 "
-        f"{shlex.quote('/usr/local/sbin/vpn_watchdog.sh')}; {TRUTH_BIN}"
-    )
+    return f"{shlex.quote(WATCHDOGVPN_CLI)} rotate --force; {TRUTH_BIN}"
 
 
 def real_status_command() -> str:
     return f"{VPNCTL} status"
-
-
-def start_rotate_timer_command() -> str:
-    return (
-        f"sudo systemctl start {ROTATE_TIMER} {ROTATE_FIRSTBOOT_TIMER} "
-        f"&& systemctl status {ROTATE_TIMER} --no-pager -n 8"
-    )
-
-
-def stop_rotate_timer_command() -> str:
-    return (
-        f"sudo systemctl stop {ROTATE_TIMER} {ROTATE_FIRSTBOOT_TIMER} "
-        f"&& systemctl status {ROTATE_TIMER} --no-pager -n 8"
-    )
-
-
-def start_watchdog_timer_command() -> str:
-    return f"sudo systemctl start {WATCHDOG_TIMER} && systemctl status {WATCHDOG_TIMER} --no-pager -n 8"
-
-
-def stop_watchdog_timer_command() -> str:
-    return f"sudo systemctl stop {WATCHDOG_TIMER} && systemctl status {WATCHDOG_TIMER} --no-pager -n 8"
 
 
 def list_bypass_domains_command() -> str:
@@ -81,7 +47,7 @@ def add_bypass_domain_command(domain: str) -> str:
 
 
 def set_timer_interval_command(unit: str, value: str) -> str:
-    if unit not in ALLOWED_TIMER_UNITS:
+    if unit != "myvpn-logrotate.timer":
         return "echo 'ERROR: timer no permitido.'"
     ok, value_or_error = valid_timer_interval(value)
     if not ok:
@@ -107,37 +73,6 @@ systemctl status {unit} --no-pager -n 8
 
 def set_timer_interval(unit: str, value: str) -> str:
     return run(set_timer_interval_command(unit, value), 20)
-
-
-def set_rotate_top_n_command(value: str) -> str:
-    value = (value or "").strip()
-    if not re.match(r"^[0-9]+$", value):
-        return "echo 'ERROR: TOP_N debe ser un numero.'"
-    num = int(value)
-    if num < 1 or num > 100:
-        return "echo 'ERROR: TOP_N debe estar entre 1 y 100.'"
-    return rf"""
-tmp="$(mktemp)"
-sudo awk -F= -v val="{value}" '
-BEGIN {{ done=0 }}
-/^[[:space:]]*TOP_N=/ {{ print "TOP_N=" val; done=1; next }}
-{{ print $0 }}
-END {{ if (!done) print "TOP_N=" val }}
-' /usr/local/sbin/vpn_rotate.sh > "$tmp"
-sudo install -m 700 -o root -g root "$tmp" /usr/local/sbin/vpn_rotate.sh
-rm -f "$tmp"
-sudo grep -E '^(TOP_N|RECENT_KEEP)=' /usr/local/sbin/vpn_rotate.sh
-"""
-
-
-def set_rotate_top_n(value: str) -> str:
-    value = (value or "").strip()
-    if not re.match(r"^[0-9]+$", value):
-        return "ERROR: TOP_N debe ser un numero."
-    num = int(value)
-    if num < 1 or num > 100:
-        return "ERROR: TOP_N debe estar entre 1 y 100."
-    return run(set_rotate_top_n_command(value), 20)
 
 
 def remove_bypass_domain_command(domain: str) -> str:

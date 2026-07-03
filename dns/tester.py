@@ -214,7 +214,7 @@ def default_auto_channel_candidates() -> dict[DNSChannelName, tuple[Resolver, ..
         Resolver(uri="https://1.1.1.1/dns-query", label="Cloudflare DoH"),
         Resolver(uri="https://9.9.9.9/dns-query", label="Quad9 DoH"),
         Resolver(uri="tls://1.1.1.1", label="Cloudflare TLS"),
-        Resolver(uri="tls://dns.adguard-dns.com", label="AdGuard TLS"),
+        Resolver(uri="tls://dns.quad9.net", label="Quad9 TLS"),
     )
     return {
         DNSChannelName.BOOTSTRAP: local_candidates,

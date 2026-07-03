@@ -15,7 +15,7 @@
   `dns/singbox.py`, `dns/hijack.py`, `dns/capabilities.py`
 - `drivers/singbox_driver.py`, `drivers/amneziawg_driver.py`,
   `drivers/openvpn_driver.py`, `drivers/openvpn_cloak_driver.py`,
-  `drivers/legacy/adguard_driver.py`, `drivers/base.py`
+  `drivers/base.py`
 - `core/watchdog.py`, `rotation/rotation_engine.py`
 - `core/kill_switch.py`
 - `cli/main.py` (`dns status|test|apply|reset`), `tui/watchdogvpn/dns.py`
@@ -40,8 +40,8 @@
 Resolution:
 - `drivers/base.py`: `BaseDriver.connect()` now accepts an optional
   `dns_policy: DNSPolicy | None = None`. All driver implementations
-  (`SingBoxDriver`, `AmneziaWGDriver`, `OpenVPNDriver`, `OpenVPNCloakDriver`,
-  legacy `AdGuardDriver`) accept the parameter; only `SingBoxDriver` uses it
+  (`SingBoxDriver`, `AmneziaWGDriver`, `OpenVPNDriver`, `OpenVPNCloakDriver`)
+  accept the parameter; only `SingBoxDriver` uses it
   (per the Phase 10 design: "sing-box is the primary DNS engine for advanced
   behavior").
 - `SingBoxDriver.connect()` now forwards `dns_policy` into

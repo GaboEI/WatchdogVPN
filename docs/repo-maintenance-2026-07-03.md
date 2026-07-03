@@ -7,7 +7,7 @@
 ## Checked Areas
 
 - README, ROADMAP and CHANGELOG coherence.
-- AdGuard Home removal references.
+- Removed guided third-party DNS integration references.
 - DNS v2 shipped-state documentation.
 - Root documentation links.
 - Repo hygiene basics: license, gitignore, branch state and sensitive-word
@@ -15,8 +15,8 @@
 
 ## Changes Made
 
-- Updated README DNS v2 wording so AdGuard public DNS is described as normal
-  custom resolver configuration, while AdGuard Home remains removed.
+- Updated README DNS v2 wording so the removed guided third-party DNS
+  integration remains outside the product.
 - Updated `docs/dns-cli.md` so DNS v2 is described as shipped behavior rather
   than still being under Phase 10 validation.
 - Updated `docs/security.md` so DNS v2 guidance no longer says "when Phase 10

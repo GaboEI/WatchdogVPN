@@ -77,20 +77,6 @@ RESOLVER_PRESETS: tuple[ResolverPreset, ...] = (
         description="Google public DNS over HTTPS.",
         tags=("public", "doh"),
     ),
-    ResolverPreset(
-        id="adguard-doh",
-        label="AdGuard DoH",
-        resolvers=(Resolver(uri="https://dns.adguard-dns.com/dns-query"),),
-        description="AdGuard public DNS over HTTPS.",
-        tags=("public", "doh"),
-    ),
-    ResolverPreset(
-        id="adguard-tls",
-        label="AdGuard TLS",
-        resolvers=(Resolver(uri="tls://dns.adguard-dns.com"),),
-        description="AdGuard public DNS over TLS.",
-        tags=("public", "dot"),
-    ),
 )
 
 

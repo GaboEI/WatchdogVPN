@@ -22,11 +22,11 @@ class SingBoxDriverBinaryTests(unittest.TestCase):
     def test_find_binary_falls_back_to_which(self, access_mock, exists_mock, which_mock) -> None:
         self.assertEqual(self.driver.find_singbox_binary(), "/usr/bin/sing-box")
 
-    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIN": "/opt/karing/sing-box"})
+    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIN": "/opt/watchdogvpn/sing-box"})
     @patch("drivers.singbox_driver.os.path.exists", return_value=True)
     @patch("drivers.singbox_driver.os.access", return_value=True)
     def test_find_binary_accepts_env_override_for_compatible_cores(self, access_mock, exists_mock) -> None:
-        self.assertEqual(self.driver.find_singbox_binary(), "/opt/karing/sing-box")
+        self.assertEqual(self.driver.find_singbox_binary(), "/opt/watchdogvpn/sing-box")
 
     @patch("drivers.singbox_driver.shutil.which", return_value=None)
     @patch("drivers.singbox_driver.os.path.exists", return_value=False)

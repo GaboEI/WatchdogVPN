@@ -10,10 +10,9 @@ updates and future CLI/TUI features can evolve without overwriting local choices
 
 Persistent configuration is being introduced for `v0.2.0`.
 
-`v0.1.1` preserves existing product-managed configuration files such as
-`/etc/adguardvpn.env`, `/etc/vpn-domain-bypass.conf`, Conky configuration,
-logs and rotation state. It does not yet provide a central WatchdogVPN
-configuration file.
+Earlier runtime versions preserved scattered product-managed configuration.
+The current v2 path centralizes WatchdogVPN configuration under
+`/etc/watchdogvpn/` and shared daemon state under `/var/lib/watchdogvpn/`.
 
 The `v0.2.0` development path now creates `/etc/watchdogvpn/config.toml` from
 the packaged defaults when the file is missing. When the file already exists,
@@ -58,8 +57,8 @@ The initial configuration should stay small and stable.
 
 ```toml
 [backend]
-mode = "adguard"
-active = "adguard"
+mode = "custom-vps"
+active = "custom-vps"
 
 [custom_vps]
 enabled = false
@@ -74,10 +73,6 @@ service_name = ""
 [language]
 current = "en"
 auto_detect = true
-
-[timers]
-watchdog_interval = "5min"
-rotation_interval = "12h"
 
 [dns]
 advanced_mode = false
@@ -99,15 +94,12 @@ sanitize_home = true
 
 `backend.active`
 
-Active VPN backend name. `adguard` is the legacy compatibility backend.
-`custom-vps` is an experimental user-owned server backend controlled through a
-local systemd service configured by the user.
+Active VPN backend name. Supported value: `custom-vps`, which controls a local
+systemd service configured by the user.
 
 `backend.mode`
 
-Configured backend mode. Supported values are `adguard`, `custom-vps` and
-`both`. `both` keeps AdGuard active while preparing local Custom VPS
-configuration for experimental service-control use.
+Configured backend mode. Supported value: `custom-vps`.
 
 `custom_vps.*`
 
@@ -129,16 +121,6 @@ throughout the TUI.
 
 Whether WatchdogVPN may use the system locale as a suggestion. Auto-detection
 must never override an explicit user choice.
-
-`timers.watchdog_interval`
-
-Preferred watchdog timer interval. The value must be validated before writing
-systemd timer overrides.
-
-`timers.rotation_interval`
-
-Preferred VPN rotation interval. The value must be validated before writing
-systemd timer overrides.
 
 `dns.advanced_mode`
 
@@ -198,7 +180,7 @@ Update must be conservative.
 - Validate the migrated file before replacing the active file.
 - If migration fails, keep the old file and print a clear warning.
 
-The updater must never reset timer, DNS, language, theme or reporting
+The updater must never reset DNS, language, theme or reporting
 preferences silently.
 
 ## Uninstall Contract
@@ -211,7 +193,6 @@ Default uninstall:
 Full purge:
 
 - Remove `/etc/watchdogvpn/` only when `--purge-config` is provided.
-- Keep the official AdGuard VPN CLI and account/license state untouched.
 
 ## Reset Contract
 

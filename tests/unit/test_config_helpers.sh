@@ -53,12 +53,11 @@ config_has_key language.current "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key backend.mode "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key backend.active "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key custom_vps.enabled "$WATCHDOGVPN_CONFIG_FILE"
-config_has_key timers.watchdog_interval "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key dns.profile "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key tui.theme "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key reporting.sanitize_ipv4 "$WATCHDOGVPN_CONFIG_FILE"
 
-if config_has_key timers.missing_key "$WATCHDOGVPN_CONFIG_FILE"; then
+if config_has_key dns.missing_key "$WATCHDOGVPN_CONFIG_FILE"; then
   printf 'FAIL: config_has_key returned true for a missing key\n' >&2
   exit 1
 fi
@@ -81,9 +80,6 @@ cat >"$WATCHDOGVPN_CONFIG_FILE" <<'EOF'
 current = "es"
 custom_language_note = "keep"
 
-[timers]
-watchdog_interval = "10min"
-
 [custom]
 local_value = "preserve"
 EOF
@@ -94,7 +90,6 @@ grep -Fq 'current = "es"' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq 'custom_language_note = "keep"' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq 'local_value = "preserve"' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq 'auto_detect = true' "$WATCHDOGVPN_CONFIG_FILE"
-grep -Fq 'rotation_interval = "12h"' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq '[dns]' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq '[backend]' "$WATCHDOGVPN_CONFIG_FILE"
 grep -Fq 'mode = "custom-vps"' "$WATCHDOGVPN_CONFIG_FILE"

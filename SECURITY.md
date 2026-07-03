@@ -61,11 +61,10 @@ In scope:
 - Unsafe install, update or uninstall behavior.
 - DNS breakage or failure to recover DNS after uninstall.
 - Loss or overwrite of preserved user configuration.
-- Dangerous behavior in watchdog, rotation or bypass scripts.
+- Dangerous behavior in daemon, rotation, DNS, backend or bypass paths.
 
 Out of scope:
 
-- Vulnerabilities in the official AdGuard VPN CLI itself.
 - Requests to bypass VPN licensing or provider restrictions.
 - General anonymity guarantees.
 - Unsupported distributions not claimed as validated.

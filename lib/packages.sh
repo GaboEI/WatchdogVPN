@@ -6,7 +6,7 @@ required_commands() {
 }
 
 optional_commands() {
-  printf '%s\n' notify-send conky
+  printf '%s\n' notify-send
 }
 
 package_hint_header() {

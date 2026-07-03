@@ -2,7 +2,10 @@
 
 ## Summary
 
-WatchdogVPN v2.0.0 is the stable Linux CLI + TUI line. Its purpose is to turn the project into a reusable resilience layer for VPN/proxy connections on Linux, with legacy AdGuard compatibility isolated rather than treated as the product center.
+WatchdogVPN v2.0.0 is the stable Linux CLI + TUI line. Its purpose is to turn
+the project into a reusable resilience layer for VPN/proxy connections on
+Linux, centered on the v2 daemon, profile/provider stores, sing-box,
+AmneziaWG, OpenVPN+Cloak, DNS v2 and rules.
 
 The v3.0.0 line is future-facing and reserved for a GUI expansion across additional platforms after v2 is stable.
 
@@ -11,7 +14,6 @@ The v3.0.0 line is future-facing and reserved for a GUI expansion across additio
 - Preserve the watchdog core and the real-state verification model.
 - Add the new profile, provider, parser and driver structure in small validated steps.
 - Keep CLI and TUI the primary user surfaces.
-- Keep AdGuard compatibility available only as legacy support during v2.
 - Treat kill switch, DNS, rules, rotation and recovery as first-class product areas.
 - Keep docs, tests and runtime behavior aligned before expanding scope.
 
@@ -20,7 +22,6 @@ The v3.0.0 line is future-facing and reserved for a GUI expansion across additio
 - Linux only.
 - CLI + TUI only.
 - No mobile or desktop GUI rewrite in this version line.
-- No full removal of legacy AdGuard support yet.
 - No silent behavior changes that can surprise existing users.
 
 ## v3.0.0 Direction
@@ -47,7 +48,7 @@ repo narrative aligned with the current codebase:
 - Phase 7 - Rotation/recovery state handling: completed.
 - Phase 8 - Driver and process hardening: completed.
 - Phase 9 - Profile/provider/parser foundation: completed.
-- Phase 9.5 - AdGuard Home integration removal: completed.
+- Phase 9.5 - guided third-party DNS integration removal: completed.
 - Phase 10 - DNS v2 system: completed and wired into live sing-box connect paths.
 - Pre-Phase 11 QA audits for Layers 1, 4 and 5: completed with no open HIGH or
   MEDIUM debt.

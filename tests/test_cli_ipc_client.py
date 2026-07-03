@@ -171,6 +171,15 @@ class WatchdogIPCClientErrorTests(unittest.TestCase):
 
         self.assertEqual(str(cm.exception), PERMISSION_DENIED_MESSAGE)
 
+    def test_permission_error_reading_socket_path_maps_to_daemon_permission_error(self) -> None:
+        client = WatchdogIPCClient(Path("/run/watchdogvpn/control.sock"), timeout=0.1)
+
+        with patch.object(Path, "exists", side_effect=PermissionError):
+            with self.assertRaises(DaemonPermissionError) as cm:
+                client.status()
+
+        self.assertEqual(str(cm.exception), PERMISSION_DENIED_MESSAGE)
+
     def test_request_timeout_maps_to_daemon_timeout_error(self) -> None:
         with hanging_unix_server() as socket_path:
             client = WatchdogIPCClient(socket_path, timeout=0.1)

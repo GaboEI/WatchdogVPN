@@ -16,8 +16,8 @@ and CI.
   validators.
 - Installer/update support for deploying the extracted TUI support package next
   to the `VPN` launcher.
-- Real-state validation through `vpn_truth_check` instead of trusting only
-  `adguardvpn-cli status`.
+- Real-state validation through `vpn_truth_check` instead of trusting only a
+  provider CLI status.
 - Watchdog service for automatic recovery when the tunnel, route or public IP
   state is unhealthy.
 - Controlled VPN location rotation with validation and anti-loop behavior.
@@ -51,10 +51,10 @@ and CI.
   builders, render primitives and state/command helpers are already split into
   importable modules.
 - TUI command helpers use explicit argv wrappers instead of subprocess shell mode.
-- External installer verification for the official AdGuard VPN CLI and AdGuard
-  Home is not yet cryptographically pinned.
-- The first backend is AdGuard VPN CLI. WireGuard/private backend support is not
-  implemented yet.
+- External installer verification for the initial provider CLI and optional DNS
+  component is not yet cryptographically pinned.
+- The first backend is provider-CLI based. WireGuard/private backend support is
+  not implemented yet.
 
 ## Release Checklist
 
@@ -86,8 +86,8 @@ git pull
 ./update.sh
 ```
 
-The updater preserves user configuration, logs, rotation state, legacy DNS
-configuration and Conky files.
+The updater preserves user configuration, logs, rotation state and legacy DNS
+configuration.
 
 ## Fresh Install
 

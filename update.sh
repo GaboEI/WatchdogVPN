@@ -110,8 +110,8 @@ require_existing_installation() {
     /usr/local/bin/vpn_backend \
     /usr/local/bin/vpn_truth_check \
     /usr/local/bin/vpnctl \
-    /usr/local/sbin/vpn_watchdog.sh \
-    /usr/local/sbin/vpn_rotate.sh \
+    /usr/local/bin/watchdog \
+    /usr/local/bin/watchdogvpn-daemon \
     "$HOME/.local/bin/VPN"
   do
     [[ -e "$path" ]] && found=1
@@ -127,16 +127,15 @@ require_existing_installation() {
 print_preservation_contract() {
   print_section "Preserved by update"
   printf '/etc/vpn-domain-bypass.conf\n'
-  printf '/var/lib/vpn-rotate/\n'
+  printf '/var/lib/watchdogvpn/\n'
   printf '/var/log/myvpn/\n'
-  printf 'user Conky configuration\n'
   printf '\nOnly product-managed runtime files are replaced after validation and backup.\n'
 }
 
 final_report() {
   print_title "WatchdogVPN update completed"
   print_field "Preserved bypass" "/etc/vpn-domain-bypass.conf"
-  print_field "Preserved state" "/var/lib/vpn-rotate/"
+  print_field "Preserved state" "/var/lib/watchdogvpn/"
   print_field "Preserved logs" "/var/log/myvpn/"
 
   print_section "Recommended checks"

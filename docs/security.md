@@ -48,31 +48,23 @@ Product-managed runtime files include:
 - `/usr/local/bin/vpnctl`
 - `/usr/local/bin/vpn_backend`
 - `/usr/local/bin/vpn_truth_check`
-- `/usr/local/bin/vpn_auth_check`
 - `/usr/local/bin/vpn_dns_rescue`
 - `/usr/local/bin/vpn_manual_state`
 - `/usr/local/bin/vpn_notify`
 - `/usr/local/bin/no_vpn`
 - `/usr/local/bin/watchdogvpn`
-- `/usr/local/sbin/vpn_set`
-- `/usr/local/sbin/vpn_rotate.sh`
-- `/usr/local/sbin/vpn_watchdog.sh`
 - `/usr/local/sbin/vpn_domain_bypass_apply.sh`
 - product units under `/etc/systemd/system/`
 - product dispatcher hook under `/etc/NetworkManager/dispatcher.d/`
 - product logrotate policy under `/etc/logrotate.d/myvpn`
 - TUI launcher under `~/.local/bin/VPN`
 - optional desktop launcher under the user's application/desktop paths
-- optional Conky files under `~/.conky/WatchdogVPN`
 
 User configuration and state that must be preserved by default:
 
-- `/etc/adguardvpn.env`
 - `/etc/vpn-domain-bypass.conf`
-- `/var/lib/vpn-rotate/`
 - `/var/lib/watchdogvpn/`
 - `/var/log/myvpn/`
-- Conky user configuration
 - provider installation and account/license state
 
 ## Install, Update and Uninstall Safety
@@ -82,9 +74,10 @@ User configuration and state that must be preserved by default:
 `install.sh` and `update.sh` validate repository files before installing them,
 back up replaced files and preserve existing user configuration.
 
-`uninstall.sh` removes product-managed files but does not remove the underlying
-provider installation or account/license state. Config, logs, rotation state
-and Conky files are removed only when the user explicitly asks for purge options.
+`uninstall.sh` removes product-managed files but does not remove user-owned
+provider software, profiles, private keys or account state. Config, logs, shared
+runtime state are removed only when the user explicitly asks for
+purge options.
 
 ## DNS Safety
 
@@ -96,16 +89,16 @@ uninstall/recovery work.
 
 ## External Installer Risk
 
-WatchdogVPN can guide installation of the selected provider path when the
-required CLI is missing. This currently depends on downloading the
-vendor-provided installer from a remote endpoint.
+WatchdogVPN can guide installation of required open runtime dependencies when
+they are missing. Any future provider-specific download path must be explicit,
+auditable and separately validated.
 
 Current risk:
 
-- The installer path is practical but not yet fully pinned by checksum or
-  cryptographic signature inside this repository.
-- If the remote endpoint changes or is unavailable, automated installation may
-  fail.
+- Some distribution packages or upstream runtime binaries may not be pinned by
+  repository-managed checksum in early development paths.
+- If an upstream package endpoint changes or is unavailable, automated
+  installation may fail.
 Current mitigation:
 
 - The installer is explicit about what it is doing.
@@ -114,9 +107,9 @@ Current mitigation:
 
 Manual-first path:
 
-1. Install the selected provider from the vendor documentation.
-2. Confirm the provider CLI works.
-3. Run `./install.sh` and let WatchdogVPN configure its service user and runtime.
+1. Install any user-owned provider software from trusted documentation.
+2. Confirm the service/profile works independently.
+3. Run `./install.sh` and let WatchdogVPN configure its daemon and runtime.
 4. Configure DNS through the WatchdogVPN v2 DNS system.
 
 Planned hardening:
@@ -138,7 +131,7 @@ Current rules:
   and `run_process_args`.
 - User-provided domains and locations should be shell-quoted before command
   execution.
-- User-provided domains, timer intervals and DNS profiles are validated before
+- User-provided domains, TUI settings and DNS profiles are validated before
   command construction in the TUI action layer where practical.
 - Privileged operations are routed through narrow helper scripts where possible.
 - The TUI is treated as trusted local tooling, not as a sandbox boundary.
@@ -160,9 +153,9 @@ conservative.
 
 The uninstall contract is:
 
-- never remove the underlying provider installation without consent;
-- never remove provider account/license state without consent;
-- preserve config, logs, rotation state and Conky unless purge flags are used;
+- never remove user-owned provider software without consent;
+- never remove provider account/license state, private keys or profiles without consent;
+- preserve config, logs and shared runtime state unless purge flags are used;
 - attempt DNS recovery before removing WatchdogVPN commands.
 
 ## Local Diagnostic Reports

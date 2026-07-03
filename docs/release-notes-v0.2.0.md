@@ -148,10 +148,10 @@ VPN -> Update
 - Timer and DNS preferences are documented in the configuration model, but
   runtime application remains read-only for now.
 - TUI command helpers use explicit argv wrappers instead of subprocess shell mode.
-- External installer verification for the official AdGuard VPN CLI and AdGuard
-  Home is not yet cryptographically pinned.
-- The first backend is AdGuard VPN CLI. WireGuard/private backend support is not
-  implemented yet.
+- External installer verification for the initial provider CLI and optional DNS
+  component is not yet cryptographically pinned.
+- The first backend is provider-CLI based. WireGuard/private backend support is
+  not implemented yet.
 - Fedora support remains a future target.
 
 ## Validation

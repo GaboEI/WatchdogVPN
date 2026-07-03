@@ -47,7 +47,17 @@ fi
 printf '%s\\n' "$public_ip"
 EOF
 
-  chmod +x "$tmpdir/ip" "$tmpdir/curl"
+  cat > "$tmpdir/vpn_backend" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  active) printf 'custom-vps\n' ;;
+  truth-interface) printf 'tun0\n' ;;
+  *) exit 0 ;;
+esac
+EOF
+
+  chmod +x "$tmpdir/ip" "$tmpdir/curl" "$tmpdir/vpn_backend"
 }
 
 assert_contains() {
@@ -64,13 +74,13 @@ run_case() {
 
   write_fake_commands "$tun" "$route" "$public_ip"
 
-  output="$(PATH="$tmpdir:$PATH" "$SCRIPT" --shell)"
-  assert_contains "$output" "BACKEND=adguard"
+  output="$(PATH="$tmpdir:$PATH" VPN_TRUTH_BACKEND_BIN="$tmpdir/vpn_backend" "$SCRIPT" --shell)"
+  assert_contains "$output" "BACKEND=custom-vps"
   assert_contains "$output" "INTERFACE=tun0"
   assert_contains "$output" "STATUS=$expected_status"
 
   set +e
-  PATH="$tmpdir:$PATH" "$SCRIPT" --quiet >/dev/null
+  PATH="$tmpdir:$PATH" VPN_TRUTH_BACKEND_BIN="$tmpdir/vpn_backend" "$SCRIPT" --quiet >/dev/null
   rc=$?
   set -e
   if (( rc != expected_exit )); then
@@ -78,8 +88,8 @@ run_case() {
     exit 1
   fi
 
-  json="$(PATH="$tmpdir:$PATH" "$SCRIPT" --json)"
-  assert_contains "$json" "\"backend\":\"adguard\""
+  json="$(PATH="$tmpdir:$PATH" VPN_TRUTH_BACKEND_BIN="$tmpdir/vpn_backend" "$SCRIPT" --json)"
+  assert_contains "$json" "\"backend\":\"custom-vps\""
   assert_contains "$json" "\"interface\":\"tun0\""
   assert_contains "$json" "\"status\":\"$expected_status\""
   assert_contains "$json" "\"exit_code\":$expected_exit"

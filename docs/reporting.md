@@ -11,8 +11,8 @@ Run the lightweight checks from the repository root when possible:
 ```sh
 ./doctor.sh
 vpn_truth_check
-vpn_auth_check
-systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager
+watchdog status --json
+systemctl list-timers --all vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager
 ```
 
 For installer or update issues, also include whether the command was run with:
@@ -49,7 +49,7 @@ Good reports include:
 - Distribution and version.
 - Install method: fresh install, update or manual copy.
 - Current DNS/resolver state if the issue is DNS-related.
-- Whether Conky or desktop launcher integration is enabled.
+- Whether desktop launcher integration is enabled.
 - Exact command or TUI action that failed.
 - Expected behavior.
 - Actual behavior.

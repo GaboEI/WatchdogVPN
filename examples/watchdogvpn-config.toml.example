@@ -22,10 +22,6 @@ interface = ""
 current = "en"
 auto_detect = true
 
-[timers]
-watchdog_interval = "5min"
-rotation_interval = "12h"
-
 [dns]
 advanced_mode = false
 profile = "quad9-doh"

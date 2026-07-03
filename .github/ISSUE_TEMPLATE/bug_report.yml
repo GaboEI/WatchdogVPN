@@ -77,7 +77,7 @@ body:
       placeholder: |
         ./doctor.sh
         vpn_truth_check
-        vpn_auth_check
+        watchdog status --json
   - type: checkboxes
     id: safety
     attributes:

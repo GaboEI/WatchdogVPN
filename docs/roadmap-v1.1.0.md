@@ -145,7 +145,7 @@ Report content should be sanitized:
 - systemd unit status.
 - timer status.
 - `vpn_truth_check` output.
-- `vpn_auth_check` output.
+- `watchdog status --json` output.
 - recent logs without credentials.
 - config summary without secrets.
 
