@@ -1,0 +1,480 @@
+# WatchdogVPN Diagnostic Report - Phase 12, Task 12.5 Real Traffic Validation
+
+> Date: 2026-07-03/04 (overnight session)
+> Task: PHASE 12 - Linux Split Tunneling & App Policy, Task 12.5 - Real traffic
+> validation matrix
+> Status: NOT CLOSED. Real, confirmed progress made; one blocking root cause
+> still open. Session paused deliberately after two severe real-machine
+> incidents, not because the task was abandoned.
+
+---
+
+## 1. What task/phase we are trying to complete
+
+Task 12.5 is the first task in Phase 12 that requires validating the app
+policy / split tunneling feature against **real network traffic** on the real
+development machine, through the real systemd daemon - not generated JSON,
+not unit tests with mocked config directories. Tasks 12.1-12.4 (design audit,
+app policy model, runtime wiring, minimal CLI) were already implemented and
+validated at the unit-test level. Task 12.5 exists specifically to prove (or
+disprove) that the generated sing-box configuration actually behaves
+correctly when real processes generate real traffic through a real TUN
+interface.
+
+## 2. Original technical objective of this task
+
+Per the master plan, Task 12.5 must validate on the real machine:
+
+- one app forced `direct` while another goes through the VPN
+- one app forced through the VPN while default traffic goes direct
+- a blocked app cannot reach the network
+- DNS follows the chosen traffic policy
+- kill switch does not allow non-tunnel leaks
+- disconnect/reset leaves no stale routes, DNS state, or orphan process state
+
+It also owns closing four audit findings carried over from Task 12.1/12.3:
+AUD-P12-002 (DNS follows app-policy action), AUD-P12-003 (kill switch does
+not leak with the real TUN interface), AUD-P12-004 (TUN route hardening
+behavior on the real machine), AUD-P12-006 (disconnect/restart/crash cleanup
+leaves no stale state).
+
+## 3. What was attempted during this session
+
+In rough chronological order:
+
+1. Real CLI/daemon smoke checks - found the operator's own user session was
+   not in the `watchdogvpn` group in the running shell (stale login), and
+   that `sudo` inside the VS Code integrated terminal panel silently strips
+   TTY access (`NoNewPrivs=1`), unrelated to WatchdogVPN itself. Resolved by
+   using a real terminal and a fresh login.
+2. First profile add + first `watchdog connect` attempts - failed with a
+   generic `connect failed`. Root-caused to `find_singbox_binary()` never
+   finding a system-wide sing-box binary: it was only installed at
+   `~/.local/bin/sing-box`, invisible to the daemon (different user,
+   `ProtectHome=read-only`, restricted `PATH`). Fixed for this machine by
+   installing sing-box to `/usr/local/bin/sing-box` (the installer's own
+   canonical path).
+3. First successful TUN connect, but immediately after, a **full network
+   outage** requiring a normal reboot to recover (see Incident 1 below).
+4. Root-caused the AdGuard VPN CLI + legacy v1 bash rotation/watchdog
+   automation (`vpn-rotate`/`vpn-watchdog` systemd units, NetworkManager
+   dispatcher) still being installed and periodically forcing AdGuard back
+   online on this machine, despite the repo saying it was fully removed in
+   PHASE 2.6. Removed with explicit user authorization (systemd units,
+   dispatcher script, AdGuard CLI binary/service user). This is a real
+   "repo says removed, live machine says otherwise" gap, tracked separately
+   in section 7.
+5. Reconnect attempts kept failing at the DNS layer (`Resolving timed out`).
+   Traced to the daemon running a **stale, pre-Phase-12 installed copy** of
+   the code (`/usr/local/lib/watchdogvpn`, last synced before Task 12.2).
+   `update.sh` re-synced it; this is the first time the daemon ever ran any
+   Phase 12 code end-to-end.
+6. Traced a further DNS failure to `AdGuardHome` (a separate, legitimate ad
+   blocker product) occupying `127.0.0.1:53`, colliding with WatchdogVPN's
+   DNS hijack listener. Removed with explicit user authorization (official
+   `-s uninstall`, then binary removal).
+7. Found and fixed, in order, four real code bugs in the sing-box config
+   generator and DNS module (full detail in section 6). Added regression
+   tests for all four and updated the three tests whose assertions encoded
+   the old, buggy behavior.
+8. Validated the fixes manually (root-run `sing-box run` against a
+   generated config, bypassing the daemon) - three of four traffic-matrix
+   cases passed cleanly in this mode.
+9. Re-validated through the real daemon (dedicated `watchdogvpn` service
+   user) - DNS resolution now works, but per-process route differentiation
+   (the `direct` app-policy rule) does not reproduce the same result as the
+   manual/root run.
+10. Diagnosed the daemon-vs-manual discrepancy to sing-box being unable to
+    identify the OWNING PROCESS for connections made by users other than the
+    daemon's own service account (`router: find process path: ... not
+    found`). Added `CAP_SYS_PTRACE` to the daemon's systemd unit as the
+    documented fix for this exact sing-box behavior. Verified via a second
+    debug-log capture that the capability did **not** resolve it.
+11. Immediately after that verification, a **second and more severe
+    incident** occurred, requiring a hard power cut (see Incident 2 below).
+    Session paused at the user's explicit instruction.
+
+## 4. What worked partially
+
+- **Manual (root, non-daemon) sing-box runs** with the four code fixes
+  applied produced a fully correct result for 3 of 4 traffic-matrix cases:
+  - `dig` resolved real domains correctly through the tunnel's DNS path.
+  - `curl` matched to the `direct` app-policy rule correctly bypassed the
+    tunnel and showed the real ISP IP.
+  - `wget` with no matching rule correctly fell through to the tunnel and
+    showed the VPS exit IP.
+  - `apt-get` (rule: `block`) was **not** actually blocked, but this is an
+    expected, understood limitation, not a routing bug: `apt-get` itself
+    never opens the network socket - it delegates to separate
+    `/usr/lib/apt/methods/{http,https,...}` helper binaries, which have a
+    different process name than the rule matched against. This is exactly
+    the scenario the existing `match_confidence: low` labeling on
+    process_name-only rules already exists to warn about.
+- The clean, root-run reproduction proves the **generated configuration
+  itself**, after the four fixes, is logically correct for this traffic
+  matrix. The remaining problem is specific to running under the daemon's
+  service-user identity.
+
+## 5. What failed
+
+- The same, fixed configuration run through the real daemon (`watchdogvpn`
+  service user) did not reproduce the "direct" vs "default" traffic
+  differentiation reliably - in most attempts both flows showed the tunnel's
+  exit IP, meaning the `direct` app-policy rule silently failed to match.
+- Two full-machine network/stability incidents occurred (see section 6.1),
+  each requiring a full reboot / hard power cycle to recover.
+- Kill switch behavior (AUD-P12-003) and disconnect/crash cleanup at scale
+  (AUD-P12-006) were never reached - the session never got far enough past
+  the DNS/routing and process-attribution problems to test them.
+
+## 6. Errors, symptoms and anomalous behavior observed
+
+- `error: "connect failed"` (generic, daemon-side) - root cause: missing
+  daemon-reachable sing-box binary (item 3.2 above).
+- `curl: (28) Resolving timed out after N milliseconds` - repeated across
+  many attempts, root causes were layered (stale daemon code, AdGuardHome
+  port conflict, then the four DNS/routing bugs fixed in this session).
+- `dig` output: `;; communications error to 192.168.0.1#53: timed out` -
+  same root causes as above.
+- `sing-box` `FATAL[0000] start service: post-start inbound/tun[...]:
+  starting TUN interface: set routes: add route 0: file exists` - occurs
+  whenever WatchdogVPN's sing-box tries to start while Karing (a different,
+  also sing-box-based VPN client already installed on this machine) is
+  connected. Both default to the same internal kernel routing table number
+  (`2022`). Sing-box fails fast and cleanly in this case - not a leak, not a
+  hang, just a same-machine resource collision between two independent
+  sing-box-based clients. Confirmed reproducible and understood; not a
+  WatchdogVPN-only bug, but must never be allowed to happen in the field
+  (two VPN tunnels active at once is not a supported configuration for any
+  sing-box-based client).
+- `sing-box` debug log: `router: find process path: process of uid(1000),
+  inode(N) not found` followed by `router: found user: <name>` - the
+  process-level identity resolves to a *user*, never a *process path*, for
+  every connection whose owning process is not the daemon's own service
+  account. This is the direct cause of process_name-based app-policy rules
+  silently not matching under the daemon. Confirmed present both before and
+  after granting `CAP_SYS_PTRACE`.
+- Two severe real-machine incidents (full detail below).
+
+### 6.1 Real-machine incidents
+
+**Incident 1** - after the very first successful TUN connect (with
+`strict_route`/`auto_redirect` active and no DNS channel configured yet),
+the machine lost all internet connectivity completely: router restart,
+Wi-Fi toggle, and cable swap did not restore it. A normal reboot did. Kernel/
+systemd logs for that boot showed a clean, orderly shutdown sequence (no
+kernel oops, no hung processes, `NetworkManager` correctly unmanaging
+`wdvpn-tun0` on shutdown) - i.e. no evidence of kernel-level corruption, but
+also no direct evidence of what caused the live outage, since the failure
+happened during live operation, not at teardown. Root cause was later
+narrowed to the missing `bind_interface` on the "direct" outbound (fixed,
+section 6.2, fix #1) combined with the DNS-black-hole default policy (fixed,
+section 7) - both of which, together, could plausibly explain a
+total-capture, no-egress state under `strict_route`.
+
+**Incident 2** - after verifying that `CAP_SYS_PTRACE` did not fix the
+process-attribution problem (a short, targeted debug-log capture), the user
+attempted to log out; the screen went black and stayed unresponsive through
+the login password prompt. A normal restart did not recover it - the machine
+required a full power disconnect. This is more severe than Incident 1. A
+real, avoidable contributing factor is on record: sing-box's log level had
+been left at `debug` for the diagnostic capture and was not reverted before
+this attempt. Under `strict_route`+`auto_redirect`, *every* packet from
+*every* running application (browser tabs, WhatsApp, Chrome background
+services, etc.) is evaluated by the router and produces multiple debug log
+lines - this is a plausible source of severe I/O/CPU pressure independent of
+any routing bug, and cannot be ruled out as a real contributor. The debug
+log level has been reverted to `warning` in the committed code. The exact
+mechanism that made the machine unresponsive to the point of requiring a
+hard power cut is **not confirmed** and must not be assumed to be "just the
+logging" without verification - it is the top open risk carried into
+tomorrow's plan.
+
+### 6.2 Confirmed, fixed code bugs (in `drivers/singbox_driver.py` and `dns/singbox.py`)
+
+1. **Missing `bind_interface` on the "direct" outbound.** The profile's own
+   outbound always received `bind_interface` (e.g. `enp4s0`), but the
+   generated "direct" outbound (used for app-policy `direct` actions and
+   for `direct`/`rules` connection modes) never did. Under `strict_route`,
+   an outbound with no `bind_interface` has its own egress traffic
+   recaptured by the tunnel's own system-wide route redirect, black-holing
+   all "direct"-routed and default DNS traffic. Fixed by threading the same
+   `_outbound_bind_interface(profile)` value into `_ensure_direct_outbound()`
+   at both call sites. Covered by two new regression tests.
+2. **FakeIP incorrectly assigned as the main outbound's `domain_resolver`.**
+   Whenever a DNS "proxy" channel was configured (the default
+   `proxy_resolution_channel` is `"fakeip"`), the *profile's own outbound*
+   (the trojan/vless/etc. tunnel connection) was given
+   `domain_resolver: "watchdogvpn-fakeip"`. FakeIP addresses are synthetic,
+   client-facing placeholders that can never actually be dialed - the
+   tunnel then tried to connect to its own fake address and timed out,
+   breaking the whole connection, confirmed via sing-box debug logs
+   (`dial tcp 198.18.0.2:5222: i/o timeout`). Fixed by never assigning
+   FakeIP to the profile's own outbound; it now resolves via a real,
+   dialable resolver instead. Covered by an updated existing test.
+3. **DNS query loopback when only a "proxy" channel is configured.** Once
+   fix #2 was in place, the natural next choice (route the outbound's
+   `domain_resolver` to the "final" DNS server) still broke when the only
+   configured channel was "proxy" (routed through the tunnel itself):
+   resolving the outbound's own hostname required dialing through the
+   tunnel, which required resolving the outbound's hostname first - sing-box
+   correctly detected and rejected this as a DNS query loopback. Fixed by
+   preferring the DNS "direct"/"bootstrap" channel (never proxied) for the
+   outbound's own resolver, and only falling back to "final" when it does
+   not resolve to the same tag used by the "proxy" channel. Covered by a new
+   regression test asserting no `domain_resolver` is assigned when only an
+   unsafe (proxy-only) channel exists.
+4. **DNS hijack rule scope too narrow for TUN-captured traffic.** The
+   existing hijack-DNS route rule only matched traffic arriving at two
+   explicit loopback inbounds (`127.0.0.1:53`). But real system DNS queries
+   (addressed to the actual LAN resolver, e.g. the router) get captured by
+   `strict_route`/`auto_route` and arrive at sing-box via the TUN's own
+   inbound with a *different* destination (the TUN's internal peer
+   address) - a destination the old rule never matched. These queries
+   silently fell through to the catch-all rule and were sent to the VPN
+   outbound as if they were ordinary traffic toward a real, routable
+   address - which they are not, since that destination only exists inside
+   this machine's own TUN. Fixed by adding a `{"action": "sniff"}` step
+   followed by a destination-independent `{"protocol": ["dns"], "action":
+   "hijack-dns"}` rule (sing-box's documented pattern for protocol-based,
+   not inbound-tag-based, DNS interception under a TUN). Covered by two
+   updated existing tests.
+
+All four fixes are committed with passing unit tests (690 total,
+`bash tests/unit.sh`, `bash tests/syntax.sh`, `compileall`, `git diff
+--check` all green) and were confirmed working end-to-end in a manual,
+root-run reproduction (section 4). `CAP_SYS_PTRACE` was also added to the
+daemon's systemd unit (`AmbientCapabilities`/`CapabilityBoundingSet`) as a
+plausible, documented fix for the process-attribution problem below, and is
+committed, but it did **not** resolve that specific problem on its own.
+
+## 7. Other real findings (not code bugs in the routing/DNS generator, but real gaps)
+
+- **Daemon code drift**: the installed daemon
+  (`/usr/local/lib/watchdogvpn`) can silently run stale code indefinitely.
+  `update.sh` refreshes the files on disk but does not always restart an
+  already-"healthy" daemon process, and Python does not reload already
+  loaded modules. There is currently no guarantee that "files on disk match
+  files in memory" after an update. This means every finding validated
+  earlier in Phase 12 (12.2/12.3/12.4) was, until this session, only ever
+  exercised through unit tests with mocked config directories - never
+  through the actual running daemon.
+- **`lib/singbox.sh` install detection is daemon-blind.** It accepts
+  `$HOME/.local/bin/sing-box` as "already installed", which was true when
+  everything ran as the interactive user, but is invisible to the daemon
+  (dedicated service user, `ProtectHome=read-only`, restricted `PATH`).
+  `install.sh`/`update.sh` need to either treat only system-wide paths as
+  sufficient, or copy a user-local install into `/usr/local/bin` themselves.
+- **No conflict detection for the DNS hijack port.** `build_dns_hijack_inbounds()`
+  hardcodes `listen: 127.0.0.1:53` with no check for an already-occupying
+  local resolver. When one exists (found: AdGuardHome), sing-box fails to
+  bind and exits immediately, surfaced only as a generic, unhelpful daemon
+  `"connect failed"`.
+- **Default DNS policy is a black hole under `rules`+app-policy mode.** A
+  fresh `DNSPolicy()` (`mode=auto`, zero configured channels,
+  `tun_hijack=True`) produces a hijack listener with no real resolver behind
+  it. Any operator who enables app-policy in `rules` mode without first
+  configuring DNS channels gets total DNS failure with no actionable error.
+- **Two sing-box-based VPN clients cannot run simultaneously on this
+  machine.** Karing and WatchdogVPN share the same default kernel routing
+  table number (`2022`). This is expected/inherent to sing-box, not a
+  WatchdogVPN-specific bug, but currently surfaces as an opaque `FATAL`
+  crash in the daemon's own log rather than a clear, actionable CLI error.
+- **Legacy v1 AdGuard automation was still live on this real machine**
+  despite the repo/master-plan recording PHASE 2.6 as fully closed. This is
+  a "repo says done, deployed machine says otherwise" gap - closing a phase
+  in the repo does not retroactively fix machines that were never
+  re-installed/updated after that phase. Removed this session with explicit
+  authorization; not itself a code bug, but worth remembering when auditing
+  "is this really gone" claims on any real machine going forward.
+- **AdGuardHome** (separate legitimate product, unrelated to the AdGuard VPN
+  removal decision) was occupying port 53 on this dev machine and was
+  removed this session with explicit authorization once its conflict with
+  WatchdogVPN's own DNS hijack was confirmed.
+
+## 8. Current technical hypotheses
+
+- **H1 (leading, for the open blocker).** sing-box's process-attribution
+  mechanism (used for `process_name` app-policy matching) needs more than
+  `CAP_SYS_PTRACE` to inspect connections owned by users other than the
+  daemon's own service account under this unit's full hardening profile
+  (`NoNewPrivileges=true`, `ProtectSystem=strict`,
+  `SystemCallArchitectures=native`, etc). Untested so far: whether the
+  capability is actually being delivered to the sing-box child process at
+  all (ambient capabilities can be stripped by `execve()` semantics
+  depending on file capability bits and `securebits`); whether an additional
+  capability (e.g. `CAP_DAC_READ_SEARCH`) is required; whether Yama's
+  `ptrace_scope` (currently `1` on this machine) interacts unexpectedly even
+  with the capability present; or whether sing-box's process match is simply
+  not designed to work reliably for a non-root, capability-limited daemon
+  process at all.
+- **H2.** `NoNewPrivileges=true` combined with granted capabilities can be
+  self-defeating for some capability-gated code paths on some kernels -
+  worth isolating with a minimal test before assuming sing-box itself is the
+  only variable.
+- **H3 (safety-critical).** `strict_route=true` + `auto_redirect=true`
+  together impose a very aggressive, system-wide capture of literally all
+  traffic on the machine. This had never been exercised, end-to-end, against
+  a real, busy desktop (browser, WhatsApp, Chrome background services,
+  Telegram, etc. all generating constant traffic) before this session - all
+  earlier Phase 12 validation was unit-test-only. The two severe incidents
+  may be a symptom of this specific combination being heavier and more
+  fragile under real, sustained, multi-process load than anything tested so
+  far, independent of any single one of the four fixed bugs.
+- **H4.** Residual, transient kernel-level state from repeated manual
+  sing-box invocations (started and `kill`-ed, rather than cleanly
+  disconnected) during this session may have contributed to some of the
+  inconsistent reproduction seen between attempts, on top of the
+  Karing-collision explanation that accounts for some (but likely not all)
+  of the inconsistency.
+
+## 9. What part of the problem may come from treating this as a "normal" app
+
+Most of what was found and fixed this session **is** "normal app" plumbing,
+unrelated to the hostile-DPI mission specifically:
+
+- Daemon code drift / stale install (`update.sh` not guaranteeing a
+  restart).
+- `lib/singbox.sh`'s install-path detection not accounting for the daemon's
+  own reachability.
+- The DNS hijack port conflict with another local resolver.
+- The default-DNS-policy black hole.
+- All four fixed sing-box config-generation bugs (`bind_interface`, FakeIP
+  misuse, DNS bootstrap loop, DNS hijack rule scope).
+
+These are the kind of bugs any sing-box-based TUN client would need to get
+right regardless of threat model - they are not about censorship resistance,
+they are about making a TUN-based VPN client function at all. The good news
+is all of them are now understood, and four are code-fixed and tested.
+
+## 10. What part of the problem may come from forgetting the hostile-DPI mission
+
+The opposite risk did **not** materialize today. If anything, the session
+deliberately built and is now testing the **most aggressive, most
+leak-resistant** TUN configuration sing-box supports:
+`strict_route`+`auto_redirect`+per-process rules+DNS hijack - specifically
+because a resilience product cannot accept a softer routing mode that might
+occasionally leak a flow outside the tunnel, the way a "normal" commercial
+VPN client might tolerate. Per-process route differentiation itself (the
+entire point of App Policy) is a hostile-network-motivated feature that a
+"normal" VPN app would not need at all - so the fact that it is proving hard
+to get right under a hardened, non-root daemon is new, legitimately
+unexplored territory for this project, not a sign of having drifted toward
+"normal app" thinking.
+
+The one place this distinction matters most for tomorrow: **the instinct to
+make routing "softer" (e.g. drop `auto_redirect`, or `strict_route`) to make
+today's incidents go away must be resisted** without first understanding
+*why* the aggressive mode is unstable. Weakening the routing model to dodge
+today's findings would directly undermine the project's core resilience
+promise. The correct response is to diagnose the instability, not to
+route around it by making the product leakier.
+
+## 11. Open technical risks
+
+- App Policy's core promise (per-process control) may not hold at all for
+  any process outside the daemon's own service account, under the current
+  daemon security model - this is not a cosmetic bug, it is a potential
+  fundamental gap in the feature Phase 12 exists to deliver.
+- `strict_route`+`auto_redirect` stability under real, sustained, multi-app
+  desktop load is unproven and has now caused two severe machine-level
+  incidents, the second requiring a hard power cut. The exact failure
+  mechanism for Incident 2 is not confirmed.
+- Kill switch (AUD-P12-003) and disconnect/crash cleanup (AUD-P12-006) are
+  still completely unvalidated against real traffic - the session never
+  reached them.
+
+## 12. Open technical debt / uncertainty
+
+- `lib/singbox.sh` needs a daemon-reachability-aware install check (or
+  install.sh/update.sh must always place sing-box in a daemon-reachable
+  path).
+- The daemon needs a mechanism to guarantee "installed code == running
+  code" after an update (e.g. `update.sh` always restarts the daemon, or the
+  daemon self-checks its own module state against disk on connect and fails
+  loudly if stale).
+- No pre-flight check/actionable error exists for "the DNS hijack port is
+  already occupied by another local resolver".
+- No pre-flight check/actionable error exists for "another sing-box-based
+  VPN client is already using the same kernel routing table" - currently
+  surfaces as an opaque FATAL crash.
+- The DNS hijack inbounds' hardcoded `override_address: "1.1.1.1"` design
+  (a raw address-override "direct"-type inbound, separate from the new
+  sniff+protocol-based hijack rule) may now be partially redundant - worth a
+  design review once the process-attribution blocker is resolved, rather
+  than carrying two overlapping DNS-hijack mechanisms indefinitely.
+
+## 13. What must NOT be attempted again tomorrow without first validating a hypothesis
+
+- Do **not** re-run a full daemon-mediated `connect()` with
+  `mode=rules`+app-policy+TUN active and simply "try again" hoping it works.
+  Every blind repeat today cost real machine stability for no new
+  information.
+- Do **not** assume granting another capability (guessing) will fix process
+  attribution. Verify what sing-box's process-path lookup actually requires
+  in this exact kernel/hardening context first (Phase 1 below).
+- Do **not** leave `strict_route`+`auto_redirect` active for a long,
+  multi-command, unattended live session again. Every future exposure to
+  this exact combination must be short, bounded with `timeout`, and
+  immediately followed by a forced, verified teardown - never an open-ended
+  sequence.
+- Do **not** weaken `strict_route`/`auto_redirect` just to make today's
+  symptoms disappear without first understanding the real cause (see
+  section 10).
+
+## 14. Ordered test plan for tomorrow
+
+**Phase 0 - Safety setup.** Confirm Karing (and any other sing-box-based
+client) is fully off before touching sing-box again. Work from a real
+terminal, not VS Code's integrated one. Keep `sudo -v` fresh. Every sing-box
+test invocation must be short, bounded with `timeout`, and end with a
+guaranteed kill/teardown - never an open-ended session.
+
+**Phase 1 - Isolate process attribution, without `connect()`.** Build a
+minimal, standalone sing-box config with no trojan outbound, no app-policy,
+no DNS hijack - just the TUN plus one `process_name` route rule - and run it
+two ways: (a) manually as root, (b) under the real `watchdogvpn.service`
+unit. While running under the daemon, inspect the sing-box child process's
+actual effective capabilities directly (e.g. via `/proc/<pid>/status`
+`CapEff`/`CapAmb`, or `getpcaps <pid>`) to confirm whether `CAP_SYS_PTRACE`
+is really reaching the process at all. This isolates H1/H2 without touching
+app-policy, DNS, or the kill switch.
+
+**Phase 2 - Resolve the process-attribution root cause.** Depending on
+Phase 1's result: if the capability is missing at runtime, find why
+(`NoNewPrivileges` interaction, capability bounding set, `securebits`); if
+present but still failing, research whether sing-box 1.13.14's process
+match is documented to work at all for a hardened, non-root daemon
+inspecting other users' processes, and decide between (a) further
+capability/hardening adjustments, (b) an explicit, accepted limitation with
+a safe default (e.g. treat unattributable processes as blocked in whitelist
+mode, or as the tunnel default in blacklist mode, rather than silently
+falling through), or (c) revisiting whether sing-box needs different
+privilege boundaries entirely for this feature.
+
+**Phase 3 - Re-attempt the full daemon-mediated traffic matrix once, with
+new information.** Only after Phase 1/2 give a clear, understood answer,
+repeat the original Task 12.5 matrix (`dig`, `curl` direct, `wget` default,
+`apt-get` block) through the real daemon exactly as designed, bounded and
+logged. Escalate to repeats only if that single attempt produces new
+information.
+
+**Phase 4 - Decide on `auto_redirect` before further TUN experiments.**
+Independently of Phase 1-3, and before any further live TUN testing,
+decide whether `strict_route` alone (without `auto_redirect`) is sufficient
+for the resilience guarantee Task 12.3 wants, given two severe incidents
+with both flags on. Test the same matrix with `auto_redirect=false` in a
+short, bounded, controlled way to compare stability, before committing to
+either configuration as the shipped default.
+
+**Phase 5 - Resume the rest of Task 12.5.** Once routing/process-attribution
+is understood and stable, validate the kill switch (AUD-P12-003) and
+disconnect/daemon-restart/sing-box-crash cleanup (AUD-P12-006), which have
+not been touched at all this session.
+
+---
+
+*This report documents an in-progress task. Task 12.5 is not closed. No
+code fix for the process-attribution blocker (section 6.1/8, item H1) has
+been found yet - only `CAP_SYS_PTRACE` was tried and confirmed insufficient
+on its own.*

@@ -134,10 +134,22 @@ def build_dns_hijack_route(policy: DNSPolicy) -> dict[str, Any] | None:
         return None
     return {
         "rules": [
+            # A TUN's auto_route/strict_route captures system DNS queries
+            # addressed to the real LAN resolver (e.g. the router), not to
+            # our loopback listeners below — that traffic only reaches
+            # sing-box's own router via the tun inbound itself, so it needs
+            # protocol sniffing plus a destination-independent "protocol:
+            # dns" match to be hijacked. Without this, DNS queries silently
+            # fell through to the catch-all rule and got forwarded to the
+            # VPN outbound as if bound for a real, routable address —
+            # black-holing all DNS resolution (confirmed via live traffic
+            # reproduction with sing-box debug logs, Task 12.5).
+            {"action": "sniff"},
+            {"protocol": ["dns"], "action": "hijack-dns"},
             {
                 "inbound": list(DNS_HIJACK_INBOUND_TAGS),
                 "action": "hijack-dns",
-            }
+            },
         ]
     }
 
@@ -169,6 +181,13 @@ def _resolver_to_singbox_server(
         server["domain_resolver"] = bootstrap_tag
     if channel_name == DNSChannelName.PROXY:
         server["detour"] = proxy_outbound_tag
+    elif parsed.transport not in (ResolverTransport.LOCAL, ResolverTransport.DHCP):
+        # Non-proxy channels must dial out via the "direct" outbound instead
+        # of sing-box's default dispatch. Under strict_route/auto_route TUN
+        # hardening, an undetoured DNS server query gets recaptured by the
+        # tunnel's own system-wide route redirect, black-holing DNS
+        # resolution (confirmed via live traffic reproduction, Task 12.5).
+        server["detour"] = "direct"
     return server
 
 

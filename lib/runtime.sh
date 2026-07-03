@@ -3,6 +3,7 @@ set -euo pipefail
 
 PYTHON_PACKAGE_DIR="${PYTHON_PACKAGE_DIR:-/usr/local/lib/watchdogvpn}"
 PYTHON_RUNTIME_PACKAGES=(
+  app_policy
   cli
   config
   core

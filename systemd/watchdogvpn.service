@@ -22,8 +22,8 @@ Environment=WATCHDOGVPN_RUNTIME_DIR=/run/watchdogvpn
 Environment=WATCHDOGVPN_SOCKET_PATH=/run/watchdogvpn/control.sock
 Environment=WATCHDOGVPN_EVENT_SOCKET_PATH=/run/watchdogvpn/control.events.sock
 
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SYS_PTRACE
 DevicePolicy=closed
 DeviceAllow=/dev/net/tun rw
 

@@ -13,7 +13,7 @@ from typing import Any
 
 from app_policy.models import AppPolicy
 from config.state_manager import ALLOWED_ACTIVE_MODES
-from dns.models import DNSPolicy
+from dns.models import DNSChannelName, DNSPolicy
 from dns.singbox import (
     build_dns_hijack_inbounds,
     build_dns_hijack_route,
@@ -139,16 +139,23 @@ class SingBoxDriver(BaseDriver):
         return mode == "tun" or (mode == "rules" and app_policy is not None and app_policy.enabled)
 
     def _ensure_direct_outbound(
-        self, config: dict[str, Any], domain_resolver: dict[str, Any] | None = None
+        self,
+        config: dict[str, Any],
+        domain_resolver: dict[str, Any] | None = None,
+        bind_interface: str | None = None,
     ) -> dict[str, Any]:
         for outbound in config["outbounds"]:
             if outbound.get("tag") == "direct":
                 if domain_resolver is not None:
                     outbound["domain_resolver"] = domain_resolver
+                if bind_interface is not None:
+                    outbound.setdefault("bind_interface", bind_interface)
                 return outbound
         direct_outbound: dict[str, Any] = {"type": "direct", "tag": "direct"}
         if domain_resolver is not None:
             direct_outbound["domain_resolver"] = domain_resolver
+        if bind_interface is not None:
+            direct_outbound["bind_interface"] = bind_interface
         config["outbounds"].append(direct_outbound)
         return direct_outbound
 
@@ -605,10 +612,44 @@ class SingBoxDriver(BaseDriver):
                 hijack_route = build_dns_hijack_route(dns_policy)
                 if hijack_route is not None:
                     _merge_route_config(config, hijack_route)
-                if dns_config.proxy_domain_resolver is not None:
-                    outbound["domain_resolver"] = dns_config.proxy_domain_resolver
-                if dns_config.direct_domain_resolver is not None:
-                    self._ensure_direct_outbound(config, dns_config.direct_domain_resolver)
+                # The profile's own outbound must resolve its own server
+                # hostname via a resolver that does not itself dial through
+                # this same outbound — otherwise resolving the server's
+                # hostname requires the tunnel, which requires resolving the
+                # server's hostname first (sing-box correctly rejects this as
+                # a DNS query loopback). FakeIP is also unsafe here: it is a
+                # synthetic placeholder meant for client-facing DNS
+                # interception, not a real dialable address for an
+                # outbound's own connection target. Both failure modes were
+                # confirmed via live traffic reproduction with sing-box
+                # debug logs (Task 12.5) — prefer the direct/bootstrap
+                # channel (never proxied), and only fall back to "final" if
+                # it does not resolve to the proxy channel itself.
+                outbound_resolver: str | None = None
+                for bootstrap_channel in (DNSChannelName.DIRECT, DNSChannelName.BOOTSTRAP):
+                    tags = dns_config.channel_servers.get(bootstrap_channel)
+                    if tags:
+                        outbound_resolver = tags[0]
+                        break
+                if outbound_resolver is None:
+                    final_resolver = dns_config.config.get("final")
+                    proxy_tags = dns_config.channel_servers.get(DNSChannelName.PROXY, ())
+                    if final_resolver and final_resolver not in proxy_tags:
+                        outbound_resolver = final_resolver
+                if outbound_resolver:
+                    outbound["domain_resolver"] = outbound_resolver
+                    config.setdefault("route", {}).setdefault(
+                        "default_domain_resolver", outbound_resolver
+                    )
+                needs_direct_outbound = dns_config.direct_domain_resolver is not None or any(
+                    name != DNSChannelName.PROXY for name in dns_config.channel_servers
+                )
+                if needs_direct_outbound:
+                    self._ensure_direct_outbound(
+                        config,
+                        dns_config.direct_domain_resolver,
+                        bind_interface=self._outbound_bind_interface(profile),
+                    )
 
         # "rules" mode evaluates the loaded rule groups; every other mode
         # routes everything to the current outbound ("direct" mode further
@@ -624,7 +665,9 @@ class SingBoxDriver(BaseDriver):
             effective_groups = []
             effective_final_policy = "direct" if mode == "direct" else "current_profile"
         if mode in {"rules", "direct"}:
-            self._ensure_direct_outbound(config)
+            self._ensure_direct_outbound(
+                config, bind_interface=self._outbound_bind_interface(profile)
+            )
         mode_route_rules = build_singbox_route_rules(
             effective_groups,
             current_outbound_tag=outbound["tag"],

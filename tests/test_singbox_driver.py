@@ -386,7 +386,64 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             self.driver.generate_singbox_config(profile, mode="bogus")
 
     @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="enp4s0")
+    def test_generate_singbox_config_direct_outbound_binds_to_detected_interface(
+        self, bind_mock, write_mock
+    ) -> None:
+        # Regression test: under strict_route, a "direct" outbound with no
+        # bind_interface has its own egress traffic recaptured by the TUN's
+        # system-wide route capture, black-holing all direct/default traffic
+        # and DNS (confirmed via live traffic reproduction in Task 12.5).
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(profile, mode="direct")
+        direct_outbounds = [o for o in config["outbounds"] if o.get("tag") == "direct"]
+        self.assertEqual(len(direct_outbounds), 1)
+        self.assertEqual(direct_outbounds[0]["bind_interface"], "enp4s0")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="enp4s0")
+    def test_generate_singbox_config_rules_mode_direct_outbound_binds_to_detected_interface(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        groups = [
+            RuleGroup(
+                name="app",
+                rules=[Rule(id="a1", action="direct", conditions={"process_name": ["steam"]})],
+            ),
+        ]
+        config = self.driver.generate_singbox_config(profile, mode="rules", groups=groups)
+        direct_outbounds = [o for o in config["outbounds"] if o.get("tag") == "direct"]
+        self.assertEqual(len(direct_outbounds), 1)
+        self.assertEqual(direct_outbounds[0]["bind_interface"], "enp4s0")
+
+    @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_proxy_only_dns_does_not_loop_outbound_resolver(
+        self, bind_mock, write_mock
+    ) -> None:
+        # Regression: with only a "proxy" DNS channel configured (no direct/
+        # bootstrap fallback), resolving the profile outbound's own server
+        # hostname through that channel would dial through the same outbound
+        # it is trying to resolve for — a DNS query loopback sing-box
+        # correctly rejects at runtime (confirmed via live traffic
+        # reproduction, Task 12.5). The outbound must not be assigned a
+        # domain_resolver in this case.
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        dns_policy = DNSPolicy(
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="udp://1.1.1.1")],
+                ),
+            },
+        )
+        config = self.driver.generate_singbox_config(profile, dns_policy=dns_policy)
+        self.assertNotIn("domain_resolver", config["outbounds"][0])
+        self.assertNotIn("default_domain_resolver", config.get("route", {}))
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="enp4s0")
     def test_generate_singbox_config_direct_mode_reuses_dns_direct_outbound(
         self, bind_mock, write_mock
     ) -> None:
@@ -447,13 +504,24 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
         self.assertEqual(config["outbounds"][0]["type"], "vless")
         self.assertEqual(config["outbounds"][0]["tag"], "vless-demo")
-        self.assertEqual(config["outbounds"][0]["domain_resolver"], "watchdogvpn-fakeip")
+        # Regression: the profile's own outbound must resolve its own server
+        # hostname via the direct/bootstrap channel, never fakeip and never a
+        # resolver that itself dials through this same outbound (a "proxy"
+        # channel resolver, or "final" falling back to it) — both previously
+        # made the tunnel try to dial an address it could never reach and
+        # time out (confirmed via live traffic reproduction with sing-box
+        # debug logs, Task 12.5: fakeip is a synthetic, non-dialable
+        # placeholder, and a proxied resolver creates a DNS query loopback
+        # since resolving the server needs the tunnel, which needs the
+        # server resolved first).
+        self.assertEqual(config["outbounds"][0]["domain_resolver"], "watchdogvpn-direct-1")
         self.assertEqual(len(config["outbounds"]), 2)
         direct_outbound = config["outbounds"][1]
         self.assertEqual(direct_outbound["type"], "direct")
         self.assertEqual(direct_outbound["tag"], "direct")
         self.assertEqual(direct_outbound["domain_resolver"], "watchdogvpn-direct-1")
         self.assertEqual(config["dns"]["final"], "watchdogvpn-final-1")
+        self.assertEqual(config["route"]["default_domain_resolver"], "watchdogvpn-direct-1")
         self.assertEqual(config["dns"]["rules"], [])
         dns_inbounds = {
             inbound["tag"]: inbound
@@ -467,6 +535,8 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(dns_inbounds["watchdogvpn-dns-udp-in"]["network"], "udp")
         self.assertEqual(dns_inbounds["watchdogvpn-dns-tcp-in"]["network"], "tcp")
         self.assertEqual(config["route"]["rules"], [
+            {"action": "sniff"},
+            {"protocol": ["dns"], "action": "hijack-dns"},
             {
                 "inbound": [
                     "watchdogvpn-dns-udp-in",

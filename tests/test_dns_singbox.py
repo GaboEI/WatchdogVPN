@@ -465,12 +465,23 @@ class SingBoxDNSConfigTests(unittest.TestCase):
     def test_builds_dns_hijack_route_when_enabled(self) -> None:
         route = build_dns_hijack_route(DNSPolicy(tun_hijack=True))
 
+        # Regression: a TUN's auto_route/strict_route captures system DNS
+        # queries addressed to the real LAN resolver via the tun inbound
+        # itself, not via our loopback listeners — those need protocol
+        # sniffing plus a destination-independent "protocol: dns" match to
+        # be hijacked, or they silently fall through to the catch-all rule
+        # and get forwarded to the VPN outbound as if bound for a real,
+        # routable address (confirmed via live traffic reproduction with
+        # sing-box debug logs, Task 12.5). The inbound-tag rule stays for
+        # anything explicitly pointed at the loopback listeners.
         self.assertEqual(route, {
             "rules": [
+                {"action": "sniff"},
+                {"protocol": ["dns"], "action": "hijack-dns"},
                 {
                     "inbound": list(DNS_HIJACK_INBOUND_TAGS),
                     "action": "hijack-dns",
-                }
+                },
             ]
         })
 
