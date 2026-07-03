@@ -10,6 +10,9 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 
 ### Added
 
+- Add a public provider collaboration guide documenting accepted profile and
+  subscription families, provider metadata expectations, routing-rule safety
+  and submission guidance.
 - Add the DNS v2 system (Phase 10): resolver schema and presets, a resolver
   tester with auto-setup recommendations, a system DNS state manager
   (`systemd-resolved`, NetworkManager, classic `resolv.conf`) with snapshot
@@ -58,6 +61,10 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
   resilience-layer identity.
 - Refresh Pre-Phase 11 repo documentation coherence for DNS v2 shipped state,
   guided DNS removal wording and recent v2 phase status.
+- Rework the README, ROADMAP, product roadmap, Security Policy and GitHub About
+  metadata to reflect the current v2 direction: Linux resilience layer,
+  protocol category integrity, planned split tunneling/node groups/observability
+  as roadmap items, and provider collaboration without endorsement.
 - Mark provider-specific compatibility as legacy support in the public product
   narrative while preserving existing compatibility paths.
 - Add installer backend selection for the legacy provider backend,

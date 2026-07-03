@@ -1,250 +1,103 @@
 # Product Roadmap
 
-This roadmap starts after the published `v0.3.0` alpha release.
+This document explains the product direction behind the public
+[ROADMAP](../ROADMAP.md). It is written for readers who want more context than
+the short roadmap table, but less detail than the maintainer's local master
+plan.
 
-The product direction is to build WatchdogVPN in layers: safe command engine
-first, polished TUI experience second, broader operations third, then hardening
-and stable release work.
+## Product Thesis
 
-## Current State
+WatchdogVPN is not a generic VPN launcher. It is an operational resilience
+layer for Linux users who need connectivity to be observable, recoverable and
+auditable under unreliable or censored network conditions.
 
-Published releases:
+The product is built around four principles:
 
-```text
-v0.1.0-alpha  -> public technical alpha
-v0.1.1        -> support readiness and distro validation
-v0.2.0        -> persistent configuration and TUI settings/update visibility
-v0.3.0        -> professional read-only product CLI
-```
+1. **Truth over text output** — provider status is not enough; the machine's
+   route, tunnel, DNS and public-IP state matter.
+2. **Recovery with user intent** — automation must not fight a user-requested
+   stop.
+3. **Explicit policy** — traffic routing, DNS behavior and recovery decisions
+   must be inspectable.
+4. **Non-destructive operations** — install, update, restore and uninstall must
+   preserve user-owned state unless the user clearly approves removal.
 
-## Planned Release Line
+## v2.0.0 Goal
 
-```text
-v0.3.1  -> safe runtime-update engine
-v0.4.0  -> final product Update Center UX
-v0.5.0  -> operational CLI expansion
-v0.6.0  -> runtime-applied persistent configuration
-v0.7.0  -> security hardening and stronger tests
-v0.8.0  -> TUI modularity and polish
-v0.9.0  -> release candidate
-v1.0.0  -> first stable baseline
-v1.1.0  -> internationalization and advanced UX
-```
+The v2.0.0 line is the Linux CLI + TUI stability line. Its goal is to turn the
+prototype/runtime history into a maintainable product foundation:
 
-## v0.3.1: Safe Runtime Update Engine
+- daemon-backed runtime;
+- multi-protocol profile drivers;
+- provider/subscription imports;
+- DNS v2;
+- kill switch;
+- rotation and recovery;
+- routing rules;
+- split tunneling and app policy;
+- complete CLI;
+- validated TUI;
+- safe backup/restore;
+- release-quality docs.
 
-Goal: add a real update action without making it dangerous.
+## Capability Tracks
 
-Primary command:
+### Runtime and Drivers
 
-```sh
-watchdogvpn runtime-update
-```
+The runtime must support multiple protocol families without tying the product
+to one provider. Current work centers on sing-box, AmneziaWG, OpenVPN and
+OpenVPN+Cloak-style paths.
 
-Required behavior:
+### DNS and Routing
 
-- Show the plan before doing anything.
-- Require explicit confirmation.
-- Refuse to run when the working tree is dirty.
-- Refuse to run when the source branch is ahead, diverged, missing upstream or
-  ambiguous.
-- Require branch `main` unless a documented override is introduced later.
-- Run `git fetch origin --tags`.
-- Run only `git pull --ff-only origin main`.
-- Run `./update.sh --skip-doctor`.
-- Run `hash -r`.
-- Run `./doctor.sh`.
-- Stop at the first failure.
-- Report the last successful step and the failed step.
-- Never hide `sudo`; let the terminal prompt normally.
-- Do not close or relaunch the TUI yet.
+DNS and routing are first-class product areas. The goal is not just to set DNS,
+but to ensure DNS behavior follows route policy and does not leak through
+unsafe paths when the kill switch is active.
 
-Implementation blocks:
+### Policy and Split Tunneling
 
-1. Document the contract.
-   Done in [Runtime Update Contract](runtime-update-contract.md).
-2. Add preflight logic and tests.
-3. Add confirmed execution path.
-4. Add docs and release notes.
-5. Validate on an installed workstation before tagging.
+The next major product capability is Linux app/process policy: selected
+processes should be able to go through VPN, go direct, use an auto-selected
+node group or be blocked. This must be validated with real traffic, not only
+generated config.
 
-Non-goals:
+### Observability
 
-- Automatic TUI relaunch.
-- Graphical progress UI.
-- VPN connect/disconnect/rotate product commands.
+WatchdogVPN needs enough visibility to help users diagnose failures, but not so
+much that it silently creates a sensitive browsing log. The default posture must
+favor privacy.
 
-## v0.4.0: Product Update Center
+### CLI and TUI
 
-Goal: make the TUI Update Center feel like a product, not a maintainer console.
+The CLI is the validation and operator surface. The final TUI comes later, once
+the behavior it renders is proven through CLI-backed real-world use.
 
-Main user flow:
+### Website and Public Docs
 
-1. User opens `Update`.
-2. TUI shows current version and simple status.
-3. User selects `Comprobar actualizacion` or `Actualizar`.
-4. TUI shows progress text/bar while checking.
-5. If current:
-   - show `Estas en la ultima version`.
-6. If update exists:
-   - show target version;
-   - ask `Actualizar ahora?`;
-   - offer `Si` / `No`.
-7. If `No`, return to Update.
-8. If `Si`, run the safe runtime-update engine.
-9. Show progress:
-   - preparing;
-   - fetching;
-   - updating source;
-   - updating runtime;
-   - verifying.
-10. On success, close and relaunch the TUI if that is safe in the terminal
-    context.
-11. On failure, show a simple error and offer technical details.
+The public website will become a commercial front door plus a manual/docs
+surface. It should not publish unsupported install/download claims before the
+release candidate is stable.
 
-Main screen:
+## Release Discipline
 
-- Current version.
-- Update status.
-- Primary action.
-- Technical details entry.
+Every major phase should close with:
 
-Technical details screen:
+- focused tests;
+- real-machine validation when system behavior is involved;
+- QA audit;
+- fixed HIGH/MEDIUM findings before advancement;
+- updated docs where public behavior changed.
 
-- branch;
-- commit;
-- upstream;
-- origin;
-- ahead/behind;
-- local dirty/clean state;
-- last known tag;
-- command output;
-- failure step.
+## What Is Out Of Scope For v2.0.0
 
-Non-goals:
+- Mobile apps.
+- Desktop GUI rewrite.
+- Provider endorsement/certification.
+- Claims that compatibility protocols are censorship-resistant by default.
+- Silent removal of user-owned provider/account/profile data.
 
-- Showing Git commands on the main user-facing screen.
-- Asking users to type confirmation words in all caps.
-- Updating when the source checkout is unsafe.
+## Future Direction After v2.0.0
 
-## v0.5.0: Operational CLI Expansion
-
-Goal: decide which runtime operations belong in `watchdogvpn`.
-
-Candidate commands:
-
-```sh
-watchdogvpn status
-watchdogvpn doctor
-watchdogvpn tui
-watchdogvpn report
-watchdogvpn logs
-watchdogvpn update-check
-watchdogvpn update-plan
-watchdogvpn runtime-update
-watchdogvpn config get
-watchdogvpn config set
-watchdogvpn config reset
-watchdogvpn version
-```
-
-Commands to evaluate carefully:
-
-```sh
-watchdogvpn connect <location>
-watchdogvpn disconnect
-watchdogvpn rotate
-```
-
-Those commands change real VPN state and should require confirmation, clear
-error handling and rollback strategy where possible.
-
-## v0.6.0: Runtime-Applied Persistent Configuration
-
-Goal: make persisted configuration control runtime behavior safely.
-
-Planned work:
-
-- Apply timer settings from `/etc/watchdogvpn/config.toml`.
-- Apply supported DNS profile settings from config.
-- Keep TUI preferences fully persistent.
-- Backup active config before migration or runtime apply.
-- Validate after applying settings.
-- Roll back when a supported apply step fails.
-- Keep unsupported or dangerous keys read-only until tested.
-
-## v0.7.0: Hardening And Tests
-
-Goal: reduce security and maintenance risk before stable release.
-
-Planned work:
-
-- Keep TUI command execution on explicit argv wrappers and avoid shell mode.
-- Centralize command execution.
-- Improve install/update/uninstall contract tests.
-- Expand CI beyond syntax and lightweight unit checks.
-- Strengthen log/report sanitization tests.
-- Review permissions for installed files and directories.
-- Validate paths with spaces and unusual home directories.
-
-## v0.8.0: TUI Modularity And Polish
-
-Goal: make the TUI easier to maintain and more product-like.
-
-Planned work:
-
-- Split large TUI sections into modules.
-- Separate rendering, actions, state and command execution.
-- Improve loading and error states.
-- Polish Settings.
-- Polish Update Center.
-- Keep technical details separate from user-facing flows.
-- Close deferred Pre-Phase 11 Layer 5 UX debt: long CLI list names,
-  display-width-aware TUI fitting for wide Unicode glyphs, and automatic
-  no-color fallback for `TERM=dumb` or equivalent limited terminals.
-
-## v0.9.0: Release Candidate
-
-Goal: freeze features and prepare the first stable release.
-
-Required work:
-
-- Validate install/update/uninstall on supported distros.
-- Review open issues.
-- Review security docs.
-- Review release notes.
-- Confirm known limitations.
-- Decide final `v1.0.0` scope.
-
-## v1.0.0: First Stable Baseline
-
-Goal: first stable WatchdogVPN release.
-
-Required:
-
-- Reliable install/update/uninstall.
-- Persistent configuration.
-- Professional CLI.
-- Usable TUI.
-- Multi-distro validation for supported targets.
-- Clear docs and support process.
-
-Non-goals:
-
-- Full internationalization.
-- WireGuard/private backend support.
-- Fedora support unless validated before then.
-
-## v1.1.0: International Product Expansion
-
-Goal: apply the larger international roadmap after the stable baseline.
-
-Tracked separately in [Roadmap v1.1.0](roadmap-v1.1.0.md).
-
-Expected themes:
-
-- TUI internationalization.
-- Translated documentation.
-- Visual personalization.
-- Community translation process.
-- GitHub/community polish.
+After the Linux v2 line is stable, future work can consider broader GUI and
+multiplatform expansion. That future work should inherit the v2 core rather
+than bypass it.

@@ -1,17 +1,18 @@
 # GitHub About
 
-Use these values when preparing the repository for public alpha visibility.
+Use these values when preparing or refreshing the repository's public GitHub
+metadata.
 
 ## Description
 
 ```text
-Terminal-first resilience layer for VPN/proxy connections on Linux: truth checks, watchdog recovery, rotation, DNS safety and TUI control center.
+Linux resilience layer for VPN/proxy operations: real-state checks, DNS/routing safety, recovery, rotation and CLI/TUI control.
 ```
 
 ## Website
 
 ```text
-https://github.com/GaboEI/WatchdogVPN/blob/main/docs/demo.md
+https://github.com/GaboEI/WatchdogVPN
 ```
 
 ## Topics
@@ -20,19 +21,30 @@ https://github.com/GaboEI/WatchdogVPN/blob/main/docs/demo.md
 linux
 vpn
 tui
+cli
 systemd
 networkmanager
-bash
 python
-devops
 dns
-automation
+networking
+sing-box
+wireguard
+openvpn
 resilience
+anti-censorship
+dpi
 ```
 
 ## Social Preview
 
-Use a clean TUI screenshot, preferably:
+Use the branded social preview when available:
+
+```text
+docs/assets/branding/social-preview.png
+```
+
+If GitHub's preview crop makes the branded image unreadable, fall back to a
+clean current TUI screenshot:
 
 ```text
 docs/assets/tui-dashboard.png

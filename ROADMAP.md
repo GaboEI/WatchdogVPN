@@ -1,62 +1,98 @@
-# WatchdogVPN v2.0.0 Roadmap
+# WatchdogVPN Roadmap
 
-## Summary
+WatchdogVPN is moving toward a stable `v2.0.0` Linux CLI + TUI release.
 
-WatchdogVPN v2.0.0 is the stable Linux CLI + TUI line. Its purpose is to turn
-the project into a reusable resilience layer for VPN/proxy connections on
-Linux, centered on the v2 daemon, profile/provider stores, sing-box,
-AmneziaWG, OpenVPN+Cloak, DNS v2 and rules.
+This public roadmap summarizes direction. The maintainer tracks detailed
+phase-by-phase execution in a local master plan, with each phase validated and
+audited before the next one starts.
 
-The v3.0.0 line is future-facing and reserved for a GUI expansion across additional platforms after v2 is stable.
+## Product Direction
 
-## v2.0.0 Direction
+WatchdogVPN v2.0.0 is a resilience layer for VPN/proxy operation on Linux. It
+focuses on:
 
-- Preserve the watchdog core and the real-state verification model.
-- Add the new profile, provider, parser and driver structure in small validated steps.
-- Keep CLI and TUI the primary user surfaces.
-- Treat kill switch, DNS, rules, rotation and recovery as first-class product areas.
-- Keep docs, tests and runtime behavior aligned before expanding scope.
+- real-state validation instead of trusting provider status text;
+- daemon-backed connection lifecycle;
+- profile/provider management;
+- protocol driver support through sing-box, AmneziaWG and OpenVPN paths;
+- controlled rotation and recovery;
+- kill switch behavior;
+- DNS v2 safety;
+- routing rules and future app policy;
+- non-destructive install/update/uninstall behavior;
+- CLI-backed real-world validation before final TUI polish.
 
-## v2.0.0 Scope Boundaries
+## Completed v2 Foundations
+
+| Area | Status |
+| --- | --- |
+| Profile/provider/parser foundation | Implemented and audited |
+| Driver foundation | Implemented for sing-box, AmneziaWG and OpenVPN/OpenVPN+Cloak paths |
+| Watchdog runtime generalization | Implemented |
+| Rotation and recovery | Implemented and audited |
+| Kill switch | Implemented and validated with DNS leak ordering |
+| Guided third-party DNS removal | Completed |
+| DNS v2 | Implemented, wired into live runtime paths and audited |
+| Routing rules / connection modes | Implemented and audited |
+| Legacy provider/runtime cleanup | Completed |
+| Roadmap reconciliation | Completed after v2 scope expansion |
+
+## Active v2 Work Ahead
+
+These items are planned phases, not all current user-facing features:
+
+| Order | Phase | Purpose |
+| --- | --- | --- |
+| 12 | Linux split tunneling and app policy | Route selected Linux processes through VPN, direct, auto-selected group or block |
+| 13 | Policy diagnostics and rule UX | Explain why traffic matches a rule and what action applies |
+| 14 | Node groups and auto-selection | Named groups with health-aware selection |
+| 15 | DNS/network-service hardening | Refine DNS diagnostics, time checks and LAN-service decisions |
+| 16 | Privacy-preserving observability | Aggregate visibility without silent sensitive history |
+| 17 | Backup, restore and safe sync | Versioned backup/restore, rollback and remote-sync threat review |
+| 18 | Installer v2 migration | Runtime dependency installation and non-destructive update validation |
+| 19 | Full CLI | Complete operator surface after capabilities settle |
+| 20 | CLI-backed field validation | Real-machine validation before final TUI work |
+| 21 | TUI premium experience | Rewire/polish the TUI over proven v2 behavior |
+| 22 | i18n | Translate after CLI/TUI user-facing surfaces stabilize |
+| 23 | Documentation and final cleanup | Final public docs, security notes and cleanup |
+| 24 | v2.0.0 release | Final validation, tag and release |
+
+## Protocol Positioning
+
+WatchdogVPN distinguishes between resilient and compatibility profile families.
+
+| Category | Protocol Families |
+| --- | --- |
+| Resilient / anti-DPI oriented | VLESS+Reality, Trojan TLS/uTLS, Hysteria2, AmneziaWG, OpenVPN+Cloak/OverCloud |
+| Compatibility | plain WireGuard, VMess, standard Shadowsocks, SOCKS, HTTP, normal OpenVPN |
+| Conditional | TUIC and Shadowsocks only when configured and validated for restrictive networks |
+
+This roadmap must not imply that a compatibility protocol is
+censorship-resistant by default.
+
+## v2.0.0 Boundaries
 
 - Linux only.
 - CLI + TUI only.
-- No mobile or desktop GUI rewrite in this version line.
-- No silent behavior changes that can surprise existing users.
+- No mobile app in v2.0.0.
+- No desktop GUI rewrite in v2.0.0.
+- No silent changes to user-owned provider software, profiles, private keys or
+  account state.
+- No final TUI work until the CLI-backed behavior is complete and field-tested.
 
-## v3.0.0 Direction
+## Website Timing
 
-- Future GUI product on top of the v2 core.
-- Multiplatform target: Linux, Windows, macOS, iOS and Android.
-- Built after v2.0.0 is stable and operationally proven.
-- Opens the door to broader collaboration after the Linux stable line is complete.
+The public website has its own plan outside this repository. Planning and
+visual exploration can happen at any time, but full download/install pages
+should wait until release-candidate behavior is stable and real CLI/TUI media
+exists.
 
-## Working Rules
+## Future Direction
 
-- Finish one phase before starting the next.
-- Keep each phase small enough to validate independently.
-- Do not let roadmap work imply runtime features that are not yet implemented.
-- Preserve compatibility where possible, but prefer the v2 architecture direction.
+After v2.0.0 is stable, future work may include:
 
-## Recent v2 Phase Status
-
-The root roadmap tracks current public direction. Detailed task sequencing lives
-in the local v2 master plan, but these completed phase markers keep the public
-repo narrative aligned with the current codebase:
-
-- Phase 5.5 - Manual-off runtime state: completed.
-- Phase 7 - Rotation/recovery state handling: completed.
-- Phase 8 - Driver and process hardening: completed.
-- Phase 9 - Profile/provider/parser foundation: completed.
-- Phase 9.5 - guided third-party DNS integration removal: completed.
-- Phase 10 - DNS v2 system: completed and wired into live sing-box connect paths.
-- Pre-Phase 11 QA audits for Layers 1, 4 and 5: completed with no open HIGH or
-  MEDIUM debt.
-
-## Reference Docs
-
-- [Architecture](docs/architecture.md)
-- [CLI](docs/cli.md)
-- [Configuration](docs/configuration.md)
-- [Product Roadmap](docs/product-roadmap.md)
-- [Post-Alpha Roadmap](docs/roadmap-post-alpha.md)
+- broader GUI product work;
+- additional platforms;
+- richer provider collaboration workflows;
+- packaging formats beyond the shell installer;
+- expanded public website/docs ecosystem.

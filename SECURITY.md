@@ -9,11 +9,15 @@ privilege boundaries, DNS recovery or preservation of user configuration.
 
 | Version | Supported |
 | --- | --- |
+| `main` / v2.0.0 development line | Security reports accepted |
+| `v0.3.1` | Security reports accepted |
+| `v0.3.0` | Security reports accepted |
 | `v0.1.1` | Security reports accepted |
 | `v0.1.0-alpha` | Security reports accepted |
 
-The current alpha release is not a stable 1.0 release. Reports are still useful
-and will shape the stabilization roadmap.
+The project is not yet a stable `v2.0.0` release. Reports are still useful and
+shape the stabilization roadmap, especially when they affect daemon/runtime
+behavior, DNS, routing, install/update/uninstall safety or local data handling.
 
 ## Reporting a Vulnerability
 
@@ -61,7 +65,9 @@ In scope:
 - Unsafe install, update or uninstall behavior.
 - DNS breakage or failure to recover DNS after uninstall.
 - Loss or overwrite of preserved user configuration.
-- Dangerous behavior in daemon, rotation, DNS, backend or bypass paths.
+- Dangerous behavior in daemon, rotation, DNS, routing, app-policy, provider,
+  backup or bypass paths.
+- Sensitive data leakage through logs, diagnostics, backups or statistics.
 
 Out of scope:
 
@@ -76,9 +82,9 @@ The detailed security model is documented in:
 - [Security](docs/security.md)
 - [Threat Model](docs/threat-model.md)
 
-Known alpha limitations include:
+Known development limitations include:
 
-- Some TUI helpers still use shell command strings.
 - External installer verification is not fully cryptographically pinned.
 - CI is stronger than syntax-only validation, but not yet a full integration
   simulation.
+- The final CLI/TUI surfaces are still being completed and audited for v2.0.0.

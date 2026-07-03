@@ -8,150 +8,142 @@
 
 [![CI](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml/badge.svg)](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml)
 
-- **Status:** `v2.0.0` planning line
+- **Status:** v2.0.0 in active development
+- **Platform:** Linux
+- **Interface:** CLI first, TUI after CLI-backed validation
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
-- **Primary direction:** Linux VPN/proxy resilience layer
 
-WatchdogVPN is a terminal-first resilience layer for VPN and proxy connections on Linux. It focuses on real-state verification, automatic recovery, safe rotation, optional kill switch handling, DNS control, routing rules, profile management and traceable diagnostics.
+WatchdogVPN is a Linux resilience layer for VPN and proxy connections. It does
+not try to be a generic "connect button"; it verifies what is really happening
+on the machine, manages recovery, protects DNS/routing state, and keeps traffic
+policy explicit enough to audit.
 
-The product assumes network connections fail in the real world: endpoints degrade, routes change, DNS breaks, providers misreport state and users sometimes need to stop automation on purpose. WatchdogVPN is built to observe that state, respect user decisions and recover when recovery is safe.
+The project is built for networks where ordinary assumptions are not enough:
+routes change, DNS fails, providers misreport state, endpoints degrade, DPI can
+interfere with protocols, and a silent tunnel failure can put the user at risk.
 
 ![WatchdogVPN dashboard](docs/assets/tui-dashboard.png)
 
-## Quick Links
+## Why It Exists
 
-| Need | Start Here |
+Most VPN tools focus on starting a tunnel. WatchdogVPN focuses on the harder
+operational question: **is the tunnel actually working, and what should happen
+when it stops working?**
+
+WatchdogVPN is designed for users who need observable, recoverable connectivity
+under unstable or censored network conditions: journalists, researchers,
+developers, students, remote workers and people operating in restrictive
+networks. It does not promise anonymity or magic bypass. It gives the operator
+clear state, safer recovery paths and auditable decisions.
+
+## Current v2 Foundation
+
+The v2 line is being rebuilt in validated phases. The current repository already
+contains the core foundation:
+
+| Area | Current State |
 | --- | --- |
-| See the interface | [Demo and screenshots](docs/demo.md) |
-| Understand the design | [Architecture](docs/architecture.md) |
-| Review the current roadmap | [Roadmap](ROADMAP.md) |
-| See project history | [Project History](docs/project-history.md) |
-| Review security tradeoffs | [Security](docs/security.md) and [Threat Model](docs/threat-model.md) |
-| Report an issue safely | [Reporting Issues](docs/reporting.md) and [Security Policy](SECURITY.md) |
-| Validate a machine | [Validation](docs/validation.md) |
-| Use the CLI | [CLI](docs/cli.md) |
-| Understand configuration | [Configuration](docs/configuration.md) |
-| Review release status | [Current release notes](docs/release-notes-v0.3.1.md) |
-| Prepare a release | [Release Checklist](docs/release-checklist.md) |
+| Daemon/runtime | daemon-backed runtime path with IPC and systemd integration |
+| Profiles/providers | manual imports, subscription-backed providers and persistent stores |
+| Protocol drivers | sing-box, AmneziaWG, OpenVPN and OpenVPN+Cloak driver paths |
+| Rotation/recovery | controlled rotation, cooldowns, known-good handling and failure categories |
+| Kill switch | nftables/iptables fail-closed model with DNS leak ordering |
+| DNS v2 | DNS policy model, resolver testing, TUN hijack, FakeIP, ECS, static IP mappings and rollback |
+| Routing rules | persistent rule groups, rule engine and sing-box route generation |
+| Installer/update | non-destructive install/update contracts with backup and validation |
+| Audits | phase-level QA audits with HIGH/MEDIUM findings fixed before advancement |
 
-## Core Capabilities
+## Active Roadmap Before v2.0.0
 
-| Capability | What It Solves |
+These are planned phases, not current user-facing promises:
+
+| Phase | Goal |
 | --- | --- |
-| Truth check | Verifies tunnel, route and public IP instead of trusting CLI text alone |
-| Watchdog | Detects real VPN failures and triggers recovery when needed |
-| Rotation | Changes connection targets on a controlled schedule with validation |
-| Profiles | Supports manual imports and subscription-backed profile sources |
-| Providers | Keeps profile sources manageable and capped where required |
-| Exclusions | Routes selected domains outside the tunnel when required |
-| DNS safety | Applies validated DNS profiles with backup and rollback behavior |
-| Routing rules | Keeps traffic policy explicit and inspectable |
-| Notifications | Emits user-facing and traceable events through `vpn_notify` |
-| Housekeeping | Keeps operational logs bounded with logrotate and systemd timers |
+| Linux split tunneling / app policy | route selected Linux processes through VPN, direct, auto-selected group or block |
+| Policy diagnostics | explain why traffic matches a rule and where it should go |
+| Node groups / auto-selection | named node groups with health-aware selection |
+| DNS/network hardening | refine DNS diagnostics, time checks and LAN-service decisions |
+| Privacy-preserving observability | aggregate stats without silently logging sensitive browsing history |
+| Backup/restore/sync | safe versioned backups, restore rollback and remote-sync threat review |
+| Full CLI | complete operator surface after capabilities settle |
+| Field validation | real CLI-driven validation before final TUI work |
+| TUI premium experience | final v2 TUI over proven behavior |
 
-## TUI Overview
+Detailed sequencing lives in the local master plan used by the maintainer. The
+public roadmap summary is in [ROADMAP.md](ROADMAP.md).
 
-WatchdogVPN includes a terminal control center designed for repeated operational use rather than one-off script execution.
+## Protocol Support
 
-| View | Purpose |
+WatchdogVPN separates **resilient profile families** from **standard
+compatibility profiles**. This distinction matters: supporting a protocol does
+not automatically mean it is appropriate for hostile DPI environments.
+
+| Category | Protocol Families |
 | --- | --- |
-| Dashboard | Real connection state, session, tunnel, route, IP, DNS and timers |
-| Locations | Select connection targets from measured candidates |
-| Actions | Restart, disconnect, rotate now and run immediate health checks |
-| DNS | Apply validated DNS profiles with rollback protection |
-| Exclusions | Manage domains routed outside the VPN or proxy path |
-| Timers | Adjust watchdog and rotation intervals without editing units by hand |
-| Logs | Read recent operational logs and traceable events |
-| Settings | Read and update safe persistent language and UI preferences |
-| Update | Product update status, remote check and safe runtime update guidance |
+| Resilient / anti-DPI oriented | VLESS+Reality, Trojan TLS/uTLS, Hysteria2, AmneziaWG, OpenVPN+Cloak/OverCloud |
+| Compatibility | plain WireGuard, VMess, standard Shadowsocks, SOCKS, HTTP, normal OpenVPN |
+| Conditional | TUIC and Shadowsocks may be treated as resilient only when configured and validated for restrictive networks |
 
-More screenshots and command examples are available in [Demo](docs/demo.md).
+Compatibility profiles are useful, but WatchdogVPN should not describe them as
+censorship-resistant unless the concrete configuration has been validated.
 
-## Status
+## Core Concepts
 
-WatchdogVPN is currently in the transition toward a stable `v2.0.0` line. The v2 direction is a Linux CLI + TUI product centered on resilience, profiles, routing and safe recovery.
+### Real-State Verification
 
-Current support status:
+Provider status text is not treated as truth. WatchdogVPN checks observable
+state such as tunnel interface, route, DNS behavior and public IP where
+appropriate.
 
-| Distribution | Status |
-| --- | --- |
-| Ubuntu 24.04 | Tested on a real workstation |
-| Arch Linux | Tested on a real workstation |
-| Debian | Tested with a real install flow, including DNS tooling |
-| CachyOS | Tested with a real install flow; initial settle may require reboot |
-| Fedora | Future target |
+### Recovery With User Intent
 
-The project is designed as one multi-distro codebase rather than separate repositories per distro.
+The runtime distinguishes automatic recovery from a user-requested manual stop.
+If the user deliberately turns the VPN off, automation must not immediately
+fight that decision.
 
-## Philosophy
+### DNS Safety
 
-WatchdogVPN is not designed around the fantasy that a VPN or proxy is always fast, stable or honest about its own state. It is designed around a harsher assumption: in unstable networks, censored environments or hostile information conditions, the connection will eventually break.
+DNS v2 is part of the product, not an afterthought. WatchdogVPN can model DNS
+channels, apply local resolver state with rollback, hijack application DNS into
+the tunnel path and avoid LAN resolver leaks when the kill switch is active.
 
-The goal is resilience for people who cannot afford to stop working because the tunnel silently died: journalists, researchers, developers, students, remote workers and users living under network censorship or unreliable routing. The product does not promise the fastest possible connection. It tries to keep the connection observable, recoverable and boring in the best sense: when something fails, the system should detect it, repair it when possible and keep the user informed only when attention is needed.
+### Explicit Traffic Policy
 
-The v2 product direction is not tied to any single vendor. It is centered on reusable connection handling, profile management and safe recovery across protocols and providers.
+Routing rules make traffic decisions inspectable. The v2 roadmap extends this
+into Linux app/process policy, rule explanations and node-group routing.
 
-## What It Does
+### Non-Destructive Operations
 
-- Shows a terminal dashboard for connection state, tunnel, route, IP, DNS,
-  backend and exclusions.
-- Uses `vpn_truth_check` as the source of truth instead of trusting only provider text output.
-- Detects tunnel, route, public IP and country state.
-- Rotates connection targets safely with validation and anti-loop behavior.
-- Runs a watchdog that can recover from real connection failures.
-- Supports domain exclusion rules for selected domains that should not use the tunnel.
-- Provides optional DNS management with backup and rollback behavior.
-- Keeps logs under rotation with a dedicated logrotate policy.
-- Emits traceable events through `vpn_notify`.
-- Offers an optional desktop launcher.
+Install, update, uninstall and restore flows must preserve user configuration
+unless the user explicitly approves destructive behavior.
 
-## What It Does Not Do
+## Installation
 
-- It does not replace the underlying VPN or proxy provider.
-- It does not provide credentials or bypass licensing.
-- It does not hide illegal activity or encourage misuse.
-- It does not erase existing user configuration without confirmation.
-
-## System Requirements
-
-Required base components are checked by `doctor.sh` and the guided installer:
-
-- `systemd`
-- `NetworkManager`
-- `bash`
-- `python3`
-- `curl`
-- `iproute2`
-- `sudo`
-- `logrotate`
-- A supported backend installed and available for the selected mode
-
-## Install
+WatchdogVPN is currently Linux-focused. Run it from a checkout:
 
 ```sh
 git clone https://github.com/GaboEI/WatchdogVPN.git
 cd WatchdogVPN
 ./doctor.sh
 ./install.sh
+```
+
+Launch the current TUI:
+
+```sh
 VPN
 ```
 
-For an SSH checkout, use:
+Run the product CLI:
 
 ```sh
-git clone git@github.com:GaboEI/WatchdogVPN.git
+watchdogvpn --help
 ```
 
-`doctor.sh` is read-only. It checks whether the machine is ready.
+`doctor.sh` is read-only. It checks whether the machine has the expected
+dependencies and runtime state.
 
-`install.sh` is guided but conservative. It asks only product-level choices:
-
-- Install desktop launcher?
-
-It does not ask internal technical defaults such as daemon internals, log
-housekeeping or internal installation paths.
-
-## Update
+## Updating
 
 ```sh
 cd WatchdogVPN
@@ -159,12 +151,10 @@ git pull
 ./update.sh
 ```
 
-The updater validates the repository, backs up managed files and preserves user
+The updater validates the checkout, backs up managed files and preserves user
 configuration, logs, shared runtime state and DNS configuration.
 
-## Uninstall
-
-Basic removal:
+## Uninstalling
 
 ```sh
 cd WatchdogVPN
@@ -178,124 +168,91 @@ cd WatchdogVPN
 ./uninstall.sh --purge-config --purge-logs --purge-state
 ```
 
-This does not remove the user's underlying VPN/proxy provider state unless the selected backend contract explicitly says otherwise.
+Uninstall does not remove user-owned VPN/proxy provider software, private keys,
+profiles or account state unless an explicit future contract says otherwise.
+
+## For Providers
+
+WatchdogVPN is provider-agnostic. It can accept compatible subscription/profile
+formats without depending on or endorsing any specific provider.
+
+Provider collaboration is welcome when it improves interoperability. See
+[Provider Collaboration](docs/providers.md) for accepted formats, expectations
+and submission guidance.
+
+## For Contributors
+
+Useful contributions include:
+
+- protocol/profile parser fixtures;
+- distro validation;
+- documentation corrections;
+- tests for installer, DNS, routing, daemon and recovery behavior;
+- carefully scoped bug reports with sanitized logs.
+
+Before opening an issue, read [Reporting Issues](docs/reporting.md) and
+[Security Policy](SECURITY.md), especially if logs may reveal network or account
+details.
 
 ## Repository Layout
 
 ```text
-bin/                User-facing helper commands
-sbin/               Privileged runtime scripts
-tui/                Terminal UI and support modules
-systemd/            Services and timers
-networkmanager/     NetworkManager dispatcher hooks
-etc/                Product configuration templates
-examples/           Safe example configs
-lib/                Installer shared functions
-distros/            Ubuntu/Debian/Arch adapters
-desktop/            Optional desktop launcher
-docs/               Architecture, validation and operating notes
-tests/              Syntax, unit behavior and runtime validation helpers
+bin/        User-facing helper commands
+cli/        Python CLI surface for v2 functionality
+config/     Persistent stores and application config
+core/       Runtime orchestration
+daemon/     daemon IPC and worker entrypoints
+dns/        DNS v2 policy, testing and apply/restore logic
+drivers/    Protocol/runtime drivers
+models/     Shared data models
+providers/  Manual and subscription provider imports
+rotation/   Health checks, rotation and recovery
+rules/      Routing rule models, parser and sing-box generation
+systemd/    Services and timers
+tui/        Terminal UI
+docs/       Architecture, security, validation and release docs
+tests/      Unit, syntax and runtime contract tests
 ```
-
-## Key Design Decisions
-
-- **Real-state validation:** the project checks tunnel, route and public IP state instead of relying only on provider status text.
-- **Fail-safe recovery:** the watchdog distinguishes normal failures, unknown IP states and authentication problems.
-- **One runtime, distro adapters:** Ubuntu, Debian and Arch use the same runtime. Only installation and package checks differ.
-- **DNS v2 ownership:** DNS management is handled by the WatchdogVPN v2 DNS
-  system; the removed guided third-party DNS integration is not part of the
-  current product.
-- **No duplicate repos by distro:** multi-distro support stays in one repository to avoid divergent behavior.
-- **Traceable logs:** operational events are written in a parseable format for future diagnostics.
-- **User-owned exclusions:** new installations start without personal bypass domains. Each user chooses which domains should leave through the normal network route.
-
-## Known Limitations
-
-- `v0.3.1` is the last documented alpha-line release.
-- The current TUI is functional and the gradual module split has started, but most rendering/action flow still lives in `tui/VPN`.
-- Python TUI command helpers avoid subprocess shell mode; legacy shell pipelines run through explicit Bash argv wrappers.
 
 ## Validation
 
-Development test dependencies are installed in a local virtual environment:
+Common local checks:
 
 ```sh
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
-```
-
-Current validation commands:
-
-```sh
-pytest tests
-python -m pytest tests
-python3 -m compileall -q tui tests/unit/test_tui_modules.py
-bash tests/syntax.sh
+python3 -m unittest discover tests
 bash tests/unit.sh
+bash tests/syntax.sh
 systemd-analyze verify systemd/*.service systemd/*.timer
 ./doctor.sh
 ```
 
-Generate a local support report without uploading anything:
-
-```sh
-watchdogvpn report
-```
-
-GitHub Actions runs syntax checks and systemd unit verification automatically. `shellcheck` and `shfmt` are currently advisory checks while the shell code is being hardened.
-
-Some local system validations require root or an installed system target, for example:
-
-```sh
-sudo logrotate -d etc/logrotate.d/myvpn
-```
+Some validations require an installed system target or privileges. They are run
+manually and documented in phase/audit notes when needed.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
-- [Problem Context](docs/problem-context.md)
-- [Project History](docs/project-history.md)
-- [Security](docs/security.md)
-- [Threat Model](docs/threat-model.md)
-- [Reporting Issues](docs/reporting.md)
 - [CLI](docs/cli.md)
 - [Configuration](docs/configuration.md)
-- [Runtime Update Contract](docs/runtime-update-contract.md)
-- [Demo](docs/demo.md)
+- [DNS CLI](docs/dns-cli.md)
+- [Security](docs/security.md)
+- [Threat Model](docs/threat-model.md)
 - [Validation](docs/validation.md)
-- [v0.3.1 Release Notes](docs/release-notes-v0.3.1.md)
-- [v0.3.0 Release Notes](docs/release-notes-v0.3.0.md)
-- [v0.2.0 Release Notes](docs/release-notes-v0.2.0.md)
-- [v0.1.1 Release Notes](docs/release-notes-v0.1.1.md)
-- [v0.1.0-alpha Release Notes](docs/release-notes-v0.1.0-alpha.md)
-- [Release Checklist](docs/release-checklist.md)
-- [GitHub About](docs/github-about.md)
-- [GitHub Planning](docs/github-planning.md)
+- [Demo](docs/demo.md)
+- [Provider Collaboration](docs/providers.md)
 - [Roadmap](ROADMAP.md)
-- [Product Roadmap](docs/product-roadmap.md)
-- [Post-Alpha Roadmap](docs/roadmap-post-alpha.md)
-- [Roadmap v1.1.0](docs/roadmap-v1.1.0.md)
-- [Install Contracts](docs/install-contracts.md)
-
-## Security
-
-WatchdogVPN is system tooling that can modify VPN services, DNS configuration, NetworkManager hooks and systemd units. Review [Security](docs/security.md) and [Threat Model](docs/threat-model.md) before running it on a sensitive machine.
-
-## Roadmap
-
-- Complete the v2.0.0 CLI and TUI stable line.
-- Expand profile, provider, parser and driver coverage in controlled phases.
-- Harden the runtime and tests before any v3 GUI work.
-- Treat multiplatform GUI work as a future v3.0.0 direction, not the next immediate step.
-
-## License
-
-WatchdogVPN is licensed under GPL-3.0-or-later. You may use, study, modify and redistribute it under the terms of the GNU General Public License version 3 or any later version. See [LICENSE](LICENSE).
+- [Changelog](CHANGELOG.md)
 
 ## Safety Rule
 
-The installer must preserve existing user configuration unless the user explicitly approves a change.
+WatchdogVPN must preserve existing user configuration unless the user
+explicitly approves a change. When a feature touches DNS, routing, daemon state,
+privileged files or installed runtime paths, unit tests are not enough: the
+behavior must be validated against the real machine or a faithful system-level
+test.
 
-This project is intended as a practical resilience and operations tool for legitimate access, study, development and day-to-day connectivity.
+## License
+
+WatchdogVPN is licensed under GPL-3.0-or-later. You may use, study, modify and
+redistribute it under the terms of the GNU General Public License version 3 or
+any later version.

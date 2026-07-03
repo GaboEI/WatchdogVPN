@@ -1,5 +1,10 @@
 # Roadmap
 
+> Historical roadmap note: this document describes the original packaging path
+> from local runtime scripts into the first public alpha line. The current v2
+> public roadmap is [../ROADMAP.md](../ROADMAP.md), and the product context is
+> [product-roadmap.md](product-roadmap.md).
+
 This roadmap describes the original packaging path from loose local runtime
 scripts to a reproducible multi-distro product.
 
