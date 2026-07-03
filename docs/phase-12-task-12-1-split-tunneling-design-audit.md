@@ -380,6 +380,25 @@ Finding status after Task 12.3:
   needs real traffic proof in Task 12.5, especially for browser DoH, helper
   processes, package managers, and apps that bypass system DNS.
 
+## Task 12.4 Resolution Notes
+
+Task 12.4 added minimal operator commands under `watchdog app-policy`:
+
+- `status [--json]`
+- `enable|disable [--json]`
+- `mode whitelist|blacklist [--json]`
+- `add --process-name NAME --action direct|current|block [--id ID] [--json]`
+- `add --process-path PATH --action direct|current|block [--id ID] [--json]`
+- `remove RULE_ID [--json]`
+
+The command set intentionally does not expose `auto` or `group:<id>` actions.
+Those remain scheduled for real multi-outbound selector support instead of
+being presented as working app-policy actions.
+
+`status --json` reports invalid/corrupt persisted policy as `valid: false` and
+shows the fail-closed disabled policy returned by `AppPolicyStore`; mutation
+commands still require a valid policy file before saving changes.
+
 ## Recommended Design
 
 1. Keep sing-box as the first implementation mechanism.

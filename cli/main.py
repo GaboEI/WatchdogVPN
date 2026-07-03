@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -10,6 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import NoReturn
 
+from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPolicyRule
+from app_policy.store import AppPolicyStore
 from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
 from config.dns_policy_store import DNSPolicyStore
@@ -234,6 +237,52 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     config_set_mode_parser.add_argument("--json", action="store_true", help="Print JSON")
     config_set_mode_parser.set_defaults(handler=_config_set_mode)
+
+    app_policy_parser = subparsers.add_parser(
+        "app-policy",
+        help="Manage minimal Linux app/process policy",
+    )
+    app_policy_subparsers = app_policy_parser.add_subparsers(dest="app_policy_command")
+
+    app_policy_status_parser = app_policy_subparsers.add_parser("status", help="Show app policy")
+    app_policy_status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_status_parser.set_defaults(handler=_app_policy_status)
+
+    app_policy_enable_parser = app_policy_subparsers.add_parser("enable", help="Enable app policy")
+    app_policy_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_enable_parser.set_defaults(handler=_app_policy_set_enabled, enabled=True)
+
+    app_policy_disable_parser = app_policy_subparsers.add_parser("disable", help="Disable app policy")
+    app_policy_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_disable_parser.set_defaults(handler=_app_policy_set_enabled, enabled=False)
+
+    app_policy_mode_parser = app_policy_subparsers.add_parser("mode", help="Set app policy mode")
+    app_policy_mode_parser.add_argument(
+        "mode",
+        choices=[item.value for item in AppPolicyMode],
+        help="App policy mode",
+    )
+    app_policy_mode_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_mode_parser.set_defaults(handler=_app_policy_set_mode)
+
+    app_policy_add_parser = app_policy_subparsers.add_parser("add", help="Add an app policy rule")
+    app_policy_add_match = app_policy_add_parser.add_mutually_exclusive_group(required=True)
+    app_policy_add_match.add_argument("--process-name", help="Process executable name")
+    app_policy_add_match.add_argument("--process-path", help="Exact process executable path")
+    app_policy_add_parser.add_argument(
+        "--action",
+        required=True,
+        choices=[item.value for item in AppPolicyAction],
+        help="Route action",
+    )
+    app_policy_add_parser.add_argument("--id", help="Rule ID; generated when omitted")
+    app_policy_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_add_parser.set_defaults(handler=_app_policy_add)
+
+    app_policy_remove_parser = app_policy_subparsers.add_parser("remove", help="Remove an app policy rule")
+    app_policy_remove_parser.add_argument("rule_id")
+    app_policy_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_remove_parser.set_defaults(handler=_app_policy_remove)
 
     return parser
 
@@ -522,6 +571,175 @@ def _config_set_mode(args: argparse.Namespace) -> int:
     else:
         print(f"Active mode set to: {args.mode}")
     return 0
+
+
+def _app_policy_status(args: argparse.Namespace) -> int:
+    result = AppPolicyStore().load_or_disabled()
+    data = _app_policy_status_data(result.policy, valid=result.valid, error=result.error)
+    if args.json:
+        _print_json(data)
+        return 0
+    if not result.valid:
+        print("App policy: invalid")
+        print(f"Error: {result.error}")
+        print("Runtime behavior: fail closed")
+        return 0
+    _print_app_policy(data)
+    return 0
+
+
+def _app_policy_set_enabled(args: argparse.Namespace) -> int:
+    store = AppPolicyStore()
+    policy = store.load()
+    policy.enabled = bool(args.enabled)
+    store.save(policy)
+    data = _app_policy_status_data(policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"App policy {'enabled' if policy.enabled else 'disabled'}.")
+    return 0
+
+
+def _app_policy_set_mode(args: argparse.Namespace) -> int:
+    store = AppPolicyStore()
+    policy = store.load()
+    policy.mode = AppPolicyMode(args.mode)
+    policy = AppPolicy.from_dict(policy.to_dict())
+    store.save(policy)
+    data = _app_policy_status_data(policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"App policy mode set to: {policy.mode.value}")
+    return 0
+
+
+def _app_policy_add(args: argparse.Namespace) -> int:
+    store = AppPolicyStore()
+    policy = store.load()
+    match: dict[str, list[str]] = {}
+    if args.process_name:
+        match["process_name"] = [args.process_name]
+    if args.process_path:
+        match["process_path"] = [args.process_path]
+    rule_id = args.id or _next_app_policy_rule_id(policy, match, args.action)
+    if any(rule.id == rule_id for rule in policy.rules):
+        raise ValueError(f"app policy rule already exists: {rule_id}")
+    rule = AppPolicyRule(
+        id=rule_id,
+        action=args.action,
+        match=match,
+    )
+    policy.rules.append(rule)
+    policy = AppPolicy.from_dict(policy.to_dict())
+    store.save(policy)
+    data = {"added": rule.to_dict(), "policy": _app_policy_status_data(policy)}
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added app policy rule: {rule.id}")
+        print(f"Action: {rule.action.value}")
+        print(f"Confidence: {rule.match_confidence.value}")
+    return 0
+
+
+def _app_policy_remove(args: argparse.Namespace) -> int:
+    store = AppPolicyStore()
+    policy = store.load()
+    original_count = len(policy.rules)
+    policy.rules = [rule for rule in policy.rules if rule.id != args.rule_id]
+    if len(policy.rules) == original_count:
+        raise ValueError(f"app policy rule not found: {args.rule_id}")
+    policy = AppPolicy.from_dict(policy.to_dict())
+    store.save(policy)
+    data = {"removed": args.rule_id, "policy": _app_policy_status_data(policy)}
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed app policy rule: {args.rule_id}")
+    return 0
+
+
+def _app_policy_status_data(
+    policy: AppPolicy,
+    *,
+    valid: bool = True,
+    error: str | None = None,
+) -> dict[str, object]:
+    return {
+        "valid": valid,
+        "error": error,
+        "policy": policy.to_dict(),
+        "rule_count": len(policy.rules),
+        "enabled_rule_count": len([rule for rule in policy.rules if rule.enabled]),
+        "rules": [
+            {
+                **rule.to_dict(),
+                "match_confidence": rule.match_confidence.value,
+            }
+            for rule in policy.rules
+        ],
+    }
+
+
+def _print_app_policy(data: dict[str, object]) -> None:
+    policy = data["policy"]
+    if not isinstance(policy, dict):
+        return
+    print(f"App policy: {_on_off(bool(policy.get('enabled', False)))}")
+    print(f"Mode: {policy.get('mode', '-')}")
+    print(f"Default action: {policy.get('default_action', '-')}")
+    print(f"Rules: {data['enabled_rule_count']}/{data['rule_count']} enabled")
+    rules = data.get("rules", [])
+    if not isinstance(rules, list) or not rules:
+        return
+    print("ID\tAction\tConfidence\tMatch")
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        print(
+            "\t".join(
+                [
+                    str(rule.get("id", "-")),
+                    str(rule.get("action", "-")),
+                    str(rule.get("match_confidence", "-")),
+                    _format_app_policy_match(rule.get("match", {})),
+                ]
+            )
+        )
+
+
+def _format_app_policy_match(match: object) -> str:
+    if not isinstance(match, dict):
+        return "-"
+    parts = []
+    for key, values in sorted(match.items()):
+        if isinstance(values, list):
+            parts.append(f"{key}={','.join(str(value) for value in values)}")
+    return ";".join(parts) or "-"
+
+
+def _next_app_policy_rule_id(
+    policy: AppPolicy,
+    match: dict[str, list[str]],
+    action: str,
+) -> str:
+    matcher_key, matcher_values = next(iter(match.items()))
+    base = _slug(f"{matcher_key}-{matcher_values[0]}-{action}")
+    existing = {rule.id for rule in policy.rules}
+    if base not in existing:
+        return base
+    index = 2
+    while f"{base}-{index}" in existing:
+        index += 1
+    return f"{base}-{index}"
+
+
+def _slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9_-]+", "-", value.strip().lower())
+    slug = slug.strip("-_")
+    return slug[:64] or "app-policy-rule"
 
 
 def _dns_status(args: argparse.Namespace) -> int:
