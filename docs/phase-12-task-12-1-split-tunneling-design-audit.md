@@ -220,6 +220,10 @@ These limits must be documented in user-facing text before release:
 
 ## Findings and Risks
 
+Every finding below has an assigned Phase 12 owner task. A future session must
+not close the owner task unless its assigned finding is either fixed and
+validated, or explicitly reclassified in the master plan with a new owner task.
+
 ### AUD-P12-001 - App policy schema does not exist yet
 
 Severity: HIGH
@@ -306,6 +310,18 @@ shorthand as deprecated since 1.11.0.
 Recommendation: schedule a compatibility cleanup to emit explicit
 `action: route` for forward-looking configs. This is not required before
 starting Task 12.2, but should be considered before release.
+
+## Finding Ownership Matrix
+
+| Finding | Severity | Owner task | Closure requirement |
+|---|---:|---|---|
+| AUD-P12-001 app-policy schema missing | HIGH | Task 12.2 | Add a first-class app-policy model/store with strict schema validation and fail-closed invalid-policy behavior. |
+| AUD-P12-002 DNS can diverge from process route policy | HIGH | Task 12.3 and Task 12.5 | Define per-action DNS semantics in runtime wiring, then prove them with real traffic validation. |
+| AUD-P12-003 kill-switch interface mismatch | HIGH | Task 12.3 and Task 12.5 | Align kill-switch tunnel interface handling with the active sing-box TUN interface and validate fail-closed behavior. |
+| AUD-P12-004 TUN route hardening incomplete | HIGH | Task 12.3 and Task 12.5 | Decide and implement/decline `strict_route` and `auto_redirect` with real-machine evidence. |
+| AUD-P12-005 `auto_select` and `group:<id>` are not real per-app selectors | MEDIUM | Task 12.2 | Reject, hide, or explicitly alias these actions until Phase 14 multi-outbound selectors exist. |
+| AUD-P12-006 daemon stop does not explicitly disconnect runtime | MEDIUM | Task 12.5 | Validate `watchdog disconnect`, daemon stop/restart, and sing-box crash cleanup; create a Phase 12 fix subtask if cleanup is not clean. |
+| AUD-P12-007 route rule shorthand is deprecated | LOW | Task 12.3 or Task 12.6 | Either migrate generated route rules to explicit `action: route` or record a low-risk compatibility decision before Phase 12 closes. |
 
 ## Recommended Design
 
