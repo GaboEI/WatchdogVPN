@@ -2,10 +2,9 @@
 
 > Date: 2026-07-03
 > Protocol: `/home/gabodev/Escritorio/temporales/WatchdogVPN_QA_AUDIT_PROTOCOL.md`
-> Scope: post-removal audit after Phase 2.6 closure. No product-code fixes were
-> made during this audit.
-> Status: OPEN - findings below must be handled one by one before advancing to
-> new feature phases.
+> Scope: post-removal audit after Phase 2.6 closure. Detection was documented
+> first; product-code hardening closure is recorded below.
+> Status: RESOLVED 2026-07-03 - hardening closure completed below.
 
 ## Protocol Update
 
@@ -56,7 +55,7 @@ runtime entry points.
 | ID | AUD-P26-001 |
 | Layer | Layer 6 - Daemon, IPC, systemd and privilege boundaries |
 | Severity | HIGH |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 | Subtask | Add bounded daemon command execution and regression coverage. |
 
 Description:
@@ -103,7 +102,7 @@ Recommendation:
 | ID | AUD-P26-002 |
 | Layer | Layer 1 / Layer 6 / Layer 8 |
 | Severity | MEDIUM |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 | Subtask | Move DNS snapshot persistence onto the shared persistence helper. |
 
 Description:
@@ -151,7 +150,7 @@ Recommendation:
 | ID | AUD-P26-003 |
 | Layer | Layer 7 - Installer, updater, uninstaller and migration safety |
 | Severity | MEDIUM |
-| Status | OPEN |
+| Status | RESOLVED 2026-07-03 |
 | Subtask | Add a non-destructive daemon/CLI smoke test after install and update. |
 
 Description:
@@ -246,15 +245,62 @@ the snapshot is persisted to disk.
 2. AUD-P26-002 - DNS snapshot atomicity and shared-state permissions.
 3. AUD-P26-003 - real post-install/update daemon smoke validation.
 
+## Hardening Closure - 2026-07-03
+
+### Implemented fixes
+
+- AUD-P26-001: daemon IPC request handling now uses a bounded server-side
+  timeout instead of `timeout=None`. A stuck runtime command returns a
+  structured `ok=false` response with `daemon runtime command timed out`, and a
+  regression test covers a blocking runtime plus a later status request.
+- AUD-P26-002: DNS snapshot save/load now goes through `dns.state_manager`
+  helpers backed by `config.persistence` file locks, atomic fsync+replace
+  writes, and shared-state permission normalization.
+- AUD-P26-003: install/update now run a non-destructive daemon smoke test after
+  service enablement. The smoke checks `watchdogvpn.service`, the IPC socket,
+  and read-only `watchdog status --json`; if the daemon is healthy but the
+  current login session lacks refreshed group membership, it reports an
+  actionable session-refresh warning instead of misclassifying the daemon as
+  broken.
+
+### Validation completed
+
+- `python3 -m py_compile daemon/ipc_server.py tests/test_cli_ipc_client.py`
+  passed.
+- `WATCHDOGVPN_CONFIG_DIR=$(mktemp -d) python3 -m unittest
+  tests.test_cli_ipc_client tests.test_daemon_runtime_worker` passed: 27 tests.
+- `python3 -m py_compile cli/main.py dns/state_manager.py
+  tests/test_cli_dns_commands.py` passed.
+- `WATCHDOGVPN_CONFIG_DIR=$(mktemp -d) python3 -m unittest
+  tests.test_cli_dns_commands tests.test_dns_state_manager
+  tests.test_core_watchdog` passed: 82 tests.
+- `bash tests/unit/test_install_security_contracts.sh` passed.
+- `bash tests/unit/test_install_backend_selection.sh` passed.
+- `bash tests/syntax.sh` passed.
+- `bash tests/unit.sh` passed.
+- `WATCHDOGVPN_CONFIG_DIR=$(mktemp -d) python3 -m unittest discover tests`
+  passed: 647 tests.
+
+### Residual risk
+
+- Python cannot safely terminate an arbitrary stuck worker thread. This closure
+  makes the daemon IPC boundary deterministic and test-covered, but a deeper
+  future daemon architecture could still add last-known-state `busy` responses
+  or supervised per-command workers if real-world testing shows a need.
+- No destructive live network validation was run during this closure because the
+  developer machine had an active tunnel. The new install/update smoke test is
+  intentionally read-only and does not connect, disconnect, rotate, or mutate
+  DNS.
+
 ## Closure Criteria
 
 Phase 2.6 should not be considered audit-closed until:
 
-- Every HIGH/MEDIUM subtask above is fixed or explicitly accepted by the user
+- [x] Every HIGH/MEDIUM subtask above is fixed or explicitly accepted by the user
   with rationale.
-- Regression tests are added for each fixed subtask.
-- `bash tests/unit.sh` passes.
-- `WATCHDOGVPN_CONFIG_DIR=$(mktemp -d) python3 -m unittest discover tests`
+- [x] Regression tests are added for each fixed subtask.
+- [x] `bash tests/unit.sh` passes.
+- [x] `WATCHDOGVPN_CONFIG_DIR=$(mktemp -d) python3 -m unittest discover tests`
   passes.
-- The report is updated with a hardening closure section listing fixes,
+- [x] The report is updated with a hardening closure section listing fixes,
   validations, and final residual risk.

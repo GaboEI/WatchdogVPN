@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -8,6 +7,13 @@ from pathlib import Path
 from typing import Protocol
 
 from config.paths import resolve_config_dir
+from config.persistence import (
+    PersistentStoreError,
+    dump_json,
+    file_lock,
+    load_json,
+    require_mapping,
+)
 from .resolver_inventory import (
     ResolverInventory,
     ResolverManager,
@@ -34,10 +40,20 @@ def default_snapshot_path() -> Path:
 def load_snapshot(path: Path) -> "DNSStateSnapshot | None":
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise DNSStateError("dns snapshot file must contain a JSON object")
-    return DNSStateSnapshot.from_dict(data)
+    try:
+        with file_lock(path):
+            data = require_mapping(load_json(path, {}), path)
+            return DNSStateSnapshot.from_dict(data)
+    except PersistentStoreError as exc:
+        raise DNSStateError(str(exc)) from exc
+
+
+def save_snapshot(path: Path, snapshot: "DNSStateSnapshot") -> None:
+    try:
+        with file_lock(path):
+            dump_json(path, snapshot.to_dict())
+    except PersistentStoreError as exc:
+        raise DNSStateError(str(exc)) from exc
 
 
 class DNSCommandRunner(Protocol):

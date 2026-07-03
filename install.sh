@@ -424,8 +424,10 @@ print_section "Optional integrations"
 install_optional_integrations
 print_section "Enable services"
 enable_systemd_units
-ensure_user_local_bin_path
 wait_for_services
+print_section "Daemon smoke test"
+smoke_test_watchdogvpn_daemon
+ensure_user_local_bin_path
 settle_vpn_after_install
 post_install_validation
 final_report

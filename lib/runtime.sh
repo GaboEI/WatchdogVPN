@@ -177,6 +177,53 @@ repair_watchdogvpn_shared_state_permissions() {
   run_step sudo find "$target_dir" -type f -exec chmod 0660 {} +
 }
 
+smoke_test_watchdogvpn_daemon() {
+  local socket_path="${WATCHDOGVPN_SOCKET_PATH:-/run/watchdogvpn/control.sock}"
+  local status_output status_rc
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] smoke test watchdogvpn.service and daemon IPC status\n'
+    return 0
+  fi
+
+  if [[ "${ENABLE_VPN_AUTOMATION:-1}" != "1" ]]; then
+    printf '[SKIP] daemon smoke test; VPN automation is disabled for this install\n'
+    return 0
+  fi
+
+  if ! systemctl is-active --quiet watchdogvpn.service; then
+    fail "watchdogvpn.service is not active after install/update"
+    printf 'Check: sudo journalctl -u watchdogvpn --no-pager -n 80\n'
+    return 1
+  fi
+
+  if ! sudo test -S "$socket_path"; then
+    fail "daemon IPC socket was not created: $socket_path"
+    printf 'Check: sudo systemctl status watchdogvpn --no-pager\n'
+    return 1
+  fi
+
+  set +e
+  status_output="$(WATCHDOGVPN_SOCKET_PATH="$socket_path" /usr/local/bin/watchdog status --json 2>&1)"
+  status_rc=$?
+  set -e
+  if ((status_rc == 0)); then
+    ok "daemon IPC status smoke test passed"
+    return 0
+  fi
+
+  if grep -Fqi "watchdogvpn' group" <<<"$status_output" \
+    || grep -Fqi "permission denied" <<<"$status_output"; then
+    warn "daemon is active, but this login session cannot access the IPC socket yet"
+    printf 'Open a new login session after the watchdogvpn group change, then run: watchdog status --json\n'
+    return 0
+  fi
+
+  fail "daemon IPC status smoke test failed"
+  printf '%s\n' "$status_output"
+  return 1
+}
+
 refresh_installed_desktop_launcher() {
   if [[ -f "$HOME/.local/share/applications/watchdogvpn.desktop" ]]; then
     install_desktop_launcher

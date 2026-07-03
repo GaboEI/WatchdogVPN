@@ -188,5 +188,7 @@ verify_systemd_units
 print_section "Refresh launchers and services"
 refresh_installed_desktop_launcher
 enable_systemd_units
+print_section "Daemon smoke test"
+smoke_test_watchdogvpn_daemon
 ensure_user_local_bin_path
 final_report

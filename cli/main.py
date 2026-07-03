@@ -26,6 +26,8 @@ from dns.state_manager import (
     DNSStateSnapshot,
     LocalDNSEntryPoint,
     SystemDNSStateManager,
+    load_snapshot,
+    save_snapshot,
 )
 from dns.tester import DNSTester
 from daemon.protocol import Response
@@ -732,20 +734,14 @@ def _require_dns_entrypoint(entrypoint: LocalDNSEntryPoint, timeout: float) -> N
 
 
 def _save_dns_snapshot(path: Path, snapshot: DNSStateSnapshot) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(snapshot.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    save_snapshot(path, snapshot)
 
 
 def _load_dns_snapshot(path: Path) -> DNSStateSnapshot:
-    if not path.exists():
+    snapshot = load_snapshot(path)
+    if snapshot is None:
         raise FileNotFoundError(path)
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError("dns snapshot file must contain a JSON object")
-    return DNSStateSnapshot.from_dict(data)
+    return snapshot
 
 
 def _print_json(data: object) -> None:

@@ -65,6 +65,11 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'StateDirectoryMode=2770' "state dire
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'repair_watchdogvpn_shared_state_permissions' "runtime install must normalize shared state permissions after migration"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'find "$target_dir" -type d -exec chmod 2770 {} +' "shared state directories must retain watchdogvpn group inheritance"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'find "$target_dir" -type f -exec chmod 0660 {} +' "shared state files must be readable and writable by the watchdogvpn group"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'smoke_test_watchdogvpn_daemon()' "runtime install must define a daemon smoke test"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'systemctl is-active --quiet watchdogvpn.service' "daemon smoke test must verify the service is active"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo test -S "$socket_path"' "daemon smoke test must verify the IPC socket exists"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '/usr/local/bin/watchdog status --json' "daemon smoke test must use a read-only daemon status command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'Open a new login session after the watchdogvpn group change' "daemon smoke test must distinguish session group refresh from daemon failure"
 if grep -Fq 'install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"' "$ROOT_DIR/lib/runtime.sh"; then
   printf 'FAIL: migration must not create /var/lib/watchdogvpn with install -d\n' >&2
   exit 1
@@ -78,6 +83,10 @@ assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/watchd
 assert_contains "$ROOT_DIR/lib/desktop.sh" 'desktop folder not detected; application-menu launcher was installed only' "desktop launcher should skip missing desktop folder cleanly"
 assert_contains "$ROOT_DIR/lib/desktop.sh" '"$desktop_dir" == "$HOME"' "desktop launcher should reject HOME as Desktop directory"
 assert_contains "$ROOT_DIR/install.sh" "settle_vpn_after_install" "installer must run VPN settle check before final validation"
+assert_contains "$ROOT_DIR/install.sh" "smoke_test_watchdogvpn_daemon" "installer must run daemon smoke validation"
+assert_contains "$ROOT_DIR/update.sh" "smoke_test_watchdogvpn_daemon" "updater must run daemon smoke validation"
+assert_order "$ROOT_DIR/install.sh" "enable_systemd_units" "smoke_test_watchdogvpn_daemon" "installer must smoke test after enabling services"
+assert_order "$ROOT_DIR/update.sh" "enable_systemd_units" "smoke_test_watchdogvpn_daemon" "updater must smoke test after enabling services"
 assert_install_order "$ROOT_DIR/install.sh" "settle_vpn_after_install" "post_install_validation" "installer must settle VPN before final validation"
 assert_contains "$ROOT_DIR/install.sh" "If the dashboard stays degraded, reboot once" "installer must provide degraded-state recovery guidance"
 

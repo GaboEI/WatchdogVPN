@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import stat
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -163,6 +165,25 @@ class CliDNSCommandTests(unittest.TestCase):
             saved = json.loads(snapshot_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["inventory"]["manager"], "resolv_conf")
             controller_cls.return_value.apply.assert_called_once()
+
+    def test_dns_snapshot_save_uses_shared_state_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            shared_dir = Path(tmp) / "watchdogvpn"
+            snapshot_path = shared_dir / "dns-state.json"
+            resolv_conf = Path(tmp) / "resolv.conf"
+            snapshot = _snapshot(resolv_conf)
+            old_umask = os.umask(0o077)
+            try:
+                with patch("config.paths.SYSTEM_CONFIG_DIR", shared_dir):
+                    cli.main._save_dns_snapshot(snapshot_path, snapshot)
+            finally:
+                os.umask(old_umask)
+
+            self.assertEqual(stat.S_IMODE(shared_dir.stat().st_mode), 0o2770)
+            self.assertEqual(stat.S_IMODE(snapshot_path.stat().st_mode), 0o660)
+            self.assertEqual(stat.S_IMODE(snapshot_path.with_name("dns-state.json.lock").stat().st_mode), 0o660)
+            saved = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["inventory"]["manager"], "resolv_conf")
 
     def test_dns_reset_restores_snapshot_and_removes_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

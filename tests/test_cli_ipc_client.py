@@ -63,6 +63,18 @@ class FakeRuntime:
         return ConnectionState(active_profile_id="rotated", mode="rules", status="recovered")
 
 
+class BlockingRuntime(FakeRuntime):
+    def __init__(self, profile_store: ProfileStore) -> None:
+        super().__init__(profile_store)
+        self.connect_started = threading.Event()
+        self.release_connect = threading.Event()
+
+    def connect(self, profile: Profile) -> bool:
+        self.connect_started.set()
+        self.release_connect.wait(timeout=5.0)
+        return super().connect(profile)
+
+
 def make_profile(profile_id: str = "p1") -> Profile:
     return Profile(
         id=profile_id,
@@ -134,6 +146,28 @@ class WatchdogIPCClientIntegrationTests(unittest.TestCase):
 
         self.assertEqual(event.event, EVENT_STATE_CHANGED)
         self.assertEqual(event.payload["active_profile_id"], self.profile.id)
+
+    def test_server_returns_structured_timeout_when_runtime_command_hangs(self) -> None:
+        self.server.stop()
+        self.runtime = BlockingRuntime(self.profile_store)
+        self.server = IPCServer(
+            self.request_socket,
+            self.event_socket,
+            RuntimeWorker(self.runtime),
+            request_timeout_seconds=0.05,
+        )
+        self.server.start()
+        self.client = WatchdogIPCClient(self.request_socket, self.event_socket, timeout=1.0)
+
+        connect_response = self.client.connect(self.profile.id)
+        self.assertFalse(connect_response.ok)
+        self.assertEqual(connect_response.error, "daemon runtime command timed out")
+        self.assertTrue(self.runtime.connect_started.is_set())
+
+        status_response = self.client.status()
+        self.assertFalse(status_response.ok)
+        self.assertEqual(status_response.error, "daemon runtime command timed out")
+        self.runtime.release_connect.set()
 
 
 class WatchdogIPCClientErrorTests(unittest.TestCase):
