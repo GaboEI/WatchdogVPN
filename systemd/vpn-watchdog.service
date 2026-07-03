@@ -1,8 +1,0 @@
-[Unit]
-  Description=AdGuard VPN watchdog (restart if tunnel is down or country is RU)
-  After=network-online.target
-  Wants=network-online.target
-
-  [Service]
-  Type=oneshot
-  ExecStart=/usr/local/sbin/vpn_watchdog.sh

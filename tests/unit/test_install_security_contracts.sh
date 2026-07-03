@@ -42,9 +42,6 @@ assert_install_order() {
   fi
 }
 
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_set" /usr/local/sbin/vpn_set 0700' "vpn_set must be installed root-only executable"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_rotate.sh" /usr/local/sbin/vpn_rotate.sh 0700' "vpn_rotate.sh must be installed root-only executable"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_watchdog.sh" /usr/local/sbin/vpn_watchdog.sh 0700' "vpn_watchdog.sh must be installed root-only executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700' "domain bypass helper must be installed root-only executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_config_defaults' "runtime install must create persistent config defaults"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'migrate_watchdogvpn_shared_state' "runtime install must migrate shared WatchdogVPN state"
@@ -79,14 +76,14 @@ assert_install_order "$ROOT_DIR/install.sh" "settle_vpn_after_install" "post_ins
 assert_contains "$ROOT_DIR/install.sh" "If the dashboard stays degraded, reboot once" "installer must provide degraded-state recovery guidance"
 
 assert_runtime_order "$ROOT_DIR/uninstall.sh" "rescue_system_dns" "remove_runtime_files" "uninstall must run DNS rescue before removing runtime files"
-assert_contains "$ROOT_DIR/uninstall.sh" "This script never removes the official AdGuard VPN CLI or account/license state." "uninstall must declare preserved vendor CLI state"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''/etc/watchdogvpn/\n'\''' "uninstall preservation contract must mention WatchdogVPN config directory"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_legacy_adguard_units' "uninstall must clean up orphaned AdGuard-era systemd units from pre-removal installs"
+assert_contains "$ROOT_DIR/uninstall.sh" 'adguardvpn.service vpn-watchdog.service vpn-watchdog.timer' "legacy unit cleanup must target the removed AdGuard-era units"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$WATCHDOGVPN_CONFIG_DIR"' "purge-config must remove WatchdogVPN config directory"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] config: %s\n'\'' "$WATCHDOGVPN_CONFIG_DIR"' "uninstall must preserve WatchdogVPN config by default"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /var/lib/watchdogvpn' "purge-state must remove WatchdogVPN runtime state"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] state: /var/lib/watchdogvpn\n'\''' "uninstall must preserve WatchdogVPN runtime state by default"
 
-assert_contains "$ROOT_DIR/lib/adguard_vpn_cli.sh" "does not currently pin that vendor script by checksum" "AdGuard VPN CLI external installer risk must be explicit"
 assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn' "OpenVPN normal compatibility requires installer dependency detection"
 assert_contains "$ROOT_DIR/distros/ubuntu.sh" "openvpn" "Ubuntu package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/debian.sh" "openvpn" "Debian package set must include OpenVPN"

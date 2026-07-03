@@ -24,6 +24,9 @@ assert_contains "$output" "IMPLEMENTED=false"
 assert_contains "$output" "SUPPORTS_ROTATION=false"
 assert_contains "$output" "TRUTH_INTERFACE=unknown"
 
+# "adguard" is no longer a supported backend value (full removal, no
+# back-compat): an existing config still carrying it must fail validate,
+# not silently succeed.
 cat >"$tmpdir/config.toml" <<'EOF'
 [backend]
 mode = "adguard"
@@ -34,7 +37,17 @@ mode="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" mode)"
 active="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" active)"
 [[ "$mode" == "adguard" ]]
 [[ "$active" == "adguard" ]]
-WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" validate
+
+set +e
+adguard_output="$(WATCHDOGVPN_CONFIG_FILE="$tmpdir/config.toml" "$SCRIPT" validate 2>&1)"
+adguard_rc=$?
+set -e
+if ((adguard_rc != 65)); then
+  printf 'expected adguard backend to be rejected with rc 65, got %s\n%s\n' "$adguard_rc" "$adguard_output" >&2
+  exit 1
+fi
+assert_contains "$adguard_output" "unsupported backend: adguard"
+assert_contains "$adguard_output" "implemented backends: custom-vps"
 
 cat >"$tmpdir/config.toml" <<'EOF'
 [backend]

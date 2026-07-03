@@ -46,10 +46,6 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "health_status_cooldown_seconds": 300,
         "max_backoff_interval_seconds": 300,
     },
-    "adguard": {
-        "enabled": False,
-        "legacy_mode": True,
-    },
 }
 
 CONFIG_BOOL_FIELDS = {
@@ -57,8 +53,6 @@ CONFIG_BOOL_FIELDS = {
     ("kill_switch", "block_ipv6"),
     ("kill_switch", "allow_lan"),
     ("rotation", "enabled"),
-    ("adguard", "enabled"),
-    ("adguard", "legacy_mode"),
 }
 CONFIG_INT_FIELDS = {
     ("watchdog", "check_interval_seconds"),

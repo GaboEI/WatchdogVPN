@@ -22,8 +22,8 @@ for section in backend custom_vps language timers dns tui reporting; do
   assert_contains "$CONFIG_DOC" "[$section]" "configuration docs must mention [$section]"
 done
 
-assert_contains "$CONFIG_EXAMPLE" 'mode = "adguard"' "default backend mode must be adguard"
-assert_contains "$CONFIG_EXAMPLE" 'active = "adguard"' "default backend must be adguard"
+assert_contains "$CONFIG_EXAMPLE" 'mode = "custom-vps"' "default backend mode must be custom-vps"
+assert_contains "$CONFIG_EXAMPLE" 'active = "custom-vps"' "default backend must be custom-vps"
 assert_contains "$CONFIG_EXAMPLE" 'enabled = false' "custom VPS must default disabled"
 assert_contains "$CONFIG_EXAMPLE" 'ssh_port = 22' "custom VPS SSH port default missing"
 assert_contains "$CONFIG_EXAMPLE" 'current = "en"' "default language must be English"

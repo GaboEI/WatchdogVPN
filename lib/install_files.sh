@@ -90,20 +90,6 @@ create_config_if_missing() {
   run_step sudo install -m "$mode" -o root -g root "$src" "$dest"
 }
 
-create_service_user() {
-  local user="${1:-adgvpn}" home="${2:-/var/lib/adguardvpn}" shell
-  if getent passwd "$user" >/dev/null 2>&1; then
-    printf '[KEEP] service user exists: %s\n' "$user"
-    create_owned_dir "$home" "$user" "$user" 0755
-    return 0
-  fi
-  shell="/usr/sbin/nologin"
-  [[ -x "$shell" ]] || shell="/usr/bin/nologin"
-  [[ -x "$shell" ]] || shell="/bin/false"
-  run_step sudo useradd --system --home-dir "$home" --create-home --shell "$shell" "$user"
-  create_owned_dir "$home" "$user" "$user" 0755
-}
-
 create_system_user_no_home() {
   local user="$1" shell
   if getent passwd "$user" >/dev/null 2>&1; then

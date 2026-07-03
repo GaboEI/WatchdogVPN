@@ -19,12 +19,9 @@ Uso:
   vpn_backend configured
 
 Contrato:
-  "custom-vps" es el backend por defecto para instalaciones nuevas: es
-  experimental y controla un servicio local configurado por el usuario. No
-  guarda secretos ni instala protocolos por si solo.
-  "adguard" sigue siendo un valor aceptado solo por compatibilidad con
-  instalaciones existentes que ya lo tenian configurado; el instalador ya no
-  lo ofrece ni lo instala.
+  "custom-vps" es el unico backend soportado: es experimental y controla un
+  servicio local configurado por el usuario. No guarda secretos ni instala
+  protocolos por si solo.
 USAGE
 }
 
@@ -95,7 +92,6 @@ custom_vps_configured() {
 
 implemented_backend() {
   case "$(active_backend)" in
-    adguard) printf 'true\n' ;;
     custom-vps)
       if custom_vps_configured; then
         printf 'true\n'
@@ -111,9 +107,6 @@ validate_backend() {
   local backend service
   backend="$(active_backend)"
   case "$backend" in
-    adguard)
-      return 0
-      ;;
     custom-vps)
       if [[ "$(custom_vps_enabled)" != "true" ]]; then
         printf 'backend custom-vps is active but custom_vps.enabled is not true\n' >&2
@@ -132,22 +125,18 @@ validate_backend() {
       ;;
     *)
       printf 'unsupported backend: %s\n' "$backend" >&2
-      printf 'implemented backends: adguard custom-vps\n' >&2
+      printf 'implemented backends: custom-vps\n' >&2
       return 65
       ;;
   esac
 }
 
 supports_rotation() {
-  case "$(active_backend)" in
-    adguard) printf 'true\n' ;;
-    *) printf 'false\n' ;;
-  esac
+  printf 'false\n'
 }
 
 truth_interface() {
   case "$(active_backend)" in
-    adguard) printf 'tun0\n' ;;
     custom-vps)
       local iface
       iface="$(custom_vps_interface)"

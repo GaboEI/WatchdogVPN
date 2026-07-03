@@ -4,7 +4,6 @@ set -euo pipefail
 VERSION="v0.3.1"
 REPORT_DIR="${WATCHDOGVPN_REPORT_DIR:-$HOME}"
 TRUTH_BIN="${WATCHDOGVPN_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
-AUTH_BIN="${WATCHDOGVPN_AUTH_BIN:-/usr/local/bin/vpn_auth_check}"
 VPNCTL_BIN="${WATCHDOGVPN_VPNCTL_BIN:-/usr/local/bin/vpnctl}"
 BACKEND_BIN="${WATCHDOGVPN_BACKEND_BIN:-/usr/local/bin/vpn_backend}"
 DOCTOR_BIN="${WATCHDOGVPN_DOCTOR_BIN:-./doctor.sh}"
@@ -174,7 +173,7 @@ Usage:
   watchdogvpn backend help
 
 Shows the active WatchdogVPN backend contract without changing runtime state.
-In this phase only the "adguard" backend is implemented.
+In this phase only the "custom-vps" backend is implemented.
 USAGE
 }
 
@@ -675,15 +674,14 @@ generate_report() {
 
     run_report_command "VPN truth" "$TRUTH_BIN"
     run_report_command "Backend status" "$BACKEND_BIN" status
-    run_report_command "VPN auth" "$AUTH_BIN"
     run_report_command "VPN status" "$VPNCTL_BIN" status
 
     run_shell_report_command "Systemd units" \
-      "systemctl --no-pager --plain status adguardvpn.service vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer"
+      "systemctl --no-pager --plain status watchdogvpn.service vpn-domain-bypass.timer myvpn-logrotate.timer"
     run_shell_report_command "Timers" \
-      "systemctl list-timers --all vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager"
+      "systemctl list-timers --all vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager"
     run_shell_report_command "Recent WatchdogVPN events" \
-      "sudo -n tail -n 80 /var/log/myvpn/vpn-events.log 2>/dev/null || tail -n 80 /var/log/myvpn/vpn-events.log 2>/dev/null || true"
+      "sudo -n tail -n 80 $LOG_DIR/vpn-events.log 2>/dev/null || tail -n 80 $LOG_DIR/vpn-events.log 2>/dev/null || true"
   } >"$report"
 
   printf 'Report written: %s\n' "$report"
@@ -962,12 +960,12 @@ backend_command() {
       if command -v "$BACKEND_BIN" >/dev/null 2>&1 || [[ -x "$BACKEND_BIN" ]]; then
         "$BACKEND_BIN" status
       else
-        printf 'MODE=adguard\n'
-        printf 'BACKEND=adguard\n'
+        printf 'MODE=custom-vps\n'
+        printf 'BACKEND=custom-vps\n'
         printf 'CUSTOM_VPS_ENABLED=false\n'
-        printf 'IMPLEMENTED=true\n'
-        printf 'SUPPORTS_ROTATION=true\n'
-        printf 'TRUTH_INTERFACE=tun0\n'
+        printf 'IMPLEMENTED=false\n'
+        printf 'SUPPORTS_ROTATION=false\n'
+        printf 'TRUTH_INTERFACE=unknown\n'
       fi
       ;;
     help|--help|-h)

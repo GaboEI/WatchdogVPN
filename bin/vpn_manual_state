@@ -34,7 +34,7 @@ is_manual_off() {
 }
 
 write_manual_off() {
-  local reason="${1:-user-request}" backend="${2:-adguard}" tmp
+  local reason="${1:-user-request}" backend="${2:-custom-vps}" tmp
   if (( EUID == 0 )); then
     install -d -m 0755 -o root -g root "$(state_dir)"
   else
@@ -75,7 +75,7 @@ case "${1:-status}" in
     ;;
   set-manual-off)
     shift || true
-    write_manual_off "${1:-user-request}" "${2:-adguard}"
+    write_manual_off "${1:-user-request}" "${2:-custom-vps}"
     ;;
   clear)
     clear_manual_off

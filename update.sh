@@ -126,7 +126,6 @@ require_existing_installation() {
 
 print_preservation_contract() {
   print_section "Preserved by update"
-  printf '/etc/adguardvpn.env\n'
   printf '/etc/vpn-domain-bypass.conf\n'
   printf '/var/lib/vpn-rotate/\n'
   printf '/var/log/myvpn/\n'
@@ -136,7 +135,6 @@ print_preservation_contract() {
 
 final_report() {
   print_title "WatchdogVPN update completed"
-  print_field "Preserved config" "/etc/adguardvpn.env"
   print_field "Preserved bypass" "/etc/vpn-domain-bypass.conf"
   print_field "Preserved state" "/var/lib/vpn-rotate/"
   print_field "Preserved logs" "/var/log/myvpn/"

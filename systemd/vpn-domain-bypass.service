@@ -1,6 +1,6 @@
 [Unit]
 Description=Apply domain bypass routes (outside VPN)
-After=network-online.target adguardvpn.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

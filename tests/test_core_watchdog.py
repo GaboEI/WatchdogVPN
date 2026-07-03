@@ -1013,7 +1013,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         from config.app_config import AppConfig
         from unittest.mock import MagicMock
         app_config = MagicMock(spec=AppConfig)
-        app_config.load.return_value = {"watchdog": {"reconnect_attempts": 3}, "kill_switch": {"enabled": False}, "rotation": {}, "adguard": {}}
+        app_config.load.return_value = {"watchdog": {"reconnect_attempts": 3}, "kill_switch": {"enabled": False}, "rotation": {}}
 
         from rotation.recovery import Recovery
         from rotation.rotation_engine import RotationEngine
@@ -1056,7 +1056,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1112,7 +1111,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1165,7 +1163,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1199,7 +1196,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": False},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1241,7 +1237,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1273,7 +1268,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1, "reconnect_backoff_seconds": 7},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": False, "max_backoff_interval_seconds": 8},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1311,7 +1305,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": True},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1347,7 +1340,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1383,7 +1375,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {"reconnect_attempts": 1},
             "kill_switch": {"enabled": True},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         from rotation.recovery import Recovery
@@ -1432,7 +1423,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         runtime.app_config = MagicMock(spec=AppConfig)
         runtime.app_config.load.return_value = {
             "watchdog": {}, "kill_switch": {"enabled": False},
-            "rotation": {"enabled": True}, "adguard": {},
+            "rotation": {"enabled": True},
         }
 
         result = runtime.rotate_now(force=True)
@@ -1467,7 +1458,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         runtime.rotate_now(force=True)
@@ -1509,7 +1499,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
             "watchdog": {},
             "kill_switch": {"enabled": False},
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         runtime.rotate_now(force=True)
@@ -1545,7 +1534,6 @@ class WatchdogIntegrationTests(unittest.TestCase):
                 "allow_lan": False,
             },
             "rotation": {"enabled": True},
-            "adguard": {},
         }
 
         result = runtime.rotate_now(force=True)

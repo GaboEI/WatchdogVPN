@@ -19,7 +19,7 @@ Modos:
   --help    Muestra esta ayuda.
 
 Contrato de estado:
-  BACKEND=adguard    Backend activo segun WatchdogVPN.
+  BACKEND=custom-vps Backend activo segun WatchdogVPN.
   INTERFACE=tun0     Interfaz de tunel esperada para el backend activo.
   STATUS=UP        tun0 UP, ruta por tun0 e IP publica OK.
   STATUS=DEGRADED  tun0 UP, pero ruta o IP publica no valida.
@@ -176,15 +176,15 @@ TUN="DOWN"
 ROUTE="UNKNOWN"
 IP="FAIL"
 IP_ADDR="none"
-BACKEND="adguard"
+BACKEND="custom-vps"
 INTERFACE="tun0"
 
 backend_context() {
   if [[ -x "$BACKEND_BIN" ]]; then
-    BACKEND="$("$BACKEND_BIN" active 2>/dev/null || printf 'adguard')"
+    BACKEND="$("$BACKEND_BIN" active 2>/dev/null || printf 'custom-vps')"
     INTERFACE="$("$BACKEND_BIN" truth-interface 2>/dev/null || printf 'tun0')"
   fi
-  [[ -n "$BACKEND" ]] || BACKEND="adguard"
+  [[ -n "$BACKEND" ]] || BACKEND="custom-vps"
   [[ -n "$INTERFACE" ]] || INTERFACE="tun0"
 }
 

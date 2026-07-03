@@ -36,8 +36,6 @@ Options:
   --skip-dns-rescue
                   Do not reset system DNS before removing product files.
   --help          Show this help.
-
-This script never removes the official AdGuard VPN CLI or account/license state.
 USAGE
 }
 
@@ -115,17 +113,12 @@ print_contract() {
   printf 'desktop launcher\n'
 
   print_section "Preserved unless explicitly purged"
-  printf '/etc/adguardvpn.env\n'
   printf '/etc/vpn-domain-bypass.conf\n'
   printf '/etc/watchdogvpn/\n'
   printf '/var/log/myvpn/\n'
   printf '/var/lib/vpn-rotate/\n'
   printf '/var/lib/watchdogvpn/\n'
   printf 'Conky configuration\n'
-
-  print_section "Never removed"
-  printf 'official AdGuard VPN CLI\n'
-  printf 'AdGuard account/license state\n'
 }
 
 remove_runtime_files() {
@@ -191,6 +184,21 @@ remove_optional_user_data() {
   fi
 }
 
+remove_legacy_adguard_units() {
+  local unit
+  for unit in adguardvpn.service vpn-watchdog.service vpn-watchdog.timer \
+    vpn-rotate.service vpn-rotate.timer vpn-rotate-firstboot.timer \
+    vpn-rotate-onboot.service; do
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      run_step sudo systemctl disable --now "$unit"
+    else
+      sudo systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    fi
+    remove_root_path "/etc/systemd/system/$unit"
+  done
+  run_step sudo systemctl daemon-reload
+}
+
 rescue_system_dns() {
   if ((RUN_DNS_RESCUE == 0)); then
     printf '[SKIP] DNS rescue disabled\n'
@@ -220,8 +228,6 @@ rescue_system_dns() {
 
 final_report() {
   print_title "WatchdogVPN uninstall completed"
-  print_field "AdGuard VPN CLI" "preserved"
-  print_field "Account/license state" "preserved"
   print_field "Config purged" "$(yes_no_word "$PURGE_CONFIG")"
   print_field "Logs purged" "$(yes_no_word "$PURGE_LOGS")"
   print_field "Rotation state purged" "$(yes_no_word "$PURGE_STATE")"
@@ -256,7 +262,7 @@ else
 fi
 
 if ((ASSUME_YES == 0)); then
-  printf '\nThis removes WatchdogVPN product files but keeps the official AdGuard VPN CLI.\n'
+  printf '\nThis removes WatchdogVPN product files from this system.\n'
   if ! prompt_yes_no "Remove WatchdogVPN product files from this system?" no; then
     warn "uninstall cancelled"
     exit 0
@@ -287,6 +293,8 @@ print_section "DNS rescue"
 rescue_system_dns
 print_section "Remove systemd units"
 remove_systemd_units
+print_section "Remove legacy AdGuard-era units"
+remove_legacy_adguard_units
 print_section "Remove product files"
 remove_runtime_files
 print_section "Remove optional user data"

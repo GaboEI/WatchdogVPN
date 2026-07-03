@@ -3,13 +3,6 @@ set -euo pipefail
 
 SYSTEMD_UNITS=(
   watchdogvpn.service
-  adguardvpn.service
-  vpn-rotate.service
-  vpn-rotate.timer
-  vpn-rotate-firstboot.timer
-  vpn-rotate-onboot.service
-  vpn-watchdog.service
-  vpn-watchdog.timer
   vpn-domain-bypass.service
   vpn-domain-bypass.timer
   myvpn-logrotate.service
@@ -18,9 +11,6 @@ SYSTEMD_UNITS=(
 
 SYSTEMD_ENABLE_UNITS=(
   watchdogvpn.service
-  adguardvpn.service
-  vpn-rotate.timer
-  vpn-watchdog.timer
   vpn-domain-bypass.timer
   myvpn-logrotate.timer
 )
@@ -69,13 +59,6 @@ enable_systemd_units() {
 disable_systemd_units() {
   local unit
   for unit in "${SYSTEMD_ENABLE_UNITS[@]}"; do
-    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-      run_step sudo systemctl disable --now "$unit"
-    else
-      sudo systemctl disable --now "$unit" >/dev/null 2>&1 || true
-    fi
-  done
-  for unit in vpn-rotate-firstboot.timer vpn-rotate-onboot.service; do
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
       run_step sudo systemctl disable --now "$unit"
     else

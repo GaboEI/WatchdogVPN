@@ -54,7 +54,7 @@ class ConfigStorageTests(unittest.TestCase):
             config = AppConfig(path)
             loaded = config.load()
             self.assertEqual(loaded["watchdog"]["check_interval_seconds"], 30)
-            self.assertEqual(loaded["adguard"]["legacy_mode"], True)
+            self.assertEqual(loaded["rotation"]["enabled"], False)
 
             loaded["watchdog"]["check_interval_seconds"] = 45
             config.save(loaded)

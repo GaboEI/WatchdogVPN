@@ -1,8 +1,0 @@
-[Unit]
-Description=Rotate VPN on boot (avoid last location)
-After=network-online.target adguardvpn.service
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/vpn_rotate.sh

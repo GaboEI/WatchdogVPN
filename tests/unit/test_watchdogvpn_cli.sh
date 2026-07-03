@@ -134,12 +134,10 @@ force_remote_back_one_commit() {
 
 make_cmd "$TMP_DIR/truth" \
   'printf "STATUS=UP\nTUN=UP\nROUTE=TUN\nIP=OK\nIP_ADDR=198.51.100.10\n"'
-make_cmd "$TMP_DIR/auth" \
-  'printf "AUTH=OK\nREASON=license_valid\nDETAIL=user@example.com 203.0.113.4\n"'
 make_cmd "$TMP_DIR/vpnctl" \
   'printf "VPN STATUS: UP\npublic ip: 198.51.100.10\n"'
 make_cmd "$TMP_DIR/backend" \
-  'case "${1:-}" in status) printf "MODE=adguard\nBACKEND=adguard\nCUSTOM_VPS_ENABLED=false\nIMPLEMENTED=true\nSUPPORTS_ROTATION=true\nTRUTH_INTERFACE=tun0\n";; active) printf "adguard\n";; mode) printf "adguard\n";; validate) exit 0;; *) exit 64;; esac'
+  'case "${1:-}" in status) printf "MODE=custom-vps\nBACKEND=custom-vps\nCUSTOM_VPS_ENABLED=true\nIMPLEMENTED=true\nSUPPORTS_ROTATION=false\nTRUTH_INTERFACE=wg0\n";; active) printf "custom-vps\n";; mode) printf "custom-vps\n";; validate) exit 0;; *) exit 64;; esac'
 
 cat >"$TMP_DIR/config.toml" <<'EOF'
 [language]
@@ -169,9 +167,9 @@ init_runtime_update_repo "$UPDATE_REPO" "$UPDATE_REMOTE"
 output="$(
   WATCHDOGVPN_REPORT_DIR="$TMP_DIR" \
   WATCHDOGVPN_TRUTH_BIN="$TMP_DIR/truth" \
-  WATCHDOGVPN_AUTH_BIN="$TMP_DIR/auth" \
   WATCHDOGVPN_BACKEND_BIN="$TMP_DIR/backend" \
   WATCHDOGVPN_VPNCTL_BIN="$TMP_DIR/vpnctl" \
+  WATCHDOGVPN_LOG_DIR="$LOG_DIR" \
   "$SCRIPT" report
 )"
 
@@ -230,8 +228,8 @@ if WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 0 >/dev/null 2>&1; then
 fi
 backend_output="$(WATCHDOGVPN_BACKEND_BIN="$TMP_DIR/backend" "$SCRIPT" backend status)"
 printf '%s\n' "$backend_output" | grep -Fq 'WatchdogVPN backend status'
-printf '%s\n' "$backend_output" | grep -Fq 'MODE=adguard'
-printf '%s\n' "$backend_output" | grep -Fq 'BACKEND=adguard'
+printf '%s\n' "$backend_output" | grep -Fq 'MODE=custom-vps'
+printf '%s\n' "$backend_output" | grep -Fq 'BACKEND=custom-vps'
 if "$SCRIPT" backend unknown >/dev/null 2>&1; then
   printf 'FAIL: unknown backend command should fail\n' >&2
   exit 1

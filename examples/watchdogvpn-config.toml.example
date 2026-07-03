@@ -4,8 +4,8 @@
 # It must not contain credentials, tokens, account data or private keys.
 
 [backend]
-mode = "adguard"
-active = "adguard"
+mode = "custom-vps"
+active = "custom-vps"
 
 [custom_vps]
 enabled = false

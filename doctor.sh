@@ -76,16 +76,6 @@ read_key_value() {
   awk -F= -v wanted="$key" '$1 == wanted {sub(/^[[:space:]]+/, "", $2); sub(/[[:space:]]+$/, "", $2); print $2; exit}'
 }
 
-adguard_cli_path() {
-  if have_cmd adguardvpn-cli; then
-    command -v adguardvpn-cli
-  elif [[ -x /usr/local/bin/adguardvpn-cli ]]; then
-    printf '%s\n' /usr/local/bin/adguardvpn-cli
-  else
-    return 1
-  fi
-}
-
 print_package_hint() {
   local packages=("$@")
   ((${#packages[@]} > 0)) || return 0
@@ -193,40 +183,6 @@ else
   mark_fail "NetworkManager service not found"
 fi
 
-section "AdGuard VPN"
-if cli="$(adguard_cli_path)"; then
-  mark_ok "adguardvpn-cli detected: $cli"
-  version="$("$cli" --version 2>/dev/null | head -n1 || true)"
-  [[ -n "$version" ]] && info "version: $version" || mark_warn "could not read adguardvpn-cli version"
-else
-  mark_fail "adguardvpn-cli not detected"
-fi
-
-if getent passwd adgvpn >/dev/null 2>&1; then
-  mark_ok "service user: adgvpn"
-else
-  mark_warn "service user missing: adgvpn"
-fi
-
-if [[ -x "$ROOT_DIR/bin/vpn_auth_check" ]]; then
-  auth_raw="$(ADGUARDVPN_CLI="${cli:-/usr/local/bin/adguardvpn-cli}" "$ROOT_DIR/bin/vpn_auth_check" 2>/dev/null || true)"
-  auth_state="$(printf '%s\n' "$auth_raw" | read_key_value AUTH)"
-  auth_reason="$(printf '%s\n' "$auth_raw" | read_key_value REASON)"
-  case "$auth_state" in
-    OK)
-      mark_ok "auth: OK"
-      ;;
-    EXPIRED)
-      mark_fail "auth expired: ${auth_reason:-unknown}"
-      ;;
-    *)
-      mark_warn "auth unknown: ${auth_reason:-unknown}"
-      ;;
-  esac
-else
-  mark_fail "repo helper missing: bin/vpn_auth_check"
-fi
-
 section "Repository Runtime"
 check_repo_file "tui/VPN" exec
 check_repo_file "tui/watchdogvpn/__init__.py"
@@ -241,7 +197,6 @@ check_repo_file "tui/watchdogvpn/styles.py"
 check_repo_file "tui/watchdogvpn/validators.py"
 check_repo_file "bin/vpn_truth_check" exec
 check_repo_file "bin/vpn_backend" exec
-check_repo_file "bin/vpn_auth_check" exec
 check_repo_file "bin/vpn_dns_rescue" exec
 check_repo_file "bin/vpn_manual_state" exec
 check_repo_file "bin/vpn_notify" exec
@@ -249,12 +204,7 @@ check_repo_file "bin/vpnctl" exec
 check_repo_file "bin/watchdog" exec
 check_repo_file "bin/watchdogvpn" exec
 check_repo_file "bin/watchdogvpn-daemon" exec
-check_repo_file "sbin/vpn_set" exec
-check_repo_file "sbin/vpn_rotate.sh" exec
-check_repo_file "sbin/vpn_watchdog.sh" exec
 check_repo_file "systemd/watchdogvpn.service"
-check_repo_file "systemd/vpn-watchdog.timer"
-check_repo_file "systemd/vpn-rotate.timer"
 check_repo_file "etc/logrotate.d/myvpn"
 
 section "Current Installation"
@@ -262,7 +212,6 @@ installed_any=0
 for path in \
   /usr/local/bin/vpn_truth_check \
   /usr/local/bin/vpn_backend \
-  /usr/local/bin/vpn_auth_check \
   /usr/local/bin/vpn_dns_rescue \
   /usr/local/bin/vpn_manual_state \
   /usr/local/bin/vpn_notify \
@@ -271,9 +220,6 @@ for path in \
   /usr/local/bin/watchdogvpn \
   /usr/local/bin/watchdogvpn-daemon \
   /usr/local/lib/watchdogvpn \
-  /usr/local/sbin/vpn_set \
-  /usr/local/sbin/vpn_rotate.sh \
-  /usr/local/sbin/vpn_watchdog.sh \
   "$HOME/.local/bin/VPN" \
   "$HOME/.local/share/watchdogvpn/watchdogvpn"
 do
@@ -368,7 +314,7 @@ else
 fi
 
 section "Legacy Systemd Units"
-for unit in adguardvpn.service vpn-watchdog.timer vpn-rotate.timer vpn-domain-bypass.timer myvpn-logrotate.timer; do
+for unit in vpn-domain-bypass.timer myvpn-logrotate.timer; do
   if systemd_unit_known "$unit"; then
     info "$unit: active=$(systemd_active_state "$unit") enabled=$(systemd_enabled_state "$unit")"
   else
