@@ -9,8 +9,10 @@ from models.profile import Profile
 
 
 def _profiles_path() -> Path:
-    base = resolve_config_dir()
-    return Path(os.environ.get("WATCHDOGVPN_PROFILES_FILE", base / "profiles.json"))
+    override = os.environ.get("WATCHDOGVPN_PROFILES_FILE")
+    if override:
+        return Path(override)
+    return resolve_config_dir() / "profiles.json"
 
 
 class ProfileStore:

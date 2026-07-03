@@ -10,8 +10,10 @@ from rules.models import DEFAULT_RULE_GROUPS, Rule, RuleGroup, validate_group_na
 
 
 def _rules_dir() -> Path:
-    base = resolve_config_dir()
-    return Path(os.environ.get("WATCHDOGVPN_RULES_DIR", base / "rules"))
+    override = os.environ.get("WATCHDOGVPN_RULES_DIR")
+    if override:
+        return Path(override)
+    return resolve_config_dir() / "rules"
 
 
 class RuleStoreError(RuntimeError):

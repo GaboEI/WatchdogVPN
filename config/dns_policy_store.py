@@ -13,7 +13,10 @@ def _config_dir() -> Path:
 
 
 def _dns_policy_path() -> Path:
-    return Path(os.environ.get("WATCHDOGVPN_DNS_POLICY_FILE", _config_dir() / "dns-policy.json"))
+    override = os.environ.get("WATCHDOGVPN_DNS_POLICY_FILE")
+    if override:
+        return Path(override)
+    return _config_dir() / "dns-policy.json"
 
 
 class DNSPolicyStore:

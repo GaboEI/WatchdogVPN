@@ -323,6 +323,25 @@ starting Task 12.2, but should be considered before release.
 | AUD-P12-006 daemon stop does not explicitly disconnect runtime | MEDIUM | Task 12.5 | Validate `watchdog disconnect`, daemon stop/restart, and sing-box crash cleanup; create a Phase 12 fix subtask if cleanup is not clean. |
 | AUD-P12-007 route rule shorthand is deprecated | LOW | Task 12.3 or Task 12.6 | Either migrate generated route rules to explicit `action: route` or record a low-risk compatibility decision before Phase 12 closes. |
 
+## Task 12.2 Resolution Notes
+
+Task 12.2 resolved the model-owned findings:
+
+- AUD-P12-001: added a first-class app-policy model and store in
+  `app_policy/`, with schema versioning, strict validation, atomic JSON
+  persistence, environment path override, and `load_or_disabled()` for
+  fail-closed runtime callers.
+- AUD-P12-005: app-policy v1 rejects `auto` and `group:<id>` actions. Only
+  `current`, `direct`, and `block` are accepted until Phase 14 provides real
+  multi-outbound selectors.
+- A related persistence bug pattern was fixed while validating Task 12.2:
+  explicit path overrides now bypass shared-state discovery before touching
+  `/var/lib/watchdogvpn`.
+
+Task 12.2 deliberately did not wire runtime, DNS, kill switch, TUN hardening, or
+daemon cleanup. Those remain owned by Task 12.3 and Task 12.5 in the matrix
+above.
+
 ## Recommended Design
 
 1. Keep sing-box as the first implementation mechanism.

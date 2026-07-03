@@ -29,12 +29,10 @@ DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
 
 
 def default_snapshot_path() -> Path:
-    return Path(
-        os.environ.get(
-            "WATCHDOGVPN_DNS_SNAPSHOT_FILE",
-            resolve_config_dir() / DEFAULT_DNS_SNAPSHOT_NAME,
-        )
-    )
+    override = os.environ.get("WATCHDOGVPN_DNS_SNAPSHOT_FILE")
+    if override:
+        return Path(override)
+    return resolve_config_dir() / DEFAULT_DNS_SNAPSHOT_NAME
 
 
 def load_snapshot(path: Path) -> "DNSStateSnapshot | None":

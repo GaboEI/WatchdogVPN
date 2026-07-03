@@ -9,8 +9,10 @@ from models.provider import Provider
 
 
 def _providers_path() -> Path:
-    base = resolve_config_dir()
-    return Path(os.environ.get("WATCHDOGVPN_PROVIDERS_FILE", base / "providers.json"))
+    override = os.environ.get("WATCHDOGVPN_PROVIDERS_FILE")
+    if override:
+        return Path(override)
+    return resolve_config_dir() / "providers.json"
 
 
 class ProviderLimitError(ValueError):

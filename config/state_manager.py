@@ -48,8 +48,13 @@ STATE_STRING_FIELDS = {
 
 
 def _state_path() -> Path:
-    base = Path(os.environ.get("WATCHDOGVPN_STATE_DIR", resolve_config_dir()))
-    return Path(os.environ.get("WATCHDOGVPN_STATE_FILE", base / "state.toml"))
+    file_override = os.environ.get("WATCHDOGVPN_STATE_FILE")
+    if file_override:
+        return Path(file_override)
+    dir_override = os.environ.get("WATCHDOGVPN_STATE_DIR")
+    if dir_override:
+        return Path(dir_override) / "state.toml"
+    return resolve_config_dir() / "state.toml"
 
 
 class StateManager:
