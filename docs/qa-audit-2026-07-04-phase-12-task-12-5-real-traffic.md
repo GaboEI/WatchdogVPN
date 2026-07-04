@@ -810,6 +810,36 @@ Normal disconnect, systemd stop, systemd restart, and sing-box child crash
 cleanup now leave no stale routes, nftables state, TUN link, listeners, or
 orphan sing-box processes after explicit cleanup.
 
+### 8.9 Remaining closure checklist before Task 12.5 can close
+
+Task 12.5 must not be closed only because the named audit findings above are
+resolved. Before moving to Task 12.6, run a short checklist audit against the
+original Task 12.5 acceptance text and close any remaining matrix gaps.
+
+Planned order:
+
+1. Audit this report against the original Task 12.5 checklist:
+   - one app forced direct while another goes through VPN
+   - one app forced through VPN while default traffic goes direct
+   - blocked app cannot reach the network
+   - DNS follows the chosen traffic policy
+   - kill switch does not allow non-tunnel leaks
+   - disconnect/reset/systemd stop/restart/sing-box crash leave no stale state
+   - coverage includes terminal/curl, browser, and package-manager/updater-style
+     process behavior when safe
+2. If the audit confirms gaps, run bounded VM validation for:
+   - default direct plus one app forced through the VPN
+   - a browser process, if a suitable browser is available in the VM
+3. Use the same safety protocol as the cleanup/crash tests:
+   - external conversation VPN disconnected before WatchdogVPN tests
+   - one WatchdogVPN TUN exposure at a time
+   - short timeouts
+   - explicit disconnect and forced cleanup checks
+   - profile/state/app-policy backup and restore
+   - no blind repeat after a failure
+4. Document the pass/fail result here and in the master plan before marking
+   Task 12.5 closed.
+
 ## 9. What part of the problem may come from treating this as a "normal" app
 
 Most of what was found and fixed this session **is** "normal app" plumbing,
@@ -865,8 +895,8 @@ route around it by making the product leakier.
   helper executable can be blocked by exact `process_path` while unrelated
   traffic continues through the VPN. Kill switch no-leak validation then
   proved bounded real daemon traffic stays on the VPN path with the kill
-  switch active. Crash cleanup still needs validation before the risk can be
-  closed.
+  switch active. Cleanup/crash validation exposed one real child-crash residue
+  bug, then confirmed clean teardown after the fix.
 - `strict_route`+`auto_redirect` stability under real, sustained, multi-app
   desktop load is unproven and has now caused two severe machine-level
   incidents, the second requiring a hard power cut. The exact failure
