@@ -665,6 +665,65 @@ match the helper executable that owns the socket, preferably with exact
 therefore documented as an expected helper-process limitation of
 parent-process matching, not a failure of app-policy enforcement.
 
+### 8.7 Kill switch no-leak validation - 2026-07-04
+
+The next bounded VM validation tested AUD-P12-003 with a real daemon-managed
+TUN connection, nftables kill switch rules, `strict_route=true`, and
+`auto_redirect=true`.
+
+Implementation changes made during this validation:
+
+- The kill switch now carries the active profile's literal endpoint IP when
+  available, allowing the VPN transport endpoint while the default policy
+  remains drop.
+- nftables rules now include counters and counted terminal drops, which made
+  the bounded VM diagnosis auditable instead of relying on policy-drop
+  silence.
+- The kill switch explicitly allows the sing-box TUN internal DNS endpoint
+  (`172.19.0.2:53`) before generic DNS/DoT leak blocks. This is required
+  because DNS hijack rewrites system DNS to the TUN-side endpoint before the
+  WatchdogVPN output chain sees the packet.
+- The kill switch explicitly allows loopback destinations (`127.0.0.0/8` and
+  `::1/128`) before terminal drops. This is required because auto-redirected
+  TCP flows are redirected to a local sing-box listener and may not appear as
+  `oifname lo` at the output hook.
+- The same endpoint, mark, internal-DNS, and loopback allowances are covered
+  in the iptables fallback path.
+
+Bounded real-traffic validation result:
+
+- Daemon connect succeeded in forced `tun` mode with `tun_active=true`.
+- Baseline traffic before enabling the kill switch used the VPN exit:
+  `baseline_ip=138.124.58.47`.
+- With kill switch active, unbound control traffic still used the same VPN
+  exit: `vpn_control_ip=138.124.58.47`.
+- A request forced to the physical interface using curl was captured by
+  `auto_redirect` and still exposed the same VPN exit:
+  `direct_trace_ip=138.124.58.47`.
+- Direct TCP DNS on port 53 did not connect: `tcp_53_exit=124`.
+- TCP 853 may connect under `auto_redirect`; this is not treated as a leak by
+  itself because the physical-interface trace already proved the observed
+  public egress stayed on the VPN path.
+- Cleanup disabled the kill switch, disconnected WatchdogVPN, restored the
+  temporary profile/state backup, and showed no leftover non-default `ip rule`
+  or WatchdogVPN firewall table.
+
+Local validation after the implementation changes:
+
+- `bash tests/syntax.sh` - pass
+- `bash tests/unit.sh` - pass
+- `python3 -m py_compile core/kill_switch.py core/watchdog.py
+  tests/test_kill_switch.py tests/test_core_watchdog.py` - pass
+- `python3 -m unittest discover -s tests` - 700 OK, 1 skipped
+- `git diff --check` - pass
+
+Conclusion: AUD-P12-003 is resolved for bounded Arch VM no-leak validation
+with the real daemon, real TUN interface, nftables kill switch, and
+`strict_route`+`auto_redirect`. The validation proved that normal traffic
+continues through the VPN with the kill switch active, a physical-interface
+forced request is captured and still exits via the VPN, and direct TCP DNS is
+blocked. Task 12.5 remains open for cleanup/crash validation.
+
 ## 9. What part of the problem may come from treating this as a "normal" app
 
 Most of what was found and fixed this session **is** "normal app" plumbing,
@@ -718,15 +777,16 @@ route around it by making the product leakier.
   rules before domain/channel DNS rules with bounded daemon validation. A
   controlled helper-process validation then proved that a parent-launched
   helper executable can be blocked by exact `process_path` while unrelated
-  traffic continues through the VPN. Kill switch and crash cleanup still
-  need validation before the risk can be closed.
+  traffic continues through the VPN. Kill switch no-leak validation then
+  proved bounded real daemon traffic stays on the VPN path with the kill
+  switch active. Crash cleanup still needs validation before the risk can be
+  closed.
 - `strict_route`+`auto_redirect` stability under real, sustained, multi-app
   desktop load is unproven and has now caused two severe machine-level
   incidents, the second requiring a hard power cut. The exact failure
   mechanism for Incident 2 is not confirmed.
-- Kill switch (AUD-P12-003) and disconnect/crash cleanup (AUD-P12-006) are
-  still completely unvalidated against real traffic - the session never
-  reached them.
+- Disconnect/crash cleanup (AUD-P12-006) is still unvalidated against real
+  stop/restart/crash traffic.
 
 ## 12. Open technical debt / uncertainty
 
@@ -806,7 +866,8 @@ information. The first daemon-mediated follow-up confirmed `curl -> block`
 with a `python3` tunnel control. The second confirmed `curl -> direct` while
 the `python3` control continued through the VPN. The DNS policy inheritance
 fix and controlled helper-process validation then covered DNS-follow-policy
-and package-manager-style helper delegation. Continue with kill switch and
+and package-manager-style helper delegation. Kill switch no-leak validation
+then covered AUD-P12-003 for the bounded Arch VM daemon path. Continue with
 cleanup/crash validation.
 
 **Phase 4 - Decide on `auto_redirect` before further TUN experiments.**
@@ -818,9 +879,9 @@ short, bounded, controlled way to compare stability, before committing to
 either configuration as the shipped default.
 
 **Phase 5 - Resume the rest of Task 12.5.** Once routing/process-attribution
-is understood and stable, validate the kill switch (AUD-P12-003) and
-disconnect/daemon-restart/sing-box-crash cleanup (AUD-P12-006), which have
-not been touched at all this session.
+is understood and stable, validate disconnect/daemon-restart/sing-box-crash
+cleanup (AUD-P12-006). Kill switch no-leak validation is resolved for the
+bounded Arch VM daemon path.
 
 ---
 
@@ -836,4 +897,7 @@ is resolved for generated-config implementation and bounded daemon validation.
 A controlled parent/child helper-process validation then confirmed that a
 delegated helper executable is blocked when the rule targets the helper's exact
 `process_path`, while unrelated `python3` traffic continues through the VPN.
-Kill switch and cleanup checks remain pending.*
+Kill switch no-leak validation then confirmed that normal traffic and a
+physical-interface-forced probe both exposed the VPN exit while the kill switch
+was active, and direct TCP DNS was blocked. Cleanup/crash checks remain
+pending.*

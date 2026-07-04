@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from core.kill_switch import KillSwitch, WATCHDOGVPN_COMMENT, WATCHDOGVPN_IPTABLES_CHAIN
+from core.kill_switch import (
+    KillSwitch,
+    LOOPBACK_CIDRS,
+    SING_BOX_AUTO_REDIRECT_MARKS,
+    SING_BOX_TUN_DNS_ENDPOINTS,
+    WATCHDOGVPN_COMMENT,
+    WATCHDOGVPN_IPTABLES_CHAIN,
+)
 from core.kill_switch import WATCHDOGVPN_NFT_COMMENT
 from core.kill_switch import WATCHDOGVPN_TABLE, CommandResult
 
@@ -24,6 +31,22 @@ def fake_which(*available: str):
         return None
 
     return _which
+
+
+def nft_rule(*tokens: str) -> list[str]:
+    return [
+        "nft",
+        "add",
+        "rule",
+        "inet",
+        WATCHDOGVPN_TABLE,
+        "output",
+        *tokens[:-1],
+        "counter",
+        tokens[-1],
+        "comment",
+        WATCHDOGVPN_NFT_COMMENT,
+    ]
 
 
 class KillSwitchDetectionTests(unittest.TestCase):
@@ -78,19 +101,7 @@ class NftablesKillSwitchTests(unittest.TestCase):
             recorder.commands,
         )
         self.assertIn(
-            [
-                "nft",
-                "add",
-                "rule",
-                "inet",
-                WATCHDOGVPN_TABLE,
-                "output",
-                "oifname",
-                "wg0",
-                "accept",
-                "comment",
-                WATCHDOGVPN_NFT_COMMENT,
-            ],
+            nft_rule("oifname", "wg0", "accept"),
             recorder.commands,
         )
 
@@ -137,22 +148,41 @@ class NftablesKillSwitchTests(unittest.TestCase):
         kill_switch.enable()
 
         self.assertIn(
-            [
-                "nft",
-                "add",
-                "rule",
-                "inet",
-                WATCHDOGVPN_TABLE,
-                "output",
-                "ip6",
-                "daddr",
-                "::/0",
-                "accept",
-                "comment",
-                WATCHDOGVPN_NFT_COMMENT,
-            ],
+            nft_rule("ip6", "daddr", "::/0", "accept"),
             recorder.commands,
         )
+
+    def test_nftables_adds_counted_terminal_drop_rules(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
+
+        kill_switch.enable()
+
+        self.assertEqual(
+            recorder.commands[-5:],
+            [
+                nft_rule("meta", "l4proto", "tcp", "drop"),
+                nft_rule("meta", "l4proto", "udp", "drop"),
+                nft_rule("meta", "l4proto", "icmp", "drop"),
+                nft_rule("meta", "l4proto", "ipv6-icmp", "drop"),
+                nft_rule("drop"),
+            ],
+        )
+
+    def test_nftables_allows_loopback_destination_before_dns_and_terminal_drop(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
+
+        kill_switch.enable()
+
+        loopback_rule = nft_rule("ip", "daddr", LOOPBACK_CIDRS[0], "accept")
+        ipv6_loopback_rule = nft_rule("ip6", "daddr", LOOPBACK_CIDRS[1], "accept")
+        dns_block_rule = nft_rule("udp", "dport", "53", "reject")
+        terminal_drop_rule = nft_rule("meta", "l4proto", "tcp", "drop")
+        self.assertIn(loopback_rule, recorder.commands)
+        self.assertIn(ipv6_loopback_rule, recorder.commands)
+        self.assertLess(recorder.commands.index(loopback_rule), recorder.commands.index(dns_block_rule))
+        self.assertLess(recorder.commands.index(loopback_rule), recorder.commands.index(terminal_drop_rule))
 
     def test_nftables_blocks_dns_before_lan_allow_rules(self) -> None:
         recorder = CommandRecorder()
@@ -160,34 +190,8 @@ class NftablesKillSwitchTests(unittest.TestCase):
 
         kill_switch.enable()
 
-        dns_rule = [
-            "nft",
-            "add",
-            "rule",
-            "inet",
-            WATCHDOGVPN_TABLE,
-            "output",
-            "udp",
-            "dport",
-            "53",
-            "reject",
-            "comment",
-            WATCHDOGVPN_NFT_COMMENT,
-        ]
-        lan_rule = [
-            "nft",
-            "add",
-            "rule",
-            "inet",
-            WATCHDOGVPN_TABLE,
-            "output",
-            "ip",
-            "daddr",
-            "192.168.0.0/16",
-            "accept",
-            "comment",
-            WATCHDOGVPN_NFT_COMMENT,
-        ]
+        dns_rule = nft_rule("udp", "dport", "53", "reject")
+        lan_rule = nft_rule("ip", "daddr", "192.168.0.0/16", "accept")
         self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(lan_rule))
 
     def test_nftables_blocks_dns_before_established_connections(self) -> None:
@@ -196,49 +200,64 @@ class NftablesKillSwitchTests(unittest.TestCase):
 
         kill_switch.enable()
 
-        tunnel_rule = [
-            "nft",
-            "add",
-            "rule",
-            "inet",
-            WATCHDOGVPN_TABLE,
-            "output",
-            "oifname",
-            "wdvpn-tun0",
-            "accept",
-            "comment",
-            WATCHDOGVPN_NFT_COMMENT,
-        ]
-        dns_rule = [
-            "nft",
-            "add",
-            "rule",
-            "inet",
-            WATCHDOGVPN_TABLE,
-            "output",
+        tunnel_rule = nft_rule("oifname", "wdvpn-tun0", "accept")
+        dns_rule = nft_rule("udp", "dport", "53", "reject")
+        established_rule = nft_rule("ct", "state", "established,related", "accept")
+        self.assertLess(recorder.commands.index(tunnel_rule), recorder.commands.index(dns_rule))
+        self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(established_rule))
+
+    def test_nftables_allows_vpn_endpoint_and_singbox_marks_before_dns_and_established_rules(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(
+            allowed_endpoints=("203.0.113.10", "not-a-literal"),
+            runner=recorder,
+            which=fake_which("nft"),
+        )
+
+        kill_switch.enable()
+
+        endpoint_rule = nft_rule("ip", "daddr", "203.0.113.10", "accept")
+        dns_rule = nft_rule("udp", "dport", "53", "reject")
+        established_rule = nft_rule("ct", "state", "established,related", "accept")
+        mark_rule = nft_rule("meta", "mark", SING_BOX_AUTO_REDIRECT_MARKS[0], "accept")
+        ct_mark_rule = nft_rule("ct", "mark", SING_BOX_AUTO_REDIRECT_MARKS[0], "accept")
+        self.assertIn(endpoint_rule, recorder.commands)
+        self.assertIn(mark_rule, recorder.commands)
+        self.assertIn(ct_mark_rule, recorder.commands)
+        self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(dns_rule))
+        self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(established_rule))
+        self.assertLess(recorder.commands.index(mark_rule), recorder.commands.index(dns_rule))
+        self.assertLess(recorder.commands.index(ct_mark_rule), recorder.commands.index(dns_rule))
+
+    def test_nftables_allows_internal_tun_dns_before_dns_leak_blocks(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
+
+        kill_switch.enable()
+
+        internal_udp_rule = nft_rule(
+            "ip",
+            "daddr",
+            SING_BOX_TUN_DNS_ENDPOINTS[0],
             "udp",
             "dport",
             "53",
-            "reject",
-            "comment",
-            WATCHDOGVPN_NFT_COMMENT,
-        ]
-        established_rule = [
-            "nft",
-            "add",
-            "rule",
-            "inet",
-            WATCHDOGVPN_TABLE,
-            "output",
-            "ct",
-            "state",
-            "established,related",
             "accept",
-            "comment",
-            WATCHDOGVPN_NFT_COMMENT,
-        ]
-        self.assertLess(recorder.commands.index(tunnel_rule), recorder.commands.index(dns_rule))
-        self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(established_rule))
+        )
+        internal_tcp_rule = nft_rule(
+            "ip",
+            "daddr",
+            SING_BOX_TUN_DNS_ENDPOINTS[0],
+            "tcp",
+            "dport",
+            "53",
+            "accept",
+        )
+        dns_block_rule = nft_rule("udp", "dport", "53", "reject")
+        self.assertIn(internal_udp_rule, recorder.commands)
+        self.assertIn(internal_tcp_rule, recorder.commands)
+        self.assertLess(recorder.commands.index(internal_udp_rule), recorder.commands.index(dns_block_rule))
+        self.assertLess(recorder.commands.index(internal_tcp_rule), recorder.commands.index(dns_block_rule))
 
     def test_disable_deletes_nftables_table(self) -> None:
         recorder = CommandRecorder()
@@ -385,6 +404,252 @@ class IptablesKillSwitchTests(unittest.TestCase):
         self.assertLess(recorder.commands.index(tunnel_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(established_rule))
 
+    def test_iptables_allows_vpn_endpoint_and_singbox_marks_before_dns_and_established_rules(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(
+            allowed_endpoints=("203.0.113.10", "2001:db8::10", "not-a-literal"),
+            runner=recorder,
+            which=fake_which("iptables", "ip6tables"),
+        )
+
+        kill_switch.enable()
+
+        endpoint_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-d",
+            "203.0.113.10",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        ipv6_endpoint_rule = [
+            "ip6tables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-d",
+            "2001:db8::10",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        dns_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-p",
+            "udp",
+            "--dport",
+            "53",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "REJECT",
+        ]
+        established_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-m",
+            "conntrack",
+            "--ctstate",
+            "ESTABLISHED,RELATED",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        mark_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-m",
+            "mark",
+            "--mark",
+            SING_BOX_AUTO_REDIRECT_MARKS[0],
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        connmark_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-m",
+            "connmark",
+            "--mark",
+            SING_BOX_AUTO_REDIRECT_MARKS[0],
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        self.assertIn(endpoint_rule, recorder.commands)
+        self.assertIn(ipv6_endpoint_rule, recorder.commands)
+        self.assertIn(mark_rule, recorder.commands)
+        self.assertIn(connmark_rule, recorder.commands)
+        self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(dns_rule))
+        self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(established_rule))
+        self.assertLess(recorder.commands.index(mark_rule), recorder.commands.index(dns_rule))
+        self.assertLess(recorder.commands.index(connmark_rule), recorder.commands.index(dns_rule))
+
+    def test_iptables_allows_internal_tun_dns_before_dns_leak_blocks(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("iptables", "ip6tables"))
+
+        kill_switch.enable()
+
+        internal_udp_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-d",
+            SING_BOX_TUN_DNS_ENDPOINTS[0],
+            "-p",
+            "udp",
+            "--dport",
+            "53",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        internal_tcp_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-d",
+            SING_BOX_TUN_DNS_ENDPOINTS[0],
+            "-p",
+            "tcp",
+            "--dport",
+            "53",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        dns_block_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-p",
+            "udp",
+            "--dport",
+            "53",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "REJECT",
+        ]
+        invalid_ip6_rule = [
+            "ip6tables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-d",
+            SING_BOX_TUN_DNS_ENDPOINTS[0],
+            "-p",
+            "udp",
+            "--dport",
+            "53",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        self.assertIn(internal_udp_rule, recorder.commands)
+        self.assertIn(internal_tcp_rule, recorder.commands)
+        self.assertNotIn(invalid_ip6_rule, recorder.commands)
+        self.assertLess(recorder.commands.index(internal_udp_rule), recorder.commands.index(dns_block_rule))
+        self.assertLess(recorder.commands.index(internal_tcp_rule), recorder.commands.index(dns_block_rule))
+
+    def test_iptables_allows_loopback_destination_before_dns_and_terminal_reject(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("iptables", "ip6tables"))
+
+        kill_switch.enable()
+
+        loopback_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-d",
+            LOOPBACK_CIDRS[0],
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        ipv6_loopback_rule = [
+            "ip6tables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-d",
+            LOOPBACK_CIDRS[1],
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        dns_block_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-p",
+            "udp",
+            "--dport",
+            "53",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "REJECT",
+        ]
+        terminal_reject_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "REJECT",
+        ]
+        self.assertIn(loopback_rule, recorder.commands)
+        self.assertIn(ipv6_loopback_rule, recorder.commands)
+        self.assertLess(recorder.commands.index(loopback_rule), recorder.commands.index(dns_block_rule))
+        self.assertLess(recorder.commands.index(loopback_rule), recorder.commands.index(terminal_reject_rule))
+
     def test_iptables_skips_ip6tables_when_ipv6_blocking_disabled(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(
@@ -451,6 +716,7 @@ class KillSwitchStatusTests(unittest.TestCase):
                 "tunnel_interface": "awg0",
                 "block_ipv6": False,
                 "allow_lan": False,
+                "allowed_endpoints": [],
             },
         )
 

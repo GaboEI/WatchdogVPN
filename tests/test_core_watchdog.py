@@ -125,6 +125,7 @@ class FakeKillSwitch:
         self.tunnel_interface = "tun0"
         self.block_ipv6 = True
         self.allow_lan = True
+        self.allowed_endpoints: tuple[str, ...] = ()
 
     def _enable(self) -> bool:
         if self.enable_result:
@@ -1389,6 +1390,9 @@ class WatchdogIntegrationTests(unittest.TestCase):
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
         kill_switch = FakeKillSwitch(active=False)
+        self.profile.config["host"] = "203.0.113.10"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
 
         from config.app_config import AppConfig
         from unittest.mock import MagicMock
@@ -1417,6 +1421,45 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "kill_switch_active")
         kill_switch.enable_mock.assert_called_once_with()
+        self.assertEqual(kill_switch.allowed_endpoints, ("203.0.113.10",))
+
+    @patch("core.watchdog.pool_builder.build_pool", return_value=[])
+    @patch("core.watchdog.health_checker.check", return_value="down")
+    def test_run_iteration_does_not_allow_hostname_endpoint_without_literal_ip(self, _hc, _pool) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        kill_switch = FakeKillSwitch(active=False)
+        self.profile.config["host"] = "vpn.example.test"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": True},
+            "rotation": {"enabled": True},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=kill_switch,
+        )
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "kill_switch_active")
+        self.assertEqual(kill_switch.allowed_endpoints, ())
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
     @patch("core.watchdog.health_checker.check", return_value="down")

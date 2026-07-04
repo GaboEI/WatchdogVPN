@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Callable
 
@@ -324,7 +325,7 @@ class WatchdogRuntime:
             self.recovery.max_interval_seconds = float(rotation_config["max_backoff_interval_seconds"])
 
     def _apply_all_failed_kill_switch(self, config: dict) -> bool:
-        self._configure_kill_switch(config)
+        self._configure_kill_switch(config, self._active_profile())
         configured = strict_bool(config.get("kill_switch", {}).get("enabled", False), "kill_switch.enabled")
         if self.kill_switch.is_active():
             LOGGER.warning("watchdog_all_failed_kill_switch action=keep_active")
@@ -342,7 +343,7 @@ class WatchdogRuntime:
         return self._as_recovered(self.driver.status(), kill_switch_active=kill_switch_active)
 
     def _restore_kill_switch_after_recovery(self, config: dict) -> bool:
-        self._configure_kill_switch(config)
+        self._configure_kill_switch(config, self._active_profile())
         if not self.kill_switch.is_active():
             return False
         if self.kill_switch.enable():
@@ -351,7 +352,7 @@ class WatchdogRuntime:
         LOGGER.error("watchdog_kill_switch_restore_failed_after_recovery")
         return False
 
-    def _configure_kill_switch(self, config: dict) -> None:
+    def _configure_kill_switch(self, config: dict, profile: Profile | None = None) -> None:
         kill_switch_config = config.get("kill_switch", {})
         if hasattr(self.kill_switch, "tunnel_interface"):
             self.kill_switch.tunnel_interface = str(
@@ -367,10 +368,27 @@ class WatchdogRuntime:
                 kill_switch_config.get("allow_lan", True),
                 "kill_switch.allow_lan",
             )
+        if hasattr(self.kill_switch, "allowed_endpoints"):
+            self.kill_switch.allowed_endpoints = self._kill_switch_allowed_endpoints(profile)
+
+    def _kill_switch_allowed_endpoints(self, profile: Profile | None) -> tuple[str, ...]:
+        if profile is None:
+            return ()
+        host = profile.config.get("host") or profile.config.get("server")
+        if not isinstance(host, str) or not host.strip():
+            endpoint = profile.config.get("endpoint")
+            if isinstance(endpoint, str):
+                host = endpoint.rsplit(":", 1)[0].strip("[]")
+        if not isinstance(host, str) or not host.strip():
+            return ()
+        try:
+            return (str(ip_address(host.strip())),)
+        except ValueError:
+            return ()
 
     def _handle_manual_disconnect_kill_switch(self) -> None:
         config = self.app_config.load()
-        self._configure_kill_switch(config)
+        self._configure_kill_switch(config, self._active_profile())
         if not self.kill_switch.is_active():
             return
 
