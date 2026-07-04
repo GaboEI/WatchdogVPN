@@ -138,8 +138,8 @@ In rough chronological order:
   same root causes as above.
 - `sing-box` `FATAL[0000] start service: post-start inbound/tun[...]:
   starting TUN interface: set routes: add route 0: file exists` - occurs
-  whenever WatchdogVPN's sing-box tries to start while Karing (a different,
-  also sing-box-based VPN client already installed on this machine) is
+  whenever WatchdogVPN's sing-box tries to start while a different,
+  comparable sing-box-based VPN client already installed on this machine is
   connected. Both default to the same internal kernel routing table number
   (`2022`). Sing-box fails fast and cleanly in this case - not a leak, not a
   hang, just a same-machine resource collision between two independent
@@ -276,7 +276,8 @@ committed, but it did **not** resolve that specific problem on its own.
   it. Any operator who enables app-policy in `rules` mode without first
   configuring DNS channels gets total DNS failure with no actionable error.
 - **Two sing-box-based VPN clients cannot run simultaneously on this
-  machine.** Karing and WatchdogVPN share the same default kernel routing
+  machine.** The other comparable sing-box-based client already installed
+  here and WatchdogVPN share the same default kernel routing
   table number (`2022`). This is expected/inherent to sing-box, not a
   WatchdogVPN-specific bug, but currently surfaces as an opaque `FATAL`
   crash in the daemon's own log rather than a clear, actionable CLI error.
@@ -325,8 +326,8 @@ committed, but it did **not** resolve that specific problem on its own.
   sing-box invocations (started and `kill`-ed, rather than cleanly
   disconnected) during this session may have contributed to some of the
   inconsistent reproduction seen between attempts, on top of the
-  Karing-collision explanation that accounts for some (but likely not all)
-  of the inconsistency.
+  other-client-collision explanation (section 6) that accounts for some
+  (but likely not all) of the inconsistency.
 
 ## 9. What part of the problem may come from treating this as a "normal" app
 
@@ -424,8 +425,8 @@ route around it by making the product leakier.
 
 ## 14. Ordered test plan for tomorrow
 
-**Phase 0 - Safety setup.** Confirm Karing (and any other sing-box-based
-client) is fully off before touching sing-box again. Work from a real
+**Phase 0 - Safety setup.** Confirm any other sing-box-based VPN
+client is fully off before touching sing-box again. Work from a real
 terminal, not VS Code's integrated one. Keep `sudo -v` fresh. Every sing-box
 test invocation must be short, bounded with `timeout`, and end with a
 guaranteed kill/teardown - never an open-ended session.
