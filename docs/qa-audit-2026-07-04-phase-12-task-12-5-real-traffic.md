@@ -387,6 +387,40 @@ level, but it does not close Task 12.5; the full daemon-mediated traffic
 matrix, DNS policy behavior, kill switch, and cleanup validation still need
 to run in later phases.
 
+### 8.2 Daemon-mediated app-policy confirmation - 2026-07-04
+
+After landing and installing the capability fix, the corrected daemon was
+tested in the Arch VM with the real `watchdog connect` path, the real
+`watchdogvpn.service`, and a real VLESS profile. This was still a bounded
+single-case validation, not the full Task 12.5 matrix.
+
+Setup:
+
+- active mode: `rules`
+- app-policy mode: `blacklist`
+- app-policy rule: `process_name = curl` -> `block`
+- generated sing-box rule confirmed in the live config:
+  `{"action": "reject", "process_name": ["curl"]}`
+- sing-box log level remained at `warning`; the test avoided debug logging.
+
+Result:
+
+- `watchdog connect` succeeded through the daemon.
+- `wdvpn-tun0` came up and daemon status reported `tun_active = true`.
+- `curl http://1.1.1.1/cdn-cgi/trace` failed quickly
+  (`curl_exit=7`, no remote IP), consistent with the generated reject rule.
+- A control request from `python3` to the same URL succeeded with HTTP 200
+  and showed the VLESS exit IP, proving the tunnel itself was working and
+  the `curl` failure was process-policy-specific rather than general
+  connectivity failure.
+- Explicit `watchdog disconnect` returned the daemon to standby and cleanup
+  left no sing-box process, no `wdvpn-tun0`, no non-default `ip rule`, and
+  no WatchdogVPN nftables residue.
+
+Conclusion: the corrected daemon now enforces a real `process_name` app
+policy rule in the daemon-mediated TUN path. The next matrix case is an app
+forced `direct` while default traffic continues through the VPN.
+
 ## 9. What part of the problem may come from treating this as a "normal" app
 
 Most of what was found and fixed this session **is** "normal app" plumbing,
@@ -433,9 +467,9 @@ route around it by making the product leakier.
 
 - App Policy's core promise (per-process control) depends on the daemon
   carrying both `CAP_SYS_PTRACE` and `CAP_DAC_READ_SEARCH`; the VM
-  isolation proved this fixes minimal cross-user process attribution under
-  daemon-like hardening, but the full daemon-mediated traffic matrix still
-  needs validation before the risk can be closed.
+  isolation and a daemon-mediated `curl -> block` differential test proved
+  this works for one real process-policy case, but the rest of the traffic
+  matrix still needs validation before the risk can be closed.
 - `strict_route`+`auto_redirect` stability under real, sustained, multi-app
   desktop load is unproven and has now caused two severe machine-level
   incidents, the second requiring a hard power cut. The exact failure
@@ -518,7 +552,9 @@ new information.** Only after Phase 1/2 give a clear, understood answer,
 repeat the original Task 12.5 matrix (`dig`, `curl` direct, `wget` default,
 `apt-get` block) through the real daemon exactly as designed, bounded and
 logged. Escalate to repeats only if that single attempt produces new
-information.
+information. The first daemon-mediated follow-up confirmed `curl -> block`
+with a `python3` tunnel control. Continue from the next matrix case: one app
+forced `direct` while default traffic goes through the VPN.
 
 **Phase 4 - Decide on `auto_redirect` before further TUN experiments.**
 Independently of Phase 1-3, and before any further live TUN testing,
@@ -537,6 +573,7 @@ not been touched at all this session.
 
 *This report documents an in-progress task. Task 12.5 is not closed. The
 Phase 1 VM follow-up identified `CAP_DAC_READ_SEARCH` plus `CAP_SYS_PTRACE`
-as the minimal daemon capability set needed for isolated cross-user process
-attribution, but the full daemon-mediated traffic matrix, DNS behavior, kill
-switch, and cleanup checks remain pending.*
+as the minimal daemon capability set needed for cross-user process
+attribution, and a daemon-mediated `curl -> block` differential test
+confirmed one real app-policy case. The direct-vs-VPN matrix case, DNS
+behavior, kill switch, and cleanup checks remain pending.*
