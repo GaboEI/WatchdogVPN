@@ -99,12 +99,15 @@ runtime path; app policy must not add a second privileged control plane.
 - `CAP_NET_ADMIN`
 - `CAP_NET_BIND_SERVICE`
 - `CAP_NET_RAW`
+- `CAP_SYS_PTRACE`
+- `CAP_DAC_READ_SEARCH`
 - `/dev/net/tun` access
 - strict filesystem and namespace hardening
 
 Those capabilities are appropriate for TUN, route manipulation, DNS hijack on
-port 53, and firewall interaction. Task 12 must preserve the daemon privilege
-boundary instead of granting capabilities to CLI commands or broad wrappers.
+port 53, firewall interaction, and sing-box process attribution under the
+dedicated service user. Task 12 must preserve the daemon privilege boundary
+instead of granting capabilities to CLI commands or broad wrappers.
 
 ### TUN settings
 

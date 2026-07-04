@@ -352,6 +352,41 @@ committed, but it did **not** resolve that specific problem on its own.
   other-client-collision explanation (section 6) that accounts for some
   (but likely not all) of the inconsistency.
 
+### 8.1 Follow-up VM isolation result - 2026-07-04
+
+The ordered Phase 1 isolation was repeated in an Arch VM from a clean
+snapshot, without running the full WatchdogVPN `connect()` path and without
+remote profiles, DNS hijack, app-policy persistence, or kill-switch state.
+The minimal config used only a temporary TUN, one `process_name = curl`
+reject rule, and a `direct` fallback.
+
+Results:
+
+- Root-run sing-box identified `/usr/bin/curl` and matched
+  `process_name = curl`, proving the minimal config and sing-box
+  process-rule mechanism work.
+- Running sing-box as the dedicated `watchdogvpn` user with
+  `CAP_SYS_PTRACE` only failed the same way as the live daemon:
+  `find process path ... not found`, followed by user-only attribution.
+- Removing the daemon-like hardening did not fix the failure, so the root
+  cause is not `NoNewPrivileges`, seccomp, `ProtectSystem`, `ProtectHome`,
+  or namespace hardening by itself.
+- Adding `CAP_DAC_READ_SEARCH` alongside `CAP_SYS_PTRACE` allowed sing-box
+  running as `watchdogvpn` to resolve `/usr/bin/curl` and match the route
+  rule.
+- The same `CAP_SYS_PTRACE` + `CAP_DAC_READ_SEARCH` set also worked with the
+  daemon-like hardening profile enabled (`NoNewPrivileges=true`, seccomp,
+  `ProtectSystem=strict`, `ProtectHome=read-only`,
+  `RestrictNamespaces=true`, etc.).
+
+Conclusion: Phase 1 identified a concrete systemd capability gap. The
+daemon needs both `CAP_SYS_PTRACE` and `CAP_DAC_READ_SEARCH` in its ambient
+and bounding sets for sing-box process attribution across users. This
+resolves the process-attribution root cause at the isolated capability
+level, but it does not close Task 12.5; the full daemon-mediated traffic
+matrix, DNS policy behavior, kill switch, and cleanup validation still need
+to run in later phases.
+
 ## 9. What part of the problem may come from treating this as a "normal" app
 
 Most of what was found and fixed this session **is** "normal app" plumbing,
@@ -396,10 +431,11 @@ route around it by making the product leakier.
 
 ## 11. Open technical risks
 
-- App Policy's core promise (per-process control) may not hold at all for
-  any process outside the daemon's own service account, under the current
-  daemon security model - this is not a cosmetic bug, it is a potential
-  fundamental gap in the feature Phase 12 exists to deliver.
+- App Policy's core promise (per-process control) depends on the daemon
+  carrying both `CAP_SYS_PTRACE` and `CAP_DAC_READ_SEARCH`; the VM
+  isolation proved this fixes minimal cross-user process attribution under
+  daemon-like hardening, but the full daemon-mediated traffic matrix still
+  needs validation before the risk can be closed.
 - `strict_route`+`auto_redirect` stability under real, sustained, multi-app
   desktop load is unproven and has now caused two severe machine-level
   incidents, the second requiring a hard power cut. The exact failure
@@ -434,9 +470,9 @@ route around it by making the product leakier.
   `mode=rules`+app-policy+TUN active and simply "try again" hoping it works.
   Every blind repeat today cost real machine stability for no new
   information.
-- Do **not** assume granting another capability (guessing) will fix process
-  attribution. Verify what sing-box's process-path lookup actually requires
-  in this exact kernel/hardening context first (Phase 1 below).
+- Do **not** assume capability changes beyond the verified
+  `CAP_DAC_READ_SEARCH` requirement will fix unrelated routing behavior.
+  Future privilege changes must be isolated the same way before they land.
 - Do **not** leave `strict_route`+`auto_redirect` active for a long,
   multi-command, unattended live session again. Every future exposure to
   this exact combination must be short, bounded with `timeout`, and
@@ -470,17 +506,12 @@ actual effective capabilities directly (e.g. via `/proc/<pid>/status`
 is really reaching the process at all. This isolates H1/H2 without touching
 app-policy, DNS, or the kill switch.
 
-**Phase 2 - Resolve the process-attribution root cause.** Depending on
-Phase 1's result: if the capability is missing at runtime, find why
-(`NoNewPrivileges` interaction, capability bounding set, `securebits`); if
-present but still failing, research whether sing-box 1.13.14's process
-match is documented to work at all for a hardened, non-root daemon
-inspecting other users' processes, and decide between (a) further
-capability/hardening adjustments, (b) an explicit, accepted limitation with
-a safe default (e.g. treat unattributable processes as blocked in whitelist
-mode, or as the tunnel default in blacklist mode, rather than silently
-falling through), or (c) revisiting whether sing-box needs different
-privilege boundaries entirely for this feature.
+**Phase 2 - Resolve the process-attribution root cause.** Follow-up VM
+testing identified the missing requirement: `CAP_DAC_READ_SEARCH` must be
+granted together with `CAP_SYS_PTRACE`. Land the unit-file fix, update the
+systemd/doctor contracts, reinstall/restart the daemon, and confirm the
+running sing-box child receives both capabilities before re-attempting the
+full traffic matrix.
 
 **Phase 3 - Re-attempt the full daemon-mediated traffic matrix once, with
 new information.** Only after Phase 1/2 give a clear, understood answer,
@@ -504,7 +535,8 @@ not been touched at all this session.
 
 ---
 
-*This report documents an in-progress task. Task 12.5 is not closed. No
-code fix for the process-attribution blocker (section 6.1/8, item H1) has
-been found yet - only `CAP_SYS_PTRACE` was tried and confirmed insufficient
-on its own.*
+*This report documents an in-progress task. Task 12.5 is not closed. The
+Phase 1 VM follow-up identified `CAP_DAC_READ_SEARCH` plus `CAP_SYS_PTRACE`
+as the minimal daemon capability set needed for isolated cross-user process
+attribution, but the full daemon-mediated traffic matrix, DNS behavior, kill
+switch, and cleanup checks remain pending.*

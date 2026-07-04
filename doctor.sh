@@ -125,6 +125,14 @@ cap_eff_has_bind_service() {
   (( (16#$cap_eff & (1 << 10)) != 0 ))
 }
 
+cap_eff_has_process_attribution_caps() {
+  local pid="$1" cap_eff
+  [[ -n "$pid" && "$pid" != "0" && -r "/proc/$pid/status" ]] || return 1
+  cap_eff="$(awk '/^CapEff:/ {print $2; exit}' "/proc/$pid/status")"
+  [[ -n "$cap_eff" ]] || return 1
+  (( (16#$cap_eff & (1 << 19)) != 0 && (16#$cap_eff & (1 << 2)) != 0 ))
+}
+
 capability_list_has() {
   local haystack="$1" needle="$2"
   [[ " $haystack " == *" $needle "* ]]
@@ -282,6 +290,12 @@ if systemd_unit_known "$daemon_unit"; then
   else
     mark_warn "daemon missing CAP_NET_BIND_SERVICE in systemd capability sets"
   fi
+  if capability_list_has "$ambient_caps" cap_sys_ptrace && capability_list_has "$bounding_caps" cap_sys_ptrace \
+    && capability_list_has "$ambient_caps" cap_dac_read_search && capability_list_has "$bounding_caps" cap_dac_read_search; then
+    mark_ok "daemon process-attribution capabilities configured"
+  else
+    mark_warn "daemon missing CAP_SYS_PTRACE/CAP_DAC_READ_SEARCH for process attribution"
+  fi
 
   daemon_pid="$(systemd_show_value "$daemon_unit" MainPID)"
   if [[ "$daemon_state" == "active" ]]; then
@@ -289,6 +303,11 @@ if systemd_unit_known "$daemon_unit"; then
       mark_ok "daemon process can inherit privileged-port bind capability"
     else
       mark_warn "daemon process effective capabilities do not include CAP_NET_BIND_SERVICE"
+    fi
+    if cap_eff_has_process_attribution_caps "$daemon_pid"; then
+      mark_ok "daemon process can inherit process-attribution capabilities"
+    else
+      mark_warn "daemon process effective capabilities do not include CAP_SYS_PTRACE/CAP_DAC_READ_SEARCH"
     fi
   else
     info "daemon process capability check skipped; service is not active"
