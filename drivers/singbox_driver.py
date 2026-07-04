@@ -521,6 +521,26 @@ class SingBoxDriver(BaseDriver):
         self._config_path = None
         self._log_path = None
 
+    def _run_cleanup_command(self, command: list[str]) -> None:
+        subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+    def _cleanup_tun_residue(self) -> None:
+        """Best-effort cleanup for sing-box TUN state after child crashes."""
+        if shutil.which("nft"):
+            self._run_cleanup_command(["nft", "delete", "table", "inet", "sing-box"])
+
+        if shutil.which("ip"):
+            for preference in ("1", "9000", "9001", "9002", "32768"):
+                self._run_cleanup_command(["ip", "rule", "del", "pref", preference])
+            self._run_cleanup_command(["ip", "route", "flush", "table", "2022"])
+            self._run_cleanup_command(["ip", "-6", "route", "flush", "table", "2022"])
+
     def _append_log(self, message: str) -> None:
         _, log_path = self._ensure_runtime_paths()
         with log_path.open("a", encoding="utf-8") as log_file:
@@ -770,6 +790,7 @@ class SingBoxDriver(BaseDriver):
 
     def disconnect(self) -> bool:
         process = self._process
+        cleanup_tun_residue = self._tun_expected
         self._process = None
         self._active_profile = None
         self._connected_at = None
@@ -789,6 +810,8 @@ class SingBoxDriver(BaseDriver):
                         stopped = False
                         return False
         finally:
+            if cleanup_tun_residue:
+                self._cleanup_tun_residue()
             self._cleanup_runtime()
         return stopped
 

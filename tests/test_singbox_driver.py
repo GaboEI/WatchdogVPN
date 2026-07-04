@@ -915,6 +915,39 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertIsNone(self.driver._active_profile)
         self.assertIsNone(self.driver._connected_at)
 
+    @patch.object(SingBoxDriver, "_cleanup_tun_residue")
+    @patch.object(SingBoxDriver, "_cleanup_runtime")
+    def test_disconnect_cleans_tun_residue_after_child_crash(
+        self, cleanup_mock, tun_cleanup_mock
+    ) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = -9
+        self.driver._process = process
+        self.driver._tun_expected = True
+
+        self.assertTrue(self.driver.disconnect())
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+        tun_cleanup_mock.assert_called_once()
+        cleanup_mock.assert_called_once()
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_cleanup_tun_residue_removes_singbox_auto_redirect_state(
+        self, run_mock, which_mock
+    ) -> None:
+        self.driver._cleanup_tun_residue()
+
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(["nft", "delete", "table", "inet", "sing-box"], commands)
+        self.assertIn(["ip", "rule", "del", "pref", "1"], commands)
+        self.assertIn(["ip", "rule", "del", "pref", "9000"], commands)
+        self.assertIn(["ip", "rule", "del", "pref", "9001"], commands)
+        self.assertIn(["ip", "rule", "del", "pref", "9002"], commands)
+        self.assertIn(["ip", "rule", "del", "pref", "32768"], commands)
+        self.assertIn(["ip", "route", "flush", "table", "2022"], commands)
+        self.assertIn(["ip", "-6", "route", "flush", "table", "2022"], commands)
+
     @patch.object(SingBoxDriver, "_cleanup_runtime")
     def test_disconnect_kills_hung_process(self, cleanup_mock) -> None:
         process = unittest.mock.Mock()

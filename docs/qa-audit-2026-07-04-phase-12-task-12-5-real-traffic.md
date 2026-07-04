@@ -724,6 +724,92 @@ continues through the VPN with the kill switch active, a physical-interface
 forced request is captured and still exits via the VPN, and direct TCP DNS is
 blocked. Task 12.5 remains open for cleanup/crash validation.
 
+### 8.8 Cleanup/crash validation - 2026-07-04
+
+The next bounded VM validation tested normal disconnect cleanup, systemd stop,
+systemd restart, and sing-box child crash behavior. Each subtest started from a
+clean runtime preflight, imported a temporary profile into shared daemon state,
+forced `active_mode = "tun"`, connected through the real daemon, and checked
+for leftover sing-box processes, `wdvpn-tun0`, non-default `ip rule` entries,
+WatchdogVPN/sing-box nftables tables, and sing-box/proxy listeners.
+
+The first three subtests passed without code changes:
+
+- `watchdog disconnect` after a daemon-managed TUN connection returned the
+  daemon to standby and left no runtime residue.
+- `systemctl stop watchdogvpn.service` during an active TUN connection cleaned
+  the sing-box child, TUN link, sing-box nftables table, auto-redirect rules,
+  and listeners; restarting the daemon left it usable.
+- `systemctl restart watchdogvpn.service` during an active TUN connection
+  stopped the old daemon/child pair, left no sing-box process or kernel
+  routing/firewall residue, and the new daemon came back in coherent standby
+  state. A follow-up explicit disconnect was idempotent.
+
+The sing-box child crash subtest exposed a real cleanup bug. After forcing
+`SIGKILL` on the daemon's sing-box child:
+
+- the TUN link disappeared and daemon status reported standby;
+- the sing-box child briefly appeared as a defunct process;
+- sing-box auto-redirect `ip rule` entries remained:
+  `pref 1`, `9000`, `9001`, `9002`, and `32768`;
+- `table inet sing-box` remained in nftables;
+- a subsequent explicit `watchdog disconnect` did not clean those kernel
+  route/firewall residues because `SingBoxDriver.disconnect()` only cleaned
+  its runtime directory when the child process had already exited.
+
+This residue caused the external conversation VPN and direct network path to
+fail to recover until the VM was rebooted. The test was stopped at that point;
+the failure was treated as a real AUD-P12-006 bug, not retried blindly.
+
+Implementation fix:
+
+- `SingBoxDriver.disconnect()` now records whether the active session expected
+  a TUN before resetting in-memory state.
+- For TUN sessions, disconnect now performs best-effort cleanup of sing-box
+  auto-redirect residue even if the sing-box child has already crashed:
+  - `nft delete table inet sing-box`
+  - `ip rule del pref 1`
+  - `ip rule del pref 9000`
+  - `ip rule del pref 9001`
+  - `ip rule del pref 9002`
+  - `ip rule del pref 32768`
+  - `ip route flush table 2022`
+  - `ip -6 route flush table 2022`
+- The temporary VM validation script's trap was also hardened with emergency
+  cleanup for the same sing-box residue, so a failed validation run no longer
+  leaves the VM network wedged before the external VPN is restored.
+
+Local validation after the fix:
+
+- `python3 -m unittest tests.test_singbox_driver` - 63 tests passed
+- `python3 -m py_compile drivers/singbox_driver.py tests/test_singbox_driver.py`
+  - passed
+- focused daemon/runtime tests - 142 tests passed
+- `bash tests/syntax.sh` - passed
+- `bash tests/unit.sh` - passed
+- `python3 -m unittest discover -s tests` - 702 tests passed, 1 skipped
+- `git diff --check` - passed
+
+Bounded real-traffic revalidation after installing the fix and restarting the
+daemon:
+
+- `sudo ./update.sh --yes` completed and preserved `/var/lib/watchdogvpn/`.
+- `watchdogvpn.service` was restarted and the daemon smoke test passed.
+- The sing-box child crash subtest was repeated once, bounded, in the Arch VM.
+- After `SIGKILL` of the sing-box child, the immediate snapshot still showed
+  the expected temporary residue while daemon status had moved to standby.
+- The follow-up explicit `watchdog disconnect` cleaned the auto-redirect
+  `ip rule` entries, `table inet sing-box`, sing-box listeners, and runtime
+  state.
+- Final verification reported `ASSERTION_OK: clean runtime after final`.
+- The external conversation VPN restored successfully afterward, with no VM
+  reboot required.
+
+Conclusion: AUD-P12-006 is resolved for bounded Arch VM daemon validation.
+Normal disconnect, systemd stop, systemd restart, and sing-box child crash
+cleanup now leave no stale routes, nftables state, TUN link, listeners, or
+orphan sing-box processes after explicit cleanup.
+
 ## 9. What part of the problem may come from treating this as a "normal" app
 
 Most of what was found and fixed this session **is** "normal app" plumbing,
@@ -785,8 +871,9 @@ route around it by making the product leakier.
   desktop load is unproven and has now caused two severe machine-level
   incidents, the second requiring a hard power cut. The exact failure
   mechanism for Incident 2 is not confirmed.
-- Disconnect/crash cleanup (AUD-P12-006) is still unvalidated against real
-  stop/restart/crash traffic.
+- Cleanup/crash validation exposed and fixed a real sing-box child-crash
+  residue bug. The bounded Arch VM retest now resolves AUD-P12-006 for normal
+  disconnect, systemd stop/restart, and sing-box child crash cleanup.
 
 ## 12. Open technical debt / uncertainty
 
@@ -878,10 +965,11 @@ with both flags on. Test the same matrix with `auto_redirect=false` in a
 short, bounded, controlled way to compare stability, before committing to
 either configuration as the shipped default.
 
-**Phase 5 - Resume the rest of Task 12.5.** Once routing/process-attribution
-is understood and stable, validate disconnect/daemon-restart/sing-box-crash
-cleanup (AUD-P12-006). Kill switch no-leak validation is resolved for the
-bounded Arch VM daemon path.
+**Phase 5 - Resume the rest of Task 12.5.** Completed in the Arch VM on
+2026-07-04. Normal disconnect, systemd stop, systemd restart, and sing-box
+child crash cleanup were validated with bounded daemon tests. The child-crash
+case exposed a real auto-redirect residue bug, which was fixed and retested.
+Kill switch no-leak validation is resolved for the bounded Arch VM daemon path.
 
 ---
 
@@ -899,5 +987,6 @@ delegated helper executable is blocked when the rule targets the helper's exact
 `process_path`, while unrelated `python3` traffic continues through the VPN.
 Kill switch no-leak validation then confirmed that normal traffic and a
 physical-interface-forced probe both exposed the VPN exit while the kill switch
-was active, and direct TCP DNS was blocked. Cleanup/crash checks remain
-pending.*
+was active, and direct TCP DNS was blocked. Cleanup/crash validation then
+confirmed clean teardown for normal disconnect, systemd stop, systemd restart,
+and sing-box child crash after fixing auto-redirect residue cleanup.*
