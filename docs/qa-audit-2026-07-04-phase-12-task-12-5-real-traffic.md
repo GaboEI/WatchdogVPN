@@ -453,10 +453,9 @@ Result:
 Conclusion: the corrected daemon now validates both core per-process
 directions in the real TUN path: `curl -> block` with unrelated traffic
 through the VPN, and `curl -> direct` with unrelated traffic through the
-VPN. Remaining Task 12.5 work should continue with DNS-follow-policy,
-blocked helper-process behavior, kill switch, and cleanup/crash validation.
-Later sections in this same report record the follow-up DNS and helper-process
-validation.
+VPN. At this point in the chronology, Task 12.5 still needed DNS-follow-policy,
+helper-process behavior, kill switch, and cleanup/crash validation; later
+sections in this same report record those follow-up validations and fixes.
 
 ### 8.4 DNS-follow-policy audit - 2026-07-04
 
