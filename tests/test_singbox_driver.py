@@ -859,6 +859,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
             patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
             patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
+            patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
         ):
             self.assertTrue(self.driver.connect(self.profile, mode="tun"))
 
@@ -891,6 +892,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
             patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
             patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
+            patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
         ):
             self.assertTrue(self.driver.connect(self.profile, mode="rules", app_policy=policy))
 
@@ -931,22 +933,188 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         tun_cleanup_mock.assert_called_once()
         cleanup_mock.assert_called_once()
 
+    @patch.object(SingBoxDriver, "_cleanup_tun_residue")
+    @patch.object(SingBoxDriver, "_cleanup_runtime")
+    def test_disconnect_does_not_remove_tun_residue_when_process_survives_kill(
+        self, cleanup_mock, tun_cleanup_mock
+    ) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired(cmd="sing-box", timeout=5),
+            subprocess.TimeoutExpired(cmd="sing-box", timeout=5),
+        ]
+        self.driver._process = process
+        self.driver._tun_expected = True
+
+        self.assertFalse(self.driver.disconnect())
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
+        tun_cleanup_mock.assert_not_called()
+        cleanup_mock.assert_called_once()
+
+    def test_capture_tun_cleanup_state_tracks_added_rules_and_tables(self) -> None:
+        self.driver._tun_rule_baseline = (
+            "0:\tfrom all lookup local",
+            "32766:\tfrom all lookup main",
+            "32767:\tfrom all lookup default",
+        )
+        current_rules = (
+            *self.driver._tun_rule_baseline,
+            "1:\tfrom all lookup 1771114712",
+            "9000:\tfrom all fwmark 0x2024 goto 9002",
+            "9001:\tfrom all fwmark 0x2023 lookup 2022",
+            "9002:\tfrom all nop",
+            "32768:\tfrom all lookup 2022",
+        )
+
+        with (
+            patch.object(self.driver, "_ip_rule_lines", return_value=current_rules),
+            patch.object(
+                self.driver,
+                "_route_table_looks_like_watchdogvpn",
+                side_effect=lambda table: table == "1771114712",
+            ),
+        ):
+            self.driver._capture_tun_cleanup_state()
+
+        self.assertEqual(
+            self.driver._tun_cleanup_rule_prefs,
+            ("1", "9000", "9001", "9002", "32768"),
+        )
+        self.assertEqual(
+            self.driver._tun_cleanup_route_tables,
+            ("1771114712", "2022"),
+        )
+
+    def test_capture_tun_cleanup_state_ignores_unmarked_unrelated_rule(self) -> None:
+        self.driver._tun_rule_baseline = (
+            "0:\tfrom all lookup local",
+            "32766:\tfrom all lookup main",
+            "32767:\tfrom all lookup default",
+        )
+        current_rules = (
+            *self.driver._tun_rule_baseline,
+            "100:\tfrom all lookup 424242",
+        )
+
+        with (
+            patch.object(self.driver, "_ip_rule_lines", return_value=current_rules),
+            patch.object(self.driver, "_route_table_looks_like_watchdogvpn", return_value=False),
+        ):
+            self.driver._capture_tun_cleanup_state()
+
+        self.assertEqual(self.driver._tun_cleanup_rule_prefs, ())
+        self.assertEqual(self.driver._tun_cleanup_route_tables, ())
+
     @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
     @patch("drivers.singbox_driver.subprocess.run")
-    def test_cleanup_tun_residue_removes_singbox_auto_redirect_state(
+    def test_cleanup_tun_residue_uses_captured_state(
         self, run_mock, which_mock
     ) -> None:
+        self.driver._tun_cleanup_rule_prefs = ("1", "9000")
+        self.driver._tun_cleanup_route_tables = ("1771114712", "2022")
+
         self.driver._cleanup_tun_residue()
 
         commands = [call.args[0] for call in run_mock.call_args_list]
         self.assertIn(["nft", "delete", "table", "inet", "sing-box"], commands)
         self.assertIn(["ip", "rule", "del", "pref", "1"], commands)
         self.assertIn(["ip", "rule", "del", "pref", "9000"], commands)
-        self.assertIn(["ip", "rule", "del", "pref", "9001"], commands)
-        self.assertIn(["ip", "rule", "del", "pref", "9002"], commands)
-        self.assertIn(["ip", "rule", "del", "pref", "32768"], commands)
+        self.assertNotIn(["ip", "rule", "del", "pref", "9001"], commands)
+        self.assertIn(["ip", "route", "flush", "table", "1771114712"], commands)
+        self.assertIn(["ip", "-6", "route", "flush", "table", "1771114712"], commands)
         self.assertIn(["ip", "route", "flush", "table", "2022"], commands)
         self.assertIn(["ip", "-6", "route", "flush", "table", "2022"], commands)
+
+    def test_discover_singbox_tun_residue_uses_marks_and_tun_routes(self) -> None:
+        current_rules = (
+            "0:\tfrom all lookup local",
+            "1:\tfrom all lookup 1771114712",
+            "9000:\tfrom all fwmark 0x2024 goto 9002",
+            "9001:\tfrom all fwmark 0x2023 lookup 2022",
+            "9002:\tfrom all nop",
+            "32766:\tfrom all lookup main",
+            "32767:\tfrom all lookup default",
+            "32768:\tfrom all lookup 2022",
+        )
+
+        def route_table_output(table: str, ipv6: bool = False) -> str:
+            if table == "1771114712":
+                return "default dev wdvpn-tun0 scope link\n"
+            return ""
+
+        with (
+            patch.object(self.driver, "_ip_rule_lines", return_value=current_rules),
+            patch.object(self.driver, "_route_table_output", side_effect=route_table_output),
+        ):
+            prefs, tables = self.driver._discover_singbox_tun_residue()
+
+        self.assertEqual(prefs, ("1", "9000", "9001", "9002", "32768"))
+        self.assertEqual(tables, ("1771114712", "2022"))
+
+    def test_discover_singbox_tun_residue_can_include_orphaned_auto_route_rule(self) -> None:
+        current_rules = (
+            "0:\tfrom all lookup local",
+            "1:\tfrom all lookup 1590681128",
+            "32766:\tfrom all lookup main",
+            "32767:\tfrom all lookup default",
+        )
+
+        with (
+            patch.object(self.driver, "_ip_rule_lines", return_value=current_rules),
+            patch.object(self.driver, "_route_table_output", return_value=""),
+        ):
+            prefs, tables = self.driver._discover_singbox_tun_residue(
+                include_orphaned_auto_route_rule=True,
+            )
+
+        self.assertEqual(prefs, ("1",))
+        self.assertEqual(tables, ("1590681128",))
+
+    def test_discover_singbox_tun_residue_ignores_orphaned_auto_route_by_default(self) -> None:
+        current_rules = (
+            "0:\tfrom all lookup local",
+            "1:\tfrom all lookup 1590681128",
+            "32766:\tfrom all lookup main",
+            "32767:\tfrom all lookup default",
+        )
+
+        with (
+            patch.object(self.driver, "_ip_rule_lines", return_value=current_rules),
+            patch.object(self.driver, "_route_table_output", return_value=""),
+        ):
+            prefs, tables = self.driver._discover_singbox_tun_residue()
+
+        self.assertEqual(prefs, ())
+        self.assertEqual(tables, ())
+
+    @patch.object(SingBoxDriver, "_cleanup_tun_residue")
+    def test_reconcile_stale_tun_state_skips_when_singbox_is_alive(self, cleanup_mock) -> None:
+        with (
+            patch.object(self.driver, "_singbox_process_alive", return_value=True),
+            patch.object(self.driver, "_discover_singbox_tun_residue") as discover_mock,
+        ):
+            self.driver.reconcile_stale_tun_state()
+
+        discover_mock.assert_not_called()
+        cleanup_mock.assert_not_called()
+
+    @patch.object(SingBoxDriver, "_cleanup_tun_residue")
+    def test_reconcile_stale_tun_state_cleans_orphaned_residue(self, cleanup_mock) -> None:
+        with (
+            patch.object(self.driver, "_singbox_process_alive", return_value=False),
+            patch.object(
+                self.driver,
+                "_discover_singbox_tun_residue",
+                return_value=(("9000", "9001"), ("2022",)),
+            ),
+        ):
+            self.driver.reconcile_stale_tun_state()
+
+        self.assertEqual(self.driver._tun_cleanup_rule_prefs, ("9000", "9001"))
+        self.assertEqual(self.driver._tun_cleanup_route_tables, ("2022",))
+        cleanup_mock.assert_called_once()
 
     @patch.object(SingBoxDriver, "_cleanup_runtime")
     def test_disconnect_kills_hung_process(self, cleanup_mock) -> None:
@@ -1031,6 +1199,30 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
         state = self.driver.status()
         self.assertEqual(state.status, "standby")
+
+    @patch.object(SingBoxDriver, "_cleanup_tun_residue")
+    @patch.object(SingBoxDriver, "_cleanup_runtime")
+    def test_status_cleans_tun_residue_when_child_crashed(
+        self, cleanup_mock, tun_cleanup_mock
+    ) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = -9
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+        self.driver._connected_at = unittest.mock.sentinel.connected_at
+        self.driver._active_mode = "tun"
+        self.driver._tun_expected = True
+
+        state = self.driver.status()
+
+        self.assertEqual(state.status, "standby")
+        tun_cleanup_mock.assert_called_once()
+        cleanup_mock.assert_called_once()
+        self.assertIsNone(self.driver._process)
+        self.assertIsNone(self.driver._active_profile)
+        self.assertIsNone(self.driver._connected_at)
+        self.assertEqual(self.driver._active_mode, "global")
+        self.assertFalse(self.driver._tun_expected)
 
 
 class SingBoxDriverHealthTests(unittest.TestCase):

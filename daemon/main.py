@@ -36,6 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     request_socket_path = _resolve_socket_path(args.socket_path)
     event_socket_path = _resolve_event_socket_path(request_socket_path)
     runtime = build_watchdog()
+    reconcile_stale_tun_state = getattr(runtime.driver, "reconcile_stale_tun_state", None)
+    if not args.standalone and callable(reconcile_stale_tun_state):
+        reconcile_stale_tun_state()
     server = IPCServer(request_socket_path, event_socket_path, RuntimeWorker(runtime))
     try:
         server.start()

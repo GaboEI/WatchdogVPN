@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -32,6 +33,8 @@ CONFIG_NAME = "singbox.json"
 LOG_NAME = "singbox.log"
 PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
 DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
+DEFAULT_RULE_TABLES = {"local", "main", "default"}
+SING_BOX_AUTO_REDIRECT_MARKS = {"0x2023", "0x2024"}
 VIRTUAL_INTERFACE_PREFIXES = (
     "lo",
     "tun",
@@ -121,6 +124,9 @@ class SingBoxDriver(BaseDriver):
         self._runtime_dir: Path | None = None
         self._config_path: Path | None = None
         self._log_path: Path | None = None
+        self._tun_rule_baseline: tuple[str, ...] = ()
+        self._tun_cleanup_rule_prefs: tuple[str, ...] = ()
+        self._tun_cleanup_route_tables: tuple[str, ...] = ()
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def find_singbox_binary(self) -> str | None:
@@ -530,16 +536,195 @@ class SingBoxDriver(BaseDriver):
             check=False,
         )
 
+    def _run_capture_command(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+    def _ip_rule_lines(self) -> tuple[str, ...]:
+        if not shutil.which("ip"):
+            return ()
+        result = self._run_capture_command(["ip", "rule", "show"])
+        if result.returncode != 0:
+            return ()
+        return tuple(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+    def _route_table_output(self, table: str, ipv6: bool = False) -> str:
+        if not shutil.which("ip"):
+            return ""
+        command = ["ip", "-6", "route", "show", "table", table] if ipv6 else [
+            "ip",
+            "route",
+            "show",
+            "table",
+            table,
+        ]
+        result = self._run_capture_command(command)
+        if result.returncode != 0:
+            return ""
+        return result.stdout
+
+    def _route_table_looks_like_watchdogvpn(self, table: str) -> bool:
+        output = "\n".join(
+            [
+                self._route_table_output(table, ipv6=False),
+                self._route_table_output(table, ipv6=True),
+            ]
+        )
+        return "wdvpn-tun0" in output or "172.19.0." in output
+
+    def _rule_preference(self, line: str) -> str | None:
+        match = re.match(r"^(\d+):", line)
+        return match.group(1) if match else None
+
+    def _rule_lookup_table(self, line: str) -> str | None:
+        match = re.search(r"\blookup\s+(\S+)", line)
+        if not match:
+            return None
+        table = match.group(1)
+        if table in DEFAULT_RULE_TABLES:
+            return None
+        return table
+
+    def _rule_goto_preference(self, line: str) -> str | None:
+        match = re.search(r"\bgoto\s+(\d+)", line)
+        return match.group(1) if match else None
+
+    def _capture_tun_cleanup_state(self) -> None:
+        current_rules = self._ip_rule_lines()
+        if not current_rules:
+            return
+
+        baseline = set(self._tun_rule_baseline)
+        candidate_rules = [
+            line for line in current_rules if not baseline or line not in baseline
+        ]
+        prefs: set[str] = set()
+        tables: set[str] = set()
+        goto_targets: set[str] = set()
+        candidate_has_singbox_marks = any(
+            any(f"fwmark {mark}" in line for mark in SING_BOX_AUTO_REDIRECT_MARKS)
+            for line in candidate_rules
+        )
+
+        for line in candidate_rules:
+            pref = self._rule_preference(line)
+            table = self._rule_lookup_table(line)
+            if pref and any(f"fwmark {mark}" in line for mark in SING_BOX_AUTO_REDIRECT_MARKS):
+                prefs.add(pref)
+                if table is not None:
+                    tables.add(table)
+            elif candidate_has_singbox_marks and pref and table is not None:
+                prefs.add(pref)
+                tables.add(table)
+            goto_pref = self._rule_goto_preference(line)
+            if goto_pref is not None:
+                goto_targets.add(goto_pref)
+
+        for line in current_rules:
+            pref = self._rule_preference(line)
+            table = self._rule_lookup_table(line)
+            if pref in goto_targets:
+                prefs.add(pref)
+            if table is not None and table in tables:
+                prefs.add(pref)
+            if table is not None and self._route_table_looks_like_watchdogvpn(table):
+                if pref:
+                    prefs.add(pref)
+                tables.add(table)
+
+        self._tun_cleanup_rule_prefs = tuple(sorted(prefs, key=int))
+        self._tun_cleanup_route_tables = tuple(sorted(tables))
+
+    def _discover_singbox_tun_residue(
+        self,
+        *,
+        include_orphaned_auto_route_rule: bool = False,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        rules = self._ip_rule_lines()
+        prefs: set[str] = set()
+        tables: set[str] = set()
+        goto_targets: set[str] = set()
+
+        for line in rules:
+            pref = self._rule_preference(line)
+            if pref is None:
+                continue
+            if any(f"fwmark {mark}" in line for mark in SING_BOX_AUTO_REDIRECT_MARKS):
+                prefs.add(pref)
+                table = self._rule_lookup_table(line)
+                if table is not None:
+                    tables.add(table)
+                goto_pref = self._rule_goto_preference(line)
+                if goto_pref is not None:
+                    goto_targets.add(goto_pref)
+
+        for line in rules:
+            pref = self._rule_preference(line)
+            table = self._rule_lookup_table(line)
+            if pref in goto_targets:
+                prefs.add(pref)
+            if table is not None and table in tables:
+                prefs.add(pref)
+            if table is not None and self._route_table_looks_like_watchdogvpn(table):
+                prefs.add(pref)
+                tables.add(table)
+            if (
+                include_orphaned_auto_route_rule
+                and pref == "1"
+                and table is not None
+                and table.isdigit()
+            ):
+                prefs.add(pref)
+                tables.add(table)
+
+        return tuple(sorted(prefs, key=int)), tuple(sorted(tables))
+
+    def _singbox_process_alive(self) -> bool:
+        if not shutil.which("pgrep"):
+            return False
+        result = self._run_capture_command(["pgrep", "-x", "sing-box"])
+        return result.returncode == 0 and bool(result.stdout.strip())
+
+    def _clear_tun_cleanup_state(self) -> None:
+        self._tun_rule_baseline = ()
+        self._tun_cleanup_rule_prefs = ()
+        self._tun_cleanup_route_tables = ()
+
+    def reconcile_stale_tun_state(self) -> None:
+        """Clean orphaned sing-box TUN state when no sing-box process is alive."""
+        if self._singbox_process_alive():
+            return
+        rule_prefs, route_tables = self._discover_singbox_tun_residue(
+            include_orphaned_auto_route_rule=True,
+        )
+        if not rule_prefs and not route_tables:
+            return
+        self._tun_cleanup_rule_prefs = rule_prefs
+        self._tun_cleanup_route_tables = route_tables
+        self._cleanup_tun_residue()
+
     def _cleanup_tun_residue(self) -> None:
         """Best-effort cleanup for sing-box TUN state after child crashes."""
-        if shutil.which("nft"):
+        rule_prefs = self._tun_cleanup_rule_prefs
+        route_tables = self._tun_cleanup_route_tables
+        if not rule_prefs and not route_tables:
+            rule_prefs, route_tables = self._discover_singbox_tun_residue()
+
+        if (rule_prefs or route_tables) and shutil.which("nft"):
             self._run_cleanup_command(["nft", "delete", "table", "inet", "sing-box"])
 
         if shutil.which("ip"):
-            for preference in ("1", "9000", "9001", "9002", "32768"):
+            for preference in rule_prefs:
                 self._run_cleanup_command(["ip", "rule", "del", "pref", preference])
-            self._run_cleanup_command(["ip", "route", "flush", "table", "2022"])
-            self._run_cleanup_command(["ip", "-6", "route", "flush", "table", "2022"])
+            for table in route_tables:
+                self._run_cleanup_command(["ip", "route", "flush", "table", table])
+                self._run_cleanup_command(["ip", "-6", "route", "flush", "table", table])
+        self._clear_tun_cleanup_state()
 
     def _append_log(self, message: str) -> None:
         _, log_path = self._ensure_runtime_paths()
@@ -760,6 +945,10 @@ class SingBoxDriver(BaseDriver):
         binary = self.find_singbox_binary()
         if not binary:
             return False
+        tun_expected = self._mode_requires_tun(mode, app_policy)
+        self._clear_tun_cleanup_state()
+        if tun_expected:
+            self._tun_rule_baseline = self._ip_rule_lines()
         self.generate_singbox_config(
             profile,
             dns_policy=dns_policy,
@@ -779,18 +968,24 @@ class SingBoxDriver(BaseDriver):
         log_file.close()
         self._active_profile = profile
         self._active_mode = mode
-        self._tun_expected = self._mode_requires_tun(mode, app_policy)
+        self._tun_expected = tun_expected
         if self._process.poll() is None and self.health_check() == "ok":
+            if self._tun_expected:
+                self._capture_tun_cleanup_state()
             self._connected_at = datetime.now(timezone.utc)
             return True
         self._connected_at = None
         self._active_profile = None
+        if self._tun_expected:
+            self._capture_tun_cleanup_state()
         self.disconnect()
         return False
 
     def disconnect(self) -> bool:
         process = self._process
         cleanup_tun_residue = self._tun_expected
+        if cleanup_tun_residue:
+            self._capture_tun_cleanup_state()
         self._process = None
         self._active_profile = None
         self._connected_at = None
@@ -810,7 +1005,8 @@ class SingBoxDriver(BaseDriver):
                         stopped = False
                         return False
         finally:
-            if cleanup_tun_residue:
+            process_stopped = process is None or process.poll() is not None
+            if cleanup_tun_residue and process_stopped:
                 self._cleanup_tun_residue()
             self._cleanup_runtime()
         return stopped
@@ -852,4 +1048,13 @@ class SingBoxDriver(BaseDriver):
                 proxy_active=self._active_mode != "tun",
                 status="connected",
             )
+        if self._tun_expected:
+            self._capture_tun_cleanup_state()
+            self._cleanup_tun_residue()
+        self._process = None
+        self._active_profile = None
+        self._connected_at = None
+        self._active_mode = "global"
+        self._tun_expected = False
+        self._cleanup_runtime()
         return ConnectionState(status="standby")

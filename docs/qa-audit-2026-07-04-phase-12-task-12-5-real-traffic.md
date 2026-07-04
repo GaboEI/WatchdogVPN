@@ -722,7 +722,7 @@ with the real daemon, real TUN interface, nftables kill switch, and
 `strict_route`+`auto_redirect`. The validation proved that normal traffic
 continues through the VPN with the kill switch active, a physical-interface
 forced request is captured and still exits via the VPN, and direct TCP DNS is
-blocked. Task 12.5 remains open for cleanup/crash validation.
+blocked. Task 12.5 remained open for cleanup/crash validation at that point.
 
 ### 8.8 Cleanup/crash validation - 2026-07-04
 
@@ -765,29 +765,41 @@ Implementation fix:
 
 - `SingBoxDriver.disconnect()` now records whether the active session expected
   a TUN before resetting in-memory state.
-- For TUN sessions, disconnect now performs best-effort cleanup of sing-box
-  auto-redirect residue even if the sing-box child has already crashed:
-  - `nft delete table inet sing-box`
-  - `ip rule del pref 1`
-  - `ip rule del pref 9000`
-  - `ip rule del pref 9001`
-  - `ip rule del pref 9002`
-  - `ip rule del pref 32768`
-  - `ip route flush table 2022`
-  - `ip -6 route flush table 2022`
+- For TUN sessions, the driver records the `ip rule` baseline before starting
+  sing-box and captures the route-rule preferences and lookup tables added by
+  that specific connection. Cleanup removes the captured rule preferences and
+  flushes the captured non-default route tables instead of assuming fixed
+  sing-box preference or table numbers.
+- When no per-connection capture is available, cleanup falls back to a bounded
+  discovery path keyed off sing-box auto-redirect marks (`0x2023`/`0x2024`)
+  and route tables that still reference WatchdogVPN's TUN (`wdvpn-tun0` or
+  `172.19.0.0/30`), rather than deleting arbitrary fixed preferences.
+- Daemon startup/restart reconciliation also handles the narrower orphaned
+  auto-route case observed during VM validation: no sing-box process, no
+  sing-box nftables table, no auto-redirect mark rules, but a remaining
+  `pref 1` rule pointing at a numeric table created by the previous sing-box
+  TUN run.
+- Cleanup only removes `table inet sing-box` after the managed sing-box child
+  has stopped; if a process survives termination, the driver does not delete
+  nftables state underneath a still-running sing-box.
+- `SingBoxDriver.status()` now reconciles a crashed TUN child when it observes
+  that the process has exited: it captures current residue, runs TUN residue
+  cleanup, clears runtime paths, resets in-memory connection fields, and only
+  then returns standby.
 - The temporary VM validation script's trap was also hardened with emergency
-  cleanup for the same sing-box residue, so a failed validation run no longer
-  leaves the VM network wedged before the external VPN is restored.
+  cleanup for the same sing-box residue using rule/table discovery, so a failed
+  validation run no longer leaves the VM network wedged before the external VPN
+  is restored.
 
 Local validation after the fix:
 
-- `python3 -m unittest tests.test_singbox_driver` - 63 tests passed
+- `python3 -m unittest tests.test_singbox_driver` - 72 tests passed
 - `python3 -m py_compile drivers/singbox_driver.py tests/test_singbox_driver.py`
   - passed
-- focused daemon/runtime tests - 142 tests passed
+- focused daemon/runtime tests - 157 tests passed
 - `bash tests/syntax.sh` - passed
 - `bash tests/unit.sh` - passed
-- `python3 -m unittest discover -s tests` - 702 tests passed, 1 skipped
+- `python3 -m unittest discover -s tests` - 711 tests passed, 1 skipped
 - `git diff --check` - passed
 
 Bounded real-traffic revalidation after installing the fix and restarting the
@@ -804,19 +816,37 @@ daemon:
 - Final verification reported `ASSERTION_OK: clean runtime after final`.
 - The external conversation VPN restored successfully afterward, with no VM
   reboot required.
+- The `crash -> daemon status reconciliation without explicit disconnect`
+  subtest was then run in the same bounded VM flow. After `SIGKILL`, the
+  script deliberately skipped `watchdog disconnect` and requested daemon
+  status. Status returned standby and cleaned the stale sing-box
+  auto-redirect rules, `table inet sing-box`, listeners, TUN state, and
+  runtime residue. Final verification reported
+  `ASSERTION_OK: clean runtime after final`.
+- The companion `crash -> daemon restart/startup reconciliation without
+  explicit disconnect` subtest was also run. After `SIGKILL`, the script
+  deliberately skipped both `watchdog disconnect` and daemon status, then
+  restarted `watchdogvpn.service`. Startup reconciliation removed the stale
+  sing-box `ip rule` entries and nftables state. Final verification reported
+  `ASSERTION_OK: clean runtime after final`.
 
-Conclusion: AUD-P12-006 is partially resolved for bounded Arch VM daemon
+Conclusion: AUD-P12-006 is resolved for bounded Arch VM daemon
 validation. Normal disconnect, systemd stop, and systemd restart leave no
 stale routes, nftables state, TUN link, listeners, or orphan sing-box
-processes. The sing-box child crash path is resolved only for the
-`crash -> explicit watchdog disconnect` flow. The immediate post-crash
-snapshot proved that the daemon moved to standby before the explicit
-disconnect, but the sing-box auto-redirect `ip rule` entries and
-`table inet sing-box` were still present at that point. Task 12.5 therefore
-still needs a bounded `crash without explicit disconnect` reconciliation test:
-the daemon must either clean residue automatically when it detects the child
-exit, or a daemon restart/startup reconciliation path must remove stale
-sing-box kernel state before this finding can be fully closed.
+processes. The sing-box child crash path is resolved for the
+`crash -> explicit watchdog disconnect` flow, the
+`crash -> daemon status reconciliation without explicit disconnect` flow, and
+the `crash -> daemon restart/startup reconciliation without explicit
+disconnect` flow. The
+status-reconciliation retest first confirmed a clean preflight after daemon
+startup removed the previously observed orphan `pref 1 -> lookup <numeric>`
+rule. It then connected TUN, killed the daemon's sing-box child, skipped
+`watchdog disconnect`, and requested daemon status. `SingBoxDriver.status()`
+returned standby and cleaned the stale sing-box auto-redirect rules,
+`table inet sing-box`, listeners, TUN state, and runtime residue. Final
+verification reported `ASSERTION_OK: clean runtime after final`. The restart
+reconciliation retest then proved daemon startup also cleans stale sing-box
+kernel state when no status call observes the child exit.
 
 ### 8.9 Remaining closure checklist before Task 12.5 can close
 
@@ -833,33 +863,23 @@ Planned order:
    - DNS follows the chosen traffic policy
    - kill switch does not allow non-tunnel leaks
    - disconnect/reset/systemd stop/restart/sing-box crash leave no stale state
-   - sing-box crash without a follow-up explicit disconnect is reconciled
-     automatically by the daemon or by daemon restart/startup cleanup
+   - sing-box crash without a follow-up explicit disconnect is reconciled by
+     daemon status and by daemon restart/startup cleanup - done for
+     AUD-P12-006
    - coverage includes terminal/curl, browser, and package-manager/updater-style
      process behavior when safe
-2. Before feature-matrix closure, run a bounded VM validation for the higher
-   risk crash-reconciliation gap:
-   - connect TUN
-   - `SIGKILL` the sing-box child
-   - do not run `watchdog disconnect`
-   - observe whether the daemon cleans residue on its own after detecting the
-     child exit
-   - if not, restart the daemon and verify whether startup/restart cleanup
-     removes stale sing-box `ip rule` entries and nftables state
-   - if neither path cleans residue, Task 12.5 remains open for a crash handler
-     or startup reconciliation fix
-3. If the checklist audit confirms feature-matrix gaps, run bounded VM
+2. If the checklist audit confirms feature-matrix gaps, run bounded VM
    validation for:
    - default direct plus one app forced through the VPN
    - a browser process, if a suitable browser is available in the VM
-4. Use the same safety protocol as the cleanup/crash tests:
+3. Use the same safety protocol as the cleanup/crash tests:
    - external conversation VPN disconnected before WatchdogVPN tests
    - one WatchdogVPN TUN exposure at a time
    - short timeouts
    - explicit disconnect and forced cleanup checks
    - profile/state/app-policy backup and restore
    - no blind repeat after a failure
-5. Document the pass/fail result here and in the master plan before marking
+4. Document the pass/fail result here and in the master plan before marking
    Task 12.5 closed.
 
 ## 9. What part of the problem may come from treating this as a "normal" app
@@ -924,10 +944,11 @@ route around it by making the product leakier.
   incidents, the second requiring a hard power cut. The exact failure
   mechanism for Incident 2 is not confirmed.
 - Cleanup/crash validation exposed and fixed a real sing-box child-crash
-  residue bug for the `crash -> explicit disconnect` path. The bounded Arch VM
-  retest resolves normal disconnect and systemd stop/restart cleanup, but
-  Task 12.5 still needs a `crash without explicit disconnect` reconciliation
-  test before AUD-P12-006 can be fully closed.
+  residue bug. The bounded Arch VM retests resolve normal disconnect,
+  systemd stop/restart cleanup, `crash -> explicit disconnect`,
+  `crash -> daemon status reconciliation without explicit disconnect`, and
+  `crash -> daemon restart/startup reconciliation without explicit
+  disconnect`. AUD-P12-006 is resolved for the bounded Arch VM daemon path.
 
 ## 12. Open technical debt / uncertainty
 
