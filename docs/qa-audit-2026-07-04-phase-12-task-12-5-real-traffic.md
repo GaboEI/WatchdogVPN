@@ -950,7 +950,48 @@ route around it by making the product leakier.
   `crash -> daemon restart/startup reconciliation without explicit
   disconnect`. AUD-P12-006 is resolved for the bounded Arch VM daemon path.
 
-## 12. Open technical debt / uncertainty
+## 12. Closure checklist audit - 2026-07-04
+
+This mini-audit compares the current report against the original Task 12.5
+acceptance text before running any remaining matrix tests.
+
+Checklist status:
+
+- One app forced `direct` while another goes through VPN: covered by the
+  daemon-mediated `curl -> direct` validation while a `python3` control request
+  continued through the VPN.
+- Blocked app cannot reach the network: covered by the daemon-mediated
+  `curl -> block` validation.
+- DNS follows the chosen traffic policy: covered by the DNS-follow-policy
+  audit and app-policy-derived DNS rule fix; AUD-P12-002 is resolved.
+- Kill switch does not allow non-tunnel leaks: covered by bounded real daemon
+  validation; AUD-P12-003 is resolved.
+- Disconnect/reset/systemd stop/restart/sing-box crash leave no stale routes,
+  DNS state, listeners, or orphan processes: covered by cleanup/crash
+  validation; AUD-P12-006 is resolved.
+- Package-manager/updater-style helper behavior: covered by the controlled
+  helper-process validation using an exact helper `process_path` rule.
+- One app forced through VPN while default traffic goes direct: not yet covered.
+  This remains a Task 12.5 matrix gap and needs one bounded VM validation.
+- Browser process coverage: not yet covered. This remains a Task 12.5 matrix
+  gap and must use a real desktop Firefox process launched as the normal
+  `gabodev` user, not as the daemon user, to exercise cross-user process
+  attribution.
+
+Low-severity technical debt observed during the audit:
+
+- LOW: the fallback TUN-residue discovery path identifies WatchdogVPN route
+  tables by checking for `wdvpn-tun0` or `172.19.0.` in route-table output.
+  This is bounded to cleanup/reconciliation and does not block Task 12.5, but
+  it couples cleanup detection to the current sing-box TUN address range. A
+  later cleanup hardening pass should derive or persist the TUN address range
+  instead of matching a literal prefix.
+
+Task 12.5 remains open only for the two remaining matrix gaps above. If the
+bounded default-direct/app-VPN and desktop Firefox validations pass without new
+HIGH or MEDIUM findings, Task 12.5 can be closed before starting Task 12.6.
+
+## 13. Open technical debt / uncertainty
 
 - `lib/singbox.sh` needs a daemon-reachability-aware install check (or
   install.sh/update.sh must always place sing-box in a daemon-reachable
@@ -977,7 +1018,7 @@ route around it by making the product leakier.
   design review once the process-attribution blocker is resolved, rather
   than carrying two overlapping DNS-hijack mechanisms indefinitely.
 
-## 13. What must NOT be attempted again tomorrow without first validating a hypothesis
+## 14. What must NOT be attempted again tomorrow without first validating a hypothesis
 
 - Do **not** re-run a full daemon-mediated `connect()` with
   `mode=rules`+app-policy+TUN active and simply "try again" hoping it works.
