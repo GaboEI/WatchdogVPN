@@ -281,6 +281,29 @@ committed, but it did **not** resolve that specific problem on its own.
   table number (`2022`). This is expected/inherent to sing-box, not a
   WatchdogVPN-specific bug, but currently surfaces as an opaque `FATAL`
   crash in the daemon's own log rather than a clear, actionable CLI error.
+- **Incident 3 (post-session, after the code fixes were already committed):**
+  the other sing-box-based client on this machine crashed on its own
+  (`traps: <client>[PID] trap int3 ... in libsentry.so`, its own Sentry
+  crash-reporting handler firing) roughly two minutes before a total network
+  outage (neither the VPN nor the normal direct connection worked, no IP at
+  all) that required a reboot. The user correctly pushed back on treating
+  this as an unrelated coincidence: this client had reportedly never crashed
+  before, on the same night this session ran sing-box manually dozens of
+  times and killed it with `kill` rather than a clean `disconnect()` in many
+  of those runs (a known risk already flagged in section 13/[[feedback-live-tun-testing-safety]]).
+  At the moment this was investigated, no WatchdogVPN residue was found
+  (no sing-box process, no nftables table, no `wdvpn-tun0` interface, daemon
+  in standby) - but that only proves the state was clean *by the time it was
+  checked*, not that it was clean at the moment of the crash. The working
+  hypothesis is that incomplete cleanup from one of tonight's many
+  kill-instead-of-disconnect test cycles left transient state in the shared
+  routing table (`2022`) that the other client's own process encountered and
+  crashed on when it was reconnected afterward - a *residue* collision, not
+  only the already-documented *simultaneous-use* collision. `watchdogvpn.service`
+  was stopped and disabled (`systemctl stop` + `disable`) as an immediate,
+  low-cost precaution for the rest of the night; this needs to be confirmed
+  or ruled out properly tomorrow (see the added phase in section 14), not
+  left as an assumption in either direction.
 - **Legacy v1 AdGuard automation was still live on this real machine**
   despite the repo/master-plan recording PHASE 2.6 as fully closed. This is
   a "repo says done, deployed machine says otherwise" gap - closing a phase
@@ -425,11 +448,17 @@ route around it by making the product leakier.
 
 ## 14. Ordered test plan for tomorrow
 
-**Phase 0 - Safety setup.** Confirm any other sing-box-based VPN
-client is fully off before touching sing-box again. Work from a real
-terminal, not VS Code's integrated one. Keep `sudo -v` fresh. Every sing-box
-test invocation must be short, bounded with `timeout`, and end with a
-guaranteed kill/teardown - never an open-ended session.
+**Phase 0 - Safety setup.** `watchdogvpn.service` was stopped and disabled at
+the end of this session (Incident 3, section 7) - re-enable it deliberately
+(`systemctl enable --now`) when resuming, don't assume it's already running.
+Confirm any other sing-box-based VPN client is fully off before touching
+sing-box again. Work from a real terminal, not VS Code's integrated one.
+Keep `sudo -v` fresh. Every sing-box test invocation must be short, bounded
+with `timeout`, and end with a guaranteed kill/teardown - never an
+open-ended session. Before resuming any live test, check `ip rule show` and
+`sudo nft list tables` for leftover WatchdogVPN state from a *previous*
+session, not just confirm the current attempt cleans up after itself - this
+is specifically to test the Incident 3 residue hypothesis.
 
 **Phase 1 - Isolate process attribution, without `connect()`.** Build a
 minimal, standalone sing-box config with no trojan outbound, no app-policy,
