@@ -805,10 +805,18 @@ daemon:
 - The external conversation VPN restored successfully afterward, with no VM
   reboot required.
 
-Conclusion: AUD-P12-006 is resolved for bounded Arch VM daemon validation.
-Normal disconnect, systemd stop, systemd restart, and sing-box child crash
-cleanup now leave no stale routes, nftables state, TUN link, listeners, or
-orphan sing-box processes after explicit cleanup.
+Conclusion: AUD-P12-006 is partially resolved for bounded Arch VM daemon
+validation. Normal disconnect, systemd stop, and systemd restart leave no
+stale routes, nftables state, TUN link, listeners, or orphan sing-box
+processes. The sing-box child crash path is resolved only for the
+`crash -> explicit watchdog disconnect` flow. The immediate post-crash
+snapshot proved that the daemon moved to standby before the explicit
+disconnect, but the sing-box auto-redirect `ip rule` entries and
+`table inet sing-box` were still present at that point. Task 12.5 therefore
+still needs a bounded `crash without explicit disconnect` reconciliation test:
+the daemon must either clean residue automatically when it detects the child
+exit, or a daemon restart/startup reconciliation path must remove stale
+sing-box kernel state before this finding can be fully closed.
 
 ### 8.9 Remaining closure checklist before Task 12.5 can close
 
@@ -825,19 +833,33 @@ Planned order:
    - DNS follows the chosen traffic policy
    - kill switch does not allow non-tunnel leaks
    - disconnect/reset/systemd stop/restart/sing-box crash leave no stale state
+   - sing-box crash without a follow-up explicit disconnect is reconciled
+     automatically by the daemon or by daemon restart/startup cleanup
    - coverage includes terminal/curl, browser, and package-manager/updater-style
      process behavior when safe
-2. If the audit confirms gaps, run bounded VM validation for:
+2. Before feature-matrix closure, run a bounded VM validation for the higher
+   risk crash-reconciliation gap:
+   - connect TUN
+   - `SIGKILL` the sing-box child
+   - do not run `watchdog disconnect`
+   - observe whether the daemon cleans residue on its own after detecting the
+     child exit
+   - if not, restart the daemon and verify whether startup/restart cleanup
+     removes stale sing-box `ip rule` entries and nftables state
+   - if neither path cleans residue, Task 12.5 remains open for a crash handler
+     or startup reconciliation fix
+3. If the checklist audit confirms feature-matrix gaps, run bounded VM
+   validation for:
    - default direct plus one app forced through the VPN
    - a browser process, if a suitable browser is available in the VM
-3. Use the same safety protocol as the cleanup/crash tests:
+4. Use the same safety protocol as the cleanup/crash tests:
    - external conversation VPN disconnected before WatchdogVPN tests
    - one WatchdogVPN TUN exposure at a time
    - short timeouts
    - explicit disconnect and forced cleanup checks
    - profile/state/app-policy backup and restore
    - no blind repeat after a failure
-4. Document the pass/fail result here and in the master plan before marking
+5. Document the pass/fail result here and in the master plan before marking
    Task 12.5 closed.
 
 ## 9. What part of the problem may come from treating this as a "normal" app
@@ -902,8 +924,10 @@ route around it by making the product leakier.
   incidents, the second requiring a hard power cut. The exact failure
   mechanism for Incident 2 is not confirmed.
 - Cleanup/crash validation exposed and fixed a real sing-box child-crash
-  residue bug. The bounded Arch VM retest now resolves AUD-P12-006 for normal
-  disconnect, systemd stop/restart, and sing-box child crash cleanup.
+  residue bug for the `crash -> explicit disconnect` path. The bounded Arch VM
+  retest resolves normal disconnect and systemd stop/restart cleanup, but
+  Task 12.5 still needs a `crash without explicit disconnect` reconciliation
+  test before AUD-P12-006 can be fully closed.
 
 ## 12. Open technical debt / uncertainty
 
@@ -919,6 +943,13 @@ route around it by making the product leakier.
 - No pre-flight check/actionable error exists for "another sing-box-based
   VPN client is already using the same kernel routing table" - currently
   surfaces as an opaque FATAL crash.
+- `watchdogvpn.service` logs
+  `ConfigurationDirectory 'watchdogvpn' already exists but the mode is different`
+  because `/etc/watchdogvpn` exists with mode `755` while the unit declares
+  `ConfigurationDirectoryMode=750`. This did not block daemon startup or the
+  Task 12.5 validations, but it should be reconciled later by either fixing the
+  directory mode during install/update or aligning the unit contract with the
+  intentionally supported mode.
 - The DNS hijack inbounds' hardcoded `override_address: "1.1.1.1"` design
   (a raw address-override "direct"-type inbound, separate from the new
   sniff+protocol-based hijack rule) may now be partially redundant - worth a
