@@ -421,6 +421,41 @@ Conclusion: the corrected daemon now enforces a real `process_name` app
 policy rule in the daemon-mediated TUN path. The next matrix case is an app
 forced `direct` while default traffic continues through the VPN.
 
+### 8.3 Daemon-mediated direct-vs-VPN confirmation - 2026-07-04
+
+The next bounded VM validation confirmed the direct-vs-VPN matrix case
+through the real daemon path, still without enabling kill switch testing.
+
+Setup:
+
+- active mode: `rules`
+- app-policy mode: `blacklist`
+- app-policy rule: `process_name = curl` -> `direct`
+- default action: `current`
+- generated sing-box rule confirmed in the live config:
+  `{"action": "route", "outbound": "direct", "process_name": ["curl"]}`
+- generated outbounds included both the VLESS profile outbound and `direct`
+
+Result:
+
+- `watchdog connect` succeeded through the daemon.
+- `wdvpn-tun0` came up and daemon status reported `tun_active = true`.
+- Baseline direct `curl` to `http://1.1.1.1/cdn-cgi/trace` returned the
+  same direct behavior as `curl` after connect (`HTTP 301` from
+  `remote_ip = 1.1.1.1`), consistent with the app-policy direct route.
+- A control request from `python3` to the same endpoint succeeded with
+  HTTP 200 and showed the VLESS exit IP, proving default traffic still went
+  through the VPN while `curl` was routed direct.
+- Explicit `watchdog disconnect` returned the daemon to standby and cleanup
+  left no sing-box process, no `wdvpn-tun0`, no non-default `ip rule`, and
+  no WatchdogVPN nftables residue.
+
+Conclusion: the corrected daemon now validates both core per-process
+directions in the real TUN path: `curl -> block` with unrelated traffic
+through the VPN, and `curl -> direct` with unrelated traffic through the
+VPN. Remaining Task 12.5 work should continue with DNS-follow-policy,
+blocked helper-process behavior, kill switch, and cleanup/crash validation.
+
 ## 9. What part of the problem may come from treating this as a "normal" app
 
 Most of what was found and fixed this session **is** "normal app" plumbing,
@@ -467,9 +502,10 @@ route around it by making the product leakier.
 
 - App Policy's core promise (per-process control) depends on the daemon
   carrying both `CAP_SYS_PTRACE` and `CAP_DAC_READ_SEARCH`; the VM
-  isolation and a daemon-mediated `curl -> block` differential test proved
-  this works for one real process-policy case, but the rest of the traffic
-  matrix still needs validation before the risk can be closed.
+  isolation plus daemon-mediated `curl -> block` and `curl -> direct`
+  differential tests proved the core per-process routing behavior, but DNS,
+  helper-process matching, kill switch, and crash cleanup still need
+  validation before the risk can be closed.
 - `strict_route`+`auto_redirect` stability under real, sustained, multi-app
   desktop load is unproven and has now caused two severe machine-level
   incidents, the second requiring a hard power cut. The exact failure
@@ -553,8 +589,9 @@ repeat the original Task 12.5 matrix (`dig`, `curl` direct, `wget` default,
 `apt-get` block) through the real daemon exactly as designed, bounded and
 logged. Escalate to repeats only if that single attempt produces new
 information. The first daemon-mediated follow-up confirmed `curl -> block`
-with a `python3` tunnel control. Continue from the next matrix case: one app
-forced `direct` while default traffic goes through the VPN.
+with a `python3` tunnel control. The second confirmed `curl -> direct` while
+the `python3` control continued through the VPN. Continue with DNS policy,
+blocked helper-process behavior, kill switch, and cleanup/crash validation.
 
 **Phase 4 - Decide on `auto_redirect` before further TUN experiments.**
 Independently of Phase 1-3, and before any further live TUN testing,
@@ -574,6 +611,7 @@ not been touched at all this session.
 *This report documents an in-progress task. Task 12.5 is not closed. The
 Phase 1 VM follow-up identified `CAP_DAC_READ_SEARCH` plus `CAP_SYS_PTRACE`
 as the minimal daemon capability set needed for cross-user process
-attribution, and a daemon-mediated `curl -> block` differential test
-confirmed one real app-policy case. The direct-vs-VPN matrix case, DNS
-behavior, kill switch, and cleanup checks remain pending.*
+attribution, and daemon-mediated `curl -> block` / `curl -> direct`
+differential tests confirmed the two core real app-policy routing cases.
+DNS behavior, helper-process blocked-app behavior, kill switch, and cleanup
+checks remain pending.*
