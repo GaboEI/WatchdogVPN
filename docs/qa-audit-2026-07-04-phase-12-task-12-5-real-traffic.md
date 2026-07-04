@@ -455,6 +455,8 @@ directions in the real TUN path: `curl -> block` with unrelated traffic
 through the VPN, and `curl -> direct` with unrelated traffic through the
 VPN. Remaining Task 12.5 work should continue with DNS-follow-policy,
 blocked helper-process behavior, kill switch, and cleanup/crash validation.
+Later sections in this same report record the follow-up DNS and helper-process
+validation.
 
 ### 8.4 DNS-follow-policy audit - 2026-07-04
 
@@ -592,9 +594,76 @@ Live daemon validation:
   no WatchdogVPN nftables residue.
 
 Conclusion: AUD-P12-002 is now resolved for generated-config implementation
-and bounded daemon validation. Task 12.5 should still continue with blocked
-helper-process behavior, kill switch no-leak validation, and cleanup/crash
-validation before the full matrix can close.
+and bounded daemon validation. The next section records the bounded
+helper-process validation; after that, Task 12.5 still needs kill switch
+no-leak validation and cleanup/crash validation before the full matrix can
+close.
+
+### 8.6 Blocked helper-process behavior validation - 2026-07-04
+
+The next bounded VM validation tested the package-manager-style helper
+process pattern without touching the system package manager or running an
+upgrade. The goal was to prove the important behavior observed earlier with
+`apt-get`: the parent process name may not own the network socket, so the
+correct app-policy target is the helper executable that actually opens the
+connection.
+
+Setup:
+
+- Ran in the Arch VM from the clean Task 12.5 baseline.
+- The external conversation VPN was disconnected before the WatchdogVPN test
+  and restored only after cleanup.
+- The test imported a temporary VLESS profile into the shared daemon state,
+  then restored the previous `profiles.json` at teardown.
+- The test backed up and restored `state.toml`, forcing
+  `active_mode = "rules"` only for the connected window.
+- The test backed up and restored/removes app-policy state at teardown.
+- A controlled helper executable was created by copying `/usr/bin/curl` to:
+  `/tmp/watchdogvpn-task-12-5-helper-curl`
+- A parent launcher process executed that helper. The app-policy rule matched
+  the helper path, not the parent:
+
+```json
+{
+  "id": "task-12-5-helper-block",
+  "action": "block",
+  "match": {
+    "process_path": ["/tmp/watchdogvpn-task-12-5-helper-curl"]
+  },
+  "enabled": true
+}
+```
+
+Result:
+
+- `watchdog connect` succeeded through the real daemon.
+- `wdvpn-tun0` came up and daemon status reported `tun_active = true`.
+- The generated live sing-box config contained the helper route reject rule:
+  `ASSERTION_OK: helper route reject rule found in
+  /run/watchdogvpn/watchdogvpn-singbox-.../singbox.json dns_reject=not-present`
+- `dns_reject=not-present` is expected for this specific helper test because
+  the probe intentionally used `http://1.1.1.1/cdn-cgi/trace` to isolate
+  process routing without introducing DNS resolution into the assertion.
+- A `python3` control request to the same endpoint succeeded during the
+  connected window and reported the VPN exit IP, proving default traffic still
+  used the tunnel while the helper was blocked.
+- The parent-launched helper failed quickly:
+  `curl_exit=0 http_code=000 remote_ip=`, `actual_exit=7`,
+  `helper_command_exit=7`.
+- The test reported:
+  `ASSERTION_OK: delegated helper process was blocked by process_path`.
+- Explicit `watchdog disconnect` ran at teardown, restored the previous
+  profile and state files, removed the temporary app-policy, and cleanup left
+  no sing-box process, no `wdvpn-tun0`, no non-default `ip rule`, and no
+  WatchdogVPN nftables residue.
+
+Conclusion: package-manager-style helper behavior is validated for the
+bounded daemon path. Blocking the parent process is not sufficient when a
+package manager or updater delegates network I/O; the reliable rule is to
+match the helper executable that owns the socket, preferably with exact
+`process_path` for high-confidence matching. The earlier `apt-get` result is
+therefore documented as an expected helper-process limitation of
+parent-process matching, not a failure of app-policy enforcement.
 
 ## 9. What part of the problem may come from treating this as a "normal" app
 
@@ -646,9 +715,11 @@ route around it by making the product leakier.
   differential tests proved the core per-process routing behavior. The
   DNS-follow-policy audit then showed that TUN-captured DNS needed explicit
   app-policy-derived DNS rules, and the follow-up fix now prepends those
-  rules before domain/channel DNS rules with bounded daemon validation.
-  Helper-process matching, kill switch, and crash cleanup still need
-  validation before the risk can be closed.
+  rules before domain/channel DNS rules with bounded daemon validation. A
+  controlled helper-process validation then proved that a parent-launched
+  helper executable can be blocked by exact `process_path` while unrelated
+  traffic continues through the VPN. Kill switch and crash cleanup still
+  need validation before the risk can be closed.
 - `strict_route`+`auto_redirect` stability under real, sustained, multi-app
   desktop load is unproven and has now caused two severe machine-level
   incidents, the second requiring a hard power cut. The exact failure
@@ -733,8 +804,10 @@ repeat the original Task 12.5 matrix (`dig`, `curl` direct, `wget` default,
 logged. Escalate to repeats only if that single attempt produces new
 information. The first daemon-mediated follow-up confirmed `curl -> block`
 with a `python3` tunnel control. The second confirmed `curl -> direct` while
-the `python3` control continued through the VPN. Continue with DNS policy,
-blocked helper-process behavior, kill switch, and cleanup/crash validation.
+the `python3` control continued through the VPN. The DNS policy inheritance
+fix and controlled helper-process validation then covered DNS-follow-policy
+and package-manager-style helper delegation. Continue with kill switch and
+cleanup/crash validation.
 
 **Phase 4 - Decide on `auto_redirect` before further TUN experiments.**
 Independently of Phase 1-3, and before any further live TUN testing,
@@ -760,5 +833,7 @@ The DNS-follow-policy audit confirmed generated DNS channel routing and
 smoke DNS connectivity, then the app-policy DNS inheritance fix added and
 validated process-matched DNS rules before domain/channel DNS rules. AUD-P12-002
 is resolved for generated-config implementation and bounded daemon validation.
-Helper-process blocked-app behavior, kill switch, and cleanup checks remain
-pending.*
+A controlled parent/child helper-process validation then confirmed that a
+delegated helper executable is blocked when the rule targets the helper's exact
+`process_path`, while unrelated `python3` traffic continues through the VPN.
+Kill switch and cleanup checks remain pending.*
