@@ -456,6 +456,80 @@ through the VPN, and `curl -> direct` with unrelated traffic through the
 VPN. Remaining Task 12.5 work should continue with DNS-follow-policy,
 blocked helper-process behavior, kill switch, and cleanup/crash validation.
 
+### 8.4 DNS-follow-policy audit - 2026-07-04
+
+The next bounded VM validation audited the live daemon-generated DNS and
+route config with:
+
+- active mode: `rules`
+- app-policy mode: `blacklist`
+- app-policy rule: `process_name = curl` -> `direct`
+- default action: `current`
+- DNS mode: `custom`
+- DNS hijack: enabled
+- DNS channels intentionally distinguishable:
+  - direct: `udp://9.9.9.9`
+  - proxy: `https://1.1.1.1/dns-query`
+  - final: `tcp://8.8.8.8`
+- DNS rules:
+  - `example.com` -> direct channel
+  - `cloudflare.com` -> proxy channel
+
+Result:
+
+- `watchdog connect` succeeded through the real daemon.
+- `wdvpn-tun0` came up and daemon status reported `tun_active = true`.
+- The generated outbounds kept the expected hardening:
+  - profile outbound `domain_resolver = watchdogvpn-direct-1`
+  - profile outbound `bind_interface = enp0s8`
+  - `direct` outbound `domain_resolver = watchdogvpn-direct-1`
+  - `direct` outbound `bind_interface = enp0s8`
+- The generated DNS servers were correctly detoured by channel:
+  - direct DNS server detoured through `direct`
+  - proxy DNS server detoured through the active VLESS outbound
+  - final DNS server detoured through `direct`
+  - FakeIP server present for proxy resolution
+- DNS rules were present in the generated config:
+  - `example.com` -> `watchdogvpn-direct-1`
+  - `cloudflare.com` -> `watchdogvpn-proxy-1`
+- Smoke DNS lookups for `example.com` and `cloudflare.com` returned A
+  records during the connected window.
+- Explicit `watchdog disconnect` returned the daemon to standby and cleanup
+  left no sing-box process, no `wdvpn-tun0`, no non-default `ip rule`, and
+  no WatchdogVPN nftables residue.
+
+Important finding:
+
+The generated route rule order was:
+
+```json
+[
+  {"action": "sniff"},
+  {"action": "hijack-dns", "protocol": ["dns"]},
+  {"action": "hijack-dns", "inbound": ["watchdogvpn-dns-udp-in", "watchdogvpn-dns-tcp-in"]},
+  {"action": "route", "outbound": "direct", "process_name": ["curl"]},
+  {"action": "route", "outbound": "ubuntu_gabo_yahoo_firefox"}
+]
+```
+
+That order means TUN-captured DNS packets are hijacked before the
+`process_name = curl` app-policy rule can route them to `direct`. The DNS
+policy's own domain/channel rules can still steer specific domains to direct
+or proxy DNS channels, but the current design does **not** prove that DNS
+automatically follows a per-process app-policy action. AUD-P12-002 therefore
+remains open as a design/implementation question, not a runtime connectivity
+failure.
+
+Operational note:
+
+In the Arch VM, the installed daemon socket and shared-state lock files were
+owned by the `watchdogvpn` user/group. The unprivileged shell could not
+connect to `/run/watchdogvpn/control.sock` or create
+`/var/lib/watchdogvpn/*.lock`, so daemon-mediated validation used
+`sudo WATCHDOGVPN_CONFIG_DIR=/var/lib/watchdogvpn ./bin/watchdog ...`.
+This did not affect the daemon runtime result, but it should be considered
+when auditing CLI/group access behavior separately.
+
 ## 9. What part of the problem may come from treating this as a "normal" app
 
 Most of what was found and fixed this session **is** "normal app" plumbing,
@@ -503,8 +577,11 @@ route around it by making the product leakier.
 - App Policy's core promise (per-process control) depends on the daemon
   carrying both `CAP_SYS_PTRACE` and `CAP_DAC_READ_SEARCH`; the VM
   isolation plus daemon-mediated `curl -> block` and `curl -> direct`
-  differential tests proved the core per-process routing behavior, but DNS,
-  helper-process matching, kill switch, and crash cleanup still need
+  differential tests proved the core per-process routing behavior. The
+  DNS-follow-policy audit then showed that TUN-captured DNS is hijacked
+  before per-process app-policy routing rules, so DNS does not yet have a
+  proven automatic inheritance path from process-level app-policy actions.
+  Helper-process matching, kill switch, and crash cleanup still need
   validation before the risk can be closed.
 - `strict_route`+`auto_redirect` stability under real, sustained, multi-app
   desktop load is unproven and has now caused two severe machine-level
@@ -613,5 +690,8 @@ Phase 1 VM follow-up identified `CAP_DAC_READ_SEARCH` plus `CAP_SYS_PTRACE`
 as the minimal daemon capability set needed for cross-user process
 attribution, and daemon-mediated `curl -> block` / `curl -> direct`
 differential tests confirmed the two core real app-policy routing cases.
-DNS behavior, helper-process blocked-app behavior, kill switch, and cleanup
-checks remain pending.*
+The DNS-follow-policy audit confirmed generated DNS channel routing and
+smoke DNS connectivity, but also showed that TUN DNS hijack precedes
+per-process app-policy route rules, so AUD-P12-002 remains open as a
+design/implementation question. Helper-process blocked-app behavior, kill
+switch, and cleanup checks remain pending.*
