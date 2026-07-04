@@ -554,6 +554,119 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_prepends_app_policy_dns_rules(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+        dns_policy = DNSPolicy(
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="local")],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+            },
+        )
+        app_policy = AppPolicy(
+            enabled=True,
+            mode="blacklist",
+            rules=[
+                AppPolicyRule(
+                    id="curl",
+                    action="direct",
+                    match={"process_name": ["curl"]},
+                ),
+                AppPolicyRule(
+                    id="blocked",
+                    action="block",
+                    match={"process_path": ["/usr/bin/blocked"]},
+                ),
+                AppPolicyRule(
+                    id="current",
+                    action="current",
+                    match={"user": ["gabodev"]},
+                ),
+            ],
+        )
+
+        config = self.driver.generate_singbox_config(
+            profile,
+            dns_policy=dns_policy,
+            mode="rules",
+            app_policy=app_policy,
+        )
+
+        self.assertEqual(config["dns"]["rules"][:3], [
+            {"process_name": ["curl"], "server": "watchdogvpn-direct-1"},
+            {"process_path": ["/usr/bin/blocked"], "action": "reject"},
+            {"user": ["gabodev"], "server": "watchdogvpn-fakeip"},
+        ])
+        self.assertIn(
+            {"process_name": ["curl"], "action": "route", "outbound": "direct"},
+            config["route"]["rules"],
+        )
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_rejects_direct_app_dns_without_direct_channel(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+        dns_policy = DNSPolicy(
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+            },
+        )
+        app_policy = AppPolicy(
+            enabled=True,
+            mode="blacklist",
+            rules=[
+                AppPolicyRule(
+                    id="curl",
+                    action="direct",
+                    match={"process_name": ["curl"]},
+                ),
+            ],
+        )
+
+        config = self.driver.generate_singbox_config(
+            profile,
+            dns_policy=dns_policy,
+            mode="rules",
+            app_policy=app_policy,
+        )
+
+        self.assertEqual(
+            config["dns"]["rules"][0],
+            {"process_name": ["curl"], "action": "reject"},
+        )
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_skips_dns_hijack_when_disabled(
         self,
         bind_mock,

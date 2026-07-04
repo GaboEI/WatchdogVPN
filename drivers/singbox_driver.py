@@ -54,6 +54,47 @@ def _merge_route_config(config: dict[str, Any], route_config: dict[str, Any]) ->
     route["rules"].extend(route_config.get("rules", []))
 
 
+def _app_policy_dns_rules(
+    app_policy: AppPolicy | None,
+    dns_config: Any,
+) -> list[dict[str, Any]]:
+    if app_policy is None or not app_policy.enabled:
+        return []
+
+    direct_server = _first_dns_server(dns_config, DNSChannelName.DIRECT)
+    proxy_server = dns_config.proxy_domain_resolver or _first_dns_server(
+        dns_config,
+        DNSChannelName.PROXY,
+    )
+    final_server = dns_config.config.get("final")
+
+    rules: list[dict[str, Any]] = []
+    for rule in app_policy.rules:
+        if not rule.enabled:
+            continue
+        dns_rule: dict[str, Any] = {
+            key: list(values) for key, values in rule.match.items()
+        }
+        action = rule.action.value if hasattr(rule.action, "value") else str(rule.action)
+        if action == "block":
+            dns_rule["action"] = "reject"
+        elif action == "direct":
+            if direct_server:
+                dns_rule["server"] = direct_server
+            else:
+                dns_rule["action"] = "reject"
+        elif proxy_server or final_server:
+            dns_rule["server"] = proxy_server or final_server
+        if "server" in dns_rule or "action" in dns_rule:
+            rules.append(dns_rule)
+    return rules
+
+
+def _first_dns_server(dns_config: Any, channel_name: DNSChannelName) -> str | None:
+    tags = dns_config.channel_servers.get(channel_name)
+    return tags[0] if tags else None
+
+
 @dataclass(slots=True)
 class _BinaryPaths:
     sing_box: tuple[str, str, str] = (
@@ -607,6 +648,13 @@ class SingBoxDriver(BaseDriver):
         if dns_policy is not None:
             dns_config = build_singbox_dns_config(dns_policy, outbound["tag"])
             if dns_config is not None:
+                dns_config.config["rules"] = [
+                    *_app_policy_dns_rules(
+                        app_policy if mode == "rules" else None,
+                        dns_config,
+                    ),
+                    *dns_config.config.get("rules", []),
+                ]
                 config["dns"] = dns_config.config
                 config["inbounds"].extend(build_dns_hijack_inbounds(dns_policy))
                 hijack_route = build_dns_hijack_route(dns_policy)
