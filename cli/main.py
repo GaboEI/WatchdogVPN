@@ -39,6 +39,13 @@ from models.provider import Provider
 from parsers import ParseError
 from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
+from rules.explanation import (
+    RuleExplainer,
+    RuleExplanation,
+    RuleExplanationConfidence,
+)
+from rules.rule_engine import TrafficInfo
+from rules.rule_store import RuleStore
 
 
 DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
@@ -237,6 +244,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     config_set_mode_parser.add_argument("--json", action="store_true", help="Print JSON")
     config_set_mode_parser.set_defaults(handler=_config_set_mode)
+
+    rules_parser = subparsers.add_parser("rules", help="Inspect configured routing rules")
+    rules_subparsers = rules_parser.add_subparsers(dest="rules_command")
+
+    rules_explain_parser = rules_subparsers.add_parser(
+        "explain",
+        help="Explain how configured rules would handle hypothetical traffic",
+    )
+    rules_explain_parser.add_argument("--domain", help="Traffic domain name")
+    rules_explain_parser.add_argument("--ip", help="Traffic destination IP")
+    rules_explain_parser.add_argument("--port", type=int, help="Traffic destination port")
+    rules_explain_parser.add_argument("--protocol", help="Traffic protocol, for example tls")
+    rules_explain_parser.add_argument("--network", help="Network transport, for example tcp")
+    rules_explain_parser.add_argument("--process-name", help="Process executable name")
+    rules_explain_parser.add_argument("--process-path", help="Exact process executable path")
+    rules_explain_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_explain_parser.set_defaults(handler=_rules_explain)
 
     app_policy_parser = subparsers.add_parser(
         "app-policy",
@@ -583,6 +607,88 @@ def _config_set_mode(args: argparse.Namespace) -> int:
     else:
         print(f"Active mode set to: {args.mode}")
     return 0
+
+
+def _rules_explain(args: argparse.Namespace) -> int:
+    traffic = TrafficInfo(
+        domain=args.domain,
+        ip=args.ip,
+        port=args.port,
+        protocol=args.protocol,
+        network=args.network,
+        process_name=args.process_name,
+        process_path=args.process_path,
+    )
+    explanation = RuleExplainer().explain(traffic, RuleStore().list_groups())
+    if args.json:
+        _print_json(explanation.to_dict())
+    else:
+        _print_rule_explanation(explanation)
+    return 0
+
+
+def _print_rule_explanation(explanation: RuleExplanation) -> None:
+    data = explanation.to_dict()
+    confidence = RuleExplanationConfidence(data["confidence"])
+    matched = data.get("matched") if isinstance(data.get("matched"), dict) else None
+
+    print("Rule explanation: configured policy only, not live traffic observation.")
+    print(f"Confidence: {confidence.value}")
+    print(f"Input: {_format_rule_explain_input(data['input_traffic'])}")
+
+    if confidence == RuleExplanationConfidence.DEFINITIVE and matched:
+        print(f"Decision: configured policy would use action '{matched['action']}'.")
+        if matched.get("source") == "rule":
+            print(f"Matched rule: {matched.get('group_name')}/{matched.get('rule_id')}")
+        else:
+            print("Matched rule: final fallback")
+    elif confidence == RuleExplanationConfidence.PARTIAL:
+        print("Decision: incomplete; more input is needed before stating a final action.")
+        if matched:
+            print(f"Candidate local action: {matched['action']} ({matched['source']})")
+    elif confidence == RuleExplanationConfidence.RUNTIME_REQUIRED:
+        print("Decision: cannot be determined statically.")
+        print("Reason: runtime-evaluated rule sets may change the result.")
+        if matched:
+            print(f"Candidate local action: {matched['action']} ({matched['source']})")
+    else:
+        print("Decision: unknown; provide a domain, IP, port, protocol, network, or process.")
+
+    skipped = data.get("skipped_conditions", [])
+    if isinstance(skipped, list) and skipped:
+        print("Skipped conditions:")
+        for item in skipped:
+            if not isinstance(item, dict):
+                continue
+            print(
+                "  "
+                f"{item.get('group_name')}/{item.get('rule_id')} "
+                f"{item.get('condition')}={','.join(str(value) for value in item.get('values', []))} "
+                f"reason={item.get('reason')}"
+            )
+
+    rule_sets = data.get("unevaluated_rule_sets", [])
+    if isinstance(rule_sets, list) and rule_sets:
+        print("Unevaluated rule sets:")
+        for item in rule_sets:
+            if not isinstance(item, dict):
+                continue
+            print(
+                "  "
+                f"{item.get('group_name')}/{item.get('rule_id')} "
+                f"{item.get('kind')}={','.join(str(value) for value in item.get('values', []))}"
+            )
+
+
+def _format_rule_explain_input(input_traffic: object) -> str:
+    if not isinstance(input_traffic, dict):
+        return "-"
+    parts = [
+        f"{key}={value}"
+        for key, value in input_traffic.items()
+        if value is not None
+    ]
+    return ", ".join(parts) or "-"
 
 
 def _app_policy_status(args: argparse.Namespace) -> int:
