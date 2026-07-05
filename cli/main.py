@@ -15,6 +15,7 @@ from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPoli
 from app_policy.store import AppPolicyStore
 from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
+from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
 from config.paths import resolve_config_dir
 from config.persistence import PersistentStoreError, dump_json
@@ -39,6 +40,7 @@ from models.provider import Provider
 from parsers import ParseError
 from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
+from rotation import pool_builder
 from rules.explanation import (
     RuleExplainer,
     RuleExplanation,
@@ -472,7 +474,10 @@ def _profile_add(args: argparse.Namespace) -> int:
 
 def _profile_list(args: argparse.Namespace) -> int:
     store = ProfileStore()
-    profiles = store.get_rotation_pool() if args.pool else store.list()
+    if args.pool:
+        profiles = pool_builder.build_pool(store, ProviderStore(), AppConfig().load())
+    else:
+        profiles = store.list()
     if args.json:
         print(json.dumps([profile.to_dict() for profile in profiles], indent=2, sort_keys=True))
         return 0

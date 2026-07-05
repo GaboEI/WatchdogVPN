@@ -131,7 +131,7 @@ class ConfigStorageTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(target.parent.stat().st_mode), 0o2770)
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o660)
 
-    def test_profile_store_crud_and_rotation_pool(self) -> None:
+    def test_profile_store_crud(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "profiles.json"
             store = ProfileStore(path)
@@ -147,11 +147,10 @@ class ConfigStorageTests(unittest.TestCase):
             )
             store.add(profile)
             self.assertEqual(store.get("p1"), profile)
-            self.assertEqual(store.get_rotation_pool(), [profile])
 
             profile.enabled = False
             store.update(profile)
-            self.assertEqual(store.get_rotation_pool(), [])
+            self.assertEqual(store.get("p1").enabled, False)
 
             store.remove("p1")
             self.assertIsNone(store.get("p1"))

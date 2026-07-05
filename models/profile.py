@@ -28,6 +28,43 @@ class ProfileSource(str, Enum):
     SUBSCRIPTION = "subscription"
 
 
+class ResilienceCategory(str, Enum):
+    """Anti-DPI/censorship-resistance category, per the master plan's
+    "Profile Categories" doctrine (Phase 2/4.6/5.5) - never encoded in code
+    until now. Documentation-only classifications must not silently drift
+    from what the driver/parser layers actually validated:
+    - RESILIENT: directly serves anti-censorship/anti-DPI resilience.
+    - COMPATIBILITY: broad interoperability, no anti-censorship claim.
+    """
+
+    RESILIENT = "resilient"
+    COMPATIBILITY = "compatibility"
+
+
+PROTOCOL_RESILIENCE_CATEGORY: dict[ProtocolType, ResilienceCategory] = {
+    ProtocolType.VLESS: ResilienceCategory.RESILIENT,
+    ProtocolType.TROJAN: ResilienceCategory.RESILIENT,
+    ProtocolType.HYSTERIA2: ResilienceCategory.RESILIENT,
+    ProtocolType.AMNEZIAWG: ResilienceCategory.RESILIENT,
+    ProtocolType.OPENVPN_CLOAK: ResilienceCategory.RESILIENT,
+    ProtocolType.VMESS: ResilienceCategory.COMPATIBILITY,
+    ProtocolType.TUIC: ResilienceCategory.COMPATIBILITY,
+    ProtocolType.SHADOWSOCKS: ResilienceCategory.COMPATIBILITY,
+    ProtocolType.WIREGUARD: ResilienceCategory.COMPATIBILITY,
+    ProtocolType.SOCKS: ResilienceCategory.COMPATIBILITY,
+    ProtocolType.HTTP: ResilienceCategory.COMPATIBILITY,
+    ProtocolType.OPENVPN: ResilienceCategory.COMPATIBILITY,
+}
+
+
+def profile_resilience_category(profile: "Profile") -> ResilienceCategory:
+    """Direct mapping access, not .get(protocol, default): a missing entry
+    must raise KeyError, not silently degrade to COMPATIBILITY. Completeness
+    is enforced separately by a test iterating every ProtocolType - a masked
+    default here would defeat that fail-loud guarantee."""
+    return PROTOCOL_RESILIENCE_CATEGORY[profile.protocol]
+
+
 PROFILE_FIELDS = {
     "id",
     "name",

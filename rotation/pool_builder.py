@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
@@ -30,21 +30,37 @@ def _recently_failed(profile: Profile, cooldown_seconds: float) -> bool:
     return elapsed < cooldown_seconds
 
 
-def build_pool(
-    profile_store: ProfileStore,
+def filter_eligible_profiles(
+    profiles: Iterable[Profile],
     provider_store: ProviderStore,
     config: dict[str, Any],
 ) -> list[Profile]:
+    """Health/eligibility pass: origin-enabled, enabled, not recently failed.
+
+    Takes any already-scoped iterable - it does not decide *which* profiles
+    are in scope, only which of them are currently healthy candidates. This
+    is the one reusable runtime layer node-group resolution (Phase 14) reuses
+    instead of reimplementing eligibility checks: callers pick the scope
+    (`in_rotation_pool` for the legacy pool, group membership for a
+    NodeGroup), this function applies the same health filter to either.
+    """
     cooldown_seconds = float(config.get("rotation", {}).get("health_status_cooldown_seconds", 0))
-    pool: list[Profile] = []
-    for profile in profile_store.list():
+    eligible: list[Profile] = []
+    for profile in profiles:
         if not _origin_enabled(profile, provider_store):
-            continue
-        if not profile.in_rotation_pool:
             continue
         if not profile.enabled:
             continue
         if _recently_failed(profile, cooldown_seconds):
             continue
-        pool.append(profile)
-    return pool
+        eligible.append(profile)
+    return eligible
+
+
+def build_pool(
+    profile_store: ProfileStore,
+    provider_store: ProviderStore,
+    config: dict[str, Any],
+) -> list[Profile]:
+    candidates = [profile for profile in profile_store.list() if profile.in_rotation_pool]
+    return filter_eligible_profiles(candidates, provider_store, config)

@@ -52,6 +52,3 @@ class ProfileStore:
         with file_lock(self.path):
             items = [item for item in self._load_raw() if item.get("id") != profile_id]
             self._save_raw(items)
-
-    def get_rotation_pool(self) -> list[Profile]:
-        return [p for p in self.list() if p.enabled and p.in_rotation_pool]
