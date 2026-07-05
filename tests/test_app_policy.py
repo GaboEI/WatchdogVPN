@@ -60,15 +60,40 @@ class AppPolicyRuleModelTests(unittest.TestCase):
         self.assertEqual(regex_rule.match_confidence, MatchConfidence.MEDIUM)
         self.assertEqual(user_rule.match_confidence, MatchConfidence.MEDIUM)
 
-    def test_rejects_auto_and_group_actions_until_multi_outbound_exists(self) -> None:
-        for action in ("auto", "group:secure"):
-            with self.subTest(action=action):
-                with self.assertRaises(PersistentValidationError):
-                    AppPolicyRule(
-                        id="future",
-                        action=action,
-                        match={"process_path": ["/usr/bin/curl"]},
-                    )
+    def test_rejects_bare_auto_action(self) -> None:
+        # "auto" (bare, no group) still has no backing mechanism - unlike
+        # group:<name>, which Task 14.6 now backs with a real NodeGroup
+        # selector. If a bare auto-select-from-default-pool action is ever
+        # built, it should be spelled "auto_select" (matching
+        # rules.models.SIMPLE_RULE_ACTIONS), not "auto" - a second name for
+        # the same concept, not reintroducing this literal.
+        with self.assertRaises(PersistentValidationError):
+            AppPolicyRule(
+                id="future",
+                action="auto",
+                match={"process_path": ["/usr/bin/curl"]},
+            )
+
+    def test_accepts_group_action_backed_by_task_14_6(self) -> None:
+        rule = AppPolicyRule(
+            id="secure",
+            action="group:secure",
+            match={"process_path": ["/usr/bin/curl"]},
+        )
+
+        self.assertEqual(rule.action, "group:secure")
+        self.assertEqual(rule.to_dict()["action"], "group:secure")
+
+    def test_group_action_round_trips_through_from_dict(self) -> None:
+        rule = AppPolicyRule(
+            id="secure",
+            action="group:secure",
+            match={"process_path": ["/usr/bin/curl"]},
+        )
+
+        restored = AppPolicyRule.from_dict(rule.to_dict())
+
+        self.assertEqual(restored, rule)
 
     def test_rejects_unknown_action(self) -> None:
         with self.assertRaises(PersistentValidationError):
@@ -157,6 +182,20 @@ class AppPolicyModelTests(unittest.TestCase):
     def test_rejects_auto_default_action(self) -> None:
         with self.assertRaises(PersistentValidationError):
             AppPolicy.from_dict({"default_action": "auto"})
+
+    def test_group_default_action_round_trips(self) -> None:
+        policy = AppPolicy(
+            enabled=True,
+            mode="whitelist",
+            default_action="group:secure",
+            rules=[],
+        )
+
+        restored = AppPolicy.from_dict(policy.to_dict())
+
+        self.assertEqual(restored, policy)
+        self.assertEqual(restored.default_action, "group:secure")
+        self.assertEqual(restored.to_dict()["default_action"], "group:secure")
 
 
 class AppPolicyStoreTests(unittest.TestCase):

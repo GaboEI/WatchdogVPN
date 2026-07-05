@@ -25,9 +25,14 @@ from dns.models import DNSPolicy
 from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from node_groups.models import NodeGroup, NodeGroupSelectionMode, group_target
+from node_groups.resolver import resolve_candidates as resolve_node_group_candidates
+from node_groups.scoring import score_candidates
+from node_groups.store import NodeGroupStore
 from rotation import health_checker, pool_builder
 from rotation.recovery import Recovery
 from rotation.rotation_engine import RotationEngine
+from rules.rule_engine import PRIORITY_TIER_ORDER, group_by_tier
 from rules.rule_store import RuleStore
 
 
@@ -71,6 +76,7 @@ class WatchdogRuntime:
     dns_snapshot_path: Path = field(default_factory=default_snapshot_path)
     rule_store: RuleStore = field(default_factory=RuleStore)
     app_policy_store: AppPolicyStore = field(default_factory=AppPolicyStore)
+    node_group_store: NodeGroupStore = field(default_factory=NodeGroupStore)
     driver_selector: DriverSelector = field(default_factory=lambda: select_driver)
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
@@ -380,7 +386,86 @@ class WatchdogRuntime:
         return ConnectionState(status=status, mode=self.driver.status().mode)
 
     def _compatible_pool(self, config: dict) -> list[Profile]:
-        return pool_builder.build_pool(self.profile_store, self.provider_store, config)
+        """The candidate pool RotationEngine rotates over.
+
+        Task 14.6: the node-group selector does not compete with
+        RotationEngine for "which profile is active" - it only changes
+        which candidate list feeds it. RotationEngine itself, Recovery,
+        and the kill-switch/all-failed pipeline are all unchanged; this is
+        the single point where the source of candidates is decided.
+        """
+        target_name, target_group = self._effective_node_group()
+        if target_name is None:
+            return pool_builder.build_pool(self.profile_store, self.provider_store, config)
+        if target_group is None:
+            # Fail-closed, deliberately: an enabled rule/app-policy action
+            # references a node group that does not exist (deleted, or the
+            # rule was written before the group was created). This is a
+            # broken routing reference, not "nothing configured" - for a
+            # resilience product it must not silently degrade to "use any
+            # node" by falling back to the legacy pool. An empty pool here
+            # flows into the same unavailable/kill-switch path as any other
+            # exhausted pool (RotationEngine.pool_size_category() ==
+            # "unavailable" -> _handle_rotation_unavailable), so no new
+            # safety code is needed - only correct sourcing.
+            LOGGER.error("node_group_target_missing name=%s", target_name)
+            return []
+        return self._group_scoped_pool(target_group, config)
+
+    def _effective_node_group(self) -> tuple[str | None, NodeGroup | None]:
+        """Which node group, if any, currently governs the active connection.
+
+        Scans enabled rules/app-policy in the same priority order RuleEngine
+        already uses for matching real traffic (block -> custom -> app ->
+        imported -> recommended), reusing that order rather than inventing a
+        second precedence system: the first `group:<id>` action found, in
+        that order, is the group that governs. Returns (None, None) when no
+        enabled rule/app-policy targets any group - the legacy pool applies.
+        Returns (name, None) when a group is targeted but does not exist
+        (name, group) when it does.
+        """
+        tiers = group_by_tier(self.rule_store.list_groups())
+        app_policy = self._runtime_app_policy()
+        for tier in PRIORITY_TIER_ORDER:
+            if tier == "app":
+                name = self._app_policy_group_target(app_policy)
+                if name is not None:
+                    return name, self.node_group_store.get(name)
+            for rule_group in tiers[tier]:
+                if not rule_group.enabled:
+                    continue
+                for rule in rule_group.rules:
+                    if not rule.enabled:
+                        continue
+                    name = group_target(rule.action)
+                    if name is not None:
+                        return name, self.node_group_store.get(name)
+        return None, None
+
+    def _app_policy_group_target(self, policy: AppPolicy) -> str | None:
+        if not policy.enabled:
+            return None
+        for rule in policy.rules:
+            if not rule.enabled:
+                continue
+            name = group_target(rule.action)
+            if name is not None:
+                return name
+        return group_target(policy.default_action)
+
+    def _group_scoped_pool(self, group: NodeGroup, config: dict) -> list[Profile]:
+        candidates = resolve_node_group_candidates(
+            group, self.profile_store, self.provider_store, config
+        )
+        if group.selection_mode is NodeGroupSelectionMode.MANUAL:
+            # Hard pin (Task 14.3): never substitute a different profile
+            # when the pinned one is unavailable - "decisions are
+            # respected," an empty result here is correct, not a bug.
+            return [profile for profile in candidates if profile.id == group.manual_profile_id]
+        scores = score_candidates(candidates, group.resilience_policy)
+        ranked_ids = [score.profile_id for score in sorted(scores, key=lambda s: (-s.total, s.profile_id))]
+        by_id = {profile.id: profile for profile in candidates}
+        return [by_id[profile_id] for profile_id in ranked_ids]
 
     def _driver_for_profile(self, profile: Profile, disconnect_current: bool = True) -> BaseDriver:
         selected_driver = self.driver_selector(profile)

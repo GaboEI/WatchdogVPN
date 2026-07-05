@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -11,6 +10,7 @@ from config.persistence import (
     strict_bool,
     strict_int,
 )
+from node_groups.models import group_target
 
 
 APP_POLICY_SCHEMA_VERSION = 1
@@ -35,7 +35,6 @@ APP_POLICY_MATCH_FIELDS = {
     "user_id",
 }
 UNAVAILABLE_ACTIONS = {"auto"}
-GROUP_ACTION_RE = re.compile(r"^group:.+")
 
 
 class AppPolicyMode(str, Enum):
@@ -55,21 +54,37 @@ class MatchConfidence(str, Enum):
     LOW = "low"
 
 
-def _validate_action(value: Any, field_name: str) -> AppPolicyAction:
+def _validate_action(value: Any, field_name: str) -> AppPolicyAction | str:
     if isinstance(value, AppPolicyAction):
         return value
     action = str(value).strip()
-    if action in UNAVAILABLE_ACTIONS or GROUP_ACTION_RE.match(action):
+    if action in UNAVAILABLE_ACTIONS:
         raise PersistentValidationError(
             f"{field_name} action {action!r} is scheduled for later multi-outbound support"
         )
+    # group:<name> is additive: existing persisted "current"/"direct"/"block"
+    # rules are unaffected (none of them ever matched group_target()), and
+    # this is now backed by a real NodeGroup selector (Task 14.6) instead of
+    # being rejected as unbuilt. Kept as a raw string, not an AppPolicyAction
+    # member - there is no enum value for an arbitrary group name, matching
+    # how rules.models.Rule.action already stores group:<name> as a string.
+    if group_target(action) is not None:
+        return action
     try:
         return AppPolicyAction(action)
     except ValueError as exc:
         supported = ", ".join(item.value for item in AppPolicyAction)
         raise PersistentValidationError(
-            f"{field_name} must be one of: {supported}"
+            f"{field_name} must be one of: {supported}, or 'group:<name>'"
         ) from exc
+
+
+def _action_value(action: AppPolicyAction | str) -> str:
+    """Serialize either an AppPolicyAction member or a raw group:<name>
+    string to its persisted form - action is no longer always an enum
+    member now that group:<name> is accepted, so `.value` is not always
+    valid on it."""
+    return action.value if isinstance(action, AppPolicyAction) else action
 
 
 def _string_list(value: Any, field_name: str) -> list[str]:
@@ -144,7 +159,7 @@ class AppPolicyRule:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "action": self.action.value,
+            "action": _action_value(self.action),
             "match": {key: list(value) for key, value in self.match.items()},
             "enabled": self.enabled,
         }
@@ -212,7 +227,7 @@ class AppPolicy:
             "schema_version": self.schema_version,
             "enabled": self.enabled,
             "mode": self.mode.value,
-            "default_action": self.default_action.value,
+            "default_action": _action_value(self.default_action),
             "rules": [rule.to_dict() for rule in self.rules],
         }
 

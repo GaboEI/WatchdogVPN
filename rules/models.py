@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from config.persistence import reject_unknown_keys, strict_bool, strict_int
+from node_groups.models import group_target
 
 
 RULE_FIELDS = {"id", "action", "conditions", "enabled"}
@@ -29,7 +30,6 @@ ALLOWED_RULE_CONDITIONS = {
 SIMPLE_RULE_ACTIONS = {"direct", "current_profile", "auto_select", "block"}
 
 GROUP_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_GROUP_ACTION_RE = re.compile(r"^group:(?P<group_id>.+)$")
 
 DEFAULT_RULE_GROUPS = (
     "recommended",
@@ -46,8 +46,7 @@ def _validate_rule_action(action: Any) -> str:
     action = str(action).strip()
     if action in SIMPLE_RULE_ACTIONS:
         return action
-    match = _GROUP_ACTION_RE.match(action)
-    if match and match.group("group_id").strip():
+    if group_target(action) is not None:
         return action
     raise ValueError(f"unsupported rule action: {action!r}")
 

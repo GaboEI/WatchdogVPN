@@ -10,6 +10,28 @@ from config.persistence import PersistentValidationError, reject_unknown_keys, s
 
 NODE_GROUP_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
+_GROUP_ACTION_RE = re.compile(r"^group:(?P<group_name>.+)$")
+
+
+def group_target(action: Any) -> str | None:
+    """Parse a `group:<name>` action string, returning `<name>`, or None if
+    `action` does not target a node group.
+
+    This is the single canonical parser for the `group:<name>` syntax.
+    `rules/models.py` and `app_policy/models.py` both import this instead
+    of each keeping their own regex, and `core/watchdog.py`'s runtime
+    resolution uses it too - there must be exactly one definition of "how
+    to read a group target" in the codebase. `<name>` is not validated
+    against NODE_GROUP_NAME_RE here (matching the historical, already-
+    persisted behavior of the original rules/models.py regex this
+    replaces) - whether a referenced name resolves to a real NodeGroup is
+    a runtime concern (core.watchdog.WatchdogRuntime._effective_node_group),
+    not a syntax concern.
+    """
+    match = _GROUP_ACTION_RE.match(str(action).strip())
+    return match.group("group_name").strip() if match else None
+
+
 NODE_GROUP_FIELDS = {
     "name",
     "enabled",

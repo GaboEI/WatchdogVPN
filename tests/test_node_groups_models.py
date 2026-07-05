@@ -7,7 +7,36 @@ from node_groups.models import (
     NodeGroup,
     NodeGroupResiliencePolicy,
     NodeGroupSelectionMode,
+    group_target,
 )
+
+
+class GroupTargetParserTests(unittest.TestCase):
+    """group_target() is the single canonical parser for the group:<name>
+    syntax (Task 14.6) - rules/models.py and app_policy/models.py both
+    import this instead of keeping their own regex."""
+
+    def test_extracts_the_group_name(self) -> None:
+        self.assertEqual(group_target("group:paris"), "paris")
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        self.assertEqual(group_target("  group:paris  "), "paris")
+
+    def test_non_group_actions_return_none(self) -> None:
+        for action in ("direct", "current_profile", "auto_select", "block", "current"):
+            with self.subTest(action=action):
+                self.assertIsNone(group_target(action))
+
+    def test_bare_group_prefix_with_no_name_returns_none(self) -> None:
+        self.assertIsNone(group_target("group:"))
+
+    def test_does_not_validate_the_extracted_name_as_a_slug(self) -> None:
+        # Matches the historical rules/models.py behavior this replaces:
+        # syntax extraction and "does this NodeGroup actually exist" are
+        # different concerns - the latter is a runtime question
+        # (core.watchdog.WatchdogRuntime._effective_node_group), not this
+        # parser's job.
+        self.assertEqual(group_target("group:Not A Valid Slug!"), "Not A Valid Slug!")
 
 
 class NodeGroupDefaultsTests(unittest.TestCase):
