@@ -10,6 +10,7 @@ from pathlib import Path
 from core.watchdog import build_watchdog
 from daemon.ipc_server import IPCServer
 from daemon.runtime_worker import RuntimeWorker
+from daemon.watchdog_loop import WatchdogLoop
 from daemon import systemd_helper
 
 
@@ -39,12 +40,16 @@ def main(argv: list[str] | None = None) -> int:
     reconcile_stale_tun_state = getattr(runtime.driver, "reconcile_stale_tun_state", None)
     if not args.standalone and callable(reconcile_stale_tun_state):
         reconcile_stale_tun_state()
-    server = IPCServer(request_socket_path, event_socket_path, RuntimeWorker(runtime))
+    worker = RuntimeWorker(runtime)
+    server = IPCServer(request_socket_path, event_socket_path, worker)
+    watchdog_loop = WatchdogLoop(worker, app_config=runtime.app_config)
     try:
         server.start()
+        watchdog_loop.start()
         systemd_helper.notify("READY=1")
         stop_event.wait()
     finally:
+        watchdog_loop.stop()
         server.stop()
     return 0
 

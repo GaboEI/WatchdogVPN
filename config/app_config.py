@@ -67,6 +67,8 @@ CONFIG_STRING_FIELDS = {
     ("dns", "mode"),
 }
 
+MIN_WATCHDOG_CHECK_INTERVAL_SECONDS = 5
+
 
 def _config_path() -> Path:
     override = os.environ.get("WATCHDOGVPN_CONFIG_FILE")
@@ -169,4 +171,10 @@ def _validate_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
         raise PersistentValidationError("kill_switch.on_manual_disconnect must be 'disable' or 'keep'")
     if validated["dns"]["mode"] not in {"auto", "off", "custom", "advanced"}:
         raise PersistentValidationError("dns.mode must be one of: auto, off, custom, advanced")
+    check_interval = validated["watchdog"]["check_interval_seconds"]
+    if check_interval < MIN_WATCHDOG_CHECK_INTERVAL_SECONDS:
+        raise PersistentValidationError(
+            f"watchdog.check_interval_seconds must be at least "
+            f"{MIN_WATCHDOG_CHECK_INTERVAL_SECONDS}"
+        )
     return validated

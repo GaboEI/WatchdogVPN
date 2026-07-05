@@ -79,6 +79,22 @@ class ConfigStorageTests(unittest.TestCase):
             with self.assertRaises(PersistentValidationError):
                 AppConfig(path).load()
 
+    def test_app_config_rejects_check_interval_below_minimum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("[watchdog]\ncheck_interval_seconds = 1\n", encoding="utf-8")
+
+            with self.assertRaises(PersistentValidationError):
+                AppConfig(path).load()
+
+    def test_app_config_accepts_check_interval_at_minimum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("[watchdog]\ncheck_interval_seconds = 5\n", encoding="utf-8")
+
+            loaded = AppConfig(path).load()
+            self.assertEqual(loaded["watchdog"]["check_interval_seconds"], 5)
+
     def test_config_paths_follow_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / "cfg"

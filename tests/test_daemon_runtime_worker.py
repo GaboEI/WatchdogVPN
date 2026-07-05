@@ -15,6 +15,7 @@ from daemon.protocol import (
     COMMAND_DISCONNECT,
     COMMAND_ROTATE,
     COMMAND_STATUS,
+    EVENT_HEALTH_CHECK,
     EVENT_ROTATION,
     EVENT_STATE_CHANGED,
 )
@@ -74,6 +75,7 @@ class FakeRuntime:
         self.connected_profile_id = ""
         self.disconnect_calls = 0
         self.rotate_calls: list[bool] = []
+        self.run_iteration_queue: list[ConnectionState] = []
 
     def connect(self, profile: Profile) -> bool:
         self.connected_profile_id = profile.id
@@ -96,6 +98,11 @@ class FakeRuntime:
         self.connected_profile_id = "rotated"
         return ConnectionState(active_profile_id="rotated", mode="rules", status="recovered")
 
+    def run_iteration(self) -> ConnectionState:
+        if self.run_iteration_queue:
+            return self.run_iteration_queue.pop(0)
+        return self.status()
+
 
 class ThreadTrackingRuntime(FakeRuntime):
     def __init__(self, profile_store: ProfileStore) -> None:
@@ -116,6 +123,11 @@ class ThreadTrackingRuntime(FakeRuntime):
     def status(self) -> ConnectionState:
         self._record_thread()
         return super().status()
+
+
+class RaisingTickRuntime(FakeRuntime):
+    def run_iteration(self) -> ConnectionState:
+        raise RuntimeError("boom")
 
 
 def make_profile(profile_id: str = "p1") -> Profile:
@@ -282,6 +294,77 @@ class RuntimeWorkerTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             worker.submit_request(WorkerRequest(command=COMMAND_STATUS))
+
+    def test_submit_tick_requires_running_worker(self) -> None:
+        worker = RuntimeWorker(self.make_runtime())
+
+        with self.assertRaises(RuntimeError):
+            worker.submit_tick()
+
+    def test_tick_always_broadcasts_health_check_event(self) -> None:
+        bus = EventBus()
+        subscription = bus.subscribe()
+        runtime = FakeRuntime(self.profile_store)
+        worker = RuntimeWorker(runtime, bus)
+        worker.start()
+        try:
+            worker.submit_tick()
+            event = subscription.get(timeout=2.0)
+            worker.submit(COMMAND_STATUS, timeout=2.0)  # drain queue in order
+        finally:
+            worker.stop()
+
+        self.assertEqual(event.event, EVENT_HEALTH_CHECK)
+        self.assertEqual(event.payload["status"], "standby")
+
+    def test_tick_broadcasts_state_changed_only_when_status_changes(self) -> None:
+        bus = EventBus()
+        subscription = bus.subscribe()
+        runtime = FakeRuntime(self.profile_store)
+        runtime.run_iteration_queue = [
+            ConnectionState(status="standby", mode="standby"),
+            ConnectionState(status="standby", mode="standby"),
+            ConnectionState(status="recovered", mode="rules"),
+        ]
+        worker = RuntimeWorker(runtime, bus)
+        worker.start()
+        try:
+            worker.submit_tick()
+            worker.submit_tick()
+            worker.submit_tick()
+            worker.submit(COMMAND_STATUS, timeout=2.0)  # drain queue in order
+
+            first = subscription.get(timeout=2.0)
+            second = subscription.get(timeout=2.0)
+            third = subscription.get(timeout=2.0)
+            fourth = subscription.get(timeout=2.0)
+            fifth = subscription.get(timeout=2.0)
+            with self.assertRaises(queue.Empty):
+                subscription.get(timeout=0.05)
+        finally:
+            worker.stop()
+
+        # tick 1 (standby, first time seen): health_check + state_changed
+        self.assertEqual(first.event, EVENT_HEALTH_CHECK)
+        self.assertEqual(second.event, EVENT_STATE_CHANGED)
+        # tick 2 (still standby, unchanged): only health_check
+        self.assertEqual(third.event, EVENT_HEALTH_CHECK)
+        # tick 3 (status changed to recovered): health_check + state_changed
+        self.assertEqual(fourth.event, EVENT_HEALTH_CHECK)
+        self.assertEqual(fifth.event, EVENT_STATE_CHANGED)
+        self.assertEqual(fifth.payload["status"], "recovered")
+
+    def test_tick_survives_run_iteration_exception_and_worker_keeps_serving(self) -> None:
+        runtime = RaisingTickRuntime(self.profile_store)
+        worker = RuntimeWorker(runtime)
+        worker.start()
+        try:
+            worker.submit_tick()
+            response = worker.submit(COMMAND_STATUS, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertTrue(response.ok)
 
 
 class EventBusTests(unittest.TestCase):

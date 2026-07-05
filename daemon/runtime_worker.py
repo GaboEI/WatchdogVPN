@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ from daemon.protocol import (
     COMMAND_DISCONNECT,
     COMMAND_ROTATE,
     COMMAND_STATUS,
+    EVENT_HEALTH_CHECK,
     EVENT_ROTATION,
     EVENT_STATE_CHANGED,
     ALLOWED_COMMANDS,
@@ -20,6 +22,9 @@ from daemon.protocol import (
 )
 from models.connection_state import ConnectionState
 from models.profile import Profile
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class RuntimeLike(Protocol):
@@ -37,8 +42,12 @@ class RuntimeLike(Protocol):
     def rotate_now(self, force: bool = False) -> ConnectionState:
         ...
 
+    def run_iteration(self) -> ConnectionState:
+        ...
+
 
 _STOP = object()
+_TICK = object()
 
 
 @dataclass(slots=True)
@@ -56,6 +65,7 @@ class RuntimeWorker:
         self._thread = threading.Thread(target=self._run, name="watchdogvpn-runtime-worker", daemon=True)
         self._started = threading.Event()
         self._stopped = threading.Event()
+        self._last_tick_status: str | None = None
 
     def start(self) -> None:
         if self._thread.is_alive():
@@ -84,6 +94,17 @@ class RuntimeWorker:
             raise RuntimeError("runtime worker is not running")
         self._queue.put(request)
 
+    def submit_tick(self) -> None:
+        """Enqueue an autonomous health-check tick (see daemon.watchdog_loop).
+
+        Fire-and-forget: goes through the same queue as IPC requests so it
+        never runs concurrently with a connect/disconnect/rotate command,
+        but nothing waits on a response.
+        """
+        if not self._thread.is_alive():
+            raise RuntimeError("runtime worker is not running")
+        self._queue.put(_TICK)
+
     def is_running(self) -> bool:
         return self._thread.is_alive() and not self._stopped.is_set()
 
@@ -94,11 +115,29 @@ class RuntimeWorker:
                 item = self._queue.get()
                 if item is _STOP:
                     return
+                if item is _TICK:
+                    self._handle_tick()
+                    continue
                 if not isinstance(item, WorkerRequest):
                     continue
                 item.response_queue.put(self._handle_request(item))
         finally:
             self._stopped.set()
+
+    def _handle_tick(self) -> None:
+        # A tick has no caller waiting on a response - an unexpected
+        # exception here must never escape and kill this thread, since it
+        # also serves every IPC connect/disconnect/status/rotate command.
+        try:
+            state = self.runtime.run_iteration()
+        except Exception:
+            LOGGER.error("watchdog_tick_failed", exc_info=True)
+            return
+        state_payload = _state_payload(state)
+        self.event_bus.broadcast(Event(EVENT_HEALTH_CHECK, state_payload))
+        if state_payload.get("status") != self._last_tick_status:
+            self._last_tick_status = state_payload.get("status")
+            self._broadcast_state(state_payload)
 
     def _handle_request(self, request: WorkerRequest) -> Response:
         try:
