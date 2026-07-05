@@ -895,6 +895,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         with (
             patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
             patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
             patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
@@ -928,6 +929,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         with (
             patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
             patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
             patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
@@ -938,6 +940,35 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertTrue(self.driver._tun_expected)
         http_mock.assert_not_called()
         ip_mock.assert_not_called()
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_fails_and_cleans_up_when_tun_auto_redirect_never_gets_ready(
+        self, popen_mock, generate_mock, binary_mock
+    ) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+
+        def mark_child_dead() -> bool:
+            process.poll.return_value = 1
+            return False
+
+        with (
+            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", side_effect=mark_child_dead),
+            patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
+            patch.object(self.driver, "_capture_tun_cleanup_state") as capture_mock,
+            patch.object(self.driver, "_cleanup_tun_residue") as cleanup_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+
+        self.assertIsNone(self.driver._active_profile)
+        self.assertIsNone(self.driver._connected_at)
+        self.assertFalse(self.driver._tun_expected)
+        self.assertGreaterEqual(capture_mock.call_count, 1)
+        cleanup_mock.assert_called_once()
 
     @patch.object(SingBoxDriver, "_cleanup_runtime")
     def test_disconnect_terminates_and_cleans_runtime(self, cleanup_mock) -> None:
@@ -1064,6 +1095,41 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertIn(["ip", "-6", "route", "flush", "table", "1771114712"], commands)
         self.assertIn(["ip", "route", "flush", "table", "2022"], commands)
         self.assertIn(["ip", "-6", "route", "flush", "table", "2022"], commands)
+
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
+    @patch.object(SingBoxDriver, "_run_capture_command")
+    def test_singbox_auto_redirect_ready_requires_nft_table_and_base_chains(
+        self, capture_mock, which_mock
+    ) -> None:
+        capture_mock.return_value.returncode = 0
+        capture_mock.return_value.stdout = """
+table inet sing-box {
+    chain output {
+        type route hook output priority mangle; policy accept;
+    }
+    chain prerouting {
+        type filter hook prerouting priority mangle; policy accept;
+    }
+}
+"""
+
+        self.assertTrue(self.driver._singbox_auto_redirect_ready())
+        capture_mock.assert_called_once_with(["nft", "list", "table", "inet", "sing-box"])
+
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
+    @patch.object(SingBoxDriver, "_run_capture_command")
+    def test_singbox_auto_redirect_ready_rejects_partial_nft_table(
+        self, capture_mock, which_mock
+    ) -> None:
+        capture_mock.return_value.returncode = 0
+        capture_mock.return_value.stdout = """
+table inet sing-box {
+    chain output {
+    }
+}
+"""
+
+        self.assertFalse(self.driver._singbox_auto_redirect_ready())
 
     def test_discover_singbox_tun_residue_uses_marks_and_tun_routes(self) -> None:
         current_rules = (
@@ -1278,9 +1344,12 @@ class SingBoxDriverHealthTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_public_ip_via_proxy")
     @patch.object(SingBoxDriver, "_http_via_proxy")
+    @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_ok_for_tun_mode_without_proxy_http(self, port_mock, tun_mock, http_mock, ip_mock) -> None:
+    def test_health_check_ok_for_tun_mode_without_proxy_http(
+        self, port_mock, tun_mock, nft_mock, http_mock, ip_mock
+    ) -> None:
         self.driver._active_mode = "tun"
         self.driver._tun_expected = True
 
@@ -1292,6 +1361,17 @@ class SingBoxDriverHealthTests(unittest.TestCase):
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=False)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
     def test_health_check_degraded_when_tun_interface_missing(self, port_mock, tun_mock) -> None:
+        self.driver._active_mode = "tun"
+        self.driver._tun_expected = True
+
+        self.assertEqual(self.driver.health_check(), "degraded")
+
+    @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=False)
+    @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_degraded_when_tun_auto_redirect_not_ready(
+        self, port_mock, tun_mock, nft_mock
+    ) -> None:
         self.driver._active_mode = "tun"
         self.driver._tun_expected = True
 

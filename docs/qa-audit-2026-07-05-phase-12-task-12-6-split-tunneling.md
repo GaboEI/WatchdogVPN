@@ -2,7 +2,7 @@
 
 > Date: 2026-07-05
 > Task: PHASE 12 - Linux Split Tunneling & App Policy, Task 12.6 - Split tunneling audit closure
-> Status: OPEN. The audit found no HIGH findings. AUD-P12-008 is resolved; Task 12.6 cannot close while AUD-P12-009 remains open.
+> Status: CLOSED. The audit found no unresolved HIGH or MEDIUM findings.
 
 ---
 
@@ -32,7 +32,7 @@ distinguishable from "not reviewed".
 | Surface | Reviewed criteria | Result |
 | --- | --- | --- |
 | Split tunneling / app policy | Persistent schema, supported actions, whitelist/blacklist default semantics, app-policy rule ordering, real `process_name`/`process_path` behavior, helper-process caveat, CLI operability. | Reviewed. AUD-P12-008 was found and then resolved by adding CLI support for `default_action` plus regression coverage for the default-direct/app-current matrix. |
-| Daemon / driver readiness | Daemon passes app-policy/DNS state into sing-box, invalid policy fails closed, child crash/status/startup cleanup from Task 12.5, TUN connect readiness semantics. | Reviewed. MEDIUM AUD-P12-009 found because TUN readiness can report success before the child proves stable after auto-redirect/nftables setup. |
+| Daemon / driver readiness | Daemon passes app-policy/DNS state into sing-box, invalid policy fails closed, child crash/status/startup cleanup from Task 12.5, TUN connect readiness semantics. | Reviewed. AUD-P12-009 was found and then resolved by moving TUN readiness past local bind/TUN creation to observable sing-box auto-redirect nftables state. |
 | Routing / TUN cleanup | `strict_route`/`auto_redirect`, direct outbound physical-interface bind, route rule order, explicit route actions, crash cleanup/reconciliation, residual route-table discovery. | Reviewed. LOW AUD-P12-010 carried for hardcoded fallback route-table discovery. No HIGH/MEDIUM routing leak found; Task 12.5 real traffic and cleanup/crash tests covered the dangerous paths. |
 | DNS | App-policy-derived DNS rules for `direct`, `current`, and `block`; DNS hijack route order; FakeIP safety for outbound self-resolution; LAN resolver leak behavior under app policy and kill switch. | Reviewed. No new finding. AUD-P12-002 was resolved by generated-config changes and real daemon validation, and Task 12.5 verified DNS-follow-policy/no LAN resolver leak behavior. |
 | Kill switch | TUN interface alignment, default-drop behavior, DNS leak block order, loopback/internal TUN DNS allowances, sing-box auto-redirect mark allowances, forced-physical-interface no-leak validation. | Reviewed. No new finding. AUD-P12-003 was resolved and validated in the bounded Arch VM path; unit tests cover nftables/iptables rule ordering and failure rollback. |
@@ -49,7 +49,7 @@ distinguishable from "not reviewed".
 | Kill switch remains fail-closed under app policy | PASS | AUD-P12-003 was resolved and validated in Task 12.5. `core/kill_switch.py` uses `wdvpn-tun0`, blocks DNS leak ports before LAN/established accepts, allows sing-box auto-redirect marks, and allows the internal TUN DNS endpoint. |
 | Minimal CLI commands expose enough control for validation | PASS | AUD-P12-008 is resolved. The CLI can enable/disable policy, set mode, set `default_action`, and add/remove rules; regression tests cover configuring the default-direct/app-current matrix through CLI commands instead of direct JSON mutation. |
 | No TUI work is added in this phase | PASS | Task 12 stayed in model/runtime/CLI/docs/tests; no TUI work was added. |
-| Phase-specific QA audit has no unresolved HIGH or MEDIUM findings | FAIL | MEDIUM finding AUD-P12-009 remains open. |
+| Phase-specific QA audit has no unresolved HIGH or MEDIUM findings | PASS | AUD-P12-008 and AUD-P12-009 are resolved. Only LOW AUD-P12-010 remains as deferred cleanup hardening debt. |
 
 ## 4. Findings
 
@@ -90,7 +90,7 @@ distinguishable from "not reviewed".
 
 - Layer: 2 - Daemon/runtime health
 - Severity: MEDIUM
-- Status: OPEN
+- Status: RESOLVED on 2026-07-05
 - Description: `SingBoxDriver.connect()` returns success once the local proxy
   port responds and, for TUN mode, `wdvpn-tun0` is briefly active. In the VM
   retry sequence before the kernel/module state was repaired, `watchdog connect`
@@ -115,13 +115,19 @@ distinguishable from "not reviewed".
   - Task 12.5 VM retry logs showed `Connected` followed by `Status: standby`
     with sing-box `FATAL ... auto-redirect: setup nftables` before the Arch VM
     kernel/module state was repaired.
-- Recommendation: Move the TUN readiness boundary to the correct lifecycle
-  point: after sing-box has survived the post-start auto-redirect/nftables setup,
-  not merely after local bind/TUN surface creation. At minimum, add a bounded
-  post-connect stability check, re-check that the child process is still alive
-  after a short settle interval, inspect early fatal log output when it exits,
-  and return a failed connect instead of a transient success. Keep the timeout
-  bounded so real connects remain fast.
+- Resolution:
+  - Added TUN readiness detection for sing-box auto-redirect nftables state:
+    `table inet sing-box` must exist and include base chains/hooks before TUN
+    health returns OK.
+  - `health_check()` now requires proxy port readiness, `wdvpn-tun0` readiness,
+    auto-redirect nftables readiness, and a final alive-process check for TUN
+    mode.
+  - If sing-box exits before auto-redirect readiness, TUN health degrades and
+    the existing `connect()` failure path captures/cleans partial TUN residue
+    instead of returning a transient success.
+  - Added deterministic driver tests for ready/partial nftables state, degraded
+    TUN health when auto-redirect is not ready, and connect failure cleanup when
+    the child dies during the readiness window.
 
 ### AUD-P12-010 - TUN residue table discovery is tied to the current address literal
 
@@ -161,12 +167,12 @@ resolved or no longer blocking:
 
 ## 6. Task 12.6 Closure Status
 
-Task 12.6 is not closed.
+Task 12.6 is closed for HIGH/MEDIUM audit purposes.
 
-No HIGH findings are open. AUD-P12-008 is resolved. One MEDIUM finding must be
-handled before Phase 12 can close:
+No HIGH or MEDIUM findings remain open:
 
-1. AUD-P12-009: make TUN connect success wait for bounded child stability.
+- AUD-P12-008: resolved.
+- AUD-P12-009: resolved.
 
-After AUD-P12-009 is fixed and regression-tested, rerun a focused audit update
-and mark the Task 12.6 acceptance matrix closed.
+LOW AUD-P12-010 remains as deferred cleanup hardening debt and does not block
+Task 12.6 closure.

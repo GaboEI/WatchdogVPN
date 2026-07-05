@@ -765,6 +765,31 @@ class SingBoxDriver(BaseDriver):
             time.sleep(0.1)
         return False
 
+    def _singbox_auto_redirect_ready(self) -> bool:
+        if not shutil.which("nft"):
+            return False
+        result = self._run_capture_command(["nft", "list", "table", "inet", "sing-box"])
+        if result.returncode != 0:
+            return False
+        output = result.stdout
+        if "table inet sing-box" not in output:
+            return False
+        chain_count = len(re.findall(r"\bchain\s+\S+", output))
+        has_base_hook = "hook output" in output or "hook prerouting" in output
+        return chain_count >= 2 and has_base_hook
+
+    def _wait_for_tun_auto_redirect_ready(self, timeout: float = 3.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            process = self._process
+            if process is None or process.poll() is not None:
+                self._append_log("health_check: sing-box exited before TUN auto_redirect readiness\n")
+                return False
+            if self._singbox_auto_redirect_ready():
+                return process.poll() is None
+            time.sleep(0.1)
+        return False
+
     def _http_via_proxy(self, target_url: str, timeout: int = 5) -> bool:
         if not shutil.which("curl"):
             self._append_log("health_check: curl not found\n")
@@ -1022,9 +1047,12 @@ class SingBoxDriver(BaseDriver):
             return "degraded"
 
         if self._tun_expected:
-            if self._wait_for_tun_interface():
+            if not self._wait_for_tun_interface():
+                self._append_log("health_check: TUN interface is not active\n")
+                return "degraded"
+            if self._wait_for_tun_auto_redirect_ready():
                 return "ok"
-            self._append_log("health_check: TUN interface is not active\n")
+            self._append_log("health_check: TUN auto_redirect nftables state is not ready\n")
             return "degraded"
 
         proxy_ok = self._http_via_proxy("https://example.com")
