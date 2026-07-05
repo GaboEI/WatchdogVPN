@@ -93,6 +93,24 @@ class SingboxRuleSetJsonParserTests(unittest.TestCase):
         with self.assertRaises(RuleParseError):
             parse_singbox_ruleset_json(data)
 
+    def test_rejects_logical_entries_without_partial_expansion(self) -> None:
+        data = {
+            "version": 1,
+            "rules": [
+                {
+                    "type": "logical",
+                    "mode": "or",
+                    "rules": [
+                        {"domain": ["a.com"]},
+                        {"domain": ["b.com"]},
+                    ],
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(RuleParseError, "nested/logical"):
+            parse_singbox_ruleset_json(data)
+
     def test_rejects_missing_rules_key(self) -> None:
         with self.assertRaises(RuleParseError):
             parse_singbox_ruleset_json({"version": 1})

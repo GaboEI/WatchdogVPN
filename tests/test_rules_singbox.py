@@ -135,6 +135,30 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
         self.assertEqual(rules[0]["domain"], ["a.com", "b.com"])
         self.assertEqual(rules[0]["port"], ["80", "443"])
 
+    def test_implicit_and_or_shape_is_preserved_without_logical_wrapper(self) -> None:
+        group = RuleGroup(
+            name="custom",
+            rules=[
+                Rule(
+                    id="c1",
+                    action="direct",
+                    conditions={
+                        "domain": ["a.com", "b.com"],
+                        "process_name": ["curl", "wget"],
+                        "port": ["443"],
+                    },
+                )
+            ],
+        )
+
+        rules = build_singbox_route_rules([group], current_outbound_tag="vps")
+
+        self.assertNotIn("type", rules[0])
+        self.assertEqual(rules[0]["domain"], ["a.com", "b.com"])
+        self.assertEqual(rules[0]["process_name"], ["curl", "wget"])
+        self.assertEqual(rules[0]["port"], ["443"])
+        self.assertEqual(rules[0]["outbound"], "direct")
+
     def test_app_policy_is_inserted_at_start_of_app_tier(self) -> None:
         custom = RuleGroup(
             name="custom",

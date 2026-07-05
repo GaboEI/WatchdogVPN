@@ -141,6 +141,24 @@ class RuleExplainerTests(unittest.TestCase):
         self.assertEqual(result.matched.action, "direct")
         self.assertEqual(result.unevaluated_rule_sets, [])
 
+    def test_implicit_and_conditions_report_missing_branch_as_partial(self) -> None:
+        group = RuleGroup(
+            name="custom",
+            rules=[
+                Rule(
+                    id="domain-and-port",
+                    action="block",
+                    conditions={"domain": ["example.com"], "port": ["443"]},
+                )
+            ],
+        )
+
+        result = RuleExplainer().explain(TrafficInfo(domain="example.com"), [group])
+
+        self.assertEqual(result.confidence, RuleExplanationConfidence.PARTIAL)
+        self.assertEqual(result.skipped_conditions[0].condition, "port")
+        self.assertEqual(result.priority_path[0].result, RuleExplanationPathResult.SKIPPED)
+
     def test_empty_input_is_unknown_when_no_runtime_rule_sets_are_relevant(self) -> None:
         group = RuleGroup(
             name="custom",
