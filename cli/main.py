@@ -265,6 +265,18 @@ def _build_parser() -> argparse.ArgumentParser:
     app_policy_mode_parser.add_argument("--json", action="store_true", help="Print JSON")
     app_policy_mode_parser.set_defaults(handler=_app_policy_set_mode)
 
+    app_policy_default_action_parser = app_policy_subparsers.add_parser(
+        "default-action",
+        help="Set app policy default action",
+    )
+    app_policy_default_action_parser.add_argument(
+        "default_action",
+        choices=[item.value for item in AppPolicyAction],
+        help="Default route action",
+    )
+    app_policy_default_action_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_default_action_parser.set_defaults(handler=_app_policy_set_default_action)
+
     app_policy_add_parser = app_policy_subparsers.add_parser("add", help="Add an app policy rule")
     app_policy_add_match = app_policy_add_parser.add_mutually_exclusive_group(required=True)
     app_policy_add_match.add_argument("--process-name", help="Process executable name")
@@ -612,6 +624,20 @@ def _app_policy_set_mode(args: argparse.Namespace) -> int:
         _print_json(data)
     else:
         print(f"App policy mode set to: {policy.mode.value}")
+    return 0
+
+
+def _app_policy_set_default_action(args: argparse.Namespace) -> int:
+    store = AppPolicyStore()
+    policy = store.load()
+    policy.default_action = AppPolicyAction(args.default_action)
+    policy = AppPolicy.from_dict(policy.to_dict())
+    store.save(policy)
+    data = _app_policy_status_data(policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"App policy default action set to: {policy.default_action.value}")
     return 0
 
 

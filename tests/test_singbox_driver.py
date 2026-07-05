@@ -738,6 +738,44 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_default_direct_plus_app_current_policy(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        policy = AppPolicy(
+            enabled=True,
+            mode="blacklist",
+            default_action="direct",
+            rules=[
+                AppPolicyRule(
+                    id="python-current",
+                    action="current",
+                    match={"process_path": ["/usr/bin/python3.14"]},
+                )
+            ],
+        )
+
+        config = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            app_policy=policy,
+        )
+
+        self.assertEqual(
+            config["route"]["rules"],
+            [
+                {
+                    "process_path": ["/usr/bin/python3.14"],
+                    "action": "route",
+                    "outbound": "vless-demo",
+                },
+                {"action": "route", "outbound": "direct"},
+                {"action": "route", "outbound": "vless-demo"},
+            ],
+        )
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_ignores_app_policy_outside_rules_mode(
         self, bind_mock, write_mock
     ) -> None:

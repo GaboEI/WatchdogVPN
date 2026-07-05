@@ -61,6 +61,59 @@ class CliAppPolicyCommandTests(unittest.TestCase):
         self.assertFalse(data["policy"]["enabled"])
         self.assertEqual(data["policy"]["mode"], "whitelist")
 
+    def test_default_action_persists_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["app-policy", "default-action", "direct", "--json"],
+                tmp,
+            )
+            data = json.loads(result.stdout)
+            self.assertEqual(data["policy"]["default_action"], "direct")
+
+            result = self.run_watchdog(["app-policy", "status", "--json"], tmp)
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["policy"]["default_action"], "direct")
+
+    def test_default_action_rejects_invalid_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["app-policy", "default-action", "auto"],
+                tmp,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("invalid choice", result.stderr)
+
+    def test_default_direct_plus_app_current_can_be_configured_with_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["app-policy", "enable"], tmp)
+            self.run_watchdog(["app-policy", "mode", "blacklist"], tmp)
+            self.run_watchdog(["app-policy", "default-action", "direct"], tmp)
+            self.run_watchdog(
+                [
+                    "app-policy",
+                    "add",
+                    "--process-path",
+                    "/usr/bin/python3.14",
+                    "--action",
+                    "current",
+                    "--id",
+                    "python-current",
+                ],
+                tmp,
+            )
+            result = self.run_watchdog(["app-policy", "status", "--json"], tmp)
+
+        data = json.loads(result.stdout)
+        self.assertTrue(data["policy"]["enabled"])
+        self.assertEqual(data["policy"]["mode"], "blacklist")
+        self.assertEqual(data["policy"]["default_action"], "direct")
+        self.assertEqual(data["rules"][0]["id"], "python-current")
+        self.assertEqual(data["rules"][0]["action"], "current")
+        self.assertEqual(data["rules"][0]["match"], {"process_path": ["/usr/bin/python3.14"]})
+
     def test_add_process_name_rule_and_remove_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(

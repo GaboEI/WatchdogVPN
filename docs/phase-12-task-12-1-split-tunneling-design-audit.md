@@ -390,9 +390,14 @@ Task 12.4 added minimal operator commands under `watchdog app-policy`:
 - `status [--json]`
 - `enable|disable [--json]`
 - `mode whitelist|blacklist [--json]`
+- `default-action current|direct|block [--json]`
 - `add --process-name NAME --action direct|current|block [--id ID] [--json]`
 - `add --process-path PATH --action direct|current|block [--id ID] [--json]`
 - `remove RULE_ID [--json]`
+
+Task 12.6 added `default-action` after AUD-P12-008 found that the engine could
+validate default-direct/app-current behavior only through direct JSON mutation,
+not through supported CLI control.
 
 The command set intentionally does not expose `auto` or `group:<id>` actions.
 Those remain scheduled for real multi-outbound selector support instead of

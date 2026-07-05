@@ -2,7 +2,7 @@
 
 > Date: 2026-07-05
 > Task: PHASE 12 - Linux Split Tunneling & App Policy, Task 12.6 - Split tunneling audit closure
-> Status: OPEN. The audit found no HIGH findings, but Task 12.6 cannot close while the MEDIUM findings below remain open.
+> Status: OPEN. The audit found no HIGH findings. AUD-P12-008 is resolved; Task 12.6 cannot close while AUD-P12-009 remains open.
 
 ---
 
@@ -24,7 +24,20 @@ Primary evidence sources:
 - kill-switch implementation and tests
 - Unit/regression tests already present in the repository
 
-## 2. Acceptance Matrix
+## 2. Coverage Checklist
+
+This section records the audit coverage explicitly so "no finding" is
+distinguishable from "not reviewed".
+
+| Surface | Reviewed criteria | Result |
+| --- | --- | --- |
+| Split tunneling / app policy | Persistent schema, supported actions, whitelist/blacklist default semantics, app-policy rule ordering, real `process_name`/`process_path` behavior, helper-process caveat, CLI operability. | Reviewed. AUD-P12-008 was found and then resolved by adding CLI support for `default_action` plus regression coverage for the default-direct/app-current matrix. |
+| Daemon / driver readiness | Daemon passes app-policy/DNS state into sing-box, invalid policy fails closed, child crash/status/startup cleanup from Task 12.5, TUN connect readiness semantics. | Reviewed. MEDIUM AUD-P12-009 found because TUN readiness can report success before the child proves stable after auto-redirect/nftables setup. |
+| Routing / TUN cleanup | `strict_route`/`auto_redirect`, direct outbound physical-interface bind, route rule order, explicit route actions, crash cleanup/reconciliation, residual route-table discovery. | Reviewed. LOW AUD-P12-010 carried for hardcoded fallback route-table discovery. No HIGH/MEDIUM routing leak found; Task 12.5 real traffic and cleanup/crash tests covered the dangerous paths. |
+| DNS | App-policy-derived DNS rules for `direct`, `current`, and `block`; DNS hijack route order; FakeIP safety for outbound self-resolution; LAN resolver leak behavior under app policy and kill switch. | Reviewed. No new finding. AUD-P12-002 was resolved by generated-config changes and real daemon validation, and Task 12.5 verified DNS-follow-policy/no LAN resolver leak behavior. |
+| Kill switch | TUN interface alignment, default-drop behavior, DNS leak block order, loopback/internal TUN DNS allowances, sing-box auto-redirect mark allowances, forced-physical-interface no-leak validation. | Reviewed. No new finding. AUD-P12-003 was resolved and validated in the bounded Arch VM path; unit tests cover nftables/iptables rule ordering and failure rollback. |
+
+## 3. Acceptance Matrix
 
 | Criterion | Audit result | Evidence |
 | --- | --- | --- |
@@ -34,40 +47,44 @@ Primary evidence sources:
 | Direct/VPN/block actions are validated with real traffic | PASS | Task 12.5 validated `direct`, `current`/VPN, and `block` actions with daemon-managed real traffic. |
 | DNS behavior follows the selected route policy without LAN resolver leaks | PASS | AUD-P12-002 was resolved and validated in Task 12.5. App-policy DNS rules are prepended in `drivers/singbox_driver.py`; direct DNS routes to the direct resolver or rejects when no safe direct resolver exists; blocked app DNS is rejected; current/VPN DNS follows proxy/final policy. |
 | Kill switch remains fail-closed under app policy | PASS | AUD-P12-003 was resolved and validated in Task 12.5. `core/kill_switch.py` uses `wdvpn-tun0`, blocks DNS leak ports before LAN/established accepts, allows sing-box auto-redirect marks, and allows the internal TUN DNS endpoint. |
-| Minimal CLI commands expose enough control for validation | FAIL | MEDIUM finding AUD-P12-008. The CLI can enable/disable policy, set mode, and add/remove rules, but cannot set `default_action`. The final default-direct/app-VPN matrix required direct JSON mutation in the temporary VM script. |
+| Minimal CLI commands expose enough control for validation | PASS | AUD-P12-008 is resolved. The CLI can enable/disable policy, set mode, set `default_action`, and add/remove rules; regression tests cover configuring the default-direct/app-current matrix through CLI commands instead of direct JSON mutation. |
 | No TUI work is added in this phase | PASS | Task 12 stayed in model/runtime/CLI/docs/tests; no TUI work was added. |
-| Phase-specific QA audit has no unresolved HIGH or MEDIUM findings | FAIL | MEDIUM findings AUD-P12-008 and AUD-P12-009 remain open. |
+| Phase-specific QA audit has no unresolved HIGH or MEDIUM findings | FAIL | MEDIUM finding AUD-P12-009 remains open. |
 
-## 3. Findings
+## 4. Findings
 
-### AUD-P12-008 - CLI cannot set app-policy `default_action`
+### AUD-P12-008 - CLI could not set app-policy `default_action`
 
 - Layer: 5 - CLI/Operator control
 - Severity: MEDIUM
-- Status: OPEN
+- Status: RESOLVED on 2026-07-05
 - Description: The persistent app-policy model supports `default_action =
   current | direct | block`, and the runtime correctly uses it. The CLI exposes
-  `app-policy status`, `enable`, `disable`, `mode`, `add`, and `remove`, but
-  there is no command to set `default_action`.
+  `app-policy status`, `enable`, `disable`, `mode`, `default-action`, `add`,
+  and `remove`.
 - Scenario: The required Task 12.5 matrix case "default direct + app-specific
   VPN" needed app-policy enabled in blacklist mode with `default_action:
-  direct` and exact `process_path` rules set to `current`. Because the CLI lacks
-  a default-action setter, the temporary VM validation script had to back up and
-  write `/var/lib/watchdogvpn/app-policy.json` directly.
-- Impact: Normal operators cannot configure one of the validated split-tunnel
-  modes through supported CLI commands. This does not indicate a routing leak,
-  but it violates the Task 12.6 acceptance criterion that minimal CLI commands
-  expose enough control for validation, and it encourages unsafe hand-editing of
-  daemon state.
-- Evidence:
-  - `cli/main.py` app-policy subcommands are limited to status/enable/disable/
+  direct` and exact `process_path` rules set to `current`. Before this fix, the
+  CLI lacked a default-action setter, so the temporary VM validation script had
+  to back up and write `/var/lib/watchdogvpn/app-policy.json` directly.
+- Impact before the fix: Normal operators could not configure one of the
+  validated split-tunnel modes through supported CLI commands. This did not
+  indicate a routing leak, but it violated the Task 12.6 acceptance criterion
+  that minimal CLI commands expose enough control for validation, and it
+  encouraged unsafe hand-editing of daemon state.
+- Evidence before the fix:
+  - `cli/main.py` app-policy subcommands were limited to status/enable/disable/
     mode/add/remove.
   - `app_policy/models.py` includes and validates `default_action`.
   - Task 12.5 final VM evidence used `default action: direct` for the passing
     default-direct/app-VPN test.
-- Recommendation: Add a minimal `watchdog app-policy default-action
-  {current,direct,block}` command with JSON output support, persistence through
-  `AppPolicyStore`, and tests covering valid values and invalid choices.
+- Resolution:
+  - Added `watchdog app-policy default-action {current,direct,block}` with JSON
+    output support and persistence through `AppPolicyStore`.
+  - Added CLI tests for persistence, invalid value rejection, and configuring
+    the default-direct/app-current matrix without direct JSON mutation.
+  - Added sing-box generation coverage proving that the resulting policy emits
+    the app-current process rule before a direct catch-all.
 
 ### AUD-P12-009 - TUN connect success can be reported before the child is stable
 
@@ -79,6 +96,10 @@ Primary evidence sources:
   retry sequence before the kernel/module state was repaired, `watchdog connect`
   printed `Connected`, then the daemon status immediately reconciled to
   `standby` after sing-box failed during `auto_redirect`/nftables setup.
+  This is a recurrence of the earlier Layer 2 readiness pattern where
+  `connect()` could report success from partial liveness before the service was
+  actually usable; the proxy-mode surface was tightened earlier, but the TUN
+  surface still has a later readiness boundary.
 - Scenario: A system can momentarily create the proxy/TUN surfaces and then
   fail during post-start TUN/auto-redirect setup. The current health check is
   short and structural; it does not add a bounded settle/recheck window or read
@@ -94,8 +115,10 @@ Primary evidence sources:
   - Task 12.5 VM retry logs showed `Connected` followed by `Status: standby`
     with sing-box `FATAL ... auto-redirect: setup nftables` before the Arch VM
     kernel/module state was repaired.
-- Recommendation: Add a bounded post-connect stability check for TUN mode before
-  returning success. At minimum, re-check that the child process is still alive
+- Recommendation: Move the TUN readiness boundary to the correct lifecycle
+  point: after sing-box has survived the post-start auto-redirect/nftables setup,
+  not merely after local bind/TUN surface creation. At minimum, add a bounded
+  post-connect stability check, re-check that the child process is still alive
   after a short settle interval, inspect early fatal log output when it exits,
   and return a failed connect instead of a transient success. Keep the timeout
   bounded so real connects remain fast.
@@ -117,7 +140,7 @@ Primary evidence sources:
   persist it in runtime cleanup metadata, or avoid address-literal matching in a
   future cleanup hardening pass.
 
-## 4. Resolved Prior Audit Items
+## 5. Resolved Prior Audit Items
 
 The Task 12.6 audit confirms that the original Phase 12 audit items are either
 resolved or no longer blocking:
@@ -136,15 +159,14 @@ resolved or no longer blocking:
   reconciliation, and startup reconciliation validation.
 - AUD-P12-007: resolved by explicit sing-box route rule syntax.
 
-## 5. Task 12.6 Closure Status
+## 6. Task 12.6 Closure Status
 
 Task 12.6 is not closed.
 
-No HIGH findings are open. Two MEDIUM findings must be handled as Task 12.6
-subtasks before Phase 12 can close:
+No HIGH findings are open. AUD-P12-008 is resolved. One MEDIUM finding must be
+handled before Phase 12 can close:
 
-1. AUD-P12-008: add CLI support for app-policy `default_action`.
-2. AUD-P12-009: make TUN connect success wait for bounded child stability.
+1. AUD-P12-009: make TUN connect success wait for bounded child stability.
 
-After those are fixed and regression-tested, rerun a focused audit update and
-mark the Task 12.6 acceptance matrix closed.
+After AUD-P12-009 is fixed and regression-tested, rerun a focused audit update
+and mark the Task 12.6 acceptance matrix closed.
