@@ -418,6 +418,65 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertIn("state=not-evaluated", result.stdout)
         self.assertNotIn("would use action", result.stdout)
 
+    def test_explain_reports_failed_critical_ruleset_from_trust_registry(self) -> None:
+        rule_set_id = "https://rules.example/sensitive.srs"
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(
+                            id="sensitive",
+                            action="current_profile",
+                            conditions={"ruleset_remote": [rule_set_id]},
+                        )
+                    ],
+                ),
+            )
+            trust_file = Path(tmp) / "ruleset-trust.json"
+            trust_file.write_text(
+                json.dumps(
+                    {
+                        "policies": {
+                            rule_set_id: {
+                                "id": rule_set_id,
+                                "kind": "remote",
+                                "source": rule_set_id,
+                                "critical": True,
+                                "expected_sha256": "a" * 64,
+                            }
+                        },
+                        "statuses": {
+                            rule_set_id: {
+                                "id": rule_set_id,
+                                "state": "failed",
+                                "error": "sha256 mismatch",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                [
+                    "rules",
+                    "explain",
+                    "--domain",
+                    "example.com",
+                    "--ruleset-trust-file",
+                    str(trust_file),
+                ],
+                tmp,
+            )
+
+        self.assertIn("Confidence: runtime-required", result.stdout)
+        self.assertIn("state=failed", result.stdout)
+        self.assertIn("behavior=fail-closed", result.stdout)
+        self.assertIn("error=sha256 mismatch", result.stdout)
+        self.assertNotIn("would use action", result.stdout)
+
     def test_unknown_text_asks_for_input_without_overstating_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.add_group(

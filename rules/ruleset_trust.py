@@ -187,6 +187,22 @@ class RuleSetTrustRegistry:
     policies: dict[str, RuleSetTrustPolicy] = field(default_factory=dict)
     statuses: dict[str, RuleSetStatus] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self.policies = {
+            key: policy if isinstance(policy, RuleSetTrustPolicy) else RuleSetTrustPolicy.from_dict(policy)
+            for key, policy in self.policies.items()
+        }
+        self.statuses = {
+            key: status if isinstance(status, RuleSetStatus) else RuleSetStatus.from_dict(status)
+            for key, status in self.statuses.items()
+        }
+        for key, policy in self.policies.items():
+            if key != policy.id:
+                raise ValueError("rule-set trust policy key must match policy id")
+        for key, status in self.statuses.items():
+            if key != status.id:
+                raise ValueError("rule-set status key must match status id")
+
     def policy_for(self, rule_set_id: str) -> RuleSetTrustPolicy | None:
         return self.policies.get(rule_set_id)
 
@@ -202,3 +218,22 @@ class RuleSetTrustRegistry:
                 key: status.to_dict() for key, status in sorted(self.statuses.items())
             },
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RuleSetTrustRegistry":
+        policies = data.get("policies", {})
+        statuses = data.get("statuses", {})
+        if not isinstance(policies, dict):
+            raise ValueError("rule-set trust registry policies must be an object")
+        if not isinstance(statuses, dict):
+            raise ValueError("rule-set trust registry statuses must be an object")
+        return cls(
+            policies={
+                str(key): RuleSetTrustPolicy.from_dict(value)
+                for key, value in policies.items()
+            },
+            statuses={
+                str(key): RuleSetStatus.from_dict(value)
+                for key, value in statuses.items()
+            },
+        )

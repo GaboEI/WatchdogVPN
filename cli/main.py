@@ -47,6 +47,7 @@ from rules.explanation import (
 from rules.models import ALLOWED_RULE_CONDITIONS, Rule, RuleGroup
 from rules.rule_engine import TrafficInfo
 from rules.rule_store import RuleStore, RuleStoreError
+from rules.ruleset_trust_store import RuleSetTrustStore
 
 
 DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
@@ -267,6 +268,7 @@ def _build_parser() -> argparse.ArgumentParser:
     rules_explain_parser.add_argument("--network", help="Network transport, for example tcp")
     rules_explain_parser.add_argument("--process-name", help="Process executable name")
     rules_explain_parser.add_argument("--process-path", help="Exact process executable path")
+    rules_explain_parser.add_argument("--ruleset-trust-file", help="Rule-set trust registry JSON file")
     rules_explain_parser.add_argument("--json", action="store_true", help="Print JSON")
     rules_explain_parser.set_defaults(handler=_rules_explain)
 
@@ -677,7 +679,12 @@ def _rules_explain(args: argparse.Namespace) -> int:
         process_name=args.process_name,
         process_path=args.process_path,
     )
-    explanation = RuleExplainer().explain(traffic, RuleStore().list_groups())
+    trust_path = Path(args.ruleset_trust_file) if args.ruleset_trust_file else None
+    trust_registry = RuleSetTrustStore(trust_path).load()
+    explanation = RuleExplainer(trust_registry=trust_registry).explain(
+        traffic,
+        RuleStore().list_groups(),
+    )
     if args.json:
         _print_json(explanation.to_dict())
     else:

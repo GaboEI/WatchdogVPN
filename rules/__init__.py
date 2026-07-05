@@ -42,6 +42,7 @@ from .ruleset_trust import (
     RuleSetTrustPolicy,
     RuleSetTrustRegistry,
 )
+from .ruleset_trust_store import RuleSetTrustStore
 from .singbox import build_singbox_route_rules
 
 __all__ = [
@@ -68,6 +69,7 @@ __all__ = [
     "RuleSetStatus",
     "RuleSetTrustPolicy",
     "RuleSetTrustRegistry",
+    "RuleSetTrustStore",
     "RuleStore",
     "RuleStoreError",
     "SIMPLE_RULE_ACTIONS",

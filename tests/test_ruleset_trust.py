@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from rules.ruleset_trust import (
     RuleSetFailureBehavior,
@@ -10,6 +13,7 @@ from rules.ruleset_trust import (
     RuleSetTrustPolicy,
     RuleSetTrustRegistry,
 )
+from rules.ruleset_trust_store import RuleSetTrustStore
 
 
 SHA256_A = "a" * 64
@@ -107,6 +111,36 @@ class RuleSetStatusTests(unittest.TestCase):
         status = registry.status_for("missing")
 
         self.assertEqual(status.state, RuleSetLoadState.NOT_EVALUATED)
+
+    def test_registry_round_trip_and_store_load(self) -> None:
+        registry = RuleSetTrustRegistry(
+            policies={
+                "ads": RuleSetTrustPolicy(
+                    id="ads",
+                    kind="remote",
+                    source="https://rules.example/ads.srs",
+                    expected_sha256=SHA256_A,
+                )
+            },
+            statuses={
+                "ads": RuleSetStatus(
+                    id="ads",
+                    state="failed",
+                    error="sha256 mismatch",
+                )
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ruleset-trust.json"
+            path.write_text(
+                json.dumps(registry.to_dict()),
+                encoding="utf-8",
+            )
+            loaded = RuleSetTrustStore(path).load()
+
+        self.assertEqual(loaded.policy_for("ads").failure_behavior.value, "fail-closed")
+        self.assertEqual(loaded.status_for("ads").state, RuleSetLoadState.FAILED)
 
 
 if __name__ == "__main__":
