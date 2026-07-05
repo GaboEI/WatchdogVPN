@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from config.persistence import PersistentStoreError, PersistentValidationError
+from config.persistence import (
+    PersistentStoreError,
+    PersistentValidationError,
+    load_json,
+    require_mapping,
+)
 from rules.models import DEFAULT_RULE_GROUPS, Rule, RuleGroup
 from rules.rule_store import RuleStore, RuleStoreError
 
@@ -62,6 +67,16 @@ class RuleModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             RuleGroup(name="Custom")
 
+    def test_rule_group_rejects_duplicate_rule_ids(self) -> None:
+        with self.assertRaises(ValueError):
+            RuleGroup(
+                name="custom",
+                rules=[
+                    Rule(id="same", action="direct", conditions={"domain": ["a.com"]}),
+                    Rule(id="same", action="block", conditions={"domain": ["b.com"]}),
+                ],
+            )
+
 
 class RuleStoreTests(unittest.TestCase):
     def test_add_get_list_remove_group(self) -> None:
@@ -96,6 +111,71 @@ class RuleStoreTests(unittest.TestCase):
             store = RuleStore(Path(tmp) / "rules")
             with self.assertRaises(RuleStoreError):
                 store.enable_group("does-not-exist")
+
+    def test_add_rule_validates_and_persists_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuleStore(Path(tmp) / "rules")
+            store.add_group(RuleGroup(name="custom"))
+
+            updated = store.add_rule(
+                "custom",
+                Rule(id="r1", action="direct", conditions={"domain": ["example.com"]}),
+            )
+
+            self.assertEqual(updated.rules[0].id, "r1")
+            self.assertEqual(store.get_group("custom").rules[0].action, "direct")
+
+    def test_add_rule_rejects_duplicate_rule_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuleStore(Path(tmp) / "rules")
+            store.add_group(
+                RuleGroup(
+                    name="custom",
+                    rules=[Rule(id="r1", action="direct", conditions={"domain": ["a.com"]})],
+                )
+            )
+
+            with self.assertRaises(RuleStoreError):
+                store.add_rule(
+                    "custom",
+                    Rule(id="r1", action="block", conditions={"domain": ["b.com"]}),
+                )
+
+            self.assertEqual(store.get_group("custom").rules[0].conditions["domain"], ["a.com"])
+
+    def test_remove_rule_rejects_missing_rule_without_clobbering_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuleStore(Path(tmp) / "rules")
+            group = RuleGroup(
+                name="custom",
+                rules=[Rule(id="r1", action="direct", conditions={"domain": ["a.com"]})],
+            )
+            store.add_group(group)
+
+            with self.assertRaises(RuleStoreError):
+                store.remove_rule("custom", "missing")
+
+            self.assertEqual(store.get_group("custom"), group)
+
+    def test_replace_group_can_backup_existing_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuleStore(Path(tmp) / "rules")
+            original = RuleGroup(
+                name="custom",
+                rules=[Rule(id="old", action="direct", conditions={"domain": ["a.com"]})],
+            )
+            replacement = RuleGroup(
+                name="custom",
+                rules=[Rule(id="new", action="block", conditions={"domain": ["b.com"]})],
+            )
+            store.add_group(original)
+
+            backup_path = store.replace_group(replacement, backup_existing=True)
+
+            self.assertIsNotNone(backup_path)
+            self.assertTrue(backup_path.exists())
+            self.assertEqual(RuleGroup.from_dict(require_mapping(load_json(backup_path, {}), backup_path)), original)
+            self.assertEqual(store.get_group("custom"), replacement)
 
     def test_ensure_default_groups_creates_all_and_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

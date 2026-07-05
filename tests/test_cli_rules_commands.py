@@ -40,6 +40,270 @@ class CliRulesCommandTests(unittest.TestCase):
     def add_group(self, tmp: str, group: RuleGroup) -> None:
         RuleStore(Path(tmp) / "rules").add_group(group)
 
+    def test_list_groups_json_and_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(
+                            id="example-direct",
+                            action="direct",
+                            conditions={"domain": ["example.com"]},
+                        )
+                    ],
+                ),
+            )
+
+            json_result = self.run_watchdog(["rules", "list", "--json"], tmp)
+            text_result = self.run_watchdog(["rules", "list"], tmp)
+
+        data = json.loads(json_result.stdout)
+        self.assertEqual(data[0]["name"], "custom")
+        self.assertEqual(data[0]["rule_count"], 1)
+        self.assertIn("Name\tEnabled\tPriority\tRules", text_result.stdout)
+        self.assertIn("custom", text_result.stdout)
+
+    def test_enable_disable_group_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(tmp, RuleGroup(name="custom", enabled=False))
+
+            enabled = self.run_watchdog(["rules", "enable", "custom", "--json"], tmp)
+            disabled = self.run_watchdog(["rules", "disable", "custom", "--json"], tmp)
+
+        self.assertTrue(json.loads(enabled.stdout)["group"]["enabled"])
+        self.assertFalse(json.loads(disabled.stdout)["group"]["enabled"])
+
+    def test_add_and_remove_rule_persist_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(tmp, RuleGroup(name="custom"))
+
+            added = self.run_watchdog(
+                [
+                    "rules",
+                    "add-rule",
+                    "custom",
+                    "example-direct",
+                    "--action",
+                    "direct",
+                    "--condition",
+                    "domain=example.com",
+                    "--condition",
+                    "port=443",
+                    "--json",
+                ],
+                tmp,
+            )
+            removed = self.run_watchdog(
+                ["rules", "remove-rule", "custom", "example-direct", "--json"],
+                tmp,
+            )
+
+        added_data = json.loads(added.stdout)
+        self.assertEqual(added_data["added"]["conditions"]["domain"], ["example.com"])
+        self.assertEqual(added_data["added"]["conditions"]["port"], ["443"])
+        self.assertEqual(json.loads(removed.stdout)["group"]["rules"], [])
+
+    def test_add_rule_rejects_invalid_condition_without_mutating_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(tmp, RuleGroup(name="custom"))
+
+            result = self.run_watchdog(
+                [
+                    "rules",
+                    "add-rule",
+                    "custom",
+                    "bad",
+                    "--action",
+                    "direct",
+                    "--condition",
+                    "wifi_ssid=home",
+                ],
+                tmp,
+                check=False,
+            )
+            status = self.run_watchdog(["rules", "list", "--json"], tmp)
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("unsupported rule condition", result.stderr)
+        self.assertEqual(json.loads(status.stdout)[0]["rules"], [])
+
+    def test_export_group_json_and_output_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[Rule(id="r1", action="block", conditions={"domain": ["a.com"]})],
+                ),
+            )
+            output = Path(tmp) / "custom-export.json"
+
+            json_result = self.run_watchdog(["rules", "export", "custom", "--json"], tmp)
+            file_result = self.run_watchdog(
+                ["rules", "export", "custom", "--output", str(output), "--json"],
+                tmp,
+            )
+            exported_file = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(json.loads(json_result.stdout)["name"], "custom")
+        self.assertEqual(exported_file["name"], "custom")
+        self.assertEqual(json.loads(file_result.stdout)["output"], str(output))
+
+    def test_import_group_rejects_duplicate_without_replace_or_clobber(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[Rule(id="old", action="direct", conditions={"domain": ["old.com"]})],
+                ),
+            )
+            import_file = Path(tmp) / "incoming.json"
+            import_file.write_text(
+                json.dumps(
+                    RuleGroup(
+                        name="custom",
+                        rules=[
+                            Rule(
+                                id="new",
+                                action="block",
+                                conditions={"domain": ["new.com"]},
+                            )
+                        ],
+                    ).to_dict()
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                ["rules", "import", str(import_file)],
+                tmp,
+                check=False,
+            )
+            status = self.run_watchdog(["rules", "export", "custom", "--json"], tmp)
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("already exists", result.stderr)
+        self.assertEqual(json.loads(status.stdout)["rules"][0]["id"], "old")
+
+    def test_import_group_replace_writes_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[Rule(id="old", action="direct", conditions={"domain": ["old.com"]})],
+                ),
+            )
+            import_file = Path(tmp) / "incoming.json"
+            import_file.write_text(
+                json.dumps(
+                    RuleGroup(
+                        name="custom",
+                        rules=[
+                            Rule(
+                                id="new",
+                                action="block",
+                                conditions={"domain": ["new.com"]},
+                            )
+                        ],
+                    ).to_dict()
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                ["rules", "import", str(import_file), "--replace", "--json"],
+                tmp,
+            )
+            data = json.loads(result.stdout)
+            backup_exists = Path(data["backup_path"]).exists()
+            status = self.run_watchdog(["rules", "export", "custom", "--json"], tmp)
+
+        self.assertTrue(data["replaced"])
+        self.assertTrue(backup_exists)
+        self.assertEqual(json.loads(status.stdout)["rules"][0]["id"], "new")
+
+    def test_import_group_rejects_invalid_schema_without_mutating_existing_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[Rule(id="old", action="direct", conditions={"domain": ["old.com"]})],
+                ),
+            )
+            import_file = Path(tmp) / "invalid.json"
+            import_file.write_text(
+                json.dumps({"name": "custom", "rules": [{"id": "bad", "action": "teleport"}]}),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                ["rules", "import", str(import_file), "--replace"],
+                tmp,
+                check=False,
+            )
+            status = self.run_watchdog(["rules", "export", "custom", "--json"], tmp)
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("invalid rule group schema", result.stderr)
+        self.assertEqual(json.loads(status.stdout)["rules"][0]["id"], "old")
+
+    def test_import_group_rejects_unknown_fields_as_input_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import_file = Path(tmp) / "invalid.json"
+            import_file.write_text(
+                json.dumps({"name": "custom", "enabled": True, "rules": [], "future": True}),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                ["rules", "import", str(import_file)],
+                tmp,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("invalid rule group schema", result.stderr)
+
+    def test_import_group_rejects_duplicate_rule_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import_file = Path(tmp) / "duplicate-rules.json"
+            import_file.write_text(
+                json.dumps(
+                    {
+                        "name": "custom",
+                        "enabled": True,
+                        "priority": 100,
+                        "rules": [
+                            {
+                                "id": "same",
+                                "action": "direct",
+                                "conditions": {"domain": ["a.com"]},
+                            },
+                            {
+                                "id": "same",
+                                "action": "block",
+                                "conditions": {"domain": ["b.com"]},
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                ["rules", "import", str(import_file)],
+                tmp,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("duplicate rule ids", result.stderr)
+
     def test_explain_json_returns_raw_model_dict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.add_group(

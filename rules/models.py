@@ -125,6 +125,9 @@ class RuleGroup:
         self.rules = [
             rule if isinstance(rule, Rule) else Rule.from_dict(rule) for rule in self.rules
         ]
+        rule_ids = [rule.id for rule in self.rules]
+        if len(rule_ids) != len(set(rule_ids)):
+            raise ValueError("rule group must not contain duplicate rule ids")
 
     def to_dict(self) -> dict[str, Any]:
         return {

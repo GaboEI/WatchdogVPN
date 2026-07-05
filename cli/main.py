@@ -17,7 +17,7 @@ from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
 from config.dns_policy_store import DNSPolicyStore
 from config.paths import resolve_config_dir
-from config.persistence import PersistentStoreError
+from config.persistence import PersistentStoreError, dump_json
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
 from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager
@@ -44,8 +44,9 @@ from rules.explanation import (
     RuleExplanation,
     RuleExplanationConfidence,
 )
+from rules.models import ALLOWED_RULE_CONDITIONS, Rule, RuleGroup
 from rules.rule_engine import TrafficInfo
-from rules.rule_store import RuleStore
+from rules.rule_store import RuleStore, RuleStoreError
 
 
 DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
@@ -60,6 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.handler(args))
     except (ProviderLimitError, ProviderNotFoundError) as exc:
+        _error(str(exc))
+        return 65
+    except RuleStoreError as exc:
         _error(str(exc))
         return 65
     except ParseError as exc:
@@ -248,6 +252,10 @@ def _build_parser() -> argparse.ArgumentParser:
     rules_parser = subparsers.add_parser("rules", help="Inspect configured routing rules")
     rules_subparsers = rules_parser.add_subparsers(dest="rules_command")
 
+    rules_list_parser = rules_subparsers.add_parser("list", help="List routing rule groups")
+    rules_list_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_list_parser.set_defaults(handler=_rules_list)
+
     rules_explain_parser = rules_subparsers.add_parser(
         "explain",
         help="Explain how configured rules would handle hypothetical traffic",
@@ -261,6 +269,56 @@ def _build_parser() -> argparse.ArgumentParser:
     rules_explain_parser.add_argument("--process-path", help="Exact process executable path")
     rules_explain_parser.add_argument("--json", action="store_true", help="Print JSON")
     rules_explain_parser.set_defaults(handler=_rules_explain)
+
+    rules_enable_parser = rules_subparsers.add_parser("enable", help="Enable a rule group")
+    rules_enable_parser.add_argument("group")
+    rules_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_enable_parser.set_defaults(handler=_rules_set_group_enabled, enabled=True)
+
+    rules_disable_parser = rules_subparsers.add_parser("disable", help="Disable a rule group")
+    rules_disable_parser.add_argument("group")
+    rules_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_disable_parser.set_defaults(handler=_rules_set_group_enabled, enabled=False)
+
+    rules_add_rule_parser = rules_subparsers.add_parser("add-rule", help="Add a rule to a group")
+    rules_add_rule_parser.add_argument("group")
+    rules_add_rule_parser.add_argument("rule_id")
+    rules_add_rule_parser.add_argument("--action", required=True, help="Rule action")
+    rules_add_rule_parser.add_argument(
+        "--condition",
+        action="append",
+        required=True,
+        metavar="KEY=VALUE",
+        help="Rule condition; repeat to add multiple values or condition types",
+    )
+    rules_add_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_add_rule_parser.set_defaults(handler=_rules_add_rule)
+
+    rules_remove_rule_parser = rules_subparsers.add_parser(
+        "remove-rule",
+        help="Remove a rule from a group",
+    )
+    rules_remove_rule_parser.add_argument("group")
+    rules_remove_rule_parser.add_argument("rule_id")
+    rules_remove_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_remove_rule_parser.set_defaults(handler=_rules_remove_rule)
+
+    rules_import_parser = rules_subparsers.add_parser("import", help="Import a rule group JSON file")
+    rules_import_parser.add_argument("file")
+    rules_import_parser.add_argument("--name", help="Override imported group name")
+    rules_import_parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace an existing group with the same name after writing a backup",
+    )
+    rules_import_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_import_parser.set_defaults(handler=_rules_import)
+
+    rules_export_parser = rules_subparsers.add_parser("export", help="Export a rule group")
+    rules_export_parser.add_argument("group")
+    rules_export_parser.add_argument("--output", help="Write exported group JSON to this file")
+    rules_export_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_export_parser.set_defaults(handler=_rules_export)
 
     app_policy_parser = subparsers.add_parser(
         "app-policy",
@@ -627,6 +685,135 @@ def _rules_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rules_list(args: argparse.Namespace) -> int:
+    groups = RuleStore().list_groups()
+    data = [_rule_group_summary(group) for group in groups]
+    if args.json:
+        _print_json(data)
+        return 0
+    if not groups:
+        print("No rule groups found.")
+        return 0
+    print("Name\tEnabled\tPriority\tRules")
+    for group in groups:
+        print(
+            "\t".join(
+                [
+                    group.name,
+                    _on_off(group.enabled),
+                    str(group.priority),
+                    str(len(group.rules)),
+                ]
+            )
+        )
+    return 0
+
+
+def _rules_set_group_enabled(args: argparse.Namespace) -> int:
+    store = RuleStore()
+    if args.enabled:
+        store.enable_group(args.group)
+    else:
+        store.disable_group(args.group)
+    group = store.get_group(args.group)
+    if group is None:
+        raise RuleStoreError(f"rule group not found: {args.group}")
+    data = {"group": group.to_dict()}
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Rule group {'enabled' if group.enabled else 'disabled'}: {group.name}")
+    return 0
+
+
+def _rules_add_rule(args: argparse.Namespace) -> int:
+    try:
+        rule = Rule(
+            id=args.rule_id,
+            action=args.action,
+            conditions=_parse_rule_conditions(args.condition),
+        )
+    except ValueError as exc:
+        raise ParseError(str(exc)) from exc
+    group = RuleStore().add_rule(args.group, rule)
+    data = {"added": rule.to_dict(), "group": group.to_dict()}
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added rule: {group.name}/{rule.id}")
+        print(f"Action: {rule.action}")
+        print(f"Conditions: {_format_rule_conditions(rule.conditions)}")
+    return 0
+
+
+def _rules_remove_rule(args: argparse.Namespace) -> int:
+    group = RuleStore().remove_rule(args.group, args.rule_id)
+    data = {"removed": args.rule_id, "group": group.to_dict()}
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed rule: {group.name}/{args.rule_id}")
+    return 0
+
+
+def _rules_import(args: argparse.Namespace) -> int:
+    source = Path(args.file)
+    try:
+        raw = json.loads(source.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ParseError(f"invalid rule group JSON in {source}: {exc}") from exc
+    except OSError as exc:
+        raise ParseError(f"cannot read rule group file {source}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ParseError("imported rule group must be a JSON object")
+    if args.name is not None:
+        raw = {**raw, "name": args.name}
+    try:
+        group = RuleGroup.from_dict(raw)
+    except (KeyError, TypeError, ValueError, PersistentStoreError) as exc:
+        raise ParseError(f"invalid rule group schema: {exc}") from exc
+
+    store = RuleStore()
+    existing = store.get_group(group.name)
+    if existing is not None and not args.replace:
+        raise RuleStoreError(
+            f"rule group already exists: {group.name}; use --replace to overwrite"
+        )
+    backup_path = store.replace_group(group, backup_existing=bool(existing and args.replace))
+    data = {
+        "imported": group.to_dict(),
+        "replaced": existing is not None,
+        "backup_path": str(backup_path) if backup_path else None,
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Imported rule group: {group.name}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _rules_export(args: argparse.Namespace) -> int:
+    group = RuleStore().get_group(args.group)
+    if group is None:
+        raise RuleStoreError(f"rule group not found: {args.group}")
+    data = group.to_dict()
+    if args.output:
+        target = Path(args.output)
+        dump_json(target, data)
+        if args.json:
+            _print_json({"group": data, "output": str(target)})
+        else:
+            print(f"Exported rule group: {group.name}")
+            print(f"Output: {target}")
+        return 0
+    if args.json:
+        _print_json(data)
+        return 0
+    raise ParseError("rules export requires --output or --json")
+
+
 def _print_rule_explanation(explanation: RuleExplanation) -> None:
     data = explanation.to_dict()
     confidence = RuleExplanationConfidence(data["confidence"])
@@ -689,6 +876,38 @@ def _format_rule_explain_input(input_traffic: object) -> str:
         if value is not None
     ]
     return ", ".join(parts) or "-"
+
+
+def _parse_rule_conditions(items: list[str]) -> dict[str, list[str]]:
+    conditions: dict[str, list[str]] = {}
+    for item in items:
+        key, sep, value = item.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if not sep or not key or not value:
+            raise ParseError("rule condition must use KEY=VALUE")
+        if key not in ALLOWED_RULE_CONDITIONS:
+            supported = ", ".join(sorted(ALLOWED_RULE_CONDITIONS))
+            raise ParseError(f"unsupported rule condition {key!r}; supported: {supported}")
+        conditions.setdefault(key, []).append(value)
+    return conditions
+
+
+def _format_rule_conditions(conditions: dict[str, list[str]]) -> str:
+    parts = []
+    for key, values in sorted(conditions.items()):
+        parts.append(f"{key}={','.join(values)}")
+    return ";".join(parts) or "-"
+
+
+def _rule_group_summary(group: RuleGroup) -> dict[str, object]:
+    return {
+        "name": group.name,
+        "enabled": group.enabled,
+        "priority": group.priority,
+        "rule_count": len(group.rules),
+        "rules": [rule.to_dict() for rule in group.rules],
+    }
 
 
 def _app_policy_status(args: argparse.Namespace) -> int:
