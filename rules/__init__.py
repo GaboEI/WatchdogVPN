@@ -6,6 +6,17 @@ from .models import (
     SIMPLE_RULE_ACTIONS,
     validate_group_name,
 )
+from .explanation import (
+    RuleExplainer,
+    RuleExplanation,
+    RuleExplanationConfidence,
+    RuleExplanationMatch,
+    RuleExplanationPathEntry,
+    RuleExplanationPathResult,
+    RuleExplanationSkipReason,
+    RuleExplanationSkippedCondition,
+    RuleExplanationUnevaluatedRuleSet,
+)
 from .rule_engine import (
     PRIORITY_TIER_ORDER,
     RuleEngine,
@@ -31,6 +42,15 @@ __all__ = [
     "PRIORITY_TIER_ORDER",
     "Rule",
     "RuleEngine",
+    "RuleExplainer",
+    "RuleExplanation",
+    "RuleExplanationConfidence",
+    "RuleExplanationMatch",
+    "RuleExplanationPathEntry",
+    "RuleExplanationPathResult",
+    "RuleExplanationSkipReason",
+    "RuleExplanationSkippedCondition",
+    "RuleExplanationUnevaluatedRuleSet",
     "RuleGroup",
     "RuleMatch",
     "RuleParseError",
