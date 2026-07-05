@@ -76,6 +76,8 @@ class FakeRuntime:
         self.disconnect_calls = 0
         self.rotate_calls: list[bool] = []
         self.run_iteration_queue: list[ConnectionState] = []
+        self.scheduled_rotate_calls = 0
+        self.scheduled_rotate_result: ConnectionState | None = None
 
     def connect(self, profile: Profile) -> bool:
         self.connected_profile_id = profile.id
@@ -103,6 +105,12 @@ class FakeRuntime:
             return self.run_iteration_queue.pop(0)
         return self.status()
 
+    def scheduled_rotate(self) -> ConnectionState:
+        self.scheduled_rotate_calls += 1
+        if self.scheduled_rotate_result is not None:
+            return self.scheduled_rotate_result
+        return self.status()
+
 
 class ThreadTrackingRuntime(FakeRuntime):
     def __init__(self, profile_store: ProfileStore) -> None:
@@ -127,6 +135,11 @@ class ThreadTrackingRuntime(FakeRuntime):
 
 class RaisingTickRuntime(FakeRuntime):
     def run_iteration(self) -> ConnectionState:
+        raise RuntimeError("boom")
+
+
+class RaisingScheduledRotationRuntime(FakeRuntime):
+    def scheduled_rotate(self) -> ConnectionState:
         raise RuntimeError("boom")
 
 
@@ -360,6 +373,68 @@ class RuntimeWorkerTests(unittest.TestCase):
         worker.start()
         try:
             worker.submit_tick()
+            response = worker.submit(COMMAND_STATUS, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertTrue(response.ok)
+
+    def test_submit_scheduled_rotation_requires_running_worker(self) -> None:
+        worker = RuntimeWorker(self.make_runtime())
+
+        with self.assertRaises(RuntimeError):
+            worker.submit_scheduled_rotation()
+
+    def test_scheduled_rotation_broadcasts_rotation_then_state(self) -> None:
+        bus = EventBus()
+        subscription = bus.subscribe()
+        runtime = FakeRuntime(self.profile_store)
+        runtime.scheduled_rotate_result = ConnectionState(
+            active_profile_id="rotated", mode="rules", status="recovered"
+        )
+        worker = RuntimeWorker(runtime, bus)
+        worker.start()
+        try:
+            worker.submit_scheduled_rotation()
+            rotation_event = subscription.get(timeout=2.0)
+            state_event = subscription.get(timeout=2.0)
+            worker.submit(COMMAND_STATUS, timeout=2.0)  # drain queue in order
+        finally:
+            worker.stop()
+
+        self.assertEqual(runtime.scheduled_rotate_calls, 1)
+        self.assertEqual(rotation_event.event, EVENT_ROTATION)
+        self.assertEqual(rotation_event.payload["active_profile_id"], "rotated")
+        self.assertEqual(state_event.event, EVENT_STATE_CHANGED)
+
+    def test_scheduled_rotation_still_broadcasts_when_it_was_a_quiet_noop(self) -> None:
+        # scheduled_rotate() itself decides "nothing to do" (disabled gate or
+        # empty pool) and returns the current, unchanged state - the worker
+        # must not try to guess whether a real rotation happened, it just
+        # reports what scheduled_rotate() returned, same as manual rotate.
+        bus = EventBus()
+        subscription = bus.subscribe()
+        runtime = FakeRuntime(self.profile_store)
+        runtime.scheduled_rotate_result = ConnectionState(status="connected", mode="rules")
+        worker = RuntimeWorker(runtime, bus)
+        worker.start()
+        try:
+            worker.submit_scheduled_rotation()
+            rotation_event = subscription.get(timeout=2.0)
+            state_event = subscription.get(timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertEqual(rotation_event.event, EVENT_ROTATION)
+        self.assertEqual(rotation_event.payload["status"], "connected")
+        self.assertEqual(state_event.event, EVENT_STATE_CHANGED)
+
+    def test_scheduled_rotation_survives_exception_and_worker_keeps_serving(self) -> None:
+        runtime = RaisingScheduledRotationRuntime(self.profile_store)
+        worker = RuntimeWorker(runtime)
+        worker.start()
+        try:
+            worker.submit_scheduled_rotation()
             response = worker.submit(COMMAND_STATUS, timeout=2.0)
         finally:
             worker.stop()

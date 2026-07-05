@@ -45,9 +45,13 @@ class RuntimeLike(Protocol):
     def run_iteration(self) -> ConnectionState:
         ...
 
+    def scheduled_rotate(self) -> ConnectionState:
+        ...
+
 
 _STOP = object()
 _TICK = object()
+_SCHEDULED_ROTATE = object()
 
 
 @dataclass(slots=True)
@@ -105,6 +109,19 @@ class RuntimeWorker:
             raise RuntimeError("runtime worker is not running")
         self._queue.put(_TICK)
 
+    def submit_scheduled_rotation(self) -> None:
+        """Enqueue a proactive scheduled rotation (see daemon.scheduled_rotation_loop).
+
+        Same fire-and-forget discipline as submit_tick: the timer only
+        decides *when*, execution is always serialized on this single
+        worker thread through WatchdogRuntime.scheduled_rotate(), which
+        reuses the same pool_builder/RotationEngine path as reactive and
+        manual rotation.
+        """
+        if not self._thread.is_alive():
+            raise RuntimeError("runtime worker is not running")
+        self._queue.put(_SCHEDULED_ROTATE)
+
     def is_running(self) -> bool:
         return self._thread.is_alive() and not self._stopped.is_set()
 
@@ -117,6 +134,9 @@ class RuntimeWorker:
                     return
                 if item is _TICK:
                     self._handle_tick()
+                    continue
+                if item is _SCHEDULED_ROTATE:
+                    self._handle_scheduled_rotation()
                     continue
                 if not isinstance(item, WorkerRequest):
                     continue
@@ -138,6 +158,23 @@ class RuntimeWorker:
         if state_payload.get("status") != self._last_tick_status:
             self._last_tick_status = state_payload.get("status")
             self._broadcast_state(state_payload)
+
+    def _handle_scheduled_rotation(self) -> None:
+        # Same reasoning as _handle_tick: no caller is waiting on a
+        # response, and an unexpected exception must never kill this
+        # thread since it also serves every IPC command.
+        try:
+            state = self.runtime.scheduled_rotate()
+        except Exception:
+            LOGGER.error("scheduled_rotation_failed", exc_info=True)
+            return
+        state_payload = _state_payload(state)
+        # Mirrors _handle_rotate: EVENT_ROTATION means "a rotation was
+        # requested", not "it succeeded" - the payload's status says what
+        # actually happened (including a quiet no-op from scheduled_rotate
+        # when the feature is disabled or the pool is empty).
+        self.event_bus.broadcast(Event(EVENT_ROTATION, state_payload))
+        self._broadcast_state(state_payload)
 
     def _handle_request(self, request: WorkerRequest) -> Response:
         try:

@@ -1539,6 +1539,125 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "standby")
 
+    def test_scheduled_rotate_standby_when_gate_off(self) -> None:
+        self.state_manager.set("vpn_desired_state", "off")
+        runtime = self._make_runtime(FakeDriver())
+
+        result = runtime.scheduled_rotate()
+
+        self.assertEqual(result.status, "standby")
+
+    def test_scheduled_rotate_noop_when_interval_is_zero(self) -> None:
+        driver = FakeDriver()
+        runtime = self._make_runtime(driver)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "watchdog": {},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": True, "scheduled_interval_hours": 0},
+        }
+
+        result = runtime.scheduled_rotate()
+
+        self.assertEqual(result.status, "connected")
+        driver.connect_mock.assert_not_called()
+        driver.disconnect_mock.assert_not_called()
+
+    @patch("core.watchdog.pool_builder.build_pool", return_value=[])
+    def test_scheduled_rotate_skips_quietly_when_pool_empty_no_kill_switch(self, _pool) -> None:
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=False)
+        runtime = self._make_runtime(driver)
+        runtime.kill_switch = kill_switch
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "watchdog": {},
+            "kill_switch": {"enabled": True},
+            "rotation": {"scheduled_interval_hours": 6},
+        }
+
+        result = runtime.scheduled_rotate()
+
+        # An empty rotation pool means "nothing configured to rotate over",
+        # not a network failure - it must not be treated like an all-failed
+        # rotation attempt (which would enable the kill switch and record a
+        # recovery failure over a config gap, not a real outage).
+        self.assertEqual(result.status, "connected")
+        kill_switch.enable_mock.assert_not_called()
+        self.assertEqual(runtime.recovery.consecutive_failures, 0)
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check", return_value="ok")
+    def test_scheduled_rotate_rotates_through_the_same_pool_and_engine(
+        self, _hc, mock_pool, mock_sel_driver
+    ) -> None:
+        alt_profile = Profile(
+            id="alt-scheduled", name="AltScheduled", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, in_rotation_pool=True, enabled=True,
+        )
+        driver = FakeDriver()
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+
+        runtime = self._make_runtime(driver)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "watchdog": {},
+            "kill_switch": {"enabled": False},
+            # rotation.enabled is False (reactive off) - scheduled rotation
+            # has its own independent gate and must still proceed.
+            "rotation": {"enabled": False, "scheduled_interval_hours": 6},
+        }
+
+        result = runtime.scheduled_rotate()
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(self.state_manager.get("active_profile_id"), alt_profile.id)
+        mock_pool.assert_called_with(self.profile_store, runtime.provider_store, runtime.app_config.load.return_value)
+
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check", return_value="down")
+    def test_scheduled_rotate_applies_kill_switch_when_real_candidates_all_fail(
+        self, _hc, mock_pool
+    ) -> None:
+        alt_profile = Profile(
+            id="alt-scheduled-fail", name="AltFail", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, in_rotation_pool=True, enabled=True,
+        )
+        mock_pool.return_value = [alt_profile]
+        driver = FakeDriver()
+        driver.connect_mock.return_value = True
+        kill_switch = FakeKillSwitch(active=False)
+        runtime = self._make_runtime(driver)
+        runtime.kill_switch = kill_switch
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "watchdog": {},
+            "kill_switch": {"enabled": True},
+            "rotation": {"enabled": False, "scheduled_interval_hours": 6},
+        }
+
+        result = runtime.scheduled_rotate()
+
+        # Unlike the empty-pool case: real candidates were tried and really
+        # failed, so this is a genuine connectivity finding and must escalate
+        # exactly like a reactive/manual rotation would.
+        self.assertEqual(result.status, "kill_switch_active")
+        kill_switch.enable_mock.assert_called_once_with()
+
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
     @patch("core.watchdog.health_checker.check", return_value="ok")

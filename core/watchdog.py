@@ -10,7 +10,7 @@ from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode
 from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
-from config.persistence import PersistentStoreError, PersistentValidationError, strict_bool
+from config.persistence import PersistentStoreError, PersistentValidationError, strict_bool, strict_int
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager
@@ -108,6 +108,35 @@ class WatchdogRuntime:
             return self.standby_state()
         config = self.app_config.load()
         return self._attempt_rotation(config, force=force)
+
+    def scheduled_rotate(self) -> ConnectionState:
+        """Proactive rotation trigger (Task 14.2), independent of health.
+
+        Gated by rotation.scheduled_interval_hours (0 = disabled), separate
+        from rotation.enabled (which only gates reactive rotation-on-failure).
+        Peeks at the same pool_builder.build_pool() result _attempt_rotation
+        would use before committing to a real attempt: an empty pool here
+        means "nothing configured to rotate over", not a network failure, so
+        it must not trip the same kill-switch/all-failed handling a real
+        rotation attempt would - that would let an optional, unattended timer
+        block traffic over a simple configuration gap.
+        """
+        if not self.automatic_actions_enabled():
+            return self.standby_state()
+        config = self.app_config.load()
+        if not self._scheduled_rotation_enabled(config):
+            return self.status()
+        if not self._compatible_pool(config):
+            LOGGER.info("scheduled_rotation_skipped reason=pool_empty")
+            return self.status()
+        return self._attempt_rotation(config, force=True)
+
+    def _scheduled_rotation_enabled(self, config: dict) -> bool:
+        hours = strict_int(
+            config.get("rotation", {}).get("scheduled_interval_hours", 0),
+            "rotation.scheduled_interval_hours",
+        )
+        return hours > 0
 
     def startup(self) -> ConnectionState:
         try:

@@ -45,6 +45,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "enabled": False,
         "health_status_cooldown_seconds": 300,
         "max_backoff_interval_seconds": 300,
+        "scheduled_interval_hours": 0,
     },
 }
 
@@ -60,6 +61,7 @@ CONFIG_INT_FIELDS = {
     ("watchdog", "reconnect_backoff_seconds"),
     ("rotation", "health_status_cooldown_seconds"),
     ("rotation", "max_backoff_interval_seconds"),
+    ("rotation", "scheduled_interval_hours"),
 }
 CONFIG_STRING_FIELDS = {
     ("kill_switch", "tunnel_interface"),

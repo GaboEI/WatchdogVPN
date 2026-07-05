@@ -10,6 +10,7 @@ from pathlib import Path
 from core.watchdog import build_watchdog
 from daemon.ipc_server import IPCServer
 from daemon.runtime_worker import RuntimeWorker
+from daemon.scheduled_rotation_loop import ScheduledRotationLoop
 from daemon.watchdog_loop import WatchdogLoop
 from daemon import systemd_helper
 
@@ -43,12 +44,15 @@ def main(argv: list[str] | None = None) -> int:
     worker = RuntimeWorker(runtime)
     server = IPCServer(request_socket_path, event_socket_path, worker)
     watchdog_loop = WatchdogLoop(worker, app_config=runtime.app_config)
+    scheduled_rotation_loop = ScheduledRotationLoop(worker, app_config=runtime.app_config)
     try:
         server.start()
         watchdog_loop.start()
+        scheduled_rotation_loop.start()
         systemd_helper.notify("READY=1")
         stop_event.wait()
     finally:
+        scheduled_rotation_loop.stop()
         watchdog_loop.stop()
         server.stop()
     return 0
