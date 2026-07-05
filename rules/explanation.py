@@ -12,6 +12,7 @@ from rules.rule_engine import (
     _MATCHERS,
     group_by_tier,
 )
+from rules.ruleset_trust import RuleSetTrustRegistry
 
 
 class RuleExplanationConfidence(str, Enum):
@@ -78,6 +79,10 @@ class RuleExplanationUnevaluatedRuleSet:
     group_name: str
     rule_id: str
     tier: str
+    state: str = "not-evaluated"
+    failure_behavior: str | None = None
+    critical: bool | None = None
+    error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +91,10 @@ class RuleExplanationUnevaluatedRuleSet:
             "rule_id": self.rule_id,
             "kind": self.kind,
             "values": list(self.values),
+            "state": self.state,
+            "failure_behavior": self.failure_behavior,
+            "critical": self.critical,
+            "error": self.error,
         }
 
 
@@ -195,6 +204,7 @@ def _explain_rule_conditions(
     traffic: TrafficInfo,
     tier: str,
     group_name: str,
+    trust_registry: RuleSetTrustRegistry | None,
 ) -> tuple[
     bool,
     bool,
@@ -221,14 +231,16 @@ def _explain_rule_conditions(
                     reason=RuleExplanationSkipReason.UNEVALUATED_RULE_SET,
                 )
             )
-            unevaluated.append(
-                RuleExplanationUnevaluatedRuleSet(
+            unevaluated.extend(
+                _ruleset_explanation(
+                    rule_set_id=value,
+                    condition_key=condition_key,
                     tier=tier,
                     group_name=group_name,
                     rule_id=rule.id,
-                    kind=_ruleset_kind(condition_key),
-                    values=list(values),
+                    trust_registry=trust_registry,
                 )
+                for value in values
             )
             continue
 
@@ -256,9 +268,43 @@ def _explain_rule_conditions(
     return matched, has_runtime_required, has_missing_input, skipped, unevaluated
 
 
+def _ruleset_explanation(
+    *,
+    rule_set_id: str,
+    condition_key: str,
+    tier: str,
+    group_name: str,
+    rule_id: str,
+    trust_registry: RuleSetTrustRegistry | None,
+) -> RuleExplanationUnevaluatedRuleSet:
+    kind = _ruleset_kind(condition_key)
+    if trust_registry is None:
+        return RuleExplanationUnevaluatedRuleSet(
+            tier=tier,
+            group_name=group_name,
+            rule_id=rule_id,
+            kind=kind,
+            values=[rule_set_id],
+        )
+    policy = trust_registry.policy_for(rule_set_id)
+    status = trust_registry.status_for(rule_set_id)
+    return RuleExplanationUnevaluatedRuleSet(
+        tier=tier,
+        group_name=group_name,
+        rule_id=rule_id,
+        kind=policy.kind.value if policy else kind,
+        values=[rule_set_id],
+        state=status.state.value,
+        failure_behavior=policy.failure_behavior.value if policy else None,
+        critical=policy.critical if policy else None,
+        error=status.error,
+    )
+
+
 @dataclass
 class RuleExplainer:
     final_policy: str = "current_profile"
+    trust_registry: RuleSetTrustRegistry | None = None
 
     def __post_init__(self) -> None:
         if self.final_policy not in SIMPLE_RULE_ACTIONS:
@@ -310,6 +356,7 @@ class RuleExplainer:
                         traffic=traffic,
                         tier=tier,
                         group_name=group.name,
+                        trust_registry=self.trust_registry,
                     )
                     skipped.extend(rule_skipped)
                     unevaluated.extend(rule_unevaluated)

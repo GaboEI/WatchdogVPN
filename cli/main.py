@@ -863,7 +863,10 @@ def _print_rule_explanation(explanation: RuleExplanation) -> None:
             print(
                 "  "
                 f"{item.get('group_name')}/{item.get('rule_id')} "
-                f"{item.get('kind')}={','.join(str(value) for value in item.get('values', []))}"
+                f"{item.get('kind')}={','.join(str(value) for value in item.get('values', []))} "
+                f"state={item.get('state')}"
+                f"{' behavior=' + str(item.get('failure_behavior')) if item.get('failure_behavior') else ''}"
+                f"{' error=' + str(item.get('error')) if item.get('error') else ''}"
             )
 
 

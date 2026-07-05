@@ -34,6 +34,14 @@ from .rule_parser import (
     parse_watchdogvpn_json,
 )
 from .rule_store import RuleStore, RuleStoreError
+from .ruleset_trust import (
+    RuleSetFailureBehavior,
+    RuleSetKind,
+    RuleSetLoadState,
+    RuleSetStatus,
+    RuleSetTrustPolicy,
+    RuleSetTrustRegistry,
+)
 from .singbox import build_singbox_route_rules
 
 __all__ = [
@@ -54,6 +62,12 @@ __all__ = [
     "RuleGroup",
     "RuleMatch",
     "RuleParseError",
+    "RuleSetFailureBehavior",
+    "RuleSetKind",
+    "RuleSetLoadState",
+    "RuleSetStatus",
+    "RuleSetTrustPolicy",
+    "RuleSetTrustRegistry",
     "RuleStore",
     "RuleStoreError",
     "SIMPLE_RULE_ACTIONS",

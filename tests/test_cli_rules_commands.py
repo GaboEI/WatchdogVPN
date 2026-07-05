@@ -415,6 +415,7 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertIn("cannot be determined statically", result.stdout)
         self.assertIn("runtime-evaluated rule sets may change the result", result.stdout)
         self.assertIn("Unevaluated rule sets:", result.stdout)
+        self.assertIn("state=not-evaluated", result.stdout)
         self.assertNotIn("would use action", result.stdout)
 
     def test_unknown_text_asks_for_input_without_overstating_decision(self) -> None:

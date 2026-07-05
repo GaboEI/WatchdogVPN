@@ -11,6 +11,10 @@ from rules.explanation import (
 )
 from rules.models import Rule, RuleGroup
 from rules.rule_engine import TrafficInfo
+from rules.ruleset_trust import RuleSetStatus, RuleSetTrustPolicy, RuleSetTrustRegistry
+
+
+SHA256_A = "a" * 64
 
 
 class RuleExplainerTests(unittest.TestCase):
@@ -111,10 +115,54 @@ class RuleExplainerTests(unittest.TestCase):
         self.assertEqual(result.matched.rule_id, "local")
         self.assertEqual(result.unevaluated_rule_sets[0].kind, "built-in")
         self.assertEqual(result.unevaluated_rule_sets[0].values, ["geosite:category-ads"])
+        self.assertEqual(result.unevaluated_rule_sets[0].state, "not-evaluated")
         self.assertEqual(
             result.priority_path[0].result,
             RuleExplanationPathResult.RUNTIME_REQUIRED,
         )
+
+    def test_ruleset_trust_status_is_reported_without_collapsing_to_normal_runtime(self) -> None:
+        registry = RuleSetTrustRegistry(
+            policies={
+                "https://rules.example/sensitive.srs": RuleSetTrustPolicy(
+                    id="https://rules.example/sensitive.srs",
+                    kind="remote",
+                    source="https://rules.example/sensitive.srs",
+                    expected_sha256=SHA256_A,
+                    critical=True,
+                )
+            },
+            statuses={
+                "https://rules.example/sensitive.srs": RuleSetStatus(
+                    id="https://rules.example/sensitive.srs",
+                    state="failed",
+                    error="sha256 mismatch",
+                )
+            },
+        )
+        group = RuleGroup(
+            name="custom",
+            rules=[
+                Rule(
+                    id="sensitive",
+                    action="current_profile",
+                    conditions={
+                        "ruleset_remote": ["https://rules.example/sensitive.srs"],
+                    },
+                )
+            ],
+        )
+
+        result = RuleExplainer(trust_registry=registry).explain(
+            TrafficInfo(domain="example.com"),
+            [group],
+        )
+
+        self.assertEqual(result.confidence, RuleExplanationConfidence.RUNTIME_REQUIRED)
+        self.assertEqual(result.unevaluated_rule_sets[0].state, "failed")
+        self.assertEqual(result.unevaluated_rule_sets[0].failure_behavior, "fail-closed")
+        self.assertTrue(result.unevaluated_rule_sets[0].critical)
+        self.assertEqual(result.unevaluated_rule_sets[0].error, "sha256 mismatch")
 
     def test_remote_ruleset_is_not_relevant_when_local_and_condition_fails(self) -> None:
         group = RuleGroup(
