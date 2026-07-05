@@ -3,9 +3,9 @@
 > Date: 2026-07-03/04 (overnight session)
 > Task: PHASE 12 - Linux Split Tunneling & App Policy, Task 12.5 - Real traffic
 > validation matrix
-> Status: NOT CLOSED. Real, confirmed progress made; one blocking root cause
-> still open. Session paused deliberately after two severe real-machine
-> incidents, not because the task was abandoned.
+> Status: CLOSED on 2026-07-05 after bounded Arch VM validation completed the
+> remaining default-direct/app-VPN and real Firefox browser matrix gaps. Do
+> not start Task 12.6 until this closure is reviewed and committed.
 
 ---
 
@@ -847,13 +847,14 @@ verification reported `ASSERTION_OK: clean runtime after final`. The restart
 reconciliation retest then proved daemon startup also cleans stale sing-box
 kernel state when no status call observes the child exit.
 
-### 8.9 Remaining closure checklist before Task 12.5 can close
+### 8.9 Closure checklist before Task 12.5 close
 
-Task 12.5 must not be closed only because the named audit findings above are
-resolved. Before moving to Task 12.6, run a short checklist audit against the
-original Task 12.5 acceptance text and close any remaining matrix gaps.
+Task 12.5 was not closed only because the named audit findings above were
+resolved. Before moving to Task 12.6, the report was audited against the
+original Task 12.5 acceptance text and the remaining matrix gaps were closed in
+bounded Arch VM validation.
 
-Planned order:
+Completed order:
 
 1. Audit this report against the original Task 12.5 checklist:
    - one app forced direct while another goes through VPN
@@ -867,10 +868,10 @@ Planned order:
      AUD-P12-006
    - coverage includes terminal/curl, browser, and package-manager/updater-style
      process behavior when safe
-2. If the checklist audit confirms feature-matrix gaps, run bounded VM
-   validation for:
+2. The checklist audit confirmed two feature-matrix gaps, and both were
+   validated on 2026-07-05:
    - default direct plus one app forced through the VPN
-   - a browser process, if a suitable browser is available in the VM
+   - a real Firefox browser process launched as normal user `gabodev`
 3. Use the same safety protocol as the cleanup/crash tests:
    - external conversation VPN disconnected before WatchdogVPN tests
    - one WatchdogVPN TUN exposure at a time
@@ -878,8 +879,8 @@ Planned order:
    - explicit disconnect and forced cleanup checks
    - profile/state/app-policy backup and restore
    - no blind repeat after a failure
-4. Document the pass/fail result here and in the master plan before marking
-   Task 12.5 closed.
+4. The pass result is documented here and in the master plan. Task 12.5 is
+   closed, but Task 12.6 has not been started.
 
 ## 9. What part of the problem may come from treating this as a "normal" app
 
@@ -970,12 +971,15 @@ Checklist status:
   validation; AUD-P12-006 is resolved.
 - Package-manager/updater-style helper behavior: covered by the controlled
   helper-process validation using an exact helper `process_path` rule.
-- One app forced through VPN while default traffic goes direct: not yet covered.
-  This remains a Task 12.5 matrix gap and needs one bounded VM validation.
-- Browser process coverage: not yet covered. This remains a Task 12.5 matrix
-  gap and must use a real desktop Firefox process launched as the normal
-  `gabodev` user, not as the daemon user, to exercise cross-user process
-  attribution.
+- One app forced through VPN while default traffic goes direct: covered by the
+  2026-07-05 bounded Arch VM validation. With app-policy default action
+  `direct`, a `curl` default-flow probe reported the direct baseline
+  `178.66.157.164`, while an exact `process_path=/usr/bin/python3.14` rule
+  with action `current` made the Python probe report VPN exit `138.124.58.47`.
+- Browser process coverage: covered by the 2026-07-05 bounded Arch VM
+  validation. Firefox was launched as normal user `gabodev` from
+  `/usr/lib/firefox/firefox` with an exact `process_path` app-policy rule and
+  reported VPN exit `138.124.58.47`.
 
 Low-severity technical debt observed during the audit:
 
@@ -986,9 +990,62 @@ Low-severity technical debt observed during the audit:
   later cleanup hardening pass should derive or persist the TUN address range
   instead of matching a literal prefix.
 
-Task 12.5 remains open only for the two remaining matrix gaps above. If the
-bounded default-direct/app-VPN and desktop Firefox validations pass without new
-HIGH or MEDIUM findings, Task 12.5 can be closed before starting Task 12.6.
+The two remaining matrix gaps passed without new HIGH or MEDIUM findings.
+Task 12.5 is closed as of 2026-07-05. Task 12.6 has not been started.
+
+## 12.1 Final remaining-matrix validation - 2026-07-05
+
+The final bounded Arch VM validation used
+`/home/gabodev/Desktop/temporales/task_12_5_remaining_matrix_vm.sh` with the
+standard VM protocol:
+
+```bash
+vpn_d
+cd /home/gabodev/WatchdogVPN
+bash /home/gabodev/Desktop/temporales/task_12_5_remaining_matrix_vm.sh
+vpn_r
+```
+
+The temporary script backed up and restored daemon state, profile storage, and
+app-policy storage; asked for the disposable functional test profile
+interactively; enforced one WatchdogVPN TUN exposure at a time; used timeouts;
+performed explicit disconnects; and checked for leftover `sing-box`,
+`wdvpn-tun0`, non-default `ip rule`, and WatchdogVPN/sing-box nftables
+residue. Early retries exposed a VM environment issue: the running Arch kernel
+did not have a matching module tree for `7.0.12-arch1-1`, so sing-box
+`auto_redirect` failed while trying to use nftables/nfqueue. Rebooting/repairing
+the VM kernel/module state restored `nfnetlink_queue`, `nft_queue`, and related
+nftables modules. This was an environment prerequisite issue, not a
+WatchdogVPN routing finding.
+
+Final pass evidence:
+
+- Direct baseline before WatchdogVPN connect: `178.66.157.164`.
+- App-policy configuration:
+  - enabled, blacklist mode
+  - default action: `direct`
+  - `process_path=/usr/bin/python3.14` -> `current`
+  - `process_path=/usr/bin/firefox,/usr/lib/firefox/firefox` -> `current`
+- Test 1, default direct plus app-current/VPN:
+  - `curl` default direct IP: `178.66.157.164`
+  - `python3` current/VPN IP: `138.124.58.47`
+  - result: PASS
+- Test 2, real Firefox as user `gabodev`:
+  - Firefox command observed:
+    `/usr/lib/firefox/firefox --new-instance --profile <tmp> http://127.0.0.1:<port>/`
+  - Firefox-visible IP: `138.124.58.47`
+  - result: PASS
+- Cleanup:
+  - both test legs disconnected WatchdogVPN back to standby
+  - between-test cleanup checks passed
+  - final cleanup reported no leftover sing-box process, `wdvpn-tun0`,
+    non-default `ip rule`, or WatchdogVPN/sing-box nftables residue
+
+Conclusion: the original Task 12.5 matrix is now covered in bounded Arch VM
+daemon validation, including terminal process behavior, helper-process
+delegation, DNS policy inheritance, kill switch no-leak behavior,
+cleanup/crash reconciliation, default-direct/app-VPN behavior, and real Firefox
+browser coverage under a normal user session.
 
 ## 13. Open technical debt / uncertainty
 
@@ -1035,7 +1092,11 @@ HIGH or MEDIUM findings, Task 12.5 can be closed before starting Task 12.6.
   symptoms disappear without first understanding the real cause (see
   section 10).
 
-## 14. Ordered test plan for tomorrow
+## 14. Historical ordered test plan used to close Task 12.5
+
+This plan was written while Task 12.5 was still open. It is preserved for
+chronology, but its work has now been completed through bounded Arch VM
+validation.
 
 **Phase 0 - Safety setup.** `watchdogvpn.service` was stopped and disabled at
 the end of this session (Incident 3, section 7) - re-enable it deliberately
@@ -1093,22 +1154,31 @@ child crash cleanup were validated with bounded daemon tests. The child-crash
 case exposed a real auto-redirect residue bug, which was fixed and retested.
 Kill switch no-leak validation is resolved for the bounded Arch VM daemon path.
 
+**Final matrix gap closure.** Completed in the Arch VM on 2026-07-05. The
+default-direct/app-current test confirmed default `curl` traffic stayed on the
+direct IP while exact `python3` `process_path` traffic used the VPN exit. The
+real Firefox test launched `/usr/lib/firefox/firefox` as normal user `gabodev`
+and confirmed the browser-visible IP matched the VPN exit. Cleanup checks
+passed after both test legs.
+
 ---
 
-*This report documents an in-progress task. Task 12.5 is not closed. The
-Phase 1 VM follow-up identified `CAP_DAC_READ_SEARCH` plus `CAP_SYS_PTRACE`
-as the minimal daemon capability set needed for cross-user process
-attribution, and daemon-mediated `curl -> block` / `curl -> direct`
-differential tests confirmed the two core real app-policy routing cases.
-The DNS-follow-policy audit confirmed generated DNS channel routing and
-smoke DNS connectivity, then the app-policy DNS inheritance fix added and
-validated process-matched DNS rules before domain/channel DNS rules. AUD-P12-002
-is resolved for generated-config implementation and bounded daemon validation.
-A controlled parent/child helper-process validation then confirmed that a
-delegated helper executable is blocked when the rule targets the helper's exact
-`process_path`, while unrelated `python3` traffic continues through the VPN.
-Kill switch no-leak validation then confirmed that normal traffic and a
+*This report documents a closed Task 12.5. The Phase 1 VM follow-up identified
+`CAP_DAC_READ_SEARCH` plus `CAP_SYS_PTRACE` as the minimal daemon capability
+set needed for cross-user process attribution, and daemon-mediated
+`curl -> block` / `curl -> direct` differential tests confirmed the first core
+real app-policy routing cases. The DNS-follow-policy audit confirmed generated
+DNS channel routing and smoke DNS connectivity, then the app-policy DNS
+inheritance fix added and validated process-matched DNS rules before
+domain/channel DNS rules. AUD-P12-002 is resolved for generated-config
+implementation and bounded daemon validation. A controlled parent/child
+helper-process validation then confirmed that a delegated helper executable is
+blocked when the rule targets the helper's exact `process_path`, while
+unrelated `python3` traffic continues through the VPN. Kill switch no-leak
+validation then confirmed that normal traffic and a
 physical-interface-forced probe both exposed the VPN exit while the kill switch
 was active, and direct TCP DNS was blocked. Cleanup/crash validation then
 confirmed clean teardown for normal disconnect, systemd stop, systemd restart,
-and sing-box child crash after fixing auto-redirect residue cleanup.*
+and sing-box child crash after fixing auto-redirect residue cleanup. Final
+bounded VM validation on 2026-07-05 closed the remaining default-direct/app-VPN
+and real Firefox browser coverage gaps without new HIGH or MEDIUM findings.*
