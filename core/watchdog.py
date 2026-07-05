@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Callable
@@ -98,10 +99,55 @@ class WatchdogRuntime:
     def run_iteration(self) -> ConnectionState:
         if not self.automatic_actions_enabled():
             return self.standby_state()
-        if self.driver.health_check() == "ok":
+        status = self.driver.health_check()
+        active_profile = self._active_profile()
+        if active_profile is not None:
+            self._record_health_result(active_profile, status)
+        if status == "ok":
             self.recovery.record_success()
             return self.driver.status()
         return self._recover_from_failure()
+
+    def _record_health_result(self, profile: Profile, status: str) -> None:
+        """Persist the result of a real health check (Task 14.5, AUD-P14-001).
+
+        health_status and last_health_check are written together, in the
+        same profile_store.update() call, so they can never disagree on
+        disk - Profile is serialized whole, there is no way to write one
+        field without the other. last_health_check updates on every check
+        (including "ok"), not only on failure: it means "when this profile
+        was last verified", not "when it last failed" - otherwise a node
+        that stays healthy for hours would have a permanently None
+        timestamp, and the cooldown could never reason about a profile
+        that failed once and later recovered.
+
+        Design note: this field collapses two different check depths into
+        one status - run_iteration()'s happy path calls the lighter
+        driver.health_check(), while the rotation path (via
+        _checked_and_recorded) calls the deeper health_checker.check()
+        (real connect + external reachability verification).
+        health_status="ok" does not record which depth produced it. This
+        is fine for the cooldown (it only distinguishes down vs not-down),
+        but a future scoring/explainer factor that wants to weigh check
+        depth would need to extend this, not assume every "ok" is
+        equivalent - a known extension point, not a bug.
+        """
+        profile.health_status = status
+        profile.last_health_check = datetime.now(timezone.utc)
+        self.profile_store.update(profile)
+
+    def _checked_and_recorded(self, profile: Profile, driver: BaseDriver) -> str:
+        """HealthCheckFn-compatible wrapper: real check, then persist.
+
+        Passed as the health_check callable into RotationEngine.rotate()
+        (see _attempt_rotation), which threads it, unchanged, through its
+        main candidate loop, _rollback(), and _single_node_check() - all
+        three paths get persistence for free, with zero changes to
+        rotation/rotation_engine.py, which stays store-agnostic by design.
+        """
+        status = health_checker.check(profile, driver)
+        self._record_health_result(profile, status)
+        return status
 
     def rotate_now(self, force: bool = False) -> ConnectionState:
         if not self.automatic_actions_enabled():
@@ -239,7 +285,7 @@ class WatchdogRuntime:
             **self._connect_options(),
         ):
             return False
-        return health_checker.check(profile, driver) == "ok"
+        return self._checked_and_recorded(profile, driver) == "ok"
 
     def _recover_from_failure(self) -> ConnectionState:
         config = self.app_config.load()
@@ -286,7 +332,7 @@ class WatchdogRuntime:
         result = self.rotation_engine.rotate(
             pool,
             rotation_driver,
-            health_checker.check,
+            self._checked_and_recorded,
             force=force,
             dns_policy=self.dns_policy_store.load(),
         )

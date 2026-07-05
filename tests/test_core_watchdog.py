@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from app_policy.store import AppPolicyStore
 from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
+from config.provider_store import ProviderStore
 from config.state_manager import StateManager
 from dns.models import DNSMode, DNSPolicy
 from dns.state_manager import SystemDNSStateManager
@@ -22,6 +24,7 @@ from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
+from rotation import pool_builder
 from rules.models import Rule, RuleGroup
 from rules.rule_store import RuleStore
 
@@ -1052,6 +1055,19 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "connected")
 
+    def test_run_iteration_persists_health_status_on_happy_path(self) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "ok"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+        runtime = self._make_runtime(driver)
+
+        runtime.run_iteration()
+
+        persisted = self.profile_store.get(self.profile.id)
+        self.assertEqual(persisted.health_status, "ok")
+        self.assertIsNotNone(persisted.last_health_check)
+
     def test_run_iteration_standby_when_gate_off(self) -> None:
         self.state_manager.set("vpn_desired_state", "off")
         driver = FakeDriver()
@@ -1073,7 +1089,31 @@ class WatchdogIntegrationTests(unittest.TestCase):
         result = runtime.run_iteration()
 
         self.assertEqual(result.status, "recovered")
-        driver.connect_mock.assert_called_with(self.profile)
+        # Assert by id, not full object equality: _try_reconnect fetches
+        # its own fresh copy via _active_profile() (a different Profile
+        # instance from self.profile) and Task 14.5 now mutates it in
+        # place with the real health check result after connect() records
+        # it, which would otherwise make a full-object comparison flaky.
+        connected_profile = driver.connect_mock.call_args.args[0]
+        self.assertEqual(connected_profile.id, self.profile.id)
+
+    @patch("core.watchdog.health_checker.check", return_value="ok")
+    def test_successful_reconnect_persists_health_status_to_the_real_store(self, _hc) -> None:
+        # AUD-P14-001 / Task 14.5: the persisted copy must reflect the real
+        # health_checker.check() result the reconnect path just produced,
+        # even though _try_reconnect operates on its own fresh Profile
+        # instance (fetched via _active_profile()), not self.profile.
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+        runtime = self._make_runtime(driver)
+
+        runtime.run_iteration()
+
+        persisted = self.profile_store.get(self.profile.id)
+        self.assertEqual(persisted.health_status, "ok")
+        self.assertIsNotNone(persisted.last_health_check)
 
     @patch("core.watchdog.health_checker.check", return_value="ok")
     def test_reconnect_forwards_persisted_rule_groups_when_rules_mode(self, _hc) -> None:
@@ -1687,6 +1727,54 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
+    def test_rotation_persists_health_status_for_every_attempted_candidate(
+        self, mock_pool, mock_sel_driver
+    ) -> None:
+        # AUD-P14-001 / Task 14.5: RotationEngine threads the injected
+        # health_check callable through its main loop unchanged - a failed
+        # candidate and the eventual winner must both end up persisted,
+        # proving the wrapper covers real multi-candidate rotation, not
+        # just the single-profile reconnect path.
+        failing = Profile(
+            id="fails-first", name="Fails", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, in_rotation_pool=True, enabled=True,
+        )
+        winner = Profile(
+            id="wins-second", name="Wins", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, in_rotation_pool=True, enabled=True,
+        )
+        self.profile_store.add(failing)
+        self.profile_store.add(winner)
+        mock_pool.return_value = [failing, winner]
+        driver = FakeDriver()
+        mock_sel_driver.return_value = driver
+
+        def health_check_side_effect() -> str:
+            return "down" if driver.connect_mock.call_count == 1 else "ok"
+
+        driver.health_check_mock.side_effect = health_check_side_effect
+        runtime = self._make_runtime(driver)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "watchdog": {}, "kill_switch": {"enabled": False},
+            "rotation": {"enabled": True},
+        }
+
+        with patch(
+            "core.watchdog.health_checker.check",
+            side_effect=lambda profile, driver: driver.health_check(),
+        ):
+            result = runtime.rotate_now(force=True)
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(self.profile_store.get("fails-first").health_status, "down")
+        self.assertEqual(self.profile_store.get("wins-second").health_status, "ok")
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
     @patch("core.watchdog.health_checker.check", return_value="ok")
     def test_rotate_now_forwards_the_stored_active_mode_to_the_driver(self, _hc, mock_pool, mock_sel_driver) -> None:
         alt_profile = Profile(
@@ -1798,6 +1886,51 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertFalse(kill_switch.block_ipv6)
         self.assertFalse(kill_switch.allow_lan)
         kill_switch.enable_mock.assert_called_once_with()
+
+    def test_end_to_end_failed_node_excluded_then_reeligible_after_cooldown(self) -> None:
+        """Closes AUD-P14-001 with evidence, not just a lone field write:
+        a real health check finding a node down is persisted, a real
+        build_pool() call excludes it while the cooldown is active, and the
+        same real call includes it again once the cooldown window has
+        passed. Uses real ProfileStore reads/writes throughout - no mocked
+        field, no stubbed pool_builder.
+        """
+        profile = Profile(
+            id="flaky",
+            name="Flaky",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        self.profile_store.add(profile)
+        driver = FakeDriver()
+        runtime = self._make_runtime(driver)
+        provider_store = ProviderStore(Path(self.tmpdir.name) / "providers.json")
+        config = {"rotation": {"health_status_cooldown_seconds": 300}}
+
+        # 1. A real health check finds it down; the result is persisted.
+        with patch("core.watchdog.health_checker.check", return_value="down"):
+            status = runtime._checked_and_recorded(profile, driver)
+        self.assertEqual(status, "down")
+        persisted = self.profile_store.get("flaky")
+        self.assertEqual(persisted.health_status, "down")
+        self.assertIsNotNone(persisted.last_health_check)
+
+        # 2. A real build_pool() call excludes it - cooldown active.
+        pool = pool_builder.build_pool(self.profile_store, provider_store, config)
+        self.assertEqual(pool, [])
+
+        # 3. Simulate the cooldown window passing (same backdating
+        #    technique tests.test_pool_builder already uses).
+        stale = self.profile_store.get("flaky")
+        stale.last_health_check = datetime.now(timezone.utc) - timedelta(seconds=600)
+        self.profile_store.update(stale)
+
+        # 4. The same real build_pool() call now includes it again.
+        pool_after_cooldown = pool_builder.build_pool(self.profile_store, provider_store, config)
+        self.assertEqual([p.id for p in pool_after_cooldown], ["flaky"])
 
 
 if __name__ == "__main__":
