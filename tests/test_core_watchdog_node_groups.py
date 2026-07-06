@@ -365,6 +365,17 @@ class NodeGroupRuntimeIntegrationTests(unittest.TestCase):
 
         self.assertEqual(pool, [])
 
+    def test_disabled_node_group_fails_closed_to_empty_pool(self) -> None:
+        self.node_group_store.add(NodeGroup(name="paris", enabled=False, member_profile_ids=["r1"]))
+        self.rule_store.add_group(
+            RuleGroup(name="custom", rules=[Rule(id="rr", action="group:paris", conditions={"domain": ["a.com"]})])
+        )
+        runtime = self._make_runtime(FakeDriver())
+
+        pool = runtime._compatible_pool({"rotation": {}})
+
+        self.assertEqual(pool, [])
+
     def test_pool_is_restricted_to_the_manual_pin(self) -> None:
         self.node_group_store.add(
             NodeGroup(
@@ -478,6 +489,136 @@ class NodeGroupRuntimeIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "recovered")
         self.assertEqual(self.state_manager.get("active_profile_id"), "r1")
+
+
+class NodeGroupAutoTestRuntimeTests(unittest.TestCase):
+    """Task 14.8 — auto-test is a serialized runtime action that measures
+    candidates without changing active_profile_id.
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        root = Path(self.tmpdir.name)
+        self.state_manager = StateManager(root / "state.toml")
+        self.profile_store = ProfileStore(root / "profiles.json")
+        self.provider_store = ProviderStore(root / "providers.json")
+        self.node_group_store = NodeGroupStore(root / "node_groups.json")
+        self.rule_store = RuleStore(root / "rules")
+        self.app_policy_store = AppPolicyStore(root / "app_policy.json")
+
+        self.resilient = Profile(
+            id="r1", name="Resilient", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, enabled=True,
+        )
+        self.profile_store.add(self.resilient)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _make_runtime(self, driver: BaseDriver, kill_switch: FakeKillSwitch | None = None) -> WatchdogRuntime:
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {},
+            "kill_switch": {"enabled": True},
+            "rotation": {
+                "enabled": True,
+                "health_status_cooldown_seconds": 300,
+                "latency_max_stale_seconds": 300,
+                "test_url": "https://example.com",
+                "test_timeout_seconds": 5,
+            },
+        }
+        return WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            provider_store=self.provider_store,
+            node_group_store=self.node_group_store,
+            rule_store=self.rule_store,
+            app_policy_store=self.app_policy_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=lambda: 0.0, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=lambda: 0.0),
+            kill_switch=kill_switch or FakeKillSwitch(),
+        )
+
+    def test_auto_test_measures_persists_and_ranks_without_activating_profile(self) -> None:
+        second_resilient = Profile(
+            id="r2", name="Second", protocol=ProtocolType.TROJAN,
+            config={}, source=ProfileSource.MANUAL, enabled=True,
+        )
+        self.profile_store.add(second_resilient)
+        self.node_group_store.add(NodeGroup(name="paris", member_profile_ids=["r1", "r2"]))
+        driver = FakeDriver()
+        runtime = self._make_runtime(driver)
+
+        def fake_check(profile: Profile, checked_driver: BaseDriver, verify=None) -> HealthCheckResult:
+            latency = 100.0 if profile.id == "r1" else 10.0
+            return HealthCheckResult(status="ok", latency_ms=latency)
+
+        with patch("core.watchdog.health_checker.check_with_latency", side_effect=fake_check):
+            payload = runtime.node_group_auto_test("paris")
+
+        self.assertEqual(payload["result"], "selected")
+        self.assertEqual(payload["selected_profile_id"], "r2")
+        self.assertEqual([item["profile_id"] for item in payload["candidates"]], ["r2", "r1"])
+        self.assertEqual(driver.connected_profile_id, "")
+        self.assertEqual(self.state_manager.get("active_profile_id", ""), "")
+        self.assertEqual(self.profile_store.get("r1").latency_ms, 100.0)
+        self.assertEqual(self.profile_store.get("r2").latency_ms, 10.0)
+
+    def test_auto_test_records_connect_failure_as_down_and_unavailable(self) -> None:
+        self.node_group_store.add(NodeGroup(name="paris", member_profile_ids=["r1"]))
+        driver = FakeDriver()
+        driver.connect = MagicMock(return_value=False)  # type: ignore[method-assign]
+        runtime = self._make_runtime(driver)
+
+        payload = runtime.node_group_auto_test("paris")
+
+        self.assertEqual(payload["result"], "unavailable")
+        self.assertIsNone(payload["selected_profile_id"])
+        self.assertEqual(payload["tested"][0]["health_status"], "down")
+        self.assertEqual(self.profile_store.get("r1").health_status, "down")
+
+    def test_auto_test_disconnects_when_deep_check_raises(self) -> None:
+        self.node_group_store.add(NodeGroup(name="paris", member_profile_ids=["r1"]))
+        driver = FakeDriver()
+        driver.disconnect = MagicMock(return_value=True)  # type: ignore[method-assign]
+        runtime = self._make_runtime(driver)
+
+        with patch(
+            "core.watchdog.health_checker.check_with_latency",
+            side_effect=RuntimeError("probe failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "probe failed"):
+                runtime.node_group_auto_test("paris")
+
+        driver.disconnect.assert_called_once()
+
+    def test_auto_test_rejects_active_connection(self) -> None:
+        self.node_group_store.add(NodeGroup(name="paris", member_profile_ids=["r1"]))
+        driver = FakeDriver()
+        driver.connect(self.resilient)
+        runtime = self._make_runtime(driver)
+
+        with self.assertRaisesRegex(RuntimeError, "requires standby/disconnected state"):
+            runtime.node_group_auto_test("paris")
+
+    def test_auto_test_rejects_active_kill_switch(self) -> None:
+        self.node_group_store.add(NodeGroup(name="paris", member_profile_ids=["r1"]))
+        kill_switch = FakeKillSwitch()
+        kill_switch.active = True
+        runtime = self._make_runtime(FakeDriver(), kill_switch=kill_switch)
+
+        with self.assertRaisesRegex(RuntimeError, "kill switch to be inactive"):
+            runtime.node_group_auto_test("paris")
+
+    def test_auto_test_rejects_disabled_group(self) -> None:
+        self.node_group_store.add(NodeGroup(name="paris", enabled=False, member_profile_ids=["r1"]))
+        runtime = self._make_runtime(FakeDriver())
+
+        with self.assertRaisesRegex(RuntimeError, "node group is disabled: paris"):
+            runtime.node_group_auto_test("paris")
 
 
 if __name__ == "__main__":

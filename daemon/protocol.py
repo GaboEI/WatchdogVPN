@@ -15,11 +15,13 @@ COMMAND_CONNECT = "connect"
 COMMAND_DISCONNECT = "disconnect"
 COMMAND_STATUS = "status"
 COMMAND_ROTATE = "rotate"
+COMMAND_NODE_GROUP_AUTO_TEST = "node_group_auto_test"
 
 ALLOWED_COMMANDS = frozenset(
     {
         COMMAND_CONNECT,
         COMMAND_DISCONNECT,
+        COMMAND_NODE_GROUP_AUTO_TEST,
         COMMAND_STATUS,
         COMMAND_ROTATE,
     }

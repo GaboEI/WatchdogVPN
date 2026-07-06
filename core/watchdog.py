@@ -231,6 +231,93 @@ class WatchdogRuntime:
             return self.status()
         return self._attempt_rotation(config, force=True)
 
+    def node_group_auto_test(self, group_name: str) -> dict[str, object]:
+        """Sequentially measure one group's currently eligible candidates.
+
+        This is the explicit CLI consumer anticipated by Task 14.7. It is
+        intentionally a RuntimeWorker/IPC action, not a direct store mutation:
+        each candidate requires a real connect + deep health check, so the
+        work must be serialized with manual connect/disconnect/rotate and the
+        autonomous timers on the single runtime worker thread.
+
+        It does not use RotationEngine and does not write active_profile_id:
+        this is an operator validation command, not a request to change the
+        active exit node or trigger kill-switch/all-failed recovery policy.
+        """
+        state = self.status()
+        if (
+            state.active_profile_id
+            or state.tun_active
+            or state.proxy_active
+            or state.status != "standby"
+        ):
+            raise RuntimeError("node-group auto-test requires standby/disconnected state")
+        if self.kill_switch.is_active() or state.kill_switch_active:
+            raise RuntimeError("node-group auto-test requires the kill switch to be inactive")
+
+        group = self.node_group_store.get(group_name)
+        if group is None:
+            raise RuntimeError(f"node group not found: {group_name}")
+        if not group.enabled:
+            raise RuntimeError(f"node group is disabled: {group_name}")
+
+        config = self.app_config.load()
+        candidates = resolve_node_group_candidates(
+            group, self.profile_store, self.provider_store, config
+        )
+        test_results: list[dict[str, object]] = []
+        for profile in candidates:
+            driver = self._driver_for_profile(profile)
+            connected = driver.connect(
+                profile,
+                dns_policy=self.dns_policy_store.load(),
+                **self._connect_options(),
+            )
+            if not connected:
+                self._record_health_result(profile, "down", latency_ms=None)
+                test_results.append(
+                    {
+                        "profile_id": profile.id,
+                        "connected": False,
+                        "health_status": "down",
+                        "latency_ms": None,
+                    }
+                )
+                driver.disconnect()
+                continue
+            try:
+                if self.rotation_engine.warmup_seconds > 0:
+                    self.rotation_engine.sleep(self.rotation_engine.warmup_seconds)
+                status = self._checked_and_recorded(profile, driver)
+                refreshed = self.profile_store.get(profile.id) or profile
+                test_results.append(
+                    {
+                        "profile_id": profile.id,
+                        "connected": True,
+                        "health_status": status,
+                        "latency_ms": refreshed.latency_ms,
+                    }
+                )
+            finally:
+                if not driver.disconnect():
+                    raise RuntimeError(
+                        f"node-group auto-test failed to disconnect profile: {profile.id}"
+                    )
+
+        refreshed_group = self.node_group_store.get(group_name) or group
+        refreshed_candidates = resolve_node_group_candidates(
+            refreshed_group, self.profile_store, self.provider_store, config
+        )
+        ranked = rank_candidates(refreshed_candidates, refreshed_group.resilience_policy, config)
+        selected_profile_id = ranked[0].profile_id if ranked else None
+        return {
+            "group_name": group_name,
+            "result": "selected" if selected_profile_id else "unavailable",
+            "selected_profile_id": selected_profile_id,
+            "tested": test_results,
+            "candidates": [score.to_dict() for score in ranked],
+        }
+
     def _scheduled_rotation_enabled(self, config: dict) -> bool:
         hours = strict_int(
             config.get("rotation", {}).get("scheduled_interval_hours", 0),
@@ -457,6 +544,9 @@ class WatchdogRuntime:
             # "unavailable" -> _handle_rotation_unavailable), so no new
             # safety code is needed - only correct sourcing.
             LOGGER.error("node_group_target_missing name=%s", target_name)
+            return []
+        if not target_group.enabled:
+            LOGGER.error("node_group_target_disabled name=%s", target_name)
             return []
         return self._group_scoped_pool(target_group, config)
 

@@ -37,6 +37,8 @@ from dns.tester import DNSTester
 from daemon.protocol import Response
 from models.profile import Profile
 from models.provider import Provider
+from node_groups.models import NodeGroup, NodeGroupSelectionMode
+from node_groups.store import NodeGroupStore, NodeGroupStoreError
 from parsers import ParseError
 from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
@@ -53,6 +55,23 @@ from rules.ruleset_trust_store import RuleSetTrustStore
 
 
 DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
+CONFIG_SET_KEYS = frozenset(
+    {
+        "watchdog.check_interval_seconds",
+        "rotation.scheduled_interval_hours",
+        "rotation.test_url",
+        "rotation.test_timeout_seconds",
+        "rotation.latency_max_stale_seconds",
+    }
+)
+CONFIG_INT_SET_KEYS = frozenset(
+    {
+        "watchdog.check_interval_seconds",
+        "rotation.scheduled_interval_hours",
+        "rotation.test_timeout_seconds",
+        "rotation.latency_max_stale_seconds",
+    }
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,6 +86,9 @@ def main(argv: list[str] | None = None) -> int:
         _error(str(exc))
         return 65
     except RuleStoreError as exc:
+        _error(str(exc))
+        return 65
+    except NodeGroupStoreError as exc:
         _error(str(exc))
         return 65
     except ParseError as exc:
@@ -194,6 +216,38 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_node_group.add_argument("--disable", action="store_true", help="Disable node rotation")
     provider_node_parser.set_defaults(handler=_provider_node)
 
+    node_group_parser = subparsers.add_parser("node-group", help="Manage node groups")
+    node_group_subparsers = node_group_parser.add_subparsers(dest="node_group_command")
+
+    node_group_list_parser = node_group_subparsers.add_parser("list", help="List node groups")
+    node_group_list_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_list_parser.set_defaults(handler=_node_group_list)
+
+    node_group_create_parser = node_group_subparsers.add_parser("create", help="Create a node group")
+    node_group_create_parser.add_argument("name")
+    node_group_create_parser.set_defaults(handler=_node_group_create)
+
+    node_group_add_profile_parser = node_group_subparsers.add_parser(
+        "add-profile", help="Add a profile to a node group"
+    )
+    node_group_add_profile_parser.add_argument("group")
+    node_group_add_profile_parser.add_argument("profile")
+    node_group_add_profile_parser.set_defaults(handler=_node_group_add_profile)
+
+    node_group_auto_test_parser = node_group_subparsers.add_parser(
+        "auto-test", help="Measure and rank a node group's eligible candidates"
+    )
+    node_group_auto_test_parser.add_argument("group")
+    node_group_auto_test_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_auto_test_parser.set_defaults(handler=_node_group_auto_test)
+
+    node_group_select_parser = node_group_subparsers.add_parser(
+        "select", help="Set a node group to auto mode or pin one profile"
+    )
+    node_group_select_parser.add_argument("group")
+    node_group_select_parser.add_argument("selection", help="Profile ID or 'auto'")
+    node_group_select_parser.set_defaults(handler=_node_group_select)
+
     dns_parser = subparsers.add_parser("dns", help="Manage DNS v2 policy and state")
     dns_subparsers = dns_parser.add_subparsers(dest="dns_command")
 
@@ -237,20 +291,14 @@ def _build_parser() -> argparse.ArgumentParser:
     dns_reset_parser.add_argument("--yes", action="store_true", help="Confirm DNS restore")
     dns_reset_parser.set_defaults(handler=_dns_reset)
 
-    config_parser = subparsers.add_parser("config", help="Manage WatchdogVPN connection mode")
+    config_parser = subparsers.add_parser("config", help="Manage WatchdogVPN configuration")
     config_subparsers = config_parser.add_subparsers(dest="config_command")
 
     config_set_parser = config_subparsers.add_parser("set", help="Set a configuration value")
-    config_set_subparsers = config_set_parser.add_subparsers(dest="config_set_target")
-
-    config_set_mode_parser = config_set_subparsers.add_parser(
-        "mode", help="Set the active connection mode"
-    )
-    config_set_mode_parser.add_argument(
-        "mode", choices=sorted(ALLOWED_ACTIVE_MODES), help="New connection mode"
-    )
-    config_set_mode_parser.add_argument("--json", action="store_true", help="Print JSON")
-    config_set_mode_parser.set_defaults(handler=_config_set_mode)
+    config_set_parser.add_argument("key", help="Configuration key, for example mode or rotation.test_url")
+    config_set_parser.add_argument("value", help="Configuration value")
+    config_set_parser.add_argument("--json", action="store_true", help="Print JSON")
+    config_set_parser.set_defaults(handler=_config_set)
 
     rules_parser = subparsers.add_parser("rules", help="Inspect configured routing rules")
     rules_subparsers = rules_parser.add_subparsers(dest="rules_command")
@@ -663,15 +711,121 @@ def _provider_node(args: argparse.Namespace) -> int:
     return 0
 
 
-def _config_set_mode(args: argparse.Namespace) -> int:
-    manager = StateManager()
-    manager.set("active_mode", args.mode)
-    data = {"active_mode": args.mode}
+def _node_group_list(args: argparse.Namespace) -> int:
+    groups = NodeGroupStore().list()
+    data = [_node_group_summary(group) for group in groups]
+    if args.json:
+        _print_json(data)
+        return 0
+    if not groups:
+        print("No node groups found.")
+        return 0
+    print("Name\tEnabled\tMode\tManual\tProfiles\tProviders\tExcluded\tPolicy")
+    for item in data:
+        print(
+            "\t".join(
+                [
+                    str(item["name"]),
+                    _on_off(bool(item["enabled"])),
+                    str(item["selection_mode"]),
+                    str(item["manual_profile_id"] or "-"),
+                    str(len(item["member_profile_ids"])),
+                    str(len(item["member_provider_ids"])),
+                    str(len(item["exclude_profile_ids"])),
+                    str(item["resilience_policy"]),
+                ]
+            )
+        )
+    return 0
+
+
+def _node_group_create(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    if store.get(args.name) is not None:
+        raise ParseError(f"node group already exists: {args.name}")
+    group = NodeGroup(name=args.name)
+    store.add(group)
+    print(f"Created node group: {group.name}")
+    return 0
+
+
+def _node_group_add_profile(args: argparse.Namespace) -> int:
+    profile = _require_profile(ProfileStore(), args.profile)
+    group = NodeGroupStore().add_member_profile(args.group, profile.id)
+    print(f"Added profile to node group: {group.name} profile={profile.id}")
+    return 0
+
+
+def _node_group_select(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    if args.selection == "auto":
+        group = store.set_selection(args.group, NodeGroupSelectionMode.AUTO)
+        print(f"Node group selection set to auto: {group.name}")
+        return 0
+    profile = _require_profile(ProfileStore(), args.selection)
+    group = store.set_selection(args.group, NodeGroupSelectionMode.MANUAL, profile.id)
+    print(f"Node group selection pinned: {group.name} profile={profile.id}")
+    return 0
+
+
+def _node_group_auto_test(args: argparse.Namespace) -> int:
+    response = WatchdogIPCClient().node_group_auto_test(args.group)
+    if not response.ok:
+        _error(response.error or "node-group auto-test failed")
+        return 70
+    data = response.payload
+    if args.json:
+        _print_json(data)
+        return 0
+    _print_node_group_auto_test(data)
+    return 0
+
+
+def _config_set(args: argparse.Namespace) -> int:
+    if args.key == "mode":
+        return _config_set_mode_value(args.value, args.json)
+    if args.key not in CONFIG_SET_KEYS:
+        supported = ", ".join(["mode", *sorted(CONFIG_SET_KEYS)])
+        raise ParseError(f"unsupported config key: {args.key} (supported: {supported})")
+
+    config_store = AppConfig()
+    config = config_store.load()
+    section, key = args.key.split(".", 1)
+    value = _parse_config_value(args.key, args.value)
+    config.setdefault(section, {})[key] = value
+    config_store.save(config)
+    data = {"key": args.key, "value": config_store.load()[section][key]}
     if args.json:
         _print_json(data)
     else:
-        print(f"Active mode set to: {args.mode}")
+        print(f"Config set: {args.key}={data['value']}")
     return 0
+
+
+def _config_set_mode_value(mode: str, json_output: bool) -> int:
+    if mode not in ALLOWED_ACTIVE_MODES:
+        supported = ", ".join(sorted(ALLOWED_ACTIVE_MODES))
+        raise ParseError(f"mode must be one of: {supported}")
+    manager = StateManager()
+    manager.set("active_mode", mode)
+    data = {"active_mode": mode}
+    if json_output:
+        _print_json(data)
+    else:
+        print(f"Active mode set to: {mode}")
+    return 0
+
+
+def _parse_config_value(key: str, value: str) -> int | str:
+    if key == "rotation.scheduled_interval_hours" and value == "off":
+        return 0
+    if key in CONFIG_INT_SET_KEYS:
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ParseError(f"{key} must be an integer") from exc
+    return value
 
 
 def _rules_explain(args: argparse.Namespace) -> int:
@@ -1332,6 +1486,33 @@ def _print_json(data: object) -> None:
     print(json.dumps(data, indent=2, sort_keys=True))
 
 
+def _print_node_group_auto_test(data: dict) -> None:
+    print(f"Node group: {data.get('group_name')}")
+    print(f"Result: {data.get('result')}")
+    print(f"Selected profile: {data.get('selected_profile_id') or '-'}")
+    tested = data.get("tested") or []
+    if tested:
+        print("Tested:")
+        for item in tested:
+            latency = item.get("latency_ms")
+            latency_label = "-" if latency is None else f"{latency} ms"
+            connected = _on_off(bool(item.get("connected")))
+            print(
+                f"  {item.get('profile_id')}\tconnected={connected}\t"
+                f"health={item.get('health_status')}\tlatency={latency_label}"
+            )
+    candidates = data.get("candidates") or []
+    if candidates:
+        print("Ranking:")
+        for item in candidates:
+            latency = item.get("latency_score")
+            latency_label = "-" if latency is None else f"{latency} ms"
+            print(
+                f"  {item.get('profile_id')}\ttotal={item.get('total')}\t"
+                f"resilience={item.get('resilience_score')}\tlatency={latency_label}"
+            )
+
+
 def _require_profile(store: ProfileStore, profile_id: str) -> Profile:
     profile = store.get(profile_id)
     if profile is None:
@@ -1344,6 +1525,17 @@ def _require_provider(store: ProviderStore, provider_id: str) -> Provider:
     if provider is None:
         raise ProviderNotFoundError(f"provider not found: {provider_id}")
     return provider
+
+
+def _require_node_group(store: NodeGroupStore, name: str) -> NodeGroup:
+    group = store.get(name)
+    if group is None:
+        raise ParseError(f"node group not found: {name}")
+    return group
+
+
+def _node_group_summary(group: NodeGroup) -> dict:
+    return group.to_dict()
 
 
 def _provider_summary(provider: Provider) -> dict:

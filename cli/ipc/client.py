@@ -15,6 +15,7 @@ from cli.ipc.errors import (
 from daemon.protocol import (
     COMMAND_CONNECT,
     COMMAND_DISCONNECT,
+    COMMAND_NODE_GROUP_AUTO_TEST,
     COMMAND_ROTATE,
     COMMAND_STATUS,
     Event,
@@ -60,6 +61,9 @@ class WatchdogIPCClient:
 
     def rotate(self, force: bool = False) -> Response:
         return self.request(COMMAND_ROTATE, {"force": force})
+
+    def node_group_auto_test(self, group_name: str) -> Response:
+        return self.request(COMMAND_NODE_GROUP_AUTO_TEST, {"group_name": group_name})
 
     def request(self, command: str, payload: dict | None = None) -> Response:
         request_line = encode_request(command, payload or {})

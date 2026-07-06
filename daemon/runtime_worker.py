@@ -10,6 +10,7 @@ from daemon.event_bus import EventBus
 from daemon.protocol import (
     COMMAND_CONNECT,
     COMMAND_DISCONNECT,
+    COMMAND_NODE_GROUP_AUTO_TEST,
     COMMAND_ROTATE,
     COMMAND_STATUS,
     EVENT_HEALTH_CHECK,
@@ -46,6 +47,9 @@ class RuntimeLike(Protocol):
         ...
 
     def scheduled_rotate(self) -> ConnectionState:
+        ...
+
+    def node_group_auto_test(self, group_name: str) -> dict[str, Any]:
         ...
 
 
@@ -188,6 +192,8 @@ class RuntimeWorker:
                 return self._handle_status()
             if request.command == COMMAND_ROTATE:
                 return self._handle_rotate(request.payload)
+            if request.command == COMMAND_NODE_GROUP_AUTO_TEST:
+                return self._handle_node_group_auto_test(request.payload)
             raise UnknownCommandError(f"unknown command: {request.command}")
         except Exception as exc:
             return Response(ok=False, error=str(exc))
@@ -237,6 +243,10 @@ class RuntimeWorker:
         self.event_bus.broadcast(Event(EVENT_ROTATION, state_payload))
         self._broadcast_state(state_payload)
         return Response(ok=True, payload={"state": state_payload})
+
+    def _handle_node_group_auto_test(self, payload: dict[str, Any]) -> Response:
+        group_name = _require_string(payload.get("group_name"), "group_name")
+        return Response(ok=True, payload=self.runtime.node_group_auto_test(group_name))
 
     def _broadcast_state(self, state_payload: dict[str, Any]) -> None:
         self.event_bus.broadcast(Event(EVENT_STATE_CHANGED, state_payload))

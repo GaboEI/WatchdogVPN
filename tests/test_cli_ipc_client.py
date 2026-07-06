@@ -41,6 +41,7 @@ class FakeRuntime:
         self.profile_store = profile_store
         self.connected_profile_id = ""
         self.rotate_calls: list[bool] = []
+        self.auto_test_calls: list[str] = []
 
     def connect(self, profile: Profile) -> bool:
         self.connected_profile_id = profile.id
@@ -61,6 +62,10 @@ class FakeRuntime:
         self.rotate_calls.append(force)
         self.connected_profile_id = "rotated"
         return ConnectionState(active_profile_id="rotated", mode="rules", status="recovered")
+
+    def node_group_auto_test(self, group_name: str) -> dict:
+        self.auto_test_calls.append(group_name)
+        return {"group_name": group_name, "result": "unavailable"}
 
 
 class BlockingRuntime(FakeRuntime):
@@ -119,12 +124,16 @@ class WatchdogIPCClientIntegrationTests(unittest.TestCase):
         connect_response = self.client.connect(self.profile.id)
         status_response = self.client.status()
         rotate_response = self.client.rotate(force=True)
+        auto_test_response = self.client.node_group_auto_test("paris")
         disconnect_response = self.client.disconnect()
 
         self.assertTrue(connect_response.ok)
         self.assertEqual(status_response.payload["state"]["active_profile_id"], self.profile.id)
         self.assertTrue(rotate_response.ok)
         self.assertEqual(self.runtime.rotate_calls, [True])
+        self.assertTrue(auto_test_response.ok)
+        self.assertEqual(self.runtime.auto_test_calls, ["paris"])
+        self.assertEqual(auto_test_response.payload["group_name"], "paris")
         self.assertTrue(disconnect_response.ok)
         self.assertEqual(disconnect_response.payload["state"]["status"], "standby")
 

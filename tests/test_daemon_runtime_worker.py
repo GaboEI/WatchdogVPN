@@ -13,6 +13,7 @@ from daemon.event_bus import EventBus
 from daemon.protocol import (
     COMMAND_CONNECT,
     COMMAND_DISCONNECT,
+    COMMAND_NODE_GROUP_AUTO_TEST,
     COMMAND_ROTATE,
     COMMAND_STATUS,
     EVENT_HEALTH_CHECK,
@@ -75,6 +76,7 @@ class FakeRuntime:
         self.connected_profile_id = ""
         self.disconnect_calls = 0
         self.rotate_calls: list[bool] = []
+        self.auto_test_calls: list[str] = []
         self.run_iteration_queue: list[ConnectionState] = []
         self.scheduled_rotate_calls = 0
         self.scheduled_rotate_result: ConnectionState | None = None
@@ -111,6 +113,10 @@ class FakeRuntime:
             return self.scheduled_rotate_result
         return self.status()
 
+    def node_group_auto_test(self, group_name: str) -> dict:
+        self.auto_test_calls.append(group_name)
+        return {"group_name": group_name, "result": "unavailable"}
+
 
 class ThreadTrackingRuntime(FakeRuntime):
     def __init__(self, profile_store: ProfileStore) -> None:
@@ -131,6 +137,10 @@ class ThreadTrackingRuntime(FakeRuntime):
     def status(self) -> ConnectionState:
         self._record_thread()
         return super().status()
+
+    def node_group_auto_test(self, group_name: str) -> dict:
+        self._record_thread()
+        return super().node_group_auto_test(group_name)
 
 
 class RaisingTickRuntime(FakeRuntime):
@@ -245,6 +255,36 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.assertEqual(rotation_event.event, EVENT_ROTATION)
         self.assertEqual(state_event.event, EVENT_STATE_CHANGED)
 
+    def test_worker_node_group_auto_test_returns_payload_without_state_event(self) -> None:
+        bus = EventBus()
+        subscription = bus.subscribe()
+        runtime = FakeRuntime(self.profile_store)
+        worker = RuntimeWorker(runtime, bus)
+        worker.start()
+        try:
+            response = worker.submit(
+                COMMAND_NODE_GROUP_AUTO_TEST, {"group_name": "paris"}, timeout=2.0
+            )
+            with self.assertRaises(queue.Empty):
+                subscription.get(timeout=0.05)
+        finally:
+            worker.stop()
+
+        self.assertTrue(response.ok)
+        self.assertEqual(runtime.auto_test_calls, ["paris"])
+        self.assertEqual(response.payload["group_name"], "paris")
+
+    def test_worker_node_group_auto_test_requires_group_name_string(self) -> None:
+        worker = RuntimeWorker(FakeRuntime(self.profile_store))
+        worker.start()
+        try:
+            response = worker.submit(COMMAND_NODE_GROUP_AUTO_TEST, {"group_name": ""}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.error, "group_name must be a non-empty string")
+
     def test_runtime_calls_run_on_single_worker_thread(self) -> None:
         runtime = ThreadTrackingRuntime(self.profile_store)
         caller_thread_id = threading.get_ident()
@@ -253,6 +293,11 @@ class RuntimeWorkerTests(unittest.TestCase):
         try:
             self.assertTrue(worker.submit(COMMAND_CONNECT, {"profile_id": self.profile.id}, timeout=2.0).ok)
             self.assertTrue(worker.submit(COMMAND_STATUS, timeout=2.0).ok)
+            self.assertTrue(
+                worker.submit(
+                    COMMAND_NODE_GROUP_AUTO_TEST, {"group_name": "paris"}, timeout=2.0
+                ).ok
+            )
             self.assertTrue(worker.submit(COMMAND_DISCONNECT, timeout=2.0).ok)
         finally:
             worker.stop()

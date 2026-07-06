@@ -6,6 +6,7 @@ import unittest
 from daemon.protocol import (
     COMMAND_CONNECT,
     COMMAND_DISCONNECT,
+    COMMAND_NODE_GROUP_AUTO_TEST,
     COMMAND_ROTATE,
     COMMAND_STATUS,
     EVENT_HEALTH_CHECK,
@@ -81,7 +82,13 @@ class DaemonProtocolRoundTripTests(unittest.TestCase):
         self.assertEqual(data["command"], COMMAND_STATUS)
 
     def test_all_command_constants_are_accepted(self) -> None:
-        for command in (COMMAND_CONNECT, COMMAND_DISCONNECT, COMMAND_STATUS, COMMAND_ROTATE):
+        for command in (
+            COMMAND_CONNECT,
+            COMMAND_DISCONNECT,
+            COMMAND_NODE_GROUP_AUTO_TEST,
+            COMMAND_STATUS,
+            COMMAND_ROTATE,
+        ):
             with self.subTest(command=command):
                 self.assertEqual(decode_request_line(encode_request(command)).command, command)
 
