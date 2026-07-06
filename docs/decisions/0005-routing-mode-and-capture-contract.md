@@ -83,10 +83,13 @@ That phase must:
 - make Rule/Global a routing-policy concept, not a proxy/TUN toggle;
 - make Proxy/TUN/LAN explicit capture/entry concepts;
 - preserve direct/current/block/group route actions;
-- define rule import compatibility without tying WatchdogVPN to one external
-  JSON layout;
+- define rule import compatibility and live rule-set lifecycle without tying
+  WatchdogVPN to one external JSON layout;
+- define system-proxy/local-proxy cleanup, warning and coexistence behavior;
 - ensure rule detection diagnostics can answer "which rule would match this
   domain/IP/process, and which route action would apply?";
+- decide whether proxy-chain/route-chain actions are v2.0.0 work, v2.x work or
+  deliberately out of scope;
 - keep the current localhost-only LAN posture until the dedicated LAN phase
   validates broader exposure.
 

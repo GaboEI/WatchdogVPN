@@ -52,12 +52,13 @@ These items are planned phases, not all current user-facing features:
 | 18 | Installer v2 migration | Runtime dependency installation and non-destructive update validation |
 | 19 | Routing mode and capture architecture | Align Rule/Global, Proxy/TUN/LAN and route actions before final CLI |
 | 20 | LAN sharing and gateway mode | Branch-gated LAN proxy/gateway capability for network operators |
-| 21 | Full CLI | Complete operator surface after capabilities settle |
-| 22 | CLI-backed field validation | Real-machine validation before final TUI work |
-| 23 | TUI premium experience | Rewire/polish the TUI over proven v2 behavior |
-| 24 | i18n | Translate after CLI/TUI user-facing surfaces stabilize |
-| 25 | Documentation and final cleanup | Final public docs, security notes and cleanup |
-| 26 | v2.0.0 release | Final validation, tag and release |
+| 21 | Network context automation and diagnostics | Network-aware activation plus unified diagnostics before final CLI |
+| 22 | Full CLI | Complete operator surface after capabilities settle |
+| 23 | CLI-backed field validation | Real-machine validation before final TUI work |
+| 24 | TUI premium experience | Rewire/polish the TUI over proven v2 behavior |
+| 25 | i18n | Translate after CLI/TUI user-facing surfaces stabilize |
+| 26 | Documentation and final cleanup | Final public docs, security notes and cleanup |
+| 27 | v2.0.0 release | Final validation, tag and release |
 
 ## Protocol Positioning
 
@@ -84,6 +85,8 @@ censorship-resistant by default.
   Direct/Current/Block/Group into one confusing mode.
 - No LAN proxy/gateway work directly on `main`; it must be built on a
   dedicated branch and merged only after VM-only validation.
+- No final CLI freeze before network-context automation, unified diagnostics
+  and redacted support export are designed and audited.
 - No final TUI work until the CLI-backed behavior is complete and field-tested.
 
 ## Website Timing

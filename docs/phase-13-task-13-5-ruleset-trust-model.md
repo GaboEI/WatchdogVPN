@@ -130,7 +130,8 @@ Deferred to later implementation work:
 - operator commands for adding/updating trust policies
 
 This is scheduled work, not a blocker for Task 13.5. The security contract is
-now explicit so later runtime work has a precise target.
+now explicit so later runtime work has a precise target. The active v2 roadmap
+promotes this runtime lifecycle into Phase 19 before the final CLI is frozen.
 
 ## Acceptance
 
@@ -140,4 +141,5 @@ Task 13.5 closes when:
 - failure behavior is explicit and tested
 - stale/update semantics are documented
 - diagnostics distinguish not-evaluated, loaded, stale, and failed rule sets
-- runtime downloader work remains clearly deferred
+- runtime downloader work remains clearly scheduled in the later routing/capture
+  architecture phase

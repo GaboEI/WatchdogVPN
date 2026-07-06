@@ -67,6 +67,7 @@ These are planned phases, not current user-facing promises:
 | Backup/restore/sync | safe versioned backups, restore rollback and remote-sync threat review |
 | Routing/capture architecture | align Rule/Global, Proxy/TUN/LAN and route actions before final CLI |
 | LAN sharing / gateway mode | branch-gated LAN proxy and gateway capability for network operators |
+| Network context automation and diagnostics | network-aware activation plus unified diagnostics before final CLI |
 | Full CLI | complete operator surface after capabilities settle |
 | Field validation | real CLI-driven validation before final TUI work |
 | TUI premium experience | final v2 TUI over proven behavior |
@@ -83,6 +84,13 @@ that intentionally use the WatchdogVPN host as their protected path. That work
 is not enabled in the current mainline runtime; it requires a dedicated branch,
 VM-only network validation, explicit bind/firewall controls, kill-switch
 coverage and DNS leak validation before merge.
+
+Before the final CLI is frozen, WatchdogVPN will also add network-context
+automation and unified diagnostics. That track is expected to cover
+trusted/untrusted network policy, interface/default-route changes, safe
+autoconnect behavior, provider update metadata and redacted support exports.
+Automatic behavior must be explainable and reversible, and diagnostics must not
+silently become browsing history or a secret dump.
 
 ## Protocol Support
 

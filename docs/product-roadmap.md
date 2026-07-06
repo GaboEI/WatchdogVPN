@@ -86,6 +86,10 @@ means all captured traffic uses the selected protected path. Proxy, TUN and LAN
 are entry mechanisms, not replacements for Rule/Global. Direct remains a
 first-class route action, not a feature to remove.
 
+This track also owns rule-set runtime safety before those rules can affect live
+traffic: downloader/cache behavior, trust policy, bootstrap detours, stale-cache
+handling and honest diagnostics for failed or partial policy data.
+
 ### LAN Sharing and Gateway Mode
 
 WatchdogVPN should support network-operator workflows where the host can
@@ -96,6 +100,19 @@ networks, servers and multi-device labs, but it changes the trust boundary and
 must be built with exceptional care: a dedicated branch, VM-only network
 validation, explicit bind controls, firewall UX, kill-switch coverage for
 LAN-originated traffic, DNS leak checks and teardown validation before merge.
+
+### Network Context Automation and Unified Diagnostics
+
+Before the final CLI surface is frozen, WatchdogVPN should add network-aware
+automation and a single structured diagnostics layer. This includes optional
+trusted/untrusted network policy, interface/default-route changes,
+captive-portal/offline state, provider update metadata, quota/expiry display
+when supplied by provider data, and a redacted support export.
+
+Automatic behavior must be explainable, disableable and reversible.
+Diagnostics should help an operator answer "what is active, why, and where
+would this traffic go?" without silently recording browsing history, private
+keys, subscription secrets or raw local-network identifiers.
 
 ### Website and Public Docs
 

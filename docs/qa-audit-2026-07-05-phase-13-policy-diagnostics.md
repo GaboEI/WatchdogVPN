@@ -79,6 +79,9 @@ for Phase 13 closure:
 - explicit nested AND/OR rule trees
 
 These are documented deferrals, not open audit blockers.
+The active v2 roadmap promotes the runtime downloader/cache/enforcement work
+into the later routing/capture architecture phase before the final CLI is
+frozen.
 
 ## 6. Validation
 
