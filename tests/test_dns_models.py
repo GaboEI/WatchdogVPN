@@ -68,6 +68,14 @@ class DNSModelTests(unittest.TestCase):
                 ],
             )
 
+    def test_dns_channel_rejects_resolver_racing_strategy(self) -> None:
+        with self.assertRaisesRegex(ValueError, "resolver racing is not supported"):
+            DNSChannel(
+                name=DNSChannelName.FINAL,
+                resolvers=[Resolver(uri="udp://1.1.1.1")],
+                strategy="race",
+            )
+
     def test_resolver_rejects_empty_uri(self) -> None:
         with self.assertRaises(ValueError):
             Resolver(uri=" ")

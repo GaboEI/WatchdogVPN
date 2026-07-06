@@ -31,6 +31,9 @@ Useful test overrides:
 
 `test` probes configured resolver channels. If no channels are configured, or
 `--auto` is passed, it tests the default auto-setup candidates.
+Resolver probes are bounded diagnostic checks only; live DNS resolution keeps
+the deterministic resolver order recorded in the policy and does not race
+runtime answers.
 
 ```sh
 ./bin/watchdog dns test

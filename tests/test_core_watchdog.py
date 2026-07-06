@@ -780,9 +780,10 @@ class WatchdogCoreTests(unittest.TestCase):
     @patch.object(SingBoxDriver, "health_check", return_value="ok")
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    @patch.object(SingBoxDriver, "_ip_rule_lines", return_value=())
     @patch("drivers.singbox_driver.subprocess.Popen")
     def test_runtime_rules_mode_groups_reach_generated_singbox_config(
-        self, popen_mock, bind_mock, binary_mock, health_mock, write_mock
+        self, popen_mock, ip_rule_mock, bind_mock, binary_mock, health_mock, write_mock
     ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
@@ -807,11 +808,16 @@ class WatchdogCoreTests(unittest.TestCase):
                 rules=[Rule(id="ads", action="block", conditions={"domain_suffix": [".ads.example"]})],
             )
         )
+        app_policy_store = AppPolicyStore(Path(self.tmpdir.name) / "app-policy.json")
+        dns_policy_store = DNSPolicyStore(Path(self.tmpdir.name) / "dns-policy.json")
+        dns_policy_store.save(DNSPolicy(mode=DNSMode.OFF))
         driver = SingBoxDriver()
         runtime = WatchdogRuntime(
             driver=driver,
             state_manager=self.state_manager,
             rule_store=rule_store,
+            app_policy_store=app_policy_store,
+            dns_policy_store=dns_policy_store,
         )
 
         self.assertTrue(runtime.connect(profile))

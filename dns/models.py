@@ -15,6 +15,7 @@ MAX_RESOLVERS_PER_CHANNEL = 4
 DEFAULT_FAKEIP_INET4_RANGE = "198.18.0.0/15"
 DEFAULT_FAKEIP_INET6_RANGE = "fc00::/18"
 ALLOWED_PROXY_RESOLUTION_CHANNELS = {"fakeip", "proxy", "direct", "final"}
+ALLOWED_DNS_CHANNEL_STRATEGIES = {"auto"}
 DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 DNS_RULE_PATTERN_TYPES = {
     "domain",
@@ -117,6 +118,10 @@ class DNSChannel:
         if len(self.resolvers) > MAX_RESOLVERS_PER_CHANNEL:
             raise ValueError("dns channel supports at most 4 resolvers")
         self.strategy = str(self.strategy)
+        if self.strategy not in ALLOWED_DNS_CHANNEL_STRATEGIES:
+            raise ValueError(
+                "unsupported dns channel strategy; resolver racing is not supported"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
