@@ -145,6 +145,111 @@ class BackupManagerTests(unittest.TestCase):
                 original_profiles,
             )
 
+    def test_create_partial_backup_contains_only_requested_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            backup = BackupManager(config_dir=root).create_backup(
+                root / "partial.zip",
+                sections=["profiles", "selection-state"],
+            )
+
+            with ZipFile(backup.path) as archive:
+                self.assertEqual(
+                    set(archive.namelist()),
+                    {"manifest.json", "profiles.json", "selection-state.json"},
+                )
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["sections"], ["profiles", "selection-state"])
+
+    def test_restore_partial_backup_applies_only_requested_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+            backup = manager.create_backup(
+                root / "partial.zip",
+                sections=["profiles", "selection-state"],
+            ).path
+            ProfileStore(root / "profiles.json").remove("profile-one")
+            StateManager(root / "state.toml").save({"active_profile_id": ""})
+            ProviderStore(root / "providers.json").remove("provider-one")
+
+            manager.restore_backup(backup, sections=["profiles"])
+
+            self.assertEqual(
+                [profile.id for profile in ProfileStore(root / "profiles.json").list()],
+                ["profile-one"],
+            )
+            self.assertEqual(StateManager(root / "state.toml").load()["active_profile_id"], "")
+            self.assertEqual(ProviderStore(root / "providers.json").list(), [])
+
+    def test_diagnostics_section_is_explicit_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+
+            default_backup = manager.create_backup(root / "default.zip").path
+            with ZipFile(default_backup) as archive:
+                self.assertNotIn("diagnostics.json", archive.namelist())
+
+            diagnostics_backup = manager.create_backup(
+                root / "diagnostics.zip",
+                sections=["diagnostics"],
+                diagnostics={"report": "redacted"},
+            ).path
+            with ZipFile(diagnostics_backup) as archive:
+                payload = json.loads(archive.read("diagnostics.json"))
+            self.assertTrue(payload["included_by_explicit_request"])
+            self.assertEqual(payload["payload"], {"report": "redacted"})
+
+    def test_diagnostics_only_export_does_not_touch_unrequested_stores(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manager = BackupManager(config_dir=root)
+
+            manager.create_backup(
+                root / "diagnostics.zip",
+                sections=["diagnostics"],
+                diagnostics={"report": "redacted"},
+            )
+
+            self.assertEqual(
+                sorted(path.name for path in root.glob("*.lock")),
+                [],
+            )
+            self.assertFalse((root / "config.toml").exists())
+            self.assertFalse((root / "profiles.json").exists())
+            self.assertFalse((root / "providers.json").exists())
+            self.assertFalse((root / "metrics.json").exists())
+
+    def test_partial_restore_rejects_missing_requested_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            backup = BackupManager(config_dir=root).create_backup(
+                root / "partial.zip",
+                sections=["profiles"],
+            ).path
+
+            with self.assertRaisesRegex(BackupValidationError, "does not contain"):
+                BackupManager(config_dir=root).restore_backup(
+                    backup,
+                    sections=["providers"],
+                )
+
+    def test_create_backup_rejects_unknown_or_duplicate_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+
+            with self.assertRaisesRegex(BackupValidationError, "unsupported"):
+                manager.create_backup(root / "bad.zip", sections=["secrets"])
+            with self.assertRaisesRegex(BackupValidationError, "duplicate"):
+                manager.create_backup(root / "bad.zip", sections=["profiles", "profiles"])
+
     def seed_config(self, root: Path) -> None:
         AppConfig(root / "config.toml").save(AppConfig(root / "config.toml").load())
         ProfileStore(root / "profiles.json").add(

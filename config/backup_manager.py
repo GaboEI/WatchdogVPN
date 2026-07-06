@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterable
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from app_policy.models import AppPolicy
@@ -37,24 +37,29 @@ BACKUP_SCHEMA_VERSION = 1
 BACKUP_SECTION_SCHEMA_VERSION = 1
 BACKUP_PRODUCT = "WatchdogVPN"
 
-BACKUP_ENTRIES = (
-    "manifest.json",
-    "settings.json",
-    "profiles.json",
-    "providers.json",
-    "provider-state.json",
-    "routing-rules.json",
-    "app-policy.json",
-    "node-groups.json",
-    "selection-state.json",
-    "dns-policy.json",
-    "metrics-policy.json",
-    "backup-policy.json",
-    "metadata.json",
+SECTION_FILE_BY_NAME = {
+    "settings": "settings.json",
+    "profiles": "profiles.json",
+    "providers": "providers.json",
+    "provider-state": "provider-state.json",
+    "routing-rules": "routing-rules.json",
+    "app-policy": "app-policy.json",
+    "node-groups": "node-groups.json",
+    "selection-state": "selection-state.json",
+    "dns-policy": "dns-policy.json",
+    "metrics-policy": "metrics-policy.json",
+    "backup-policy": "backup-policy.json",
+    "metadata": "metadata.json",
+    "diagnostics": "diagnostics.json",
+}
+DEFAULT_SECTION_NAMES = tuple(
+    section for section in SECTION_FILE_BY_NAME if section != "diagnostics"
 )
-
-SECTION_ENTRIES = tuple(entry for entry in BACKUP_ENTRIES if entry != "manifest.json")
-SECTION_NAMES = tuple(entry.removesuffix(".json") for entry in SECTION_ENTRIES)
+SUPPORTED_SECTION_NAMES = tuple(SECTION_FILE_BY_NAME)
+BACKUP_ENTRIES = ("manifest.json",) + tuple(
+    SECTION_FILE_BY_NAME[section] for section in DEFAULT_SECTION_NAMES
+)
+SUPPORTED_BACKUP_ENTRIES = ("manifest.json",) + tuple(SECTION_FILE_BY_NAME.values())
 
 
 class BackupError(PersistentStoreError):
@@ -93,24 +98,51 @@ class BackupManager:
         output_path: Path | None = None,
         *,
         reason: str = "manual",
+        sections: Iterable[str] | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> BackupResult:
         created_at = _utc_now()
         output_path = output_path or self._default_backup_path(created_at, reason)
-        sections = self._collect_sections()
-        manifest = self._manifest(created_at, reason, sections)
+        selected_sections = _normalize_sections(sections)
+        section_payloads = self._collect_sections(
+            selected_sections,
+            diagnostics=diagnostics,
+            created_at=created_at,
+        )
+        manifest = self._manifest(created_at, reason, section_payloads)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as archive:
             archive.writestr("manifest.json", _json_text(manifest))
-            for entry in SECTION_ENTRIES:
-                archive.writestr(entry, _json_text(sections[entry]))
+            for entry in _entries_for_sections(selected_sections):
+                archive.writestr(entry, _json_text(section_payloads[entry]))
         return BackupResult(path=output_path, manifest=manifest)
 
-    def restore_backup(self, backup_path: Path) -> RestoreResult:
+    def restore_backup(
+        self,
+        backup_path: Path,
+        *,
+        sections: Iterable[str] | None = None,
+    ) -> RestoreResult:
         parsed = self.inspect_backup(backup_path)
+        selected_sections = _normalize_sections(
+            sections,
+            default=tuple(parsed.manifest["sections"]),
+        )
+        missing = set(selected_sections) - set(parsed.manifest["sections"])
+        if missing:
+            names = ", ".join(sorted(missing))
+            raise BackupValidationError(f"backup does not contain requested sections: {names}")
         pre_restore = self.create_backup(reason="pre-restore")
         snapshot = self._snapshot_targets()
         try:
-            self._apply_sections(parsed.sections)
+            self._apply_sections(
+                {
+                    SECTION_FILE_BY_NAME[section]: parsed.sections[
+                        SECTION_FILE_BY_NAME[section]
+                    ]
+                    for section in selected_sections
+                }
+            )
         except Exception:
             self._restore_snapshot(snapshot)
             raise
@@ -129,13 +161,13 @@ class BackupManager:
                 manifest = _require_object(raw_manifest, "manifest.json")
                 self._validate_manifest(manifest, names)
                 try:
-                    sections = {
+                    section_payloads = {
                         entry: self._validate_section(
                             entry,
                             _load_archive_json(archive, entry),
                         )
-                        for entry in SECTION_ENTRIES
-                        if entry in names
+                        for entry in names
+                        if entry != "manifest.json"
                     }
                 except BackupValidationError:
                     raise
@@ -143,7 +175,7 @@ class BackupManager:
                     raise BackupValidationError(f"invalid backup section: {exc}") from exc
         except BadZipFile as exc:
             raise BackupValidationError(f"invalid backup zip: {backup_path}") from exc
-        return _ParsedBackup(manifest=manifest, sections=sections)
+        return _ParsedBackup(manifest=manifest, sections=section_payloads)
 
     def _default_backup_path(self, created_at: str, reason: str) -> Path:
         stamp = created_at.replace("-", "").replace(":", "").split(".")[0]
@@ -163,9 +195,15 @@ class BackupManager:
             "reason": reason,
             "format": "watchdogvpn-backup-zip",
             "section_schema_version": BACKUP_SECTION_SCHEMA_VERSION,
-            "sections": list(SECTION_NAMES),
+            "sections": [
+                section
+                for section, entry in SECTION_FILE_BY_NAME.items()
+                if entry in sections
+            ],
             "section_files": {
-                entry.removesuffix(".json"): entry for entry in SECTION_ENTRIES
+                section: entry
+                for section, entry in SECTION_FILE_BY_NAME.items()
+                if entry in sections
             },
             "sensitive": True,
             "notes": [
@@ -174,33 +212,35 @@ class BackupManager:
             ],
         }
 
-    def _collect_sections(self) -> dict[str, dict[str, Any]]:
-        app_config = AppConfig(self.config_dir / "config.toml").load()
-        profiles = [
-            profile.to_dict()
-            for profile in ProfileStore(self.config_dir / "profiles.json").list()
-        ]
-        providers = [
-            provider.to_dict()
-            for provider in ProviderStore(self.config_dir / "providers.json").list()
-        ]
-        rule_groups = [
-            group.to_dict()
-            for group in RuleStore(self.config_dir / "rules").list_groups()
-        ]
-        app_policy = AppPolicyStore(self.config_dir / "app-policy.json").load()
-        node_groups = [
-            group.to_dict()
-            for group in NodeGroupStore(self.config_dir / "node_groups.json").list()
-        ]
-        selection_state = StateManager(self.config_dir / "state.toml").load()
-        dns_policy = DNSPolicyStore(self.config_dir / "dns-policy.json").load()
-        metrics = MetricsStore(self.config_dir / "metrics.json").load()
-        return {
-            "settings.json": _section({"config": app_config}),
-            "profiles.json": _section({"items": profiles}),
-            "providers.json": _section({"items": providers}),
-            "provider-state.json": _section(
+    def _collect_sections(
+        self,
+        selected_sections: tuple[str, ...],
+        *,
+        diagnostics: dict[str, Any] | None,
+        created_at: str,
+    ) -> dict[str, dict[str, Any]]:
+        requested = set(selected_sections)
+        selected_payloads: dict[str, dict[str, Any]] = {}
+        providers: list[dict[str, Any]] | None = None
+
+        if "settings" in requested:
+            app_config = AppConfig(self.config_dir / "config.toml").load()
+            selected_payloads["settings.json"] = _section({"config": app_config})
+        if "profiles" in requested:
+            profiles = [
+                profile.to_dict()
+                for profile in ProfileStore(self.config_dir / "profiles.json").list()
+            ]
+            selected_payloads["profiles.json"] = _section({"items": profiles})
+        if {"providers", "provider-state"} & requested:
+            providers = [
+                provider.to_dict()
+                for provider in ProviderStore(self.config_dir / "providers.json").list()
+            ]
+        if "providers" in requested:
+            selected_payloads["providers.json"] = _section({"items": providers or []})
+        if "provider-state" in requested:
+            selected_payloads["provider-state.json"] = _section(
                 {
                     "items": [
                         {
@@ -208,16 +248,34 @@ class BackupManager:
                             "last_updated": provider.get("last_updated"),
                             "metadata": provider.get("metadata", {}),
                         }
-                        for provider in providers
+                        for provider in providers or []
                     ]
                 }
-            ),
-            "routing-rules.json": _section({"groups": rule_groups}),
-            "app-policy.json": _section({"policy": app_policy.to_dict()}),
-            "node-groups.json": _section({"items": node_groups}),
-            "selection-state.json": _section({"state": selection_state}),
-            "dns-policy.json": _section({"policy": dns_policy.to_dict()}),
-            "metrics-policy.json": _section(
+            )
+        if "routing-rules" in requested:
+            rule_groups = [
+                group.to_dict()
+                for group in RuleStore(self.config_dir / "rules").list_groups()
+            ]
+            selected_payloads["routing-rules.json"] = _section({"groups": rule_groups})
+        if "app-policy" in requested:
+            app_policy = AppPolicyStore(self.config_dir / "app-policy.json").load()
+            selected_payloads["app-policy.json"] = _section({"policy": app_policy.to_dict()})
+        if "node-groups" in requested:
+            node_groups = [
+                group.to_dict()
+                for group in NodeGroupStore(self.config_dir / "node_groups.json").list()
+            ]
+            selected_payloads["node-groups.json"] = _section({"items": node_groups})
+        if "selection-state" in requested:
+            selection_state = StateManager(self.config_dir / "state.toml").load()
+            selected_payloads["selection-state.json"] = _section({"state": selection_state})
+        if "dns-policy" in requested:
+            dns_policy = DNSPolicyStore(self.config_dir / "dns-policy.json").load()
+            selected_payloads["dns-policy.json"] = _section({"policy": dns_policy.to_dict()})
+        if "metrics-policy" in requested:
+            metrics = MetricsStore(self.config_dir / "metrics.json").load()
+            selected_payloads["metrics-policy.json"] = _section(
                 {
                     "enabled": metrics.enabled,
                     "retention_days": metrics.retention_days,
@@ -226,8 +284,9 @@ class BackupManager:
                     "updated_at": metrics.updated_at,
                     "history_included": False,
                 }
-            ),
-            "backup-policy.json": _section(
+            )
+        if "backup-policy" in requested:
+            selected_payloads["backup-policy.json"] = _section(
                 {
                     "auto_backup": {
                         "before_restore": True,
@@ -240,14 +299,26 @@ class BackupManager:
                     },
                     "remote_upload": False,
                 }
-            ),
-            "metadata.json": _section(
+            )
+        if "metadata" in requested:
+            selected_payloads["metadata.json"] = _section(
                 {
                     "product": BACKUP_PRODUCT,
                     "hostname_included": False,
                     "platform": os.name,
                 }
-            ),
+            )
+        if "diagnostics" in requested:
+            selected_payloads["diagnostics.json"] = _section(
+                {
+                    "generated_at": created_at,
+                    "payload": diagnostics or {},
+                    "included_by_explicit_request": True,
+                }
+            )
+        return {
+            SECTION_FILE_BY_NAME[section]: selected_payloads[SECTION_FILE_BY_NAME[section]]
+            for section in selected_sections
         }
 
     def _validate_entry_names(self, names: list[str]) -> None:
@@ -257,7 +328,7 @@ class BackupManager:
             path = PurePosixPath(name)
             if path.is_absolute() or ".." in path.parts or len(path.parts) != 1:
                 raise BackupValidationError(f"backup contains unsafe path: {name}")
-            if name not in BACKUP_ENTRIES:
+            if name not in SUPPORTED_BACKUP_ENTRIES:
                 raise BackupValidationError(f"backup contains unsupported entry: {name}")
         if "manifest.json" not in names:
             raise BackupValidationError("backup missing manifest.json")
@@ -269,13 +340,16 @@ class BackupManager:
             raise BackupValidationError("backup product is not WatchdogVPN")
         section_files = _require_object(manifest.get("section_files"), "manifest.section_files")
         sections = _require_list(manifest.get("sections"), "manifest.sections")
-        expected_names = set(SECTION_NAMES)
-        if set(sections) != expected_names:
-            raise BackupValidationError("manifest sections do not match supported sections")
-        expected_files = {section: f"{section}.json" for section in expected_names}
+        normalized_sections = _normalize_sections(sections, default=())
+        if len(normalized_sections) != len(sections):
+            raise BackupValidationError("manifest contains duplicate sections")
+        expected_files = {
+            section: SECTION_FILE_BY_NAME[section] for section in normalized_sections
+        }
         if section_files != expected_files:
             raise BackupValidationError("manifest section_files do not match supported files")
-        if set(names) != set(BACKUP_ENTRIES):
+        expected_entries = {"manifest.json", *expected_files.values()}
+        if set(names) != expected_entries:
             raise BackupValidationError("backup entries do not match manifest contract")
 
     def _validate_section(self, entry: str, payload: object) -> dict[str, Any]:
@@ -336,6 +410,11 @@ class BackupManager:
             if data.get("product") != BACKUP_PRODUCT:
                 raise BackupValidationError("metadata product is not WatchdogVPN")
             return data
+        if entry == "diagnostics.json":
+            _require_object(data.get("payload"), "diagnostics.payload")
+            if data.get("included_by_explicit_request") is not True:
+                raise BackupValidationError("diagnostics must be explicitly requested")
+            return data
         raise BackupValidationError(f"unsupported backup section: {entry}")
 
     def _snapshot_targets(self) -> dict[Path, bytes | None]:
@@ -369,7 +448,9 @@ class BackupManager:
                 path.write_bytes(content)
 
     def _apply_sections(self, sections: dict[str, dict[str, Any]]) -> None:
-        for entry in SECTION_ENTRIES:
+        for entry in _entries_for_sections(DEFAULT_SECTION_NAMES):
+            if entry not in sections:
+                continue
             data = sections[entry]
             if entry == "settings.json":
                 AppConfig(self.config_dir / "config.toml").save(data["config"])
@@ -396,6 +477,8 @@ class BackupManager:
                     _metrics_policy_document(data)
                 )
             elif entry in {"provider-state.json", "backup-policy.json", "metadata.json"}:
+                continue
+            elif entry == "diagnostics.json":
                 continue
 
     def _write_json_file(self, path: Path, value: object) -> None:
@@ -459,6 +542,29 @@ def _metrics_policy_document(data: dict[str, Any]) -> MetricsDocument:
             "updated_at": data.get("updated_at"),
         }
     )
+
+
+def _normalize_sections(
+    sections: Iterable[str] | None,
+    *,
+    default: tuple[str, ...] = DEFAULT_SECTION_NAMES,
+) -> tuple[str, ...]:
+    raw_sections = default if sections is None else tuple(sections)
+    normalized: list[str] = []
+    for section in raw_sections:
+        name = str(section).strip()
+        if name not in SUPPORTED_SECTION_NAMES:
+            raise BackupValidationError(f"unsupported backup section: {name}")
+        if name in normalized:
+            raise BackupValidationError(f"duplicate backup section: {name}")
+        normalized.append(name)
+    if not normalized:
+        raise BackupValidationError("at least one backup section is required")
+    return tuple(normalized)
+
+
+def _entries_for_sections(sections: Iterable[str]) -> tuple[str, ...]:
+    return tuple(SECTION_FILE_BY_NAME[section] for section in sections)
 
 
 def _utc_now() -> str:

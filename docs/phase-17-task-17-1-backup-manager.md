@@ -47,8 +47,8 @@ Every section includes `schema_version`.
 
 ## Section Behavior
 
-Task 17.1 writes all supported sections. Partial export/import is Task 17.2
-work.
+Task 17.1 wrote all supported default sections. Section-scoped export/import was
+added later in Task 17.2.
 
 Definitions are separated from selection/use state:
 
@@ -97,7 +97,6 @@ available.
 The following are intentionally left for later Phase 17 tasks:
 
 - user-facing CLI commands;
-- partial export/import;
 - merge vs replace behavior;
 - stronger replace confirmations;
 - bounded auto-backup retention;
