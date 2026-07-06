@@ -162,9 +162,14 @@ The uninstall contract is:
 
 `watchdogvpn report` generates a local text report for support and debugging. It
 does not upload anything automatically. The report applies basic sanitization for
-common sensitive values such as IPv4 addresses, email addresses, device-code URLs
-and the user's home directory path, but users should still review the file before
-sharing it.
+common sensitive values such as IPv4/IPv6 addresses, email addresses,
+device-code URLs and the user's home directory path, but users should still
+review the file before sharing it.
+
+Phase 16 observability must default to local aggregate counters only. Full
+destination or request history, if ever implemented, must be explicit opt-in,
+clearly labeled sensitive, retention-bounded, purgeable and excluded from normal
+diagnostic exports by default.
 
 ## Reporting Security Issues
 

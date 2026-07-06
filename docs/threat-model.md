@@ -36,6 +36,7 @@ hardening.
 | Provider/profile configuration is invalid | Recovery loops cannot fix setup | stores and runtime commands fail closed with explicit errors |
 | Bad VPN endpoint | Rotation may land on unusable node | the v2 rotation/runtime path validates state before accepting a connection |
 | DNS profile breaks resolution | User may lose name resolution | DNS v2 `apply`/`reset` snapshot the prior resolver state and restore it on request; `vpn_dns_rescue` remains available as a manual fallback |
+| Observability becomes browsing history | Local metrics or support exports may reveal destinations, process activity or provider choices | Phase 16 defaults to aggregate local counters; raw destination/process history is not silently enabled and must be opt-in, retention-bounded, purgeable and excluded from normal diagnostics exports |
 | Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | Current v2.0 mainline keeps generated SOCKS/HTTP and DNS hijack inbounds bound to `127.0.0.1`; intentional LAN proxy/gateway sharing is reserved for dedicated Phase 20 work |
 | Uninstall breaks DNS | Host may remain offline after removal | `vpn_dns_rescue` restores fallback DNS behavior |
 | Repeated timer executions overlap | Race conditions and route churn | rotation uses `flock`; timers are one-shot services |
@@ -66,6 +67,7 @@ hardening.
 - `uninstall.sh` must not remove the underlying provider installation.
 - `uninstall.sh` must not remove account/license state.
 - New users must not inherit machine-specific domain exclusions.
+- Observability must not silently store raw browsing or request history.
 
 ### Future Hardening
 

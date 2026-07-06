@@ -156,6 +156,8 @@ Rules:
 - The report is written to a local text file.
 - The user must review the file before sharing it.
 - Sensitive sample data is sanitized where possible.
+- Observability metrics are excluded from normal reports unless a later
+  redacted summary contract explicitly includes them.
 
 The report may include runtime status, doctor-adjacent checks, VPN truth state,
 daemon state, DNS test output and recent troubleshooting context. See
@@ -185,6 +187,7 @@ Rules:
 - Defaults to `events` and 80 lines.
 - Accepts 1 to 500 lines.
 - Sanitizes obvious home paths, email addresses and IPv4 addresses.
+- Sanitizes common IPv6 literals.
 - Does not call `sudo`.
 - Does not modify logs, services, configuration or VPN state.
 

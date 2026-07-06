@@ -158,7 +158,7 @@ unicode = true
 EOF
 
 printf '%s\n' \
-  '2026-05-16T00:00:00Z | vpn_notify | info | sample | user@example.com 198.51.100.11 /home/tester' \
+  '2026-05-16T00:00:00Z | vpn_notify | info | sample | user@example.com 198.51.100.11 2001:db8::11 /home/tester' \
   '2026-05-16T00:01:00Z | watchdogvpn | warn | sample | 203.0.113.22' \
   >"$LOG_DIR/vpn-events.log"
 
@@ -181,7 +181,8 @@ grep -Fq "== VPN truth ==" "$report"
 grep -Fq "== Backend status ==" "$report"
 grep -Fq "<redacted-email>" "$report"
 grep -Fq "<redacted-ip>" "$report"
-if grep -Eq '198\.51\.100|203\.0\.113|user@example\.com' "$report"; then
+grep -Fq "<redacted-ipv6>" "$report"
+if grep -Eq '198\.51\.100|203\.0\.113|2001:db8|user@example\.com' "$report"; then
   printf 'FAIL: report contains unsanitized sensitive sample data\n' >&2
   exit 1
 fi
@@ -214,7 +215,8 @@ logs_output="$(WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 2)"
 printf '%s\n' "$logs_output" | grep -Fq 'WatchdogVPN logs: events'
 printf '%s\n' "$logs_output" | grep -Fq '<redacted-email>'
 printf '%s\n' "$logs_output" | grep -Fq '<redacted-ip>'
-if printf '%s\n' "$logs_output" | grep -Eq '198\.51\.100|203\.0\.113|user@example\.com'; then
+printf '%s\n' "$logs_output" | grep -Fq '<redacted-ipv6>'
+if printf '%s\n' "$logs_output" | grep -Eq '198\.51\.100|203\.0\.113|2001:db8|user@example\.com'; then
   printf 'FAIL: logs output contains unsanitized sensitive sample data\n' >&2
   exit 1
 fi
