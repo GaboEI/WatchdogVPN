@@ -25,6 +25,7 @@ from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 from rotation import pool_builder
+from rotation.health_checker import HealthCheckResult
 from rules.models import Rule, RuleGroup
 from rules.rule_store import RuleStore
 
@@ -1031,6 +1032,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.tmpdir.cleanup()
 
     def _make_runtime(self, driver: BaseDriver, rule_store: RuleStore | None = None) -> WatchdogRuntime:
+        from config.app_config import AppConfig
         from rotation.recovery import Recovery
         from rotation.rotation_engine import RotationEngine
 
@@ -1040,6 +1042,10 @@ class WatchdogIntegrationTests(unittest.TestCase):
             driver=driver,
             state_manager=self.state_manager,
             profile_store=self.profile_store,
+            # AppConfig defaults to the real user config dir - pin it to the
+            # tmpdir so any self.app_config.load() call (_checked_and_recorded,
+            # Task 14.7) never touches real filesystem state in tests.
+            app_config=AppConfig(Path(self.tmpdir.name) / "config.toml"),
             rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
             recovery=Recovery(clock=clock),
             kill_switch=FakeKillSwitch(),
@@ -1078,7 +1084,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(result.status, "standby")
         driver.health_check_mock.assert_not_called()
 
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_run_iteration_reconnects_current_profile_on_failure(self, _hc) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1097,7 +1103,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         connected_profile = driver.connect_mock.call_args.args[0]
         self.assertEqual(connected_profile.id, self.profile.id)
 
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_successful_reconnect_persists_health_status_to_the_real_store(self, _hc) -> None:
         # AUD-P14-001 / Task 14.5: the persisted copy must reflect the real
         # health_checker.check() result the reconnect path just produced,
@@ -1115,7 +1121,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(persisted.health_status, "ok")
         self.assertIsNotNone(persisted.last_health_check)
 
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_reconnect_forwards_persisted_rule_groups_when_rules_mode(self, _hc) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1136,7 +1142,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(driver.last_mode, "rules")
         self.assertEqual(driver.last_groups, [group])
 
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_returns_reconnecting_below_attempt_threshold(self, _hc) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1208,10 +1214,11 @@ class WatchdogIntegrationTests(unittest.TestCase):
             kill_switch=FakeKillSwitch(),
         )
 
-        def health_check_by_profile(profile, drv):
-            return "ok" if profile.id == alt_profile.id else "down"
+        def health_check_by_profile(profile, drv, **kwargs):
+            status = "ok" if profile.id == alt_profile.id else "down"
+            return HealthCheckResult(status=status)
 
-        with patch("core.watchdog.health_checker.check", side_effect=health_check_by_profile):
+        with patch("core.watchdog.health_checker.check_with_latency", side_effect=health_check_by_profile):
             result = runtime.run_iteration()
 
         self.assertEqual(result.status, "recovered")
@@ -1270,10 +1277,11 @@ class WatchdogIntegrationTests(unittest.TestCase):
             driver_selector=selector,
         )
 
-        def health_check_by_profile(profile: Profile, driver: BaseDriver) -> str:
-            return "ok" if profile.id == alt_profile.id else "down"
+        def health_check_by_profile(profile: Profile, driver: BaseDriver, **kwargs) -> HealthCheckResult:
+            status = "ok" if profile.id == alt_profile.id else "down"
+            return HealthCheckResult(status=status)
 
-        with patch("core.watchdog.health_checker.check", side_effect=health_check_by_profile):
+        with patch("core.watchdog.health_checker.check_with_latency", side_effect=health_check_by_profile):
             result = runtime.run_iteration()
 
         self.assertEqual(result.status, "recovered")
@@ -1284,7 +1292,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertLess(events.index("singbox:disconnect"), events.index("awg:connect:awg-alt"))
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_reports_rotation_unavailable_when_pool_empty(self, _hc, _pool) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1317,7 +1325,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(result.status, "rotation_unavailable")
 
     @patch("core.watchdog.pool_builder.build_pool")
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_does_not_rotate_when_rotation_disabled(self, _hc, pool_mock) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1352,7 +1360,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_reports_all_failed_when_candidates_fail(self, _hc, mock_pool, mock_sel_driver) -> None:
         alt_profile = Profile(
             id="alt-down", name="Alt down", protocol=ProtocolType.VLESS,
@@ -1425,7 +1433,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(runtime.recovery.backoff_interval(2), 8.0)
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_enables_kill_switch_when_configured_and_all_fail(self, _hc, _pool) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1464,7 +1472,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(kill_switch.allowed_endpoints, ("203.0.113.10",))
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_does_not_allow_hostname_endpoint_without_literal_ip(self, _hc, _pool) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1502,7 +1510,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(kill_switch.allowed_endpoints, ())
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_keeps_existing_kill_switch_active_when_all_fail(self, _hc, _pool) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1537,7 +1545,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         kill_switch.enable_mock.assert_not_called()
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_falls_back_when_configured_kill_switch_fails_to_enable(self, _hc, _pool) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
@@ -1634,7 +1642,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_scheduled_rotate_rotates_through_the_same_pool_and_engine(
         self, _hc, mock_pool, mock_sel_driver
     ) -> None:
@@ -1666,7 +1674,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         mock_pool.assert_called_with(self.profile_store, runtime.provider_store, runtime.app_config.load.return_value)
 
     @patch("core.watchdog.pool_builder.build_pool")
-    @patch("core.watchdog.health_checker.check", return_value="down")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_scheduled_rotate_applies_kill_switch_when_real_candidates_all_fail(
         self, _hc, mock_pool
     ) -> None:
@@ -1700,7 +1708,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_rotate_now_returns_recovered_on_success(self, _hc, mock_pool, mock_sel_driver) -> None:
         alt_profile = Profile(
             id="alt2", name="Alt2", protocol=ProtocolType.VLESS,
@@ -1764,8 +1772,8 @@ class WatchdogIntegrationTests(unittest.TestCase):
         }
 
         with patch(
-            "core.watchdog.health_checker.check",
-            side_effect=lambda profile, driver: driver.health_check(),
+            "core.watchdog.health_checker.check_with_latency",
+            side_effect=lambda profile, driver, **kwargs: HealthCheckResult(status=driver.health_check()),
         ):
             result = runtime.rotate_now(force=True)
 
@@ -1775,7 +1783,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_rotate_now_forwards_the_stored_active_mode_to_the_driver(self, _hc, mock_pool, mock_sel_driver) -> None:
         alt_profile = Profile(
             id="alt-tun",
@@ -1808,7 +1816,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_rotate_now_forwards_persisted_rule_groups_when_rules_mode(
         self, _hc, mock_pool, mock_sel_driver
     ) -> None:
@@ -1850,7 +1858,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_successful_rotation_restores_existing_kill_switch(self, _hc, mock_pool, mock_sel_driver) -> None:
         alt_profile = Profile(
             id="alt3", name="Alt3", protocol=ProtocolType.VLESS,
@@ -1906,12 +1914,15 @@ class WatchdogIntegrationTests(unittest.TestCase):
         )
         self.profile_store.add(profile)
         driver = FakeDriver()
-        runtime = self._make_runtime(driver)
+        runtime = self._make_runtime(driver)  # already uses a tmpdir-scoped AppConfig
         provider_store = ProviderStore(Path(self.tmpdir.name) / "providers.json")
         config = {"rotation": {"health_status_cooldown_seconds": 300}}
 
         # 1. A real health check finds it down; the result is persisted.
-        with patch("core.watchdog.health_checker.check", return_value="down"):
+        with patch(
+            "core.watchdog.health_checker.check_with_latency",
+            return_value=HealthCheckResult(status="down"),
+        ):
             status = runtime._checked_and_recorded(profile, driver)
         self.assertEqual(status, "down")
         persisted = self.profile_store.get("flaky")

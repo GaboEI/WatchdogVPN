@@ -27,7 +27,7 @@ from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 from node_groups.models import NodeGroup, NodeGroupSelectionMode, group_target
 from node_groups.resolver import resolve_candidates as resolve_node_group_candidates
-from node_groups.scoring import score_candidates
+from node_groups.scoring import rank_candidates
 from node_groups.store import NodeGroupStore
 from rotation import health_checker, pool_builder
 from rotation.recovery import Recovery
@@ -43,6 +43,12 @@ MANAGED_DRIVER_TYPES = (
     OpenVPNDriver,
     SingBoxDriver,
 )
+
+# Sentinel distinct from None: "this call site never attempted a latency
+# measurement" vs. "it attempted one and the node was unreachable". See
+# WatchdogRuntime._record_health_result for why conflating the two would
+# silently erase a real measurement.
+_LATENCY_NOT_MEASURED = object()
 
 
 def select_driver(profile: Profile | None = None) -> BaseDriver:
@@ -114,8 +120,14 @@ class WatchdogRuntime:
             return self.driver.status()
         return self._recover_from_failure()
 
-    def _record_health_result(self, profile: Profile, status: str) -> None:
-        """Persist the result of a real health check (Task 14.5, AUD-P14-001).
+    def _record_health_result(
+        self,
+        profile: Profile,
+        status: str,
+        latency_ms: float | None = _LATENCY_NOT_MEASURED,  # type: ignore[assignment]
+    ) -> None:
+        """Persist the result of a real health check (Task 14.5, AUD-P14-001;
+        latency extended in Task 14.7).
 
         health_status and last_health_check are written together, in the
         same profile_store.update() call, so they can never disagree on
@@ -127,20 +139,49 @@ class WatchdogRuntime:
         timestamp, and the cooldown could never reason about a profile
         that failed once and later recovered.
 
-        Design note: this field collapses two different check depths into
-        one status - run_iteration()'s happy path calls the lighter
-        driver.health_check(), while the rotation path (via
-        _checked_and_recorded) calls the deeper health_checker.check()
-        (real connect + external reachability verification).
-        health_status="ok" does not record which depth produced it. This
-        is fine for the cooldown (it only distinguishes down vs not-down),
-        but a future scoring/explainer factor that wants to weigh check
-        depth would need to extend this, not assume every "ok" is
-        equivalent - a known extension point, not a bug.
+        `latency_ms` defaults to the `_LATENCY_NOT_MEASURED` sentinel, not
+        `None`: run_iteration()'s happy path (bare driver.health_check())
+        never attempts a latency measurement at all and must leave
+        `latency_ms`/`last_latency_check` untouched, whereas
+        `_checked_and_recorded`'s deep check always passes a real value -
+        possibly a legitimate `None` when the node was unreachable. Using
+        `None` as the "didn't measure" default would silently erase a
+        freshly-measured latency on the very next unrelated happy-path
+        tick - the same class of bug AUD-P14-001 was about, in the other
+        direction (overwriting a real value instead of never writing one).
+        `last_latency_check` is a separate timestamp from `last_health_check`
+        on purpose: the two check depths update `last_health_check` at
+        different rates, but only the deep check ever refreshes latency -
+        collapsing them under one timestamp would make a stale latency
+        reading look fresh whenever a shallow check merely ran.
+
+        Design note: `health_status` itself still collapses two different
+        check depths into one status value - run_iteration()'s happy path
+        calls the lighter driver.health_check(), while the rotation path
+        calls the deeper health_checker.check() (real connect + external
+        reachability verification). health_status="ok" does not record
+        which depth produced it. This is fine for the cooldown (it only
+        distinguishes down vs not-down), but a future factor that wants to
+        weigh check depth would need to extend this - a known extension
+        point, not a bug.
         """
+        now = datetime.now(timezone.utc)
         profile.health_status = status
-        profile.last_health_check = datetime.now(timezone.utc)
+        profile.last_health_check = now
+        if latency_ms is not _LATENCY_NOT_MEASURED:
+            profile.latency_ms = latency_ms
+            profile.last_latency_check = now
         self.profile_store.update(profile)
+
+    def _configured_verify(self, config: dict) -> health_checker.VerifyFn:
+        rotation_config = config.get("rotation", {})
+        test_url = str(rotation_config.get("test_url", health_checker.EXTERNAL_CHECK_URL))
+        timeout = float(
+            rotation_config.get("test_timeout_seconds", health_checker.DEFAULT_TIMEOUT_SECONDS)
+        )
+        return lambda via_proxy: health_checker.reachable_and_public_ip(
+            via_proxy, timeout=timeout, test_url=test_url
+        )
 
     def _checked_and_recorded(self, profile: Profile, driver: BaseDriver) -> str:
         """HealthCheckFn-compatible wrapper: real check, then persist.
@@ -150,10 +191,17 @@ class WatchdogRuntime:
         main candidate loop, _rollback(), and _single_node_check() - all
         three paths get persistence for free, with zero changes to
         rotation/rotation_engine.py, which stays store-agnostic by design.
+
+        Uses the configured rotation.test_url/test_timeout_seconds (Task
+        14.7) for every candidate, in every call site - one shared
+        reference point is what makes latency comparable across profiles,
+        not a per-profile setting.
         """
-        status = health_checker.check(profile, driver)
-        self._record_health_result(profile, status)
-        return status
+        config = self.app_config.load()
+        verify = self._configured_verify(config)
+        result = health_checker.check_with_latency(profile, driver, verify=verify)
+        self._record_health_result(profile, result.status, latency_ms=result.latency_ms)
+        return result.status
 
     def rotate_now(self, force: bool = False) -> ConnectionState:
         if not self.automatic_actions_enabled():
@@ -462,10 +510,9 @@ class WatchdogRuntime:
             # when the pinned one is unavailable - "decisions are
             # respected," an empty result here is correct, not a bug.
             return [profile for profile in candidates if profile.id == group.manual_profile_id]
-        scores = score_candidates(candidates, group.resilience_policy)
-        ranked_ids = [score.profile_id for score in sorted(scores, key=lambda s: (-s.total, s.profile_id))]
+        ranked = rank_candidates(candidates, group.resilience_policy, config)
         by_id = {profile.id: profile for profile in candidates}
-        return [by_id[profile_id] for profile_id in ranked_ids]
+        return [by_id[score.profile_id] for score in ranked]
 
     def _driver_for_profile(self, profile: Profile, disconnect_current: bool = True) -> BaseDriver:
         selected_driver = self.driver_selector(profile)

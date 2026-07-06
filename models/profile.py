@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from config.persistence import reject_unknown_keys, strict_bool
+from config.persistence import reject_unknown_keys, strict_bool, strict_float
 
 
 class ProtocolType(str, Enum):
@@ -78,6 +78,8 @@ PROFILE_FIELDS = {
     "last_used",
     "last_health_check",
     "health_status",
+    "latency_ms",
+    "last_latency_check",
 }
 
 
@@ -105,6 +107,8 @@ class Profile:
     last_used: datetime | None = None
     last_health_check: datetime | None = None
     health_status: str = "unknown"
+    latency_ms: float | None = None
+    last_latency_check: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -113,6 +117,7 @@ class Profile:
         data["created_at"] = _dt_to_iso(self.created_at)
         data["last_used"] = _dt_to_iso(self.last_used)
         data["last_health_check"] = _dt_to_iso(self.last_health_check)
+        data["last_latency_check"] = _dt_to_iso(self.last_latency_check)
         return data
 
     @classmethod
@@ -134,4 +139,10 @@ class Profile:
             last_used=_dt_from_iso(data.get("last_used")),
             last_health_check=_dt_from_iso(data.get("last_health_check")),
             health_status=str(data.get("health_status", "unknown")),
+            latency_ms=(
+                strict_float(data["latency_ms"], "profile.latency_ms")
+                if data.get("latency_ms") is not None
+                else None
+            ),
+            last_latency_check=_dt_from_iso(data.get("last_latency_check")),
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,7 @@ from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore
+from rotation.health_checker import HealthCheckResult
 from rotation.recovery import Recovery
 from rotation.rotation_engine import RotationEngine
 from rules.models import Rule, RuleGroup
@@ -287,6 +289,72 @@ class NodeGroupRuntimeIntegrationTests(unittest.TestCase):
         # PREFERRED ranks resilient (r1) above compatibility (c1).
         self.assertEqual([p.id for p in pool], ["r1", "c1"])
 
+    def test_latency_end_to_end_measure_persist_rank_then_expire(self) -> None:
+        """Task 14.7's full cycle, with real reads/writes throughout - not
+        a mocked field: measure a real latency via _checked_and_recorded,
+        confirm it is persisted, confirm it breaks a ranking tie in
+        _compatible_pool, then backdate it past the configured staleness
+        window (same technique tests.test_pool_builder already uses for
+        health cooldown expiry) and confirm the group-scoped pool falls
+        back to the id tie-break instead of trusting stale data.
+        """
+        # Both are compatibility (equal resilience_score under PREFERRED),
+        # so only latency can break the tie between them. "s1" is the FAST
+        # one and "c1" is SLOW, deliberately the opposite of their
+        # alphabetical order - if the pool order matched id order instead,
+        # that would prove latency was NOT actually deciding anything.
+        slow = self.compat  # id "c1"
+        fast = Profile(
+            id="s1", name="Fast", protocol=ProtocolType.SHADOWSOCKS,
+            config={}, source=ProfileSource.MANUAL, enabled=True,
+        )
+        self.profile_store.add(fast)
+        self.node_group_store.add(
+            NodeGroup(name="paris", member_profile_ids=["c1", "s1"])
+        )
+        self.rule_store.add_group(
+            RuleGroup(name="custom", rules=[Rule(id="rr", action="group:paris", conditions={"domain": ["a.com"]})])
+        )
+        runtime = self._make_runtime(FakeDriver())
+        runtime.app_config = MagicMock(spec=AppConfig)
+        runtime.app_config.load.return_value = {
+            "rotation": {"latency_max_stale_seconds": 300},
+        }
+
+        # 1. Real measurements persisted via the real _checked_and_recorded
+        #    path (mocking only the network call, not the persistence).
+        with patch(
+            "core.watchdog.health_checker.check_with_latency",
+            return_value=HealthCheckResult(status="ok", latency_ms=900.0),
+        ):
+            runtime._checked_and_recorded(slow, FakeDriver())
+        with patch(
+            "core.watchdog.health_checker.check_with_latency",
+            return_value=HealthCheckResult(status="ok", latency_ms=20.0),
+        ):
+            runtime._checked_and_recorded(fast, FakeDriver())
+
+        self.assertEqual(self.profile_store.get("c1").latency_ms, 900.0)
+        self.assertEqual(self.profile_store.get("s1").latency_ms, 20.0)
+
+        # 2. Latency breaks the tie in the real group-scoped pool: "s1"
+        #    (fast) ranks first despite "c1" < "s1" alphabetically -
+        #    proves latency is actually deciding, not the id fallback.
+        pool = runtime._compatible_pool({"rotation": {"latency_max_stale_seconds": 300}})
+        self.assertEqual([p.id for p in pool], ["s1", "c1"])
+
+        # 3. Backdate the faster node's measurement past staleness.
+        stale = self.profile_store.get("s1")
+        stale.last_latency_check = datetime.now(timezone.utc) - timedelta(seconds=999999)
+        self.profile_store.update(stale)
+
+        # 4. Both now effectively unmeasured for ranking purposes - the
+        #    order flips back to the id tie-break ("c1" < "s1"), proving
+        #    the stale measurement stopped being trusted instead of
+        #    silently keeping "s1" ranked first forever.
+        pool_after_expiry = runtime._compatible_pool({"rotation": {"latency_max_stale_seconds": 300}})
+        self.assertEqual([p.id for p in pool_after_expiry], ["c1", "s1"])
+
     def test_pool_is_empty_fail_closed_when_targeted_group_does_not_exist(self) -> None:
         self.rule_store.add_group(
             RuleGroup(name="custom", rules=[Rule(id="rr", action="group:missing", conditions={"domain": ["a.com"]})])
@@ -395,7 +463,7 @@ class NodeGroupRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(result.status, "kill_switch_active")
         self.assertTrue(kill_switch.active)
 
-    @patch("core.watchdog.health_checker.check", return_value="ok")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_targeted_group_actually_connects_to_the_best_candidate(self, _hc) -> None:
         self.node_group_store.add(
             NodeGroup(name="paris", member_profile_ids=["r1", "c1"], resilience_policy=NodeGroupResiliencePolicy.PREFERRED)

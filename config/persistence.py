@@ -139,6 +139,12 @@ def strict_int(value: Any, field: str) -> int:
     return value
 
 
+def strict_float(value: Any, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PersistentValidationError(f"{field} must be a number")
+    return float(value)
+
+
 def reject_unknown_keys(data: dict[str, Any], allowed: set[str], object_name: str) -> None:
     unknown = sorted(set(data) - allowed)
     if unknown:

@@ -95,6 +95,39 @@ class ConfigStorageTests(unittest.TestCase):
             loaded = AppConfig(path).load()
             self.assertEqual(loaded["watchdog"]["check_interval_seconds"], 5)
 
+    def test_app_config_default_rotation_test_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded = AppConfig(Path(tmp) / "config.toml").load()
+
+            self.assertEqual(loaded["rotation"]["test_url"], "https://example.com")
+            self.assertEqual(loaded["rotation"]["test_timeout_seconds"], 5)
+            self.assertEqual(loaded["rotation"]["latency_max_stale_seconds"], 300)
+
+    def test_app_config_rejects_test_url_without_scheme(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[rotation]\ntest_url = "example.com"\n', encoding="utf-8")
+
+            with self.assertRaises(PersistentValidationError):
+                AppConfig(path).load()
+
+    def test_app_config_accepts_custom_test_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[rotation]\ntest_url = "https://custom.example/probe"\n', encoding="utf-8")
+
+            loaded = AppConfig(path).load()
+
+            self.assertEqual(loaded["rotation"]["test_url"], "https://custom.example/probe")
+
+    def test_app_config_rejects_test_timeout_below_minimum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text("[rotation]\ntest_timeout_seconds = 0\n", encoding="utf-8")
+
+            with self.assertRaises(PersistentValidationError):
+                AppConfig(path).load()
+
     def test_config_paths_follow_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_dir = Path(tmp) / "cfg"

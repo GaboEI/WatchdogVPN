@@ -46,6 +46,9 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "health_status_cooldown_seconds": 300,
         "max_backoff_interval_seconds": 300,
         "scheduled_interval_hours": 0,
+        "test_url": "https://example.com",
+        "test_timeout_seconds": 5,
+        "latency_max_stale_seconds": 300,
     },
 }
 
@@ -62,11 +65,14 @@ CONFIG_INT_FIELDS = {
     ("rotation", "health_status_cooldown_seconds"),
     ("rotation", "max_backoff_interval_seconds"),
     ("rotation", "scheduled_interval_hours"),
+    ("rotation", "test_timeout_seconds"),
+    ("rotation", "latency_max_stale_seconds"),
 }
 CONFIG_STRING_FIELDS = {
     ("kill_switch", "tunnel_interface"),
     ("kill_switch", "on_manual_disconnect"),
     ("dns", "mode"),
+    ("rotation", "test_url"),
 }
 
 MIN_WATCHDOG_CHECK_INTERVAL_SECONDS = 5
@@ -179,4 +185,9 @@ def _validate_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
             f"watchdog.check_interval_seconds must be at least "
             f"{MIN_WATCHDOG_CHECK_INTERVAL_SECONDS}"
         )
+    test_url = validated["rotation"]["test_url"]
+    if not test_url.startswith(("http://", "https://")):
+        raise PersistentValidationError("rotation.test_url must start with http:// or https://")
+    if validated["rotation"]["test_timeout_seconds"] < 1:
+        raise PersistentValidationError("rotation.test_timeout_seconds must be at least 1")
     return validated

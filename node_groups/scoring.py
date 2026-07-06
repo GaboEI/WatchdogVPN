@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -29,27 +30,59 @@ def _resilience_score(profile: Profile, policy: NodeGroupResiliencePolicy) -> fl
     return 1.0 if profile_resilience_category(profile) is ResilienceCategory.RESILIENT else 0.0
 
 
+def _fresh_latency_ms(profile: Profile, config: dict[str, Any]) -> float | None:
+    """The profile's measured latency, or None if never measured or stale.
+
+    Task 14.7: latency is captured opportunistically by
+    WatchdogRuntime._checked_and_recorded whenever a real deep health check
+    already happens - it is not a separate background prober (the single-
+    outbound driver constraint documented in Task 14.6 rules that out for
+    candidates that are not the currently connected profile). A candidate
+    that has never been the active connection, or was checked too long ago,
+    correctly has no fresh latency data - this returns None rather than a
+    stale number pretending to be current. Mirrors
+    rotation.pool_builder._recently_failed's exact staleness-window
+    structure (including the future-timestamp guard against clock skew).
+    """
+    if profile.latency_ms is None or profile.last_latency_check is None:
+        return None
+    max_stale_seconds = config.get("rotation", {}).get("latency_max_stale_seconds", 300)
+    last_check = profile.last_latency_check
+    if last_check.tzinfo is None:
+        last_check = last_check.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if last_check > now:
+        return None
+    elapsed = (now - last_check).total_seconds()
+    if elapsed >= max_stale_seconds:
+        return None
+    return profile.latency_ms
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateScore:
     """Per-candidate ranking breakdown, in the spirit of Phase 13's
     RuleExplanation: never collapse "not measured" into "measured as zero".
 
-    `latency_score` and `health_score` are `float | None`, not `float`,
-    and are `None` for every candidate today - see AUD-P14-001 (Phase 14
-    master plan notes): no runtime path measures fresh latency, and
-    `Profile.health_status` is never written by a real health check, so
-    there is no real recent-failure data to score. `None` means "not
-    considered" (Phase 13's `unknown`/`runtime-required` posture); it must
-    never be conflated with a real `0.0` (measured and scored the worst).
-    Task 14.5 (health_status persistence) and a future latency-measurement
-    task are what will eventually turn these into real numbers - this
-    dataclass's shape does not need to change when that happens, only
-    `score_candidates()`'s body.
+    `latency_score` and `health_score` are `float | None`. `None` means
+    "not considered" (Phase 13's `unknown`/`runtime-required` posture); it
+    must never be conflated with a real `0.0` (measured and scored the
+    worst). `health_score` stays `None` for every candidate today - Task
+    14.5 only gives a binary health_status, already fully consumed at the
+    filtering stage (Task 14.3's cooldown), not a graded quality signal
+    `total` could use. `latency_score` (Task 14.7) is real, fresh-or-None
+    milliscond data now, sourced from `Profile.latency_ms`/
+    `last_latency_check`.
 
-    `total` treats a `None` factor as a neutral (zero) contribution for
-    ranking purposes only; the `None` itself is preserved on the
-    dataclass so `to_dict()` renders `null`, not `0`, keeping the
-    distinction visible to any future explainer/CLI output.
+    **`latency_score` deliberately does NOT contribute to `total`.**
+    Raw milliseconds and the 0.0/1.0 `resilience_score` are not on a
+    comparable scale - summing them would let latency's sheer numeric
+    magnitude (tens to hundreds) dominate or distort a ranking that should
+    be decided by real, meaningful factors first. Instead, latency is a
+    secondary, ranking tie-break: it only distinguishes between candidates
+    that are already equal on `total`, and only ever loses to a real
+    difference in `total`, never overrides one. See `select_best()`'s sort
+    key.
     """
 
     profile_id: str
@@ -71,6 +104,7 @@ class CandidateScore:
 def score_candidates(
     candidates: list[Profile],
     resilience_policy: NodeGroupResiliencePolicy,
+    config: dict[str, Any],
 ) -> list[CandidateScore]:
     """Rank the eligible set node_groups.resolver.resolve_candidates()
     already produced. This function never queries ProfileStore/
@@ -79,17 +113,21 @@ def score_candidates(
     low score, it gets none at all. Two-stage architecture: stage 1
     (resolve_candidates) decides eligibility, this stage only orders what
     stage 1 already declared eligible.
+
+    `config` (Task 14.7) is only consulted for
+    `rotation.latency_max_stale_seconds` - it is not a second source of
+    eligibility rules, those stay entirely in the resolver.
     """
     scores = []
     for profile in candidates:
         resilience_score = _resilience_score(profile, resilience_policy)
-        # AUD-P14-001: no runtime path produces fresh latency or a real
-        # health_status today - both stay explicitly unmeasured (None),
-        # never a placeholder 0.0, until Task 14.5 and a latency mechanism
-        # exist to populate them for real.
-        latency_score: float | None = None
+        latency_score = _fresh_latency_ms(profile, config)
+        # AUD-P14-001 / Task 14.5: health_status is binary and already
+        # consumed at the filtering stage - no graded quality signal exists
+        # yet for a ranking factor to use, so this stays explicitly
+        # unmeasured (None), never a placeholder 0.0.
         health_score: float | None = None
-        total = resilience_score + (latency_score or 0.0) + (health_score or 0.0)
+        total = resilience_score + (health_score or 0.0)
         scores.append(
             CandidateScore(
                 profile_id=profile.id,
@@ -130,44 +168,75 @@ class NodeGroupSelectionExplanation:
         }
 
 
+def _latency_rank(score: CandidateScore) -> float:
+    """Sorts fresh, lower latency first; unmeasured/stale candidates
+    (`None`) sort last among ties - absence of data must never look better
+    than a real, if mediocre, measurement."""
+    return score.latency_score if score.latency_score is not None else float("inf")
+
+
+def rank_candidates(
+    candidates: list[Profile],
+    resilience_policy: NodeGroupResiliencePolicy,
+    config: dict[str, Any],
+) -> list[CandidateScore]:
+    """`score_candidates()`, sorted by `(-total, latency_rank, profile_id)`.
+
+    The single ranking implementation `select_best()` and
+    `WatchdogRuntime._group_scoped_pool()` both use - RotationEngine needs
+    the *entire* ordered candidate list (to try the next-best if the
+    winner's live connect/health-check fails), not just the top pick, so
+    the sort itself lives here once rather than being duplicated at each
+    call site.
+    """
+    scores = score_candidates(candidates, resilience_policy, config)
+    return sorted(scores, key=lambda score: (-score.total, _latency_rank(score), score.profile_id))
+
+
 def select_best(
     group: NodeGroup,
     candidates: list[Profile],
+    config: dict[str, Any],
 ) -> tuple[Profile | None, NodeGroupSelectionExplanation]:
     """Rank `candidates` (already-eligible output of resolve_candidates())
     and pick one, deterministically.
 
-    Tie-break mirrors rules/rule_engine.py's existing (priority, name)
-    sort convention: highest total first, then ascending profile id as the
-    deterministic tie-break, so the same input always produces the same
-    winner - reproducible, explainable selection, never
-    order-of-iteration-dependent.
+    Sort key is `(-total, latency_rank, profile_id)`: `total` (the real
+    factors) decides first; fresh latency only breaks ties within an
+    already-equal `total`, never outweighs it (see CandidateScore's
+    docstring for why latency is not summed into `total`); ascending
+    `profile_id` is the final, always-available tie-break, mirroring
+    rules/rule_engine.py's existing `(priority, name)` sort convention.
+    Same input always produces the same winner - reproducible, explainable
+    selection, never order-of-iteration-dependent.
 
     Only called for selection_mode=AUTO; MANUAL is a hard pin resolved
     entirely outside this function (Task 14.3) and never reaches scoring.
     """
-    scores = score_candidates(candidates, group.resilience_policy)
-    if not scores:
+    ranked = rank_candidates(candidates, group.resilience_policy, config)
+    if not ranked:
         return None, NodeGroupSelectionExplanation(
             group_name=group.name,
             result=NodeGroupSelectionResult.UNAVAILABLE,
             selected_profile_id=None,
         )
 
-    ranked = sorted(scores, key=lambda score: (-score.total, score.profile_id))
     winner = ranked[0]
-    # Today only resilience_score is ever non-zero (see AUD-P14-001), so
-    # this three-way call is accurate: no other candidate to compare
-    # against, a real margin at the top, or a tie broken by id. Revisit
-    # this attribution once a second factor is ever non-neutral - it will
-    # need to name whichever factor actually produced the winning margin,
-    # not assume it was resilience_score.
+    # Today only resilience_score is ever non-zero in `total` (see
+    # AUD-P14-001 / CandidateScore docstring), so this attribution is
+    # accurate: no other candidate to compare against, a real margin in
+    # `total`, a fresh-latency tie-break, or a final tie broken by id.
+    # Revisit once health_score is ever non-neutral too - it will need to
+    # name whichever factor actually produced the winning margin in
+    # `total`, not assume it was resilience_score.
     if len(ranked) == 1:
         decided_by = "only_candidate"
-    elif ranked[0].total == ranked[1].total:
-        decided_by = "tie_break_by_id"
-    else:
+    elif ranked[0].total != ranked[1].total:
         decided_by = "resilience_score"
+    elif _latency_rank(ranked[0]) != _latency_rank(ranked[1]):
+        decided_by = "latency_tie_break"
+    else:
+        decided_by = "tie_break_by_id"
 
     by_id = {profile.id: profile for profile in candidates}
     explanation = NodeGroupSelectionExplanation(
