@@ -1343,6 +1343,10 @@ def _dns_apply(args: argparse.Namespace) -> int:
         return _dns_apply_output(args, {**plan, "status": "dry-run"})
     if not args.yes:
         raise ParseError("dns apply requires --yes or --dry-run")
+    if entrypoint.port != 53:
+        raise ParseError(
+            "dns apply requires --entrypoint-port 53; system resolvers are configured by address only"
+        )
     if plan["would_apply"] and not args.skip_entrypoint_check:
         _require_dns_entrypoint(entrypoint, timeout=float(args.entrypoint_timeout))
 

@@ -113,6 +113,31 @@ class CliDNSCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 65)
 
+    def test_dns_apply_rejects_non_standard_entrypoint_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "dns-state.json"
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 203.0.113.53\n", encoding="utf-8")
+
+            with redirect_stderr(StringIO()) as stderr:
+                result = cli.main.main(
+                    [
+                        "dns",
+                        "apply",
+                        "--yes",
+                        "--entrypoint-port",
+                        "1053",
+                        "--snapshot-file",
+                        str(snapshot_path),
+                        "--resolv-conf-path",
+                        str(resolv_conf),
+                    ]
+                )
+
+            self.assertEqual(result, 65)
+            self.assertIn("dns apply requires --entrypoint-port 53", stderr.getvalue())
+            self.assertFalse(snapshot_path.exists())
+
     def test_dns_apply_dry_run_does_not_create_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             snapshot_path = Path(tmp) / "dns-state.json"
@@ -136,6 +161,34 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertEqual(result, 0)
             data = json.loads(stdout.getvalue())
             self.assertEqual(data["status"], "dry-run")
+            self.assertFalse(snapshot_path.exists())
+
+    def test_dns_apply_dry_run_allows_non_standard_entrypoint_port_for_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "dns-state.json"
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 203.0.113.53\n", encoding="utf-8")
+
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(
+                    [
+                        "dns",
+                        "apply",
+                        "--dry-run",
+                        "--json",
+                        "--entrypoint-port",
+                        "1053",
+                        "--snapshot-file",
+                        str(snapshot_path),
+                        "--resolv-conf-path",
+                        str(resolv_conf),
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            data = json.loads(stdout.getvalue())
+            self.assertEqual(data["status"], "dry-run")
+            self.assertEqual(data["entrypoint"]["port"], 1053)
             self.assertFalse(snapshot_path.exists())
 
     def test_dns_apply_saves_snapshot_after_confirmed_apply(self) -> None:

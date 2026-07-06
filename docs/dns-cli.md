@@ -61,6 +61,14 @@ The local entrypoint defaults to `127.0.0.1:53`:
 ./bin/watchdog dns apply --yes --entrypoint-address 127.0.0.1 --entrypoint-port 53
 ```
 
+Real apply requires port `53`. System resolver managers such as
+`systemd-resolved`, NetworkManager and plain `resolv.conf` are configured by
+nameserver address; they do not preserve an arbitrary per-nameserver port.
+`--entrypoint-port` is still useful in `--dry-run` output and in the
+reachability check, but confirmed mutation rejects non-53 ports instead of
+leaving the host pointed at an address where DNS will not answer on the
+standard port.
+
 `--skip-entrypoint-check` exists for controlled validation paths such as tests
 against temporary files. It should not be used for normal workstation apply.
 
