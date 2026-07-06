@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from app_policy.models import AppPolicy
+from app_policy.models import AppPolicy, AppPolicyRule
 from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from config.backup_manager import (
@@ -17,6 +17,7 @@ from config.backup_manager import (
     BACKUP_SCHEMA_VERSION,
     BackupManager,
     BackupValidationError,
+    RESTORE_REPLACE_CONFIRMATION,
 )
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
@@ -112,7 +113,10 @@ class BackupManagerTests(unittest.TestCase):
                 )
             )
 
-            result = manager.restore_backup(backup)
+            result = manager.restore_backup(
+                backup,
+                replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+            )
 
             profiles = ProfileStore(root / "profiles.json").list()
             self.assertEqual([profile.id for profile in profiles], ["profile-one"])
@@ -138,7 +142,10 @@ class BackupManagerTests(unittest.TestCase):
                 side_effect=RuntimeError("disk full"),
             ):
                 with self.assertRaisesRegex(RuntimeError, "disk full"):
-                    manager.restore_backup(backup)
+                    manager.restore_backup(
+                        backup,
+                        replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+                    )
 
             self.assertEqual(
                 (root / "profiles.json").read_text(encoding="utf-8"),
@@ -175,7 +182,11 @@ class BackupManagerTests(unittest.TestCase):
             StateManager(root / "state.toml").save({"active_profile_id": ""})
             ProviderStore(root / "providers.json").remove("provider-one")
 
-            manager.restore_backup(backup, sections=["profiles"])
+            manager.restore_backup(
+                backup,
+                sections=["profiles"],
+                replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+            )
 
             self.assertEqual(
                 [profile.id for profile in ProfileStore(root / "profiles.json").list()],
@@ -237,6 +248,7 @@ class BackupManagerTests(unittest.TestCase):
                 BackupManager(config_dir=root).restore_backup(
                     backup,
                     sections=["providers"],
+                    replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
                 )
 
     def test_create_backup_rejects_unknown_or_duplicate_sections(self) -> None:
@@ -249,6 +261,100 @@ class BackupManagerTests(unittest.TestCase):
                 manager.create_backup(root / "bad.zip", sections=["secrets"])
             with self.assertRaisesRegex(BackupValidationError, "duplicate"):
                 manager.create_backup(root / "bad.zip", sections=["profiles", "profiles"])
+
+    def test_replace_restore_requires_strong_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+            backup = manager.create_backup(root / "source.zip").path
+
+            with self.assertRaisesRegex(BackupValidationError, "requires"):
+                manager.restore_backup(backup)
+
+    def test_merge_restore_preserves_local_policy_and_imports_timestamped_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            target = Path(tmp) / "target"
+            source.mkdir()
+            target.mkdir()
+            self.seed_config(source)
+            self.seed_config(target)
+            AppPolicyStore(source / "app-policy.json").save(
+                AppPolicy(
+                    enabled=True,
+                    mode="whitelist",
+                    default_action="block",
+                    rules=[
+                        AppPolicyRule(
+                            id="source-rule",
+                            action="direct",
+                            match={"process_name": ["curl"]},
+                        )
+                    ],
+                )
+            )
+            AppPolicyStore(target / "app-policy.json").save(
+                AppPolicy(
+                    enabled=False,
+                    mode="blacklist",
+                    default_action="current",
+                    rules=[
+                        AppPolicyRule(
+                            id="local-rule",
+                            action="block",
+                            match={"process_name": ["browser"]},
+                        )
+                    ],
+                )
+            )
+            backup = BackupManager(config_dir=source).create_backup(
+                Path(tmp) / "merge.zip",
+                sections=["routing-rules", "app-policy", "node-groups"],
+            ).path
+
+            with patch(
+                "config.backup_manager._timestamp_suffix",
+                return_value="20260707120000",
+            ):
+                BackupManager(config_dir=target).restore_backup(
+                    backup,
+                    sections=["routing-rules", "app-policy", "node-groups"],
+                    mode="merge",
+                )
+
+            rule_names = sorted(group.name for group in RuleStore(target / "rules").list_groups())
+            self.assertIn("custom", rule_names)
+            self.assertIn("imported-custom-20260707120000", rule_names)
+            node_group_names = sorted(
+                group.name for group in NodeGroupStore(target / "node_groups.json").list()
+            )
+            self.assertIn("primary", node_group_names)
+            self.assertIn("imported-primary-20260707120000", node_group_names)
+            policy = AppPolicyStore(target / "app-policy.json").load()
+            self.assertFalse(policy.enabled)
+            self.assertEqual(policy.mode.value, "blacklist")
+            self.assertEqual(policy.default_action.value, "current")
+            self.assertEqual(
+                [rule.id for rule in policy.rules],
+                ["local-rule", "imported-source-rule-20260707120000"],
+            )
+
+    def test_merge_restore_rejects_sections_without_merge_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            backup = BackupManager(config_dir=root).create_backup(
+                root / "settings.zip",
+                sections=["settings"],
+            ).path
+
+            with self.assertRaisesRegex(BackupValidationError, "does not support"):
+                BackupManager(config_dir=root).restore_backup(
+                    backup,
+                    sections=["settings"],
+                    mode="merge",
+                )
 
     def seed_config(self, root: Path) -> None:
         AppConfig(root / "config.toml").save(AppConfig(root / "config.toml").load())

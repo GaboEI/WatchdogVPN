@@ -60,6 +60,8 @@ BACKUP_ENTRIES = ("manifest.json",) + tuple(
     SECTION_FILE_BY_NAME[section] for section in DEFAULT_SECTION_NAMES
 )
 SUPPORTED_BACKUP_ENTRIES = ("manifest.json",) + tuple(SECTION_FILE_BY_NAME.values())
+MERGE_SECTION_NAMES = ("routing-rules", "app-policy", "node-groups")
+RESTORE_REPLACE_CONFIRMATION = "RESTORE-WATCHDOGVPN-BACKUP"
 
 
 class BackupError(PersistentStoreError):
@@ -122,12 +124,19 @@ class BackupManager:
         backup_path: Path,
         *,
         sections: Iterable[str] | None = None,
+        mode: str = "replace",
+        replace_confirmation: str | None = None,
     ) -> RestoreResult:
         parsed = self.inspect_backup(backup_path)
         selected_sections = _normalize_sections(
             sections,
             default=tuple(parsed.manifest["sections"]),
         )
+        restore_mode = _normalize_restore_mode(mode)
+        if restore_mode == "replace":
+            _require_replace_confirmation(replace_confirmation)
+        else:
+            _validate_merge_sections(selected_sections)
         missing = set(selected_sections) - set(parsed.manifest["sections"])
         if missing:
             names = ", ".join(sorted(missing))
@@ -135,14 +144,16 @@ class BackupManager:
         pre_restore = self.create_backup(reason="pre-restore")
         snapshot = self._snapshot_targets()
         try:
-            self._apply_sections(
-                {
-                    SECTION_FILE_BY_NAME[section]: parsed.sections[
-                        SECTION_FILE_BY_NAME[section]
-                    ]
-                    for section in selected_sections
-                }
-            )
+            section_payloads = {
+                SECTION_FILE_BY_NAME[section]: parsed.sections[
+                    SECTION_FILE_BY_NAME[section]
+                ]
+                for section in selected_sections
+            }
+            if restore_mode == "replace":
+                self._apply_sections(section_payloads)
+            else:
+                self._merge_sections(section_payloads)
         except Exception:
             self._restore_snapshot(snapshot)
             raise
@@ -481,6 +492,19 @@ class BackupManager:
             elif entry == "diagnostics.json":
                 continue
 
+    def _merge_sections(self, sections: dict[str, dict[str, Any]]) -> None:
+        timestamp = _timestamp_suffix()
+        for entry in _entries_for_sections(MERGE_SECTION_NAMES):
+            if entry not in sections:
+                continue
+            data = sections[entry]
+            if entry == "routing-rules.json":
+                self._merge_rule_groups(data["groups"], timestamp=timestamp)
+            elif entry == "app-policy.json":
+                self._merge_app_policy(data["policy"], timestamp=timestamp)
+            elif entry == "node-groups.json":
+                self._merge_node_groups(data["items"], timestamp=timestamp)
+
     def _write_json_file(self, path: Path, value: object) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         dump_json(path, value)
@@ -493,6 +517,57 @@ class BackupManager:
         for item in groups:
             group = RuleGroup.from_dict(item)
             dump_json(rules_dir / f"{validate_group_name(group.name)}.json", group.to_dict())
+
+    def _merge_rule_groups(self, groups: list[dict[str, Any]], *, timestamp: str) -> None:
+        store = RuleStore(self.config_dir / "rules")
+        existing_names = {group.name for group in store.list_groups()}
+        for item in groups:
+            imported = RuleGroup.from_dict(item)
+            name = _unique_timestamped_name(imported.name, existing_names, timestamp=timestamp)
+            existing_names.add(name)
+            store.add_group(
+                RuleGroup(
+                    name=name,
+                    enabled=imported.enabled,
+                    rules=list(imported.rules),
+                    priority=imported.priority,
+                )
+            )
+
+    def _merge_app_policy(self, policy: dict[str, Any], *, timestamp: str) -> None:
+        imported = AppPolicy.from_dict(policy)
+        store = AppPolicyStore(self.config_dir / "app-policy.json")
+        local = store.load()
+        existing_ids = {rule.id for rule in local.rules}
+        merged_rules = list(local.rules)
+        for rule in imported.rules:
+            rule_data = rule.to_dict()
+            rule_data["id"] = _unique_imported_id(rule.id, existing_ids, timestamp=timestamp)
+            existing_ids.add(rule_data["id"])
+            merged_rules.append(rule_data)
+        store.save(
+            AppPolicy(
+                schema_version=local.schema_version,
+                enabled=local.enabled,
+                mode=local.mode,
+                default_action=local.default_action,
+                rules=merged_rules,
+            )
+        )
+
+    def _merge_node_groups(self, groups: list[dict[str, Any]], *, timestamp: str) -> None:
+        store = NodeGroupStore(self.config_dir / "node_groups.json")
+        existing_names = {group.name for group in store.list()}
+        for item in groups:
+            imported = NodeGroup.from_dict(item)
+            group_data = imported.to_dict()
+            group_data["name"] = _unique_timestamped_name(
+                imported.name,
+                existing_names,
+                timestamp=timestamp,
+            )
+            existing_names.add(group_data["name"])
+            store.add(NodeGroup.from_dict(group_data))
 
 
 @dataclass(frozen=True, slots=True)
@@ -567,6 +642,75 @@ def _entries_for_sections(sections: Iterable[str]) -> tuple[str, ...]:
     return tuple(SECTION_FILE_BY_NAME[section] for section in sections)
 
 
+def _normalize_restore_mode(mode: str) -> str:
+    normalized = str(mode).strip()
+    if normalized not in {"replace", "merge"}:
+        raise BackupValidationError("restore mode must be one of: replace, merge")
+    return normalized
+
+
+def _require_replace_confirmation(replace_confirmation: str | None) -> None:
+    if replace_confirmation != RESTORE_REPLACE_CONFIRMATION:
+        raise BackupValidationError(
+            "replace restore requires RESTORE-WATCHDOGVPN-BACKUP confirmation"
+        )
+
+
+def _validate_merge_sections(sections: tuple[str, ...]) -> None:
+    unsupported = set(sections) - set(MERGE_SECTION_NAMES)
+    if unsupported:
+        names = ", ".join(sorted(unsupported))
+        raise BackupValidationError(f"merge restore does not support sections: {names}")
+
+
+def _timestamp_suffix() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
+def _unique_timestamped_name(
+    source_name: str,
+    existing_names: set[str],
+    *,
+    timestamp: str,
+) -> str:
+    base = _slug_prefix(f"imported-{source_name}", max_prefix_length=48)
+    candidate = validate_group_name(f"{base}-{timestamp}")
+    suffix = 2
+    while candidate in existing_names:
+        suffix_text = f"-{suffix}"
+        prefix = _slug_prefix(
+            f"imported-{source_name}",
+            max_prefix_length=64 - len(timestamp) - len(suffix_text) - 1,
+        )
+        candidate = validate_group_name(f"{prefix}-{timestamp}{suffix_text}")
+        suffix += 1
+    return candidate
+
+
+def _unique_imported_id(
+    source_id: str,
+    existing_ids: set[str],
+    *,
+    timestamp: str,
+) -> str:
+    base = str(source_id).strip() or "rule"
+    candidate = f"imported-{base}-{timestamp}"
+    suffix = 2
+    while candidate in existing_ids:
+        candidate = f"imported-{base}-{timestamp}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _slug_prefix(value: str, *, max_prefix_length: int) -> str:
+    normalized = "".join(
+        char if char.isalnum() or char in "-_" else "-"
+        for char in value.lower().strip()
+    )
+    normalized = normalized.strip("-_") or "imported"
+    return normalized[:max_prefix_length].rstrip("-_") or "imported"
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -578,5 +722,6 @@ __all__ = [
     "BackupManager",
     "BackupResult",
     "BackupValidationError",
+    "RESTORE_REPLACE_CONFIRMATION",
     "RestoreResult",
 ]

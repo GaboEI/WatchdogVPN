@@ -8,9 +8,9 @@
 Task 17.2 adds section-scoped backup creation and restore to
 `config.backup_manager.BackupManager`.
 
-It does not add the user-facing CLI yet. It also does not implement merge-mode
-conflict semantics, replace confirmations, remote sync, encryption or uninstall
-flow integration.
+It does not add the user-facing CLI yet. It also does not implement remote sync,
+encryption or uninstall flow integration. Merge/replace restore policy was added
+later in Task 17.3.
 
 ## Section Selection
 
@@ -75,8 +75,6 @@ history or counters.
 The following remain later Phase 17 work:
 
 - CLI wiring;
-- merge-mode conflict behavior;
-- replace-mode confirmation;
 - bounded auto-backup retention;
 - backup encryption;
 - WebDAV/LAN sync;

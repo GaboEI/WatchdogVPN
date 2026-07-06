@@ -6,8 +6,8 @@
 ## Scope
 
 Task 17.1 introduces the low-level backup/restore manager. It does not add a
-user-facing CLI yet, and it does not implement merge-mode imports, remote sync,
-encryption or uninstall UX.
+user-facing CLI yet, and it does not implement remote sync, encryption or
+uninstall UX.
 
 The implemented manager is `config.backup_manager.BackupManager`.
 
@@ -48,7 +48,8 @@ Every section includes `schema_version`.
 ## Section Behavior
 
 Task 17.1 wrote all supported default sections. Section-scoped export/import was
-added later in Task 17.2.
+added later in Task 17.2. Merge/replace restore policy was added later in Task
+17.3.
 
 Definitions are separated from selection/use state:
 
@@ -97,8 +98,6 @@ available.
 The following are intentionally left for later Phase 17 tasks:
 
 - user-facing CLI commands;
-- merge vs replace behavior;
-- stronger replace confirmations;
 - bounded auto-backup retention;
 - backup encryption;
 - WebDAV/LAN sync;
