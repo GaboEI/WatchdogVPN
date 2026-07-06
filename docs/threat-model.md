@@ -36,7 +36,7 @@ hardening.
 | Provider/profile configuration is invalid | Recovery loops cannot fix setup | stores and runtime commands fail closed with explicit errors |
 | Bad VPN endpoint | Rotation may land on unusable node | the v2 rotation/runtime path validates state before accepting a connection |
 | DNS profile breaks resolution | User may lose name resolution | DNS v2 `apply`/`reset` snapshot the prior resolver state and restore it on request; `vpn_dns_rescue` remains available as a manual fallback |
-| Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | Current v2.0 mainline keeps generated SOCKS/HTTP and DNS hijack inbounds bound to `127.0.0.1`; intentional LAN proxy/gateway sharing is reserved for a dedicated future phase |
+| Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | Current v2.0 mainline keeps generated SOCKS/HTTP and DNS hijack inbounds bound to `127.0.0.1`; intentional LAN proxy/gateway sharing is reserved for dedicated Phase 20 work |
 | Uninstall breaks DNS | Host may remain offline after removal | `vpn_dns_rescue` restores fallback DNS behavior |
 | Repeated timer executions overlap | Race conditions and route churn | rotation uses `flock`; timers are one-shot services |
 | User-specific bypass domains leak into new installs | New users inherit irrelevant routing policy | default bypass example starts empty |
@@ -54,8 +54,8 @@ hardening.
 - Automatic CLI installer verification is not yet cryptographically pinned.
 - GitHub Actions currently performs baseline validation, not full integration
   simulation.
-- LAN proxy/gateway sharing is a planned high-value future capability, but it
-  must be built in a dedicated branch/phase with authentication or an explicit
+- LAN proxy/gateway sharing is a planned high-value Phase 20 capability, but it
+  must be built in a dedicated branch with authentication or an explicit
   protocol exception, firewall UX, kill-switch validation, DNS leak validation
   and teardown validation before it can reach `main`.
 

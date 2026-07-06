@@ -40,7 +40,7 @@ listeners also remain loopback-only. No `0.0.0.0`, `::`, LAN interface, or
 wildcard listener is part of the supported v2.0 configuration.
 
 LAN proxy sharing and full LAN gateway/router mode are promoted to the
-dedicated Phase 19 track, before the final Full CLI phase. That work must be
+dedicated Phase 20 track, before the final Full CLI phase. That work must be
 developed on a separate branch, validated in VM network scenarios only, and
 merged back to `main` only after the branch proves the feature is correct,
 secure and fully validated.
@@ -50,7 +50,7 @@ secure and fully validated.
 - No default LAN exposure is introduced.
 - WatchdogVPN avoids creating an accidental unauthenticated LAN proxy path.
 - LAN sharing remains a planned core capability, but only through the dedicated
-  design and validation phase before Full CLI.
+  Phase 20 design and validation track before Full CLI.
 - The future phase must define authentication or an explicit reason if a
   protocol path cannot support it, explicit bind addresses, firewall UX,
   kill-switch behavior for LAN-originated traffic, DNS leak validation,

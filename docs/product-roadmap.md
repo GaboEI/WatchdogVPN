@@ -72,6 +72,20 @@ favor privacy.
 The CLI is the validation and operator surface. The final TUI comes later, once
 the behavior it renders is proven through CLI-backed real-world use.
 
+### Routing Mode and Capture Architecture
+
+Before the final CLI is frozen, WatchdogVPN must align three product concepts
+that are easy to confuse:
+
+- routing policy: Rule or Global;
+- capture or entry: local proxy, system proxy, TUN, LAN proxy, gateway/router;
+- route action: Direct, Current/Profile, Block, Group/Auto and future chains.
+
+Rule mode means split-tunnel rules and exceptions are honored. Global mode
+means all captured traffic uses the selected protected path. Proxy, TUN and LAN
+are entry mechanisms, not replacements for Rule/Global. Direct remains a
+first-class route action, not a feature to remove.
+
 ### LAN Sharing and Gateway Mode
 
 WatchdogVPN should support network-operator workflows where the host can
