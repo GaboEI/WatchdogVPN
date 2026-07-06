@@ -646,6 +646,54 @@ run_shell_report_command() {
   bash -c "$command_text" 2>&1 | sanitize_stream || printf 'command failed: %s\n' "$command_text"
 }
 
+metrics_report_summary() {
+  section "Observability metrics"
+  if ! PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY' 2>/dev/null | sanitize_stream; then
+from metrics.store import MetricsStore
+
+SAFE_COUNTER_PREFIXES = (
+    "command.",
+    "rotation.",
+    "health_check.status.",
+    "recovery.status.",
+    "node_group.auto_test.",
+    "error.",
+)
+MAX_COUNTER_LINES = 20
+
+
+try:
+    store = MetricsStore()
+    metrics_file_exists = store.path.exists()
+    document = store.load()
+except Exception:
+    print("metrics_status=unavailable")
+    print("metrics_error=load_failed")
+else:
+    totals = {}
+    total_events = 0
+    for bucket in document.buckets:
+        for key, value in bucket.counters.items():
+            total_events += value
+            if key.startswith(SAFE_COUNTER_PREFIXES):
+                totals[key] = totals.get(key, 0) + value
+
+    print(f"metrics_status={'available' if metrics_file_exists else 'missing'}")
+    print(f"enabled={str(document.enabled).lower()}")
+    print(f"redaction_mode={document.redaction_mode.value}")
+    print(f"retention_days={document.retention_days}")
+    print(f"bucket_count={len(document.buckets)}")
+    print(f"total_events={total_events}")
+
+    for key in sorted(totals)[:MAX_COUNTER_LINES]:
+        print(f"counter.{key}={totals[key]}")
+    if len(totals) > MAX_COUNTER_LINES:
+        print(f"counter.truncated={len(totals) - MAX_COUNTER_LINES}")
+PY
+    printf 'metrics_status=unavailable\n'
+  fi
+}
+
 git_commit() {
   if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     git rev-parse --short HEAD 2>/dev/null || true
@@ -681,6 +729,7 @@ generate_report() {
       "systemctl --no-pager --plain status watchdogvpn.service vpn-domain-bypass.timer myvpn-logrotate.timer"
     run_shell_report_command "Timers" \
       "systemctl list-timers --all vpn-domain-bypass.timer myvpn-logrotate.timer --no-pager"
+    metrics_report_summary
     run_shell_report_command "Recent WatchdogVPN events" \
       "sudo -n tail -n 80 $LOG_DIR/vpn-events.log 2>/dev/null || tail -n 80 $LOG_DIR/vpn-events.log 2>/dev/null || true"
   } >"$report"

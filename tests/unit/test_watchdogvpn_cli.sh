@@ -162,6 +162,33 @@ printf '%s\n' \
   '2026-05-16T00:01:00Z | watchdogvpn | warn | sample | 203.0.113.22' \
   >"$LOG_DIR/vpn-events.log"
 
+cat >"$TMP_DIR/metrics.json" <<'EOF'
+{
+  "schema_version": 1,
+  "enabled": true,
+  "retention_days": 7,
+  "redaction_mode": "aggregate",
+  "max_bytes": 1048576,
+  "buckets": [
+    {
+      "bucket_start": "2026-07-06T10:00:00+00:00",
+      "bucket_end": "2026-07-06T11:00:00+00:00",
+      "counters": {
+        "command.connect.success": 3,
+        "recovery.status.recovered": 2,
+        "node_group.auto_test.unavailable": 1,
+        "profile.secret-profile.connect.success": 9,
+        "rule_group.private-group": 8,
+        "node_group.private-lan.auto_test.ok": 7,
+        "route_action.group:private": 6,
+        "dns_query.secret.example": 5
+      }
+    }
+  ],
+  "updated_at": "2026-07-06T10:05:00+00:00"
+}
+EOF
+
 init_runtime_update_repo "$UPDATE_REPO" "$UPDATE_REMOTE"
 
 output="$(
@@ -170,6 +197,8 @@ output="$(
   WATCHDOGVPN_BACKEND_BIN="$TMP_DIR/backend" \
   WATCHDOGVPN_VPNCTL_BIN="$TMP_DIR/vpnctl" \
   WATCHDOGVPN_LOG_DIR="$LOG_DIR" \
+  WATCHDOGVPN_METRICS_FILE="$TMP_DIR/metrics.json" \
+  WATCHDOGVPN_REPO_DIR="$ROOT_DIR" \
   "$SCRIPT" report
 )"
 
@@ -179,11 +208,20 @@ report="$(printf '%s\n' "$output" | sed -n 's/^Report written: //p')"
 grep -Fq "WatchdogVPN diagnostic report" "$report"
 grep -Fq "== VPN truth ==" "$report"
 grep -Fq "== Backend status ==" "$report"
+grep -Fq "== Observability metrics ==" "$report"
+grep -Fq "metrics_status=available" "$report"
+grep -Fq "counter.command.connect.success=3" "$report"
+grep -Fq "counter.recovery.status.recovered=2" "$report"
+grep -Fq "counter.node_group.auto_test.unavailable=1" "$report"
 grep -Fq "<redacted-email>" "$report"
 grep -Fq "<redacted-ip>" "$report"
 grep -Fq "<redacted-ipv6>" "$report"
 if grep -Eq '198\.51\.100|203\.0\.113|2001:db8|user@example\.com' "$report"; then
   printf 'FAIL: report contains unsanitized sensitive sample data\n' >&2
+  exit 1
+fi
+if grep -Eq 'secret-profile|private-group|private-lan|route_action\.group:private|secret\.example|metrics\.json' "$report"; then
+  printf 'FAIL: report contains raw metrics data or local identifiers\n' >&2
   exit 1
 fi
 

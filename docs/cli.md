@@ -156,12 +156,16 @@ Rules:
 - The report is written to a local text file.
 - The user must review the file before sharing it.
 - Sensitive sample data is sanitized where possible.
-- Observability metrics are excluded from normal reports unless a later
-  redacted summary contract explicitly includes them.
+- Observability metrics are summarized only through the Phase 16 redacted
+  export contract.
+- Raw metrics stores, profile ids, rule-group names, named node groups,
+  route-action group labels and DNS-query-like counter keys are excluded from
+  normal reports.
 
 The report may include runtime status, doctor-adjacent checks, VPN truth state,
-daemon state, DNS test output and recent troubleshooting context. See
-[Reporting Issues](reporting.md) for safe sharing guidance.
+daemon state, DNS test output, a redacted observability summary and recent
+troubleshooting context. See [Reporting Issues](reporting.md) for safe sharing
+guidance.
 
 ## Local Logs
 
