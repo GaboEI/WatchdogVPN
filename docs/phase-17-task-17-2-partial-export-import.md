@@ -10,7 +10,7 @@ Task 17.2 adds section-scoped backup creation and restore to
 
 It does not add the user-facing CLI yet. It also does not implement remote sync,
 encryption or uninstall flow integration. Merge/replace restore policy was added
-later in Task 17.3.
+later in Task 17.3. Bounded auto-backup retention was added later in Task 17.5.
 
 ## Section Selection
 
@@ -75,7 +75,6 @@ history or counters.
 The following remain later Phase 17 work:
 
 - CLI wiring;
-- bounded auto-backup retention;
 - backup encryption;
 - WebDAV/LAN sync;
 - uninstall flow integration.

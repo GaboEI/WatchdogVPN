@@ -49,7 +49,7 @@ Every section includes `schema_version`.
 
 Task 17.1 wrote all supported default sections. Section-scoped export/import was
 added later in Task 17.2. Merge/replace restore policy was added later in Task
-17.3.
+17.3. Bounded auto-backup retention was added later in Task 17.5.
 
 Definitions are separated from selection/use state:
 
@@ -98,7 +98,6 @@ available.
 The following are intentionally left for later Phase 17 tasks:
 
 - user-facing CLI commands;
-- bounded auto-backup retention;
 - backup encryption;
 - WebDAV/LAN sync;
 - uninstall flow integration;

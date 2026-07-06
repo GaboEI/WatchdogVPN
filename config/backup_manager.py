@@ -62,6 +62,13 @@ BACKUP_ENTRIES = ("manifest.json",) + tuple(
 SUPPORTED_BACKUP_ENTRIES = ("manifest.json",) + tuple(SECTION_FILE_BY_NAME.values())
 MERGE_SECTION_NAMES = ("routing-rules", "app-policy", "node-groups")
 RESTORE_REPLACE_CONFIRMATION = "RESTORE-WATCHDOGVPN-BACKUP"
+AUTO_BACKUP_REASONS = (
+    "pre-restore",
+    "pre-replace-import",
+    "pre-destructive-remove",
+    "pre-uninstall-delete",
+)
+DEFAULT_AUTO_BACKUP_MAX_BACKUPS = 10
 
 
 class BackupError(PersistentStoreError):
@@ -119,6 +126,42 @@ class BackupManager:
                 archive.writestr(entry, _json_text(section_payloads[entry]))
         return BackupResult(path=output_path, manifest=manifest)
 
+    def create_auto_backup(
+        self,
+        *,
+        reason: str,
+        max_backups: int = DEFAULT_AUTO_BACKUP_MAX_BACKUPS,
+    ) -> BackupResult:
+        reason = _normalize_auto_backup_reason(reason)
+        max_backups = _validate_max_backups(max_backups)
+        result = self.create_backup(reason=reason)
+        self.prune_auto_backups(max_backups=max_backups)
+        return result
+
+    def list_auto_backups(self) -> list[Path]:
+        return [
+            path
+            for path in self._list_backup_files()
+            if _backup_reason_from_name(path) in AUTO_BACKUP_REASONS
+        ]
+
+    def prune_auto_backups(
+        self,
+        *,
+        max_backups: int = DEFAULT_AUTO_BACKUP_MAX_BACKUPS,
+    ) -> list[Path]:
+        max_backups = _validate_max_backups(max_backups)
+        backups = self.list_auto_backups()
+        expired = backups[:-max_backups]
+        removed: list[Path] = []
+        for path in expired:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            removed.append(path)
+        return removed
+
     def restore_backup(
         self,
         backup_path: Path,
@@ -141,7 +184,8 @@ class BackupManager:
         if missing:
             names = ", ".join(sorted(missing))
             raise BackupValidationError(f"backup does not contain requested sections: {names}")
-        pre_restore = self.create_backup(reason="pre-restore")
+        auto_reason = "pre-replace-import" if restore_mode == "replace" else "pre-restore"
+        pre_restore = self.create_auto_backup(reason=auto_reason)
         snapshot = self._snapshot_targets()
         try:
             section_payloads = {
@@ -191,7 +235,23 @@ class BackupManager:
     def _default_backup_path(self, created_at: str, reason: str) -> Path:
         stamp = created_at.replace("-", "").replace(":", "").split(".")[0]
         safe_reason = "".join(char if char.isalnum() or char in "-_" else "-" for char in reason)
-        return self.backup_dir / f"watchdogvpn-{safe_reason}-{stamp}.zip"
+        base = self.backup_dir / f"watchdogvpn-{safe_reason}-{stamp}.zip"
+        if not base.exists():
+            return base
+        suffix = 2
+        while True:
+            candidate = self.backup_dir / f"watchdogvpn-{safe_reason}-{stamp}-{suffix}.zip"
+            if not candidate.exists():
+                return candidate
+            suffix += 1
+
+    def _list_backup_files(self) -> list[Path]:
+        if not self.backup_dir.exists():
+            return []
+        return sorted(
+            self.backup_dir.glob("watchdogvpn-*.zip"),
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
 
     def _manifest(
         self,
@@ -306,7 +366,7 @@ class BackupManager:
                         "before_uninstall_delete": True,
                     },
                     "retention": {
-                        "max_backups": 10,
+                        "max_backups": DEFAULT_AUTO_BACKUP_MAX_BACKUPS,
                     },
                     "remote_upload": False,
                 }
@@ -414,7 +474,8 @@ class BackupManager:
             return data
         if entry == "backup-policy.json":
             _require_object(data.get("auto_backup"), "backup-policy.auto_backup")
-            _require_object(data.get("retention"), "backup-policy.retention")
+            retention = _require_object(data.get("retention"), "backup-policy.retention")
+            _validate_max_backups(retention.get("max_backups", DEFAULT_AUTO_BACKUP_MAX_BACKUPS))
             if not isinstance(data.get("remote_upload"), bool):
                 raise BackupValidationError("backup-policy.remote_upload must be a boolean")
             return data
@@ -661,6 +722,37 @@ def _parse_optional_datetime(value: object) -> datetime | None:
         raise BackupValidationError("provider-state last_updated must be ISO-8601") from exc
 
 
+def _normalize_auto_backup_reason(reason: str) -> str:
+    normalized = str(reason).strip()
+    if normalized not in AUTO_BACKUP_REASONS:
+        names = ", ".join(AUTO_BACKUP_REASONS)
+        raise BackupValidationError(f"auto-backup reason must be one of: {names}")
+    return normalized
+
+
+def _validate_max_backups(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise BackupValidationError("backup-policy retention.max_backups must be an integer")
+    if value < 1:
+        raise BackupValidationError("backup-policy retention.max_backups must be at least 1")
+    if value > 100:
+        raise BackupValidationError("backup-policy retention.max_backups must be at most 100")
+    return value
+
+
+def _backup_reason_from_name(path: Path) -> str | None:
+    prefix = "watchdogvpn-"
+    suffix = ".zip"
+    name = path.name
+    if not name.startswith(prefix) or not name.endswith(suffix):
+        return None
+    stem = name[len(prefix) : -len(suffix)]
+    for reason in AUTO_BACKUP_REASONS:
+        if stem.startswith(f"{reason}-"):
+            return reason
+    return None
+
+
 def _normalize_sections(
     sections: Iterable[str] | None,
     *,
@@ -760,10 +852,12 @@ def _utc_now() -> str:
 __all__ = [
     "BACKUP_SCHEMA_VERSION",
     "BACKUP_SECTION_SCHEMA_VERSION",
+    "AUTO_BACKUP_REASONS",
     "BackupError",
     "BackupManager",
     "BackupResult",
     "BackupValidationError",
+    "DEFAULT_AUTO_BACKUP_MAX_BACKUPS",
     "RESTORE_REPLACE_CONFIRMATION",
     "RestoreResult",
 ]

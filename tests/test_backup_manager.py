@@ -15,6 +15,7 @@ from config.app_config import AppConfig
 from config.backup_manager import (
     BACKUP_ENTRIES,
     BACKUP_SCHEMA_VERSION,
+    AUTO_BACKUP_REASONS,
     BackupManager,
     BackupValidationError,
     RESTORE_REPLACE_CONFIRMATION,
@@ -122,6 +123,8 @@ class BackupManagerTests(unittest.TestCase):
             self.assertEqual([profile.id for profile in profiles], ["profile-one"])
             self.assertTrue(result.pre_restore_backup.exists())
             with ZipFile(result.pre_restore_backup) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["reason"], "pre-replace-import")
                 previous = json.loads(archive.read("profiles.json"))
             self.assertEqual(
                 sorted(item["id"] for item in previous["items"]),
@@ -446,6 +449,72 @@ class BackupManagerTests(unittest.TestCase):
                     target.writestr(item.filename, data)
 
             with self.assertRaisesRegex(BackupValidationError, "last_updated"):
+                BackupManager(config_dir=root).inspect_backup(broken)
+
+    def test_default_backup_path_is_unique_with_same_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+
+            with patch("config.backup_manager._utc_now", return_value="2026-07-07T12:00:00+00:00"):
+                first = manager.create_backup(reason="manual").path
+                second = manager.create_backup(reason="manual").path
+
+            self.assertNotEqual(first, second)
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertTrue(second.name.endswith("-2.zip"))
+
+    def test_auto_backup_prunes_old_entries_and_keeps_manual_backups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+
+            with patch("config.backup_manager._utc_now", return_value="2026-07-07T12:00:00+00:00"):
+                manual = manager.create_backup(reason="manual").path
+                first = manager.create_auto_backup(reason="pre-restore", max_backups=2).path
+                second = manager.create_auto_backup(reason="pre-restore", max_backups=2).path
+                third = manager.create_auto_backup(reason="pre-restore", max_backups=2).path
+
+            self.assertTrue(manual.exists())
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists())
+            self.assertTrue(third.exists())
+            self.assertEqual(manager.list_auto_backups(), [second, third])
+
+    def test_auto_backup_rejects_unknown_reason_or_invalid_retention(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+
+            with self.assertRaisesRegex(BackupValidationError, "reason"):
+                manager.create_auto_backup(reason="manual")
+            with self.assertRaisesRegex(BackupValidationError, "max_backups"):
+                manager.create_auto_backup(reason=AUTO_BACKUP_REASONS[0], max_backups=0)
+
+    def test_backup_policy_rejects_invalid_retention(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            clean = BackupManager(config_dir=root).create_backup(
+                root / "backup-policy.zip",
+                sections=["backup-policy"],
+            ).path
+            broken = root / "broken-backup-policy.zip"
+
+            with ZipFile(clean) as source, ZipFile(broken, "w", compression=ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename == "backup-policy.json":
+                        payload = json.loads(data)
+                        payload["retention"]["max_backups"] = 0
+                        data = json.dumps(payload).encode()
+                    target.writestr(item.filename, data)
+
+            with self.assertRaisesRegex(BackupValidationError, "max_backups"):
                 BackupManager(config_dir=root).inspect_backup(broken)
 
     def seed_config(self, root: Path) -> None:
