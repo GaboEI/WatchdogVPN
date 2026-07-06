@@ -171,6 +171,14 @@ destination or request history, if ever implemented, must be explicit opt-in,
 clearly labeled sensitive, retention-bounded, purgeable and excluded from normal
 diagnostic exports by default.
 
+Local metrics can be inspected with `watchdog stats status` and
+`watchdog stats summary`. Metrics can be purged with
+`watchdog stats purge --yes`. Normal diagnostics may include only a redacted
+aggregate metrics summary; they must not include raw `metrics.json` contents.
+Future backups may include metrics policy metadata, but metrics history/counters
+must not be included in normal backup or remote sync flows without a separate
+sensitive-data decision.
+
 ## Reporting Security Issues
 
 For the alpha release, report security concerns through GitHub issues or direct
