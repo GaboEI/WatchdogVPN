@@ -266,6 +266,7 @@ class WatchdogRuntime:
             group, self.profile_store, self.provider_store, config
         )
         test_results: list[dict[str, object]] = []
+        ok_profile_ids: set[str] = set()
         for profile in candidates:
             driver = self._driver_for_profile(profile)
             connected = driver.connect(
@@ -283,12 +284,17 @@ class WatchdogRuntime:
                         "latency_ms": None,
                     }
                 )
-                driver.disconnect()
+                if not driver.disconnect():
+                    raise RuntimeError(
+                        f"node-group auto-test failed to disconnect profile: {profile.id}"
+                    )
                 continue
             try:
                 if self.rotation_engine.warmup_seconds > 0:
                     self.rotation_engine.sleep(self.rotation_engine.warmup_seconds)
                 status = self._checked_and_recorded(profile, driver)
+                if status == "ok":
+                    ok_profile_ids.add(profile.id)
                 refreshed = self.profile_store.get(profile.id) or profile
                 test_results.append(
                     {
@@ -308,6 +314,9 @@ class WatchdogRuntime:
         refreshed_candidates = resolve_node_group_candidates(
             refreshed_group, self.profile_store, self.provider_store, config
         )
+        refreshed_candidates = [
+            profile for profile in refreshed_candidates if profile.id in ok_profile_ids
+        ]
         ranked = rank_candidates(refreshed_candidates, refreshed_group.resilience_policy, config)
         selected_profile_id = ranked[0].profile_id if ranked else None
         return {

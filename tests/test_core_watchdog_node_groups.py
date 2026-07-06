@@ -580,6 +580,31 @@ class NodeGroupAutoTestRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["tested"][0]["health_status"], "down")
         self.assertEqual(self.profile_store.get("r1").health_status, "down")
 
+    def test_auto_test_does_not_report_degraded_candidate_as_selected(self) -> None:
+        self.node_group_store.add(NodeGroup(name="paris", member_profile_ids=["r1"]))
+        runtime = self._make_runtime(FakeDriver())
+
+        with patch(
+            "core.watchdog.health_checker.check_with_latency",
+            return_value=HealthCheckResult(status="degraded", latency_ms=50.0),
+        ):
+            payload = runtime.node_group_auto_test("paris")
+
+        self.assertEqual(payload["tested"][0]["health_status"], "degraded")
+        self.assertEqual(payload["result"], "unavailable")
+        self.assertIsNone(payload["selected_profile_id"])
+        self.assertEqual(payload["candidates"], [])
+
+    def test_auto_test_checks_disconnect_after_connect_failure(self) -> None:
+        self.node_group_store.add(NodeGroup(name="paris", member_profile_ids=["r1"]))
+        driver = FakeDriver()
+        driver.connect = MagicMock(return_value=False)  # type: ignore[method-assign]
+        driver.disconnect = MagicMock(return_value=False)  # type: ignore[method-assign]
+        runtime = self._make_runtime(driver)
+
+        with self.assertRaisesRegex(RuntimeError, "failed to disconnect profile: r1"):
+            runtime.node_group_auto_test("paris")
+
     def test_auto_test_disconnects_when_deep_check_raises(self) -> None:
         self.node_group_store.add(NodeGroup(name="paris", member_profile_ids=["r1"]))
         driver = FakeDriver()
