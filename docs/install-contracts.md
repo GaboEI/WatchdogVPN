@@ -36,6 +36,8 @@ Those are product defaults and can be adjusted later from the TUI.
 Role: read-only preflight and diagnostics.
 
 It must not install, remove or modify files.
+It must not change system time or NTP settings; wrong time is reported as a
+protocol-connectivity risk with actionable guidance.
 
 It should check:
 
@@ -50,6 +52,7 @@ It should check:
 - awk/sed/coreutils
 - logrotate
 - WatchdogVPN daemon user, unit, IPC socket and installed runtime
+- system time/NTP sync state and severe clock skew risk
 - basic DNS
 - previous installation state
 - optional desktop launcher

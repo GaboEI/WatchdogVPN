@@ -191,6 +191,20 @@ else
   mark_fail "NetworkManager service not found"
 fi
 
+section "Time and NTP"
+time_diag="$(PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 -m diagnostics.time_check 2>/dev/null || true)"
+time_status="$(printf '%s\n' "$time_diag" | read_key_value STATUS)"
+time_message="$(printf '%s\n' "$time_diag" | read_key_value MESSAGE)"
+ntp_state="$(printf '%s\n' "$time_diag" | read_key_value NTP_STATE)"
+skew_seconds="$(printf '%s\n' "$time_diag" | read_key_value SKEW_SECONDS)"
+if [[ "$time_status" == "ok" ]]; then
+  mark_ok "system time and NTP"
+else
+  mark_warn "system time/NTP risk: ${time_message:-unknown}"
+fi
+info "ntp_state=${ntp_state:-unknown} skew_seconds=${skew_seconds:-unknown}"
+info "wrong system time can break TLS and VPN/proxy protocol handshakes; doctor does not change the clock"
+
 section "Repository Runtime"
 check_repo_file "tui/VPN" exec
 check_repo_file "tui/watchdogvpn/__init__.py"

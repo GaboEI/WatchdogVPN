@@ -141,7 +141,8 @@ watchdogvpn --help
 ```
 
 `doctor.sh` is read-only. It checks whether the machine has the expected
-dependencies and runtime state.
+dependencies, runtime state and time/NTP health. It reports clock skew as a
+connectivity risk; it does not change system time.
 
 ## Updating
 
