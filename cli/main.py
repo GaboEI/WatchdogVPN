@@ -36,6 +36,8 @@ from dns.state_manager import (
 from dns.tester import DNSTester
 from daemon.protocol import Response
 from diagnostics.route_dns import RouteDNSDiagnostic, diagnose_route_dns
+from metrics.models import MetricsDocument, MetricsRedactionMode
+from metrics.store import MetricsStore
 from models.profile import Profile
 from models.provider import Provider
 from node_groups.models import NodeGroup, NodeGroupSelectionMode
@@ -72,6 +74,17 @@ CONFIG_INT_SET_KEYS = frozenset(
         "rotation.test_timeout_seconds",
         "rotation.latency_max_stale_seconds",
     }
+)
+VISIBLE_STATS_COUNTER_PREFIXES = (
+    "command.",
+    "rotation.",
+    "health_check.status.",
+    "recovery.status.",
+    "node_group.",
+    "error.",
+    "profile.",
+    "route_action.",
+    "rule_group.",
 )
 
 
@@ -315,6 +328,29 @@ def _build_parser() -> argparse.ArgumentParser:
     config_set_parser.add_argument("value", help="Configuration value")
     config_set_parser.add_argument("--json", action="store_true", help="Print JSON")
     config_set_parser.set_defaults(handler=_config_set)
+
+    stats_parser = subparsers.add_parser("stats", help="Inspect local observability metrics")
+    stats_subparsers = stats_parser.add_subparsers(dest="stats_command")
+
+    stats_status_parser = stats_subparsers.add_parser("status", help="Show metrics status")
+    stats_status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    stats_status_parser.set_defaults(handler=_stats_status)
+
+    stats_summary_parser = stats_subparsers.add_parser("summary", help="Show aggregate metrics summary")
+    stats_summary_parser.add_argument("--json", action="store_true", help="Print JSON")
+    stats_summary_parser.set_defaults(handler=_stats_summary)
+
+    stats_purge_parser = stats_subparsers.add_parser("purge", help="Purge local observability metrics")
+    stats_purge_parser.add_argument("--yes", action="store_true", help="Confirm metrics purge")
+    stats_purge_parser.set_defaults(handler=_stats_purge)
+
+    stats_privacy_parser = stats_subparsers.add_parser("privacy-mode", help="Set metrics privacy mode")
+    stats_privacy_parser.add_argument(
+        "mode",
+        choices=[item.value for item in MetricsRedactionMode],
+        help="Metrics privacy mode",
+    )
+    stats_privacy_parser.set_defaults(handler=_stats_privacy_mode)
 
     rules_parser = subparsers.add_parser("rules", help="Inspect configured routing rules")
     rules_subparsers = rules_parser.add_subparsers(dest="rules_command")
@@ -841,6 +877,125 @@ def _parse_config_value(key: str, value: str) -> int | str:
         except ValueError as exc:
             raise ParseError(f"{key} must be an integer") from exc
     return value
+
+
+def _stats_status(args: argparse.Namespace) -> int:
+    data = _metrics_status_data(MetricsStore())
+    if args.json:
+        _print_json(data)
+        return 0
+    _print_metrics_status(data)
+    return 0
+
+
+def _stats_summary(args: argparse.Namespace) -> int:
+    data = _metrics_summary_data(MetricsStore())
+    if args.json:
+        _print_json(data)
+        return 0
+    _print_metrics_status(data["status"])
+    print(f"Total events: {data['total_events']}")
+    print(f"Withheld counter keys: {data['withheld_counter_keys']}")
+    counters = data["counters"]
+    if not isinstance(counters, dict) or not counters:
+        print("Counters: none")
+        return 0
+    print("Counters:")
+    for key, value in counters.items():
+        print(f"  {key}: {value}")
+    return 0
+
+
+def _stats_purge(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise ParseError("stats purge requires --yes")
+    purged = MetricsStore().purge()
+    print("Metrics purged." if purged else "Metrics already absent.")
+    return 0
+
+
+def _stats_privacy_mode(args: argparse.Namespace) -> int:
+    mode = MetricsRedactionMode(args.mode)
+    store = MetricsStore()
+    current = store.load()
+    enabled = mode != MetricsRedactionMode.OFF
+    updated = MetricsDocument(
+        schema_version=current.schema_version,
+        enabled=enabled,
+        retention_days=current.retention_days,
+        redaction_mode=mode,
+        max_bytes=current.max_bytes,
+        buckets=current.buckets,
+        updated_at=current.updated_at,
+    )
+    store.save(updated)
+    print(f"Metrics privacy mode: {mode.value}")
+    print(f"Metrics enabled: {_on_off(enabled)}")
+    if mode == MetricsRedactionMode.DETAILED:
+        print("Detailed request history is not implemented; aggregate counters remain the only recorded data.")
+    return 0
+
+
+def _metrics_status_data(store: MetricsStore) -> dict[str, object]:
+    exists = store.path.exists()
+    document = store.load()
+    total_events, _ = _metrics_counter_totals(document)
+    return {
+        "metrics_status": "available" if exists else "missing",
+        "enabled": document.enabled,
+        "redaction_mode": document.redaction_mode.value,
+        "retention_days": document.retention_days,
+        "max_bytes": document.max_bytes,
+        "bucket_count": len(document.buckets),
+        "total_events": total_events,
+        "updated_at": document.updated_at,
+        "detailed_history_supported": False,
+    }
+
+
+def _metrics_summary_data(store: MetricsStore) -> dict[str, object]:
+    document = store.load()
+    total_events, counters = _metrics_counter_totals(document)
+    visible_counters = {
+        key: value
+        for key, value in counters.items()
+        if key.startswith(VISIBLE_STATS_COUNTER_PREFIXES)
+    }
+    buckets = [
+        {
+            "bucket_start": bucket.bucket_start,
+            "bucket_end": bucket.bucket_end,
+            "total_events": sum(bucket.counters.values()),
+            "counter_count": len(bucket.counters),
+        }
+        for bucket in document.buckets
+    ]
+    return {
+        "status": _metrics_status_data(store),
+        "total_events": total_events,
+        "counters": dict(sorted(visible_counters.items())),
+        "withheld_counter_keys": len(counters) - len(visible_counters),
+        "buckets": buckets,
+    }
+
+
+def _metrics_counter_totals(document: MetricsDocument) -> tuple[int, dict[str, int]]:
+    counters: dict[str, int] = {}
+    total_events = 0
+    for bucket in document.buckets:
+        for key, value in bucket.counters.items():
+            total_events += value
+            counters[key] = counters.get(key, 0) + value
+    return total_events, dict(sorted(counters.items()))
+
+
+def _print_metrics_status(data: dict[str, object]) -> None:
+    print(f"Metrics: {data['metrics_status']}")
+    print(f"Enabled: {_on_off(bool(data['enabled']))}")
+    print(f"Privacy mode: {data['redaction_mode']}")
+    print(f"Retention days: {data['retention_days']}")
+    print(f"Buckets: {data['bucket_count']}")
+    print(f"Detailed history supported: {_on_off(bool(data['detailed_history_supported']))}")
 
 
 def _rules_explain(args: argparse.Namespace) -> int:

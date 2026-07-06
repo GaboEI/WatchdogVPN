@@ -55,6 +55,15 @@ Interactive commands:
 watchdogvpn tui
 ```
 
+Python runtime commands:
+
+```sh
+watchdog stats status [--json]
+watchdog stats summary [--json]
+watchdog stats purge --yes
+watchdog stats privacy-mode <off|aggregate|detailed>
+```
+
 ## Runtime Commands
 
 ### `watchdogvpn status`
@@ -106,6 +115,60 @@ VPN
 ```
 
 `VPN` is kept because it is short and already familiar for interactive use.
+
+## Observability Stats
+
+### `watchdog stats status`
+
+Shows local observability metrics state.
+
+```sh
+watchdog stats status
+watchdog stats status --json
+```
+
+The command is read-only and does not create `metrics.json` when metrics are
+absent. It reports enabled state, privacy mode, retention, bucket count, total
+aggregate event count and whether detailed request history is supported.
+
+Detailed request history is not supported in Phase 16.
+
+### `watchdog stats summary`
+
+Shows aggregate local metrics counters.
+
+```sh
+watchdog stats summary
+watchdog stats summary --json
+```
+
+The summary exposes known aggregate counter families only. Unknown or
+DNS-query-like counter keys are withheld from the summary and counted as
+`withheld_counter_keys`.
+
+### `watchdog stats purge`
+
+Purges the local metrics store.
+
+```sh
+watchdog stats purge --yes
+```
+
+The command refuses to run without `--yes`.
+
+### `watchdog stats privacy-mode`
+
+Sets the local metrics privacy mode.
+
+```sh
+watchdog stats privacy-mode off
+watchdog stats privacy-mode aggregate
+watchdog stats privacy-mode detailed
+```
+
+`off` disables metrics recording. `aggregate` enables aggregate counters.
+`detailed` stores the policy mode value but does not enable request history,
+because detailed history is not implemented in Phase 16.
 
 ### `watchdogvpn version`
 
