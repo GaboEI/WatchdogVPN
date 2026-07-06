@@ -50,12 +50,13 @@ These items are planned phases, not all current user-facing features:
 | 16 | Privacy-preserving observability | Aggregate visibility without silent sensitive history |
 | 17 | Backup, restore and safe sync | Versioned backup/restore, rollback and remote-sync threat review |
 | 18 | Installer v2 migration | Runtime dependency installation and non-destructive update validation |
-| 19 | Full CLI | Complete operator surface after capabilities settle |
-| 20 | CLI-backed field validation | Real-machine validation before final TUI work |
-| 21 | TUI premium experience | Rewire/polish the TUI over proven v2 behavior |
-| 22 | i18n | Translate after CLI/TUI user-facing surfaces stabilize |
-| 23 | Documentation and final cleanup | Final public docs, security notes and cleanup |
-| 24 | v2.0.0 release | Final validation, tag and release |
+| 19 | LAN sharing and gateway mode | Branch-gated LAN proxy/gateway capability for network operators |
+| 20 | Full CLI | Complete operator surface after capabilities settle |
+| 21 | CLI-backed field validation | Real-machine validation before final TUI work |
+| 22 | TUI premium experience | Rewire/polish the TUI over proven v2 behavior |
+| 23 | i18n | Translate after CLI/TUI user-facing surfaces stabilize |
+| 24 | Documentation and final cleanup | Final public docs, security notes and cleanup |
+| 25 | v2.0.0 release | Final validation, tag and release |
 
 ## Protocol Positioning
 
@@ -78,6 +79,8 @@ censorship-resistant by default.
 - No desktop GUI rewrite in v2.0.0.
 - No silent changes to user-owned provider software, profiles, private keys or
   account state.
+- No LAN proxy/gateway work directly on `main`; it must be built on a
+  dedicated branch and merged only after VM-only validation.
 - No final TUI work until the CLI-backed behavior is complete and field-tested.
 
 ## Website Timing

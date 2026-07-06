@@ -72,6 +72,17 @@ favor privacy.
 The CLI is the validation and operator surface. The final TUI comes later, once
 the behavior it renders is proven through CLI-backed real-world use.
 
+### LAN Sharing and Gateway Mode
+
+WatchdogVPN should support network-operator workflows where the host can
+intentionally share a protected path with LAN devices before the final CLI is
+frozen. This includes LAN proxy sharing and, as a separate higher-risk
+capability, full gateway/router mode. This is valuable for people who manage
+networks, servers and multi-device labs, but it changes the trust boundary and
+must be built with exceptional care: a dedicated branch, VM-only network
+validation, explicit bind controls, firewall UX, kill-switch coverage for
+LAN-originated traffic, DNS leak checks and teardown validation before merge.
+
 ### Website and Public Docs
 
 The public website will become a commercial front door plus a manual/docs
@@ -95,6 +106,8 @@ Every major phase should close with:
 - Provider endorsement/certification.
 - Claims that compatibility protocols are censorship-resistant by default.
 - Silent removal of user-owned provider/account/profile data.
+- LAN proxy sharing or gateway/router mode in the current mainline runtime
+  before the dedicated branch/phase validates the security model.
 
 ## Future Direction After v2.0.0
 

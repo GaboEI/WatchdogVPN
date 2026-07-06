@@ -65,12 +65,21 @@ These are planned phases, not current user-facing promises:
 | DNS/network hardening | refine DNS diagnostics, time checks and LAN-service decisions |
 | Privacy-preserving observability | aggregate stats without silently logging sensitive browsing history |
 | Backup/restore/sync | safe versioned backups, restore rollback and remote-sync threat review |
+| LAN sharing / gateway mode | branch-gated LAN proxy and gateway capability for network operators |
 | Full CLI | complete operator surface after capabilities settle |
 | Field validation | real CLI-driven validation before final TUI work |
 | TUI premium experience | final v2 TUI over proven behavior |
 
 Detailed sequencing lives in the local master plan used by the maintainer. The
 public roadmap summary is in [ROADMAP.md](ROADMAP.md).
+
+Before the final CLI is frozen, WatchdogVPN is expected to grow a carefully
+gated LAN sharing track for network operators: LAN proxy sharing and, later,
+full gateway/router mode for devices that intentionally use the WatchdogVPN
+host as their protected path. That work is not enabled in the current mainline
+runtime; it requires a dedicated branch, VM-only network validation, explicit
+bind/firewall controls, kill-switch coverage and DNS leak validation before
+merge.
 
 ## Protocol Support
 
