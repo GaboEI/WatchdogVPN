@@ -356,6 +356,98 @@ class BackupManagerTests(unittest.TestCase):
                     mode="merge",
                 )
 
+    def test_selection_state_restore_rejects_missing_active_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            backup = BackupManager(config_dir=root).create_backup(
+                root / "selection.zip",
+                sections=["selection-state"],
+            ).path
+            ProfileStore(root / "profiles.json").remove("profile-one")
+            StateManager(root / "state.toml").save({"active_profile_id": ""})
+
+            with self.assertRaisesRegex(BackupValidationError, "active_profile_id"):
+                BackupManager(config_dir=root).restore_backup(
+                    backup,
+                    sections=["selection-state"],
+                    replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+                )
+
+            self.assertEqual(StateManager(root / "state.toml").load()["active_profile_id"], "")
+
+    def test_provider_state_restore_updates_existing_metadata_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            target = Path(tmp) / "target"
+            source.mkdir()
+            target.mkdir()
+            self.seed_config(source)
+            self.seed_config(target)
+            ProviderStore(source / "providers.json").add(
+                Provider(
+                    id="provider-two",
+                    name="Provider Two",
+                    url="https://provider-two.example/sub",
+                    last_updated=datetime(2026, 7, 7, 13, 0, tzinfo=timezone.utc),
+                    profiles=[],
+                    metadata={"traffic_used": "2 GB"},
+                )
+            )
+            ProviderStore(target / "providers.json").add(
+                Provider(
+                    id="provider-one",
+                    name="Local Provider Name",
+                    url="https://local-provider.example/sub",
+                    last_updated=None,
+                    profiles=["local-profile"],
+                    rotation_enabled=False,
+                    metadata={"traffic_used": "old"},
+                )
+            )
+            backup = BackupManager(config_dir=source).create_backup(
+                Path(tmp) / "provider-state.zip",
+                sections=["provider-state"],
+            ).path
+
+            BackupManager(config_dir=target).restore_backup(
+                backup,
+                sections=["provider-state"],
+                replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+            )
+
+            providers = ProviderStore(target / "providers.json").list()
+            self.assertEqual([provider.id for provider in providers], ["provider-one"])
+            provider = providers[0]
+            self.assertEqual(provider.name, "Local Provider Name")
+            self.assertEqual(provider.url, "https://local-provider.example/sub")
+            self.assertEqual(provider.profiles, ["local-profile"])
+            self.assertFalse(provider.rotation_enabled)
+            self.assertEqual(provider.last_updated, datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc))
+            self.assertEqual(provider.metadata, {"traffic_used": "1 GB"})
+
+    def test_provider_state_rejects_invalid_last_updated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            clean = BackupManager(config_dir=root).create_backup(
+                root / "provider-state.zip",
+                sections=["provider-state"],
+            ).path
+            broken = root / "broken-provider-state.zip"
+
+            with ZipFile(clean) as source, ZipFile(broken, "w", compression=ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename == "provider-state.json":
+                        payload = json.loads(data)
+                        payload["items"][0]["last_updated"] = "not-a-date"
+                        data = json.dumps(payload).encode()
+                    target.writestr(item.filename, data)
+
+            with self.assertRaisesRegex(BackupValidationError, "last_updated"):
+                BackupManager(config_dir=root).inspect_backup(broken)
+
     def seed_config(self, root: Path) -> None:
         AppConfig(root / "config.toml").save(AppConfig(root / "config.toml").load())
         ProfileStore(root / "profiles.json").add(

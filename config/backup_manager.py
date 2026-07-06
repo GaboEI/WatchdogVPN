@@ -409,6 +409,7 @@ class BackupManager:
                 provider_state = _require_object(item, "provider-state item")
                 if not isinstance(provider_state.get("id"), str):
                     raise BackupValidationError("provider-state item id must be a string")
+                _parse_optional_datetime(provider_state.get("last_updated"))
                 _require_object(provider_state.get("metadata", {}), "provider-state metadata")
             return data
         if entry == "backup-policy.json":
@@ -478,7 +479,9 @@ class BackupManager:
             elif entry == "node-groups.json":
                 self._write_json_file(self.config_dir / "node_groups.json", data["items"])
             elif entry == "selection-state.json":
-                StateManager(self.config_dir / "state.toml").save(data["state"])
+                StateManager(self.config_dir / "state.toml").save(
+                    self._selection_state_document(data["state"])
+                )
             elif entry == "dns-policy.json":
                 DNSPolicyStore(self.config_dir / "dns-policy.json").save(
                     DNSPolicy.from_dict(data["policy"])
@@ -487,7 +490,9 @@ class BackupManager:
                 MetricsStore(self.config_dir / "metrics.json").save(
                     _metrics_policy_document(data)
                 )
-            elif entry in {"provider-state.json", "backup-policy.json", "metadata.json"}:
+            elif entry == "provider-state.json":
+                self._apply_provider_state(data["items"])
+            elif entry in {"backup-policy.json", "metadata.json"}:
                 continue
             elif entry == "diagnostics.json":
                 continue
@@ -517,6 +522,32 @@ class BackupManager:
         for item in groups:
             group = RuleGroup.from_dict(item)
             dump_json(rules_dir / f"{validate_group_name(group.name)}.json", group.to_dict())
+
+    def _selection_state_document(self, state: dict[str, Any]) -> dict[str, Any]:
+        validated = _validate_state(state, self.config_dir / "state.toml")
+        active_profile_id = validated.get("active_profile_id", "")
+        if active_profile_id:
+            profile_ids = {
+                profile.id
+                for profile in ProfileStore(self.config_dir / "profiles.json").list()
+            }
+            if active_profile_id not in profile_ids:
+                raise BackupValidationError(
+                    f"selection-state active_profile_id is not available: {active_profile_id}"
+                )
+        return validated
+
+    def _apply_provider_state(self, items: list[dict[str, Any]]) -> None:
+        store = ProviderStore(self.config_dir / "providers.json")
+        providers_by_id = {provider.id: provider for provider in store.list()}
+        for item in items:
+            provider_id = str(item.get("id", "")).strip()
+            provider = providers_by_id.get(provider_id)
+            if provider is None:
+                continue
+            provider.last_updated = _parse_optional_datetime(item.get("last_updated"))
+            provider.metadata = dict(_require_object(item.get("metadata", {}), "provider-state metadata"))
+            store.update(provider)
 
     def _merge_rule_groups(self, groups: list[dict[str, Any]], *, timestamp: str) -> None:
         store = RuleStore(self.config_dir / "rules")
@@ -617,6 +648,17 @@ def _metrics_policy_document(data: dict[str, Any]) -> MetricsDocument:
             "updated_at": data.get("updated_at"),
         }
     )
+
+
+def _parse_optional_datetime(value: object) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise BackupValidationError("provider-state last_updated must be a string or null")
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise BackupValidationError("provider-state last_updated must be ISO-8601") from exc
 
 
 def _normalize_sections(
