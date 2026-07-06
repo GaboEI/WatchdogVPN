@@ -36,6 +36,12 @@ from rules.rule_store import RuleStore
 BACKUP_SCHEMA_VERSION = 1
 BACKUP_SECTION_SCHEMA_VERSION = 1
 BACKUP_PRODUCT = "WatchdogVPN"
+BACKUP_ENCRYPTION_SUPPORTED = False
+BACKUP_SENSITIVE_WARNING = (
+    "Backup may contain private keys, passwords, provider tokens, subscription "
+    "URLs, routing policy, app policy and local selection state. Store and share "
+    "it as sensitive data."
+)
 
 SECTION_FILE_BY_NAME = {
     "settings": "settings.json",
@@ -109,7 +115,12 @@ class BackupManager:
         reason: str = "manual",
         sections: Iterable[str] | None = None,
         diagnostics: dict[str, Any] | None = None,
+        encrypt: bool = False,
     ) -> BackupResult:
+        if encrypt:
+            raise BackupValidationError(
+                "backup encryption is not implemented; write plaintext backup only after warning"
+            )
         created_at = _utc_now()
         output_path = output_path or self._default_backup_path(created_at, reason)
         selected_sections = _normalize_sections(sections)
@@ -277,8 +288,15 @@ class BackupManager:
                 if entry in sections
             },
             "sensitive": True,
+            "sensitive_warning": BACKUP_SENSITIVE_WARNING,
+            "encryption": {
+                "enabled": False,
+                "supported": BACKUP_ENCRYPTION_SUPPORTED,
+                "format": None,
+            },
             "notes": [
-                "backup may contain private keys, provider tokens and routing policy",
+                BACKUP_SENSITIVE_WARNING,
+                "backup encryption is not implemented in this format version",
                 "metrics-policy excludes metrics history and counters",
             ],
         }
@@ -409,6 +427,10 @@ class BackupManager:
             raise BackupValidationError("unsupported backup schema_version")
         if manifest.get("product") != BACKUP_PRODUCT:
             raise BackupValidationError("backup product is not WatchdogVPN")
+        encryption = manifest.get("encryption", {"enabled": False})
+        encryption_data = _require_object(encryption, "manifest.encryption")
+        if encryption_data.get("enabled") is not False:
+            raise BackupValidationError("encrypted backups are not supported")
         section_files = _require_object(manifest.get("section_files"), "manifest.section_files")
         sections = _require_list(manifest.get("sections"), "manifest.sections")
         normalized_sections = _normalize_sections(sections, default=())
@@ -852,7 +874,9 @@ def _utc_now() -> str:
 __all__ = [
     "BACKUP_SCHEMA_VERSION",
     "BACKUP_SECTION_SCHEMA_VERSION",
+    "BACKUP_ENCRYPTION_SUPPORTED",
     "AUTO_BACKUP_REASONS",
+    "BACKUP_SENSITIVE_WARNING",
     "BackupError",
     "BackupManager",
     "BackupResult",

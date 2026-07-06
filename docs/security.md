@@ -179,6 +179,21 @@ Future backups may include metrics policy metadata, but metrics history/counters
 must not be included in normal backup or remote sync flows without a separate
 sensitive-data decision.
 
+## Backup Sensitivity
+
+WatchdogVPN backups are plaintext ZIP files unless a future reviewed encrypted
+format is explicitly implemented. Backup manifests are marked sensitive and warn
+that exports may contain private keys, passwords, provider tokens, subscription
+URLs, routing policy, app policy and local selection state.
+
+Encrypted backup input/output is not supported in the current format. Backup
+creation requests that ask for encryption are rejected, and backup manifests
+that claim `encryption.enabled=true` are rejected on inspection/restore.
+
+Backups are local files. WatchdogVPN must not silently upload backup archives.
+Future remote or LAN sync must first define acceptable client-side encryption,
+conflict handling and credential storage.
+
 ## Reporting Security Issues
 
 For the alpha release, report security concerns through GitHub issues or direct

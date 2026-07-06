@@ -11,7 +11,8 @@ sections without overwriting existing local data.
 It does not add user-facing CLI commands. It also does not add merge behavior
 for settings, profiles, providers, DNS policy, selection state, provider state,
 metrics policy, backup policy or diagnostics. Bounded auto-backup retention was
-added later in Task 17.5.
+added later in Task 17.5. Plaintext sensitive-warning and encryption rejection
+behavior was added later in Task 17.6.
 
 ## Restore Modes
 
@@ -93,7 +94,7 @@ The following remain later Phase 17 work:
 - user-facing CLI wiring;
 - CLI copy and confirmation UX;
 - merge behavior for profiles/providers if deliberately designed;
-- backup encryption;
+- reviewed encrypted backup format if encryption is revisited;
 - WebDAV/LAN sync;
 - uninstall flow integration.
 

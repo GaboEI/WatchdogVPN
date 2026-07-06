@@ -14,7 +14,9 @@ from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from config.backup_manager import (
     BACKUP_ENTRIES,
+    BACKUP_ENCRYPTION_SUPPORTED,
     BACKUP_SCHEMA_VERSION,
+    BACKUP_SENSITIVE_WARNING,
     AUTO_BACKUP_REASONS,
     BackupManager,
     BackupValidationError,
@@ -53,6 +55,15 @@ class BackupManagerTests(unittest.TestCase):
                 manifest = json.loads(archive.read("manifest.json"))
                 self.assertEqual(manifest["schema_version"], BACKUP_SCHEMA_VERSION)
                 self.assertTrue(manifest["sensitive"])
+                self.assertEqual(manifest["sensitive_warning"], BACKUP_SENSITIVE_WARNING)
+                self.assertEqual(
+                    manifest["encryption"],
+                    {
+                        "enabled": False,
+                        "supported": BACKUP_ENCRYPTION_SUPPORTED,
+                        "format": None,
+                    },
+                )
                 metrics_policy = json.loads(archive.read("metrics-policy.json"))
                 self.assertFalse(metrics_policy["history_included"])
                 self.assertNotIn("buckets", metrics_policy)
@@ -97,6 +108,19 @@ class BackupManagerTests(unittest.TestCase):
                     target.writestr(item.filename, data)
             with self.assertRaisesRegex(BackupValidationError, "schema_version"):
                 manager.inspect_backup(unsupported)
+
+            encrypted = root / "encrypted.zip"
+            with ZipFile(clean) as source, ZipFile(encrypted, "w", compression=ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename == "manifest.json":
+                        manifest = json.loads(data)
+                        manifest["encryption"]["enabled"] = True
+                        manifest["encryption"]["format"] = "example"
+                        data = json.dumps(manifest).encode()
+                    target.writestr(item.filename, data)
+            with self.assertRaisesRegex(BackupValidationError, "encrypted"):
+                manager.inspect_backup(encrypted)
 
     def test_restore_validates_before_mutation_and_creates_pre_restore_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -264,6 +288,14 @@ class BackupManagerTests(unittest.TestCase):
                 manager.create_backup(root / "bad.zip", sections=["secrets"])
             with self.assertRaisesRegex(BackupValidationError, "duplicate"):
                 manager.create_backup(root / "bad.zip", sections=["profiles", "profiles"])
+
+    def test_create_backup_rejects_encryption_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+
+            with self.assertRaisesRegex(BackupValidationError, "encryption is not implemented"):
+                BackupManager(config_dir=root).create_backup(root / "encrypted.zip", encrypt=True)
 
     def test_replace_restore_requires_strong_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
