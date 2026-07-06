@@ -29,6 +29,7 @@ from daemon.protocol import (
 
 DEFAULT_SOCKET_PATH = Path("/run/watchdogvpn/control.sock")
 DEFAULT_TIMEOUT_SECONDS = 5.0
+NODE_GROUP_AUTO_TEST_TIMEOUT_SECONDS = 120.0
 SOCKET_PATH_ENV = "WATCHDOGVPN_SOCKET_PATH"
 EVENT_SOCKET_PATH_ENV = "WATCHDOGVPN_EVENT_SOCKET_PATH"
 
@@ -63,11 +64,15 @@ class WatchdogIPCClient:
         return self.request(COMMAND_ROTATE, {"force": force})
 
     def node_group_auto_test(self, group_name: str) -> Response:
-        return self.request(COMMAND_NODE_GROUP_AUTO_TEST, {"group_name": group_name})
+        return self.request(
+            COMMAND_NODE_GROUP_AUTO_TEST,
+            {"group_name": group_name},
+            timeout=NODE_GROUP_AUTO_TEST_TIMEOUT_SECONDS,
+        )
 
-    def request(self, command: str, payload: dict | None = None) -> Response:
+    def request(self, command: str, payload: dict | None = None, timeout: float | None = None) -> Response:
         request_line = encode_request(command, payload or {})
-        with self._connect(self.request_socket_path) as sock:
+        with self._connect(self.request_socket_path, timeout=timeout) as sock:
             try:
                 sock.sendall(request_line)
                 return decode_response_line(_read_line(sock))
@@ -92,7 +97,7 @@ class WatchdogIPCClient:
                 except EOFError:
                     return
 
-    def _connect(self, path: Path) -> socket.socket:
+    def _connect(self, path: Path, timeout: float | None = None) -> socket.socket:
         try:
             exists = path.exists()
         except PermissionError as exc:
@@ -100,7 +105,7 @@ class WatchdogIPCClient:
         if not exists:
             raise DaemonNotRunningError()
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout)
+        sock.settimeout(self.timeout if timeout is None else timeout)
         try:
             sock.connect(str(path))
         except FileNotFoundError as exc:

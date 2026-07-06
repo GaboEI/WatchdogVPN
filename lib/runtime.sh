@@ -11,6 +11,7 @@ PYTHON_RUNTIME_PACKAGES=(
   dns
   drivers
   models
+  node_groups
   parsers
   providers
   rotation

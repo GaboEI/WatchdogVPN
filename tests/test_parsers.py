@@ -103,6 +103,14 @@ class UriParserTests(unittest.TestCase):
         self.assertEqual(profile.config["port"], 443)
         self.assertEqual(profile.config["password"], "/secret")
 
+    def test_parse_trojan_unescaped_slash_in_password(self) -> None:
+        profile = parse_uri("trojan://sec/ret/value@example.com:443?security=tls#demo")
+        self.assertEqual(profile.protocol, ProtocolType.TROJAN)
+        self.assertEqual(profile.name, "demo")
+        self.assertEqual(profile.config["host"], "example.com")
+        self.assertEqual(profile.config["port"], 443)
+        self.assertEqual(profile.config["password"], "sec/ret/value")
+
     def test_parse_hysteria2_alias(self) -> None:
         profile = parse_uri("hy2://password@example.com:443?sni=example.com")
         self.assertEqual(profile.protocol, ProtocolType.HYSTERIA2)

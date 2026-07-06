@@ -143,6 +143,46 @@ class CliAppPolicyCommandTests(unittest.TestCase):
 
         self.assertEqual(json.loads(status.stdout)["rule_count"], 0)
 
+    def test_add_group_action_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "app-policy",
+                    "add",
+                    "--process-name",
+                    "curl",
+                    "--action",
+                    "group:phase14-vm",
+                    "--id",
+                    "curl-phase14",
+                    "--json",
+                ],
+                tmp,
+            )
+
+            added = json.loads(result.stdout)["added"]
+            self.assertEqual(added["id"], "curl-phase14")
+            self.assertEqual(added["action"], "group:phase14-vm")
+
+    def test_add_group_action_rule_human_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "app-policy",
+                    "add",
+                    "--process-name",
+                    "curl",
+                    "--action",
+                    "group:phase14-vm",
+                    "--id",
+                    "curl-phase14",
+                ],
+                tmp,
+            )
+
+        self.assertIn("Added app policy rule: curl-phase14", result.stdout)
+        self.assertIn("Action: group:phase14-vm", result.stdout)
+
     def test_add_process_path_rule_with_custom_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(
@@ -180,8 +220,9 @@ class CliAppPolicyCommandTests(unittest.TestCase):
                 check=False,
             )
 
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("invalid choice", result.stderr)
+        self.assertEqual(result.returncode, 70)
+        self.assertIn("rule.action action 'auto' is scheduled for later multi-outbound support", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_status_json_reports_invalid_policy_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

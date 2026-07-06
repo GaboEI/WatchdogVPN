@@ -81,6 +81,15 @@ class CliProfileCommandTests(unittest.TestCase):
             listed = self.run_watchdog(["profile", "list", "--json"], tmp)
             self.assertEqual(json.loads(listed.stdout)[0]["protocol"], "hysteria2")
 
+    def test_profile_add_empty_uri_reports_parse_error_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["profile", "add", "--uri", ""], tmp, check=False)
+
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("unsupported URI scheme: missing", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_profile_enable_disable_rotation_and_remove(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.run_watchdog(

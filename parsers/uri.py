@@ -87,6 +87,16 @@ def _allow_local_value(value: Any) -> bool:
 
 
 def _normalize_path_authority(parsed, preserve_leading_slash: bool = False):
+    if parsed.hostname and parsed.path.startswith("/") and "@" in parsed.path and _safe_port(parsed, "URI") is None:
+        path_credential, authority_host = parsed.path.split("@", 1)
+        credential = f"{parsed.netloc}{path_credential}".replace("/", "%2F")
+        authority = f"{credential}@{authority_host}"
+        rebuilt = f"{parsed.scheme}://{authority}"
+        if parsed.query:
+            rebuilt = f"{rebuilt}?{parsed.query}"
+        if parsed.fragment:
+            rebuilt = f"{rebuilt}#{parsed.fragment}"
+        return urlparse(rebuilt)
     if parsed.hostname or not parsed.path.startswith("/") or "@" not in parsed.path:
         return parsed
     authority = parsed.path.lstrip("/")

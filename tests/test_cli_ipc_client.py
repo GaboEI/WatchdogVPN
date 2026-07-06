@@ -31,6 +31,7 @@ from cli.ipc.errors import (
 from config.profile_store import ProfileStore
 from daemon.ipc_server import IPCServer
 from daemon.protocol import EVENT_STATE_CHANGED, encode_event
+from daemon.protocol import encode_response
 from daemon.runtime_worker import RuntimeWorker
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -232,6 +233,16 @@ class WatchdogIPCClientErrorTests(unittest.TestCase):
 
         self.assertEqual(str(cm.exception), DAEMON_TIMEOUT_MESSAGE)
 
+    def test_node_group_auto_test_uses_extended_timeout(self) -> None:
+        line = encode_response(True, {"group_name": "phase14-vm", "result": "unavailable"})
+        with delayed_one_line_unix_server(line, delay=0.2) as socket_path:
+            client = WatchdogIPCClient(socket_path, timeout=0.05)
+
+            response = client.node_group_auto_test("phase14-vm")
+
+        self.assertTrue(response.ok)
+        self.assertEqual(response.payload["group_name"], "phase14-vm")
+
     def test_malformed_response_maps_to_unexpected_response_error(self) -> None:
         with one_line_unix_server(b"not-json\n") as socket_path:
             client = WatchdogIPCClient(socket_path, timeout=1.0)
@@ -308,6 +319,24 @@ class one_line_unix_server:
         except OSError:
             return
         with conn:
+            try:
+                conn.sendall(self.line)
+            except OSError:
+                return
+
+
+class delayed_one_line_unix_server(one_line_unix_server):
+    def __init__(self, line: bytes, delay: float) -> None:
+        super().__init__(line)
+        self.delay = delay
+
+    def _serve(self) -> None:
+        try:
+            conn, _ = self.server.accept()
+        except OSError:
+            return
+        with conn:
+            time.sleep(self.delay)
             try:
                 conn.sendall(self.line)
             except OSError:

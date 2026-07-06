@@ -418,8 +418,7 @@ def _build_parser() -> argparse.ArgumentParser:
     app_policy_add_parser.add_argument(
         "--action",
         required=True,
-        choices=[item.value for item in AppPolicyAction],
-        help="Route action",
+        help="Route action: current, direct, block, or group:<name>",
     )
     app_policy_add_parser.add_argument("--id", help="Rule ID; generated when omitted")
     app_policy_add_parser.add_argument("--json", action="store_true", help="Print JSON")
@@ -504,7 +503,7 @@ def _profile_add(args: argparse.Namespace) -> int:
         if profile is None:
             _error("clipboard does not contain supported profile content")
             return 66
-    elif args.uri:
+    elif args.uri is not None:
         profile = provider.from_uri(args.uri)
     elif args.file:
         profile = provider.from_file(args.file)
@@ -1159,7 +1158,7 @@ def _app_policy_add(args: argparse.Namespace) -> int:
         _print_json(data)
     else:
         print(f"Added app policy rule: {rule.id}")
-        print(f"Action: {rule.action.value}")
+        print(f"Action: {_app_policy_action_value(rule.action)}")
         print(f"Confidence: {rule.match_confidence.value}")
     return 0
 
@@ -1201,6 +1200,10 @@ def _app_policy_status_data(
             for rule in policy.rules
         ],
     }
+
+
+def _app_policy_action_value(action: AppPolicyAction | str) -> str:
+    return action.value if isinstance(action, AppPolicyAction) else action
 
 
 def _print_app_policy(data: dict[str, object]) -> None:

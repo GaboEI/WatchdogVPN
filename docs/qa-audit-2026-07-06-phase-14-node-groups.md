@@ -2,7 +2,7 @@
 
 > Date: 2026-07-06
 > Task: PHASE 14 - Node Groups & Auto-Selection Policy, Task 14.9 - Node group audit closure
-> Status: LOCAL AUDIT COMPLETE. No unresolved local HIGH or MEDIUM findings remain. VM validation is still required before full Phase 14 closure.
+> Status: COMPLETE. Local audit and VM validation are complete. No unresolved HIGH or MEDIUM findings remain.
 
 ## 1. Scope
 
@@ -17,38 +17,37 @@ This audit covers Phase 14 Tasks 14.1 through 14.8:
 - configurable health/latency probe settings
 - minimal CLI validation commands
 
-The local audit focuses on code correctness, fail-closed behavior,
-misleading operator output, stale health/latency handling, daemon
-serialization, and claims that can be verified without live TUN/network
-mutation. Real daemon/TUN/latency behavior with actual nodes is explicitly
-deferred to the VM validation pass.
+The audit covers code correctness, fail-closed behavior, misleading operator
+output, stale health/latency handling, daemon serialization, and the VM/live
+paths that require installed systemd service behavior, real TUN/network
+mutation, real nodes, and real latency measurements.
 
 ## 2. Coverage Checklist
 
 | Surface | Reviewed criteria | Result |
 | --- | --- | --- |
-| Autonomous watchdog loop | Timer reads bounded config, enqueues only onto `RuntimeWorker`, tolerates corrupt config and stopped worker, starts/stops with daemon. | Reviewed. No open local finding. VM must still confirm the loop runs under the installed service. |
-| Scheduled rotation loop | Separate timer, disabled-by-default polling, independent gate, serialized worker execution, empty-pool no-op before kill-switch path. | Reviewed. No open local finding. VM must still confirm scheduled firing under the installed service. |
+| Autonomous watchdog loop | Timer reads bounded config, enqueues only onto `RuntimeWorker`, tolerates corrupt config and stopped worker, starts/stops with daemon. | PASS. VM confirmed loop persistence under the installed service after restart with a 5-second interval. |
+| Scheduled rotation loop | Separate timer, disabled-by-default polling, independent gate, serialized worker execution, empty-pool no-op before kill-switch path. | PASS. Local behavior reviewed; VM confirmed `rotation.scheduled_interval_hours off` remained disabled during validation. Scheduled firing was not forced because it was outside the conservative live-test window. |
 | Node group model/store | Strict schema, name identity, selection-mode invariants, direct include/exclude contradiction rejection, atomic store mutation. | Reviewed. No open local finding. |
 | Candidate resolution | Membership expansion, exclusion precedence, provider/origin/health filtering through `pool_builder.filter_eligible_profiles()`, `resilient_only` fail-closed. | Reviewed. No open local finding. |
 | Runtime integration | Group target discovery follows rule/app-policy priority, missing/disabled groups fail closed, manual pins do not fall back, `RotationEngine` remains unchanged. | Reviewed. No open local finding. |
 | Scoring and stale latency | `None` is preserved for unmeasured data, latency is fresh-or-stale, latency is only a tie-break, not part of total. | Reviewed. No open local finding. |
-| CLI validation commands | Store-only commands avoid daemon dependency, `auto-test` runs through IPC/worker, config setter is Phase-14 allowlisted, output does not overstate degraded nodes after AUD-P14-002. | Reviewed. AUD-P14-002 found and resolved locally. |
+| CLI validation commands | Store-only commands avoid daemon dependency, `auto-test` runs through IPC/worker, config setter is Phase-14 allowlisted, output does not overstate degraded nodes after AUD-P14-002. | PASS. AUD-P14-002, AUD-P14-005, and AUD-P14-006 found and resolved. |
 | Daemon/IPC serialization | New `node_group_auto_test` command validates payload, returns structured errors, and runs on the same worker thread as connect/disconnect/rotate/timers. | Reviewed. No open local finding. |
 
 ## 3. Acceptance Matrix
 
 | Criterion | Audit result | Evidence |
 | --- | --- | --- |
-| Autonomous watchdog loop runs the existing engine on a bounded interval | LOCAL PASS, VM pending | `daemon/watchdog_loop.py`; `tests/test_daemon_watchdog_loop.py`; `RuntimeWorker.submit_tick()` serialization tests. Installed-service behavior still needs VM evidence. |
-| Scheduled proactive rotation fires through existing rotation machinery | LOCAL PASS, VM pending | `daemon/scheduled_rotation_loop.py`; `WatchdogRuntime.scheduled_rotate()`; `tests/test_daemon_scheduled_rotation_loop.py`; `tests/test_core_watchdog.py` scheduled-rotation cases. Installed-service timing still needs VM evidence. |
+| Autonomous watchdog loop runs the existing engine on a bounded interval | PASS | `daemon/watchdog_loop.py`; `tests/test_daemon_watchdog_loop.py`; `RuntimeWorker.submit_tick()` serialization tests. VM evidence: after setting `watchdog.check_interval_seconds = 5` before daemon restart and connecting a real profile, `/var/lib/watchdogvpn/profiles.json` mtime changed from `1783333061` to `1783333276`, proving installed-service loop activity. |
+| Scheduled proactive rotation fires through existing rotation machinery | PASS WITH SCHEDULED FIRING NOT FORCED | `daemon/scheduled_rotation_loop.py`; `WatchdogRuntime.scheduled_rotate()`; scheduled rotation tests. VM evidence confirmed `rotation.scheduled_interval_hours off` stayed disabled during validation. Manual rotate and auto-test worker paths were exercised live; long-wait scheduled firing was intentionally not forced in the conservative VM window. |
 | Named node groups persist with strict validation | PASS | `node_groups/models.py`, `node_groups/store.py`; `tests/test_node_groups_models.py`, `tests/test_node_groups_store.py`. |
-| Auto-selection does not select unavailable/untrusted profiles | LOCAL PASS, VM pending | Resolver reuses `filter_eligible_profiles()`; `resilient_only` exhaustion and missing/disabled groups fail closed; `auto-test` now only reports measured-OK profiles as selected. Real node behavior still needs VM evidence. |
-| Health and latency are persisted end-to-end | LOCAL PASS, VM pending | `WatchdogRuntime._record_health_result()` and `_checked_and_recorded()`; end-to-end persistence/ranking tests. Real network measurements still need VM evidence. |
-| Rule/app-policy can target a named group | LOCAL PASS, VM pending | `group_target()` is the canonical parser; `WatchdogRuntime._effective_node_group()` scans app-policy and rule groups in traffic-priority order; sing-box still maps to the single active outbound as documented. Real routing still needs VM evidence. |
-| Rotation/recovery and group auto-select do not conflict | LOCAL PASS, VM pending | The selector feeds `RotationEngine` with a scoped ordered pool; `rotation/rotation_engine.py` is unchanged. Live daemon trigger interaction still needs VM evidence. |
-| Operator can inspect why a node was chosen | LOCAL PASS, VM pending | `watchdog node-group auto-test` exposes tested rows and ranked candidate scores; AUD-P14-002 resolved misleading degraded-selection output. Real command output still needs VM evidence. |
-| Phase-specific QA audit has no unresolved HIGH/MEDIUM findings | LOCAL PASS | AUD-P14-001 and AUD-P14-002 are resolved. No additional local HIGH/MEDIUM findings were found. Full phase closure remains pending VM validation. |
+| Auto-selection does not select unavailable/untrusted profiles | PASS | Resolver reuses `filter_eligible_profiles()`; `resilient_only` exhaustion and missing/disabled groups fail closed; VM `auto-test` selected only measured-OK candidates. In a later live run, one candidate measured `degraded` with `latency_ms = null`; the command selected the other measured-OK candidate. |
+| Health and latency are persisted end-to-end | PASS | `WatchdogRuntime._record_health_result()` and `_checked_and_recorded()`; end-to-end persistence/ranking tests. VM `auto-test` measured real latency (`293.052 ms`, `224.824 ms`, later `277.493 ms`) and `watchdog profile list` reflected live `ok`/`degraded` health after persistence. |
+| Rule/app-policy can target a named group | PASS | `group_target()` is the canonical parser; `WatchdogRuntime._effective_node_group()` scans app-policy and rule groups in traffic-priority order. VM validation configured `app-policy` action `group:phase14-vm`; CLI support was fixed by AUD-P14-006. Known limit remains single active outbound only. |
+| Rotation/recovery and group auto-select do not conflict | PASS | The selector feeds `RotationEngine` with a scoped ordered pool; `rotation/rotation_engine.py` is unchanged. VM validation exercised manual connect, manual rotate, auto-test, fail-closed rotation, and watchdog loop through the installed daemon. |
+| Operator can inspect why a node was chosen | PASS | VM `watchdog node-group auto-test phase14-vm --json` exposed tested rows, ranked candidates, real latency, selected profile, and later degraded exclusion. |
+| Phase-specific QA audit has no unresolved HIGH/MEDIUM findings | PASS | AUD-P14-001 through AUD-P14-006 are resolved. No unresolved HIGH or MEDIUM findings remain. |
 
 ## 4. Findings
 
@@ -108,21 +107,120 @@ deferred to the VM validation pass.
   - Added regression tests for all-degraded auto-test output and failed
     disconnect after failed connect.
 
-## 5. Deferred VM Validation
+### AUD-P14-003 - Profile import error paths were not robust for real test URIs
 
-The following are not local code debts; they require the real VM/live-TUN
-environment and must be completed before full Phase 14 closure:
+- Layer: 5 - CLI/Operator diagnostics; Layer 2 - Profile parsing
+- Severity: MEDIUM
+- Status: RESOLVED on 2026-07-06
+- Description: VM import exposed two parser/CLI robustness issues: a Trojan
+  URI with an unescaped slash inside the password failed host/port parsing,
+  and `watchdog profile add --uri ""` reached an internal `AssertionError`
+  instead of a clean parse error.
+- Scenario: A user imports a real URI generated by a provider that leaves a
+  slash unescaped in credentials, or a shell/script accidentally passes an
+  empty URI value.
+- Impact before the fix: Import could fail with a misleading error or
+  traceback. This did not mutate routing, but it blocked legitimate profile
+  setup and violated operator-facing resilience standards.
+- Resolution: `_normalize_path_authority()` now reconstructs the authority
+  for this URI shape and percent-escapes the credential slash before normal
+  parsing. `_profile_add()` now treats an explicitly supplied empty `--uri`
+  as input to validate, returning a clean parser error instead of an
+  unreachable assertion.
+- Evidence: VM import failure reproduced before the fix; regression tests
+  added in `tests/test_parsers.py` and `tests/test_cli_profile_commands.py`.
 
-- installed daemon starts both `WatchdogLoop` and `ScheduledRotationLoop`
-- `watchdog node-group auto-test <real-group>` connects candidates
-  sequentially, measures real latency, persists profile fields, and
-  disconnects cleanly
-- a real `group:<name>` rule causes the daemon to connect the best ranked
-  profile for that group
-- missing, disabled, and exhausted `resilient_only` groups fail closed in
-  live daemon behavior
-- scheduled rotation, manual `rotate --force`, watchdog ticks, and
-  `node-group auto-test` do not overlap or fight in the single worker queue
+### AUD-P14-004 - Installed runtime omitted the `node_groups` package
+
+- Layer: 6 - Install/runtime packaging; Layer 7 - Daemon service
+- Severity: HIGH
+- Status: RESOLVED on 2026-07-06
+- Description: The repository code passed local tests, but the product
+  runtime installer did not copy the new `node_groups` package into
+  `/usr/local/lib/watchdogvpn`.
+- Scenario: After updating the installed runtime and restarting
+  `watchdogvpn.service`, the daemon failed to import
+  `node_groups.models` from `app_policy.models`.
+- Impact before the fix: The installed daemon could not start after update,
+  so all daemon-controlled VPN behavior was unavailable until the runtime
+  package list was corrected.
+- Evidence before the fix: `journalctl -u watchdogvpn` showed
+  `ModuleNotFoundError: No module named 'node_groups'`.
+- Resolution: Added `node_groups` to `PYTHON_RUNTIME_PACKAGES` in
+  `lib/runtime.sh` and pinned it in the install security contract test.
+  Re-running the installer placed `/usr/local/lib/watchdogvpn/node_groups`
+  and the service restarted successfully.
+
+### AUD-P14-005 - CLI IPC timeout was too short for real sequential auto-test
+
+- Layer: 5 - CLI/IPC; Layer 7 - Live validation
+- Severity: MEDIUM
+- Status: RESOLVED on 2026-07-06
+- Description: `watchdog node-group auto-test <group>` used the default
+  5-second IPC timeout even though the daemon command sequentially connects,
+  probes, records, and disconnects multiple real candidates.
+- Scenario: In the VM, the command timed out while the daemon continued the
+  operation and persisted partial health results.
+- Impact before the fix: Operators could see a timeout even though daemon
+  work was still in progress, making the command unreliable for real node
+  validation.
+- Resolution: The IPC client now uses a 120-second timeout for
+  `node_group_auto_test` only, preserving the short default timeout for
+  ordinary requests. Regression coverage confirms the command can outlive
+  the default socket timeout.
+- Evidence: VM retry after reinstall returned structured JSON for both real
+  candidates in approximately 11 seconds.
+
+### AUD-P14-006 - CLI rejected `group:<name>` app-policy actions
+
+- Layer: 5 - CLI/Operator commands
+- Severity: MEDIUM
+- Status: RESOLVED on 2026-07-06
+- Description: The model/runtime already accepted `group:<name>` actions,
+  but `watchdog app-policy add --action ...` used argparse choices limited
+  to enum actions and rejected group targets before validation.
+- Scenario: A user attempts to configure a temporary rule such as
+  `--action group:phase14-vm` for VM validation or operational policy.
+- Impact before the fix: Named group routing could be configured in code but
+  not through the intended CLI command.
+- Resolution: Removed the premature argparse enum restriction and lets the
+  existing policy validator decide validity. Human output now handles both
+  enum actions and string group actions. Regression tests cover JSON and
+  human output.
+
+## 5. VM Validation
+
+The VM/live-TUN validation was completed on 2026-07-06 using the installed
+`watchdogvpn.service`, real TUN mutation, two temporary real profiles, and a
+temporary group named `phase14-vm`. The temporary profiles, app-policy rules,
+and node group were removed before closure.
+
+- Installed daemon: `watchdogvpn.service` was enabled, active, restarted
+  after runtime updates, and answered `watchdog status --json`.
+- Real auto-test: `watchdog node-group auto-test phase14-vm --json`
+  sequentially tested both candidates, measured real latency, persisted
+  health/latency fields, selected the lowest-latency measured-OK candidate,
+  and returned to standby with no active tunnel.
+- Degraded exclusion: a later live run measured one candidate as
+  `degraded` with `latency_ms = null`; the command selected only the
+  measured-OK candidate.
+- Group target: VM app-policy accepted `group:phase14-vm`. Manual rotate
+  through rules mode used the group-scoped candidate set. The single-outbound
+  product limit remains explicit: group targets bias the one active
+  connection, not separate per-app outbound tunnels.
+- Fail closed: a missing group target produced visible
+  `rotation_unavailable` behavior and daemon logs
+  `node_group_target_missing name=phase14-missing` and
+  `rotation_unavailable reason=pool_empty`; there was no silent fallback to
+  the global pool. In the observed VM config the kill switch was off, so the
+  flow reported the error and retried according to the existing recovery
+  behavior rather than claiming traffic blocking.
+- Loops: after configuring a 5-second watchdog interval before service
+  restart, the installed daemon updated profile persistence while connected,
+  proving the loop was active under systemd. Scheduled rotation remained
+  configured off.
+- Cleanup: final VM state had no profiles, no node groups, app-policy
+  disabled with no rules, status `standby`, and no active TUN.
 
 ## 6. Validation
 
@@ -136,24 +234,22 @@ python3 -m unittest tests.test_core_watchdog_node_groups.NodeGroupAutoTestRuntim
 Full-suite and standard closure commands are recorded in the Task 14.9
 master-plan validation notes.
 
-Results from the local closure run:
+Results from the final closure run:
 
-- `python3 -m unittest discover -s tests -p 'test_*.py'` -> 941 tests, with
-  the same 1 pre-existing unrelated sandbox failure in
-  `test_runtime_rules_mode_groups_reach_generated_singbox_config`
-  (`subprocess.run(["ip", "rule", "show"])`).
+- `python3 -m unittest discover -s tests -p 'test_*.py'` -> 946 tests,
+  OK, skipped 1.
 - `bash tests/unit.sh` passed.
 - `bash tests/syntax.sh` passed.
-- `python3 -m compileall -q .` passed.
+- `PYTHONPYCACHEPREFIX=/tmp/watchdogvpn-pycache python3 -m compileall -q .`
+  passed.
 - `git diff --check` passed.
 - `git diff --stat rotation/rotation_engine.py` was empty.
-- No unsafe shell execution flag in files touched by the local Task 14.9
-  changes.
+- No unsafe shell execution flag in files touched by Task 14.9 changes.
 
-## 7. Local Closure Status
+## 7. Closure Status
 
-Task 14.9 is locally complete for code-audit purposes once the standard
-validation commands pass.
+Task 14.9 and Phase 14 are complete.
 
-No unresolved local HIGH or MEDIUM findings remain. Full Phase 14 closure is
-pending VM validation with real network/TUN behavior.
+No unresolved HIGH or MEDIUM findings remain after AUD-P14-001 through
+AUD-P14-006. The live VM validation cleaned up all temporary test profiles,
+node groups, and app-policy rules before closure.
