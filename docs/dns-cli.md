@@ -97,6 +97,9 @@ against temporary files. It should not be used for normal workstation apply.
 `reset` restores the saved DNS snapshot and removes the snapshot file after a
 successful restore.
 
+Confirmed apply preserves an existing rollback snapshot instead of overwriting
+the original resolver state during repeated apply attempts.
+
 ```sh
 ./bin/watchdog dns reset --yes
 ./bin/watchdog dns reset --yes --json

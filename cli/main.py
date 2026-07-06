@@ -1390,15 +1390,26 @@ def _dns_apply(args: argparse.Namespace) -> int:
         _require_dns_entrypoint(entrypoint, timeout=float(args.entrypoint_timeout))
 
     manager = SystemDNSStateManager(resolv_conf_path=Path(args.resolv_conf_path))
+    snapshot_for_apply = None
+    snapshot_preexisting = False
+    if plan["would_apply"]:
+        existing_snapshot = load_snapshot(snapshot_path)
+        if existing_snapshot is None:
+            snapshot_for_apply = manager.save_state(systemd_link=args.systemd_link)
+            _save_dns_snapshot(snapshot_path, snapshot_for_apply)
+        else:
+            snapshot_preexisting = True
     controller = DNSHijackController(manager, entrypoint=entrypoint)
-    result = controller.apply(policy, systemd_link=args.systemd_link)
-    if result.snapshot is not None:
-        _save_dns_snapshot(snapshot_path, result.snapshot)
+    result = controller.apply(
+        policy,
+        snapshot=snapshot_for_apply,
+        systemd_link=args.systemd_link,
+    )
     data = {
         **plan,
         "status": "applied" if result.applied else "skipped",
         "reason": result.reason,
-        "snapshot_saved": result.snapshot is not None,
+        "snapshot_saved": snapshot_preexisting or snapshot_for_apply is not None,
     }
     return _dns_apply_output(args, data)
 
