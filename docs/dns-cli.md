@@ -41,6 +41,23 @@ runtime answers.
 ./bin/watchdog dns test --auto --domain gstatic.com --timeout 3
 ```
 
+## Diagnose
+
+`diagnose` is read-only. It combines configured routing rules, app policy and
+DNS policy to explain how hypothetical traffic would be routed and which DNS
+channel would resolve its domain. It does not observe live packets or perform a
+DNS lookup.
+
+```sh
+./bin/watchdog dns diagnose --domain example.com
+./bin/watchdog dns diagnose --domain example.com --process-name curl --json
+```
+
+The output includes a confidence value. `definitive` means the configured
+static policy was enough to answer. `partial`, `runtime-required` or `unknown`
+mean the command could not honestly prove the full runtime decision from the
+provided inputs.
+
 ## Apply
 
 `apply` can mutate host DNS, so it is guarded. Use `--dry-run` first.

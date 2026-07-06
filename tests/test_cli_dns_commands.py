@@ -12,9 +12,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 import cli.main
+from app_policy.models import AppPolicy, AppPolicyRule
+from app_policy.store import AppPolicyStore
+from config.dns_policy_store import DNSPolicyStore
 from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
 from dns.resolver_inventory import ResolverInventory, ResolverManager
 from dns.state_manager import DNSStateSnapshot
+from rules.models import Rule, RuleGroup
+from rules.rule_store import RuleStore
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -106,6 +111,66 @@ class CliDNSCommandTests(unittest.TestCase):
             data = json.loads(result.stdout)
             self.assertEqual(data["channels"]["configured"], 1)
             self.assertTrue(data["features"]["rules_enabled"])
+
+    def test_dns_diagnose_json_reports_route_and_dns_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            RuleStore(Path(tmp) / "rules").add_group(
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(
+                            id="example-direct",
+                            action="direct",
+                            conditions={"domain": ["example.com"]},
+                        )
+                    ],
+                )
+            )
+            DNSPolicyStore(Path(tmp) / "dns-policy.json").save(
+                DNSPolicy(
+                    channels={
+                        DNSChannelName.DIRECT: DNSChannel(
+                            name=DNSChannelName.DIRECT,
+                            resolvers=[Resolver(uri="udp://1.1.1.1")],
+                        )
+                    }
+                )
+            )
+
+            result = self.run_watchdog(
+                ["dns", "diagnose", "--domain", "example.com", "--json"],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["confidence"], "definitive")
+        self.assertEqual(data["route"]["action"], "direct")
+        self.assertEqual(data["dns"]["channel"], "direct")
+        self.assertEqual(data["dns"]["path"], "direct")
+
+    def test_dns_diagnose_text_reports_app_policy_dns_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            AppPolicyStore(Path(tmp) / "app-policy.json").save(
+                AppPolicy(
+                    enabled=True,
+                    rules=[
+                        AppPolicyRule(
+                            id="curl-block",
+                            action="block",
+                            match={"process_name": ["curl"]},
+                        )
+                    ],
+                )
+            )
+
+            result = self.run_watchdog(
+                ["dns", "diagnose", "--domain", "example.com", "--process-name", "curl"],
+                tmp,
+            )
+
+        self.assertIn("configured policy only, not live traffic observation", result.stdout)
+        self.assertIn("Route action: block", result.stdout)
+        self.assertIn("DNS path: blocked", result.stdout)
 
     def test_dns_apply_requires_confirmation_or_dry_run(self) -> None:
         with redirect_stderr(StringIO()):

@@ -35,6 +35,7 @@ from dns.state_manager import (
 )
 from dns.tester import DNSTester
 from daemon.protocol import Response
+from diagnostics.route_dns import RouteDNSDiagnostic, diagnose_route_dns
 from models.profile import Profile
 from models.provider import Provider
 from node_groups.models import NodeGroup, NodeGroupSelectionMode
@@ -263,6 +264,21 @@ def _build_parser() -> argparse.ArgumentParser:
     dns_test_parser.add_argument("--domain", help="Override the policy test domain")
     dns_test_parser.add_argument("--timeout", type=float, default=3.0, help="Resolver probe timeout in seconds")
     dns_test_parser.set_defaults(handler=_dns_test)
+
+    dns_diagnose_parser = dns_subparsers.add_parser(
+        "diagnose",
+        help="Explain route and DNS policy for hypothetical traffic",
+    )
+    _add_dns_common_paths(dns_diagnose_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_diagnose_parser.add_argument("--domain", help="Traffic domain name")
+    dns_diagnose_parser.add_argument("--ip", help="Traffic destination IP")
+    dns_diagnose_parser.add_argument("--port", type=int, help="Traffic destination port")
+    dns_diagnose_parser.add_argument("--protocol", help="Traffic protocol, for example tls")
+    dns_diagnose_parser.add_argument("--network", help="Network transport, for example tcp")
+    dns_diagnose_parser.add_argument("--process-name", help="Process executable name")
+    dns_diagnose_parser.add_argument("--process-path", help="Exact process executable path")
+    dns_diagnose_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_diagnose_parser.set_defaults(handler=_dns_diagnose)
 
     dns_apply_parser = dns_subparsers.add_parser("apply", help="Apply DNS v2 local entrypoint")
     _add_dns_common_paths(dns_apply_parser)
@@ -1317,6 +1333,29 @@ def _dns_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def _dns_diagnose(args: argparse.Namespace) -> int:
+    traffic = TrafficInfo(
+        domain=args.domain,
+        ip=args.ip,
+        port=args.port,
+        protocol=args.protocol,
+        network=args.network,
+        process_name=args.process_name,
+        process_path=args.process_path,
+    )
+    diagnostic = diagnose_route_dns(
+        traffic=traffic,
+        rule_groups=RuleStore().list_groups(),
+        dns_policy=_load_dns_policy(args),
+        app_policy=AppPolicyStore().load_or_disabled().policy,
+    )
+    if args.json:
+        _print_json(diagnostic.to_dict())
+    else:
+        _print_route_dns_diagnostic(diagnostic)
+    return 0
+
+
 def _dns_apply(args: argparse.Namespace) -> int:
     policy = _load_dns_policy(args)
     snapshot_path = _dns_snapshot_path(args)
@@ -1465,6 +1504,20 @@ def _dns_apply_output(args: argparse.Namespace, data: dict[str, object]) -> int:
         if data.get("reason"):
             print(f"Reason: {data['reason']}")
     return 0
+
+
+def _print_route_dns_diagnostic(diagnostic: RouteDNSDiagnostic) -> None:
+    print("Route/DNS diagnostic: configured policy only, not live traffic observation")
+    print(f"Confidence: {diagnostic.confidence.value}")
+    print(f"Route action: {diagnostic.route_action or 'unknown'}")
+    if diagnostic.route_source:
+        source = diagnostic.route_source.get("source") or "-"
+        rule_id = diagnostic.route_source.get("rule_id") or "-"
+        group_name = diagnostic.route_source.get("group_name") or "-"
+        print(f"Route source: {source} group={group_name} rule={rule_id}")
+    print(f"DNS channel: {diagnostic.dns_channel or '-'}")
+    print(f"DNS path: {diagnostic.dns_path}")
+    print(f"Reason: {diagnostic.dns_reason}")
 
 
 def _require_dns_entrypoint(entrypoint: LocalDNSEntryPoint, timeout: float) -> None:
