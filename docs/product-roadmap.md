@@ -7,14 +7,15 @@ plan.
 
 ## Product Thesis
 
-WatchdogVPN is not a generic VPN launcher. It is an operational resilience
-layer for Linux users who need connectivity to be observable, recoverable and
-auditable under unreliable or censored network conditions.
+WatchdogVPN is not a generic VPN launcher. It is a local network control plane
+for Linux users who need VPN/proxy routing, DNS policy, split tunneling,
+kill-switch behavior, profile recovery and diagnostics to be observable,
+recoverable and auditable under unreliable or censored network conditions.
 
 The product is built around four principles:
 
 1. **Truth over text output** — provider status is not enough; the machine's
-   route, tunnel, DNS and public-IP state matter.
+   route, capture path, tunnel, DNS and public-IP state matter.
 2. **Recovery with user intent** — automation must not fight a user-requested
    stop.
 3. **Explicit policy** — traffic routing, DNS behavior and recovery decisions

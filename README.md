@@ -13,10 +13,11 @@
 - **Interface:** CLI first, TUI after CLI-backed validation
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 
-WatchdogVPN is a Linux resilience layer for VPN and proxy connections. It does
-not try to be a generic "connect button"; it verifies what is really happening
-on the machine, manages recovery, protects DNS/routing state, and keeps traffic
-policy explicit enough to audit.
+WatchdogVPN is a local network control plane for resilient VPN/proxy routing on
+Linux. It does not try to be a generic "connect button"; it manages privileged
+network behavior such as routing policy, DNS policy, kill-switch state,
+split-tunnel decisions, profile recovery and operator diagnostics from a
+CLI-first architecture.
 
 The project is built for networks where ordinary assumptions are not enough:
 routes change, DNS fails, providers misreport state, endpoints degrade, DPI can
@@ -27,8 +28,8 @@ interfere with protocols, and a silent tunnel failure can put the user at risk.
 ## Why It Exists
 
 Most VPN tools focus on starting a tunnel. WatchdogVPN focuses on the harder
-operational question: **is the tunnel actually working, and what should happen
-when it stops working?**
+operational question: **what is the machine really doing with traffic, DNS and
+routes, and what should happen when protection degrades?**
 
 WatchdogVPN is designed for users who need observable, recoverable connectivity
 under unstable or censored network conditions: journalists, researchers,

@@ -8,8 +8,9 @@ audited before the next one starts.
 
 ## Product Direction
 
-WatchdogVPN v2.0.0 is a resilience layer for VPN/proxy operation on Linux. It
-focuses on:
+WatchdogVPN v2.0.0 is a local network control plane for resilient VPN/proxy
+routing on Linux. It is not a one-button VPN launcher; it manages and validates
+privileged network behavior from a CLI-first architecture. It focuses on:
 
 - real-state validation instead of trusting provider status text;
 - daemon-backed connection lifecycle;
@@ -19,6 +20,10 @@ focuses on:
 - kill switch behavior;
 - DNS v2 safety;
 - routing rules and future app policy;
+- routing/capture separation across Rule/Global, Proxy/TUN/LAN and route
+  actions;
+- network-context automation and unified diagnostics before the final CLI
+  freezes;
 - non-destructive install/update/uninstall behavior;
 - CLI-backed real-world validation before final TUI polish.
 
