@@ -77,6 +77,44 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generated_proxy_inbounds_are_loopback_only(self, bind_mock, write_mock) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+
+        config = self.driver.generate_singbox_config(profile)
+        proxy_inbounds = {
+            inbound["tag"]: inbound
+            for inbound in config["inbounds"]
+            if inbound["tag"] in {"watchdogvpn-socks-in", "watchdogvpn-http-in"}
+        }
+
+        self.assertEqual(
+            proxy_inbounds,
+            {
+                "watchdogvpn-socks-in": {
+                    "type": "socks",
+                    "tag": "watchdogvpn-socks-in",
+                    "listen": "127.0.0.1",
+                    "listen_port": 2080,
+                },
+                "watchdogvpn-http-in": {
+                    "type": "http",
+                    "tag": "watchdogvpn-http-in",
+                    "listen": "127.0.0.1",
+                    "listen_port": 2081,
+                },
+            },
+        )
+        self.assertFalse(
+            any(inbound.get("listen") in {"0.0.0.0", "::"} for inbound in config["inbounds"])
+        )
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_vless_reality(self, bind_mock, write_mock) -> None:
         profile = self._profile(
             ProtocolType.VLESS,

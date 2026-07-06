@@ -36,6 +36,7 @@ hardening.
 | Provider/profile configuration is invalid | Recovery loops cannot fix setup | stores and runtime commands fail closed with explicit errors |
 | Bad VPN endpoint | Rotation may land on unusable node | the v2 rotation/runtime path validates state before accepting a connection |
 | DNS profile breaks resolution | User may lose name resolution | DNS v2 `apply`/`reset` snapshot the prior resolver state and restore it on request; `vpn_dns_rescue` remains available as a manual fallback |
+| Local proxy service is reachable from LAN | Other devices may use the host as an unintended proxy | v2.0 rejects LAN proxy sharing; generated SOCKS/HTTP and DNS hijack inbounds stay bound to `127.0.0.1` |
 | Uninstall breaks DNS | Host may remain offline after removal | `vpn_dns_rescue` restores fallback DNS behavior |
 | Repeated timer executions overlap | Race conditions and route churn | rotation uses `flock`; timers are one-shot services |
 | User-specific bypass domains leak into new installs | New users inherit irrelevant routing policy | default bypass example starts empty |
@@ -53,6 +54,9 @@ hardening.
 - Automatic CLI installer verification is not yet cryptographically pinned.
 - GitHub Actions currently performs baseline validation, not full integration
   simulation.
+- LAN proxy sharing is rejected for v2.0; adding it later requires an
+  authenticated service contract plus firewall, kill-switch and DNS leak
+  validation.
 
 ### Must Not Happen
 
