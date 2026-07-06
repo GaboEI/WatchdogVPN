@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Mapping
 
 from config.paths import resolve_config_dir
 from config.persistence import (
@@ -14,7 +15,7 @@ from config.persistence import (
     require_mapping,
 )
 
-from .models import MetricsDocument
+from .models import MetricsBucket, MetricsDocument
 
 
 def _metrics_path() -> Path:
@@ -29,6 +30,8 @@ class MetricsStore:
         self.path = path or _metrics_path()
 
     def load(self) -> MetricsDocument:
+        if not self.path.exists():
+            return MetricsDocument()
         with file_lock(self.path):
             data = require_mapping(load_json(self.path, {}), self.path)
             if not data:
@@ -41,9 +44,84 @@ class MetricsStore:
         with file_lock(self.path):
             dump_json(self.path, document.to_dict())
 
+    def increment(
+        self,
+        counters: Mapping[str, int],
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        if not counters:
+            return False
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        now = now.astimezone(timezone.utc)
+        document = self.load()
+        if not document.enabled:
+            return False
+        bucket_start = now.replace(minute=0, second=0, microsecond=0)
+        bucket_end = bucket_start + timedelta(hours=1)
+        bucket_start_text = bucket_start.isoformat()
+        bucket_end_text = bucket_end.isoformat()
+        buckets: list[MetricsBucket] = []
+        updated = False
+        for bucket in document.buckets:
+            if bucket.bucket_start == bucket_start_text:
+                merged = dict(bucket.counters)
+                for key, value in counters.items():
+                    if value < 0:
+                        raise PersistentValidationError(
+                            f"metrics counter increment {key} must not be negative"
+                        )
+                    merged[key] = merged.get(key, 0) + value
+                buckets.append(
+                    MetricsBucket(
+                        bucket_start=bucket.bucket_start,
+                        bucket_end=bucket.bucket_end,
+                        counters=merged,
+                    )
+                )
+                updated = True
+            else:
+                buckets.append(bucket)
+        if not updated:
+            buckets.append(
+                MetricsBucket(
+                    bucket_start=bucket_start_text,
+                    bucket_end=bucket_end_text,
+                    counters=dict(counters),
+                )
+            )
+        updated_document = MetricsDocument(
+            schema_version=document.schema_version,
+            enabled=document.enabled,
+            retention_days=document.retention_days,
+            redaction_mode=document.redaction_mode,
+            max_bytes=document.max_bytes,
+            buckets=tuple(buckets),
+            updated_at=document.updated_at,
+        )
+        updated_document = self._pruned_document(updated_document, now=now)
+        self.save(updated_document)
+        return True
+
     def prune(self, now: datetime | None = None) -> MetricsDocument:
         now = now or datetime.now(timezone.utc)
         document = self.load()
+        pruned = self._pruned_document(document, now=now)
+        if len(pruned.buckets) != len(document.buckets):
+            self.save(pruned)
+        return pruned
+
+    def _pruned_document(
+        self,
+        document: MetricsDocument,
+        *,
+        now: datetime,
+    ) -> MetricsDocument:
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        now = now.astimezone(timezone.utc)
         cutoff = now - timedelta(days=document.retention_days)
         kept = tuple(
             bucket
@@ -59,8 +137,6 @@ class MetricsStore:
             buckets=kept,
             updated_at=document.updated_at,
         )
-        if len(kept) != len(document.buckets):
-            self.save(pruned)
         return pruned
 
     def purge(self) -> bool:

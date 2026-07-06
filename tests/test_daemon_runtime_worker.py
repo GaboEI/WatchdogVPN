@@ -23,6 +23,9 @@ from daemon.protocol import (
 from daemon.runtime_worker import RuntimeWorker, WorkerRequest
 from drivers.base import BaseDriver
 from dns.models import DNSPolicy
+from metrics.models import MetricsDocument
+from metrics.recorder import MetricsRecorder
+from metrics.store import MetricsStore
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 
@@ -200,6 +203,38 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.assertEqual(response.payload["state"]["active_profile_id"], self.profile.id)
         self.assertEqual(event.event, EVENT_STATE_CHANGED)
         self.assertEqual(event.payload["active_profile_id"], self.profile.id)
+
+    def test_worker_records_aggregate_metrics_when_enabled(self) -> None:
+        metrics_path = Path(self.tmpdir.name) / "metrics.json"
+        metrics_store = MetricsStore(metrics_path)
+        metrics_store.save(MetricsDocument(enabled=True))
+        bus = EventBus()
+        runtime = FakeRuntime(self.profile_store)
+        worker = RuntimeWorker(
+            runtime,
+            bus,
+            metrics_recorder=MetricsRecorder(metrics_store),
+        )
+        worker.start()
+        try:
+            worker.submit(COMMAND_CONNECT, {"profile_id": self.profile.id}, timeout=2.0)
+            worker.submit(COMMAND_ROTATE, {"force": True}, timeout=2.0)
+            worker.submit(
+                COMMAND_NODE_GROUP_AUTO_TEST,
+                {"group_name": "paris"},
+                timeout=2.0,
+            )
+            worker.submit(COMMAND_DISCONNECT, timeout=2.0)
+        finally:
+            worker.stop()
+
+        counters = metrics_store.load().buckets[0].counters
+        self.assertEqual(counters["command.connect.success"], 1)
+        self.assertEqual(counters["profile.p1.connect.success"], 1)
+        self.assertEqual(counters["rotation.manual.attempt"], 1)
+        self.assertEqual(counters["profile.rotated.rotation.manual.recovered"], 1)
+        self.assertEqual(counters["node_group.paris.auto_test.unavailable"], 1)
+        self.assertEqual(counters["command.disconnect.success"], 1)
 
     def test_worker_status_returns_current_state_without_event(self) -> None:
         bus = EventBus()

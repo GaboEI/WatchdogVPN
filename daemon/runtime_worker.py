@@ -21,6 +21,7 @@ from daemon.protocol import (
     Response,
     UnknownCommandError,
 )
+from metrics.recorder import MetricsRecorder
 from models.connection_state import ConnectionState
 from models.profile import Profile
 
@@ -66,9 +67,15 @@ class WorkerRequest:
 
 
 class RuntimeWorker:
-    def __init__(self, runtime: RuntimeLike, event_bus: EventBus | None = None) -> None:
+    def __init__(
+        self,
+        runtime: RuntimeLike,
+        event_bus: EventBus | None = None,
+        metrics_recorder: MetricsRecorder | None = None,
+    ) -> None:
         self.runtime = runtime
         self.event_bus = event_bus or EventBus()
+        self.metrics_recorder = metrics_recorder or MetricsRecorder()
         self._queue: "queue.Queue[WorkerRequest | object]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="watchdogvpn-runtime-worker", daemon=True)
         self._started = threading.Event()
@@ -156,8 +163,10 @@ class RuntimeWorker:
             state = self.runtime.run_iteration()
         except Exception:
             LOGGER.error("watchdog_tick_failed", exc_info=True)
+            self.metrics_recorder.record_runtime_error("watchdog_tick_failed")
             return
         state_payload = _state_payload(state)
+        self.metrics_recorder.record_health_check(state)
         self.event_bus.broadcast(Event(EVENT_HEALTH_CHECK, state_payload))
         if state_payload.get("status") != self._last_tick_status:
             self._last_tick_status = state_payload.get("status")
@@ -171,8 +180,10 @@ class RuntimeWorker:
             state = self.runtime.scheduled_rotate()
         except Exception:
             LOGGER.error("scheduled_rotation_failed", exc_info=True)
+            self.metrics_recorder.record_runtime_error("scheduled_rotation_failed")
             return
         state_payload = _state_payload(state)
+        self.metrics_recorder.record_scheduled_rotation(state)
         # Mirrors _handle_rotate: EVENT_ROTATION means "a rotation was
         # requested", not "it succeeded" - the payload's status says what
         # actually happened (including a quiet no-op from scheduled_rotate
@@ -206,6 +217,10 @@ class RuntimeWorker:
         connected = self.runtime.connect(profile)
         state = self.runtime.status()
         state_payload = _state_payload(state)
+        self.metrics_recorder.record_connection_result(
+            profile_id=profile.id,
+            connected=connected,
+        )
         self._broadcast_state(state_payload)
         return Response(
             ok=connected,
@@ -221,6 +236,7 @@ class RuntimeWorker:
         disconnected = self.runtime.disconnect()
         state = self.runtime.status()
         state_payload = _state_payload(state)
+        self.metrics_recorder.record_disconnect_result(disconnected=disconnected)
         self._broadcast_state(state_payload)
         return Response(
             ok=disconnected,
@@ -240,13 +256,19 @@ class RuntimeWorker:
             return Response(ok=False, error="force must be a boolean")
         state = self.runtime.rotate_now(force=force)
         state_payload = _state_payload(state)
+        self.metrics_recorder.record_manual_rotation(state)
         self.event_bus.broadcast(Event(EVENT_ROTATION, state_payload))
         self._broadcast_state(state_payload)
         return Response(ok=True, payload={"state": state_payload})
 
     def _handle_node_group_auto_test(self, payload: dict[str, Any]) -> Response:
         group_name = _require_string(payload.get("group_name"), "group_name")
-        return Response(ok=True, payload=self.runtime.node_group_auto_test(group_name))
+        result = self.runtime.node_group_auto_test(group_name)
+        self.metrics_recorder.record_node_group_auto_test(
+            group_name=group_name,
+            result=str(result.get("result", "unknown")),
+        )
+        return Response(ok=True, payload=result)
 
     def _broadcast_state(self, state_payload: dict[str, Any]) -> None:
         self.event_bus.broadcast(Event(EVENT_STATE_CHANGED, state_payload))

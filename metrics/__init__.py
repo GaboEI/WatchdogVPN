@@ -6,6 +6,7 @@ from .models import (
     MetricsDocument,
     MetricsRedactionMode,
 )
+from .recorder import MetricsRecorder
 from .store import MetricsStore
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "MetricsBucket",
     "MetricsDocument",
     "MetricsRedactionMode",
+    "MetricsRecorder",
     "MetricsStore",
 ]
