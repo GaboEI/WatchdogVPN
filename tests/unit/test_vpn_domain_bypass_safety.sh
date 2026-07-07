@@ -65,6 +65,33 @@ assert_contains "$ROOT_DIR/lib/systemd.sh" 'VPN_DOMAIN_BYPASS_DISABLED_MARKER' \
 assert_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'DISABLED_MARKER' \
   "rescue script must write the manual-disable marker"
 
+# Regression: the user's own manual incident-recovery script swept the
+# entire known ip-rule priority range instead of trusting only the (possibly
+# stale/missing, since it lives under /run) state file. The rescue script
+# must do the same brute-force sweep as a safety net.
+assert_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'BASE_PRIO' \
+  "rescue script must brute-force-sweep the known BASE_PRIO..MAX_RULES range, not just the state file"
+assert_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'Sweeping the full known priority range' \
+  "rescue script must brute-force-sweep the known BASE_PRIO..MAX_RULES range, not just the state file"
+
+# Regression: `while run sudo ip rule del ...; do :; done` never terminates
+# under INSTALL_DRY_RUN=1, because run()'s dry-run branch always returns 0.
+# All repeated-delete call sites must go through delete_ip_rule_repeatedly,
+# which explicitly short-circuits to a single printed line in dry-run mode.
+assert_not_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'while run sudo ip' \
+  "must not use the 'while run ...; do :; done' idiom - it hangs forever under INSTALL_DRY_RUN=1"
+assert_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'delete_ip_rule_repeatedly' \
+  "repeated ip rule deletion must go through delete_ip_rule_repeatedly (dry-run safe)"
+
+# Regression (empirical): dry-run mode must terminate promptly instead of
+# looping forever. This is the actual bug repro from the 2026-07-07 session,
+# guarded by `timeout` so a regression here fails the test suite instead of
+# hanging it.
+if ! timeout 10 env INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_domain_bypass_rescue" auto >/dev/null 2>&1; then
+  echo "FAIL: vpn_domain_bypass_rescue auto must terminate promptly under INSTALL_DRY_RUN=1 (infinite loop regression)" >&2
+  exit 1
+fi
+
 # --- vpn_domain_bypass_configured(): file content detection ---
 
 empty_conf="$TMP_DIR/empty.conf"

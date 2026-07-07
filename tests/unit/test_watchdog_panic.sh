@@ -57,6 +57,18 @@ assert_contains "$ROOT_DIR/bin/watchdog_panic" 'HIBERNATE_MARKER' \
 assert_contains "$ROOT_DIR/bin/watchdog_panic" 'KILL_SWITCH_NFT_TABLE' \
   "panic script must clean up kill switch firewall state"
 
+# Regression: the user's own manual incident-recovery script had to pkill
+# leftover processes directly (systemctl stop alone wasn't enough to
+# convince them everything was actually down). The precise, safe equivalent
+# is scoping to the dedicated `watchdogvpn` system user (systemd/watchdogvpn.service
+# User=/Group=watchdogvpn; drivers/singbox_driver.py never switches users),
+# never a name/command-line match that could hit an unrelated sing-box the
+# user runs independently.
+assert_contains "$ROOT_DIR/bin/watchdog_panic" 'pkill -u watchdogvpn' \
+  "sleep must defensively pkill leftover processes scoped to the watchdogvpn system user"
+assert_contains "$ROOT_DIR/bin/watchdog_panic" 'id -u watchdogvpn' \
+  "the pkill -u watchdogvpn cleanup must guard on the system user actually existing"
+
 # Regression: found live while manually testing this script - `systemctl
 # is-enabled`/`is-active` already print "not-found"/"disabled"/"inactive"
 # themselves and exit non-zero even for a real, valid disabled/inactive

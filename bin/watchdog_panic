@@ -124,6 +124,17 @@ sleep_watchdogvpn() {
   echo "Stopping and disabling the WatchdogVPN daemon..."
   run sudo systemctl disable --now watchdogvpn.service >/dev/null 2>&1 || true
 
+  echo "Ensuring no leftover WatchdogVPN processes remain..."
+  # systemd's default KillMode=control-group should already take down the
+  # daemon and its sing-box subprocess with it, but this is a panic button:
+  # assume the worst (a wedged unit, a detached child) and clean up directly.
+  # Scoped to the dedicated `watchdogvpn` system user (see systemd/watchdogvpn.service
+  # User=/Group=) rather than a name/command-line match, so this can never kill
+  # an unrelated sing-box (or any other VPN client) the user runs independently.
+  if id -u watchdogvpn >/dev/null 2>&1; then
+    run sudo pkill -u watchdogvpn >/dev/null 2>&1 || true
+  fi
+
   echo "Cleaning up domain-bypass routing state..."
   if have vpn_domain_bypass_rescue; then
     run vpn_domain_bypass_rescue auto || true

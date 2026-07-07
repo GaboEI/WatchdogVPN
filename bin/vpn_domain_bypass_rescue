@@ -15,6 +15,15 @@ VPN_LOOKUP_TABLE="${VPN_LOOKUP_TABLE:-880}"
 VPN_FALLBACK_PRIO="${VPN_FALLBACK_PRIO:-32000}"
 STATE_FILE="${STATE_FILE:-/run/vpn-domain-bypass.priorities}"
 DISABLED_MARKER="${DISABLED_MARKER:-/etc/watchdogvpn/.domain-bypass-disabled}"
+# Must match sbin/vpn_domain_bypass_apply.sh's own BASE_PRIO/MAX_RULES - the
+# full range of priorities it could ever have used. A real incident
+# (2026-07-07) showed why relying only on $STATE_FILE is not enough: if it is
+# stale, was never written, or was lost (e.g. wiped on reboot since it lives
+# under /run), rules it doesn't mention are silently left behind. This script
+# also brute-force-scans and deletes anything in the full known range,
+# regardless of what the state file says.
+BASE_PRIO="${BASE_PRIO:-30760}"
+MAX_RULES="${MAX_RULES:-512}"
 
 usage() {
   cat <<'USAGE'
@@ -64,6 +73,29 @@ run() {
   "$@"
 }
 
+# Deletes every matching "ip rule" at a given priority. A real ip rule
+# priority can only ever hold one rule at a time in practice here, but the
+# "delete until none remain" idiom is defensive against duplicates. Plain
+# `while run ...; do :; done` cannot be used for this: run()'s dry-run branch
+# always returns 0, so the loop would never terminate under
+# INSTALL_DRY_RUN=1. This wrapper prints one dry-run line and returns instead
+# of looping when INSTALL_DRY_RUN=1, and only loops-until-fail for real.
+delete_ip_rule_repeatedly() {
+  local fam="$1" prio="$2" cmd
+  if [[ "$fam" == "6" ]]; then
+    cmd=(sudo ip -6 rule del priority "$prio")
+  else
+    cmd=(sudo ip rule del priority "$prio")
+  fi
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN]'
+    printf ' %q' "${cmd[@]}"
+    printf ' (repeated until none remain)\n'
+    return 0
+  fi
+  while "${cmd[@]}" 2>/dev/null; do :; done
+}
+
 status() {
   echo "== vpn-domain-bypass.timer =="
   # systemctl already prints "not-found" itself for a missing unit and exits
@@ -110,18 +142,21 @@ rescue() {
     fam="${entry%%:*}"
     prio="${entry#*:}"
     [[ "$prio" =~ ^[0-9]+$ ]] || continue
-    if [[ "$fam" == "6" ]]; then
-      while run sudo ip -6 rule del priority "$prio" 2>/dev/null; do :; done
-    else
-      while run sudo ip rule del priority "$prio" 2>/dev/null; do :; done
-    fi
+    delete_ip_rule_repeatedly "$fam" "$prio"
   done < <(cat "$STATE_FILE" 2>/dev/null || true)
   if [[ "${INSTALL_DRY_RUN:-0}" != "1" ]]; then
     : > "$STATE_FILE" 2>/dev/null || true
   fi
 
+  echo "Sweeping the full known priority range ($BASE_PRIO-$((BASE_PRIO + MAX_RULES - 1))) for any rule the state file missed..."
+  local prio
+  for ((prio = BASE_PRIO; prio < BASE_PRIO + MAX_RULES; prio++)); do
+    delete_ip_rule_repeatedly 4 "$prio"
+    delete_ip_rule_repeatedly 6 "$prio"
+  done
+
   echo "Removing VPN fallback rule (priority $VPN_FALLBACK_PRIO -> table $VPN_LOOKUP_TABLE)..."
-  while run sudo ip rule del priority "$VPN_FALLBACK_PRIO" 2>/dev/null; do :; done
+  delete_ip_rule_repeatedly 4 "$VPN_FALLBACK_PRIO"
 
   echo "Flushing table $VPN_LOOKUP_TABLE and the route cache..."
   run sudo ip route flush table "$VPN_LOOKUP_TABLE" >/dev/null 2>&1 || true
