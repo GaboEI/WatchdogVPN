@@ -23,7 +23,7 @@ from config.paths import resolve_config_dir
 from config.persistence import PersistentStoreError, dump_json
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
-from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager
+from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager, parse_capture_modes
 from dns.hijack import DNSHijackController, DNSHijackError
 from dns.models import DNSChannelName, DNSMode, DNSPolicy
 from dns.resolver_inventory import detect_resolver_manager
@@ -1055,11 +1055,23 @@ def _config_set_mode_value(mode: str, json_output: bool) -> int:
         raise ParseError(f"mode must be one of: {supported}")
     manager = StateManager()
     manager.set("active_mode", mode)
-    data = {"active_mode": mode}
+    state = manager.load()
+    data = {
+        "active_mode": state["active_mode"],
+        "routing_state_version": state["routing_state_version"],
+        "routing_policy": state["routing_policy"],
+        "capture_modes": list(parse_capture_modes(state["capture_modes"])),
+        "default_route_action": state["default_route_action"],
+    }
     if json_output:
         _print_json(data)
     else:
-        print(f"Active mode set to: {mode}")
+        print(f"Active mode set to: {state['active_mode']}")
+        print(
+            "Compatibility alias: routing_policy="
+            f"{state['routing_policy']} capture_modes={state['capture_modes']} "
+            f"default_route_action={state['default_route_action']}"
+        )
     return 0
 
 

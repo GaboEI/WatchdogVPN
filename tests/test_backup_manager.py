@@ -612,6 +612,69 @@ class BackupManagerTests(unittest.TestCase):
 
             self.assertEqual(StateManager(root / "state.toml").load()["active_profile_id"], "")
 
+    def test_selection_state_restore_accepts_legacy_active_mode_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            clean = BackupManager(config_dir=root).create_backup(
+                root / "selection.zip",
+                sections=["selection-state"],
+            ).path
+            legacy = root / "legacy-selection.zip"
+            with ZipFile(clean) as source, ZipFile(legacy, "w", compression=ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename == "selection-state.json":
+                        payload = json.loads(data)
+                        payload["state"] = {
+                            "active_profile_id": "profile-one",
+                            "active_mode": "direct",
+                        }
+                        data = json.dumps(payload).encode()
+                    target.writestr(item.filename, data)
+            StateManager(root / "state.toml").save({"active_profile_id": ""})
+
+            BackupManager(config_dir=root).restore_backup(
+                legacy,
+                sections=["selection-state"],
+                replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+            )
+
+            state = StateManager(root / "state.toml").load()
+            self.assertEqual(state["active_profile_id"], "profile-one")
+            self.assertEqual(state["active_mode"], "direct")
+            self.assertEqual(state["routing_policy"], "global")
+            self.assertEqual(state["capture_modes"], "local_proxy")
+            self.assertEqual(state["default_route_action"], "direct")
+
+    def test_selection_state_restore_rejects_invalid_routing_shape_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            clean = BackupManager(config_dir=root).create_backup(
+                root / "selection.zip",
+                sections=["selection-state"],
+            ).path
+            broken = root / "broken-selection.zip"
+            with ZipFile(clean) as source, ZipFile(broken, "w", compression=ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename == "selection-state.json":
+                        payload = json.loads(data)
+                        payload["state"]["default_route_action"] = "group:alpha"
+                        data = json.dumps(payload).encode()
+                    target.writestr(item.filename, data)
+            StateManager(root / "state.toml").save({"active_profile_id": ""})
+
+            with self.assertRaisesRegex(BackupValidationError, "default_route_action"):
+                BackupManager(config_dir=root).restore_backup(
+                    broken,
+                    sections=["selection-state"],
+                    replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+                )
+
+            self.assertEqual(StateManager(root / "state.toml").load()["active_profile_id"], "")
+
     def test_provider_state_restore_updates_existing_metadata_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"

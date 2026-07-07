@@ -39,18 +39,37 @@ class CliConfigCommandTests(unittest.TestCase):
             self.run_watchdog(["config", "set", "mode", "tun"], tmp)
 
             state_path = Path(tmp) / "state.toml"
-            self.assertIn('active_mode = "tun"', state_path.read_text(encoding="utf-8"))
+            content = state_path.read_text(encoding="utf-8")
+            self.assertIn('active_mode = "tun"', content)
+            self.assertIn('routing_state_version = "1"', content)
+            self.assertIn('routing_policy = "global"', content)
+            self.assertIn('capture_modes = "local_proxy,tun"', content)
+            self.assertIn('default_route_action = "current"', content)
 
     def test_set_mode_json_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["config", "set", "mode", "global", "--json"], tmp)
             data = json.loads(result.stdout)
-            self.assertEqual(data, {"active_mode": "global"})
+            self.assertEqual(
+                data,
+                {
+                    "active_mode": "global",
+                    "routing_state_version": "1",
+                    "routing_policy": "global",
+                    "capture_modes": ["local_proxy"],
+                    "default_route_action": "current",
+                },
+            )
 
     def test_set_mode_text_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["config", "set", "mode", "direct"], tmp)
             self.assertIn("Active mode set to: direct", result.stdout)
+            self.assertIn(
+                "Compatibility alias: routing_policy=global capture_modes=local_proxy "
+                "default_route_action=direct",
+                result.stdout,
+            )
 
     def test_set_mode_accepts_all_allowed_modes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

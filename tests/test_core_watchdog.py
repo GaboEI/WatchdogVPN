@@ -41,6 +41,7 @@ class FakeDriver(BaseDriver):
         self.last_mode: str | None = None
         self.last_groups = "unset"
         self.last_app_policy = "unset"
+        self.last_final_policy: str | None = None
 
     def connect(
         self,
@@ -56,6 +57,7 @@ class FakeDriver(BaseDriver):
         self.last_mode = mode
         self.last_groups = groups
         self.last_app_policy = app_policy
+        self.last_final_policy = final_policy
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -573,6 +575,7 @@ class WatchdogCoreTests(unittest.TestCase):
         runtime.connect(self.profile)
 
         self.assertEqual(driver.last_mode, "tun")
+        self.assertEqual(driver.last_final_policy, "current_profile")
 
     def test_connect_forwards_persisted_rule_groups_when_rules_mode(self) -> None:
         self.set_desired_state("off")
@@ -594,6 +597,7 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(driver.last_mode, "rules")
         self.assertEqual(driver.last_groups, [group])
+        self.assertEqual(driver.last_final_policy, "current_profile")
 
     def test_connect_forwards_app_policy_when_rules_mode(self) -> None:
         self.set_desired_state("off")
@@ -664,6 +668,38 @@ class WatchdogCoreTests(unittest.TestCase):
         runtime.connect(self.profile)
 
         self.assertEqual(driver.last_mode, "global")
+        self.assertIsNone(driver.last_groups)
+        self.assertIsNone(driver.last_app_policy)
+
+    def test_connect_maps_global_block_routing_shape_without_rule_policy(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.save(
+            {
+                "routing_state_version": "1",
+                "routing_policy": "global",
+                "capture_modes": "local_proxy",
+                "default_route_action": "block",
+                "active_mode": "global",
+            }
+        )
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        rule_store.add_group(
+            RuleGroup(
+                name="block",
+                rules=[Rule(id="ads", action="block", conditions={"domain_suffix": [".ads.example"]})],
+            )
+        )
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            rule_store=rule_store,
+        )
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_mode, "rules")
+        self.assertEqual(driver.last_final_policy, "block")
         self.assertIsNone(driver.last_groups)
         self.assertIsNone(driver.last_app_policy)
 

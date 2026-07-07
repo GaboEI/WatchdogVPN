@@ -18,7 +18,11 @@ from config.persistence import (
 )
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
-from config.state_manager import DEFAULT_STATE, StateManager
+from config.state_manager import (
+    DEFAULT_STATE,
+    StateManager,
+    rollback_active_mode_for_routing_state,
+)
 from dns.models import DNSPolicy
 from models.profile import Profile, ProfileSource, ProtocolType
 from models.provider import Provider
@@ -38,6 +42,99 @@ class ConfigStorageTests(unittest.TestCase):
             self.assertEqual(restored["vpn_desired_state"], "on")
             self.assertEqual(restored["selected_language"], "es")
             self.assertEqual(manager.get("vpn_desired_state"), "on")
+
+    def test_state_manager_migrates_legacy_active_modes(self) -> None:
+        cases = {
+            "rules": ("rule", "local_proxy", "current"),
+            "global": ("global", "local_proxy", "current"),
+            "direct": ("global", "local_proxy", "direct"),
+            "tun": ("global", "local_proxy,tun", "current"),
+            "proxy": ("global", "local_proxy", "current"),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for legacy_mode, expected in cases.items():
+                path = Path(tmp) / f"{legacy_mode}.toml"
+                path.write_text(f'active_mode = "{legacy_mode}"\n', encoding="utf-8")
+
+                state = StateManager(path).load()
+
+                self.assertEqual(state["routing_state_version"], "1")
+                self.assertEqual(
+                    (
+                        state["routing_policy"],
+                        state["capture_modes"],
+                        state["default_route_action"],
+                    ),
+                    expected,
+                )
+
+    def test_state_manager_set_active_mode_updates_routing_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            manager = StateManager(path)
+
+            manager.set("active_mode", "tun")
+
+            state = manager.load()
+            self.assertEqual(state["active_mode"], "tun")
+            self.assertEqual(state["routing_policy"], "global")
+            self.assertEqual(state["capture_modes"], "local_proxy,tun")
+            self.assertEqual(state["default_route_action"], "current")
+
+    def test_state_manager_versioned_shape_wins_over_stale_active_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        'active_mode = "tun"',
+                        'routing_state_version = "1"',
+                        'routing_policy = "global"',
+                        'capture_modes = "local_proxy"',
+                        'default_route_action = "direct"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            state = StateManager(path).load()
+
+            self.assertEqual(state["active_mode"], "direct")
+
+    def test_state_manager_rejects_invalid_routing_state_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            path.write_text('routing_state_version = "2"\n', encoding="utf-8")
+
+            with self.assertRaises(PersistentValidationError):
+                StateManager(path).load()
+
+    def test_state_manager_rejects_invalid_routing_fields(self) -> None:
+        invalid_docs = [
+            'routing_policy = "maybe"\n',
+            'capture_modes = "local_proxy,unknown"\n',
+            'capture_modes = "local_proxy,local_proxy"\n',
+            'capture_modes = "system_proxy"\n',
+            'default_route_action = "group:alpha"\n',
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, content in enumerate(invalid_docs):
+                path = Path(tmp) / f"invalid-{index}.toml"
+                path.write_text(content, encoding="utf-8")
+
+                with self.assertRaises(PersistentValidationError):
+                    StateManager(path).load()
+
+    def test_rollback_active_mode_refuses_non_equivalent_shape(self) -> None:
+        with self.assertRaises(PersistentValidationError):
+            rollback_active_mode_for_routing_state(
+                {
+                    "routing_policy": "global",
+                    "capture_modes": "local_proxy",
+                    "default_route_action": "block",
+                }
+            )
 
     def test_state_manager_rejects_invalid_desired_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

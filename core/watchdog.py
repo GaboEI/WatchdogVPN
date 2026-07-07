@@ -14,7 +14,7 @@ from config.dns_policy_store import DNSPolicyStore
 from config.persistence import PersistentStoreError, PersistentValidationError, strict_bool, strict_int
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
-from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager
+from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager, parse_capture_modes
 from core.kill_switch import KillSwitch
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
@@ -406,9 +406,35 @@ class WatchdogRuntime:
         return mode
 
     def _connect_options(self) -> dict[str, object]:
-        mode = self._active_mode()
-        options: dict[str, object] = {"mode": mode}
-        if mode == "rules":
+        state = self.state_manager.load()
+        routing_policy = str(state.get("routing_policy", "rule"))
+        capture_modes = parse_capture_modes(str(state.get("capture_modes", "local_proxy")))
+        default_action = str(state.get("default_route_action", "current"))
+
+        if not capture_modes:
+            raise RuntimeError("no usable capture mode is configured")
+
+        final_policy = {
+            "current": "current_profile",
+            "direct": "direct",
+            "block": "block",
+        }.get(default_action)
+        if final_policy is None:
+            raise PersistentValidationError("default_route_action must be one of: current, direct, block")
+
+        if routing_policy == "rule":
+            mode = "rules"
+        elif "tun" in capture_modes and default_action == "current":
+            mode = "tun"
+        elif default_action == "direct" and capture_modes == ("local_proxy",):
+            mode = "direct"
+        elif default_action == "block" and capture_modes == ("local_proxy",):
+            mode = "rules"
+        else:
+            mode = "global"
+
+        options: dict[str, object] = {"mode": mode, "final_policy": final_policy}
+        if routing_policy == "rule":
             options["groups"] = self.rule_store.list_groups()
             options["app_policy"] = self._runtime_app_policy()
         return options
@@ -763,11 +789,12 @@ class _RuntimeDriverRouter(BaseDriver):
         final_policy: str = "current_profile",
     ) -> bool:
         driver = self.runtime._driver_for_profile(profile, disconnect_current=False)
+        options = self.runtime._connect_options()
+        options.setdefault("final_policy", final_policy)
         return driver.connect(
             profile,
             dns_policy=dns_policy,
-            **self.runtime._connect_options(),
-            final_policy=final_policy,
+            **options,
         )
 
     def disconnect(self) -> bool:

@@ -29,6 +29,10 @@ DEFAULT_STATE = {
     "vpn_autoconnect_enabled": False,
     "vpn_desired_state": "off",
     "active_profile_id": "",
+    "routing_state_version": "1",
+    "routing_policy": "rule",
+    "capture_modes": "local_proxy",
+    "default_route_action": "current",
     "active_mode": "rules",
     "language_mode": "system",
     "selected_language": "en",
@@ -36,14 +40,60 @@ DEFAULT_STATE = {
 
 ALLOWED_VPN_DESIRED_STATES = {"on", "off"}
 ALLOWED_ACTIVE_MODES = {"rules", "global", "direct", "tun", "proxy"}
+SUPPORTED_ROUTING_STATE_VERSION = "1"
+ALLOWED_ROUTING_POLICIES = {"rule", "global"}
+ALLOWED_CAPTURE_MODES = {"local_proxy", "tun", "system_proxy"}
+ALLOWED_DEFAULT_ROUTE_ACTIONS = {"current", "direct", "block"}
 ALLOWED_LANGUAGE_MODES = {"system", "manual"}
 STATE_BOOL_FIELDS = {"app_autostart_enabled", "vpn_autoconnect_enabled"}
 STATE_STRING_FIELDS = {
     "vpn_desired_state",
     "active_profile_id",
+    "routing_state_version",
+    "routing_policy",
+    "capture_modes",
+    "default_route_action",
     "active_mode",
     "language_mode",
     "selected_language",
+}
+ROUTING_STATE_FIELDS = {
+    "routing_state_version",
+    "routing_policy",
+    "capture_modes",
+    "default_route_action",
+}
+LEGACY_MODE_TO_ROUTING_STATE = {
+    "rules": {
+        "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
+        "routing_policy": "rule",
+        "capture_modes": "local_proxy",
+        "default_route_action": "current",
+    },
+    "global": {
+        "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
+        "routing_policy": "global",
+        "capture_modes": "local_proxy",
+        "default_route_action": "current",
+    },
+    "direct": {
+        "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
+        "routing_policy": "global",
+        "capture_modes": "local_proxy",
+        "default_route_action": "direct",
+    },
+    "tun": {
+        "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
+        "routing_policy": "global",
+        "capture_modes": "local_proxy,tun",
+        "default_route_action": "current",
+    },
+    "proxy": {
+        "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
+        "routing_policy": "global",
+        "capture_modes": "local_proxy",
+        "default_route_action": "current",
+    },
 }
 
 
@@ -77,18 +127,14 @@ class StateManager:
             raise PersistentStoreError(f"cannot read {self.path}: {exc}") from exc
         if not isinstance(data, dict):
             raise PersistentValidationError(f"{self.path} must contain a TOML table")
-        state = dict(DEFAULT_STATE)
-        state.update(data)
-        return _validate_state(state, self.path)
+        return _validate_state(data, self.path)
 
     def save(self, state: dict[str, Any]) -> None:
         with file_lock(self.path):
             self._save_unlocked(state)
 
     def _save_unlocked(self, state: dict[str, Any]) -> None:
-        payload = dict(DEFAULT_STATE)
-        payload.update(state)
-        payload = _validate_state(payload, self.path)
+        payload = _validate_state(state, self.path)
         if tomli_w is None:  # pragma: no cover
             lines = []
             for key, value in payload.items():
@@ -105,6 +151,8 @@ class StateManager:
         with file_lock(self.path):
             state = self._load_unlocked()
             state[key] = value
+            if key == "active_mode":
+                state.update(routing_state_from_legacy_mode(str(value)))
             self._save_unlocked(state)
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -112,6 +160,7 @@ class StateManager:
 
 
 def _validate_state(state: dict[str, Any], path: Path) -> dict[str, Any]:
+    has_routing_state = any(key in state for key in ROUTING_STATE_FIELDS)
     validated = dict(DEFAULT_STATE)
     for key, value in state.items():
         if key in STATE_BOOL_FIELDS:
@@ -127,8 +176,84 @@ def _validate_state(state: dict[str, Any], path: Path) -> dict[str, Any]:
         raise PersistentValidationError("vpn_desired_state must be 'on' or 'off'")
     if validated["active_mode"] not in ALLOWED_ACTIVE_MODES:
         raise PersistentValidationError("active_mode must be one of: rules, global, direct, tun, proxy")
+    if not has_routing_state:
+        validated.update(routing_state_from_legacy_mode(validated["active_mode"]))
+    else:
+        _validate_routing_fields(validated, path)
+        validated["active_mode"] = compatibility_active_mode_for_routing_state(
+            validated,
+            fallback=validated["active_mode"],
+        )
     if validated["language_mode"] not in ALLOWED_LANGUAGE_MODES:
         raise PersistentValidationError("language_mode must be 'system' or 'manual'")
     if not validated["selected_language"]:
         raise PersistentValidationError("selected_language must not be empty")
     return validated
+
+
+def routing_state_from_legacy_mode(mode: str) -> dict[str, str]:
+    if mode not in LEGACY_MODE_TO_ROUTING_STATE:
+        raise PersistentValidationError("active_mode must be one of: rules, global, direct, tun, proxy")
+    return dict(LEGACY_MODE_TO_ROUTING_STATE[mode])
+
+
+def parse_capture_modes(value: str) -> tuple[str, ...]:
+    modes = tuple(item.strip() for item in value.split(",") if item.strip())
+    if len(set(modes)) != len(modes):
+        raise PersistentValidationError("capture_modes must not contain duplicate entries")
+    unknown = sorted(set(modes) - ALLOWED_CAPTURE_MODES)
+    if unknown:
+        joined = ", ".join(unknown)
+        raise PersistentValidationError(f"capture_modes contains unsupported entries: {joined}")
+    if "system_proxy" in modes and "local_proxy" not in modes:
+        raise PersistentValidationError("system_proxy capture requires local_proxy")
+    return modes
+
+
+def _validate_routing_fields(state: dict[str, Any], path: Path) -> None:
+    if state["routing_state_version"] != SUPPORTED_ROUTING_STATE_VERSION:
+        raise PersistentValidationError(
+            f"unsupported routing_state_version in {path}: {state['routing_state_version']}"
+        )
+    if state["routing_policy"] not in ALLOWED_ROUTING_POLICIES:
+        raise PersistentValidationError("routing_policy must be one of: rule, global")
+    if state["default_route_action"] not in ALLOWED_DEFAULT_ROUTE_ACTIONS:
+        raise PersistentValidationError("default_route_action must be one of: current, direct, block")
+    parse_capture_modes(state["capture_modes"])
+
+
+def compatibility_active_mode_for_routing_state(
+    state: dict[str, Any],
+    *,
+    fallback: str = "global",
+) -> str:
+    if fallback in ALLOWED_ACTIVE_MODES:
+        fallback_state = routing_state_from_legacy_mode(fallback)
+        if (
+            fallback_state["routing_policy"] == state.get("routing_policy")
+            and fallback_state["capture_modes"] == state.get("capture_modes")
+            and fallback_state["default_route_action"] == state.get("default_route_action")
+        ):
+            return fallback
+    try:
+        return rollback_active_mode_for_routing_state(state)
+    except PersistentValidationError:
+        if fallback in ALLOWED_ACTIVE_MODES:
+            return fallback
+        return "global"
+
+
+def rollback_active_mode_for_routing_state(state: dict[str, Any]) -> str:
+    routing_policy = str(state.get("routing_policy", ""))
+    capture_modes = parse_capture_modes(str(state.get("capture_modes", "")))
+    default_action = str(state.get("default_route_action", ""))
+
+    if routing_policy == "rule" and default_action == "current" and "tun" not in capture_modes:
+        return "rules"
+    if routing_policy == "global" and capture_modes == ("local_proxy",) and default_action == "current":
+        return "global"
+    if routing_policy == "global" and capture_modes == ("local_proxy",) and default_action == "direct":
+        return "direct"
+    if routing_policy == "global" and "tun" in capture_modes and default_action == "current":
+        return "tun"
+    raise PersistentValidationError("routing state has no exact legacy active_mode equivalent")
