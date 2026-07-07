@@ -40,13 +40,11 @@ Phase 2.6, because nothing removed them anymore. That gap is INV-18.1-001,
 fixed below.
 
 The claim "installed `watchdog`/`watchdogvpn`/daemon unit/doctor resolve to
-the same v2 runtime/source" is **not fully provable today**: Task 18.1 found
-live evidence that an installed runtime can silently drift behind the source
-checkout with no detectable version marker. That gap is real but is Task
-18.7's job (doctor integration / version-skew detection), not this task's -
-implementing it here would require inventing the install-time marker
-mechanism without the doctor-side reporting work it depends on, which is out
-of scope for an entrypoint audit.
+the same v2 runtime/source" was **not fully provable** at this task's initial
+closure: Task 18.1 found live evidence that an installed runtime can silently
+drift behind the source checkout with no detectable version marker. See the
+"Addendum" section below - the maintainer rejected leaving this as "did
+nothing" and it was implemented the same day, ahead of Task 18.7.
 
 ## Fix: INV-18.1-001 - restored legacy AdGuard-era cleanup
 
@@ -95,12 +93,77 @@ the same silent regression.
 
 ### Deliberately not changed
 
-- `update.sh` does not run legacy cleanup. It only replaces currently-shipped
-  product files; teaching it to detect and clean arbitrary historical state
-  is the mixed-install classification and migration-plan work explicitly
-  assigned to Task 18.5, not this task.
 - No new CLI flag was added. The legacy paths reuse the existing
   `--purge-config`/`--purge-state` gates instead.
+- Full mixed-install classification (fresh / clean update / legacy migration
+  / mixed-inconsistent, with an explicit refusal/migration plan) is still
+  Task 18.5's job. What changed in the addendum below is narrower and safer
+  than that: unconditionally sweeping away *known-dead* legacy units/files
+  that are never part of any supported configuration, not classifying or
+  refusing anything.
+
+## Addendum (2026-07-07, same day): update.sh was left too weak, version skew was left undone
+
+The initial closure above shipped two decisions the maintainer explicitly
+rejected on review:
+
+1. "`update.sh` does not run legacy cleanup... assigned to Task 18.5" - in
+   practice this meant a machine that never gets fully uninstalled (the
+   overwhelming majority of real usage) would carry AdGuard-era systemd units
+   and binaries forever, since most users update, they don't reinstall from
+   scratch. Deferring this to a future task's *classification* work was
+   conflating two different things: refusing/classifying mixed installs
+   (genuinely Task 18.5) vs. sweeping away files that are unconditionally
+   dead in every supported configuration (safe to do now, no classification
+   needed).
+2. "the version-skew claim is honestly assessed as not-yet-provable... Task
+   18.7's job" - correctly honest, but the maintainer's point was that
+   *some* concrete step should have been taken now (e.g. recording a marker)
+   instead of zero, leaving the rest for Task 18.7's fuller doctor
+   integration (PATH conflicts, capabilities, etc.).
+
+Both were fixed the same day, alongside the Task 18.3 AmneziaWG UX addendum:
+
+### Legacy cleanup moved to `lib/runtime.sh`, now runs on every install/update
+
+`remove_legacy_runtime_files()` moved from `uninstall.sh` into
+`lib/runtime.sh`, next to `remove_legacy_systemd_units` calls, both now
+invoked unconditionally inside `install_runtime_files()` - the function
+already shared by `install.sh` and `update.sh`. This means every install and
+every update now sweeps the seven AdGuard-era systemd units and four legacy
+binaries/dispatcher, not only a full `uninstall.sh` run. `uninstall.sh` now
+sources `lib/runtime.sh` and still calls the same two functions explicitly
+in its own removal sequence (unchanged behavior there, just a shared
+definition instead of a duplicated one).
+
+### Installed/source version marker implemented now
+
+New `lib/version_marker.sh`:
+
+- `record_installed_version()`: writes `commit=<git rev-parse HEAD>` and
+  `installed_at=<UTC timestamp>` to
+  `${WATCHDOGVPN_CONFIG_DIR:-/etc/watchdogvpn}/installed-version`. Called
+  automatically at the end of `install_python_package_tree()` (in
+  `lib/runtime.sh`), so both `install.sh` and `update.sh` record it without
+  extra wiring. Skips writing under `--dry-run` (prints
+  `[DRY-RUN] record installed version marker ...` instead), verified not to
+  create a file in that mode.
+- `installed_version_commit()` / `installed_version_timestamp()`: read the
+  marker.
+- `source_checkout_commit()`: `git -C "$ROOT_DIR" rev-parse HEAD`, i.e. the
+  commit of whatever checkout is currently running `doctor.sh`.
+
+`doctor.sh` gained an "Installed/Source Version Skew" section: `OK` if the
+marker's commit matches the current checkout's `HEAD`; `WARN` with both
+hashes and a `run ./update.sh` hint if they differ; `info` (not a failure)
+if no marker exists yet (older install, pre-dating this feature) or
+`doctor.sh` is not being run from inside a git checkout.
+
+This does not close the full Task 18.7 scope (PATH conflicts, capability
+reporting, systemd unit status, legacy-wrapper detection all remain there),
+but "is the installed runtime the same commit as this checkout" - the core
+of what Task 18.1/18.2 originally flagged as unprovable - is now answered
+directly instead of deferred to zero.
 
 ## Tests
 
@@ -108,44 +171,64 @@ the same silent regression.
   `59f4260`, in `tests/unit/test_install_security_contracts.sh`:
   assertions that `SYSTEMD_LEGACY_UNITS`/`remove_legacy_systemd_units()`
   exist and target the AdGuard-era unit names, that `uninstall.sh` calls
-  `remove_legacy_systemd_units` and defines `remove_legacy_runtime_files()`
-  with the four historical binary/dispatcher paths, that purge-config/state
-  also remove the legacy config/state paths, and that legacy systemd cleanup
-  runs in the correct order relative to current-unit cleanup.
+  `remove_legacy_systemd_units` and calls `remove_legacy_runtime_files`
+  (definition now in `lib/runtime.sh`, shared) with the four historical
+  binary/dispatcher paths, that purge-config/state also remove the legacy
+  config/state paths, that legacy systemd cleanup runs in the correct order
+  relative to current-unit cleanup, and that `install_runtime_files()` calls
+  both legacy cleanup functions (so install/update get them too).
+- New `tests/unit/test_version_marker.sh`: static wiring (install.sh/
+  update.sh/doctor.sh all source `lib/version_marker.sh`; doctor reports the
+  new section) plus real behavioral coverage - `record_installed_version`
+  skips writing under `--dry-run` (asserted no file gets created), a marker
+  written with this exact checkout's `HEAD` is read back as matching, and a
+  stale/fake commit in the marker is correctly detected as a mismatch.
 
 ## Validation
 
-- `bash -n uninstall.sh lib/systemd.sh tests/unit/test_install_security_contracts.sh`
-  passed.
+- `bash -n uninstall.sh lib/systemd.sh lib/runtime.sh lib/version_marker.sh
+  update.sh install.sh doctor.sh tests/unit/test_install_security_contracts.sh
+  tests/unit/test_version_marker.sh` passed.
 - `bash tests/unit/test_install_security_contracts.sh` passed.
-- `bash tests/unit.sh` passed (16 shell test files, including the updated
-  one).
+- `bash tests/unit/test_version_marker.sh` passed.
+- `bash tests/unit.sh` passed (18 shell test files, including both new/
+  updated ones).
 - `bash tests/syntax.sh` passed.
 - `python3 -m unittest discover -s tests -p 'test_*.py'` passed: 1026 tests
   (unaffected - this task only touched shell scripts and docs).
 - `git diff --check` passed.
 - `PYTHONPYCACHEPREFIX=/tmp/watchdogvpn-pycache python3 -m compileall -q .`
   passed.
+- Manually ran a real `update.sh --dry-run --yes --skip-doctor` end to end on
+  this development machine and confirmed, in order: the version marker
+  dry-run line right after the Python package tree install line, then all
+  seven legacy systemd units and four legacy files reported `[KEEP] absent`
+  (this machine was never AdGuard-era contaminated, so nothing to remove -
+  but the code path runs and targets the right names), then the normal
+  current-product file replacement continuing unchanged.
 - No VM was used; this closure is local-only, same as Task 18.1. Task 18.6
   still owes a real VM smoke test that provisions the seven legacy units and
-  four legacy files, then proves `uninstall.sh` actually removes them on a
-  real system (dry-run and static assertions only prove the code path exists
-  and targets the right names).
+  four legacy files on both a fresh-uninstall path and an update path, then
+  proves both actually remove them on a real system.
 
 ## Deferred To Later Tasks
 
 - **Task 18.3**: dependency installation, including sing-box checksum/
   signature pinning (already flagged in Task 18.1).
 - **Task 18.4**: shared-state permission re-audit.
-- **Task 18.5**: mixed-install classification and migration plan; should also
-  decide whether `update.sh` (not just `uninstall.sh`) should surface legacy
-  contamination during a non-destructive update, rather than only cleaning it
-  up on full uninstall.
-- **Task 18.6**: VM smoke test proving this task's cleanup functions actually
-  work against a real legacy-contaminated install.
-- **Task 18.7**: version-skew detection (installed-vs-source marker) and the
-  `doctor.sh` "Legacy Systemd Units" section naming fix, both noted in Task
-  18.1 and left open here.
+- **Task 18.5**: full mixed-install classification (fresh / clean update /
+  legacy migration / mixed-inconsistent) and migration plan. The addendum
+  above already makes `update.sh` sweep known-dead legacy artifacts
+  unconditionally; 18.5 is the broader classify-and-explain-a-plan work,
+  not "does update.sh clean anything up at all."
+- **Task 18.6**: VM smoke test proving the cleanup functions actually work
+  against a real legacy-contaminated install, on both the update and
+  uninstall paths.
+- **Task 18.7**: the remaining, broader doctor-integration scope - PATH
+  conflicts, capability reporting, systemd unit status, legacy-wrapper
+  detection, and the `doctor.sh` "Legacy Systemd Units" section naming fix.
+  Version-skew detection itself (installed-vs-source marker) is no longer
+  deferred - it shipped in this task's addendum.
 - **Task 18.8**: installer audit closure.
 
 ## Acceptance
@@ -155,9 +238,10 @@ Task 18.2 closes when:
 - [x] `install.sh`/`update.sh`/shipped systemd units are confirmed to use only
   current v2 entrypoints;
 - [x] the one concrete v1-only-entrypoint gap found in Task 18.1
-  (INV-18.1-001) is fixed with regression coverage;
-- [x] the version-skew claim is honestly assessed as not-yet-provable and
-  explicitly deferred to Task 18.7, rather than asserted without evidence;
+  (INV-18.1-001) is fixed with regression coverage, and runs on every
+  install/update, not only a full uninstall;
+- [x] the installed-vs-source version marker is implemented and reported by
+  `doctor.sh`, not left as "not yet provable, deferred";
 - [x] full local validation (shell + Python test suites, syntax, compileall,
   whitespace) passes;
 - [x] real VM validation remains explicitly owed to Task 18.6, not claimed as

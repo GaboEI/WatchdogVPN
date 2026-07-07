@@ -129,13 +129,19 @@ the module is not.
   added `install_official_cloak` right after `install_official_singbox` in
   the Custom VPS branch.
 - `update.sh`: added a "Runtime dependencies" section calling
-  `validate_python_runtime_dependencies` as a non-interactive backfill for
-  machines that installed before this task. Deliberately did not wire
-  sing-box/Cloak/AmneziaWG into `update.sh` - re-prompting for an optional
-  binary install on every update would violate `docs/install-contracts.md`'s
-  "installer should not ask internal technical questions" spirit for a
-  routine update; a user who wants Cloak installed after the fact can rerun
-  `install.sh` or install manually.
+  `validate_python_runtime_dependencies`, `install_official_singbox`,
+  `install_official_cloak` and `guide_amneziawg_setup` - full parity with
+  `install.sh`. **Addendum (2026-07-07, same day):** the initial version of
+  this task only wired the Python cryptography backfill into `update.sh` and
+  deliberately left sing-box/Cloak/AmneziaWG out, reasoning that "an
+  interactive prompt during a routine update would be surprising." The
+  maintainer rejected that as giving a returning user a worse experience
+  than a fresh install just because they used `update.sh` instead of
+  reinstalling - which is the common case for real usage, not the exception.
+  All four checks now run identically in both scripts; each one already
+  short-circuits to a silent `[KEEP]`/`[OK]` line when the dependency is
+  already present (the overwhelming majority of real updates), so there is
+  no new friction for users who already have everything installed.
 - `doctor.sh`: sources the same libs and adds a "Protocol Runtime
   Dependencies" section using only the pure detection functions
   (`singbox_available`, `cloak_available`, `amneziawg_userspace_available`,
@@ -159,13 +165,12 @@ AmneziaWG guided-setup prompts).
   the test suite (see below), not just by convention.
 - `cryptography` was not added to `DISTRO_BASE_PACKAGES` (see rationale
   above).
-- `update.sh` does not offer to install sing-box/Cloak, nor does it run the
-  AmneziaWG guided wizard (an interactive multi-attempt wizard during a
-  routine update would be surprising; a user who wants AmneziaWG installed
-  after the fact can rerun `install.sh`).
-- Version-skew detection, PATH-conflict detection and the broader
-  installed/source marker mechanism remain Task 18.7's job, unrelated to this
-  task's dependency-installation scope.
+- PATH-conflict detection and the broader doctor-integration scope (systemd
+  unit status, capability reporting, legacy-wrapper detection) remain Task
+  18.7's job, unrelated to this task's dependency-installation scope.
+  Installed/source version-skew detection itself was **not** left for Task
+  18.7 - it shipped the same day, see
+  `docs/phase-18-task-18-2-installer-entrypoint-audit.md`'s addendum.
 
 ## Tests
 
@@ -191,7 +196,11 @@ New `tests/unit/test_protocol_dependencies.sh` (registered in
   the correct package name;
 - `install.sh` calls the new validators in the right order relative to the
   existing required-commands/sing-box checks;
-- `update.sh` calls the Python dependency backfill;
+- `update.sh` calls the Python dependency backfill **and** (addendum)
+  `install_official_singbox`, `install_official_cloak` and
+  `guide_amneziawg_setup`, and sources all three of `lib/singbox.sh`,
+  `lib/cloak.sh` and `lib/amneziawg.sh` - full parity with `install.sh`, not
+  a weaker subset;
 - `doctor.sh` reports all four dependencies' state but never calls an
   installer function.
 
@@ -220,6 +229,12 @@ exercise the "still missing" branches.
   Dependencies" section correctly reported already-installed sing-box,
   Cloak client and `cryptography`, and AmneziaWG-compatible tooling, using
   real machine state (not mocked).
+- Addendum: manually ran a real `update.sh --dry-run --yes --skip-doctor` end
+  to end and confirmed the "Runtime dependencies" section now reports the
+  same four checks as `install.sh` (`[OK] python cryptography module
+  available`, `[KEEP] sing-box detected: ...`, `[KEEP] Cloak client detected:
+  ...`, `[OK] AmneziaWG (or compatible WireGuard) tooling detected`), not
+  just the cryptography backfill.
 - Checksums were computed by downloading the exact pinned-version release
   assets directly from the official GitHub releases over HTTPS and hashing
   them locally, then re-verified byte-for-byte against the values written

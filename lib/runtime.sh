@@ -18,6 +18,20 @@ PYTHON_RUNTIME_PACKAGES=(
   rules
 )
 
+# Historical WatchdogVPN-owned files removed from the shipped set before this
+# release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept separate
+# from remove_runtime_files()/install_runtime_files() purely so both install
+# and update can clean up a machine that installed before their removal, not
+# only a full uninstall. See INV-18.1-001 in
+# docs/phase-18-task-18-1-legacy-contamination-inventory.md.
+remove_legacy_runtime_files() {
+  remove_root_path /usr/local/bin/vpn_auth_check
+  remove_root_path /usr/local/sbin/vpn_rotate.sh
+  remove_root_path /usr/local/sbin/vpn_set
+  remove_root_path /usr/local/sbin/vpn_watchdog.sh
+  remove_root_path /etc/NetworkManager/dispatcher.d/99-vpn-rotate
+}
+
 install_runtime_files() {
   create_system_user_no_home watchdogvpn
   add_installing_user_to_watchdogvpn_group
@@ -28,6 +42,12 @@ install_runtime_files() {
   migrate_watchdogvpn_shared_state
   repair_watchdogvpn_shared_state_permissions
   install_python_package_tree
+
+  # Clean up pre-Phase-2.6 (AdGuard-era) contamination on every install and
+  # update, not only on a full uninstall - a machine that never gets
+  # uninstalled should not carry orphaned legacy units/scripts forever.
+  remove_legacy_systemd_units
+  remove_legacy_runtime_files
 
   install_root_file "$ROOT_DIR/bin/no_vpn" /usr/local/bin/no_vpn 0755
   install_root_file "$ROOT_DIR/bin/vpn_dns_rescue" /usr/local/bin/vpn_dns_rescue 0755
@@ -68,6 +88,7 @@ install_python_package_tree() {
   local dest="${1:-$PYTHON_PACKAGE_DIR}" package
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] install Python runtime packages to %s\n' "$dest"
+    record_installed_version
     return 0
   fi
   backup_path "$dest"
@@ -79,6 +100,7 @@ install_python_package_tree() {
   run_step sudo chown -R root:root "$dest"
   run_step sudo find "$dest" -type d -exec chmod 0755 {} +
   run_step sudo find "$dest" -type f -exec chmod 0644 {} +
+  record_installed_version
 }
 
 migrate_watchdogvpn_shared_state() {

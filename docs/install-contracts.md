@@ -66,6 +66,8 @@ It should check:
 - sing-box, AmneziaWG tooling, Cloak client and the Python `cryptography`
   module (protocol/feature runtime dependencies; see "Dependency Contract"
   below)
+- installed-vs-source-checkout version skew (see "Dependency Contract"
+  below)
 
 Result levels:
 
@@ -112,6 +114,18 @@ checksum/signature strategy where the upstream project provides one (or a
 maintainer-computed checksum pinned to the exact version otherwise), and a
 clear failure message that aborts before installing anything on mismatch.
 
+`install.sh` and `update.sh` run identical dependency checks. A returning
+user who runs `update.sh` instead of reinstalling from scratch must not get a
+weaker experience than a fresh install.
+
+**Installed/source version marker:** `install.sh`/`update.sh` record the
+installed source commit and timestamp (`lib/version_marker.sh`) every time
+the Python runtime package tree is (re)installed. `doctor.sh` compares that
+marker against `git rev-parse HEAD` of the checkout it is run from and warns
+if they differ, so "is the installed runtime the same code as this
+checkout" has a real answer instead of only the hand-edited `VERSION`
+string in `bin/watchdogvpn`.
+
 ## install.sh
 
 Role: install a new system or complete a partial installation.
@@ -145,6 +159,13 @@ It must preserve:
 
 It should replace only product-managed runtime files after validation and backup.
 It should show a preservation contract and update plan before replacing files.
+
+It runs the same dependency checks as `install.sh` (sing-box, Cloak,
+AmneziaWG guided setup, Python `cryptography`) and, on every run, sweeps
+orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts if a
+legacy-contaminated machine still has them - not only on a full uninstall.
+It also records the installed-vs-source version marker used by
+`doctor.sh`'s version-skew check (see "Dependency Contract" above).
 
 ## uninstall.sh
 

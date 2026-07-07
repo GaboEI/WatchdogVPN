@@ -15,6 +15,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/cloak.sh"
 # shellcheck source=lib/amneziawg.sh
 . "$ROOT_DIR/lib/amneziawg.sh"
+# shellcheck source=lib/version_marker.sh
+. "$ROOT_DIR/lib/version_marker.sh"
 
 FAIL_COUNT=0
 WARN_COUNT=0
@@ -281,6 +283,23 @@ if [[ -d "$HOME/.local/share/watchdogvpn/watchdogvpn" ]]; then
       mark_fail "missing installed TUI module: $module"
     fi
   done
+fi
+
+section "Installed/Source Version Skew"
+installed_commit="$(installed_version_commit 2>/dev/null || true)"
+source_commit="$(source_checkout_commit 2>/dev/null || true)"
+if [[ -z "$installed_commit" ]]; then
+  info "no installed version marker yet; run ./install.sh or ./update.sh to create one"
+elif [[ -z "$source_commit" ]]; then
+  info "not running from a git checkout; cannot compare installed vs source version"
+  info "installed: $installed_commit (installed_at=$(installed_version_timestamp 2>/dev/null || printf unknown))"
+elif [[ "$installed_commit" == "$source_commit" ]]; then
+  mark_ok "installed runtime matches source checkout: $installed_commit"
+else
+  mark_warn "installed runtime commit differs from this source checkout"
+  info "installed: $installed_commit (installed_at=$(installed_version_timestamp 2>/dev/null || printf unknown))"
+  info "checkout:  $source_commit"
+  info "run ./update.sh to refresh the installed runtime to match this checkout"
 fi
 
 section "WatchdogVPN Daemon"

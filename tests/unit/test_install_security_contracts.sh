@@ -109,14 +109,21 @@ assert_contains "$ROOT_DIR/lib/systemd.sh" 'vpn-watchdog.service' "legacy unit l
 assert_contains "$ROOT_DIR/lib/systemd.sh" 'vpn-rotate.service' "legacy unit list must target the removed rotate service"
 assert_contains "$ROOT_DIR/lib/systemd.sh" 'remove_legacy_systemd_units()' "systemd lib must define a legacy unit cleanup function"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_legacy_systemd_units' "uninstall must clean up orphaned AdGuard-era systemd units from pre-Phase-2.6 installs"
-assert_contains "$ROOT_DIR/uninstall.sh" 'remove_legacy_runtime_files()' "uninstall must define a legacy binary/script cleanup function"
-assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/vpn_auth_check' "uninstall must clean up the orphaned AdGuard-era auth check binary"
-assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/sbin/vpn_rotate.sh' "uninstall must clean up the orphaned AdGuard-era rotate script"
-assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/sbin/vpn_watchdog.sh' "uninstall must clean up the orphaned AdGuard-era watchdog script"
-assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /etc/NetworkManager/dispatcher.d/99-vpn-rotate' "uninstall must clean up the orphaned AdGuard-era NetworkManager dispatcher"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_legacy_runtime_files' "uninstall must call the legacy binary/script cleanup function"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_legacy_runtime_files()' "runtime lib must define the legacy binary/script cleanup function (shared by install/update/uninstall)"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_root_path /usr/local/bin/vpn_auth_check' "cleanup must target the orphaned AdGuard-era auth check binary"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_root_path /usr/local/sbin/vpn_rotate.sh' "cleanup must target the orphaned AdGuard-era rotate script"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_root_path /usr/local/sbin/vpn_watchdog.sh' "cleanup must target the orphaned AdGuard-era watchdog script"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_root_path /etc/NetworkManager/dispatcher.d/99-vpn-rotate' "cleanup must target the orphaned AdGuard-era NetworkManager dispatcher"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /etc/adguardvpn.env' "purge-config must also remove legacy AdGuard env config"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /var/lib/vpn-rotate' "purge-state must also remove legacy rotate state"
 assert_runtime_order "$ROOT_DIR/uninstall.sh" "remove_systemd_units" "remove_legacy_systemd_units" "uninstall must remove legacy systemd units alongside current ones"
+
+# Legacy cleanup must also run on every install/update, not only a full
+# uninstall, so a machine that never gets uninstalled is not contaminated
+# forever (feedback from the maintainer after the initial INV-18.1-001 fix
+# only covered uninstall.sh).
+assert_contains "$ROOT_DIR/lib/runtime.sh" $'  remove_legacy_systemd_units\n  remove_legacy_runtime_files' "install_runtime_files must call legacy systemd cleanup then legacy file cleanup on every install/update"
 
 assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn' "OpenVPN normal compatibility requires installer dependency detection"
 assert_contains "$ROOT_DIR/distros/ubuntu.sh" "openvpn" "Ubuntu package set must include OpenVPN"

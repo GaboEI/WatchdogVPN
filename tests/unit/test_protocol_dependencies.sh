@@ -151,9 +151,23 @@ assert_contains "$ROOT_DIR/install.sh" 'install_official_cloak' "installer must 
 assert_order "$ROOT_DIR/install.sh" "validate_required_commands" "validate_protocol_runtime_dependencies" "installer must check protocol dependencies after required commands"
 assert_order "$ROOT_DIR/install.sh" "install_official_singbox" "install_official_cloak" "installer must offer sing-box before the optional Cloak client"
 
-# --- update.sh wiring (backfill, non-interactive) ---
+# --- update.sh wiring: full parity with install.sh, not a weaker subset ---
+# (feedback from the maintainer: update.sh must not leave a returning user
+# with a worse experience than a fresh install just because it is "only" an
+# update)
 
 assert_contains "$ROOT_DIR/update.sh" 'validate_python_runtime_dependencies' "updater must backfill missing python runtime dependencies"
+assert_contains "$ROOT_DIR/update.sh" 'install_official_singbox' "updater must ensure sing-box is present, not only a fresh install"
+assert_contains "$ROOT_DIR/update.sh" 'install_official_cloak' "updater must offer the Cloak client, not only a fresh install"
+assert_contains "$ROOT_DIR/update.sh" 'guide_amneziawg_setup' "updater must offer the AmneziaWG guided setup, not only a fresh install"
+assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/singbox.sh"' "updater must source lib/singbox.sh to use install_official_singbox"
+assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/cloak.sh"' "updater must source lib/cloak.sh to use install_official_cloak"
+assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/amneziawg.sh"' "updater must source lib/amneziawg.sh to use guide_amneziawg_setup"
+
+# --- uninstall.sh also sources lib/runtime.sh now that legacy file cleanup
+#     moved there to be shared with install/update ---
+
+assert_contains "$ROOT_DIR/uninstall.sh" '. "$ROOT_DIR/lib/runtime.sh"' "uninstall must source lib/runtime.sh for the shared legacy cleanup function"
 
 # --- doctor.sh reports dependency state without installing anything ---
 

@@ -11,6 +11,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/config.sh"
 # shellcheck source=lib/systemd.sh
 . "$ROOT_DIR/lib/systemd.sh"
+# shellcheck source=lib/runtime.sh
+. "$ROOT_DIR/lib/runtime.sh"
 
 ASSUME_YES=0
 PURGE_CONFIG=0
@@ -150,19 +152,6 @@ remove_runtime_files() {
   remove_user_path "$desktop_dir/watchdogvpn.desktop"
 
   remove_root_path /etc/logrotate.d/myvpn
-}
-
-# Historical WatchdogVPN-owned files removed from the shipped set before this
-# release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept separate
-# from remove_runtime_files() purely so uninstall can clean up a machine that
-# installed before their removal. See INV-18.1-001 in
-# docs/phase-18-task-18-1-legacy-contamination-inventory.md.
-remove_legacy_runtime_files() {
-  remove_root_path /usr/local/bin/vpn_auth_check
-  remove_root_path /usr/local/sbin/vpn_rotate.sh
-  remove_root_path /usr/local/sbin/vpn_set
-  remove_root_path /usr/local/sbin/vpn_watchdog.sh
-  remove_root_path /etc/NetworkManager/dispatcher.d/99-vpn-rotate
 }
 
 remove_optional_user_data() {
