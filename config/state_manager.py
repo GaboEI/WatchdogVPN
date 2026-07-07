@@ -238,6 +238,10 @@ def compatibility_active_mode_for_routing_state(
     try:
         return rollback_active_mode_for_routing_state(state)
     except PersistentValidationError:
+        # active_mode is only a compatibility/display mirror. Runtime routing
+        # decisions must read the versioned routing fields directly; otherwise
+        # this approximate fallback could silently weaken non-legacy-equivalent
+        # shapes such as default_route_action=block.
         if fallback in ALLOWED_ACTIVE_MODES:
             return fallback
         return "global"

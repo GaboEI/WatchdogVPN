@@ -88,6 +88,25 @@ JSON output preserves `active_mode` and adds:
 
 Automation that only reads `active_mode` remains compatible.
 
+### Compatibility Mirror Guardrail
+
+`rollback_active_mode_for_routing_state()` remains strict: it raises
+`PersistentValidationError` for version 1 routing shapes that have no exact
+legacy `active_mode` equivalent, such as `default_route_action=block`.
+
+`compatibility_active_mode_for_routing_state()` intentionally keeps
+`active_mode` writable/readable as an approximate compatibility mirror when a
+legacy equivalent does not exist. That fallback is safe only because runtime
+routing decisions do not consume `active_mode`; `WatchdogRuntime._connect_options()`
+reads `routing_policy`, `capture_modes`, and `default_route_action` directly.
+
+If a future change reintroduces `active_mode` as a runtime decision source, this
+fallback becomes unsafe and must be replaced with strict refusal or an explicit
+version-aware runtime mapping. The existing regression
+`test_connect_maps_global_block_routing_shape_without_rule_policy` pins the
+current behavior: a non-legacy-equivalent `default_route_action=block` shape is
+kept fail-closed even when the compatibility mirror says `global`.
+
 ## Backup/Restore Compatibility
 
 Selection-state backup validation now accepts legacy-only state documents and
