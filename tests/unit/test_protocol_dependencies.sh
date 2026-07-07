@@ -160,6 +160,7 @@ assert_contains "$ROOT_DIR/update.sh" 'validate_python_runtime_dependencies' "up
 assert_contains "$ROOT_DIR/update.sh" 'install_official_singbox' "updater must ensure sing-box is present, not only a fresh install"
 assert_contains "$ROOT_DIR/update.sh" 'install_official_cloak' "updater must offer the Cloak client, not only a fresh install"
 assert_contains "$ROOT_DIR/update.sh" 'guide_amneziawg_setup' "updater must offer the AmneziaWG guided setup, not only a fresh install"
+assert_contains "$ROOT_DIR/update.sh" 'prompt_yes_no()' "updater must define the prompt helper required by optional dependency installers"
 assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/singbox.sh"' "updater must source lib/singbox.sh to use install_official_singbox"
 assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/cloak.sh"' "updater must source lib/cloak.sh to use install_official_cloak"
 assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/amneziawg.sh"' "updater must source lib/amneziawg.sh to use guide_amneziawg_setup"

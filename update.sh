@@ -86,6 +86,34 @@ prompt_continue() {
   esac
 }
 
+prompt_yes_no() {
+  local question="$1" default="$2" answer prompt
+
+  if ((ASSUME_YES == 1)); then
+    [[ "$default" == "yes" ]]
+    return
+  fi
+
+  case "$default" in
+    yes) prompt="[Y/n]" ;;
+    no) prompt="[y/N]" ;;
+    *) prompt="[y/n]" ;;
+  esac
+
+  while true; do
+    read -r -p "$question $prompt " answer
+    answer="${answer:-$default}"
+    case "$answer" in
+      y|Y|yes|YES|Yes|s|S|si|SI|Si)
+        return 0
+        ;;
+      n|N|no|NO|No)
+        return 1
+        ;;
+    esac
+  done
+}
+
 require_supported_distro() {
   detect_distro
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
