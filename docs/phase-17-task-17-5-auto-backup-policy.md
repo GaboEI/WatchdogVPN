@@ -10,8 +10,9 @@ Task 17.5 defines the low-level auto-backup policy in
 
 It does not add user-facing CLI commands or uninstall flow integration yet.
 Instead, it provides explicit manager APIs for future CLI/install/uninstall code
-to call before risky mutations. Plaintext sensitive-warning and encryption
-rejection behavior was added later in Task 17.6.
+to call before risky mutations. Plaintext sensitive-warning behavior was added
+later in Task 17.6. Encrypted backup format support was added later in Task
+17.7.
 
 ## Auto-Backup Reasons
 
@@ -65,7 +66,6 @@ The following remain later Phase 17 work:
   `create_auto_backup(reason="pre-destructive-remove")`;
 - connecting uninstall deletion to
   `create_auto_backup(reason="pre-uninstall-delete")`;
-- Phase 17 Task 17.7 reviewed encrypted backup format;
 - WebDAV/LAN sync;
 - uninstall flow UX.
 

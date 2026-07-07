@@ -14,6 +14,7 @@ from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from config.backup_manager import (
     BACKUP_ENTRIES,
+    BACKUP_ENCRYPTION_FORMAT,
     BACKUP_ENCRYPTION_SUPPORTED,
     BACKUP_SCHEMA_VERSION,
     BACKUP_SENSITIVE_WARNING,
@@ -289,13 +290,139 @@ class BackupManagerTests(unittest.TestCase):
             with self.assertRaisesRegex(BackupValidationError, "duplicate"):
                 manager.create_backup(root / "bad.zip", sections=["profiles", "profiles"])
 
-    def test_create_backup_rejects_encryption_request(self) -> None:
+    def test_create_backup_rejects_encryption_without_password(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.seed_config(root)
 
-            with self.assertRaisesRegex(BackupValidationError, "encryption is not implemented"):
+            with self.assertRaisesRegex(BackupValidationError, "password"):
                 BackupManager(config_dir=root).create_backup(root / "encrypted.zip", encrypt=True)
+
+    @unittest.skipUnless(BACKUP_ENCRYPTION_SUPPORTED, "cryptography dependency unavailable")
+    def test_create_encrypted_backup_writes_outer_manifest_and_hides_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+            backup = manager.create_backup(
+                root / "encrypted.zip",
+                encrypt=True,
+                password="correct horse battery staple",
+            )
+
+            with ZipFile(backup.path) as archive:
+                self.assertEqual(set(archive.namelist()), {"manifest.json", "payload.bin"})
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["format"], "watchdogvpn-encrypted-backup-zip")
+                self.assertEqual(manifest["encryption"]["format"], BACKUP_ENCRYPTION_FORMAT)
+                self.assertEqual(manifest["encryption"]["algorithm"], "AES-256-GCM")
+                self.assertEqual(manifest["encryption"]["kdf"], "scrypt")
+                self.assertTrue(manifest["encryption"]["enabled"])
+                self.assertNotIn("profiles.json", archive.namelist())
+
+            parsed = manager.inspect_backup(
+                backup.path,
+                password="correct horse battery staple",
+            )
+            self.assertIn("profiles", parsed.manifest["sections"])
+            self.assertIn("profiles.json", parsed.sections)
+
+    @unittest.skipUnless(BACKUP_ENCRYPTION_SUPPORTED, "cryptography dependency unavailable")
+    def test_restore_encrypted_backup_with_password(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+            backup = manager.create_backup(
+                root / "encrypted.zip",
+                encrypt=True,
+                password="secret",
+            ).path
+            ProfileStore(root / "profiles.json").remove("profile-one")
+
+            result = manager.restore_backup(
+                backup,
+                password="secret",
+                replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+            )
+
+            self.assertEqual(
+                [profile.id for profile in ProfileStore(root / "profiles.json").list()],
+                ["profile-one"],
+            )
+            self.assertTrue(result.pre_restore_backup.exists())
+            with self.assertRaisesRegex(BackupValidationError, "password"):
+                manager.inspect_backup(result.pre_restore_backup)
+            parsed_pre_restore = manager.inspect_backup(
+                result.pre_restore_backup,
+                password="secret",
+            )
+            self.assertIn("profiles.json", parsed_pre_restore.sections)
+
+    @unittest.skipUnless(BACKUP_ENCRYPTION_SUPPORTED, "cryptography dependency unavailable")
+    def test_encrypted_backup_rejects_missing_or_wrong_password(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+            backup = manager.create_backup(
+                root / "encrypted.zip",
+                encrypt=True,
+                password="secret",
+            ).path
+
+            with self.assertRaisesRegex(BackupValidationError, "password"):
+                manager.inspect_backup(backup)
+            with self.assertRaisesRegex(BackupValidationError, "password|authentication"):
+                manager.inspect_backup(backup, password="wrong")
+
+    @unittest.skipUnless(BACKUP_ENCRYPTION_SUPPORTED, "cryptography dependency unavailable")
+    def test_encrypted_backup_rejects_corrupt_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+            backup = manager.create_backup(
+                root / "encrypted.zip",
+                encrypt=True,
+                password="secret",
+            ).path
+            corrupt = root / "corrupt.zip"
+
+            with ZipFile(backup) as source, ZipFile(corrupt, "w", compression=ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename == "payload.bin":
+                        data = bytes([data[0] ^ 1]) + data[1:]
+                    target.writestr(item.filename, data)
+
+            with self.assertRaisesRegex(BackupValidationError, "authentication"):
+                manager.inspect_backup(corrupt, password="secret")
+
+    @unittest.skipUnless(BACKUP_ENCRYPTION_SUPPORTED, "cryptography dependency unavailable")
+    def test_encrypted_backup_rejects_unsupported_format(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+            backup = manager.create_backup(
+                root / "encrypted.zip",
+                encrypt=True,
+                password="secret",
+            ).path
+            future = root / "future.zip"
+
+            with ZipFile(backup) as source, ZipFile(future, "w", compression=ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename == "manifest.json":
+                        manifest = json.loads(data)
+                        manifest["encryption"]["format"] = "watchdogvpn-backup-future-v99"
+                        data = json.dumps(manifest).encode()
+                    target.writestr(item.filename, data)
+
+            with self.assertRaisesRegex(BackupValidationError, "unsupported encrypted backup format"):
+                manager.inspect_backup(future, password="secret")
 
     def test_replace_restore_requires_strong_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

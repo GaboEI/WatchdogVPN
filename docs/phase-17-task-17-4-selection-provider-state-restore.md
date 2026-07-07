@@ -11,8 +11,8 @@ restored by `config.backup_manager.BackupManager`.
 It does not add user-facing CLI commands. It also does not reconnect, restart
 services, mutate live network state or perform provider refreshes after restore.
 Bounded auto-backup retention was added later in Task 17.5. Plaintext
-sensitive-warning and encryption rejection behavior was added later in Task
-17.6.
+sensitive-warning behavior was added later in Task 17.6. Encrypted backup
+format support was added later in Task 17.7.
 
 ## Selection State
 
@@ -75,7 +75,6 @@ The following remain later Phase 17 work:
 - user-facing CLI wiring;
 - CLI copy and confirmation UX;
 - profiles/providers merge behavior if deliberately designed;
-- Phase 17 Task 17.7 reviewed encrypted backup format;
 - WebDAV/LAN sync;
 - uninstall flow integration.
 

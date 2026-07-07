@@ -181,18 +181,27 @@ sensitive-data decision.
 
 ## Backup Sensitivity
 
-WatchdogVPN backups are plaintext ZIP files until Phase 17 Task 17.7 defines
-and implements a reviewed encrypted backup format. Backup manifests are marked
+WatchdogVPN backups are sensitive archives. Backup manifests are marked
 sensitive and warn that exports may contain private keys, passwords, provider
 tokens, subscription URLs, routing policy, app policy and local selection state.
 
-Encrypted backup input/output is not supported in the current format. Backup
-creation requests that ask for encryption are rejected, and backup manifests
-that claim `encryption.enabled=true` are rejected on inspection/restore.
+Plaintext local ZIP backups remain supported. Encrypted backups use an outer ZIP
+with public `manifest.json` metadata and encrypted `payload.bin`. The payload is
+a complete normal WatchdogVPN backup ZIP encrypted with AES-256-GCM using a key
+derived from the caller-supplied passphrase with scrypt
+(`n=16384`, `r=8`, `p=1`, 32-byte key). Passwords are not stored and cannot be
+recovered.
+
+Encrypted restores require the password. Missing password, wrong password,
+payload authentication failure, unsupported encrypted format metadata or
+unsupported KDF parameters fail before local configuration is mutated. When
+restoring from an encrypted backup, the pre-restore auto-backup is encrypted
+with the same passphrase instead of writing an unexpected plaintext copy.
 
 Backups are local files. WatchdogVPN must not silently upload backup archives.
 Future remote or LAN sync must first define acceptable client-side encryption,
-conflict handling and credential storage.
+conflict handling and credential storage. It must not silently upload plaintext
+backup archives.
 
 ## Reporting Security Issues
 

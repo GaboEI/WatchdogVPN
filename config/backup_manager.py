@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 from dataclasses import dataclass
@@ -32,11 +34,29 @@ from node_groups.store import NodeGroupStore
 from rules.models import RuleGroup, validate_group_name
 from rules.rule_store import RuleStore
 
+try:
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+except ModuleNotFoundError:  # pragma: no cover - exercised on hosts without cryptography
+    InvalidTag = None  # type: ignore[assignment]
+    AESGCM = None  # type: ignore[assignment]
+    Scrypt = None  # type: ignore[assignment]
+
 
 BACKUP_SCHEMA_VERSION = 1
 BACKUP_SECTION_SCHEMA_VERSION = 1
 BACKUP_PRODUCT = "WatchdogVPN"
-BACKUP_ENCRYPTION_SUPPORTED = False
+BACKUP_ENCRYPTION_SUPPORTED = AESGCM is not None and Scrypt is not None
+BACKUP_ENCRYPTION_FORMAT = "watchdogvpn-backup-aesgcm-scrypt-v1"
+BACKUP_ENCRYPTION_AAD = b"WatchdogVPN encrypted backup v1"
+ENCRYPTED_PAYLOAD_ENTRY = "payload.bin"
+ENCRYPTION_SALT_BYTES = 16
+ENCRYPTION_NONCE_BYTES = 12
+ENCRYPTION_KEY_BYTES = 32
+SCRYPT_N = 2**14
+SCRYPT_R = 8
+SCRYPT_P = 1
 BACKUP_SENSITIVE_WARNING = (
     "Backup may contain private keys, passwords, provider tokens, subscription "
     "URLs, routing policy, app policy and local selection state. Store and share "
@@ -116,11 +136,8 @@ class BackupManager:
         sections: Iterable[str] | None = None,
         diagnostics: dict[str, Any] | None = None,
         encrypt: bool = False,
+        password: str | None = None,
     ) -> BackupResult:
-        if encrypt:
-            raise BackupValidationError(
-                "backup encryption is not implemented; write plaintext backup only after warning"
-            )
         created_at = _utc_now()
         output_path = output_path or self._default_backup_path(created_at, reason)
         selected_sections = _normalize_sections(sections)
@@ -131,10 +148,24 @@ class BackupManager:
         )
         manifest = self._manifest(created_at, reason, section_payloads)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        if encrypt:
+            plaintext = _plaintext_archive_bytes(manifest, section_payloads, selected_sections)
+            encrypted_payload, encryption_metadata = _encrypt_backup_payload(
+                plaintext,
+                password,
+            )
+            encrypted_manifest = self._encrypted_manifest(manifest, encryption_metadata)
+            with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as archive:
+                archive.writestr("manifest.json", _json_text(encrypted_manifest))
+                archive.writestr(ENCRYPTED_PAYLOAD_ENTRY, encrypted_payload)
+            return BackupResult(path=output_path, manifest=encrypted_manifest)
         with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as archive:
-            archive.writestr("manifest.json", _json_text(manifest))
-            for entry in _entries_for_sections(selected_sections):
-                archive.writestr(entry, _json_text(section_payloads[entry]))
+            _write_plaintext_archive(
+                archive,
+                manifest,
+                section_payloads,
+                selected_sections,
+            )
         return BackupResult(path=output_path, manifest=manifest)
 
     def create_auto_backup(
@@ -142,10 +173,12 @@ class BackupManager:
         *,
         reason: str,
         max_backups: int = DEFAULT_AUTO_BACKUP_MAX_BACKUPS,
+        encrypt: bool = False,
+        password: str | None = None,
     ) -> BackupResult:
         reason = _normalize_auto_backup_reason(reason)
         max_backups = _validate_max_backups(max_backups)
-        result = self.create_backup(reason=reason)
+        result = self.create_backup(reason=reason, encrypt=encrypt, password=password)
         self.prune_auto_backups(max_backups=max_backups)
         return result
 
@@ -180,8 +213,9 @@ class BackupManager:
         sections: Iterable[str] | None = None,
         mode: str = "replace",
         replace_confirmation: str | None = None,
+        password: str | None = None,
     ) -> RestoreResult:
-        parsed = self.inspect_backup(backup_path)
+        parsed = self.inspect_backup(backup_path, password=password)
         selected_sections = _normalize_sections(
             sections,
             default=tuple(parsed.manifest["sections"]),
@@ -196,7 +230,11 @@ class BackupManager:
             names = ", ".join(sorted(missing))
             raise BackupValidationError(f"backup does not contain requested sections: {names}")
         auto_reason = "pre-replace-import" if restore_mode == "replace" else "pre-restore"
-        pre_restore = self.create_auto_backup(reason=auto_reason)
+        pre_restore = self.create_auto_backup(
+            reason=auto_reason,
+            encrypt=parsed.encrypted,
+            password=password if parsed.encrypted else None,
+        )
         snapshot = self._snapshot_targets()
         try:
             section_payloads = {
@@ -218,10 +256,17 @@ class BackupManager:
             pre_restore_backup=pre_restore.path,
         )
 
-    def inspect_backup(self, backup_path: Path) -> "_ParsedBackup":
+    def inspect_backup(
+        self,
+        backup_path: Path,
+        *,
+        password: str | None = None,
+    ) -> "_ParsedBackup":
         try:
             with ZipFile(backup_path) as archive:
                 names = [info.filename for info in archive.infolist()]
+                if _looks_like_encrypted_backup(names):
+                    return self._inspect_encrypted_backup(archive, names, password=password)
                 self._validate_entry_names(names)
                 raw_manifest = _load_archive_json(archive, "manifest.json")
                 manifest = _require_object(raw_manifest, "manifest.json")
@@ -241,6 +286,54 @@ class BackupManager:
                     raise BackupValidationError(f"invalid backup section: {exc}") from exc
         except BadZipFile as exc:
             raise BackupValidationError(f"invalid backup zip: {backup_path}") from exc
+        return _ParsedBackup(manifest=manifest, sections=section_payloads)
+
+    def _inspect_encrypted_backup(
+        self,
+        archive: ZipFile,
+        names: list[str],
+        *,
+        password: str | None,
+    ) -> "_ParsedBackup":
+        self._validate_encrypted_entry_names(names)
+        raw_manifest = _load_archive_json(archive, "manifest.json")
+        manifest = _require_object(raw_manifest, "manifest.json")
+        self._validate_encrypted_manifest(manifest)
+        plaintext = _decrypt_backup_payload(
+            archive.read(ENCRYPTED_PAYLOAD_ENTRY),
+            _require_object(manifest["encryption"], "manifest.encryption"),
+            password,
+        )
+        try:
+            with ZipFile(io.BytesIO(plaintext)) as inner_archive:
+                parsed = self._inspect_plaintext_archive(inner_archive)
+                return _ParsedBackup(
+                    manifest=parsed.manifest,
+                    sections=parsed.sections,
+                    encrypted=True,
+                )
+        except BadZipFile as exc:
+            raise BackupValidationError("encrypted backup payload is not a valid zip") from exc
+
+    def _inspect_plaintext_archive(self, archive: ZipFile) -> "_ParsedBackup":
+        names = [info.filename for info in archive.infolist()]
+        self._validate_entry_names(names)
+        raw_manifest = _load_archive_json(archive, "manifest.json")
+        manifest = _require_object(raw_manifest, "manifest.json")
+        self._validate_manifest(manifest, names)
+        try:
+            section_payloads = {
+                entry: self._validate_section(
+                    entry,
+                    _load_archive_json(archive, entry),
+                )
+                for entry in names
+                if entry != "manifest.json"
+            }
+        except BackupValidationError:
+            raise
+        except (KeyError, TypeError, ValueError, PersistentStoreError) as exc:
+            raise BackupValidationError(f"invalid backup section: {exc}") from exc
         return _ParsedBackup(manifest=manifest, sections=section_payloads)
 
     def _default_backup_path(self, created_at: str, reason: str) -> Path:
@@ -296,7 +389,32 @@ class BackupManager:
             },
             "notes": [
                 BACKUP_SENSITIVE_WARNING,
-                "backup encryption is not implemented in this format version",
+                "plaintext backup; use encrypt=True for encrypted backup archives",
+                "metrics-policy excludes metrics history and counters",
+            ],
+        }
+
+    def _encrypted_manifest(
+        self,
+        plaintext_manifest: dict[str, Any],
+        encryption_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": BACKUP_SCHEMA_VERSION,
+            "product": BACKUP_PRODUCT,
+            "created_at": plaintext_manifest["created_at"],
+            "reason": plaintext_manifest["reason"],
+            "format": "watchdogvpn-encrypted-backup-zip",
+            "section_schema_version": BACKUP_SECTION_SCHEMA_VERSION,
+            "sections": list(plaintext_manifest["sections"]),
+            "section_files": dict(plaintext_manifest["section_files"]),
+            "sensitive": True,
+            "sensitive_warning": BACKUP_SENSITIVE_WARNING,
+            "encryption": encryption_metadata,
+            "notes": [
+                BACKUP_SENSITIVE_WARNING,
+                "payload.bin contains an encrypted full WatchdogVPN backup archive",
+                "password recovery is not available if the passphrase is lost",
                 "metrics-policy excludes metrics history and counters",
             ],
         }
@@ -430,7 +548,7 @@ class BackupManager:
         encryption = manifest.get("encryption", {"enabled": False})
         encryption_data = _require_object(encryption, "manifest.encryption")
         if encryption_data.get("enabled") is not False:
-            raise BackupValidationError("encrypted backups are not supported")
+            raise BackupValidationError("encrypted backups must use the encrypted container")
         section_files = _require_object(manifest.get("section_files"), "manifest.section_files")
         sections = _require_list(manifest.get("sections"), "manifest.sections")
         normalized_sections = _normalize_sections(sections, default=())
@@ -444,6 +562,38 @@ class BackupManager:
         expected_entries = {"manifest.json", *expected_files.values()}
         if set(names) != expected_entries:
             raise BackupValidationError("backup entries do not match manifest contract")
+
+    def _validate_encrypted_entry_names(self, names: list[str]) -> None:
+        if len(names) != len(set(names)):
+            raise BackupValidationError("encrypted backup contains duplicate entries")
+        for name in names:
+            path = PurePosixPath(name)
+            if path.is_absolute() or ".." in path.parts or len(path.parts) != 1:
+                raise BackupValidationError(f"encrypted backup contains unsafe path: {name}")
+        if set(names) != {"manifest.json", ENCRYPTED_PAYLOAD_ENTRY}:
+            raise BackupValidationError("encrypted backup entries do not match manifest contract")
+
+    def _validate_encrypted_manifest(self, manifest: dict[str, Any]) -> None:
+        if manifest.get("schema_version") != BACKUP_SCHEMA_VERSION:
+            raise BackupValidationError("unsupported encrypted backup schema_version")
+        if manifest.get("product") != BACKUP_PRODUCT:
+            raise BackupValidationError("encrypted backup product is not WatchdogVPN")
+        if manifest.get("format") != "watchdogvpn-encrypted-backup-zip":
+            raise BackupValidationError("unsupported encrypted backup format")
+        encryption = _require_object(manifest.get("encryption"), "manifest.encryption")
+        if encryption.get("enabled") is not True:
+            raise BackupValidationError("encrypted backup manifest must enable encryption")
+        _validate_encryption_metadata(encryption)
+        section_files = _require_object(manifest.get("section_files"), "manifest.section_files")
+        sections = _require_list(manifest.get("sections"), "manifest.sections")
+        normalized_sections = _normalize_sections(sections, default=())
+        if len(normalized_sections) != len(sections):
+            raise BackupValidationError("manifest contains duplicate sections")
+        expected_files = {
+            section: SECTION_FILE_BY_NAME[section] for section in normalized_sections
+        }
+        if section_files != expected_files:
+            raise BackupValidationError("manifest section_files do not match supported files")
 
     def _validate_section(self, entry: str, payload: object) -> dict[str, Any]:
         data = _require_object(payload, entry)
@@ -688,6 +838,7 @@ class BackupManager:
 class _ParsedBackup:
     manifest: dict[str, Any]
     sections: dict[str, dict[str, Any]]
+    encrypted: bool = False
 
 
 def _section(payload: dict[str, Any]) -> dict[str, Any]:
@@ -696,6 +847,148 @@ def _section(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _json_text(value: object) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+def _write_plaintext_archive(
+    archive: ZipFile,
+    manifest: dict[str, Any],
+    section_payloads: dict[str, dict[str, Any]],
+    selected_sections: tuple[str, ...],
+) -> None:
+    archive.writestr("manifest.json", _json_text(manifest))
+    for section in selected_sections:
+        entry = SECTION_FILE_BY_NAME[section]
+        archive.writestr(entry, _json_text(section_payloads[entry]))
+
+
+def _plaintext_archive_bytes(
+    manifest: dict[str, Any],
+    section_payloads: dict[str, dict[str, Any]],
+    selected_sections: tuple[str, ...],
+) -> bytes:
+    buffer = io.BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+        _write_plaintext_archive(archive, manifest, section_payloads, selected_sections)
+    return buffer.getvalue()
+
+
+def _encrypt_backup_payload(
+    plaintext: bytes,
+    password: str | None,
+) -> tuple[bytes, dict[str, Any]]:
+    if not BACKUP_ENCRYPTION_SUPPORTED:
+        raise BackupValidationError(
+            "backup encryption requires the optional cryptography dependency"
+        )
+    password_bytes = _password_bytes(password)
+    salt = os.urandom(ENCRYPTION_SALT_BYTES)
+    nonce = os.urandom(ENCRYPTION_NONCE_BYTES)
+    key = _derive_encryption_key(password_bytes, salt)
+    ciphertext = AESGCM(key).encrypt(nonce, plaintext, BACKUP_ENCRYPTION_AAD)  # type: ignore[operator]
+    return ciphertext, _encryption_metadata(salt=salt, nonce=nonce)
+
+
+def _decrypt_backup_payload(
+    ciphertext: bytes,
+    encryption: dict[str, Any],
+    password: str | None,
+) -> bytes:
+    if not BACKUP_ENCRYPTION_SUPPORTED:
+        raise BackupValidationError(
+            "backup encryption requires the optional cryptography dependency"
+        )
+    _validate_encryption_metadata(encryption)
+    password_bytes = _password_bytes(password)
+    salt = _b64_decode(str(encryption["salt"]), "manifest.encryption.salt")
+    nonce = _b64_decode(str(encryption["nonce"]), "manifest.encryption.nonce")
+    key = _derive_encryption_key(password_bytes, salt)
+    try:
+        return AESGCM(key).decrypt(nonce, ciphertext, BACKUP_ENCRYPTION_AAD)  # type: ignore[operator]
+    except InvalidTag as exc:  # type: ignore[misc]
+        raise BackupValidationError(
+            "encrypted backup password is incorrect or payload authentication failed"
+        ) from exc
+
+
+def _encryption_metadata(*, salt: bytes, nonce: bytes) -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "supported": BACKUP_ENCRYPTION_SUPPORTED,
+        "format": BACKUP_ENCRYPTION_FORMAT,
+        "algorithm": "AES-256-GCM",
+        "kdf": "scrypt",
+        "kdf_params": {
+            "n": SCRYPT_N,
+            "r": SCRYPT_R,
+            "p": SCRYPT_P,
+            "length": ENCRYPTION_KEY_BYTES,
+        },
+        "salt": _b64_encode(salt),
+        "nonce": _b64_encode(nonce),
+        "aad": BACKUP_ENCRYPTION_AAD.decode("utf-8"),
+    }
+
+
+def _validate_encryption_metadata(encryption: dict[str, Any]) -> None:
+    if encryption.get("enabled") is not True:
+        raise BackupValidationError("encrypted backup manifest must enable encryption")
+    if encryption.get("format") != BACKUP_ENCRYPTION_FORMAT:
+        raise BackupValidationError("unsupported encrypted backup format")
+    if encryption.get("algorithm") != "AES-256-GCM":
+        raise BackupValidationError("unsupported encrypted backup algorithm")
+    if encryption.get("kdf") != "scrypt":
+        raise BackupValidationError("unsupported encrypted backup KDF")
+    params = _require_object(encryption.get("kdf_params"), "manifest.encryption.kdf_params")
+    expected_params = {
+        "n": SCRYPT_N,
+        "r": SCRYPT_R,
+        "p": SCRYPT_P,
+        "length": ENCRYPTION_KEY_BYTES,
+    }
+    if params != expected_params:
+        raise BackupValidationError("unsupported encrypted backup KDF parameters")
+    if encryption.get("aad") != BACKUP_ENCRYPTION_AAD.decode("utf-8"):
+        raise BackupValidationError("unsupported encrypted backup AAD")
+    salt = _b64_decode(str(encryption.get("salt", "")), "manifest.encryption.salt")
+    nonce = _b64_decode(str(encryption.get("nonce", "")), "manifest.encryption.nonce")
+    if len(salt) != ENCRYPTION_SALT_BYTES:
+        raise BackupValidationError("encrypted backup salt has invalid length")
+    if len(nonce) != ENCRYPTION_NONCE_BYTES:
+        raise BackupValidationError("encrypted backup nonce has invalid length")
+
+
+def _password_bytes(password: str | None) -> bytes:
+    if password is None or password == "":
+        raise BackupValidationError("encrypted backup password is required")
+    if not isinstance(password, str):
+        raise BackupValidationError("encrypted backup password must be a string")
+    return password.encode("utf-8")
+
+
+def _derive_encryption_key(password: bytes, salt: bytes) -> bytes:
+    kdf = Scrypt(  # type: ignore[operator]
+        salt=salt,
+        length=ENCRYPTION_KEY_BYTES,
+        n=SCRYPT_N,
+        r=SCRYPT_R,
+        p=SCRYPT_P,
+    )
+    return kdf.derive(password)
+
+
+def _b64_encode(value: bytes) -> str:
+    return base64.b64encode(value).decode("ascii")
+
+
+def _b64_decode(value: str, name: str) -> bytes:
+    try:
+        return base64.b64decode(value.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, ValueError) as exc:
+        raise BackupValidationError(f"{name} is not valid base64") from exc
+
+
+def _looks_like_encrypted_backup(names: list[str]) -> bool:
+    return ENCRYPTED_PAYLOAD_ENTRY in names
 
 
 def _load_archive_json(archive: ZipFile, entry: str) -> object:
@@ -874,6 +1167,7 @@ def _utc_now() -> str:
 __all__ = [
     "BACKUP_SCHEMA_VERSION",
     "BACKUP_SECTION_SCHEMA_VERSION",
+    "BACKUP_ENCRYPTION_FORMAT",
     "BACKUP_ENCRYPTION_SUPPORTED",
     "AUTO_BACKUP_REASONS",
     "BACKUP_SENSITIVE_WARNING",

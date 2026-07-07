@@ -8,11 +8,11 @@
 Task 17.2 adds section-scoped backup creation and restore to
 `config.backup_manager.BackupManager`.
 
-It does not add the user-facing CLI yet. It also does not implement remote sync,
-encryption or uninstall flow integration. Merge/replace restore policy was added
-later in Task 17.3. Bounded auto-backup retention was added later in Task 17.5.
-Plaintext sensitive-warning and encryption rejection behavior was added later in
-Task 17.6.
+It does not add the user-facing CLI yet. It also does not implement remote sync
+or uninstall flow integration. Merge/replace restore policy was added later in
+Task 17.3. Bounded auto-backup retention was added later in Task 17.5.
+Plaintext sensitive-warning behavior was added later in Task 17.6. Encrypted
+backup format support was added later in Task 17.7.
 
 ## Section Selection
 
@@ -77,7 +77,6 @@ history or counters.
 The following remain later Phase 17 work:
 
 - CLI wiring;
-- Phase 17 Task 17.7 reviewed encrypted backup format;
 - WebDAV/LAN sync;
 - uninstall flow integration.
 
