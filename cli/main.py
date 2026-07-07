@@ -53,6 +53,7 @@ from rules.explanation import (
     RuleExplanation,
     RuleExplanationConfidence,
 )
+from rules.importer import RuleImportError, build_rule_import_plan
 from rules.models import ALLOWED_RULE_CONDITIONS, Rule, RuleGroup
 from rules.rule_engine import TrafficInfo
 from rules.rule_store import RuleStore, RuleStoreError
@@ -453,6 +454,21 @@ def _build_parser() -> argparse.ArgumentParser:
     rules_import_parser = rules_subparsers.add_parser("import", help="Import a rule group JSON file")
     rules_import_parser.add_argument("file")
     rules_import_parser.add_argument("--name", help="Override imported group name")
+    rules_import_parser.add_argument(
+        "--default-action",
+        default="block",
+        help="Route action for simple lists and external rules without explicit action",
+    )
+    rules_import_parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Import supported rules while reporting unsupported entries",
+    )
+    rules_import_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the import without writing rule files",
+    )
     rules_import_parser.add_argument(
         "--replace",
         action="store_true",
@@ -1302,19 +1318,15 @@ def _rules_remove_rule(args: argparse.Namespace) -> int:
 def _rules_import(args: argparse.Namespace) -> int:
     source = Path(args.file)
     try:
-        raw = json.loads(source.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ParseError(f"invalid rule group JSON in {source}: {exc}") from exc
-    except OSError as exc:
-        raise ParseError(f"cannot read rule group file {source}: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ParseError("imported rule group must be a JSON object")
-    if args.name is not None:
-        raw = {**raw, "name": args.name}
-    try:
-        group = RuleGroup.from_dict(raw)
-    except (KeyError, TypeError, ValueError, PersistentStoreError) as exc:
-        raise ParseError(f"invalid rule group schema: {exc}") from exc
+        plan = build_rule_import_plan(
+            source,
+            name=args.name,
+            default_action=args.default_action,
+            allow_partial=bool(args.allow_partial),
+        )
+    except RuleImportError as exc:
+        raise ParseError(str(exc)) from exc
+    group = plan.group
 
     store = RuleStore()
     existing = store.get_group(group.name)
@@ -1322,18 +1334,39 @@ def _rules_import(args: argparse.Namespace) -> int:
         raise RuleStoreError(
             f"rule group already exists: {group.name}; use --replace to overwrite"
         )
-    backup_path = store.replace_group(group, backup_existing=bool(existing and args.replace))
+    backup_path = None
+    if not args.dry_run:
+        backup_path = store.replace_group(group, backup_existing=bool(existing and args.replace))
+    if args.dry_run:
+        rollback_point = {"kind": "preview-only"}
+    elif backup_path:
+        rollback_point = {"kind": "existing-group-backup", "path": str(backup_path)}
+    else:
+        rollback_point = {"kind": "new-group-delete", "group": group.name}
     data = {
+        "dry_run": bool(args.dry_run),
+        "source_format": plan.source_format,
         "imported": group.to_dict(),
         "replaced": existing is not None,
         "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": rollback_point,
+        "accepted_rule_count": len(group.rules),
+        "rejected": [item.to_dict() for item in plan.rejected],
+        "warnings": list(plan.warnings),
     }
     if args.json:
         _print_json(data)
     else:
-        print(f"Imported rule group: {group.name}")
+        verb = "Would import" if args.dry_run else "Imported"
+        print(f"{verb} rule group: {group.name}")
+        print(f"Source format: {plan.source_format}")
+        print(f"Accepted rules: {len(group.rules)}")
+        if plan.rejected:
+            print(f"Rejected entries: {len(plan.rejected)}")
         if backup_path:
             print(f"Backup: {backup_path}")
+        elif not args.dry_run:
+            print(f"Rollback: remove imported group {group.name}")
     return 0
 
 

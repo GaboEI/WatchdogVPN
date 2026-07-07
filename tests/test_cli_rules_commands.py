@@ -304,6 +304,171 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertEqual(result.returncode, 65)
         self.assertIn("duplicate rule ids", result.stderr)
 
+    def test_import_simple_domain_ip_list_with_preview_and_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import_file = Path(tmp) / "blocklist.txt"
+            import_file.write_text(
+                "\n".join(["# comment", "example.com", ".ads.example", "10.0.0.0/24"]),
+                encoding="utf-8",
+            )
+
+            preview = self.run_watchdog(
+                [
+                    "rules",
+                    "import",
+                    str(import_file),
+                    "--name",
+                    "simple-list",
+                    "--dry-run",
+                    "--json",
+                ],
+                tmp,
+            )
+            self.assertEqual(RuleStore(Path(tmp) / "rules").get_group("simple-list"), None)
+
+            written = self.run_watchdog(
+                ["rules", "import", str(import_file), "--name", "simple-list", "--json"],
+                tmp,
+            )
+
+        preview_data = json.loads(preview.stdout)
+        written_data = json.loads(written.stdout)
+        self.assertTrue(preview_data["dry_run"])
+        self.assertEqual(preview_data["rollback_point"], {"kind": "preview-only"})
+        self.assertEqual(preview_data["source_format"], "simple-domain-ip-list")
+        self.assertEqual(preview_data["accepted_rule_count"], 3)
+        self.assertEqual(written_data["accepted_rule_count"], 3)
+        self.assertEqual(written_data["rollback_point"], {"kind": "new-group-delete", "group": "simple-list"})
+        self.assertEqual(written_data["imported"]["rules"][0]["conditions"], {"domain": ["example.com"]})
+        self.assertEqual(
+            written_data["imported"]["rules"][1]["conditions"],
+            {"domain_suffix": [".ads.example"]},
+        )
+        self.assertEqual(written_data["imported"]["rules"][2]["conditions"], {"ip_cidr": ["10.0.0.0/24"]})
+
+    def test_import_simple_list_rejects_partial_by_default_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import_file = Path(tmp) / "mixed.txt"
+            import_file.write_text("example.com\nnot a domain\n", encoding="utf-8")
+
+            result = self.run_watchdog(
+                ["rules", "import", str(import_file), "--name", "mixed"],
+                tmp,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("unsupported entries", result.stderr)
+        self.assertEqual(RuleStore(Path(tmp) / "rules").get_group("mixed"), None)
+
+    def test_import_simple_list_allows_explicit_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import_file = Path(tmp) / "mixed.txt"
+            import_file.write_text("example.com\nnot a domain\n", encoding="utf-8")
+
+            result = self.run_watchdog(
+                [
+                    "rules",
+                    "import",
+                    str(import_file),
+                    "--name",
+                    "mixed",
+                    "--allow-partial",
+                    "--json",
+                ],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["accepted_rule_count"], 1)
+        self.assertEqual(data["rejected"][0]["reason"], "not a supported domain or IP CIDR")
+
+    def test_import_clash_subset_maps_supported_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import_file = Path(tmp) / "clash.json"
+            import_file.write_text(
+                json.dumps(
+                    [
+                        "DOMAIN,example.com,DIRECT",
+                        "DOMAIN-SUFFIX,ads.example,REJECT",
+                        "IP-CIDR,192.0.2.0/24,PROXY",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                ["rules", "import", str(import_file), "--name", "clash-safe", "--json"],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["source_format"], "clash-rule-list")
+        self.assertEqual(data["accepted_rule_count"], 3)
+        self.assertEqual([rule["action"] for rule in data["imported"]["rules"]], ["direct", "block", "current_profile"])
+
+    def test_import_singbox_subset_rejects_unsupported_constructs_without_partial_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import_file = Path(tmp) / "singbox.json"
+            import_file.write_text(
+                json.dumps(
+                    {
+                        "route": {
+                            "rules": [
+                                {"domain": ["example.com"], "outbound": "direct"},
+                                {"type": "logical", "mode": "or", "rules": []},
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                ["rules", "import", str(import_file), "--name", "singbox-safe"],
+                tmp,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("unsupported entries", result.stderr)
+        self.assertEqual(RuleStore(Path(tmp) / "rules").get_group("singbox-safe"), None)
+
+    def test_import_singbox_subset_allows_explicit_partial_and_reports_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import_file = Path(tmp) / "singbox.json"
+            import_file.write_text(
+                json.dumps(
+                    {
+                        "route": {
+                            "rules": [
+                                {"domain": ["example.com"], "outbound": "direct"},
+                                {"type": "logical", "mode": "or", "rules": []},
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(
+                [
+                    "rules",
+                    "import",
+                    str(import_file),
+                    "--name",
+                    "singbox-safe",
+                    "--allow-partial",
+                    "--json",
+                ],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["source_format"], "sing-box-route-rules")
+        self.assertEqual(data["accepted_rule_count"], 1)
+        self.assertIn("unsupported structural fields", data["rejected"][0]["reason"])
+
     def test_explain_json_returns_raw_model_dict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.add_group(
