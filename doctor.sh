@@ -9,6 +9,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/distro.sh"
 # shellcheck source=lib/packages.sh
 . "$ROOT_DIR/lib/packages.sh"
+# shellcheck source=lib/singbox.sh
+. "$ROOT_DIR/lib/singbox.sh"
+# shellcheck source=lib/cloak.sh
+. "$ROOT_DIR/lib/cloak.sh"
+# shellcheck source=lib/amneziawg.sh
+. "$ROOT_DIR/lib/amneziawg.sh"
 
 FAIL_COUNT=0
 WARN_COUNT=0
@@ -381,6 +387,31 @@ if curl -fsS --max-time 5 https://www.google.com/generate_204 >/dev/null 2>&1; t
   mark_ok "HTTPS connectivity"
 else
   mark_warn "HTTPS connectivity check failed"
+fi
+
+section "Protocol Runtime Dependencies"
+if singbox_available; then
+  mark_ok "sing-box detected: $(singbox_path)"
+else
+  mark_warn "sing-box not detected; most Custom VPS protocols will not run"
+fi
+
+if amneziawg_userspace_available && amneziawg_kernel_module_available; then
+  mark_ok "AmneziaWG (or compatible WireGuard) tooling detected"
+else
+  mark_warn "AmneziaWG tooling not fully detected; AmneziaWG profiles will not run"
+fi
+
+if cloak_available; then
+  mark_ok "Cloak client detected: $(cloak_path)"
+else
+  info "Cloak client (ck-client) not detected; only needed for OpenVPN+Cloak profiles"
+fi
+
+if python_cryptography_available; then
+  mark_ok "python cryptography module available"
+else
+  mark_warn "python cryptography module missing; encrypted backups will not work"
 fi
 
 section "Optional Integrations"

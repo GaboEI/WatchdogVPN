@@ -21,6 +21,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/desktop.sh"
 # shellcheck source=lib/singbox.sh
 . "$ROOT_DIR/lib/singbox.sh"
+# shellcheck source=lib/cloak.sh
+. "$ROOT_DIR/lib/cloak.sh"
+# shellcheck source=lib/amneziawg.sh
+. "$ROOT_DIR/lib/amneziawg.sh"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
@@ -304,6 +308,11 @@ validate_required_commands() {
   install_package_set "${DISTRO_BASE_PACKAGES[@]}"
 }
 
+validate_protocol_runtime_dependencies() {
+  validate_python_runtime_dependencies
+  check_amneziawg_dependency
+}
+
 validate_repo_runtime() {
   python3 -m compileall -q "$ROOT_DIR/tui"
   bash "$ROOT_DIR/tests/syntax.sh" >/dev/null
@@ -388,6 +397,7 @@ fi
 
 print_section "Prerequisites"
 validate_required_commands
+validate_protocol_runtime_dependencies
 
 detect_existing_backend_config
 prompt_backend_mode
@@ -395,6 +405,7 @@ prompt_custom_vps_config
 
 if [[ "$CUSTOM_VPS_ENABLED" == "true" ]]; then
   install_official_singbox
+  install_official_cloak
 fi
 
 printf '\nThe desktop launcher adds WatchdogVPN to the applications menu and user desktop.\n'

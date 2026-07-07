@@ -160,6 +160,9 @@ print_preservation_contract
 require_supported_distro
 require_existing_installation
 
+print_section "Runtime dependencies"
+validate_python_runtime_dependencies
+
 if ((RUN_DOCTOR == 1)); then
   print_section "Read-only preflight"
   "$ROOT_DIR/doctor.sh"

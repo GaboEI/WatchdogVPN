@@ -19,6 +19,11 @@ This document defines how the product scripts should behave.
 
 - Install desktop launcher?
 - Configure the Custom VPS backend metadata when needed.
+- Download and install the official sing-box binary now? (only if not already
+  detected; required for most Custom VPS protocols)
+- Download and install the official Cloak client (`ck-client`) now? (only if
+  not already detected; defaults to no, since it is only needed for
+  OpenVPN+Cloak profiles)
 
 `install.sh` should not ask:
 
@@ -56,12 +61,48 @@ It should check:
 - basic DNS
 - previous installation state
 - optional desktop launcher
+- sing-box, AmneziaWG tooling, Cloak client and the Python `cryptography`
+  module (protocol/feature runtime dependencies; see "Dependency Contract"
+  below)
 
 Result levels:
 
 - `OK`: does not block
 - `WARN`: installation can continue, but the user should know
 - `FAIL`: installation should stop
+
+## Dependency Contract
+
+Protocol/feature runtime dependencies (Phase 18 Task 18.3):
+
+- **sing-box**: required by most Custom VPS protocols. `install.sh` downloads
+  the official release archive for the pinned version if not already
+  detected, verifies it against a maintainer-computed SHA-256 (SagerNet does
+  not publish release checksums), and refuses to install on mismatch.
+- **Cloak client (`ck-client`)**: only needed for OpenVPN+Cloak profiles.
+  `install.sh` offers to download and checksum-verify it the same way as
+  sing-box, but defaults to no and is skipped without prompting under
+  `--dry-run`, since most installs never use this protocol combination.
+- **AmneziaWG tooling (`amneziawg-dkms`, `amneziawg-tools`/`awg-quick`)**:
+  detected only, never installed automatically. There is no official
+  Ubuntu/Debian/Arch repository package, and the kernel module must be built
+  against the running kernel, so an unattended install would require adding a
+  third-party repository or building from source without user review.
+  `install.sh` and `doctor.sh` print accurate upstream source links instead.
+  Standard WireGuard tooling (`wg-quick`/`wg`, `wireguard` kernel module) is
+  accepted as a compatible fallback.
+- **Python `cryptography` module**: needed for encrypted backups
+  (`watchdog backup --encrypt-backup`, Phase 17). `install.sh` and
+  `update.sh` install the distro package (`python3-cryptography` on
+  Ubuntu/Debian, `python-cryptography` on Arch) if missing; this is
+  best-effort and never blocks install/update, since backup encryption is an
+  optional feature that already fails with a clear error if the module is
+  absent.
+
+All automated binary downloads must use an explicit official source URL, a
+checksum/signature strategy where the upstream project provides one (or a
+maintainer-computed checksum pinned to the exact version otherwise), and a
+clear failure message that aborts before installing anything on mismatch.
 
 ## install.sh
 

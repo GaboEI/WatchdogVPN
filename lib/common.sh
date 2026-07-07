@@ -57,6 +57,12 @@ have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+verify_sha256() {
+  local file="$1" expected="$2" actual
+  actual="$(sha256sum "$file" | awk '{print $1}')"
+  [[ "$actual" == "$expected" ]]
+}
+
 repo_root() {
   local src
   src="${BASH_SOURCE[0]}"
