@@ -295,6 +295,51 @@ networking, only replaces installed files and restarts the daemon service).
 The run itself is what surfaced the bug (daemon smoke test correctly
 `[FAIL]`ed with `watchdogvpn.service is not active after install/update`);
 `journalctl -u watchdogvpn` showed the exact `ModuleNotFoundError` above.
+A second real `sudo ./update.sh --yes` run, with the fix applied, ended
+with `doctor.sh` reporting `[OK] daemon active: watchdogvpn.service`,
+`[OK] installed runtime matches source checkout`, and
+`[OK] daemon IPC status smoke test passed` - the pending item this
+addendum originally left open is now confirmed.
+
+## Addendum 2 (2026-07-07, same day): the re-run itself caused a real incident with another VPN client
+
+Confirming the fix above (a second real `sudo ./update.sh --yes` run)
+triggered a second, unrelated real incident: `update.sh` unconditionally
+runs `systemctl enable --now vpn-domain-bypass.timer` as part of
+`enable_systemd_units()`, even when the timer was already active. Because
+`vpn-domain-bypass.timer` has `OnActiveSec=30s`, that restart reset its
+schedule and caused `vpn-domain-bypass.service` to re-apply this
+machine's real, already-configured domain-bypass `ip rule`s (and the
+catch-all fallback rule into a custom routing table) about 30 seconds
+after the update finished - colliding with a Karing VPN profile the
+maintainer needed for work at that same moment
+(`set routes: add route 0: File exists`). Rebooting did not help, because
+the timer stayed enabled and simply re-applied the same rules again. The
+maintainer manually stopped/disabled the units and flushed the residual
+`ip rule`/routing-table state to recover.
+
+This is not a Task 18.4 finding in the strict sense (it is not about
+shared config-file permissions), but it surfaced from the same real
+validation effort and is recorded here for continuity. Full detail,
+contract and fix in `docs/security.md`'s new "Domain Bypass Network
+Safety" section and commit `ce69d8d`. Summary:
+
+- `vpn-domain-bypass.timer` removed from the unconditional
+  `SYSTEMD_ENABLE_UNITS` enable-on-every-run list.
+- New `enable_vpn_domain_bypass_timer_if_safe()`: never restarts an
+  already-active timer; only auto-enables it when real domains are
+  configured; respects a new `/etc/watchdogvpn/.domain-bypass-disabled`
+  marker so a user's manual disable after a conflict is not silently
+  undone by a later install/update.
+- New `bin/vpn_domain_bypass_rescue`: official recovery command
+  (mirrors `vpn_dns_rescue`), now always run by `uninstall.sh` before
+  removing files, since disabling the timer alone does not undo
+  already-applied kernel routing state.
+- New `tests/unit/test_vpn_domain_bypass_safety.sh` covers the enable/
+  skip/marker logic with a stubbed `systemctl`.
+- The maintainer's own machine had its manual disable protected with the
+  new marker file after this fix, so a future install/update on that
+  specific machine will not re-enable domain bypass automatically.
 
 ## Acceptance
 
@@ -318,9 +363,11 @@ Task 18.4 closes when:
   package being forgotten, not just these two;
 - [x] full local validation (shell + Python test suites, syntax,
   compileall, whitespace) passes;
-- [ ] a real (non-dry-run) `update.sh` re-run on this machine, with the fix
-  applied, ends with the daemon active and the smoke test passing (the
-  first real run is what found the bug above; confirming the fix requires
-  re-running it - pending as of this addendum);
+- [x] a real (non-dry-run) `update.sh` re-run on this machine, with the fix
+  applied, ended with the daemon active and the smoke test passing;
+- [x] the unrelated real incident surfaced by that same re-run
+  (`vpn-domain-bypass.timer` forced restart conflicting with another VPN
+  client) is fixed, with a manual-disable marker so the maintainer's own
+  recovery action is not silently undone later, and regression coverage;
 - [x] real VM validation of a from-scratch install remains explicitly
   owed to Task 18.6, not claimed as done here.
