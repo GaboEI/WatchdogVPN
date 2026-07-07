@@ -124,6 +124,28 @@ if they differ, so "is the installed runtime the same code as this
 checkout" has a real answer instead of only the hand-edited `VERSION`
 string in `bin/watchdogvpn`.
 
+## Domain Bypass Network Contract
+
+Full rationale and incident background in `docs/security.md`'s "Domain
+Bypass Network Safety". Summary of the contract:
+
+- `vpn-domain-bypass.timer` is only auto-enabled by `install.sh`/`update.sh`
+  when `/etc/vpn-domain-bypass.conf` has real configured domains. A fresh
+  install with the default empty config never enables it.
+- `install.sh`/`update.sh` never touch the timer at all if it is already
+  active, since even an idempotent `systemctl enable --now` resets its
+  schedule and forces an unplanned re-application of routing rules.
+- If the user manually disabled the timer after a routing conflict,
+  `install.sh`/`update.sh` will not silently re-enable it later just because
+  domains are still configured (`/etc/watchdogvpn/.domain-bypass-disabled`
+  marker, written by `vpn_domain_bypass_rescue`, cleared automatically once
+  the user re-enables the timer themselves).
+- `uninstall.sh` always runs `vpn_domain_bypass_rescue` (regardless of purge
+  flags) before removing product files, since disabling the timer alone does
+  not undo ip rules it already applied.
+- `vpn_domain_bypass_rescue auto` is the official manual recovery command if
+  another VPN/proxy client on the same machine cannot set its own routes.
+
 ## install.sh
 
 Role: install a new system or complete a partial installation.

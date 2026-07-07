@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Emergency recovery for vpn-domain-bypass routing conflicts, e.g. when
+# another VPN/proxy client (Karing, a manual WireGuard/OpenVPN profile, etc.)
+# on the same machine cannot set its own routes because WatchdogVPN's
+# domain-bypass ip rule/table state is still present. Stops WatchdogVPN's
+# own domain-bypass automation and removes only the kernel state it created;
+# it never touches any other VPN/proxy software's configuration.
+#
+# Background: docs/security.md "Domain bypass network safety".
+
+MODE="auto"
+VPN_LOOKUP_TABLE="${VPN_LOOKUP_TABLE:-880}"
+VPN_FALLBACK_PRIO="${VPN_FALLBACK_PRIO:-32000}"
+STATE_FILE="${STATE_FILE:-/run/vpn-domain-bypass.priorities}"
+DISABLED_MARKER="${DISABLED_MARKER:-/etc/watchdogvpn/.domain-bypass-disabled}"
+
+usage() {
+  cat <<'USAGE'
+WatchdogVPN domain-bypass rescue
+
+Usage:
+  vpn_domain_bypass_rescue [auto|status]
+
+Modes:
+  auto    Stop and disable vpn-domain-bypass automation, remove the ip rules
+          and routing table it created, and flush the route cache. Does not
+          touch any other VPN/proxy software.
+  status  Show the current WatchdogVPN domain-bypass unit and ip rule state.
+
+Use this if another VPN/proxy client on this machine fails to set its own
+routes (for example: "set routes: add route 0: File exists") after
+WatchdogVPN's domain-bypass automation has run.
+USAGE
+}
+
+while (($#)); do
+  case "${1:-}" in
+    auto|status)
+      MODE="$1"
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR unknown argument: $1" >&2
+      usage >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+run() {
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] %q' "$1"
+    shift
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  "$@"
+}
+
+status() {
+  echo "== vpn-domain-bypass.timer =="
+  systemctl is-enabled vpn-domain-bypass.timer 2>/dev/null || echo "not-found"
+  systemctl is-active vpn-domain-bypass.timer 2>/dev/null || echo "not-found"
+
+  echo
+  echo "== manual-disable marker =="
+  if [[ -e "$DISABLED_MARKER" ]]; then
+    echo "present: install.sh/update.sh will not auto-re-enable the timer"
+  else
+    echo "absent"
+  fi
+
+  echo
+  echo "== vpn-domain-bypass.service =="
+  systemctl is-active vpn-domain-bypass.service 2>/dev/null || echo "not-found"
+
+  echo
+  echo "== current ip rule state =="
+  ip rule show
+
+  echo
+  echo "== table $VPN_LOOKUP_TABLE =="
+  ip route show table "$VPN_LOOKUP_TABLE" 2>/dev/null || echo "(empty or does not exist)"
+}
+
+rescue() {
+  echo "Stopping WatchdogVPN domain-bypass automation..."
+  run sudo systemctl disable --now vpn-domain-bypass.timer >/dev/null 2>&1 || true
+  run sudo systemctl stop vpn-domain-bypass.service >/dev/null 2>&1 || true
+  run sudo mkdir -p "$(dirname "$DISABLED_MARKER")"
+  run sudo touch "$DISABLED_MARKER"
+  echo "Recorded that domain-bypass was manually disabled; install.sh/update.sh"
+  echo "will not re-enable it automatically until you run"
+  echo "'sudo systemctl enable --now vpn-domain-bypass.timer' yourself."
+
+  echo "Removing domain-bypass ip rules recorded in $STATE_FILE..."
+  local entry fam prio
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    fam="${entry%%:*}"
+    prio="${entry#*:}"
+    [[ "$prio" =~ ^[0-9]+$ ]] || continue
+    if [[ "$fam" == "6" ]]; then
+      while run sudo ip -6 rule del priority "$prio" 2>/dev/null; do :; done
+    else
+      while run sudo ip rule del priority "$prio" 2>/dev/null; do :; done
+    fi
+  done < <(cat "$STATE_FILE" 2>/dev/null || true)
+  if [[ "${INSTALL_DRY_RUN:-0}" != "1" ]]; then
+    : > "$STATE_FILE" 2>/dev/null || true
+  fi
+
+  echo "Removing VPN fallback rule (priority $VPN_FALLBACK_PRIO -> table $VPN_LOOKUP_TABLE)..."
+  while run sudo ip rule del priority "$VPN_FALLBACK_PRIO" 2>/dev/null; do :; done
+
+  echo "Flushing table $VPN_LOOKUP_TABLE and the route cache..."
+  run sudo ip route flush table "$VPN_LOOKUP_TABLE" >/dev/null 2>&1 || true
+  run sudo ip route flush cache >/dev/null 2>&1 || true
+  run sudo ip -6 route flush cache >/dev/null 2>&1 || true
+
+  echo
+  echo "Done. Domain-bypass rules will not return unless you re-enable"
+  echo "vpn-domain-bypass.timer yourself or rerun ./install.sh."
+  echo
+  status
+}
+
+case "$MODE" in
+  status)
+    status
+    ;;
+  auto)
+    rescue
+    ;;
+esac

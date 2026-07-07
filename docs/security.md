@@ -86,6 +86,51 @@ external DNS service. `vpn_dns_rescue` remains as a fallback helper to recover
 name resolution when local DNS services are removed or broken during
 uninstall/recovery work.
 
+## Domain Bypass Network Safety
+
+`vpn-domain-bypass.timer`/`vpn-domain-bypass.service` apply live kernel
+routing state: `ip rule` entries for each configured bypass domain's
+resolved IPs, plus a catch-all fallback `ip rule` (default priority
+`32000`) pointing traffic at a dedicated routing table (default `880`).
+This is real, persistent, system-wide routing policy - it is not scoped to
+a single application or user session, and it can conflict with any other
+VPN or proxy client on the same machine that also manages its own routes
+(observed in practice: a real incident on 2026-07-07 where this collided
+with a Karing VPN profile, producing errors like
+`set routes: add route 0: File exists`).
+
+Contract:
+
+- `install.sh`/`update.sh` only enable `vpn-domain-bypass.timer`
+  automatically when `/etc/vpn-domain-bypass.conf` actually has configured
+  domains. A fresh install with the default empty config never enables it.
+- If the timer is already active, `install.sh`/`update.sh` never restart it.
+  `systemctl enable --now` on an already-active timer resets its
+  `OnActiveSec` schedule and forces an unplanned re-application of routing
+  rules - a routine software update must not have that side effect.
+- `uninstall.sh` disabling the timer does not, by itself, remove ip rules
+  it already applied (stopping a timer does not undo already-applied kernel
+  state). `uninstall.sh` therefore always runs `vpn_domain_bypass_rescue`
+  before removing product files, regardless of purge flags.
+- `vpn_domain_bypass_rescue` (installed to `/usr/local/bin/`) is the
+  official recovery command: it stops/disables the domain-bypass
+  automation, removes the ip rules it created, flushes the custom routing
+  table and the route cache, and never touches any other VPN/proxy
+  software's configuration. Run it manually
+  (`vpn_domain_bypass_rescue auto`) any time another VPN/proxy client
+  cannot set its own routes on a machine that also runs WatchdogVPN.
+- `vpn_domain_bypass_rescue` also records that the user disabled the timer
+  on purpose (`/etc/watchdogvpn/.domain-bypass-disabled`). systemd's own
+  enabled/disabled state cannot distinguish "never enabled" from
+  "explicitly disabled after a conflict" - both look identical. Because of
+  this marker, `install.sh`/`update.sh` will not silently re-enable the
+  timer on a later run just because domains are still configured; the user
+  has to explicitly run `systemctl enable --now vpn-domain-bypass.timer`
+  themselves to opt back in, which also clears the marker.
+- Users who intentionally run another VPN/proxy client on the same machine
+  as WatchdogVPN should not enable domain bypass at all, or should expect to
+  run `vpn_domain_bypass_rescue` before switching between them.
+
 ## External Installer Risk
 
 WatchdogVPN can guide installation of required open runtime dependencies when

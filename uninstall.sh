@@ -131,6 +131,7 @@ print_contract() {
 remove_runtime_files() {
   remove_root_path /usr/local/bin/no_vpn
   remove_root_path /usr/local/bin/vpn_dns_rescue
+  remove_root_path /usr/local/bin/vpn_domain_bypass_rescue
   remove_root_path /usr/local/bin/vpn_backend
   remove_root_path /usr/local/bin/vpn_manual_state
   remove_root_path /usr/local/bin/vpn_notify
@@ -202,6 +203,33 @@ require_delete_confirmation() {
   fail "data purge requires --confirm-delete DELETE"
 }
 
+rescue_domain_bypass_routing() {
+  # Stopping/disabling vpn-domain-bypass.timer does not undo ip rule entries
+  # it already applied - only actually running the rescue script removes
+  # them. Without this, a machine that uninstalls WatchdogVPN while another
+  # VPN/proxy client is active could be left with the exact routing conflict
+  # documented in docs/security.md's "Domain bypass network safety".
+  if [[ -x "$ROOT_DIR/bin/vpn_domain_bypass_rescue" ]]; then
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_domain_bypass_rescue" auto || true
+    else
+      "$ROOT_DIR/bin/vpn_domain_bypass_rescue" auto || true
+    fi
+    return 0
+  fi
+
+  if [[ -x /usr/local/bin/vpn_domain_bypass_rescue ]]; then
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      INSTALL_DRY_RUN=1 /usr/local/bin/vpn_domain_bypass_rescue auto || true
+    else
+      /usr/local/bin/vpn_domain_bypass_rescue auto || true
+    fi
+    return 0
+  fi
+
+  printf '[WARN] domain-bypass rescue tool not found; if another VPN client cannot set routes, check: ip rule show\n'
+}
+
 rescue_system_dns() {
   if ((RUN_DNS_RESCUE == 0)); then
     printf '[SKIP] DNS rescue disabled\n'
@@ -238,6 +266,7 @@ final_report() {
   print_section "Recovery"
   printf 'To reinstall, run: ./install.sh\n'
   printf 'If DNS looks wrong, run: vpn_dns_rescue auto --no-reconnect\n'
+  printf 'If another VPN client cannot set routes, run: vpn_domain_bypass_rescue auto\n'
 }
 
 print_uninstall_plan() {
@@ -288,6 +317,8 @@ require_delete_confirmation
 print_uninstall_plan
 print_section "Disable services"
 disable_systemd_units
+print_section "Domain-bypass routing rescue"
+rescue_domain_bypass_routing
 print_section "DNS rescue"
 rescue_system_dns
 print_section "Remove systemd units"

@@ -9,15 +9,77 @@ SYSTEMD_UNITS=(
   myvpn-logrotate.timer
 )
 
+# vpn-domain-bypass.timer is deliberately NOT in this list. It modifies live
+# kernel routing state (ip rule entries and a custom routing table) and must
+# never be force-restarted just because install.sh/update.sh ran - a real
+# incident (2026-07-07) showed that unconditionally re-running
+# `systemctl enable --now vpn-domain-bypass.timer` on every update resets its
+# OnActiveSec=30s schedule, causing it to re-apply routing rules ~30s after
+# a routine update finishes and collide with another VPN client (Karing)
+# managing its own routes at that moment. It is handled by
+# enable_vpn_domain_bypass_timer_if_safe() instead, which only enables it
+# when real bypass domains are configured and never touches it if it is
+# already running. See docs/security.md's "Domain bypass network safety".
 SYSTEMD_ENABLE_UNITS=(
   watchdogvpn.service
-  vpn-domain-bypass.timer
   myvpn-logrotate.timer
 )
 
 SYSTEMD_COMMON_ENABLE_UNITS=(
   myvpn-logrotate.timer
 )
+
+vpn_domain_bypass_configured() {
+  local conf="${WATCHDOGVPN_DOMAIN_BYPASS_CONF:-/etc/vpn-domain-bypass.conf}"
+  [[ -f "$conf" ]] || return 1
+  grep -Eq '^[[:space:]]*[^#[:space:]]' "$conf"
+}
+
+# systemd cannot distinguish "never enabled" from "the user explicitly
+# disabled this after a routing conflict" - both look identical
+# (disabled/inactive). This marker is WatchdogVPN's own record of the
+# latter, so a later install/update does not silently undo a safety
+# decision the user already made. Written by vpn_domain_bypass_rescue.
+VPN_DOMAIN_BYPASS_DISABLED_MARKER="${VPN_DOMAIN_BYPASS_DISABLED_MARKER:-/etc/watchdogvpn/.domain-bypass-disabled}"
+
+enable_vpn_domain_bypass_timer_if_safe() {
+  local unit="vpn-domain-bypass.timer" conf="${WATCHDOGVPN_DOMAIN_BYPASS_CONF:-/etc/vpn-domain-bypass.conf}"
+
+  if systemctl is-active --quiet "$unit" 2>/dev/null; then
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      printf '[DRY-RUN] %s already active; would not restart it\n' "$unit"
+      [[ -e "$VPN_DOMAIN_BYPASS_DISABLED_MARKER" ]] && printf '[DRY-RUN] clear stale manual-disable marker: %s\n' "$VPN_DOMAIN_BYPASS_DISABLED_MARKER"
+      return 0
+    fi
+    printf '[KEEP] %s already active; not restarting it (would re-apply routing rules)\n' "$unit"
+    if [[ -e "$VPN_DOMAIN_BYPASS_DISABLED_MARKER" ]]; then
+      run_step sudo rm -f "$VPN_DOMAIN_BYPASS_DISABLED_MARKER"
+      printf '[INFO] cleared previous manual-disable marker; %s is running again\n' "$unit"
+    fi
+    return 0
+  fi
+
+  if [[ -e "$VPN_DOMAIN_BYPASS_DISABLED_MARKER" ]]; then
+    printf '[SKIP] %s was manually disabled after a routing conflict; not re-enabling automatically\n' "$unit"
+    printf '       to re-enable it yourself: sudo systemctl enable --now %s\n' "$unit"
+    return 0
+  fi
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    if vpn_domain_bypass_configured; then
+      printf '[DRY-RUN] sudo systemctl enable --now %s (domains configured in %s)\n' "$unit" "$conf"
+    else
+      printf '[DRY-RUN] skip enabling %s; no domains configured in %s\n' "$unit" "$conf"
+    fi
+    return 0
+  fi
+
+  if ! vpn_domain_bypass_configured; then
+    printf '[SKIP] %s not enabled; no domains configured in %s\n' "$unit" "$conf"
+    return 0
+  fi
+  run_step sudo systemctl enable --now "$unit"
+}
 
 # Historical WatchdogVPN-owned units removed from the shipped set before this
 # release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept here,
@@ -63,6 +125,7 @@ enable_systemd_units() {
     for unit in "${SYSTEMD_ENABLE_UNITS[@]}"; do
       run_step sudo systemctl enable --now "$unit"
     done
+    enable_vpn_domain_bypass_timer_if_safe
     return 0
   fi
 
@@ -73,7 +136,7 @@ enable_systemd_units() {
 
 disable_systemd_units() {
   local unit
-  for unit in "${SYSTEMD_ENABLE_UNITS[@]}"; do
+  for unit in "${SYSTEMD_ENABLE_UNITS[@]}" vpn-domain-bypass.timer; do
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
       run_step sudo systemctl disable --now "$unit"
     else
