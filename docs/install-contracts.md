@@ -152,7 +152,7 @@ Role: install a new system or complete a partial installation.
 
 Expected flow:
 
-1. Run preflight checks.
+1. Run read-only doctor and mixed-install preflight checks.
 2. Explain that the product installs the WatchdogVPN runtime and can configure
    the custom-vps service-control path.
 3. Detect distro and load its adapter.
@@ -179,6 +179,16 @@ It must preserve:
 
 It should replace only product-managed runtime files after validation and backup.
 It should show a preservation contract and update plan before replacing files.
+
+Before dependency checks or replacement, `install.sh` and `update.sh` run the
+shared mixed-install preflight from `lib/install_preflight.sh`. It classifies
+the machine as `fresh install`, `clean update`, `legacy migration`,
+`mixed-inconsistent` or `unsupported`; prints the exact runtime files,
+systemd units, wrappers and state paths that will be replaced, preserved,
+removed or reported; and refuses mixed/unsupported states before mutation.
+Known-dead WatchdogVPN-owned legacy artifacts are the only automatic repair
+path, and user data is preserved by default. Existing product config that names
+an unsupported backend is also blocked rather than preserved silently.
 
 It runs the same dependency checks as `install.sh` (sing-box, Cloak,
 AmneziaWG guided setup, Python `cryptography`) and, on every run, sweeps

@@ -19,6 +19,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/systemd.sh"
 # shellcheck source=lib/runtime.sh
 . "$ROOT_DIR/lib/runtime.sh"
+# shellcheck source=lib/install_preflight.sh
+. "$ROOT_DIR/lib/install_preflight.sh"
 # shellcheck source=lib/singbox.sh
 . "$ROOT_DIR/lib/singbox.sh"
 # shellcheck source=lib/cloak.sh
@@ -385,6 +387,9 @@ if ((RUN_DOCTOR == 1)); then
   print_section "Read-only preflight"
   "$ROOT_DIR/doctor.sh" || warn "preflight reported issues; continuing with guided installer checks"
 fi
+
+print_section "Mixed-install preflight"
+run_mixed_install_preflight install
 
 print_section "Prerequisites"
 validate_required_commands

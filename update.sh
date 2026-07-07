@@ -19,6 +19,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/systemd.sh"
 # shellcheck source=lib/runtime.sh
 . "$ROOT_DIR/lib/runtime.sh"
+# shellcheck source=lib/install_preflight.sh
+. "$ROOT_DIR/lib/install_preflight.sh"
 # shellcheck source=lib/singbox.sh
 . "$ROOT_DIR/lib/singbox.sh"
 # shellcheck source=lib/cloak.sh
@@ -165,6 +167,9 @@ print_preservation_contract
 
 require_supported_distro
 require_existing_installation
+
+print_section "Mixed-install preflight"
+run_mixed_install_preflight update
 
 print_section "Runtime dependencies"
 validate_python_runtime_dependencies
