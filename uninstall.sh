@@ -157,12 +157,12 @@ remove_runtime_files() {
 remove_optional_user_data() {
   if ((PURGE_CONFIG == 1)); then
     remove_root_path /etc/vpn-domain-bypass.conf
-    remove_root_path "$WATCHDOGVPN_CONFIG_DIR"
+    remove_root_path "$WATCHDOGVPN_ETC_CONFIG_DIR"
     remove_root_path /etc/adguardvpn.env
     remove_user_path "$HOME/.conky/WatchdogVPN"
   else
     printf '[KEEP] config: /etc/vpn-domain-bypass.conf\n'
-    printf '[KEEP] config: %s\n' "$WATCHDOGVPN_CONFIG_DIR"
+    printf '[KEEP] config: %s\n' "$WATCHDOGVPN_ETC_CONFIG_DIR"
     printf '[KEEP] legacy config: /etc/adguardvpn.env\n'
     printf '[KEEP] legacy conky: %s\n' "$HOME/.conky/WatchdogVPN"
   fi

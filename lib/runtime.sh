@@ -107,22 +107,27 @@ migrate_watchdogvpn_shared_state() {
   local source_dir="${WATCHDOGVPN_LEGACY_CONFIG_DIR:-$HOME/.config/watchdogvpn}"
   local target_dir="${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}"
   local marker="$target_dir/.migrated"
+  local has_legacy_data=0
 
+  # NOTE: the marker means "the shared state directory is ready for the CLI
+  # and daemon to use," not literally "a copy happened." A fresh install with
+  # no legacy $HOME/.config/watchdogvpn data must still get the marker once
+  # the target directory exists, otherwise config/paths.py::resolve_config_dir()
+  # keeps routing the CLI to $HOME/.config/watchdogvpn forever (the daemon
+  # always uses the shared dir), so the CLI and daemon silently never share
+  # state on any install that never had legacy per-user config. Found during
+  # the Phase 18 Task 18.4 shared-state permissions audit.
   if [[ -e "$marker" ]]; then
     printf '[KEEP] WatchdogVPN shared state already migrated: %s\n' "$target_dir"
-    return 0
-  fi
-  if [[ ! -d "$source_dir" ]]; then
-    printf '[SKIP] no legacy WatchdogVPN user state: %s\n' "$source_dir"
-    return 0
-  fi
-  if [[ -z "$(find "$source_dir" -mindepth 1 ! -name .migrated -print -quit)" ]]; then
-    printf '[SKIP] legacy WatchdogVPN user state is empty: %s\n' "$source_dir"
     return 0
   fi
   if [[ -e "$target_dir" && ! -d "$target_dir" ]]; then
     printf 'ERROR: WatchdogVPN shared state target is not a directory: %s\n' "$target_dir" >&2
     return 1
+  fi
+  if [[ -d "$source_dir" ]] \
+    && [[ -n "$(find "$source_dir" -mindepth 1 ! -name .migrated -print -quit)" ]]; then
+    has_legacy_data=1
   fi
   if [[ ! -d "$target_dir" ]]; then
     prepare_watchdogvpn_state_directory "$target_dir"
@@ -136,14 +141,22 @@ migrate_watchdogvpn_shared_state() {
     return 0
   fi
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] migrate WatchdogVPN state %s -> %s\n' "$source_dir" "$target_dir"
+    if ((has_legacy_data == 1)); then
+      printf '[DRY-RUN] migrate WatchdogVPN state %s -> %s\n' "$source_dir" "$target_dir"
+    else
+      printf '[DRY-RUN] mark WatchdogVPN shared state ready (no legacy user state to migrate): %s\n' "$target_dir"
+    fi
     return 0
   fi
 
-  run_step sudo cp -a --update=none "$source_dir/." "$target_dir/"
+  if ((has_legacy_data == 1)); then
+    run_step sudo cp -a --update=none "$source_dir/." "$target_dir/"
+    printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
+  else
+    printf '[SKIP] no legacy WatchdogVPN user state to migrate; marking shared state ready: %s\n' "$target_dir"
+  fi
   run_step sudo touch "$marker"
   repair_watchdogvpn_shared_state_permissions "$target_dir"
-  printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
 }
 
 prepare_watchdogvpn_state_directory() {

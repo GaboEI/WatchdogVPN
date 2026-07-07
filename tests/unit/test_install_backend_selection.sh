@@ -19,12 +19,12 @@ not_contains() {
   fi
 }
 
-# Every invocation below points WATCHDOGVPN_CONFIG_DIR/FILE at an isolated
+# Every invocation below points WATCHDOGVPN_ETC_CONFIG_DIR/FILE at an isolated
 # temp path so this test never reads or depends on the real
 # /etc/watchdogvpn/config.toml on the machine running it.
 fresh_yes_dir="$TMP_DIR/fresh-yes/etc/watchdogvpn"
 mkdir -p "$fresh_yes_dir"
-yes_output="$(WATCHDOGVPN_CONFIG_DIR="$fresh_yes_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_yes_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
+yes_output="$(WATCHDOGVPN_ETC_CONFIG_DIR="$fresh_yes_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_yes_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
 contains "$yes_output" "Backend mode:"
 contains "$yes_output" "Active backend:"
 contains "$yes_output" "custom-vps"
@@ -34,7 +34,7 @@ not_contains "$yes_output" "select vpn backend"
 mkdir -p "$TMP_DIR/home"
 fresh_custom_dir="$TMP_DIR/fresh-custom/etc/watchdogvpn"
 mkdir -p "$fresh_custom_dir"
-custom_output="$(printf '\n\n\n\n\n\n\n\nn\nn\n' | HOME="$TMP_DIR/home" WATCHDOGVPN_CONFIG_DIR="$fresh_custom_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_custom_dir/config.toml" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$INSTALLER" --dry-run --skip-doctor 2>&1)"
+custom_output="$(printf '\n\n\n\n\n\n\n\nn\nn\n' | HOME="$TMP_DIR/home" WATCHDOGVPN_ETC_CONFIG_DIR="$fresh_custom_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_custom_dir/config.toml" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$INSTALLER" --dry-run --skip-doctor 2>&1)"
 contains "$custom_output" "WatchdogVPN backend: Custom VPS"
 contains "$custom_output" "Custom VPS configuration stores only non-secret local metadata."
 if ! contains "$custom_output" "[DRY-RUN] install sing-box to /usr/local/bin/sing-box" \
@@ -75,7 +75,7 @@ service_name = "wg-quick@existing.service"
 interface = "wg-existing"
 CFG
 existing_hash_before="$(md5sum "$existing_dir/config.toml" | awk '{print $1}')"
-preserve_output="$(WATCHDOGVPN_CONFIG_DIR="$existing_dir" WATCHDOGVPN_CONFIG_FILE="$existing_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
+preserve_output="$(WATCHDOGVPN_ETC_CONFIG_DIR="$existing_dir" WATCHDOGVPN_CONFIG_FILE="$existing_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor 2>&1)"
 existing_hash_after="$(md5sum "$existing_dir/config.toml" | awk '{print $1}')"
 
 contains "$preserve_output" "Existing backend configuration detected: custom-vps"

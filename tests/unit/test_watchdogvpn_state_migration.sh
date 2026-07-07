@@ -73,7 +73,45 @@ install -d -m 0755 "$empty_source"
 WATCHDOGVPN_LEGACY_CONFIG_DIR="$empty_source" \
 WATCHDOGVPN_SHARED_STATE_DIR="$empty_source_target" \
   migrate_watchdogvpn_shared_state
+# Non-default target that does not exist yet is never auto-created (only the
+# literal default path is prepared via systemd), so there is nothing to mark
+# ready yet.
 [[ ! -e "$empty_source_target/.migrated" ]]
+
+# Regression test for the fresh-install bug found in the Task 18.4
+# shared-state audit: a machine with NO legacy per-user config ever must
+# still get the shared state directory marked "ready" once it exists, or
+# config/paths.py::resolve_config_dir() keeps routing the CLI to
+# $HOME/.config/watchdogvpn forever while the daemon uses the shared
+# directory - the two processes would silently never share state. This
+# simulates the real production case (the target directory already exists,
+# e.g. created by systemd's StateDirectory= on first daemon start, or by
+# prepare_watchdogvpn_state_directory for the literal default path) with no
+# legacy data to migrate.
+no_legacy_source="$TMP_DIR/no-legacy-source"
+ready_target="$TMP_DIR/ready-target"
+install -d -m 0750 "$ready_target"
+WATCHDOGVPN_LEGACY_CONFIG_DIR="$no_legacy_source" \
+WATCHDOGVPN_SHARED_STATE_DIR="$ready_target" \
+  migrate_watchdogvpn_shared_state
+if [[ ! -f "$ready_target/.migrated" ]]; then
+  printf 'FAIL: shared state must be marked ready even with no legacy data to migrate, once the target directory exists\n' >&2
+  exit 1
+fi
+
+# Same fix, but the legacy source directory exists and is merely empty
+# (rather than absent) - must behave identically.
+empty_but_present_source="$TMP_DIR/empty-but-present-source"
+empty_but_present_target="$TMP_DIR/empty-but-present-target"
+install -d -m 0755 "$empty_but_present_source"
+install -d -m 0750 "$empty_but_present_target"
+WATCHDOGVPN_LEGACY_CONFIG_DIR="$empty_but_present_source" \
+WATCHDOGVPN_SHARED_STATE_DIR="$empty_but_present_target" \
+  migrate_watchdogvpn_shared_state
+if [[ ! -f "$empty_but_present_target/.migrated" ]]; then
+  printf 'FAIL: shared state must be marked ready even when the legacy source directory exists but is empty\n' >&2
+  exit 1
+fi
 
 dry_source="$TMP_DIR/dry-source"
 dry_target="$TMP_DIR/dry-target"

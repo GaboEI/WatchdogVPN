@@ -28,7 +28,6 @@ class ProviderStore:
         return [dict(item) for item in items]
 
     def _save_raw(self, items: list[dict]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         dump_json(self.path, items)
 
     def add(self, provider: Provider) -> None:

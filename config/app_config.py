@@ -118,7 +118,6 @@ class AppConfig:
             self._save_unlocked(config)
 
     def _save_unlocked(self, config: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
         for section, values in config.items():
             if isinstance(values, dict):

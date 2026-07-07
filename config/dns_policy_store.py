@@ -32,5 +32,4 @@ class DNSPolicyStore:
 
     def save(self, policy: DNSPolicy) -> None:
         with file_lock(self.path):
-            self.path.parent.mkdir(parents=True, exist_ok=True)
             dump_json(self.path, policy.to_dict())

@@ -86,7 +86,6 @@ class StateManager:
             self._save_unlocked(state)
 
     def _save_unlocked(self, state: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = dict(DEFAULT_STATE)
         payload.update(state)
         payload = _validate_state(payload, self.path)

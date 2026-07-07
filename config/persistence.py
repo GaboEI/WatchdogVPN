@@ -55,6 +55,26 @@ def atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    _ensure_parent_dir(path)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _ensure_shared_file_mode(tmp_path)
+        os.replace(tmp_path, path)
+        _ensure_shared_file_mode(path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def _ensure_parent_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if _is_shared_state_path(path):

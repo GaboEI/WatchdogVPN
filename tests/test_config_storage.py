@@ -10,7 +10,12 @@ from unittest.mock import patch
 
 from config.app_config import AppConfig, DEFAULT_CONFIG
 from config.dns_policy_store import DNSPolicyStore
-from config.persistence import PersistentStoreError, PersistentValidationError, atomic_write_text
+from config.persistence import (
+    PersistentStoreError,
+    PersistentValidationError,
+    atomic_write_bytes,
+    atomic_write_text,
+)
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
 from config.state_manager import DEFAULT_STATE, StateManager
@@ -163,6 +168,28 @@ class ConfigStorageTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(shared_dir.stat().st_mode), 0o2770)
             self.assertEqual(stat.S_IMODE(target.parent.stat().st_mode), 0o2770)
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o660)
+
+    def test_atomic_write_bytes_ignores_restrictive_umask(self) -> None:
+        # Regression coverage for the Phase 18 Task 18.4 shared-state audit:
+        # config.backup_manager's restore-rollback path used to write bytes
+        # directly (path.write_bytes()), bypassing this shared-permission
+        # normalization entirely. Under the daemon's real UMask=0077, a raw
+        # write would land as 0600 (unreadable/unwritable by the watchdogvpn
+        # group) - the same bug class as the historical Phase 2.6 incident.
+        with tempfile.TemporaryDirectory() as tmp:
+            shared_dir = Path(tmp) / "watchdogvpn"
+            target = shared_dir / "rules" / "restored.json"
+            old_umask = os.umask(0o077)
+            try:
+                with patch("config.paths.SYSTEM_CONFIG_DIR", shared_dir):
+                    atomic_write_bytes(target, b'{"restored": true}\n')
+            finally:
+                os.umask(old_umask)
+
+            self.assertEqual(stat.S_IMODE(shared_dir.stat().st_mode), 0o2770)
+            self.assertEqual(stat.S_IMODE(target.parent.stat().st_mode), 0o2770)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o660)
+            self.assertEqual(target.read_bytes(), b'{"restored": true}\n')
 
     def test_profile_store_crud(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

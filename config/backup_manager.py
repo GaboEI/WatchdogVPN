@@ -18,8 +18,10 @@ from config.paths import resolve_config_dir
 from config.persistence import (
     PersistentStoreError,
     PersistentValidationError,
+    atomic_write_bytes,
     atomic_write_text,
     dump_json,
+    file_lock,
 )
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
@@ -699,16 +701,20 @@ class BackupManager:
         if rules_dir.exists():
             for path in sorted(rules_dir.glob("*.json")):
                 if path not in snapshot.rule_files:
-                    path.unlink()
+                    with file_lock(path):
+                        try:
+                            path.unlink()
+                        except FileNotFoundError:
+                            pass
         for path, content in snapshot.files.items():
-            if content is None:
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(content)
+            with file_lock(path):
+                if content is None:
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
+                else:
+                    atomic_write_bytes(path, content)
 
     def _apply_sections(self, sections: dict[str, dict[str, Any]]) -> None:
         for entry in _entries_for_sections(DEFAULT_SECTION_NAMES):
@@ -762,12 +768,10 @@ class BackupManager:
                 self._merge_node_groups(data["items"], timestamp=timestamp)
 
     def _write_json_file(self, path: Path, value: object) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         dump_json(path, value)
 
     def _write_rule_groups(self, groups: list[dict[str, Any]]) -> None:
         rules_dir = self.config_dir / "rules"
-        rules_dir.mkdir(parents=True, exist_ok=True)
         for existing in rules_dir.glob("*.json"):
             existing.unlink()
         for item in groups:

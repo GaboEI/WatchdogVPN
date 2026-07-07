@@ -42,20 +42,17 @@ class RuleStore:
     def add_group(self, group: RuleGroup) -> None:
         target = self._group_path(group.name)
         with file_lock(target):
-            self.path.mkdir(parents=True, exist_ok=True)
             validated = RuleGroup.from_dict(group.to_dict())
             dump_json(target, validated.to_dict())
 
     def replace_group(self, group: RuleGroup, *, backup_existing: bool = False) -> Path | None:
         target = self._group_path(group.name)
         with file_lock(target):
-            self.path.mkdir(parents=True, exist_ok=True)
             validated = RuleGroup.from_dict(group.to_dict())
             backup_path = None
             if backup_existing and target.exists():
                 existing = RuleGroup.from_dict(require_mapping(load_json(target, {}), target))
                 backup_path = self._backup_path(existing.name)
-                backup_path.parent.mkdir(parents=True, exist_ok=True)
                 dump_json(backup_path, existing.to_dict())
             dump_json(target, validated.to_dict())
             return backup_path

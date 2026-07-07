@@ -31,9 +31,9 @@ backup_path() {
   cp -a "$path" "$backup"
 }
 
-WATCHDOGVPN_CONFIG_DIR="$TMP_DIR/etc/watchdogvpn"
-WATCHDOGVPN_CONFIG_FILE="$WATCHDOGVPN_CONFIG_DIR/config.toml"
-WATCHDOGVPN_CONFIG_EXAMPLE="$WATCHDOGVPN_CONFIG_DIR/config.toml.example"
+WATCHDOGVPN_ETC_CONFIG_DIR="$TMP_DIR/etc/watchdogvpn"
+WATCHDOGVPN_CONFIG_FILE="$WATCHDOGVPN_ETC_CONFIG_DIR/config.toml"
+WATCHDOGVPN_CONFIG_EXAMPLE="$WATCHDOGVPN_ETC_CONFIG_DIR/config.toml.example"
 WATCHDOGVPN_REPO_CONFIG_EXAMPLE="$ROOT_DIR/examples/watchdogvpn-config.toml.example"
 BACKUP_ROOT="$TMP_DIR/backups"
 INSTALL_DRY_RUN=0
@@ -45,7 +45,7 @@ validate_config_example "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE"
 
 install_config_defaults
 
-[[ -d "$WATCHDOGVPN_CONFIG_DIR" ]]
+[[ -d "$WATCHDOGVPN_ETC_CONFIG_DIR" ]]
 [[ -f "$WATCHDOGVPN_CONFIG_FILE" ]]
 [[ -f "$WATCHDOGVPN_CONFIG_EXAMPLE" ]]
 

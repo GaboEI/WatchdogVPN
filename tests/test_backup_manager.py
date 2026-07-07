@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import tempfile
 import unittest
 import warnings
@@ -216,6 +218,41 @@ class BackupManagerTests(unittest.TestCase):
                 original_rule_files,
             )
             self.assertIsNone(RuleStore(target / "rules").get_group("source-only"))
+
+    def test_restore_rollback_writes_group_writable_shared_state(self) -> None:
+        # Regression coverage for the Phase 18 Task 18.4 shared-state audit:
+        # _restore_snapshot() used to write the rolled-back files with
+        # path.write_bytes() directly, bypassing config.persistence's shared
+        # permission normalization. Under the daemon's real UMask=0077, a raw
+        # write lands as 0600 (unreadable/unwritable by the watchdogvpn
+        # group) - the same bug class as the historical Phase 2.6 incident.
+        # This locks in the fix: files restored by a rollback must still end
+        # up 0660/2770 even under a restrictive umask.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+            backup = manager.create_backup(root / "source.zip").path
+
+            old_umask = os.umask(0o077)
+            try:
+                with patch("config.paths.SYSTEM_CONFIG_DIR", root):
+                    with patch.object(
+                        BackupManager,
+                        "_write_json_file",
+                        side_effect=RuntimeError("disk full"),
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "disk full"):
+                            manager.restore_backup(
+                                backup,
+                                replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+                            )
+            finally:
+                os.umask(old_umask)
+
+            restored = root / "profiles.json"
+            self.assertEqual(stat.S_IMODE(restored.stat().st_mode), 0o660)
+            self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o2770)
 
     def test_create_partial_backup_contains_only_requested_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

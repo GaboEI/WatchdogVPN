@@ -12,6 +12,15 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local file="$1" pattern="$2" message="$3"
+  if grep -Fq "$pattern" "$file"; then
+    printf 'FAIL: %s\n' "$message" >&2
+    printf 'unexpected pattern in %s: %s\n' "$file" "$pattern" >&2
+    exit 1
+  fi
+}
+
 assert_order() {
   local file="$1" first="$2" second="$3" message="$4" first_line second_line
   first_line="$(grep -nF "$first" "$file" | head -n1 | cut -d: -f1 || true)"
@@ -91,8 +100,9 @@ assert_contains "$ROOT_DIR/install.sh" "If the dashboard stays degraded, reboot 
 
 assert_runtime_order "$ROOT_DIR/uninstall.sh" "rescue_system_dns" "remove_runtime_files" "uninstall must run DNS rescue before removing runtime files"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''/etc/watchdogvpn/\n'\''' "uninstall preservation contract must mention WatchdogVPN config directory"
-assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$WATCHDOGVPN_CONFIG_DIR"' "purge-config must remove WatchdogVPN config directory"
-assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] config: %s\n'\'' "$WATCHDOGVPN_CONFIG_DIR"' "uninstall must preserve WatchdogVPN config by default"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$WATCHDOGVPN_ETC_CONFIG_DIR"' "purge-config must remove WatchdogVPN config directory"
+assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] config: %s\n'\'' "$WATCHDOGVPN_ETC_CONFIG_DIR"' "uninstall must preserve WatchdogVPN config by default"
+assert_not_contains "$ROOT_DIR/lib/config.sh" 'WATCHDOGVPN_CONFIG_DIR:-' "shell config lib must not reuse the Python-side WATCHDOGVPN_CONFIG_DIR env var name (collision risk found in Task 18.4 audit)"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /var/lib/watchdogvpn' "purge-state must remove WatchdogVPN runtime state"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] state: /var/lib/watchdogvpn\n'\''' "uninstall must preserve WatchdogVPN runtime state by default"
 assert_contains "$ROOT_DIR/uninstall.sh" 'require_delete_confirmation' "uninstall data purge must require DELETE confirmation"

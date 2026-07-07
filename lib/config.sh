@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WATCHDOGVPN_CONFIG_DIR="${WATCHDOGVPN_CONFIG_DIR:-/etc/watchdogvpn}"
-WATCHDOGVPN_CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-$WATCHDOGVPN_CONFIG_DIR/config.toml}"
-WATCHDOGVPN_CONFIG_EXAMPLE="${WATCHDOGVPN_CONFIG_EXAMPLE:-$WATCHDOGVPN_CONFIG_DIR/config.toml.example}"
+# Named distinctly from Python's WATCHDOGVPN_CONFIG_DIR (config/paths.py,
+# the shared runtime state directory - /var/lib/watchdogvpn or
+# ~/.config/watchdogvpn) on purpose: this is the installer-managed
+# /etc/watchdogvpn product config directory (backend/custom_vps/language/
+# dns/tui/reporting sections), a different directory with different
+# permissions (0755/0644, not 2770/0660). Using the same name in both
+# contexts was a real latent bug risk found during the Phase 18 Task 18.4
+# shared-state audit: exporting WATCHDOGVPN_CONFIG_DIR in a shell before
+# running a Python CLI command would have silently redirected shared daemon
+# state to /etc/watchdogvpn.
+WATCHDOGVPN_ETC_CONFIG_DIR="${WATCHDOGVPN_ETC_CONFIG_DIR:-/etc/watchdogvpn}"
+WATCHDOGVPN_CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-$WATCHDOGVPN_ETC_CONFIG_DIR/config.toml}"
+WATCHDOGVPN_CONFIG_EXAMPLE="${WATCHDOGVPN_CONFIG_EXAMPLE:-$WATCHDOGVPN_ETC_CONFIG_DIR/config.toml.example}"
 WATCHDOGVPN_REPO_CONFIG_EXAMPLE="${WATCHDOGVPN_REPO_CONFIG_EXAMPLE:-$ROOT_DIR/examples/watchdogvpn-config.toml.example}"
 
 config_required_sections() {
@@ -56,7 +66,7 @@ validate_config_example() {
 
 install_config_defaults() {
   validate_config_example "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE"
-  create_root_dir "$WATCHDOGVPN_CONFIG_DIR" 0755
+  create_root_dir "$WATCHDOGVPN_ETC_CONFIG_DIR" 0755
   create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_EXAMPLE" 0644
   create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_FILE" 0644
   migrate_config_missing_keys

@@ -7,7 +7,7 @@ set -euo pipefail
 # VERSION string in bin/watchdogvpn, which does not change when the
 # installed copy falls behind. Written by install.sh and update.sh every
 # time install_python_package_tree() runs; read by doctor.sh.
-WATCHDOGVPN_VERSION_MARKER="${WATCHDOGVPN_VERSION_MARKER:-${WATCHDOGVPN_CONFIG_DIR:-/etc/watchdogvpn}/installed-version}"
+WATCHDOGVPN_VERSION_MARKER="${WATCHDOGVPN_VERSION_MARKER:-${WATCHDOGVPN_ETC_CONFIG_DIR:-/etc/watchdogvpn}/installed-version}"
 
 record_installed_version() {
   local commit timestamp tmp
