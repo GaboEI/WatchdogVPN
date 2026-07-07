@@ -166,6 +166,25 @@ The focused rule import tests cover:
 - safe Clash subset import;
 - safe sing-box subset import and unsupported construct rejection.
 
-No VM/live-network validation was run because Task 19.4 only changes local rule
-import parsing and rule-store writes. It does not apply routes or connect a
-tunnel.
+Installed VM validation also passed on 2026-07-07 after refreshing the runtime
+with `./update.sh --yes`:
+
+- `./doctor.sh` reported installed/source match at
+  `dc79733c4ea00689db6d2c8cf87b285b9f4d3fe2`, daemon IPC reachable, and
+  `FAIL=0`;
+- installed `/usr/local/bin/watchdog rules import` was smoke tested with
+  temporary config/state/rules directories for:
+  - native WatchdogVPN rule-group JSON using the persisted `conditions` schema;
+  - simple domain/IP list dry-run plus write with `--allow-partial`;
+  - safe Clash-style JSON string array import;
+  - sing-box route-rule rejection without `--allow-partial`, followed by
+    accepted partial import with rejected-construct reporting;
+  - `watchdog rules list --json` against the temporary rules directory.
+
+The first manual native VM smoke used an invalid fixture with legacy
+`type`/`value` fields and was correctly rejected before mutation. The final
+native smoke used the real WatchdogVPN rule-group schema and passed.
+
+No live routing/tunnel capture validation was required because Task 19.4 changes
+local rule import parsing and rule-store writes only. It does not apply routes
+or connect a WatchdogVPN tunnel.
