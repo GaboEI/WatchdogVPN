@@ -7,10 +7,11 @@
 
 Task 17.6 defines the sensitive-data posture for backup exports.
 
-Backups remain plaintext ZIP files in this task. Encryption is intentionally not
-implemented because the project does not yet have a reviewed cryptographic
-library dependency, key-derivation contract, recovery UX or documented encrypted
-backup format.
+Backups remain plaintext ZIP files in this task. Encryption is intentionally
+deferred to the dedicated Phase 17 Task 17.7 reviewed encrypted backup format
+work, because the project does not yet have a reviewed cryptographic library
+dependency, key-derivation contract, recovery UX or documented encrypted backup
+format.
 
 ## Sensitive Warning
 
@@ -46,8 +47,8 @@ current format.
 
 ## Restore Safety
 
-Plaintext backups remain restoreable. Encrypted backups are not accepted until a
-future task defines and implements the encrypted format.
+Plaintext backups remain restoreable. Encrypted backups are not accepted until
+Task 17.7 defines and implements the encrypted format.
 
 ## Deferred Work
 
@@ -55,7 +56,7 @@ The following remain later Phase 17 work:
 
 - user-facing CLI wiring;
 - CLI warning/confirmation UX;
-- reviewed encrypted backup format if encryption is revisited;
+- Phase 17 Task 17.7 reviewed encrypted backup format;
 - WebDAV/LAN sync;
 - uninstall flow UX.
 

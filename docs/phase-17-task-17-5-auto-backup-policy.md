@@ -65,7 +65,7 @@ The following remain later Phase 17 work:
   `create_auto_backup(reason="pre-destructive-remove")`;
 - connecting uninstall deletion to
   `create_auto_backup(reason="pre-uninstall-delete")`;
-- reviewed encrypted backup format if encryption is revisited;
+- Phase 17 Task 17.7 reviewed encrypted backup format;
 - WebDAV/LAN sync;
 - uninstall flow UX.
 

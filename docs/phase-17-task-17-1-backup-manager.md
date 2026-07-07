@@ -100,7 +100,7 @@ available.
 The following are intentionally left for later Phase 17 tasks:
 
 - user-facing CLI commands;
-- reviewed encrypted backup format if encryption is revisited;
+- Phase 17 Task 17.7 reviewed encrypted backup format;
 - WebDAV/LAN sync;
 - uninstall flow integration;
 - private metrics history export.

@@ -181,10 +181,10 @@ sensitive-data decision.
 
 ## Backup Sensitivity
 
-WatchdogVPN backups are plaintext ZIP files unless a future reviewed encrypted
-format is explicitly implemented. Backup manifests are marked sensitive and warn
-that exports may contain private keys, passwords, provider tokens, subscription
-URLs, routing policy, app policy and local selection state.
+WatchdogVPN backups are plaintext ZIP files until Phase 17 Task 17.7 defines
+and implements a reviewed encrypted backup format. Backup manifests are marked
+sensitive and warn that exports may contain private keys, passwords, provider
+tokens, subscription URLs, routing policy, app policy and local selection state.
 
 Encrypted backup input/output is not supported in the current format. Backup
 creation requests that ask for encryption are rejected, and backup manifests

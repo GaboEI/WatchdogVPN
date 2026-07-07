@@ -94,7 +94,7 @@ The following remain later Phase 17 work:
 - user-facing CLI wiring;
 - CLI copy and confirmation UX;
 - merge behavior for profiles/providers if deliberately designed;
-- reviewed encrypted backup format if encryption is revisited;
+- Phase 17 Task 17.7 reviewed encrypted backup format;
 - WebDAV/LAN sync;
 - uninstall flow integration.
 

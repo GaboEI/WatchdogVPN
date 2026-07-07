@@ -77,7 +77,7 @@ history or counters.
 The following remain later Phase 17 work:
 
 - CLI wiring;
-- reviewed encrypted backup format if encryption is revisited;
+- Phase 17 Task 17.7 reviewed encrypted backup format;
 - WebDAV/LAN sync;
 - uninstall flow integration.
 
