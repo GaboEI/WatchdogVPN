@@ -183,11 +183,20 @@ cd WatchdogVPN
 ./uninstall.sh
 ```
 
+Guided uninstall choices are available through the Python CLI:
+
+```sh
+cd WatchdogVPN
+watchdog uninstall --keep-data --yes
+watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
+watchdog uninstall --delete-all-data --confirm-delete DELETE --backup-output ~/watchdogvpn-pre-delete.zip --yes
+```
+
 Full product purge:
 
 ```sh
 cd WatchdogVPN
-./uninstall.sh --purge-config --purge-logs --purge-state
+./uninstall.sh --purge-config --purge-logs --purge-state --confirm-delete DELETE
 ```
 
 Uninstall does not remove user-owned VPN/proxy provider software, private keys,

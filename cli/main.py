@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn
 
@@ -16,6 +17,7 @@ from app_policy.store import AppPolicyStore
 from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
 from config.app_config import AppConfig
+from config.backup_manager import BackupManager
 from config.dns_policy_store import DNSPolicyStore
 from config.paths import resolve_config_dir
 from config.persistence import PersistentStoreError, dump_json
@@ -143,6 +145,47 @@ def _build_parser() -> argparse.ArgumentParser:
     rotate_parser.add_argument("--force", action="store_true", help="Force rotation even if conservative checks apply")
     rotate_parser.add_argument("--json", action="store_true", help="Print JSON")
     rotate_parser.set_defaults(handler=_connection_rotate)
+
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Run the safe WatchdogVPN uninstall flow",
+    )
+    uninstall_mode = uninstall_parser.add_mutually_exclusive_group()
+    uninstall_mode.add_argument(
+        "--keep-data",
+        action="store_true",
+        help="Uninstall product files and preserve local WatchdogVPN data",
+    )
+    uninstall_mode.add_argument(
+        "--backup-first",
+        action="store_true",
+        help="Export a backup before uninstalling product files",
+    )
+    uninstall_mode.add_argument(
+        "--delete-all-data",
+        action="store_true",
+        help="Export a pre-delete backup, then uninstall and purge WatchdogVPN data",
+    )
+    uninstall_parser.add_argument("--yes", action="store_true", help="Confirm product uninstall")
+    uninstall_parser.add_argument("--dry-run", action="store_true", help="Show plan without changing the system")
+    uninstall_parser.add_argument("--skip-dns-rescue", action="store_true", help="Skip uninstall DNS rescue")
+    uninstall_parser.add_argument("--backup-output", help="Backup path for backup-first/delete-all-data")
+    uninstall_parser.add_argument(
+        "--encrypt-backup",
+        action="store_true",
+        help="Encrypt the backup using a password from --backup-password-env",
+    )
+    uninstall_parser.add_argument(
+        "--backup-password-env",
+        help="Environment variable containing the encrypted-backup password",
+    )
+    uninstall_parser.add_argument(
+        "--confirm-delete",
+        help="Required literal DELETE for --delete-all-data",
+    )
+    uninstall_parser.add_argument("--uninstall-script", help=argparse.SUPPRESS)
+    uninstall_parser.add_argument("--json", action="store_true", help="Print JSON")
+    uninstall_parser.set_defaults(handler=_uninstall)
 
     profile_parser = subparsers.add_parser("profile", help="Manage local profiles")
     profile_subparsers = profile_parser.add_subparsers(dest="profile_command")
@@ -521,6 +564,158 @@ def _connection_rotate(args: argparse.Namespace) -> int:
         json_output=bool(args.json),
         success_label="Rotation requested",
     )
+
+
+def _uninstall(args: argparse.Namespace) -> int:
+    mode = _uninstall_mode(args)
+    if mode == "delete-all-data" and args.confirm_delete != "DELETE" and not args.dry_run:
+        raise ParseError("uninstall --delete-all-data requires --confirm-delete DELETE")
+    if mode in {"backup-first", "delete-all-data"} and args.encrypt_backup and not args.backup_password_env:
+        raise ParseError("--encrypt-backup requires --backup-password-env")
+
+    backup_path: Path | None = None
+    if mode in {"backup-first", "delete-all-data"}:
+        backup_path = _uninstall_backup_output(args.backup_output)
+        _validate_uninstall_backup_output(backup_path)
+
+    if not args.dry_run and mode in {"backup-first", "delete-all-data"}:
+        password = _uninstall_backup_password(args)
+        reason = "pre-uninstall-delete" if mode == "delete-all-data" else "uninstall-export"
+        BackupManager().create_backup(
+            backup_path,
+            reason=reason,
+            encrypt=bool(args.encrypt_backup),
+            password=password,
+        )
+
+    command = _uninstall_script_command(args, mode)
+    data = {
+        "mode": mode,
+        "dry_run": bool(args.dry_run),
+        "backup_path": str(backup_path) if backup_path is not None else None,
+        "encrypted_backup": bool(args.encrypt_backup),
+        "command": command,
+    }
+    if args.json:
+        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        data["uninstall_exit_code"] = int(completed.returncode)
+        data["uninstall_stdout"] = completed.stdout
+        data["uninstall_stderr"] = completed.stderr
+        _print_json(data)
+        return int(completed.returncode)
+    _print_uninstall_plan(data)
+    completed = subprocess.run(command, check=False)
+    return int(completed.returncode)
+
+
+def _uninstall_mode(args: argparse.Namespace) -> str:
+    if args.keep_data:
+        return "keep-data"
+    if args.backup_first:
+        return "backup-first"
+    if args.delete_all_data:
+        return "delete-all-data"
+    if not sys.stdin.isatty():
+        raise ParseError(
+            "uninstall requires one of: --keep-data, --backup-first, --delete-all-data"
+        )
+    print("WatchdogVPN uninstall options:")
+    print("1. Keep local data")
+    print("2. Export backup first, then uninstall")
+    print("3. Delete all WatchdogVPN data")
+    answer = input("Choose 1, 2 or 3: ").strip()
+    if answer == "1":
+        return "keep-data"
+    if answer == "2":
+        return "backup-first"
+    if answer == "3":
+        return "delete-all-data"
+    raise ParseError("uninstall choice must be 1, 2 or 3")
+
+
+def _uninstall_backup_output(value: str | None) -> Path:
+    if value:
+        return Path(value).expanduser()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return Path.home() / f"watchdogvpn-uninstall-backup-{stamp}.zip"
+
+
+def _validate_uninstall_backup_output(path: Path) -> None:
+    resolved = path.resolve(strict=False)
+    managed_roots = [
+        resolve_config_dir(),
+        Path("/etc/watchdogvpn"),
+        Path("/var/lib/watchdogvpn"),
+        Path("/var/log/myvpn"),
+    ]
+    for root in managed_roots:
+        root_resolved = root.resolve(strict=False)
+        if resolved == root_resolved or root_resolved in resolved.parents:
+            raise ParseError(
+                f"uninstall backup output must be outside WatchdogVPN-owned paths: {path}"
+            )
+
+
+def _uninstall_backup_password(args: argparse.Namespace) -> str | None:
+    if not args.encrypt_backup:
+        return None
+    password = os.environ.get(args.backup_password_env or "")
+    if not password:
+        raise ParseError("encrypted uninstall backup password environment variable is empty")
+    return password
+
+
+def _uninstall_script_command(args: argparse.Namespace, mode: str) -> list[str]:
+    script = _uninstall_script_path(args.uninstall_script)
+    command = [str(script)]
+    if args.dry_run:
+        command.append("--dry-run")
+    if args.yes:
+        command.append("--yes")
+    if args.skip_dns_rescue:
+        command.append("--skip-dns-rescue")
+    if mode == "delete-all-data":
+        command.extend(
+            [
+                "--purge-config",
+                "--purge-logs",
+                "--purge-state",
+                "--confirm-delete",
+                "DELETE",
+            ]
+        )
+    return command
+
+
+def _uninstall_script_path(value: str | None) -> Path:
+    if value:
+        candidates = [Path(value).expanduser()]
+    elif os.environ.get("WATCHDOGVPN_UNINSTALL_SCRIPT"):
+        candidates = [Path(os.environ["WATCHDOGVPN_UNINSTALL_SCRIPT"]).expanduser()]
+    else:
+        candidates = []
+        if os.environ.get("WATCHDOGVPN_REPO_DIR"):
+            candidates.append(Path(os.environ["WATCHDOGVPN_REPO_DIR"]).expanduser() / "uninstall.sh")
+        candidates.append(Path.cwd() / "uninstall.sh")
+        candidates.append(Path(__file__).resolve().parents[1] / "uninstall.sh")
+    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+    if not script.exists():
+        raise FileNotFoundError(
+            f"uninstall.sh not found; run from the WatchdogVPN checkout or set WATCHDOGVPN_REPO_DIR"
+        )
+    if not os.access(script, os.X_OK):
+        raise PermissionError(f"uninstall script is not executable: {script}")
+    return script
+
+
+def _print_uninstall_plan(data: dict[str, object]) -> None:
+    print("WatchdogVPN uninstall plan")
+    print(f"Mode: {data['mode']}")
+    print(f"Dry run: {_on_off(bool(data['dry_run']))}")
+    print(f"Backup: {data['backup_path'] or '-'}")
+    print(f"Encrypted backup: {_on_off(bool(data['encrypted_backup']))}")
+    print("Command:")
+    print("  " + " ".join(str(part) for part in data["command"]))
 
 
 def _connection_response_output(response: Response, json_output: bool, success_label: str) -> int:

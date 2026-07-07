@@ -58,11 +58,47 @@ watchdogvpn tui
 Python runtime commands:
 
 ```sh
+watchdog uninstall --keep-data --yes
+watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
+watchdog uninstall --delete-all-data --confirm-delete DELETE --backup-output ~/watchdogvpn-pre-delete.zip --yes
 watchdog stats status [--json]
 watchdog stats summary [--json]
 watchdog stats purge --yes
 watchdog stats privacy-mode <off|aggregate|detailed>
 ```
+
+## Uninstall Flow
+
+### `watchdog uninstall`
+
+Runs the safe uninstall flow by wrapping `uninstall.sh` with explicit user-data
+choices.
+
+Run it from the WatchdogVPN checkout, or set `WATCHDOGVPN_REPO_DIR` to the
+checkout path if launching from another directory.
+
+```sh
+watchdog uninstall --keep-data --yes
+watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
+watchdog uninstall --delete-all-data --confirm-delete DELETE --backup-output ~/watchdogvpn-pre-delete.zip --yes
+```
+
+Modes:
+
+- `--keep-data`: uninstall product files while preserving WatchdogVPN config,
+  logs and shared runtime state;
+- `--backup-first`: export a backup outside WatchdogVPN-owned paths, then
+  uninstall product files while preserving data;
+- `--delete-all-data`: export a pre-delete backup outside WatchdogVPN-owned
+  paths, then pass `--purge-config --purge-logs --purge-state` to
+  `uninstall.sh`.
+
+`--delete-all-data` requires `--confirm-delete DELETE`. Backups can be encrypted
+with `--encrypt-backup --backup-password-env ENV_NAME`; the password is read
+from the named environment variable and is not written to the backup manifest.
+
+Backup output paths inside WatchdogVPN-owned paths are rejected so a pre-delete
+backup is not deleted by the same uninstall operation.
 
 ## Runtime Commands
 

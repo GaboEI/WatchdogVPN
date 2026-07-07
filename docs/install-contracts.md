@@ -117,6 +117,10 @@ It must ask before deleting:
 - `/var/log/myvpn/`
 - `/var/lib/watchdogvpn/`
 
+Data deletion requires the literal confirmation `DELETE`. The Python
+`watchdog uninstall --delete-all-data` flow also exports a pre-delete backup
+outside WatchdogVPN-owned paths before passing purge flags to `uninstall.sh`.
+
 It must not remove:
 
 - user-owned provider software, profiles, private keys or account state

@@ -97,6 +97,8 @@ assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$WATCHDOGVPN_CONFIG_
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] config: %s\n'\'' "$WATCHDOGVPN_CONFIG_DIR"' "uninstall must preserve WatchdogVPN config by default"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /var/lib/watchdogvpn' "purge-state must remove WatchdogVPN runtime state"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] state: /var/lib/watchdogvpn\n'\''' "uninstall must preserve WatchdogVPN runtime state by default"
+assert_contains "$ROOT_DIR/uninstall.sh" 'require_delete_confirmation' "uninstall data purge must require DELETE confirmation"
+assert_contains "$ROOT_DIR/uninstall.sh" 'fail "data purge requires --confirm-delete DELETE"' "uninstall data purge must fail without DELETE confirmation"
 
 assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn' "OpenVPN normal compatibility requires installer dependency detection"
 assert_contains "$ROOT_DIR/distros/ubuntu.sh" "openvpn" "Ubuntu package set must include OpenVPN"

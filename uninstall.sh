@@ -17,13 +17,14 @@ PURGE_CONFIG=0
 PURGE_LOGS=0
 PURGE_STATE=0
 RUN_DNS_RESCUE=1
+CONFIRM_DELETE=""
 
 usage() {
   cat <<'USAGE'
 WatchdogVPN uninstaller
 
 Usage:
-  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--skip-dns-rescue]
+  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--confirm-delete DELETE] [--skip-dns-rescue]
 
 Options:
   --dry-run       Show what would be removed without changing the system.
@@ -31,6 +32,8 @@ Options:
   --purge-config  Also remove WatchdogVPN config files.
   --purge-logs    Also remove WatchdogVPN logs.
   --purge-state   Also remove WatchdogVPN rotation state.
+  --confirm-delete DELETE
+                  Required literal confirmation before purging WatchdogVPN data.
   --skip-dns-rescue
                   Do not reset system DNS before removing product files.
   --help          Show this help.
@@ -53,6 +56,11 @@ while (($#)); do
       ;;
     --purge-state)
       PURGE_STATE=1
+      ;;
+    --confirm-delete)
+      shift
+      [[ $# -gt 0 ]] || fail "--confirm-delete requires DELETE"
+      CONFIRM_DELETE="$1"
       ;;
     --skip-dns-rescue)
       RUN_DNS_RESCUE=0
@@ -163,6 +171,25 @@ remove_optional_user_data() {
 
 }
 
+require_delete_confirmation() {
+  local answer
+  if ((PURGE_CONFIG == 0 && PURGE_LOGS == 0 && PURGE_STATE == 0)); then
+    return 0
+  fi
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$CONFIRM_DELETE" == "DELETE" ]]; then
+    return 0
+  fi
+  if [[ -t 0 ]]; then
+    printf '\nPurging WatchdogVPN data is destructive.\n'
+    read -r -p "Type DELETE to purge selected WatchdogVPN data: " answer
+    [[ "$answer" == "DELETE" ]] && return 0
+  fi
+  fail "data purge requires --confirm-delete DELETE"
+}
+
 rescue_system_dns() {
   if ((RUN_DNS_RESCUE == 0)); then
     printf '[SKIP] DNS rescue disabled\n'
@@ -243,6 +270,8 @@ fi
 if ((PURGE_STATE == 0)) && prompt_yes_no "Also remove WatchdogVPN rotation state?" no; then
   PURGE_STATE=1
 fi
+
+require_delete_confirmation
 
 print_uninstall_plan
 print_section "Disable services"

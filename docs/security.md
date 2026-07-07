@@ -156,6 +156,8 @@ The uninstall contract is:
 - never remove user-owned provider software without consent;
 - never remove provider account/license state, private keys or profiles without consent;
 - preserve config, logs and shared runtime state unless purge flags are used;
+- require the literal `DELETE` confirmation before purging WatchdogVPN data;
+- write uninstall pre-delete backups outside WatchdogVPN-owned paths;
 - attempt DNS recovery before removing WatchdogVPN commands.
 
 ## Local Diagnostic Reports
