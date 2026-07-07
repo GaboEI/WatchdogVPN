@@ -125,6 +125,22 @@ Validation passed on 2026-07-07:
 
 Full Python unittest result: 1037 tests passed, 1 skipped.
 
-No VM or live network validation was run because Task 19.3 changes state
-mapping and local runtime option construction only; it does not add new capture
-mechanisms or live routing behavior beyond existing compatibility paths.
+Additional installed-VM validation was performed after updating the VM runtime
+to this checkout:
+
+- `./update.sh` completed successfully and installed runtime commit
+  `870ff799c63804fba7519e7889b2c90b74c444c4`;
+- `./doctor.sh` reported the installed runtime matched the source checkout,
+  daemon IPC was reachable, and `FAIL=0`;
+- installed `/usr/local/bin/watchdog config set mode <mode> --json` was smoke
+  tested with temporary state files for `rules`, `global`, `direct`, `tun`, and
+  `proxy`;
+- installed legacy-only state loading was smoke tested with
+  `PYTHONPATH=/usr/local/lib/watchdogvpn` and temporary state files containing
+  only `active_mode` for all five legacy modes.
+
+No live WatchdogVPN tunnel/capture test was run because Task 19.3 changes
+state mapping and local runtime option construction only; it does not add new
+capture mechanisms or live routing behavior beyond existing compatibility
+paths. A separate third-party VPN was manually disconnected before the installed
+smokes to avoid contaminating routing state.
