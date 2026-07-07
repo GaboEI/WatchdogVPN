@@ -378,7 +378,7 @@ install_baseline() {
   section "Fresh shared-state convergence"
   sudo test -d "$STATE_DIR"
   sudo test -f "$STATE_DIR/.migrated"
-  sudo -u watchdogvpn env PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+  sudo -u watchdogvpn env PYTHONPATH="/usr/local/lib/watchdogvpn" \
     python3 - <<'PY'
 from config.paths import resolve_config_dir
 print(resolve_config_dir())
