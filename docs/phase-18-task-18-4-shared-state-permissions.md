@@ -311,8 +311,8 @@ runs `systemctl enable --now vpn-domain-bypass.timer` as part of
 schedule and caused `vpn-domain-bypass.service` to re-apply this
 machine's real, already-configured domain-bypass `ip rule`s (and the
 catch-all fallback rule into a custom routing table) about 30 seconds
-after the update finished - colliding with a Karing VPN profile the
-maintainer needed for work at that same moment
+after the update finished - colliding with another VPN client's profile
+the maintainer needed for work at that same moment
 (`set routes: add route 0: File exists`). Rebooting did not help, because
 the timer stayed enabled and simply re-applied the same rules again. The
 maintainer manually stopped/disabled the units and flushed the residual

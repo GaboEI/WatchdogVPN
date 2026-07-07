@@ -140,8 +140,8 @@ This is real, persistent, system-wide routing policy - it is not scoped to
 a single application or user session, and it can conflict with any other
 VPN or proxy client on the same machine that also manages its own routes
 (observed in practice: a real incident on 2026-07-07 where this collided
-with a Karing VPN profile, producing errors like
-`set routes: add route 0: File exists`).
+with another VPN client's own profile on the same machine, producing
+errors like `set routes: add route 0: File exists`).
 
 Contract:
 
