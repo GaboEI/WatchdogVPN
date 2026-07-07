@@ -118,6 +118,12 @@ class RestoreResult:
     pre_restore_backup: Path
 
 
+@dataclass(frozen=True, slots=True)
+class _RestoreSnapshot:
+    files: dict[Path, bytes | None]
+    rule_files: set[Path]
+
+
 class BackupManager:
     def __init__(
         self,
@@ -662,7 +668,7 @@ class BackupManager:
             return data
         raise BackupValidationError(f"unsupported backup section: {entry}")
 
-    def _snapshot_targets(self) -> dict[Path, bytes | None]:
+    def _snapshot_targets(self) -> _RestoreSnapshot:
         paths = [
             self.config_dir / "config.toml",
             self.config_dir / "profiles.json",
@@ -679,10 +685,22 @@ class BackupManager:
         snapshot: dict[Path, bytes | None] = {}
         for path in paths:
             snapshot[path] = path.read_bytes() if path.exists() else None
-        return snapshot
+        return _RestoreSnapshot(
+            files=snapshot,
+            rule_files={
+                path
+                for path in paths
+                if path.parent == rules_dir and path.suffix == ".json"
+            },
+        )
 
-    def _restore_snapshot(self, snapshot: dict[Path, bytes | None]) -> None:
-        for path, content in snapshot.items():
+    def _restore_snapshot(self, snapshot: _RestoreSnapshot) -> None:
+        rules_dir = self.config_dir / "rules"
+        if rules_dir.exists():
+            for path in sorted(rules_dir.glob("*.json")):
+                if path not in snapshot.rule_files:
+                    path.unlink()
+        for path, content in snapshot.files.items():
             if content is None:
                 try:
                     path.unlink()

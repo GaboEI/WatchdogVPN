@@ -180,6 +180,43 @@ class BackupManagerTests(unittest.TestCase):
                 original_profiles,
             )
 
+    def test_restore_rolls_back_new_rule_files_when_later_apply_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            target = Path(tmp) / "target"
+            source.mkdir()
+            target.mkdir()
+            self.seed_config(source)
+            self.seed_config(target)
+            RuleStore(source / "rules").add_group(
+                RuleGroup(
+                    name="source-only",
+                    rules=[
+                        Rule(
+                            id="source-only-rule",
+                            action="block",
+                            conditions={"domain_suffix": ["source-only.example"]},
+                        )
+                    ],
+                )
+            )
+            manager = BackupManager(config_dir=target, backup_dir=target / "backups")
+            backup = BackupManager(config_dir=source).create_backup(Path(tmp) / "source.zip").path
+            original_rule_files = sorted(path.name for path in (target / "rules").glob("*.json"))
+
+            with patch.object(AppPolicyStore, "save", side_effect=RuntimeError("policy write failed")):
+                with self.assertRaisesRegex(RuntimeError, "policy write failed"):
+                    manager.restore_backup(
+                        backup,
+                        replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+                    )
+
+            self.assertEqual(
+                sorted(path.name for path in (target / "rules").glob("*.json")),
+                original_rule_files,
+            )
+            self.assertIsNone(RuleStore(target / "rules").get_group("source-only"))
+
     def test_create_partial_backup_contains_only_requested_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
