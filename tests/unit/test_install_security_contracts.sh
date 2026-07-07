@@ -81,8 +81,6 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$ROOT_DIR/tui/watc
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_user_path "$HOME/.local/share/watchdogvpn"' "uninstall must remove installed TUI support package"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/vpn_backend' "uninstall must remove backend helper"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/watchdogvpn-daemon' "uninstall must remove daemon wrapper"
-assert_contains "$ROOT_DIR/lib/desktop.sh" 'desktop folder not detected; application-menu launcher was installed only' "desktop launcher should skip missing desktop folder cleanly"
-assert_contains "$ROOT_DIR/lib/desktop.sh" '"$desktop_dir" == "$HOME"' "desktop launcher should reject HOME as Desktop directory"
 assert_contains "$ROOT_DIR/install.sh" "settle_vpn_after_install" "installer must run VPN settle check before final validation"
 assert_contains "$ROOT_DIR/install.sh" "smoke_test_watchdogvpn_daemon" "installer must run daemon smoke validation"
 assert_contains "$ROOT_DIR/update.sh" "smoke_test_watchdogvpn_daemon" "updater must run daemon smoke validation"
@@ -129,5 +127,23 @@ assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 cu
 assert_contains "$ROOT_DIR/distros/ubuntu.sh" "openvpn" "Ubuntu package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/debian.sh" "openvpn" "Debian package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/arch.sh" "openvpn" "Arch package set must include OpenVPN"
+
+# The desktop launcher feature was removed entirely (maintainer feedback:
+# "nadie la uso realmente"). Guard against it silently coming back.
+if [[ -e "$ROOT_DIR/lib/desktop.sh" ]]; then
+  printf 'FAIL: lib/desktop.sh must not exist; the desktop launcher feature was removed\n' >&2
+  exit 1
+fi
+if [[ -e "$ROOT_DIR/desktop" ]]; then
+  printf 'FAIL: desktop/ must not exist; the desktop launcher feature was removed\n' >&2
+  exit 1
+fi
+for script in install.sh update.sh doctor.sh; do
+  if grep -Fqi 'desktop' "$ROOT_DIR/$script"; then
+    printf 'FAIL: %s must not reference the removed desktop launcher feature\n' "$script" >&2
+    exit 1
+  fi
+done
+assert_contains "$ROOT_DIR/uninstall.sh" 'watchdogvpn.desktop' "uninstall must still clean up a desktop launcher file left by a pre-removal install"
 
 echo "install security contract checks passed"

@@ -17,8 +17,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/version_marker.sh"
 # shellcheck source=lib/systemd.sh
 . "$ROOT_DIR/lib/systemd.sh"
-# shellcheck source=lib/desktop.sh
-. "$ROOT_DIR/lib/desktop.sh"
 # shellcheck source=lib/runtime.sh
 . "$ROOT_DIR/lib/runtime.sh"
 # shellcheck source=lib/singbox.sh
@@ -199,8 +197,7 @@ print_section "Replace product files"
 install_runtime_files
 print_section "Systemd verification"
 verify_systemd_units
-print_section "Refresh launchers and services"
-refresh_installed_desktop_launcher
+print_section "Enable services"
 enable_systemd_units
 print_section "Daemon smoke test"
 smoke_test_watchdogvpn_daemon

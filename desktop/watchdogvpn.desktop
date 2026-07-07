@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=WatchdogVPN
-Comment=Terminal control center for WatchdogVPN
-Exec=sh -c 'command -v x-terminal-emulator >/dev/null 2>&1 && x-terminal-emulator -e VPN || (command -v gnome-terminal >/dev/null 2>&1 && gnome-terminal -- VPN)'
-Terminal=false
-Categories=Network;System;

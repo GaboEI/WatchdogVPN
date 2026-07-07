@@ -19,8 +19,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/systemd.sh"
 # shellcheck source=lib/runtime.sh
 . "$ROOT_DIR/lib/runtime.sh"
-# shellcheck source=lib/desktop.sh
-. "$ROOT_DIR/lib/desktop.sh"
 # shellcheck source=lib/singbox.sh
 . "$ROOT_DIR/lib/singbox.sh"
 # shellcheck source=lib/cloak.sh
@@ -30,7 +28,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
-INSTALL_DESKTOP=""
 BACKEND_MODE="custom-vps"
 BACKEND_ACTIVE="custom-vps"
 CUSTOM_VPS_ENABLED="true"
@@ -57,7 +54,7 @@ Usage:
 
 Options:
   --dry-run       Show what would be installed without changing the system.
-  --yes           Use product defaults: Custom VPS backend and desktop launcher on.
+  --yes           Use product defaults: Custom VPS backend.
   --skip-doctor   Do not run the read-only preflight first.
   --help          Show this help.
 
@@ -65,7 +62,6 @@ What this installer manages:
   - WatchdogVPN runtime commands and privileged scripts.
   - WatchdogVPN systemd units and timers.
   - Custom VPS backend configuration.
-  - Optional desktop launcher.
 USAGE
 }
 
@@ -321,12 +317,6 @@ validate_repo_runtime() {
   ok "repository runtime validated"
 }
 
-install_optional_integrations() {
-  if [[ "$INSTALL_DESKTOP" == "1" ]]; then
-    install_desktop_launcher
-  fi
-}
-
 wait_for_services() {
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] wait for services to settle\n'
@@ -381,7 +371,6 @@ print_install_plan() {
   print_field "Systemd units" "enabled"
   print_field "Backend mode" "$BACKEND_MODE"
   print_field "Active backend" "$BACKEND_ACTIVE"
-  print_field "Desktop launcher" "$(yes_no_word "$INSTALL_DESKTOP")"
   print_field "Backups" "$BACKUP_ROOT"
   print_field "Dry run" "$(yes_no_word "${INSTALL_DRY_RUN:-0}")"
 }
@@ -410,13 +399,6 @@ if [[ "$CUSTOM_VPS_ENABLED" == "true" ]]; then
   install_official_cloak
 fi
 
-printf '\nThe desktop launcher adds WatchdogVPN to the applications menu and user desktop.\n'
-if prompt_yes_no "Install desktop launcher for this user?" yes; then
-  INSTALL_DESKTOP=1
-else
-  INSTALL_DESKTOP=0
-fi
-
 print_install_plan
 
 if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
@@ -433,8 +415,6 @@ install_runtime_files
 apply_backend_install_selection
 print_section "Systemd verification"
 verify_systemd_units
-print_section "Optional integrations"
-install_optional_integrations
 print_section "Enable services"
 enable_systemd_units
 wait_for_services

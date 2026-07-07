@@ -248,12 +248,6 @@ smoke_test_watchdogvpn_daemon() {
   return 1
 }
 
-refresh_installed_desktop_launcher() {
-  if [[ -f "$HOME/.local/share/applications/watchdogvpn.desktop" ]]; then
-    install_desktop_launcher
-  fi
-}
-
 ensure_user_local_bin_path() {
   local path_line='export PATH="$HOME/.local/bin:$PATH"'
   local marker="# WatchdogVPN: user local commands"

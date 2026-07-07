@@ -35,7 +35,3 @@ only in installation and dependency detection.
 - `uninstall.sh`: careful removal
 - `lib/`: shared installer functions
 - `distros/`: Ubuntu, Debian and Arch adapters
-
-## Optional Integrations
-
-- `.desktop` launcher

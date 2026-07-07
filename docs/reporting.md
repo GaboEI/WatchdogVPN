@@ -51,7 +51,6 @@ Good reports include:
 - Distribution and version.
 - Install method: fresh install, update or manual copy.
 - Current DNS/resolver state if the issue is DNS-related.
-- Whether desktop launcher integration is enabled.
 - Exact command or TUI action that failed.
 - Expected behavior.
 - Actual behavior.

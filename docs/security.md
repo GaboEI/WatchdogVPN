@@ -58,7 +58,6 @@ Product-managed runtime files include:
 - product dispatcher hook under `/etc/NetworkManager/dispatcher.d/`
 - product logrotate policy under `/etc/logrotate.d/myvpn`
 - TUI launcher under `~/.local/bin/VPN`
-- optional desktop launcher under the user's application/desktop paths
 
 User configuration and state that must be preserved by default:
 

@@ -17,7 +17,6 @@ This document defines how the product scripts should behave.
 
 `install.sh` may ask:
 
-- Install desktop launcher?
 - Configure the Custom VPS backend metadata when needed.
 - Download and install the official sing-box binary now? (only if not already
   detected; required for most Custom VPS protocols)
@@ -62,7 +61,6 @@ It should check:
 - system time/NTP sync state and severe clock skew risk
 - basic DNS
 - previous installation state
-- optional desktop launcher
 - sing-box, AmneziaWG tooling, Cloak client and the Python `cryptography`
   module (protocol/feature runtime dependencies; see "Dependency Contract"
   below)
@@ -179,7 +177,10 @@ It should remove:
 - product systemd units
 - product NetworkManager dispatcher
 - product logrotate config
-- optional desktop launcher installed by the product
+- a desktop launcher file left by a pre-removal install, if present (the
+  desktop launcher feature itself was removed; `install.sh`/`update.sh` no
+  longer offer or refresh it, but `uninstall.sh` still cleans up a leftover
+  one)
 - orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts, if a
   legacy-contaminated machine still has them (see
   `docs/phase-18-task-18-1-legacy-contamination-inventory.md`)

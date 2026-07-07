@@ -68,7 +68,6 @@ Implement `install.sh`.
 The installer should ask only product-level choices:
 
 - DNS v2 management without the old guided third-party DNS integration
-- desktop launcher
 
 It should configure safe defaults for:
 

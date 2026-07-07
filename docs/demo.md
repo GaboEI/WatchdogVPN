@@ -163,7 +163,6 @@ Runtime commands:      /usr/local/bin
 Privileged scripts:    /usr/local/sbin
 Systemd units:         enabled
 Advanced DNS:          no
-Desktop launcher:      yes
 Backups:               /var/backups/watchdogvpn
 Dry run:               yes
 ```

@@ -438,12 +438,6 @@ for cmd in $(optional_commands); do
   check_optional_command "$cmd"
 done
 
-if [[ -f "$HOME/.local/share/applications/watchdogvpn.desktop" || -f "$HOME/.local/share/applications/vpn-control-center.desktop" ]]; then
-  mark_ok "desktop launcher detected"
-else
-  info "desktop launcher not detected"
-fi
-
 printf '\n== Result ==\n'
 printf 'OK=%d WARN=%d FAIL=%d\n' "$OK_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
 

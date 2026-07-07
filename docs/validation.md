@@ -55,11 +55,6 @@ The CachyOS result confirms that the Arch adapter works for a real install flow
 with advanced DNS. The installer gives reboot guidance if the tunnel remains
 degraded after setup.
 
-On tiling/minimal environments such as Hyprland setups where `xdg-user-dir
-DESKTOP` resolves to `$HOME` or no real Desktop folder exists, the installer
-should install only the application-menu launcher and skip the desktop-file copy
-with a warning.
-
 ## Persistent Configuration Update Validation
 
 Last recorded persistent configuration update validation: 2026-05-16.
