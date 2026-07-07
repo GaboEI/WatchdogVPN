@@ -114,12 +114,16 @@ print_contract() {
   printf 'NetworkManager dispatcher\n'
   printf 'logrotate policy\n'
   printf 'desktop launcher\n'
+  printf 'orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts, if present\n'
 
   print_section "Preserved unless explicitly purged"
   printf '/etc/vpn-domain-bypass.conf\n'
   printf '/etc/watchdogvpn/\n'
   printf '/var/log/myvpn/\n'
   printf '/var/lib/watchdogvpn/\n'
+  printf '/etc/adguardvpn.env (legacy, if present)\n'
+  printf '/var/lib/vpn-rotate/ (legacy, if present)\n'
+  printf '~/.conky/WatchdogVPN/ (legacy, if present)\n'
 }
 
 remove_runtime_files() {
@@ -148,13 +152,30 @@ remove_runtime_files() {
   remove_root_path /etc/logrotate.d/myvpn
 }
 
+# Historical WatchdogVPN-owned files removed from the shipped set before this
+# release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept separate
+# from remove_runtime_files() purely so uninstall can clean up a machine that
+# installed before their removal. See INV-18.1-001 in
+# docs/phase-18-task-18-1-legacy-contamination-inventory.md.
+remove_legacy_runtime_files() {
+  remove_root_path /usr/local/bin/vpn_auth_check
+  remove_root_path /usr/local/sbin/vpn_rotate.sh
+  remove_root_path /usr/local/sbin/vpn_set
+  remove_root_path /usr/local/sbin/vpn_watchdog.sh
+  remove_root_path /etc/NetworkManager/dispatcher.d/99-vpn-rotate
+}
+
 remove_optional_user_data() {
   if ((PURGE_CONFIG == 1)); then
     remove_root_path /etc/vpn-domain-bypass.conf
     remove_root_path "$WATCHDOGVPN_CONFIG_DIR"
+    remove_root_path /etc/adguardvpn.env
+    remove_user_path "$HOME/.conky/WatchdogVPN"
   else
     printf '[KEEP] config: /etc/vpn-domain-bypass.conf\n'
     printf '[KEEP] config: %s\n' "$WATCHDOGVPN_CONFIG_DIR"
+    printf '[KEEP] legacy config: /etc/adguardvpn.env\n'
+    printf '[KEEP] legacy conky: %s\n' "$HOME/.conky/WatchdogVPN"
   fi
 
   if ((PURGE_LOGS == 1)); then
@@ -165,8 +186,10 @@ remove_optional_user_data() {
 
   if ((PURGE_STATE == 1)); then
     remove_root_path /var/lib/watchdogvpn
+    remove_root_path /var/lib/vpn-rotate
   else
     printf '[KEEP] state: /var/lib/watchdogvpn\n'
+    printf '[KEEP] legacy state: /var/lib/vpn-rotate\n'
   fi
 
 }
@@ -280,8 +303,12 @@ print_section "DNS rescue"
 rescue_system_dns
 print_section "Remove systemd units"
 remove_systemd_units
+print_section "Remove legacy AdGuard-era units"
+remove_legacy_systemd_units
 print_section "Remove product files"
 remove_runtime_files
+print_section "Remove legacy AdGuard-era files"
+remove_legacy_runtime_files
 print_section "Remove optional user data"
 remove_optional_user_data
 final_report

@@ -110,12 +110,18 @@ It should remove:
 - product NetworkManager dispatcher
 - product logrotate config
 - optional desktop launcher installed by the product
+- orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts, if a
+  legacy-contaminated machine still has them (see
+  `docs/phase-18-task-18-1-legacy-contamination-inventory.md`)
 
 It must ask before deleting:
 
 - `/etc/vpn-domain-bypass.conf`
 - `/var/log/myvpn/`
 - `/var/lib/watchdogvpn/`
+- `/etc/adguardvpn.env`, `/var/lib/vpn-rotate/`, `~/.conky/WatchdogVPN/`
+  (legacy, gated by the same `--purge-config`/`--purge-state` flags as their
+  current equivalents)
 
 Data deletion requires the literal confirmation `DELETE`. The Python
 `watchdog uninstall --delete-all-data` flow also exports a pre-delete backup

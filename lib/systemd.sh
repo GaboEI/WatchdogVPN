@@ -19,6 +19,21 @@ SYSTEMD_COMMON_ENABLE_UNITS=(
   myvpn-logrotate.timer
 )
 
+# Historical WatchdogVPN-owned units removed from the shipped set before this
+# release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept here,
+# separate from SYSTEMD_UNITS, purely so uninstall can clean up a machine
+# that installed before their removal. See INV-18.1-001 in
+# docs/phase-18-task-18-1-legacy-contamination-inventory.md.
+SYSTEMD_LEGACY_UNITS=(
+  adguardvpn.service
+  vpn-watchdog.service
+  vpn-watchdog.timer
+  vpn-rotate.service
+  vpn-rotate.timer
+  vpn-rotate-firstboot.timer
+  vpn-rotate-onboot.service
+)
+
 verify_systemd_units() {
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] systemd-analyze verify systemd/*.service systemd/*.timer\n'
@@ -70,6 +85,19 @@ disable_systemd_units() {
 remove_systemd_units() {
   local unit
   for unit in "${SYSTEMD_UNITS[@]}"; do
+    remove_root_path "/etc/systemd/system/$unit"
+  done
+  run_step sudo systemctl daemon-reload
+}
+
+remove_legacy_systemd_units() {
+  local unit
+  for unit in "${SYSTEMD_LEGACY_UNITS[@]}"; do
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      run_step sudo systemctl disable --now "$unit"
+    else
+      sudo systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    fi
     remove_root_path "/etc/systemd/system/$unit"
   done
   run_step sudo systemctl daemon-reload
