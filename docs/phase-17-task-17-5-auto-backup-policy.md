@@ -66,7 +66,7 @@ The following remain later Phase 17 work:
   `create_auto_backup(reason="pre-destructive-remove")`;
 - connecting uninstall deletion to
   `create_auto_backup(reason="pre-uninstall-delete")`;
-- WebDAV/LAN sync;
+- WebDAV/LAN sync, later explicitly deferred by Task 17.9 / ADR 0006;
 - uninstall flow UX.
 
 ## Validation

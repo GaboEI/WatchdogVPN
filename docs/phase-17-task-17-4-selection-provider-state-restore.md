@@ -75,7 +75,7 @@ The following remain later Phase 17 work:
 - user-facing CLI wiring;
 - CLI copy and confirmation UX;
 - profiles/providers merge behavior if deliberately designed;
-- WebDAV/LAN sync;
+- WebDAV/LAN sync, later explicitly deferred by Task 17.9 / ADR 0006;
 - uninstall flow integration.
 
 ## Validation

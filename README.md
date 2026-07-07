@@ -76,6 +76,10 @@ These are planned phases, not current user-facing promises:
 Detailed sequencing lives in the local master plan used by the maintainer. The
 public roadmap summary is in [ROADMAP.md](ROADMAP.md).
 
+Phase 17 keeps automatic remote backup sync deferred. The supported portable
+workflow is explicit ZIP export/import, preferably encrypted before moving the
+archive off the local machine.
+
 Before the final CLI is frozen, WatchdogVPN will align its routing model so
 Rule/Global are routing policies, Proxy/TUN/LAN are capture or entry
 mechanisms, and Direct/Current/Block/Group are route actions. After that,

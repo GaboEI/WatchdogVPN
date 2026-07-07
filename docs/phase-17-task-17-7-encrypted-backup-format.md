@@ -77,8 +77,8 @@ the same encryption password.
 There is no password recovery. If the passphrase is lost, the encrypted backup
 cannot be restored.
 
-Encrypted backup support currently lives in `BackupManager`. User-facing CLI UX,
-remote sync and uninstall integration remain later Phase 17 tasks.
+Encrypted backup support lives in `BackupManager` and is used by backup/uninstall
+flows. Automatic remote sync is deferred by Phase 17 Task 17.9 / ADR 0006.
 
 Remote or LAN sync must not upload plaintext backups silently. Remote sync must
 use encrypted backups or document a stronger reviewed security contract before

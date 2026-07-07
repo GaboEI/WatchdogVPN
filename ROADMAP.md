@@ -53,7 +53,7 @@ These items are planned phases, not all current user-facing features:
 | 14 | Node groups and auto-selection | Named groups with health-aware selection |
 | 15 | DNS/network-service hardening | Refine DNS diagnostics, time checks and LAN-service decisions |
 | 16 | Privacy-preserving observability | Aggregate visibility without silent sensitive history |
-| 17 | Backup, restore and safe sync | Versioned backup/restore, rollback and remote-sync threat review |
+| 17 | Backup, restore and safe sync | Versioned backup/restore, rollback and remote-sync threat review; automatic remote sync deferred |
 | 18 | Installer v2 migration | Runtime dependency installation and non-destructive update validation |
 | 19 | Routing mode and capture architecture | Align Rule/Global, Proxy/TUN/LAN and route actions before final CLI |
 | 20 | LAN sharing and gateway mode | Branch-gated LAN proxy/gateway capability for network operators |

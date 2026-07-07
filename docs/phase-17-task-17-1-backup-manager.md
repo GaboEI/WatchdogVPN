@@ -100,7 +100,7 @@ available.
 The following are intentionally left for later Phase 17 tasks:
 
 - user-facing CLI commands;
-- WebDAV/LAN sync;
+- WebDAV/LAN sync, later explicitly deferred by Task 17.9 / ADR 0006;
 - uninstall flow integration;
 - private metrics history export.
 

@@ -201,6 +201,7 @@ restoring from an encrypted backup, the pre-restore auto-backup is encrypted
 with the same passphrase instead of writing an unexpected plaintext copy.
 
 Backups are local files. WatchdogVPN must not silently upload backup archives.
+Automatic WebDAV, LAN and other remote backup sync are deferred by ADR 0006.
 Future remote or LAN sync must first define acceptable client-side encryption,
 conflict handling and credential storage. It must not silently upload plaintext
 backup archives.

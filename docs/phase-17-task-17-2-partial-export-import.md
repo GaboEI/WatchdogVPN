@@ -77,7 +77,7 @@ history or counters.
 The following remain later Phase 17 work:
 
 - CLI wiring;
-- WebDAV/LAN sync;
+- WebDAV/LAN sync, later explicitly deferred by Task 17.9 / ADR 0006;
 - uninstall flow integration.
 
 ## Validation
