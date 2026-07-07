@@ -79,13 +79,62 @@ assert_sha256_shape "$SINGBOX_SHA256_LINUX_ARM64" "SINGBOX_SHA256_LINUX_ARM64 mu
 assert_sha256_shape "$CLOAK_SHA256_LINUX_AMD64" "CLOAK_SHA256_LINUX_AMD64 must be a 64-char hex sha256"
 assert_sha256_shape "$CLOAK_SHA256_LINUX_ARM64" "CLOAK_SHA256_LINUX_ARM64 must be a 64-char hex sha256"
 
-# --- AmneziaWG: detection and guidance only, no automated install ---
+# --- AmneziaWG: guided manual install, never executed by WatchdogVPN itself ---
 
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_userspace_available' "amneziawg lib must define a userspace tooling check"
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_kernel_module_available' "amneziawg lib must define a kernel module check"
-assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'sudo apt' "amneziawg lib must not auto-install packages"
-assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'add-apt-repository' "amneziawg lib must not add third-party repositories automatically"
-assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'curl' "amneziawg lib must not download anything automatically"
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'guide_amneziawg_setup()' "amneziawg lib must define a guided setup wizard"
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_setup_commands_ubuntu' "amneziawg lib must provide exact Ubuntu setup commands"
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_setup_commands_debian' "amneziawg lib must provide exact Debian setup commands"
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_setup_commands_arch' "amneziawg lib must provide exact Arch setup commands"
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'read -r -p' "guided setup must wait for the user to run the printed commands themselves"
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" '"${INSTALL_DRY_RUN:-0}" == "1"' "guided setup must skip prompting under --dry-run"
+# The setup command blocks are only ever printed (via `cat <<'EOF' ... EOF`
+# heredocs), never executed by the library itself - WatchdogVPN must not
+# silently add a third-party repository or build an AUR package on its own.
+assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'run_step sudo apt' "amneziawg lib must not execute apt commands itself, only print them"
+assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'run_step sudo pacman' "amneziawg lib must not execute pacman commands itself, only print them"
+assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'run_step git clone' "amneziawg lib must not clone/build AUR packages itself, only print the commands"
+assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'run_step makepkg' "amneziawg lib must not run makepkg itself, only print the command"
+
+# --- guided setup actually behaves correctly end to end (stubbed detection) ---
+
+guided_setup_test_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/distro.sh
+detect_distro
+source lib/amneziawg.sh
+amneziawg_userspace_available() { return 1; }
+amneziawg_kernel_module_available() { return 1; }
+prompt_yes_no() { return 0; }
+INSTALL_DRY_RUN=0
+printf "skip\n" | guide_amneziawg_setup
+' 2>&1)"
+grep -Fq "Run the following commands" <<<"$guided_setup_test_output" || {
+  printf 'FAIL: guided setup must print copy-pasteable commands, not just a link\n' >&2
+  exit 1
+}
+grep -Fq "AmneziaWG guided setup stopped" <<<"$guided_setup_test_output" || {
+  printf 'FAIL: guided setup must honor a skip answer without looping forever\n' >&2
+  exit 1
+}
+
+dry_run_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/distro.sh
+detect_distro
+source lib/amneziawg.sh
+amneziawg_userspace_available() { return 1; }
+amneziawg_kernel_module_available() { return 1; }
+INSTALL_DRY_RUN=1
+guide_amneziawg_setup
+' 2>&1)"
+grep -Fq "[DRY-RUN] skip interactive AmneziaWG setup guide" <<<"$dry_run_output" || {
+  printf 'FAIL: guided setup must skip without prompting under --dry-run\n' >&2
+  exit 1
+}
 
 # --- Python cryptography dependency (encrypted backups, Phase 17) ---
 

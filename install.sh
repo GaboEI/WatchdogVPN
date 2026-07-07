@@ -310,7 +310,7 @@ validate_required_commands() {
 
 validate_protocol_runtime_dependencies() {
   validate_python_runtime_dependencies
-  check_amneziawg_dependency
+  guide_amneziawg_setup
 }
 
 validate_repo_runtime() {

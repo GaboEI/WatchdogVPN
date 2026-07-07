@@ -24,6 +24,8 @@ This document defines how the product scripts should behave.
 - Download and install the official Cloak client (`ck-client`) now? (only if
   not already detected; defaults to no, since it is only needed for
   OpenVPN+Cloak profiles)
+- Walk through installing AmneziaWG step by step now? (only if not already
+  detected; defaults to no; see "Dependency Contract" below)
 
 `install.sh` should not ask:
 
@@ -84,13 +86,19 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   sing-box, but defaults to no and is skipped without prompting under
   `--dry-run`, since most installs never use this protocol combination.
 - **AmneziaWG tooling (`amneziawg-dkms`, `amneziawg-tools`/`awg-quick`)**:
-  detected only, never installed automatically. There is no official
-  Ubuntu/Debian/Arch repository package, and the kernel module must be built
-  against the running kernel, so an unattended install would require adding a
-  third-party repository or building from source without user review.
-  `install.sh` and `doctor.sh` print accurate upstream source links instead.
-  Standard WireGuard tooling (`wg-quick`/`wg`, `wireguard` kernel module) is
-  accepted as a compatible fallback.
+  never installed unattended by WatchdogVPN itself - the official install
+  path adds a third-party APT repository (Ubuntu/Debian) or builds an AUR
+  package (Arch), which WatchdogVPN treats as the user's own trust decision
+  to make knowingly, not something to do silently on their behalf. Instead,
+  if not detected, `install.sh` offers a **guided setup**: it prints the
+  exact, distro-specific, official commands (so the user never has to
+  research or guess them), waits for the user to run them in their own
+  terminal, then re-checks and reports success or exactly what is still
+  missing, repeating up to a few attempts. `doctor.sh` only reports detection
+  state (`WARN` if missing) and points back to `install.sh` for the guided
+  setup, keeping its own read-only contract. Standard WireGuard tooling
+  (`wg-quick`/`wg`, `wireguard` kernel module) is accepted as a compatible
+  fallback if AmneziaWG-specific packages are not available.
 - **Python `cryptography` module**: needed for encrypted backups
   (`watchdog backup --encrypt-backup`, Phase 17). `install.sh` and
   `update.sh` install the distro package (`python3-cryptography` on
