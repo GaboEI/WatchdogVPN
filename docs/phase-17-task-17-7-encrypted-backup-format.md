@@ -107,3 +107,16 @@ Commands run:
 - `bash tests/syntax.sh` -> passed;
 - `git diff --check` -> passed;
 - `PYTHONPYCACHEPREFIX=/tmp/watchdogvpn-pycache python3 -m compileall -q .` -> passed.
+
+Additional local-machine validation:
+
+- ran an isolated temporary-config validation on the development machine;
+- created an encrypted backup containing a profile secret and provider token;
+- verified the outer ZIP exposes only `manifest.json` and `payload.bin`;
+- verified plaintext secret/token bytes are not present in `payload.bin`;
+- verified inspect without password fails;
+- verified inspect with wrong password fails;
+- verified inspect with the correct password succeeds;
+- removed the profile and restored from the encrypted backup;
+- verified restore recreated the profile;
+- verified the restore-created pre-restore backup also requires the password.
