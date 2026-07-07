@@ -101,3 +101,31 @@ result=PASS
 
 If a mode fails, keep the full output. The failure point is part of the Task
 18.6 evidence and should be reviewed before changing the script or rerunning.
+
+## Validation Result
+
+Task 18.6 was validated on a real VM on 2026-07-07 from branch
+`phase-18-6-vm-smoke`.
+
+- `install-baseline` passed on commit `fa58216`, proving a fresh install
+  creates shared state, marks `/var/lib/watchdogvpn/.migrated`, converges the
+  daemon service user and CLI on `/var/lib/watchdogvpn`, installs the expected
+  entrypoints, records the installed/source version marker, and produces a
+  doctor result with no `FAIL` findings.
+- `update-preserve` initially passed on commit `fa58216`, but exposed a real
+  updater bug: optional dependency installers called `prompt_yes_no` from
+  `update.sh` even though the updater did not define the helper. Commit
+  `a32baf3` restored the updater prompt helper and added regression coverage.
+- `update-preserve` passed again on commit `a32baf3` with no
+  `prompt_yes_no: command not found` errors. The smoke confirmed state and
+  config hashes were preserved, the daemon was active/enabled, IPC status
+  returned standby, the installed/source version marker matched `a32baf3`,
+  `PATH` resolved to `/usr/local/bin/watchdog`,
+  `/usr/local/bin/watchdogvpn`, and `/usr/local/bin/watchdogvpn-daemon`,
+  planted legacy wrappers/units were removed, backups existed under
+  `/var/backups/watchdogvpn`, and doctor reported `OK=77 WARN=3 FAIL=0`.
+
+Known VM warnings were non-blocking for this task: NTP was unsynchronized, the
+truth state was `DOWN` because no live VPN profile was connected, and
+AmneziaWG tooling was not installed because the VM smoke did not exercise
+AmneziaWG profiles.
