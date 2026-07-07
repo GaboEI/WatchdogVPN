@@ -20,8 +20,13 @@ SYSTEMD_UNITS=(
 # enable_vpn_domain_bypass_timer_if_safe() instead, which only enables it
 # when real bypass domains are configured and never touches it if it is
 # already running. See docs/security.md's "Domain bypass network safety".
+#
+# watchdogvpn.service is also NOT in this list, for a related reason: if the
+# user put WatchdogVPN to sleep with `watchdog_panic sleep`
+# (docs/security.md "WatchdogVPN Panic Button"), a later install/update must
+# not silently wake it back up. It is handled by
+# enable_watchdogvpn_service_unless_hibernating() instead.
 SYSTEMD_ENABLE_UNITS=(
-  watchdogvpn.service
   myvpn-logrotate.timer
 )
 
@@ -81,6 +86,53 @@ enable_vpn_domain_bypass_timer_if_safe() {
   run_step sudo systemctl enable --now "$unit"
 }
 
+# Written by `watchdog_panic sleep` (bin/watchdog_panic). While present,
+# install.sh/update.sh must not re-enable the daemon - the whole point of
+# the panic button is that it stays off until the user explicitly runs
+# `watchdog_panic wake`, including across a reboot and across running the
+# installer again. See docs/security.md "WatchdogVPN Panic Button".
+WATCHDOGVPN_HIBERNATE_MARKER="${WATCHDOGVPN_HIBERNATE_MARKER:-/etc/watchdogvpn/.hibernating}"
+
+enable_watchdogvpn_service_unless_hibernating() {
+  local unit="watchdogvpn.service"
+  if [[ -e "$WATCHDOGVPN_HIBERNATE_MARKER" ]]; then
+    printf '[SKIP] %s not enabled; WatchdogVPN is asleep (run: watchdog_panic wake)\n' "$unit"
+    return 0
+  fi
+  run_step sudo systemctl enable --now "$unit"
+}
+
+# Kill switch firewall state (core/kill_switch.py) is not tracked by any
+# systemd unit - it is nftables/iptables state the daemon applies directly.
+# Disabling/removing the daemon does not undo it, so uninstall must clean it
+# up explicitly or a user with the kill switch enabled would be left with a
+# firewall silently blocking non-tunnel traffic forever with no WatchdogVPN
+# left to turn it off. Mirrors bin/watchdog_panic's cleanup (kept separate
+# since bin/ scripts run standalone once installed and cannot source lib/).
+KILL_SWITCH_NFT_TABLE="${KILL_SWITCH_NFT_TABLE:-watchdogvpn}"
+KILL_SWITCH_IPTABLES_CHAIN="${KILL_SWITCH_IPTABLES_CHAIN:-WATCHDOGVPN-OUTPUT}"
+
+remove_kill_switch_rules() {
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] remove kill switch firewall rules (nftables table %s / iptables chain %s)\n' \
+      "$KILL_SWITCH_NFT_TABLE" "$KILL_SWITCH_IPTABLES_CHAIN"
+    return 0
+  fi
+  if command -v nft >/dev/null 2>&1; then
+    sudo nft delete table inet "$KILL_SWITCH_NFT_TABLE" >/dev/null 2>&1 || true
+  fi
+  if command -v iptables >/dev/null 2>&1; then
+    sudo iptables -D OUTPUT -j "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+    sudo iptables -F "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+    sudo iptables -X "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+  fi
+  if command -v ip6tables >/dev/null 2>&1; then
+    sudo ip6tables -D OUTPUT -j "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+    sudo ip6tables -F "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+    sudo ip6tables -X "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+  fi
+}
+
 # Historical WatchdogVPN-owned units removed from the shipped set before this
 # release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept here,
 # separate from SYSTEMD_UNITS, purely so uninstall can clean up a machine
@@ -125,6 +177,7 @@ enable_systemd_units() {
     for unit in "${SYSTEMD_ENABLE_UNITS[@]}"; do
       run_step sudo systemctl enable --now "$unit"
     done
+    enable_watchdogvpn_service_unless_hibernating
     enable_vpn_domain_bypass_timer_if_safe
     return 0
   fi
@@ -136,7 +189,7 @@ enable_systemd_units() {
 
 disable_systemd_units() {
   local unit
-  for unit in "${SYSTEMD_ENABLE_UNITS[@]}" vpn-domain-bypass.timer; do
+  for unit in "${SYSTEMD_ENABLE_UNITS[@]}" watchdogvpn.service vpn-domain-bypass.timer; do
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
       run_step sudo systemctl disable --now "$unit"
     else

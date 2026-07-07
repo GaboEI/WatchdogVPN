@@ -514,3 +514,7 @@ instead of parsing user-facing text.
 - Prefer `watchdogvpn config set` over manual edits for supported keys.
 - Use `./update.sh --skip-doctor` from a clean, current checkout when updating
   installed runtime files.
+- If you need to put WatchdogVPN completely to sleep (daemon, kill switch,
+  domain-bypass routing) without uninstalling it, run `watchdog_panic sleep`;
+  `watchdog_panic wake` resumes it. See `docs/security.md`
+  "WatchdogVPN Panic Button".

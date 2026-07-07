@@ -132,6 +132,7 @@ remove_runtime_files() {
   remove_root_path /usr/local/bin/no_vpn
   remove_root_path /usr/local/bin/vpn_dns_rescue
   remove_root_path /usr/local/bin/vpn_domain_bypass_rescue
+  remove_root_path /usr/local/bin/watchdog_panic
   remove_root_path /usr/local/bin/vpn_backend
   remove_root_path /usr/local/bin/vpn_manual_state
   remove_root_path /usr/local/bin/vpn_notify
@@ -317,6 +318,8 @@ require_delete_confirmation
 print_uninstall_plan
 print_section "Disable services"
 disable_systemd_units
+print_section "Remove kill switch firewall rules"
+remove_kill_switch_rules
 print_section "Domain-bypass routing rescue"
 rescue_domain_bypass_routing
 print_section "DNS rescue"

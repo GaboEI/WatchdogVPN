@@ -86,6 +86,50 @@ external DNS service. `vpn_dns_rescue` remains as a fallback helper to recover
 name resolution when local DNS services are removed or broken during
 uninstall/recovery work.
 
+## WatchdogVPN Panic Button
+
+`watchdog_panic` (installed to `/usr/local/bin/`) is a deliberately separate
+concept from both `watchdog disconnect` (only tears down the active tunnel)
+and disabling autostart (only affects the next boot). `watchdog_panic sleep`
+puts WatchdogVPN completely to sleep - the daemon, the kill switch and any
+live domain-bypass routing state - without uninstalling anything, and it
+stays asleep across reboots and across running `install.sh`/`update.sh`
+again, until the user explicitly runs `watchdog_panic wake`.
+
+Implemented as a dependency-light bash script, not a Python CLI command,
+on purpose: a panic button must still work if the daemon or the Python
+runtime it depends on is the thing behaving badly. It intentionally
+duplicates a small amount of cleanup logic already present elsewhere
+(`core/kill_switch.py`'s nftables/iptables table/chain names,
+`vpn_domain_bypass_rescue`'s ip rule cleanup) rather than depending on
+either, for the same reason.
+
+`watchdog_panic sleep`:
+
+1. Attempts a graceful disconnect through the daemon, best effort.
+2. Removes kill switch firewall rules directly (nftables table `watchdogvpn`
+   / iptables chain `WATCHDOGVPN-OUTPUT`), independent of whether the daemon
+   itself is able to do so.
+3. Stops and disables `watchdogvpn.service`.
+4. Runs `vpn_domain_bypass_rescue auto` to clean up any domain-bypass
+   routing state.
+5. Writes `/etc/watchdogvpn/.hibernating`.
+
+`watchdog_panic wake` removes the marker and re-enables/starts the daemon.
+It deliberately does not also re-enable domain-bypass automation - that
+keeps its own independent on/off state (see below).
+
+Contract: while `/etc/watchdogvpn/.hibernating` exists, `install.sh`/
+`update.sh` will not re-enable `watchdogvpn.service` on their own
+(`enable_watchdogvpn_service_unless_hibernating()` in `lib/systemd.sh`) -
+the same "don't silently undo an explicit user safety decision" principle
+already used for domain bypass. `uninstall.sh` disables the daemon
+regardless of the marker (uninstalling always wins), and now also
+explicitly removes kill switch firewall rules before removing files - a
+gap found while building this feature: nothing previously cleaned up an
+active kill switch on uninstall, which could have left a user's traffic
+firewalled with no WatchdogVPN left to undo it.
+
 ## Domain Bypass Network Safety
 
 `vpn-domain-bypass.timer`/`vpn-domain-bypass.service` apply live kernel

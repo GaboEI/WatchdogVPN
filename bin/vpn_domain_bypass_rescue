@@ -66,8 +66,11 @@ run() {
 
 status() {
   echo "== vpn-domain-bypass.timer =="
-  systemctl is-enabled vpn-domain-bypass.timer 2>/dev/null || echo "not-found"
-  systemctl is-active vpn-domain-bypass.timer 2>/dev/null || echo "not-found"
+  # systemctl already prints "not-found" itself for a missing unit and exits
+  # non-zero even for a valid "disabled"/"inactive" state, so a `|| echo`
+  # fallback here would double-print the line - let its own output stand.
+  systemctl is-enabled vpn-domain-bypass.timer 2>/dev/null || true
+  systemctl is-active vpn-domain-bypass.timer 2>/dev/null || true
 
   echo
   echo "== manual-disable marker =="
@@ -79,7 +82,7 @@ status() {
 
   echo
   echo "== vpn-domain-bypass.service =="
-  systemctl is-active vpn-domain-bypass.service 2>/dev/null || echo "not-found"
+  systemctl is-active vpn-domain-bypass.service 2>/dev/null || true
 
   echo
   echo "== current ip rule state =="

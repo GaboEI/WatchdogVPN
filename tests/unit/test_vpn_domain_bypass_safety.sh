@@ -52,7 +52,9 @@ done
 
 assert_contains "$ROOT_DIR/lib/systemd.sh" 'enable_vpn_domain_bypass_timer_if_safe' \
   "enable_systemd_units must call the safe domain-bypass enabler"
-assert_contains "$ROOT_DIR/lib/systemd.sh" 'for unit in "${SYSTEMD_ENABLE_UNITS[@]}" vpn-domain-bypass.timer' \
+# (the exact array/unit list in disable_systemd_units's loop is asserted in
+# test_watchdog_panic.sh, since watchdog_panic sleep/wake also depend on it)
+assert_contains "$ROOT_DIR/lib/systemd.sh" 'vpn-domain-bypass.timer' \
   "disable_systemd_units must still disable vpn-domain-bypass.timer on uninstall"
 assert_contains "$ROOT_DIR/uninstall.sh" 'rescue_domain_bypass_routing' \
   "uninstall must run the domain-bypass rescue before removing files"

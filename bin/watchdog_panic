@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# WatchdogVPN panic button: a single command to put WatchdogVPN completely
+# to sleep - the daemon, the kill switch and any live domain-bypass routing
+# state - without uninstalling anything, until the user explicitly wakes it
+# back up. This is deliberately its own concept, not a variant of
+# "disconnect" (which only tears down the active tunnel) or "disable on
+# boot" (which only stops future autostart): it stops what is running right
+# now, prevents future install/update runs from silently reviving it, and
+# stays that way across reboots until a human runs `watchdog_panic wake`.
+#
+# Deliberately implemented as a dependency-light bash script, not a Python
+# CLI command: a panic button must still work if the daemon or the Python
+# runtime it depends on is the thing behaving badly.
+#
+# Background: docs/security.md.
+
+MODE="${1:-sleep}"
+HIBERNATE_MARKER="${HIBERNATE_MARKER:-/etc/watchdogvpn/.hibernating}"
+KILL_SWITCH_NFT_TABLE="${KILL_SWITCH_NFT_TABLE:-watchdogvpn}"
+KILL_SWITCH_IPTABLES_CHAIN="${KILL_SWITCH_IPTABLES_CHAIN:-WATCHDOGVPN-OUTPUT}"
+
+usage() {
+  cat <<'USAGE'
+WatchdogVPN panic button
+
+Usage:
+  watchdog_panic [sleep|wake|status]
+
+Modes:
+  sleep   Stop the WatchdogVPN daemon, remove kill switch firewall rules and
+          domain-bypass routing state, and disable everything from starting
+          again on its own - including across a reboot. Nothing is
+          uninstalled. This stays in effect until you run
+          `watchdog_panic wake` yourself.
+  wake    Undo `sleep`: re-enable and start the WatchdogVPN daemon again.
+  status  Show whether WatchdogVPN is currently asleep.
+
+This is not the same as `watchdog disconnect` (which only tears down the
+active tunnel) or disabling autostart (which only affects the next boot).
+`sleep` stops everything running right now and keeps it stopped until you
+explicitly wake it.
+USAGE
+}
+
+case "$MODE" in
+  sleep|wake|status) ;;
+  --help|-h)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "ERROR unknown argument: $MODE" >&2
+    usage >&2
+    exit 64
+    ;;
+esac
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+run() {
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] %q' "$1"
+    shift
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  "$@"
+}
+
+status() {
+  echo "== watchdogvpn.service =="
+  # systemctl already prints "not-found" itself for a missing unit and exits
+  # non-zero even for a valid "disabled"/"inactive" state, so a `|| echo`
+  # fallback here would double-print the line - let its own output stand.
+  systemctl is-enabled watchdogvpn.service 2>/dev/null || true
+  systemctl is-active watchdogvpn.service 2>/dev/null || true
+
+  echo
+  echo "== hibernate marker =="
+  if [[ -e "$HIBERNATE_MARKER" ]]; then
+    echo "present: WatchdogVPN is asleep (run 'watchdog_panic wake' to resume)"
+    cat "$HIBERNATE_MARKER" 2>/dev/null || true
+  else
+    echo "absent"
+  fi
+
+  echo
+  echo "== kill switch =="
+  if have nft && nft list table inet "$KILL_SWITCH_NFT_TABLE" >/dev/null 2>&1; then
+    echo "active (nftables)"
+  elif have iptables && iptables -S "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1; then
+    echo "active (iptables)"
+  else
+    echo "inactive"
+  fi
+}
+
+sleep_watchdogvpn() {
+  echo "Attempting a graceful disconnect (best effort)..."
+  if have watchdog; then
+    run watchdog disconnect >/dev/null 2>&1 || true
+  fi
+
+  echo "Removing kill switch firewall rules..."
+  if have nft; then
+    run sudo nft delete table inet "$KILL_SWITCH_NFT_TABLE" >/dev/null 2>&1 || true
+  fi
+  if have iptables; then
+    run sudo iptables -D OUTPUT -j "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+    run sudo iptables -F "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+    run sudo iptables -X "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+  fi
+  if have ip6tables; then
+    run sudo ip6tables -D OUTPUT -j "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+    run sudo ip6tables -F "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+    run sudo ip6tables -X "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
+  fi
+
+  echo "Stopping and disabling the WatchdogVPN daemon..."
+  run sudo systemctl disable --now watchdogvpn.service >/dev/null 2>&1 || true
+
+  echo "Cleaning up domain-bypass routing state..."
+  if have vpn_domain_bypass_rescue; then
+    run vpn_domain_bypass_rescue auto || true
+  elif [[ -x "$(dirname "$0")/vpn_domain_bypass_rescue" ]]; then
+    run "$(dirname "$0")/vpn_domain_bypass_rescue" auto || true
+  fi
+
+  echo "Recording that WatchdogVPN was put to sleep..."
+  run sudo mkdir -p "$(dirname "$HIBERNATE_MARKER")"
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] write %s\n' "$HIBERNATE_MARKER"
+  else
+    printf 'slept_at=%s\n' "$(date --iso-8601=seconds)" | sudo tee "$HIBERNATE_MARKER" >/dev/null
+  fi
+
+  echo
+  echo "WatchdogVPN is now completely asleep: daemon stopped, kill switch"
+  echo "removed, domain-bypass routing cleared. Nothing was uninstalled."
+  echo "install.sh/update.sh will not wake it back up on their own."
+  echo "Run 'watchdog_panic wake' when you want WatchdogVPN active again."
+  echo
+  status
+}
+
+wake_watchdogvpn() {
+  echo "Waking WatchdogVPN..."
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] remove %s\n' "$HIBERNATE_MARKER"
+  else
+    run sudo rm -f "$HIBERNATE_MARKER"
+  fi
+  run sudo systemctl enable --now watchdogvpn.service
+
+  echo
+  echo "WatchdogVPN daemon is enabled and starting again. Domain-bypass"
+  echo "automation, if you had it configured, keeps its own separate"
+  echo "on/off state - see 'vpn_domain_bypass_rescue status'."
+  echo
+  status
+}
+
+case "$MODE" in
+  status)
+    status
+    ;;
+  sleep)
+    sleep_watchdogvpn
+    ;;
+  wake)
+    wake_watchdogvpn
+    ;;
+esac

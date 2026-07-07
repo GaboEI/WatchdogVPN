@@ -233,6 +233,7 @@ check_repo_file "bin/vpn_manual_state" exec
 check_repo_file "bin/vpn_notify" exec
 check_repo_file "bin/vpnctl" exec
 check_repo_file "bin/watchdog" exec
+check_repo_file "bin/watchdog_panic" exec
 check_repo_file "bin/watchdogvpn" exec
 check_repo_file "bin/watchdogvpn-daemon" exec
 check_repo_file "systemd/watchdogvpn.service"
@@ -249,6 +250,7 @@ for path in \
   /usr/local/bin/vpn_notify \
   /usr/local/bin/vpnctl \
   /usr/local/bin/watchdog \
+  /usr/local/bin/watchdog_panic \
   /usr/local/bin/watchdogvpn \
   /usr/local/bin/watchdogvpn-daemon \
   /usr/local/lib/watchdogvpn \
@@ -307,6 +309,11 @@ fi
 section "WatchdogVPN Daemon"
 daemon_unit="${WATCHDOGVPN_DAEMON_UNIT:-watchdogvpn.service}"
 daemon_socket="${WATCHDOGVPN_SOCKET_PATH:-/run/watchdogvpn/control.sock}"
+hibernate_marker="${WATCHDOGVPN_HIBERNATE_MARKER:-/etc/watchdogvpn/.hibernating}"
+
+if [[ -e "$hibernate_marker" ]]; then
+  mark_warn "WatchdogVPN is asleep (watchdog_panic sleep was run); run 'watchdog_panic wake' to resume"
+fi
 
 if getent passwd watchdogvpn >/dev/null 2>&1; then
   mark_ok "service user: watchdogvpn"
@@ -319,6 +326,8 @@ if systemd_unit_known "$daemon_unit"; then
   daemon_state="$(systemd_active_state "$daemon_unit")"
   if [[ "$daemon_state" == "active" ]]; then
     mark_ok "daemon active: $daemon_unit"
+  elif [[ -e "$hibernate_marker" ]]; then
+    info "daemon state: ${daemon_state:-unknown} (expected while asleep)"
   else
     mark_warn "daemon state: ${daemon_state:-unknown}"
   fi
@@ -368,6 +377,8 @@ else
     mark_warn "daemon socket not reachable: $daemon_socket"
   elif [[ "${daemon_state:-}" == "active" ]]; then
     mark_fail "daemon socket missing while service is active: $daemon_socket"
+  elif [[ -e "$hibernate_marker" ]]; then
+    info "daemon socket missing (expected while asleep): $daemon_socket"
   else
     mark_warn "daemon socket missing: $daemon_socket"
   fi
