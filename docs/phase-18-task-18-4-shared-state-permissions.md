@@ -239,6 +239,63 @@ different systemd-managed directory with its own explicit
   plus the new migration test together prove, but a real end-to-end VM run
   is the strongest possible proof and is intentionally not claimed here.
 
+## Addendum (2026-07-07, same day): a real `update.sh` run found a second, more severe bug
+
+After closing the findings above, the maintainer asked to actually run
+`update.sh` for real (no `--dry-run`) on this development machine, since it
+doesn't touch VPN/proxy/TUN networking and is therefore safe to validate
+live rather than only in isolated tests. This immediately surfaced a real
+production-breaking bug that no isolated unit test had caught:
+
+**Bug: `lib/runtime.sh::PYTHON_RUNTIME_PACKAGES` was missing `metrics` and
+`diagnostics`.** After the real update replaced
+`/usr/local/lib/watchdogvpn`, `watchdogvpn.service` entered a crash loop:
+
+```
+File "/usr/local/lib/watchdogvpn/daemon/runtime_worker.py", line 24, in <module>
+    from metrics.recorder import MetricsRecorder
+ModuleNotFoundError: No module named 'metrics'
+```
+
+`metrics/` was added in Phase 16 and `daemon/runtime_worker.py` has imported
+from it ever since; `cli/main.py` separately imports
+`from diagnostics.route_dns import ...`. Neither top-level package was ever
+added to the list of packages `lib/runtime.sh` actually copies into
+`/usr/local/lib/watchdogvpn`. This means **every real (non-dry-run)
+install/update since Phase 16 shipped would have produced a daemon that
+crashes on startup**, and any real invocation of the installed `watchdog`
+CLI wrapper would crash at import time before running any command. This had
+never been caught because no real (non-dry-run) `install.sh`/`update.sh` had
+been run on this machine (or apparently anywhere) since Phase 16 landed -
+every validation across Phases 16, 17 and this phase's earlier findings
+used `--dry-run`, which never touches the installed package tree or
+restarts the daemon. The `daemon smoke test` added to `install.sh`/`update.sh`
+back in the Phase 2.6 audit (AUD-P26-003) worked exactly as designed here -
+it caught the failure and reported it clearly instead of silently
+continuing - it just had never been exercised for real until now.
+
+**Fix:** added `metrics` and `diagnostics` to
+`PYTHON_RUNTIME_PACKAGES` in `lib/runtime.sh`.
+
+**Regression coverage, generalized rather than just patched:** new
+`tests/unit/test_python_runtime_packages.sh` does not merely assert the two
+specific names. It discovers every top-level Python package in the repo,
+walks the AST of every `.py` file under each package currently listed in
+`PYTHON_RUNTIME_PACKAGES`, finds every cross-package import, and fails if
+any imported top-level package is missing from the list - so a future phase
+that adds a new top-level package and forgets to list it here fails CI
+immediately instead of only failing on someone's next real install. Verified
+this test actually catches the regression: temporarily removed
+`metrics`/`diagnostics` from the array and confirmed the test fails with
+the exact right message, then restored the fix.
+
+**Real-machine validation performed:** ran `sudo ./update.sh --yes` for real
+on this development machine (safe - it does not touch VPN/proxy/TUN
+networking, only replaces installed files and restarts the daemon service).
+The run itself is what surfaced the bug (daemon smoke test correctly
+`[FAIL]`ed with `watchdogvpn.service is not active after install/update`);
+`journalctl -u watchdogvpn` showed the exact `ModuleNotFoundError` above.
+
 ## Acceptance
 
 Task 18.4 closes when:
@@ -255,7 +312,15 @@ Task 18.4 closes when:
   justified rather than silently ignored;
 - [x] redundant/dead mkdir call sites are cleaned up across every file
   where they were found;
+- [x] the real, production-breaking bug found via an actual live
+  `update.sh` run (missing `metrics`/`diagnostics` packages) is fixed, with
+  a generalized regression test that would catch any future top-level
+  package being forgotten, not just these two;
 - [x] full local validation (shell + Python test suites, syntax,
   compileall, whitespace) passes;
+- [ ] a real (non-dry-run) `update.sh` re-run on this machine, with the fix
+  applied, ends with the daemon active and the smoke test passing (the
+  first real run is what found the bug above; confirming the fix requires
+  re-running it - pending as of this addendum);
 - [x] real VM validation of a from-scratch install remains explicitly
   owed to Task 18.6, not claimed as done here.

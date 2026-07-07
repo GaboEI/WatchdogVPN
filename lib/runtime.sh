@@ -8,8 +8,10 @@ PYTHON_RUNTIME_PACKAGES=(
   config
   core
   daemon
+  diagnostics
   dns
   drivers
+  metrics
   models
   node_groups
   parsers
