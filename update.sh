@@ -31,6 +31,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ASSUME_YES=0
 RUN_DOCTOR=1
 
+trap 'install_failure_trap "update.sh"' ERR
+
 usage() {
   cat <<'USAGE'
 WatchdogVPN updater

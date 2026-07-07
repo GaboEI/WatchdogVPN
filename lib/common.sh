@@ -19,6 +19,33 @@ fail() {
   printf '[FAIL] %s\n' "$*"
 }
 
+print_installer_failure_recovery() {
+  local rc="${1:-1}" operation="${2:-operation}" backup_root="${BACKUP_ROOT:-/var/backups/watchdogvpn}"
+
+  {
+    printf '\n== Failure recovery ==\n'
+    printf '[FAIL] %s failed with exit code %s.\n' "$operation" "$rc"
+    printf 'User configuration, runtime state and logs are preserved by default:\n'
+    printf '  /etc/watchdogvpn/\n'
+    printf '  /etc/vpn-domain-bypass.conf\n'
+    printf '  /var/lib/watchdogvpn/\n'
+    printf '  /var/log/myvpn/\n'
+    printf 'Product-managed files are backed up before replacement/removal when possible:\n'
+    printf '  %s\n' "$backup_root"
+    printf 'Next steps:\n'
+    printf '  1. Review the error immediately above this block.\n'
+    printf '  2. Run ./doctor.sh to inspect installed/source skew, PATH, services and legacy artifacts.\n'
+    printf '  3. After fixing the reported issue, rerun ./update.sh or ./install.sh.\n'
+  } >&2
+}
+
+install_failure_trap() {
+  local rc=$?
+  trap - ERR
+  print_installer_failure_recovery "$rc" "${1:-installer operation}"
+  exit "$rc"
+}
+
 print_title() {
   local title="$1"
   printf '\n%s\n' "$title"

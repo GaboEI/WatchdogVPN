@@ -47,6 +47,8 @@ PRESERVE_BACKEND_CONFIG=0
 EXISTING_BACKEND_ACTIVE=""
 EXISTING_BACKEND_MODE=""
 
+trap 'install_failure_trap "install.sh"' ERR
+
 usage() {
   cat <<'USAGE'
 WatchdogVPN installer
