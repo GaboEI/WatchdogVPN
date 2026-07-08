@@ -140,3 +140,20 @@ Local focused validation covered:
 No installed-VM live routing/capture validation was required for this task
 because the implementation is read-only diagnostics and does not apply routes,
 capture state, DNS state or system proxy settings.
+
+Additional maintainer-run installed VM read-only validation passed:
+
+- External VPN was brought down before update and restored afterward.
+- `./update.sh --yes` completed successfully.
+- `./doctor.sh` reported installed/source match at
+  `e3f6784131e9ee4a662972f208b7825d8276a833`, daemon IPC reachable,
+  `OK=107 WARN=3 FAIL=0`.
+- Installed `/usr/local/bin/watchdog rules explain --domain example.com --json`
+  returned the route diagnostic contract with `runtime_observation=false`,
+  `routing_policy=rule`, `default_route_action=current`, `active_mode_role`
+  set to compatibility-display-only, no rule match and route action `current`.
+- Installed `/usr/local/bin/watchdog dns diagnose --domain example.com --json`
+  returned `route_diagnostic` with the same route decision and DNS path
+  `unavailable` because the temporary policy had no configured proxy resolver.
+- The smokes used temporary config/rules/DNS policy paths and did not apply
+  routes, capture, DNS state or system proxy settings.
