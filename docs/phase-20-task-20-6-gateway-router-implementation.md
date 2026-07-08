@@ -159,3 +159,18 @@ Both were fixed before Task 20.7:
 - connection state now reports `lan_gateway_status` as `disabled`,
   `configured`, `applied` or `degraded`;
 - local tests and the VM helper pin the default-drop firewall contract.
+
+Installed VM revalidation on `archvm` passed at
+`3c20e813365eb5e5836c63b4c0eb6c123ec7ced4` after reinstall:
+
+- installed/source match OK at `3c20e813365eb5e5836c63b4c0eb6c123ec7ced4`;
+- `./doctor.sh`: `FAIL=0`, `Result: WARN` only for known environment warnings;
+- pre/post `net.ipv4.ip_forward = 0`;
+- pre/post policy rules: local/main/default only;
+- pre/post routes unchanged;
+- gateway nftables table absent after cleanup;
+- helper markers:
+  - `PHASE20_6_GATEWAY_APPLY_OK`;
+  - `PHASE20_6_GATEWAY_CLEANUP_OK`;
+  - `PHASE20_6_LAN_GATEWAY_VM_VALIDATION_OK`;
+  - `PHASE20_6_INSTALLED_VALIDATION_SCRIPT_OK`.
