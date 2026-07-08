@@ -1239,6 +1239,7 @@ def _routing_state_data(state: dict[str, object]) -> dict[str, object]:
     modes = parse_capture_modes(str(state["capture_modes"]))
     return {
         "active_mode": state["active_mode"],
+        "active_mode_role": "compatibility-display-only",
         "routing_state_version": state["routing_state_version"],
         "routing_policy": state["routing_policy"],
         "capture_modes": list(modes),

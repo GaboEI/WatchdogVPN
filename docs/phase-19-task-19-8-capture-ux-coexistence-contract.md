@@ -92,6 +92,13 @@ watchdog config set default-route-action block
 - notes that `direct` is a route action, not capture;
 - LAN proxy/gateway deferral to Phase 20.
 
+JSON emitted by routing/capture config commands includes
+`active_mode_role = "compatibility-display-only"` because `active_mode` is not
+the decision source for Phase 19 routing/capture state. States that do not have
+an exact legacy `active_mode` equivalent may keep an approximate compatibility
+mirror for older readers; new code must use `routing_policy`, `capture_modes`
+and `default_route_action`.
+
 ## Runtime Guardrails
 
 `StateManager` now rejects an empty `capture_modes` string and unsupported
@@ -127,3 +134,21 @@ This task changes local state validation and CLI contract only. It does not
 start sing-box, apply TUN, mutate system proxy, change DNS, or alter live
 routes. Installed VM validation should therefore use temporary state files and
 read-only/config-only smokes unless a later task changes live capture behavior.
+
+Additional maintainer-run installed VM validation passed:
+
+- External VPN was brought down before update and restored afterward.
+- `./update.sh --yes` completed successfully.
+- `./doctor.sh` reported installed/source match at
+  `15420882673d87d8f1414b1c0d9a49daec0b5121`, daemon IPC reachable,
+  `OK=107 WARN=3 FAIL=0`.
+- Installed `watchdog config routing-contract --json` reported connectable
+  `local_proxy` and `local_proxy,tun`, fail-closed representable
+  `local_proxy,system_proxy` and `local_proxy,tun,system_proxy`, plus invalid
+  no-capture and system-proxy-without-local-proxy examples.
+- Installed temporary-state smokes covered Rule + local proxy, Rule + TUN,
+  Global + local proxy, Global + TUN, system-proxy intent, no-capture rejection
+  and system-proxy-without-local-proxy rejection.
+- Passive `ip -brief link`, `ip route`, `ip rule` and optional nft inspection
+  showed only `lo` and `enp0s8`, default route via `192.168.0.1`, local/main/
+  default policy rules, and no WatchdogVPN TUN/capture residue.

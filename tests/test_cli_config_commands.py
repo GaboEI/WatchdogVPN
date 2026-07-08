@@ -55,6 +55,7 @@ class CliConfigCommandTests(unittest.TestCase):
                     key: data[key]
                     for key in (
                         "active_mode",
+                        "active_mode_role",
                         "routing_state_version",
                         "routing_policy",
                         "capture_modes",
@@ -63,6 +64,7 @@ class CliConfigCommandTests(unittest.TestCase):
                 },
                 {
                     "active_mode": "global",
+                    "active_mode_role": "compatibility-display-only",
                     "routing_state_version": "1",
                     "routing_policy": "global",
                     "capture_modes": ["local_proxy"],
@@ -126,6 +128,7 @@ class CliConfigCommandTests(unittest.TestCase):
 
         data = json.loads(result.stdout)
         self.assertEqual(data["capture_modes"], ["local_proxy", "system_proxy"])
+        self.assertEqual(data["active_mode_role"], "compatibility-display-only")
         self.assertFalse(data["connectable"])
         self.assertEqual(data["runtime_status"], "representable-fail-closed")
 
