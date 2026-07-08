@@ -170,6 +170,26 @@ class ConfigStorageTests(unittest.TestCase):
 
             self.assertEqual(state["capture_modes"], "local_proxy,tun,system_proxy")
 
+    def test_state_manager_canonicalizes_capture_mode_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        'routing_state_version = "1"',
+                        'routing_policy = "global"',
+                        'capture_modes = "tun,local_proxy"',
+                        'default_route_action = "current"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            state = StateManager(path).load()
+
+            self.assertEqual(state["capture_modes"], "local_proxy,tun")
+
     def test_rollback_active_mode_refuses_non_equivalent_shape(self) -> None:
         with self.assertRaises(PersistentValidationError):
             rollback_active_mode_for_routing_state(

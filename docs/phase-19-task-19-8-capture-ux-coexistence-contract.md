@@ -68,6 +68,11 @@ Invalid capture states:
 | `tun` | not exposed as a standalone v1 capture shape; current sing-box runtime keeps local proxy inbounds for health checks and operator use |
 | LAN modes | scheduled for Phase 20 branch-only VM validation |
 
+Capture mode input is order-insensitive after Task 19.10. State persistence and
+JSON output use the canonical order `local_proxy,tun,system_proxy`, so
+equivalent input such as `tun,local_proxy` is accepted and saved as
+`local_proxy,tun`.
+
 ## CLI Contract
 
 `watchdog config set mode <legacy>` remains a compatibility command.

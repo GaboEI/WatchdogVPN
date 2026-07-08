@@ -64,6 +64,12 @@ and capture behavior.
 - proxy inbounds are always generated, but `status()` reports
   `proxy_active=False` when `_active_mode == "tun"`.
 
+Task 19.10 closure note: the stale `proxy_active=False` status report for TUN
+capture was fixed after the Phase 19 model made `tun` map to
+`local_proxy,tun`. `SingBoxDriver.status()` now reports local proxy active for
+running sing-box sessions because SOCKS/HTTP inbounds remain present alongside
+TUN capture.
+
 This is the core one-dimensional shortcut Phase 19 must replace.
 
 ### Route Generation

@@ -1086,7 +1086,7 @@ class SingBoxDriver(BaseDriver):
                 connected_at=self._connected_at,
                 mode="sing-box",
                 tun_active=tun_active,
-                proxy_active=self._active_mode != "tun",
+                proxy_active=True,
                 status="connected",
             )
         if self._tun_expected:

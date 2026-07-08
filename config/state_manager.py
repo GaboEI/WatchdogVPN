@@ -43,6 +43,7 @@ ALLOWED_ACTIVE_MODES = {"rules", "global", "direct", "tun", "proxy"}
 SUPPORTED_ROUTING_STATE_VERSION = "1"
 ALLOWED_ROUTING_POLICIES = {"rule", "global"}
 ALLOWED_CAPTURE_MODES = {"local_proxy", "tun", "system_proxy"}
+CAPTURE_MODE_ORDER = ("local_proxy", "tun", "system_proxy")
 CONNECTABLE_CAPTURE_MODE_SETS = {
     ("local_proxy",),
     ("local_proxy", "tun"),
@@ -50,7 +51,6 @@ CONNECTABLE_CAPTURE_MODE_SETS = {
 REPRESENTABLE_CAPTURE_MODE_SETS = {
     *CONNECTABLE_CAPTURE_MODE_SETS,
     ("local_proxy", "system_proxy"),
-    ("local_proxy", "system_proxy", "tun"),
     ("local_proxy", "tun", "system_proxy"),
 }
 ALLOWED_DEFAULT_ROUTE_ACTIONS = {"current", "direct", "block"}
@@ -208,15 +208,16 @@ def routing_state_from_legacy_mode(mode: str) -> dict[str, str]:
 
 
 def parse_capture_modes(value: str) -> tuple[str, ...]:
-    modes = tuple(item.strip() for item in value.split(",") if item.strip())
-    if not modes:
+    raw_modes = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not raw_modes:
         raise PersistentValidationError("capture_modes must include at least one capture mode")
-    if len(set(modes)) != len(modes):
+    if len(set(raw_modes)) != len(raw_modes):
         raise PersistentValidationError("capture_modes must not contain duplicate entries")
-    unknown = sorted(set(modes) - ALLOWED_CAPTURE_MODES)
+    unknown = sorted(set(raw_modes) - ALLOWED_CAPTURE_MODES)
     if unknown:
         joined = ", ".join(unknown)
         raise PersistentValidationError(f"capture_modes contains unsupported entries: {joined}")
+    modes = tuple(item for item in CAPTURE_MODE_ORDER if item in raw_modes)
     if "system_proxy" in modes and "local_proxy" not in modes:
         raise PersistentValidationError("system_proxy capture requires local_proxy")
     if modes not in REPRESENTABLE_CAPTURE_MODE_SETS:
@@ -238,7 +239,7 @@ def _validate_routing_fields(state: dict[str, Any], path: Path) -> None:
         raise PersistentValidationError("routing_policy must be one of: rule, global")
     if state["default_route_action"] not in ALLOWED_DEFAULT_ROUTE_ACTIONS:
         raise PersistentValidationError("default_route_action must be one of: current, direct, block")
-    parse_capture_modes(state["capture_modes"])
+    state["capture_modes"] = ",".join(parse_capture_modes(state["capture_modes"]))
 
 
 def compatibility_active_mode_for_routing_state(

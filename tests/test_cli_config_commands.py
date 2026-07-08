@@ -112,6 +112,15 @@ class CliConfigCommandTests(unittest.TestCase):
         self.assertIn('capture_modes = "local_proxy,tun"', state_content)
         self.assertIn('default_route_action = "direct"', state_content)
 
+    def test_set_capture_modes_accepts_equivalent_token_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["config", "set", "capture-modes", "tun,local_proxy", "--json"], tmp)
+            state_content = (Path(tmp) / "state.toml").read_text(encoding="utf-8")
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["capture_modes"], ["local_proxy", "tun"])
+        self.assertIn('capture_modes = "local_proxy,tun"', state_content)
+
     def test_set_capture_modes_rejects_no_capture(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["config", "set", "capture-modes", ""], tmp, check=False)

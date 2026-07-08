@@ -20,12 +20,14 @@ or proxy-chain syntax.
 
 - `routing_state_version = "1"`;
 - `routing_policy = "rule" | "global"`;
-- `capture_modes = "local_proxy" | "local_proxy,tun" | "local_proxy,system_proxy"`;
+- `capture_modes = "local_proxy" | "local_proxy,tun" | "local_proxy,system_proxy" | "local_proxy,tun,system_proxy"`;
 - `default_route_action = "current" | "direct" | "block"`;
 - `active_mode` remains as a compatibility mirror.
 
 Task 19.6 keeps `system_proxy` runtime activation fail-closed until a future
 implementation provides apply, cleanup, crash recovery and platform detection.
+Task 19.10 canonicalizes capture mode token order on load/save and CLI writes
+so equivalent input such as `tun,local_proxy` persists as `local_proxy,tun`.
 
 Legacy state files containing only `active_mode` are migrated in memory on
 load/save. `StateManager.set("active_mode", value)` updates both the legacy

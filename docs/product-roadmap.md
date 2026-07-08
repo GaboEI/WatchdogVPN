@@ -82,10 +82,11 @@ that are easy to confuse:
 - capture or entry: local proxy, system proxy, TUN, LAN proxy, gateway/router;
 - route action: Direct, Current/Profile, Block, Group/Auto and future chains.
 
-Rule mode means split-tunnel rules and exceptions are honored. Global mode
-means all captured traffic uses the selected protected path. Proxy, TUN and LAN
-are entry mechanisms, not replacements for Rule/Global. Direct remains a
-first-class route action, not a feature to remove.
+The Rule routing policy means split-tunnel rules and exceptions are honored.
+The Global routing policy means all captured traffic uses the selected
+protected path. Proxy, TUN and LAN are entry mechanisms, not replacements for
+Rule/Global. Direct remains a first-class route action, not a feature to
+remove.
 
 This track also owns rule-set runtime safety before those rules can affect live
 traffic: downloader/cache behavior, trust policy, bootstrap detours, stale-cache

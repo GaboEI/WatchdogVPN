@@ -1346,7 +1346,7 @@ table inet sing-box {
         self.assertFalse(state.tun_active)
 
     @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
-    def test_status_reports_tun_mode_without_proxy_route(self, tun_mock) -> None:
+    def test_status_reports_local_proxy_active_with_tun_capture(self, tun_mock) -> None:
         process = unittest.mock.Mock()
         process.poll.return_value = None
         self.driver._process = process
@@ -1358,7 +1358,7 @@ table inet sing-box {
 
         self.assertEqual(state.status, "connected")
         self.assertTrue(state.tun_active)
-        self.assertFalse(state.proxy_active)
+        self.assertTrue(state.proxy_active)
 
     @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
     def test_status_reports_tun_active_for_rules_app_policy(self, tun_mock) -> None:
