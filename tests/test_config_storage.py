@@ -120,6 +120,7 @@ class ConfigStorageTests(unittest.TestCase):
             'capture_modes = "tun"\n',
             'capture_modes = "tun,system_proxy"\n',
             'default_route_action = "group:alpha"\n',
+            'default_route_action = "chain:primary"\n',
         ]
         with tempfile.TemporaryDirectory() as tmp:
             for index, content in enumerate(invalid_docs):

@@ -103,6 +103,18 @@ class AppPolicyRuleModelTests(unittest.TestCase):
                 match={"process_path": ["/usr/bin/curl"]},
             )
 
+    def test_rejects_deferred_chain_action(self) -> None:
+        with self.assertRaises(PersistentValidationError):
+            AppPolicyRule(
+                id="chain",
+                action="chain:primary",
+                match={"process_path": ["/usr/bin/curl"]},
+            )
+
+    def test_rejects_deferred_chain_default_action(self) -> None:
+        with self.assertRaises(PersistentValidationError):
+            AppPolicy(default_action="chain:primary")
+
     def test_rejects_unknown_matcher(self) -> None:
         with self.assertRaises(PersistentValidationError):
             AppPolicyRule(

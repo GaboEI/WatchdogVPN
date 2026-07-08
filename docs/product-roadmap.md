@@ -91,6 +91,11 @@ This track also owns rule-set runtime safety before those rules can affect live
 traffic: downloader/cache behavior, trust policy, bootstrap detours, stale-cache
 handling and honest diagnostics for failed or partial policy data.
 
+Explicit proxy-chain and route-chain actions are deferred out of v2.0.0. The
+route-action model remains open for a later v2.x chain phase, but v2.0.0
+validators reject chain syntax until loop prevention, DNS ownership, hop health
+checks, failure behavior and installed-VM validation are defined.
+
 ### LAN Sharing and Gateway Mode
 
 WatchdogVPN should support network-operator workflows where the host can
