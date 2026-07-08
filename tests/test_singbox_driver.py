@@ -408,6 +408,43 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_rules_mode_declares_verified_local_rule_sets(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        groups = [
+            RuleGroup(
+                name="custom",
+                rules=[
+                    Rule(
+                        id="rs",
+                        action="block",
+                        conditions={"ruleset_remote": ["remote-ads"]},
+                    )
+                ],
+            )
+        ]
+
+        config = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            groups=groups,
+            rule_set_tags={"remote-ads": "wd-rule-set-abc"},
+            rule_set_declarations=[
+                {
+                    "type": "local",
+                    "tag": "wd-rule-set-abc",
+                    "format": "source",
+                    "path": "/tmp/ads.json",
+                }
+            ],
+        )
+
+        self.assertEqual(config["route"]["rule_set"][0]["tag"], "wd-rule-set-abc")
+        self.assertEqual(config["route"]["rules"][0], {"rule_set": ["wd-rule-set-abc"], "action": "reject"})
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_rules_mode_with_no_groups_falls_back_to_final_policy(
         self, bind_mock, write_mock
     ) -> None:
@@ -878,6 +915,8 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                 groups=None,
                 app_policy=None,
                 final_policy="current_profile",
+                rule_set_tags=None,
+                rule_set_declarations=None,
             )
             popen_mock.assert_called_once()
             self.assertIs(self.driver._process, process)
@@ -913,6 +952,8 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                 groups=None,
                 app_policy=None,
                 final_policy="current_profile",
+                rule_set_tags=None,
+                rule_set_declarations=None,
             )
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)

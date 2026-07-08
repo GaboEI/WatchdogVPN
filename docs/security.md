@@ -207,6 +207,22 @@ Planned hardening:
   verification material.
 - Keep automatic download behavior visible and auditable.
 
+## Rule-Set Downloads And Runtime Cache
+
+Remote rule sets are security-sensitive routing policy inputs. WatchdogVPN owns
+their download and cache lifecycle before runtime uses them.
+
+Security rules:
+
+- Remote rule-set sources must use HTTPS.
+- Remote rule-set trust policies require `expected_sha256`.
+- Built-in rule sets load from explicit local source paths.
+- New payloads replace cache files only after integrity and source-format
+  validation pass.
+- Critical rule-set failures fail closed before runtime starts.
+- Runtime emits local sing-box rule-set declarations from verified cache files;
+  it does not delegate remote rule-set downloads to sing-box.
+
 ## Python TUI Command Execution
 
 The TUI centralizes command execution in `tui/watchdogvpn/commands.py`. Existing

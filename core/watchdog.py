@@ -34,6 +34,7 @@ from rotation.recovery import Recovery
 from rotation.rotation_engine import RotationEngine
 from rules.rule_engine import PRIORITY_TIER_ORDER, group_by_tier
 from rules.rule_store import RuleStore
+from rules.ruleset_lifecycle import RuleSetLifecycleManager
 
 
 LOGGER = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class WatchdogRuntime:
     dns_state_manager: SystemDNSStateManager = field(default_factory=SystemDNSStateManager)
     dns_snapshot_path: Path = field(default_factory=default_snapshot_path)
     rule_store: RuleStore = field(default_factory=RuleStore)
+    rule_set_lifecycle: RuleSetLifecycleManager = field(default_factory=RuleSetLifecycleManager)
     app_policy_store: AppPolicyStore = field(default_factory=AppPolicyStore)
     node_group_store: NodeGroupStore = field(default_factory=NodeGroupStore)
     driver_selector: DriverSelector = field(default_factory=lambda: select_driver)
@@ -435,8 +437,17 @@ class WatchdogRuntime:
 
         options: dict[str, object] = {"mode": mode, "final_policy": final_policy}
         if routing_policy == "rule":
-            options["groups"] = self.rule_store.list_groups()
+            groups = self.rule_store.list_groups()
+            runtime_plan = self.rule_set_lifecycle.runtime_plan(groups)
+            if runtime_plan.results:
+                LOGGER.info(
+                    "rule_set_refresh_before_connect results=%s",
+                    [result.to_dict() for result in runtime_plan.results],
+                )
+            options["groups"] = groups
             options["app_policy"] = self._runtime_app_policy()
+            options["rule_set_tags"] = runtime_plan.tags
+            options["rule_set_declarations"] = runtime_plan.declarations
         return options
 
     def _runtime_app_policy(self) -> AppPolicy:

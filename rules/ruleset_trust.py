@@ -24,6 +24,7 @@ RULE_SET_STATUS_FIELDS = {
     "loaded_sha256",
     "last_loaded_at",
     "last_checked_at",
+    "cache_path",
     "error",
 }
 
@@ -148,6 +149,7 @@ class RuleSetStatus:
     loaded_sha256: str | None = None
     last_loaded_at: str | None = None
     last_checked_at: str | None = None
+    cache_path: str | None = None
     error: str | None = None
 
     def __post_init__(self) -> None:
@@ -156,6 +158,8 @@ class RuleSetStatus:
             raise ValueError("rule-set status id must not be empty")
         self.state = RuleSetLoadState(self.state)
         self.loaded_sha256 = _validate_sha256(self.loaded_sha256)
+        if self.cache_path is not None:
+            self.cache_path = str(self.cache_path).strip() or None
         if self.state in {RuleSetLoadState.FAILED, RuleSetLoadState.STALE} and not self.error:
             raise ValueError(f"rule-set status {self.state.value} requires an error")
 
@@ -166,6 +170,7 @@ class RuleSetStatus:
             "loaded_sha256": self.loaded_sha256,
             "last_loaded_at": self.last_loaded_at,
             "last_checked_at": self.last_checked_at,
+            "cache_path": self.cache_path,
             "error": self.error,
         }
 
@@ -178,6 +183,7 @@ class RuleSetStatus:
             loaded_sha256=data.get("loaded_sha256"),
             last_loaded_at=data.get("last_loaded_at"),
             last_checked_at=data.get("last_checked_at"),
+            cache_path=data.get("cache_path"),
             error=data.get("error"),
         )
 

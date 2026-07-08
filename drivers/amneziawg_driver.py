@@ -195,6 +195,8 @@ class AmneziaWGDriver(BaseDriver):
         groups=None,
         app_policy=None,
         final_policy: str = "current_profile",
+        rule_set_tags: dict[str, str] | None = None,
+        rule_set_declarations: list[dict[str, str]] | None = None,
     ) -> bool:
         tool = self.find_quick_tool()
         if not tool:

@@ -65,6 +65,8 @@ watchdog stats status [--json]
 watchdog stats summary [--json]
 watchdog stats purge --yes
 watchdog stats privacy-mode <off|aggregate|detailed>
+watchdog ruleset status [--json]
+watchdog ruleset refresh [RULE_SET_ID ...] [--referenced-only] [--force] [--json]
 ```
 
 ## Uninstall Flow
@@ -205,6 +207,34 @@ watchdog stats privacy-mode detailed
 `off` disables metrics recording. `aggregate` enables aggregate counters.
 `detailed` stores the policy mode value but does not enable request history,
 because detailed history is not implemented in Phase 16.
+
+## Rule-Set Runtime Lifecycle
+
+### `watchdog ruleset status`
+
+Shows trusted remote and built-in rule-set policies plus their cache status.
+
+```sh
+watchdog ruleset status
+watchdog ruleset status --json
+```
+
+The command reads `ruleset-trust.json`. Remote rule-set policies must be
+explicitly pinned with SHA-256 before runtime can use them.
+
+### `watchdog ruleset refresh`
+
+Refreshes WatchdogVPN-owned rule-set cache files.
+
+```sh
+watchdog ruleset refresh
+watchdog ruleset refresh remote-ads --force
+watchdog ruleset refresh --referenced-only --json
+```
+
+Remote downloads require HTTPS and a matching `expected_sha256` pin. Built-in
+rule sets load from explicit local source paths. Runtime uses verified local
+cache files in sing-box rather than sing-box remote rule-set downloads.
 
 ### `watchdogvpn version`
 

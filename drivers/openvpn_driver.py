@@ -129,6 +129,8 @@ class OpenVPNDriver(BaseDriver):
         groups=None,
         app_policy=None,
         final_policy: str = "current_profile",
+        rule_set_tags: dict[str, str] | None = None,
+        rule_set_declarations: list[dict[str, str]] | None = None,
     ) -> bool:
         binary = self.find_openvpn_binary()
         if not binary:

@@ -216,6 +216,8 @@ class OpenVPNCloakDriver(BaseDriver):
         groups=None,
         app_policy=None,
         final_policy: str = "current_profile",
+        rule_set_tags: dict[str, str] | None = None,
+        rule_set_declarations: list[dict[str, str]] | None = None,
     ) -> bool:
         openvpn_bin = self.find_openvpn_binary()
         ck_bin = self.find_ck_client_binary()

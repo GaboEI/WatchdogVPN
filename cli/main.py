@@ -57,6 +57,11 @@ from rules.importer import RuleImportError, build_rule_import_plan
 from rules.models import ALLOWED_RULE_CONDITIONS, Rule, RuleGroup
 from rules.rule_engine import TrafficInfo
 from rules.rule_store import RuleStore, RuleStoreError
+from rules.ruleset_lifecycle import (
+    RuleSetLifecycleError,
+    RuleSetLifecycleManager,
+    referenced_rule_set_ids,
+)
 from rules.ruleset_trust_store import RuleSetTrustStore
 
 
@@ -103,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
         _error(str(exc))
         return 65
     except RuleStoreError as exc:
+        _error(str(exc))
+        return 65
+    except RuleSetLifecycleError as exc:
         _error(str(exc))
         return 65
     except NodeGroupStoreError as exc:
@@ -482,6 +490,31 @@ def _build_parser() -> argparse.ArgumentParser:
     rules_export_parser.add_argument("--output", help="Write exported group JSON to this file")
     rules_export_parser.add_argument("--json", action="store_true", help="Print JSON")
     rules_export_parser.set_defaults(handler=_rules_export)
+
+    ruleset_parser = subparsers.add_parser(
+        "ruleset",
+        help="Inspect and refresh trusted remote or built-in rule sets",
+    )
+    ruleset_subparsers = ruleset_parser.add_subparsers(dest="ruleset_command")
+
+    ruleset_status_parser = ruleset_subparsers.add_parser("status", help="Show rule-set trust and cache status")
+    ruleset_status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    ruleset_status_parser.set_defaults(handler=_ruleset_status)
+
+    ruleset_refresh_parser = ruleset_subparsers.add_parser(
+        "refresh",
+        help="Refresh trusted rule-set cache files",
+    )
+    ruleset_refresh_parser.add_argument("ids", nargs="*", help="Rule-set IDs to refresh; defaults to all policies")
+    ruleset_refresh_parser.add_argument(
+        "--referenced-only",
+        action="store_true",
+        help="Refresh only rule sets referenced by enabled routing rules",
+    )
+    ruleset_refresh_parser.add_argument("--force", action="store_true", help="Refresh even when cache is not due")
+    ruleset_refresh_parser.add_argument("--no-evict", action="store_true", help="Do not remove unowned cache files")
+    ruleset_refresh_parser.add_argument("--json", action="store_true", help="Print JSON")
+    ruleset_refresh_parser.set_defaults(handler=_ruleset_refresh)
 
     app_policy_parser = subparsers.add_parser(
         "app-policy",
@@ -1388,6 +1421,74 @@ def _rules_export(args: argparse.Namespace) -> int:
         _print_json(data)
         return 0
     raise ParseError("rules export requires --output or --json")
+
+
+def _ruleset_status(args: argparse.Namespace) -> int:
+    registry = RuleSetLifecycleManager().status()
+    data = registry.to_dict()
+    if args.json:
+        _print_json(data)
+        return 0
+    if not registry.policies:
+        print("No trusted rule sets configured.")
+        return 0
+    print("ID\tKind\tCritical\tBehavior\tState\tCache")
+    for rule_set_id, policy in sorted(registry.policies.items()):
+        status = registry.status_for(rule_set_id)
+        print(
+            "\t".join(
+                [
+                    rule_set_id,
+                    policy.kind.value,
+                    _on_off(policy.critical),
+                    policy.failure_behavior.value,
+                    status.state.value,
+                    status.cache_path or "-",
+                ]
+            )
+        )
+    return 0
+
+
+def _ruleset_refresh(args: argparse.Namespace) -> int:
+    if args.ids and args.referenced_only:
+        raise ParseError("ruleset refresh accepts IDs or --referenced-only, not both")
+    if args.referenced_only:
+        selected = referenced_rule_set_ids(RuleStore().list_groups())
+    elif args.ids:
+        selected = set(args.ids)
+    else:
+        selected = None
+    results = RuleSetLifecycleManager().refresh(
+        selected,
+        force=bool(args.force),
+        evict=not bool(args.no_evict),
+    )
+    data = {
+        "refreshed_count": sum(1 for result in results if result.refreshed),
+        "used_existing_cache_count": sum(1 for result in results if result.used_existing_cache),
+        "results": [result.to_dict() for result in results],
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    if not results:
+        print("No rule sets selected.")
+        return 0
+    print("ID\tState\tRefreshed\tCache\tError")
+    for result in results:
+        print(
+            "\t".join(
+                [
+                    result.id,
+                    result.state,
+                    _on_off(result.refreshed),
+                    result.cache_path or "-",
+                    result.error or "-",
+                ]
+            )
+        )
+    return 0
 
 
 def _print_rule_explanation(explanation: RuleExplanation) -> None:

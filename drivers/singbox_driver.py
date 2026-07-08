@@ -55,6 +55,9 @@ def _merge_route_config(config: dict[str, Any], route_config: dict[str, Any]) ->
     route = config.setdefault("route", {})
     route.setdefault("rules", [])
     route["rules"].extend(route_config.get("rules", []))
+    if route_config.get("rule_set"):
+        route.setdefault("rule_set", [])
+        route["rule_set"].extend(route_config["rule_set"])
 
 
 def _app_policy_dns_rules(
@@ -860,6 +863,8 @@ class SingBoxDriver(BaseDriver):
         groups: list[RuleGroup] | None = None,
         app_policy: AppPolicy | None = None,
         final_policy: str = "current_profile",
+        rule_set_tags: dict[str, str] | None = None,
+        rule_set_declarations: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
             raise ValueError(f"unsupported connection mode: {mode!r}")
@@ -951,8 +956,12 @@ class SingBoxDriver(BaseDriver):
             current_outbound_tag=outbound["tag"],
             app_policy=app_policy if mode == "rules" else None,
             final_policy=effective_final_policy,
+            rule_set_tags=rule_set_tags if mode == "rules" else None,
         )
-        _merge_route_config(config, {"rules": mode_route_rules})
+        route_config: dict[str, Any] = {"rules": mode_route_rules}
+        if mode == "rules" and rule_set_declarations:
+            route_config["rule_set"] = list(rule_set_declarations)
+        _merge_route_config(config, route_config)
 
         self._write_config(config)
         return config
@@ -966,6 +975,8 @@ class SingBoxDriver(BaseDriver):
         groups: list[RuleGroup] | None = None,
         app_policy: AppPolicy | None = None,
         final_policy: str = "current_profile",
+        rule_set_tags: dict[str, str] | None = None,
+        rule_set_declarations: list[dict[str, str]] | None = None,
     ) -> bool:
         binary = self.find_singbox_binary()
         if not binary:
@@ -981,6 +992,8 @@ class SingBoxDriver(BaseDriver):
             groups=groups,
             app_policy=app_policy,
             final_policy=final_policy,
+            rule_set_tags=rule_set_tags,
+            rule_set_declarations=rule_set_declarations,
         )
         config_path, log_path = self._ensure_runtime_paths()
         log_file = log_path.open("w", encoding="utf-8")

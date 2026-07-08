@@ -47,6 +47,8 @@ class FakeWorkerDriver(BaseDriver):
         groups=None,
         app_policy=None,
         final_policy: str = "current_profile",
+        rule_set_tags=None,
+        rule_set_declarations=None,
     ) -> bool:
         self.connect_calls.append(profile.id)
         if self.connect_result:

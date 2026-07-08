@@ -1,7 +1,7 @@
 # Phase 13 Task 13.5 - Built-in and Remote Rule-Set Trust Model
 
 > Date: 2026-07-05
-> Status: CLOSED - trust model defined, runtime downloading deferred.
+> Status: CLOSED - trust model defined; runtime lifecycle promoted in Phase 19.
 
 ## Decision
 
@@ -10,8 +10,8 @@ A remote rule set can influence whether traffic exits through the current
 profile, direct egress, a group, or block. WatchdogVPN must not treat a failed
 or changed rule set as a harmless miss.
 
-Task 13.5 defines the trust contract and diagnostics model. It does not add a
-runtime downloader or live TUN behavior.
+Task 13.5 defines the trust contract and diagnostics model. Runtime downloader
+and cache behavior were later implemented by Phase 19 Task 19.5.
 
 ## Current sing-box Baseline
 
@@ -118,20 +118,21 @@ default failure behavior from criticality.
 - `critical`
 - `error`
 
-## Deferred Runtime Work
+## Phase 19 Runtime Follow-Up
 
-Deferred to later implementation work:
+Phase 19 Task 19.5 implemented:
 
 - downloading remote rule sets
 - maintaining rule-set cache files
-- invoking sing-box remote rule-set objects
+- invoking verified local sing-box rule-set objects generated from
+  WatchdogVPN-owned cache files
 - enforcing fail-closed behavior in the live route generator
-- rule-set update scheduler
-- operator commands for adding/updating trust policies
+- due-refresh scheduling at runtime connect preflight
+- manual operator refresh and status commands
 
-This is scheduled work, not a blocker for Task 13.5. The security contract is
-now explicit so later runtime work has a precise target. The active v2 roadmap
-promotes this runtime lifecycle into Phase 19 before the final CLI is frozen.
+WatchdogVPN intentionally owns remote downloads and emits local sing-box
+rule-set declarations instead of sing-box `remote` rule-set objects. Trust
+policies remain explicit; remote policies still require SHA-256 pins.
 
 ## Acceptance
 
@@ -141,5 +142,4 @@ Task 13.5 closes when:
 - failure behavior is explicit and tested
 - stale/update semantics are documented
 - diagnostics distinguish not-evaluated, loaded, stale, and failed rule sets
-- runtime downloader work remains clearly scheduled in the later routing/capture
-  architecture phase
+- Phase 19 Task 19.5 owns the runtime lifecycle follow-up

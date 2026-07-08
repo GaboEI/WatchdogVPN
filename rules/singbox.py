@@ -14,22 +14,26 @@ from rules.rule_engine import PRIORITY_TIER_ORDER, UNEVALUABLE_CONDITIONS, group
 
 
 def _rule_to_singbox_rule(
-    rule: Rule, resolve_outbound: Callable[[str], str]
+    rule: Rule,
+    resolve_outbound: Callable[[str], str],
+    rule_set_tags: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     if not rule.enabled:
         return None
-    # ruleset_remote/ruleset_builtin need sing-box route.rule_set declarations
-    # (remote/local rule-set objects with their own fetch/cache lifecycle) that
-    # no task has built yet — see Task 11.3's UNEVALUABLE_CONDITIONS note. A
-    # rule that depends on one of these is skipped here too, for the same
-    # reason RuleEngine.evaluate() never matches it locally: skipping keeps
-    # the generated sing-box config and the local Python evaluator in
-    # agreement instead of silently disagreeing on the same rule.
-    if set(rule.conditions) & UNEVALUABLE_CONDITIONS:
-        return None
-    singbox_rule: dict[str, Any] = {
-        key: list(values) for key, values in rule.conditions.items()
-    }
+    singbox_rule: dict[str, Any] = {}
+    rule_set_values: list[str] = []
+    for key, values in rule.conditions.items():
+        if key in UNEVALUABLE_CONDITIONS:
+            if not rule_set_tags:
+                return None
+            tags = [rule_set_tags[value] for value in values if value in rule_set_tags]
+            if len(tags) != len(values):
+                return None
+            rule_set_values.extend(tags)
+            continue
+        singbox_rule[key] = list(values)
+    if rule_set_values:
+        singbox_rule["rule_set"] = rule_set_values
     if rule.action == "block":
         singbox_rule["action"] = "reject"
     else:
@@ -93,6 +97,7 @@ def build_singbox_route_rules(
     current_outbound_tag: str,
     app_policy: AppPolicy | None = None,
     final_policy: str = "current_profile",
+    rule_set_tags: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Translate rule groups into sing-box route.rules, in priority order.
 
@@ -128,7 +133,11 @@ def build_singbox_route_rules(
             if not group.enabled:
                 continue
             for rule in group.rules:
-                singbox_rule = _rule_to_singbox_rule(rule, resolve_outbound)
+                singbox_rule = _rule_to_singbox_rule(
+                    rule,
+                    resolve_outbound,
+                    rule_set_tags=rule_set_tags,
+                )
                 if singbox_rule is not None:
                     rules.append(singbox_rule)
     rules.append(_final_rule(final_policy, resolve_outbound))

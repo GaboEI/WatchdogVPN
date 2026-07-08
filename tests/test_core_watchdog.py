@@ -28,6 +28,8 @@ from rotation import pool_builder
 from rotation.health_checker import HealthCheckResult
 from rules.models import Rule, RuleGroup
 from rules.rule_store import RuleStore
+from rules.ruleset_lifecycle import RuleSetLifecycleManager
+from rules.ruleset_trust_store import RuleSetTrustStore
 
 
 class FakeDriver(BaseDriver):
@@ -42,6 +44,8 @@ class FakeDriver(BaseDriver):
         self.last_groups = "unset"
         self.last_app_policy = "unset"
         self.last_final_policy: str | None = None
+        self.last_rule_set_tags = "unset"
+        self.last_rule_set_declarations = "unset"
 
     def connect(
         self,
@@ -52,12 +56,16 @@ class FakeDriver(BaseDriver):
         groups=None,
         app_policy=None,
         final_policy: str = "current_profile",
+        rule_set_tags=None,
+        rule_set_declarations=None,
     ) -> bool:
         self.last_dns_policy = dns_policy
         self.last_mode = mode
         self.last_groups = groups
         self.last_app_policy = app_policy
         self.last_final_policy = final_policy
+        self.last_rule_set_tags = rule_set_tags
+        self.last_rule_set_declarations = rule_set_declarations
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -96,6 +104,8 @@ class EventDriver(FakeDriver):
         groups=None,
         app_policy=None,
         final_policy: str = "current_profile",
+        rule_set_tags=None,
+        rule_set_declarations=None,
     ) -> bool:
         self.events.append(f"{self.name}:connect:{profile.id}")
         return super().connect(
@@ -105,6 +115,8 @@ class EventDriver(FakeDriver):
             groups=groups,
             app_policy=app_policy,
             final_policy=final_policy,
+            rule_set_tags=rule_set_tags,
+            rule_set_declarations=rule_set_declarations,
         )
 
     def disconnect(self) -> bool:
@@ -1092,6 +1104,10 @@ class WatchdogIntegrationTests(unittest.TestCase):
             recovery=Recovery(clock=clock),
             kill_switch=FakeKillSwitch(),
             rule_store=rule_store or RuleStore(Path(self.tmpdir.name) / "rules"),
+            rule_set_lifecycle=RuleSetLifecycleManager(
+                store=RuleSetTrustStore(Path(self.tmpdir.name) / "ruleset-trust.json"),
+                cache_dir=Path(self.tmpdir.name) / "rulesets" / "cache",
+            ),
         )
 
     def test_run_iteration_healthy_resets_recovery_and_returns_connected(self) -> None:
@@ -1183,6 +1199,75 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(result.status, "recovered")
         self.assertEqual(driver.last_mode, "rules")
         self.assertEqual(driver.last_groups, [group])
+
+    def test_connect_forwards_verified_ruleset_runtime_plan(self) -> None:
+        payload = json.dumps({"version": 1, "rules": [{"domain": ["example.com"]}]}).encode("utf-8")
+        source = Path(self.tmpdir.name) / "builtin.json"
+        source.write_bytes(payload)
+        trust_store = RuleSetTrustStore(Path(self.tmpdir.name) / "ruleset-trust.json")
+        from rules.ruleset_trust import RuleSetTrustPolicy, RuleSetTrustRegistry
+
+        policy = RuleSetTrustPolicy(
+            id="builtin-example",
+            kind="built-in",
+            source=str(source),
+            critical=True,
+            update_interval_seconds=3600,
+            max_stale_seconds=7200,
+        )
+        trust_store.save(RuleSetTrustRegistry(policies={policy.id: policy}))
+        driver = FakeDriver()
+        self.state_manager.set("active_mode", "rules")
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        group = RuleGroup(
+            name="custom",
+            rules=[
+                Rule(
+                    id="rs",
+                    action="block",
+                    conditions={"ruleset_builtin": [policy.id]},
+                )
+            ],
+        )
+        rule_store.add_group(group)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            rule_store=rule_store,
+            rule_set_lifecycle=RuleSetLifecycleManager(
+                store=trust_store,
+                cache_dir=Path(self.tmpdir.name) / "rulesets" / "cache",
+            ),
+        )
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_mode, "rules")
+        self.assertIn(policy.id, driver.last_rule_set_tags)
+        self.assertEqual(driver.last_rule_set_declarations[0]["type"], "local")
+
+    def test_connect_refuses_ruleset_without_trust_policy(self) -> None:
+        driver = FakeDriver()
+        self.state_manager.set("active_mode", "rules")
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        rule_store.add_group(
+            RuleGroup(
+                name="custom",
+                rules=[
+                    Rule(
+                        id="rs",
+                        action="block",
+                        conditions={"ruleset_remote": ["missing-policy"]},
+                    )
+                ],
+            )
+        )
+        runtime = self._make_runtime(driver, rule_store=rule_store)
+
+        with self.assertRaisesRegex(RuntimeError, "referenced rule-set has no trust policy"):
+            runtime.connect(self.profile)
+        driver.connect_mock.assert_not_called()
 
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_returns_reconnecting_below_attempt_threshold(self, _hc) -> None:

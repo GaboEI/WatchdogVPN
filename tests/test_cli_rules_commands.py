@@ -8,6 +8,7 @@ from pathlib import Path
 
 from rules.models import Rule, RuleGroup
 from rules.rule_store import RuleStore
+from rules.ruleset_trust import RuleSetTrustPolicy, RuleSetTrustRegistry
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -641,6 +642,72 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertIn("behavior=fail-closed", result.stdout)
         self.assertIn("error=sha256 mismatch", result.stdout)
         self.assertNotIn("would use action", result.stdout)
+
+    def test_ruleset_status_json_reports_trust_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = {"version": 1, "rules": [{"domain": ["example.com"]}]}
+            source = Path(tmp) / "builtin.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            policy = RuleSetTrustPolicy(
+                id="builtin-example",
+                kind="built-in",
+                source=str(source),
+                critical=False,
+            )
+            trust_file = Path(tmp) / "ruleset-trust.json"
+            trust_file.write_text(
+                json.dumps(RuleSetTrustRegistry(policies={policy.id: policy}).to_dict()),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(["ruleset", "status", "--json"], tmp)
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["policies"]["builtin-example"]["kind"], "built-in")
+        self.assertEqual(data["policies"]["builtin-example"]["failure_behavior"], "warn-and-skip")
+
+    def test_ruleset_refresh_referenced_only_caches_builtin_ruleset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "builtin.json"
+            source.write_text(
+                json.dumps({"version": 1, "rules": [{"domain": ["example.com"]}]}),
+                encoding="utf-8",
+            )
+            policy = RuleSetTrustPolicy(
+                id="builtin-example",
+                kind="built-in",
+                source=str(source),
+                critical=True,
+            )
+            trust_file = Path(tmp) / "ruleset-trust.json"
+            trust_file.write_text(
+                json.dumps(RuleSetTrustRegistry(policies={policy.id: policy}).to_dict()),
+                encoding="utf-8",
+            )
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(
+                            id="rs",
+                            action="block",
+                            conditions={"ruleset_builtin": [policy.id]},
+                        )
+                    ],
+                ),
+            )
+
+            result = self.run_watchdog(
+                ["ruleset", "refresh", "--referenced-only", "--force", "--json"],
+                tmp,
+            )
+            data = json.loads(result.stdout)
+            self.assertEqual(data["refreshed_count"], 1)
+            item = data["results"][0]
+            self.assertEqual(item["id"], "builtin-example")
+            self.assertEqual(item["state"], "loaded")
+            self.assertTrue(Path(item["cache_path"]).exists())
 
     def test_unknown_text_asks_for_input_without_overstating_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -97,6 +97,33 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
             {"domain": ["a.com"], "action": "route", "outbound": "direct"},
         )
 
+    def test_ruleset_conditions_emit_singbox_rule_set_when_verified_tag_available(self) -> None:
+        group = RuleGroup(
+            name="custom",
+            rules=[
+                Rule(
+                    id="r1",
+                    action="block",
+                    conditions={"ruleset_builtin": ["builtin-example"], "domain_suffix": [".example"]},
+                ),
+            ],
+        )
+
+        rules = build_singbox_route_rules(
+            [group],
+            current_outbound_tag="vps",
+            rule_set_tags={"builtin-example": "wd-rule-set-abc"},
+        )
+
+        self.assertEqual(
+            rules[0],
+            {
+                "rule_set": ["wd-rule-set-abc"],
+                "domain_suffix": [".example"],
+                "action": "reject",
+            },
+        )
+
     def test_imported_family_included_in_priority_order(self) -> None:
         imported = RuleGroup(
             name="imported-20260702",

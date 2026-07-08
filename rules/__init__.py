@@ -43,6 +43,13 @@ from .ruleset_trust import (
     RuleSetTrustRegistry,
 )
 from .ruleset_trust_store import RuleSetTrustStore
+from .ruleset_lifecycle import (
+    RuleSetLifecycleError,
+    RuleSetLifecycleManager,
+    RuleSetRefreshResult,
+    RuleSetRuntimeError,
+    referenced_rule_set_ids,
+)
 from .singbox import build_singbox_route_rules
 
 __all__ = [
@@ -65,7 +72,11 @@ __all__ = [
     "RuleParseError",
     "RuleSetFailureBehavior",
     "RuleSetKind",
+    "RuleSetLifecycleError",
+    "RuleSetLifecycleManager",
     "RuleSetLoadState",
+    "RuleSetRefreshResult",
+    "RuleSetRuntimeError",
     "RuleSetStatus",
     "RuleSetTrustPolicy",
     "RuleSetTrustRegistry",
@@ -81,6 +92,7 @@ __all__ = [
     "parse_singbox_ruleset_json",
     "parse_singbox_ruleset_srs",
     "parse_watchdogvpn_json",
+    "referenced_rule_set_ids",
     "rule_matches",
     "validate_group_name",
 ]
