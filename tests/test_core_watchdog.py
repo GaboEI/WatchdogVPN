@@ -1269,6 +1269,23 @@ class WatchdogIntegrationTests(unittest.TestCase):
             runtime.connect(self.profile)
         driver.connect_mock.assert_not_called()
 
+    def test_connect_refuses_unimplemented_system_proxy_capture(self) -> None:
+        driver = FakeDriver()
+        self.state_manager.save(
+            {
+                **self.state_manager.load(),
+                "routing_state_version": "1",
+                "routing_policy": "global",
+                "capture_modes": "local_proxy,system_proxy",
+                "default_route_action": "current",
+            }
+        )
+        runtime = self._make_runtime(driver)
+
+        with self.assertRaisesRegex(RuntimeError, "system_proxy capture is not implemented yet"):
+            runtime.connect(self.profile)
+        driver.connect_mock.assert_not_called()
+
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_returns_reconnecting_below_attempt_threshold(self, _hc) -> None:
         driver = FakeDriver()

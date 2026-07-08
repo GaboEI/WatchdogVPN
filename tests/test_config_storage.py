@@ -126,6 +126,26 @@ class ConfigStorageTests(unittest.TestCase):
                 with self.assertRaises(PersistentValidationError):
                     StateManager(path).load()
 
+    def test_state_manager_accepts_system_proxy_only_with_local_proxy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        'routing_state_version = "1"',
+                        'routing_policy = "global"',
+                        'capture_modes = "local_proxy,system_proxy"',
+                        'default_route_action = "current"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            state = StateManager(path).load()
+
+            self.assertEqual(state["capture_modes"], "local_proxy,system_proxy")
+
     def test_rollback_active_mode_refuses_non_equivalent_shape(self) -> None:
         with self.assertRaises(PersistentValidationError):
             rollback_active_mode_for_routing_state(

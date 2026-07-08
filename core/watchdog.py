@@ -415,6 +415,10 @@ class WatchdogRuntime:
 
         if not capture_modes:
             raise RuntimeError("no usable capture mode is configured")
+        if "system_proxy" in capture_modes:
+            raise RuntimeError(
+                "system_proxy capture is not implemented yet; use local_proxy or tun"
+            )
 
         final_policy = {
             "current": "current_profile",

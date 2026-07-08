@@ -24,6 +24,9 @@ or proxy-chain syntax.
 - `default_route_action = "current" | "direct" | "block"`;
 - `active_mode` remains as a compatibility mirror.
 
+Task 19.6 keeps `system_proxy` runtime activation fail-closed until a future
+implementation provides apply, cleanup, crash recovery and platform detection.
+
 Legacy state files containing only `active_mode` are migrated in memory on
 load/save. `StateManager.set("active_mode", value)` updates both the legacy
 mirror and the new routing shape.

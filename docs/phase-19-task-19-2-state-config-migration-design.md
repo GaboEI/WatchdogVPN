@@ -86,9 +86,9 @@ active_mode = "rules"
   reject an effective connect attempt with no usable capture path unless a
   future driver path has its own non-sing-box capture semantics.
 - `local_proxy,tun` is valid: local proxy and TUN may coexist.
-- `system_proxy` is design-only until Task 19.6 defines cleanup and platform
-  boundaries. If persisted before that task, it must be accepted as stored
-  state but not silently enabled at runtime.
+- `system_proxy` is represented in state, but Task 19.6 keeps runtime
+  activation fail-closed until apply, cleanup, crash recovery and platform
+  boundaries are implemented. It must not be silently enabled.
 - LAN proxy sharing and LAN gateway/router are excluded from version 1 because
   Phase 20 owns their branch-only, VM-only validation.
 
