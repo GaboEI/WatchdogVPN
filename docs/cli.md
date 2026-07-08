@@ -300,14 +300,13 @@ implemented and installed-VM validated.
 
 ## Phase 20 LAN Sharing
 
-Phase 20 stores LAN sharing intent under `lan_sharing`. On the dedicated Phase
-20 branch, Task 20.3 can expose authenticated SOCKS/HTTP LAN proxy listeners
-when `lan_sharing.enabled = true` and `lan_sharing.mode = proxy`. Task 20.6
-adds disabled-by-default IPv4 LAN gateway mode when
-`lan_sharing.mode = gateway`.
+WatchdogVPN stores LAN sharing intent under `lan_sharing`. Authenticated
+SOCKS/HTTP LAN proxy listeners are exposed only when
+`lan_sharing.enabled = true` and `lan_sharing.mode = proxy`. Disabled-by-default
+IPv4 LAN gateway mode is selected with `lan_sharing.mode = gateway`.
 
-This remains branch-only until Phase 20 closes. Gateway mode is VM/lab-only
-until Task 20.7 completes the matrix and no HIGH/MEDIUM findings remain.
+Gateway mode passed the Phase 20 VM/lab matrix, but remains explicit,
+disabled by default and bounded to the documented IPv4/manual-DNS contract.
 
 Supported scaffold keys:
 
@@ -332,7 +331,7 @@ rollback on disconnect or failed apply.
 Validation rules:
 
 - LAN sharing is disabled by default.
-- `mode` must be `disabled` or `proxy`.
+- `mode` must be `disabled`, `proxy` or `gateway`.
 - `bind_address` must be an IP address when set.
 - wildcard binds such as `0.0.0.0` and `::` are rejected outside explicit test
   fixtures.

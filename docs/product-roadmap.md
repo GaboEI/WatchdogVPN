@@ -100,14 +100,13 @@ health checks, failure behavior and installed-VM validation.
 
 ### LAN Sharing and Gateway Mode
 
-WatchdogVPN should support network-operator workflows where the host can
+WatchdogVPN supports network-operator workflows where the host can
 intentionally share a protected path with LAN devices before the final CLI is
-frozen. This includes LAN proxy sharing and, as a separate higher-risk
-capability, full gateway/router mode. This is valuable for people who manage
-networks, servers and multi-device labs, but it changes the trust boundary and
-must be built with exceptional care: a dedicated branch, VM-only network
-validation, explicit bind controls, firewall UX, kill-switch coverage for
-LAN-originated traffic, DNS leak checks and teardown validation before merge.
+frozen. This includes authenticated LAN proxy sharing and, as a separate
+higher-risk capability, full gateway/router mode. This is valuable for people
+who manage networks, servers and multi-device labs, but it changes the trust
+boundary and must remain disabled by default, explicit, VM-validated,
+firewall-aware, kill-switch-covered, DNS-honest and teardown-validated.
 
 ### Network Context Automation and Unified Diagnostics
 

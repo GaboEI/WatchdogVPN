@@ -37,7 +37,8 @@ hardening.
 | Bad VPN endpoint | Rotation may land on unusable node | the v2 rotation/runtime path validates state before accepting a connection |
 | DNS profile breaks resolution | User may lose name resolution | DNS v2 `apply`/`reset` snapshot the prior resolver state and restore it on request; `vpn_dns_rescue` remains available as a manual fallback |
 | Observability becomes browsing history | Local metrics or support exports may reveal destinations, process activity or provider choices | Phase 16 defaults to aggregate local counters; raw destination/process history is not silently enabled and must be opt-in, retention-bounded, purgeable and excluded from normal diagnostics exports |
-| Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | Current mainline keeps generated SOCKS/HTTP and DNS hijack inbounds bound to `127.0.0.1`; Task 20.3 implements authenticated explicit-bind LAN SOCKS/HTTP proxy inbounds on the Phase 20 branch only, and Task 20.5 accepts gateway/router mode for that branch under explicit IPv4/manual/VM-only NAT, forwarding, DNS, kill-switch and teardown contracts before merge |
+| Network context becomes location history | SSID, BSSID, interface names, gateway details or route changes may reveal home/work/travel context | Phase 21 classifies network facts before implementation: raw SSID/BSSID/interface identifiers are sensitive local context, default persistence is rejected, and normal support exports must redact local network identifiers |
+| Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | LAN sharing remains disabled by default. Local SOCKS/HTTP and DNS hijack inbounds stay loopback-only unless the operator explicitly enables authenticated LAN proxy mode or bounded gateway mode. Gateway mode is IPv4/manual/VM-validated, requires TUN capture, owns reversible firewall/NAT state and must clean up forwarding/firewall state on teardown. |
 | Uninstall breaks DNS | Host may remain offline after removal | `vpn_dns_rescue` restores fallback DNS behavior |
 | Repeated timer executions overlap | Race conditions and route churn | rotation uses `flock`; timers are one-shot services |
 | User-specific bypass domains leak into new installs | New users inherit irrelevant routing policy | default bypass example starts empty |
@@ -55,10 +56,10 @@ hardening.
 - Automatic CLI installer verification is not yet cryptographically pinned.
 - GitHub Actions currently performs baseline validation, not full integration
   simulation.
-- LAN proxy/gateway sharing is active Phase 20 branch-only work, but it must
-  satisfy the Task 20.1 threat model, VM-only validation, authentication or an
-  explicit protocol exception, firewall UX, kill-switch validation, DNS leak
-  validation and teardown validation before it can reach `main`.
+- LAN proxy/gateway sharing is accepted only because Phase 20 completed
+  VM-only validation, authentication, explicit bind/firewall controls,
+  kill-switch validation, DNS leak validation and teardown validation. It must
+  remain disabled by default.
 
 ### Must Not Happen
 
@@ -68,6 +69,9 @@ hardening.
 - `uninstall.sh` must not remove account/license state.
 - New users must not inherit machine-specific domain exclusions.
 - Observability must not silently store raw browsing or request history.
+- Network-aware automation must not silently store raw location-identifying
+  network context or perform automatic connect/disconnect actions without an
+  explicit opt-in or confirmation path.
 
 ### Future Hardening
 

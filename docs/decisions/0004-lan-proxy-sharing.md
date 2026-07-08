@@ -4,7 +4,7 @@ Date: 2026-07-06
 
 ## Status
 
-Active design gate in Phase 20.
+Accepted and implemented after Phase 20 validation.
 
 ## Context
 
@@ -32,41 +32,41 @@ first-class feature, not as an incidental bind-address toggle.
 
 ## Decision
 
-Do not expose WatchdogVPN SOCKS or HTTP proxy service to LAN devices from the
-current v2.0 mainline runtime.
+Do not expose WatchdogVPN SOCKS or HTTP proxy service to LAN devices by
+default.
 
-The sing-box SOCKS and HTTP inbounds must remain loopback-only. DNS hijack
-listeners also remain loopback-only. No `0.0.0.0`, `::`, LAN interface, or
-wildcard listener is part of the supported v2.0 configuration.
+The default sing-box SOCKS and HTTP inbounds must remain loopback-only. DNS
+hijack listeners also remain loopback-only. No `0.0.0.0`, `::`, implicit LAN
+interface or wildcard listener is part of the default supported v2.0
+configuration.
 
-LAN proxy sharing and full LAN gateway/router mode are promoted to the
-dedicated Phase 20 track, before the final Full CLI phase. That work must be
+LAN proxy sharing and full LAN gateway/router mode were promoted to the
+dedicated Phase 20 track, before the final Full CLI phase. That work was
 developed on a separate branch, validated in VM network scenarios only, and
-merged back to `main` only after the branch proves the feature is correct,
-secure and fully validated.
+merged back to `main` only after the branch proved the feature correct, secure
+and fully validated.
 
 Phase 20 Task 20.1 opened that track with
-`docs/phase-20-task-20-1-lan-sharing-threat-model.md`. Task 20.3 implements
-authenticated LAN SOCKS/HTTP proxy inbounds on the dedicated Phase 20 branch
-only. Task 20.5 accepts gateway/router mode for the same dedicated branch under
+`docs/phase-20-task-20-1-lan-sharing-threat-model.md`. Task 20.3 implemented
+authenticated LAN SOCKS/HTTP proxy inbounds. Task 20.5 accepted
+gateway/router mode under
 `docs/phase-20-task-20-5-gateway-router-design-gate.md`, with
 disabled-by-default IPv4 forwarding/NAT, explicit interface selection, manual
 client setup, DNS and kill-switch contracts, reversible firewall ownership and
-VM-only validation. The work is still not part of `main`, and it does not
-authorize wildcard binds, automatic DHCP/router mutation, IPv6 forwarding or
-persistent forwarding changes.
+VM-only validation. Task 20.7 closed the final VM matrix and security audit in
+`docs/qa-audit-2026-07-08-phase-20-lan-sharing-gateway.md`. The accepted
+implementation does not authorize wildcard binds, automatic DHCP/router
+mutation, IPv6 forwarding or persistent forwarding changes.
 
 ## Consequences
 
 - No default LAN exposure is introduced.
 - WatchdogVPN avoids creating an accidental unauthenticated LAN proxy path.
-- LAN sharing remains a planned core capability, but only through the dedicated
-  Phase 20 design and validation track before Full CLI.
-- Task 20.3 satisfies the initial authenticated proxy-listener requirement on
-  the branch, and Task 20.5 decides that gateway/router remains in Phase 20
-  instead of being split again.
+- LAN sharing is a validated core capability, but remains disabled by default.
+- Task 20.3 satisfies the initial authenticated proxy-listener requirement,
+  and Task 20.5 decided that gateway/router remained in Phase 20 instead of
+  being split again.
 - Gateway/router implementation must stay disabled by default, explicit,
-  reversible and VM-validated; Task 20.7 still owns final matrix validation and
-  the no-HIGH/MEDIUM merge gate.
+  reversible and VM-validated.
 - Future work that adds LAN sharing must update this decision instead of
   weakening the existing localhost-only inbounds silently.
