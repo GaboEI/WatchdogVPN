@@ -141,8 +141,9 @@ installed-VM validation was run immediately.
 Results:
 
 - `./update.sh --yes` completed after maintainer-provided sudo validation.
-- `./doctor.sh` reported installed/source match at
-  `45a0cdc2b85a7b2e25a0a160af86fbb7154dcd36`, daemon IPC reachable, `FAIL=0`.
+- After committing the runtime change, `./doctor.sh` reported installed/source
+  match at `386061bd34e8e1b6b2bcde5506ee6b89e510ff89`, daemon IPC reachable,
+  `FAIL=0`.
 - Installed `watchdog ruleset status --json` loaded a temporary trust registry.
 - Installed `watchdog ruleset refresh --referenced-only --force --json` cached a
   built-in rule set and reported `state=loaded`.
