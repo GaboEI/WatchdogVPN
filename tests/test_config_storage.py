@@ -113,9 +113,12 @@ class ConfigStorageTests(unittest.TestCase):
     def test_state_manager_rejects_invalid_routing_fields(self) -> None:
         invalid_docs = [
             'routing_policy = "maybe"\n',
+            'capture_modes = ""\n',
             'capture_modes = "local_proxy,unknown"\n',
             'capture_modes = "local_proxy,local_proxy"\n',
             'capture_modes = "system_proxy"\n',
+            'capture_modes = "tun"\n',
+            'capture_modes = "tun,system_proxy"\n',
             'default_route_action = "group:alpha"\n',
         ]
         with tempfile.TemporaryDirectory() as tmp:
@@ -145,6 +148,26 @@ class ConfigStorageTests(unittest.TestCase):
             state = StateManager(path).load()
 
             self.assertEqual(state["capture_modes"], "local_proxy,system_proxy")
+
+    def test_state_manager_accepts_tun_with_local_and_system_proxy_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        'routing_state_version = "1"',
+                        'routing_policy = "rule"',
+                        'capture_modes = "local_proxy,tun,system_proxy"',
+                        'default_route_action = "current"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            state = StateManager(path).load()
+
+            self.assertEqual(state["capture_modes"], "local_proxy,tun,system_proxy")
 
     def test_rollback_active_mode_refuses_non_equivalent_shape(self) -> None:
         with self.assertRaises(PersistentValidationError):

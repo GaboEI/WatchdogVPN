@@ -51,7 +51,16 @@ class CliConfigCommandTests(unittest.TestCase):
             result = self.run_watchdog(["config", "set", "mode", "global", "--json"], tmp)
             data = json.loads(result.stdout)
             self.assertEqual(
-                data,
+                {
+                    key: data[key]
+                    for key in (
+                        "active_mode",
+                        "routing_state_version",
+                        "routing_policy",
+                        "capture_modes",
+                        "default_route_action",
+                    )
+                },
                 {
                     "active_mode": "global",
                     "routing_state_version": "1",
@@ -60,6 +69,8 @@ class CliConfigCommandTests(unittest.TestCase):
                     "default_route_action": "current",
                 },
             )
+            self.assertTrue(data["connectable"])
+            self.assertEqual(data["runtime_status"], "connectable")
 
     def test_set_mode_text_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -83,6 +94,57 @@ class CliConfigCommandTests(unittest.TestCase):
             result = self.run_watchdog(["config", "set", "mode", "bogus"], tmp, check=False)
             self.assertEqual(result.returncode, 65)
             self.assertIn("mode must be one of", result.stderr)
+
+    def test_set_routing_policy_capture_modes_and_default_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = self.run_watchdog(["config", "set", "routing-policy", "global", "--json"], tmp)
+            capture = self.run_watchdog(["config", "set", "capture-modes", "local_proxy,tun", "--json"], tmp)
+            action = self.run_watchdog(["config", "set", "default-route-action", "direct", "--json"], tmp)
+
+            state_content = (Path(tmp) / "state.toml").read_text(encoding="utf-8")
+
+        self.assertEqual(json.loads(policy.stdout)["routing_policy"], "global")
+        self.assertEqual(json.loads(capture.stdout)["capture_modes"], ["local_proxy", "tun"])
+        self.assertEqual(json.loads(action.stdout)["default_route_action"], "direct")
+        self.assertIn('routing_policy = "global"', state_content)
+        self.assertIn('capture_modes = "local_proxy,tun"', state_content)
+        self.assertIn('default_route_action = "direct"', state_content)
+
+    def test_set_capture_modes_rejects_no_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["config", "set", "capture-modes", ""], tmp, check=False)
+
+        self.assertEqual(result.returncode, 70)
+        self.assertIn("capture_modes must include at least one capture mode", result.stderr)
+
+    def test_set_system_proxy_capture_is_representable_but_not_connectable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "capture-modes", "local_proxy,system_proxy", "--json"],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["capture_modes"], ["local_proxy", "system_proxy"])
+        self.assertFalse(data["connectable"])
+        self.assertEqual(data["runtime_status"], "representable-fail-closed")
+
+    def test_routing_contract_reports_capture_coexistence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["config", "routing-contract", "--json"], tmp)
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["current"]["routing_policy"], "rule")
+        capture_modes = {
+            tuple(item["capture_modes"]): item
+            for item in data["contract"]["capture_modes"]
+        }
+        self.assertTrue(capture_modes[("local_proxy",)]["connectable"])
+        self.assertTrue(capture_modes[("local_proxy", "tun")]["connectable"])
+        self.assertFalse(capture_modes[("local_proxy", "system_proxy")]["connectable"])
+        invalid = {tuple(item["capture_modes"]): item["reason"] for item in data["contract"]["invalid_capture_modes"]}
+        self.assertIn((), invalid)
+        self.assertIn(("system_proxy",), invalid)
 
     def test_set_mode_preserves_other_state_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

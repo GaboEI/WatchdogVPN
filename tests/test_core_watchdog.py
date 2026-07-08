@@ -1286,6 +1286,102 @@ class WatchdogIntegrationTests(unittest.TestCase):
             runtime.connect(self.profile)
         driver.connect_mock.assert_not_called()
 
+    def test_connect_options_cover_capture_coexistence_contract(self) -> None:
+        cases = [
+            (
+                "rule-local-proxy",
+                {
+                    "routing_policy": "rule",
+                    "capture_modes": "local_proxy",
+                    "default_route_action": "current",
+                },
+                "rules",
+                "current_profile",
+            ),
+            (
+                "rule-tun",
+                {
+                    "routing_policy": "rule",
+                    "capture_modes": "local_proxy,tun",
+                    "default_route_action": "current",
+                },
+                "rules",
+                "current_profile",
+            ),
+            (
+                "global-local-proxy",
+                {
+                    "routing_policy": "global",
+                    "capture_modes": "local_proxy",
+                    "default_route_action": "current",
+                },
+                "global",
+                "current_profile",
+            ),
+            (
+                "global-tun",
+                {
+                    "routing_policy": "global",
+                    "capture_modes": "local_proxy,tun",
+                    "default_route_action": "current",
+                },
+                "tun",
+                "current_profile",
+            ),
+            (
+                "local-proxy-direct-action",
+                {
+                    "routing_policy": "global",
+                    "capture_modes": "local_proxy",
+                    "default_route_action": "direct",
+                },
+                "direct",
+                "direct",
+            ),
+            (
+                "local-proxy-block-action",
+                {
+                    "routing_policy": "global",
+                    "capture_modes": "local_proxy",
+                    "default_route_action": "block",
+                },
+                "rules",
+                "block",
+            ),
+        ]
+        runtime = self._make_runtime(FakeDriver())
+        for name, routing_shape, expected_mode, expected_final_policy in cases:
+            with self.subTest(name=name):
+                self.state_manager.save(
+                    {
+                        **self.state_manager.load(),
+                        "routing_state_version": "1",
+                        **routing_shape,
+                    }
+                )
+
+                options = runtime._connect_options()
+
+                self.assertEqual(options["mode"], expected_mode)
+                self.assertEqual(options["final_policy"], expected_final_policy)
+
+    def test_connect_refuses_tun_system_proxy_until_system_proxy_runtime_exists(self) -> None:
+        driver = FakeDriver()
+        self.state_manager.save(
+            {
+                **self.state_manager.load(),
+                "routing_state_version": "1",
+                "routing_policy": "global",
+                "capture_modes": "local_proxy,tun,system_proxy",
+                "default_route_action": "current",
+            }
+        )
+        runtime = self._make_runtime(driver)
+
+        with self.assertRaisesRegex(RuntimeError, "system_proxy capture is not implemented yet"):
+            runtime.connect(self.profile)
+        driver.connect_mock.assert_not_called()
+
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_returns_reconnecting_below_attempt_threshold(self, _hc) -> None:
         driver = FakeDriver()

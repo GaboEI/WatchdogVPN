@@ -43,6 +43,16 @@ ALLOWED_ACTIVE_MODES = {"rules", "global", "direct", "tun", "proxy"}
 SUPPORTED_ROUTING_STATE_VERSION = "1"
 ALLOWED_ROUTING_POLICIES = {"rule", "global"}
 ALLOWED_CAPTURE_MODES = {"local_proxy", "tun", "system_proxy"}
+CONNECTABLE_CAPTURE_MODE_SETS = {
+    ("local_proxy",),
+    ("local_proxy", "tun"),
+}
+REPRESENTABLE_CAPTURE_MODE_SETS = {
+    *CONNECTABLE_CAPTURE_MODE_SETS,
+    ("local_proxy", "system_proxy"),
+    ("local_proxy", "system_proxy", "tun"),
+    ("local_proxy", "tun", "system_proxy"),
+}
 ALLOWED_DEFAULT_ROUTE_ACTIONS = {"current", "direct", "block"}
 ALLOWED_LANGUAGE_MODES = {"system", "manual"}
 STATE_BOOL_FIELDS = {"app_autostart_enabled", "vpn_autoconnect_enabled"}
@@ -199,6 +209,8 @@ def routing_state_from_legacy_mode(mode: str) -> dict[str, str]:
 
 def parse_capture_modes(value: str) -> tuple[str, ...]:
     modes = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not modes:
+        raise PersistentValidationError("capture_modes must include at least one capture mode")
     if len(set(modes)) != len(modes):
         raise PersistentValidationError("capture_modes must not contain duplicate entries")
     unknown = sorted(set(modes) - ALLOWED_CAPTURE_MODES)
@@ -207,7 +219,14 @@ def parse_capture_modes(value: str) -> tuple[str, ...]:
         raise PersistentValidationError(f"capture_modes contains unsupported entries: {joined}")
     if "system_proxy" in modes and "local_proxy" not in modes:
         raise PersistentValidationError("system_proxy capture requires local_proxy")
+    if modes not in REPRESENTABLE_CAPTURE_MODE_SETS:
+        supported = "; ".join(",".join(item) for item in sorted(REPRESENTABLE_CAPTURE_MODE_SETS))
+        raise PersistentValidationError(f"capture_modes must be one of: {supported}")
     return modes
+
+
+def capture_modes_connectable(modes: tuple[str, ...]) -> bool:
+    return modes in CONNECTABLE_CAPTURE_MODE_SETS
 
 
 def _validate_routing_fields(state: dict[str, Any], path: Path) -> None:

@@ -23,7 +23,15 @@ from config.paths import resolve_config_dir
 from config.persistence import PersistentStoreError, dump_json
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderLimitError, ProviderStore
-from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager, parse_capture_modes
+from config.state_manager import (
+    ALLOWED_ACTIVE_MODES,
+    ALLOWED_DEFAULT_ROUTE_ACTIONS,
+    ALLOWED_ROUTING_POLICIES,
+    CONNECTABLE_CAPTURE_MODE_SETS,
+    StateManager,
+    capture_modes_connectable,
+    parse_capture_modes,
+)
 from dns.hijack import DNSHijackController, DNSHijackError
 from dns.models import DNSChannelName, DNSMode, DNSPolicy
 from dns.resolver_inventory import detect_resolver_manager
@@ -380,6 +388,13 @@ def _build_parser() -> argparse.ArgumentParser:
     config_set_parser.add_argument("value", help="Configuration value")
     config_set_parser.add_argument("--json", action="store_true", help="Print JSON")
     config_set_parser.set_defaults(handler=_config_set)
+
+    config_routing_parser = config_subparsers.add_parser(
+        "routing-contract",
+        help="Show routing and capture coexistence contract",
+    )
+    config_routing_parser.add_argument("--json", action="store_true", help="Print JSON")
+    config_routing_parser.set_defaults(handler=_config_routing_contract)
 
     stats_parser = subparsers.add_parser("stats", help="Inspect local observability metrics")
     stats_subparsers = stats_parser.add_subparsers(dest="stats_command")
@@ -1080,8 +1095,18 @@ def _node_group_auto_test(args: argparse.Namespace) -> int:
 def _config_set(args: argparse.Namespace) -> int:
     if args.key == "mode":
         return _config_set_mode_value(args.value, args.json)
+    if args.key in {"routing-policy", "capture-modes", "default-route-action"}:
+        return _config_set_routing_value(args.key, args.value, args.json)
     if args.key not in CONFIG_SET_KEYS:
-        supported = ", ".join(["mode", *sorted(CONFIG_SET_KEYS)])
+        supported = ", ".join(
+            [
+                "mode",
+                "routing-policy",
+                "capture-modes",
+                "default-route-action",
+                *sorted(CONFIG_SET_KEYS),
+            ]
+        )
         raise ParseError(f"unsupported config key: {args.key} (supported: {supported})")
 
     config_store = AppConfig()
@@ -1098,6 +1123,34 @@ def _config_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def _config_set_routing_value(key: str, value: str, json_output: bool) -> int:
+    manager = StateManager()
+    state = manager.load()
+    if key == "routing-policy":
+        if value not in ALLOWED_ROUTING_POLICIES:
+            supported = ", ".join(sorted(ALLOWED_ROUTING_POLICIES))
+            raise ParseError(f"routing-policy must be one of: {supported}")
+        state["routing_policy"] = value
+    elif key == "capture-modes":
+        modes = parse_capture_modes(value)
+        state["capture_modes"] = ",".join(modes)
+    elif key == "default-route-action":
+        if value not in ALLOWED_DEFAULT_ROUTE_ACTIONS:
+            supported = ", ".join(sorted(ALLOWED_DEFAULT_ROUTE_ACTIONS))
+            raise ParseError(f"default-route-action must be one of: {supported}")
+        state["default_route_action"] = value
+    else:  # pragma: no cover - guarded by caller
+        raise ParseError(f"unsupported routing key: {key}")
+    manager.save(state)
+    data = _routing_state_data(manager.load())
+    if json_output:
+        _print_json(data)
+    else:
+        print("Routing state updated.")
+        _print_routing_state_summary(data)
+    return 0
+
+
 def _config_set_mode_value(mode: str, json_output: bool) -> int:
     if mode not in ALLOWED_ACTIVE_MODES:
         supported = ", ".join(sorted(ALLOWED_ACTIVE_MODES))
@@ -1105,13 +1158,7 @@ def _config_set_mode_value(mode: str, json_output: bool) -> int:
     manager = StateManager()
     manager.set("active_mode", mode)
     state = manager.load()
-    data = {
-        "active_mode": state["active_mode"],
-        "routing_state_version": state["routing_state_version"],
-        "routing_policy": state["routing_policy"],
-        "capture_modes": list(parse_capture_modes(state["capture_modes"])),
-        "default_route_action": state["default_route_action"],
-    }
+    data = _routing_state_data(state)
     if json_output:
         _print_json(data)
     else:
@@ -1122,6 +1169,91 @@ def _config_set_mode_value(mode: str, json_output: bool) -> int:
             f"default_route_action={state['default_route_action']}"
         )
     return 0
+
+
+def _config_routing_contract(args: argparse.Namespace) -> int:
+    state = StateManager().load()
+    data = {
+        "current": _routing_state_data(state),
+        "contract": {
+            "routing_policies": sorted(ALLOWED_ROUTING_POLICIES),
+            "route_actions": sorted(ALLOWED_DEFAULT_ROUTE_ACTIONS),
+            "capture_modes": [
+                {
+                    "capture_modes": list(modes),
+                    "connectable": capture_modes_connectable(modes),
+                    "status": "connectable" if capture_modes_connectable(modes) else "representable-fail-closed",
+                    "reason": (
+                        "supported by current runtime"
+                        if capture_modes_connectable(modes)
+                        else "system_proxy is representable but runtime remains fail-closed"
+                    ),
+                }
+                for modes in [
+                    ("local_proxy",),
+                    ("local_proxy", "tun"),
+                    ("local_proxy", "system_proxy"),
+                    ("local_proxy", "tun", "system_proxy"),
+                ]
+            ],
+            "invalid_capture_modes": [
+                {
+                    "capture_modes": [],
+                    "reason": "at least one capture mode is required",
+                },
+                {
+                    "capture_modes": ["system_proxy"],
+                    "reason": "system_proxy requires local_proxy",
+                },
+                {
+                    "capture_modes": ["tun", "system_proxy"],
+                    "reason": "system_proxy requires local_proxy",
+                },
+            ],
+            "notes": [
+                "direct is a route action, not a capture mode",
+                "global ignores route rules and uses default_route_action for captured traffic",
+                "rule evaluates route rules and falls back to default_route_action on no match",
+                "LAN proxy sharing and LAN gateway/router mode belong to Phase 20",
+            ],
+        },
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        _print_routing_state_summary(data["current"])
+        print("Capture coexistence:")
+        for item in data["contract"]["capture_modes"]:
+            print(
+                "  "
+                f"{','.join(item['capture_modes'])}: {item['status']} - {item['reason']}"
+            )
+        print("Invalid capture examples:")
+        for item in data["contract"]["invalid_capture_modes"]:
+            rendered = ",".join(item["capture_modes"]) or "<none>"
+            print(f"  {rendered}: {item['reason']}")
+    return 0
+
+
+def _routing_state_data(state: dict[str, object]) -> dict[str, object]:
+    modes = parse_capture_modes(str(state["capture_modes"]))
+    return {
+        "active_mode": state["active_mode"],
+        "routing_state_version": state["routing_state_version"],
+        "routing_policy": state["routing_policy"],
+        "capture_modes": list(modes),
+        "default_route_action": state["default_route_action"],
+        "connectable": capture_modes_connectable(modes),
+        "runtime_status": "connectable" if capture_modes_connectable(modes) else "representable-fail-closed",
+    }
+
+
+def _print_routing_state_summary(data: dict[str, object]) -> None:
+    print(f"Routing policy: {data['routing_policy']}")
+    print(f"Capture modes: {','.join(str(item) for item in data['capture_modes'])}")
+    print(f"Default route action: {data['default_route_action']}")
+    print(f"Runtime status: {data['runtime_status']}")
+    print("Compatibility active_mode: display only")
 
 
 def _parse_config_value(key: str, value: str) -> int | str:

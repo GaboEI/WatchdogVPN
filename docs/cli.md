@@ -20,6 +20,7 @@ watchdogvpn update-check
 watchdogvpn update-plan
 watchdogvpn runtime-update --preflight
 watchdogvpn config get [section.key]
+watchdog config routing-contract [--json]
 watchdogvpn version
 watchdogvpn help
 watchdogvpn --help
@@ -30,6 +31,9 @@ Configuration commands:
 ```sh
 watchdogvpn config set section.key value
 watchdogvpn config reset [language|tui|reporting|all] --yes
+watchdog config set routing-policy <rule|global>
+watchdog config set capture-modes <local_proxy|local_proxy,tun|local_proxy,system_proxy|local_proxy,tun,system_proxy>
+watchdog config set default-route-action <current|direct|block>
 ```
 
 Preflight-only state-changing commands:
@@ -253,6 +257,38 @@ Rule-set references are not expanded by the Python diagnostic. They are
 reported as unevaluated with trust/cache status loaded from
 `ruleset-trust.json`, including missing policy, `stale`, `failed`,
 `fail-closed` and `warn-and-skip` states when available.
+
+## Routing And Capture Contract
+
+### `watchdog config routing-contract`
+
+Shows the Phase 19 routing/capture contract without changing runtime state.
+
+```sh
+watchdog config routing-contract
+watchdog config routing-contract --json
+```
+
+The command reports the current routing state, connectable capture-mode sets,
+representable fail-closed system-proxy intent, invalid capture examples, and
+notes that `direct` is a route action rather than a capture mode.
+
+Explicit routing-shape setters are available for operator validation and future
+CLI wiring:
+
+```sh
+watchdog config set routing-policy rule
+watchdog config set routing-policy global
+watchdog config set capture-modes local_proxy
+watchdog config set capture-modes local_proxy,tun
+watchdog config set default-route-action current
+watchdog config set default-route-action direct
+watchdog config set default-route-action block
+```
+
+`system_proxy` may be represented only with `local_proxy`, but runtime connect
+remains fail-closed until the dedicated system-proxy apply/restore task is
+implemented and installed-VM validated.
 
 ## Rule-Set Runtime Lifecycle
 
