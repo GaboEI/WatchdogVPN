@@ -1,7 +1,7 @@
 # Phase 20 Task 20.6 - Gateway/Router Mode Implementation
 
 Date: 2026-07-08
-Status: in validation
+Status: closed
 
 ## Scope
 
@@ -98,8 +98,8 @@ Local unit coverage pins:
 - forwarding snapshot restore on cleanup;
 - connection state reporting active gateway details.
 
-Installed VM validation is required before Task 20.6 can close because this
-task mutates real forwarding and firewall state.
+Installed VM validation was required because this task mutates real forwarding
+and firewall state.
 
 The focused VM helper is:
 
@@ -117,3 +117,20 @@ It applies the installed gateway nftables/ip-forwarding runtime directly,
 checks that the table contains the interface, client CIDR, TUN interface,
 masquerade and reject rules, then verifies cleanup removes the table and
 restores the prior `net.ipv4.ip_forward` value.
+
+Installed VM validation on `archvm` passed with installed/source match at
+`e36e4c6a9a2284c1f6757799ef9c50806975d178`.
+
+Observed result:
+
+- `./doctor.sh`: `FAIL=0`, `Result: WARN` only for known environment warnings;
+- pre-state `net.ipv4.ip_forward = 0`;
+- pre-state gateway nftables table absent;
+- pre-state policy rules: local/main/default only;
+- helper markers:
+  - `PHASE20_6_GATEWAY_APPLY_OK`;
+  - `PHASE20_6_GATEWAY_CLEANUP_OK`;
+  - `PHASE20_6_LAN_GATEWAY_VM_VALIDATION_OK`;
+- post-state `net.ipv4.ip_forward = 0`;
+- post-state gateway nftables table absent;
+- post-state policy rules and routes unchanged.
