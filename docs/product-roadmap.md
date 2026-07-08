@@ -98,6 +98,11 @@ inside Phase 19. Until that phase lands, validators reject chain syntax while
 the route-action model remains open for loop prevention, DNS ownership, hop
 health checks, failure behavior and installed-VM validation.
 
+Phase 21.5 Task 21.5.1 defines the accepted chain contract: `chain:<id>` is a
+first-class route action only after model validation and runtime mapping land;
+v2.0 hops are explicit profile or node-group hops; nested chains are rejected;
+DNS is chain-owned by default; unresolved chains fail closed.
+
 ### LAN Sharing and Gateway Mode
 
 WatchdogVPN supports network-operator workflows where the host can
