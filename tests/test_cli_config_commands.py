@@ -193,6 +193,49 @@ class CliConfigCommandTests(unittest.TestCase):
                 {"key": "rotation.test_url", "value": "https://example.net/probe"},
             )
 
+    def test_set_lan_sharing_bind_address_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "lan_sharing.bind_address", "192.168.0.228", "--json"],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            self.assertEqual(data, {"key": "lan_sharing.bind_address", "value": "192.168.0.228"})
+
+    def test_set_lan_sharing_bool_uses_boolean_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "lan_sharing.firewall_managed", "true", "--json"],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            self.assertEqual(data, {"key": "lan_sharing.firewall_managed", "value": True})
+
+    def test_set_lan_sharing_rejects_wildcard_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "lan_sharing.bind_address", "0.0.0.0"],
+                tmp,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 70)
+            self.assertIn("lan_sharing.bind_address must not be a wildcard address", result.stderr)
+
+    def test_set_lan_sharing_enabled_rejects_missing_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["config", "set", "lan_sharing.mode", "proxy"], tmp)
+            result = self.run_watchdog(
+                ["config", "set", "lan_sharing.enabled", "true"],
+                tmp,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 70)
+            self.assertIn("lan_sharing.enabled requires an explicit bind_address", result.stderr)
+
     def test_set_rejects_unsupported_config_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(

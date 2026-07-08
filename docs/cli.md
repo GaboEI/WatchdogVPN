@@ -34,6 +34,13 @@ watchdogvpn config reset [language|tui|reporting|all] --yes
 watchdog config set routing-policy <rule|global>
 watchdog config set capture-modes <local_proxy|local_proxy,tun|local_proxy,system_proxy|local_proxy,tun,system_proxy>
 watchdog config set default-route-action <current|direct|block>
+watchdog config set lan_sharing.enabled <true|false>
+watchdog config set lan_sharing.mode <disabled|proxy>
+watchdog config set lan_sharing.bind_address <ip-address>
+watchdog config set lan_sharing.socks_port <port>
+watchdog config set lan_sharing.http_port <port>
+watchdog config set lan_sharing.authentication_required <true|false>
+watchdog config set lan_sharing.firewall_managed <true|false>
 ```
 
 Preflight-only state-changing commands:
@@ -289,6 +296,38 @@ watchdog config set default-route-action block
 `system_proxy` may be represented only with `local_proxy`, but runtime connect
 remains fail-closed until the dedicated system-proxy apply/restore task is
 implemented and installed-VM validated.
+
+## Phase 20 LAN Sharing Scaffold
+
+Phase 20 stores LAN sharing intent under `lan_sharing`, but Task 20.2 does not
+enable any runtime LAN listener, firewall rule, forwarding, DNS mutation or
+gateway behavior.
+
+Supported scaffold keys:
+
+```sh
+watchdog config set lan_sharing.enabled <true|false>
+watchdog config set lan_sharing.mode <disabled|proxy>
+watchdog config set lan_sharing.bind_address <ip-address>
+watchdog config set lan_sharing.socks_port <port>
+watchdog config set lan_sharing.http_port <port>
+watchdog config set lan_sharing.authentication_required <true|false>
+watchdog config set lan_sharing.firewall_managed <true|false>
+```
+
+Validation rules:
+
+- LAN sharing is disabled by default.
+- `mode` must be `disabled` or `proxy`.
+- `bind_address` must be an IP address when set.
+- wildcard binds such as `0.0.0.0` and `::` are rejected outside explicit test
+  fixtures.
+- enabled LAN sharing requires `mode = proxy`, an explicit non-loopback
+  `bind_address`, and `authentication_required = true`.
+- SOCKS and HTTP ports must be in `1..65535` and must differ.
+
+Until later Phase 20 tasks implement runtime behavior, these keys are
+configuration scaffold only. Setting them does not expose a LAN service.
 
 ## Rule-Set Runtime Lifecycle
 

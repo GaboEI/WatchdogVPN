@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,15 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "test_timeout_seconds": 5,
         "latency_max_stale_seconds": 300,
     },
+    "lan_sharing": {
+        "enabled": False,
+        "mode": "disabled",
+        "bind_address": "",
+        "socks_port": 2080,
+        "http_port": 2081,
+        "authentication_required": True,
+        "firewall_managed": False,
+    },
 }
 
 CONFIG_BOOL_FIELDS = {
@@ -57,6 +67,9 @@ CONFIG_BOOL_FIELDS = {
     ("kill_switch", "block_ipv6"),
     ("kill_switch", "allow_lan"),
     ("rotation", "enabled"),
+    ("lan_sharing", "enabled"),
+    ("lan_sharing", "authentication_required"),
+    ("lan_sharing", "firewall_managed"),
 }
 CONFIG_INT_FIELDS = {
     ("watchdog", "check_interval_seconds"),
@@ -67,12 +80,16 @@ CONFIG_INT_FIELDS = {
     ("rotation", "scheduled_interval_hours"),
     ("rotation", "test_timeout_seconds"),
     ("rotation", "latency_max_stale_seconds"),
+    ("lan_sharing", "socks_port"),
+    ("lan_sharing", "http_port"),
 }
 CONFIG_STRING_FIELDS = {
     ("kill_switch", "tunnel_interface"),
     ("kill_switch", "on_manual_disconnect"),
     ("dns", "mode"),
     ("rotation", "test_url"),
+    ("lan_sharing", "mode"),
+    ("lan_sharing", "bind_address"),
 }
 
 MIN_WATCHDOG_CHECK_INTERVAL_SECONDS = 5
@@ -189,4 +206,49 @@ def _validate_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
         raise PersistentValidationError("rotation.test_url must start with http:// or https://")
     if validated["rotation"]["test_timeout_seconds"] < 1:
         raise PersistentValidationError("rotation.test_timeout_seconds must be at least 1")
+    _validate_lan_sharing(validated["lan_sharing"])
     return validated
+
+
+def _validate_lan_sharing(config: dict[str, Any]) -> None:
+    mode = config["mode"]
+    if mode not in {"disabled", "proxy"}:
+        raise PersistentValidationError("lan_sharing.mode must be one of: disabled, proxy")
+
+    socks_port = config["socks_port"]
+    http_port = config["http_port"]
+    for key, port in (("socks_port", socks_port), ("http_port", http_port)):
+        if port < 1 or port > 65535:
+            raise PersistentValidationError(f"lan_sharing.{key} must be between 1 and 65535")
+    if socks_port == http_port:
+        raise PersistentValidationError("lan_sharing.socks_port and lan_sharing.http_port must differ")
+
+    bind_address = config["bind_address"].strip()
+    config["bind_address"] = bind_address
+    if bind_address:
+        _validate_lan_bind_address(bind_address)
+    if not config["enabled"]:
+        return
+
+    if mode != "proxy":
+        raise PersistentValidationError("lan_sharing.enabled requires lan_sharing.mode = 'proxy'")
+    if not bind_address:
+        raise PersistentValidationError("lan_sharing.enabled requires an explicit bind_address")
+    address = ipaddress.ip_address(bind_address)
+    if address.is_loopback:
+        raise PersistentValidationError("lan_sharing.bind_address must be a non-loopback LAN address when enabled")
+    if not config["authentication_required"]:
+        raise PersistentValidationError("lan_sharing.enabled requires authentication_required = true")
+
+
+def _validate_lan_bind_address(value: str) -> None:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise PersistentValidationError("lan_sharing.bind_address must be an IP address") from exc
+    if address.is_unspecified:
+        if os.environ.get("WATCHDOGVPN_TEST_ALLOW_WILDCARD_LAN_BIND") == "1":
+            return
+        raise PersistentValidationError("lan_sharing.bind_address must not be a wildcard address")
+    if address.is_multicast:
+        raise PersistentValidationError("lan_sharing.bind_address must not be multicast")

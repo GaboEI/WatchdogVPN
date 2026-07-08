@@ -80,6 +80,13 @@ CONFIG_SET_KEYS = frozenset(
         "rotation.test_url",
         "rotation.test_timeout_seconds",
         "rotation.latency_max_stale_seconds",
+        "lan_sharing.enabled",
+        "lan_sharing.mode",
+        "lan_sharing.bind_address",
+        "lan_sharing.socks_port",
+        "lan_sharing.http_port",
+        "lan_sharing.authentication_required",
+        "lan_sharing.firewall_managed",
     }
 )
 CONFIG_INT_SET_KEYS = frozenset(
@@ -88,6 +95,15 @@ CONFIG_INT_SET_KEYS = frozenset(
         "rotation.scheduled_interval_hours",
         "rotation.test_timeout_seconds",
         "rotation.latency_max_stale_seconds",
+        "lan_sharing.socks_port",
+        "lan_sharing.http_port",
+    }
+)
+CONFIG_BOOL_SET_KEYS = frozenset(
+    {
+        "lan_sharing.enabled",
+        "lan_sharing.authentication_required",
+        "lan_sharing.firewall_managed",
     }
 )
 VISIBLE_STATS_COUNTER_PREFIXES = (
@@ -1257,9 +1273,16 @@ def _print_routing_state_summary(data: dict[str, object]) -> None:
     print("Compatibility active_mode: display only")
 
 
-def _parse_config_value(key: str, value: str) -> int | str:
+def _parse_config_value(key: str, value: str) -> bool | int | str:
     if key == "rotation.scheduled_interval_hours" and value == "off":
         return 0
+    if key in CONFIG_BOOL_SET_KEYS:
+        lowered = value.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        raise ParseError(f"{key} must be true or false")
     if key in CONFIG_INT_SET_KEYS:
         try:
             return int(value)
