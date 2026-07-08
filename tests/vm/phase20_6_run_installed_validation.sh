@@ -20,12 +20,13 @@ echo "== install =="
 ./update.sh --yes
 
 echo "== installed/source check =="
-if watchdog doctor --json >/tmp/watchdogvpn-phase20-6-doctor.json; then
-  python3 -m json.tool /tmp/watchdogvpn-phase20-6-doctor.json | sed -n '1,160p'
+if ./doctor.sh | tee /tmp/watchdogvpn-phase20-6-doctor.txt; then
+  :
 else
-  cat /tmp/watchdogvpn-phase20-6-doctor.json
+  cat /tmp/watchdogvpn-phase20-6-doctor.txt
   exit 1
 fi
+grep -q "FAIL=0" /tmp/watchdogvpn-phase20-6-doctor.txt
 
 echo "== pre state =="
 cat /proc/sys/net/ipv4/ip_forward
