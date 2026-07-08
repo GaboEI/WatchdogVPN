@@ -9,12 +9,30 @@ from .models import (
     NetworkProfile,
     NetworkTrust,
 )
+from .monitor import (
+    ActiveNetwork,
+    ConnectivityState,
+    MatchedProfile,
+    MonitorStatus,
+    NetworkContextDecision,
+    NetworkContextMonitor,
+    NetworkObservation,
+    ProfileMatchStatus,
+    evaluate_network_context,
+)
 from .store import NetworkContextPolicyLoadResult, NetworkContextPolicyStore
 
 __all__ = [
     "NETWORK_CONTEXT_POLICY_SCHEMA_VERSION",
     "ActionIntent",
+    "ActiveNetwork",
+    "ConnectivityState",
+    "MatchedProfile",
+    "MonitorStatus",
     "NetworkContextPolicy",
+    "NetworkContextDecision",
+    "NetworkContextMonitor",
+    "NetworkObservation",
     "NetworkContextPolicyLoadResult",
     "NetworkContextPolicyStore",
     "NetworkContextTrigger",
@@ -23,4 +41,6 @@ __all__ = [
     "NetworkPolicyAction",
     "NetworkProfile",
     "NetworkTrust",
+    "ProfileMatchStatus",
+    "evaluate_network_context",
 ]
