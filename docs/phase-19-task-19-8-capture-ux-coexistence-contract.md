@@ -152,3 +152,20 @@ Additional maintainer-run installed VM validation passed:
 - Passive `ip -brief link`, `ip route`, `ip rule` and optional nft inspection
   showed only `lo` and `enp0s8`, default route via `192.168.0.1`, local/main/
   default policy rules, and no WatchdogVPN TUN/capture residue.
+
+Final post-refinement installed VM validation also passed:
+
+- External VPN was brought down before update and restored afterward.
+- Source and origin matched
+  `59565781e8dd8d63eaf6439378859e585d3b0b27`.
+- `./update.sh --yes` completed successfully.
+- `./doctor.sh` reported installed/source match at
+  `59565781e8dd8d63eaf6439378859e585d3b0b27`, daemon IPC reachable,
+  `OK=107 WARN=3 FAIL=0`.
+- Installed temporary-state smoke for
+  `watchdog config set capture-modes local_proxy,system_proxy --json` verified
+  `active_mode_role=compatibility-display-only`,
+  `runtime_status=representable-fail-closed`, and capture modes
+  `local_proxy,system_proxy`.
+- Passive route/interface proof again showed only `lo` and `enp0s8`, default
+  route via `192.168.0.1`, and policy rules limited to local/main/default.
