@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPolicyRule
 from app_policy.store import AppPolicyStore
+from config.app_config import AppConfig
 from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
@@ -46,6 +47,7 @@ class FakeDriver(BaseDriver):
         self.last_final_policy: str | None = None
         self.last_rule_set_tags = "unset"
         self.last_rule_set_declarations = "unset"
+        self.last_lan_proxy = "unset"
 
     def connect(
         self,
@@ -58,6 +60,7 @@ class FakeDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags=None,
         rule_set_declarations=None,
+        lan_proxy=None,
     ) -> bool:
         self.last_dns_policy = dns_policy
         self.last_mode = mode
@@ -66,6 +69,7 @@ class FakeDriver(BaseDriver):
         self.last_final_policy = final_policy
         self.last_rule_set_tags = rule_set_tags
         self.last_rule_set_declarations = rule_set_declarations
+        self.last_lan_proxy = lan_proxy
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -1379,6 +1383,58 @@ class WatchdogIntegrationTests(unittest.TestCase):
         runtime = self._make_runtime(driver)
 
         with self.assertRaisesRegex(RuntimeError, "system_proxy capture is not implemented yet"):
+            runtime.connect(self.profile)
+        driver.connect_mock.assert_not_called()
+
+    def test_connect_forwards_enabled_lan_proxy_runtime_config(self) -> None:
+        driver = FakeDriver()
+        config_path = Path(self.tmpdir.name) / "config.toml"
+        app_config = AppConfig(config_path)
+        config = app_config.load()
+        config["lan_sharing"].update(
+            {
+                "enabled": True,
+                "mode": "proxy",
+                "bind_address": "192.168.0.228",
+                "socks_port": 2080,
+                "http_port": 2081,
+                "authentication_required": True,
+                "firewall_managed": False,
+            }
+        )
+        app_config.save(config)
+        runtime = self._make_runtime(driver)
+        runtime.app_config = app_config
+        runtime._local_ip_addresses = Mock(return_value={"192.168.0.228"})
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_lan_proxy.bind_address, "192.168.0.228")
+        self.assertEqual(driver.last_lan_proxy.socks_port, 2080)
+        self.assertEqual(driver.last_lan_proxy.http_port, 2081)
+        self.assertEqual(driver.last_lan_proxy.username, "watchdogvpn")
+        self.assertTrue(driver.last_lan_proxy.password)
+        self.assertFalse(driver.last_lan_proxy.firewall_managed)
+
+    def test_connect_refuses_lan_proxy_bind_not_assigned_to_host(self) -> None:
+        driver = FakeDriver()
+        config_path = Path(self.tmpdir.name) / "config.toml"
+        app_config = AppConfig(config_path)
+        config = app_config.load()
+        config["lan_sharing"].update(
+            {
+                "enabled": True,
+                "mode": "proxy",
+                "bind_address": "192.168.0.228",
+                "authentication_required": True,
+            }
+        )
+        app_config.save(config)
+        runtime = self._make_runtime(driver)
+        runtime.app_config = app_config
+        runtime._local_ip_addresses = Mock(return_value={"10.0.0.5"})
+
+        with self.assertRaisesRegex(RuntimeError, "not assigned to this host"):
             runtime.connect(self.profile)
         driver.connect_mock.assert_not_called()
 

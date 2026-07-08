@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from app_policy.models import AppPolicy, AppPolicyRule
+from config.lan_sharing import LANProxyRuntimeConfig
 from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
 from drivers.singbox_driver import SingBoxDriver
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -112,6 +113,44 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertFalse(
             any(inbound.get("listen") in {"0.0.0.0", "::"} for inbound in config["inbounds"])
         )
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_lan_proxy_adds_authenticated_inbounds_and_preserves_loopback(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+        lan_proxy = LANProxyRuntimeConfig(
+            bind_address="192.168.0.228",
+            socks_port=2080,
+            http_port=2081,
+            username="watchdogvpn",
+            password="secret-pass",
+        )
+
+        config = self.driver.generate_singbox_config(profile, lan_proxy=lan_proxy)
+        inbounds = {inbound["tag"]: inbound for inbound in config["inbounds"]}
+
+        self.assertEqual(inbounds["watchdogvpn-socks-in"]["listen"], "127.0.0.1")
+        self.assertEqual(inbounds["watchdogvpn-http-in"]["listen"], "127.0.0.1")
+        self.assertEqual(inbounds["watchdogvpn-lan-socks-in"]["listen"], "192.168.0.228")
+        self.assertEqual(inbounds["watchdogvpn-lan-socks-in"]["listen_port"], 2080)
+        self.assertEqual(
+            inbounds["watchdogvpn-lan-socks-in"]["users"],
+            [{"username": "watchdogvpn", "password": "secret-pass"}],
+        )
+        self.assertEqual(inbounds["watchdogvpn-lan-http-in"]["listen"], "192.168.0.228")
+        self.assertEqual(inbounds["watchdogvpn-lan-http-in"]["listen_port"], 2081)
+        self.assertEqual(
+            inbounds["watchdogvpn-lan-http-in"]["users"],
+            [{"username": "watchdogvpn", "password": "secret-pass"}],
+        )
+        self.assertFalse(inbounds["watchdogvpn-lan-http-in"]["set_system_proxy"])
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)

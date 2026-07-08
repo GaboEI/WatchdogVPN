@@ -213,6 +213,59 @@ class CliConfigCommandTests(unittest.TestCase):
             data = json.loads(result.stdout)
             self.assertEqual(data, {"key": "lan_sharing.firewall_managed", "value": True})
 
+    def test_set_lan_sharing_enabled_warns_without_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["config", "set", "lan_sharing.mode", "proxy"], tmp)
+            self.run_watchdog(["config", "set", "lan_sharing.bind_address", "192.168.0.228"], tmp)
+            result = self.run_watchdog(
+                ["config", "set", "lan_sharing.enabled", "true", "--json"],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            self.assertEqual(data["key"], "lan_sharing.enabled")
+            self.assertIs(data["value"], True)
+            self.assertIn("authenticated SOCKS/HTTP listeners", data["warning"])
+            self.assertNotIn("password", json.dumps(data).lower())
+
+    def test_lan_sharing_credentials_do_not_create_secret_when_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["config", "lan-sharing-credentials", "--json"], tmp)
+
+            data = json.loads(result.stdout)
+            self.assertEqual(
+                data,
+                {
+                    "enabled": False,
+                    "username": None,
+                    "password_available": False,
+                    "secret_included": False,
+                },
+            )
+            self.assertFalse((Path(tmp) / "lan-sharing-credentials.json").exists())
+
+    def test_lan_sharing_credentials_require_explicit_secret_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["config", "set", "lan_sharing.mode", "proxy"], tmp)
+            self.run_watchdog(["config", "set", "lan_sharing.bind_address", "192.168.0.228"], tmp)
+            self.run_watchdog(["config", "set", "lan_sharing.enabled", "true"], tmp)
+
+            hidden = self.run_watchdog(["config", "lan-sharing-credentials", "--json"], tmp)
+            hidden_data = json.loads(hidden.stdout)
+            self.assertEqual(hidden_data["username"], "watchdogvpn")
+            self.assertTrue(hidden_data["password_available"])
+            self.assertFalse(hidden_data["secret_included"])
+            self.assertNotIn("password", hidden_data)
+
+            shown = self.run_watchdog(
+                ["config", "lan-sharing-credentials", "--show-secret", "--json"],
+                tmp,
+            )
+            shown_data = json.loads(shown.stdout)
+            self.assertTrue(shown_data["secret_included"])
+            self.assertTrue(shown_data["password"])
+            self.assertEqual(shown_data["username"], "watchdogvpn")
+
     def test_set_lan_sharing_rejects_wildcard_bind(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(

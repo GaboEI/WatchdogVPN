@@ -46,9 +46,10 @@ merged back to `main` only after the branch proves the feature is correct,
 secure and fully validated.
 
 Phase 20 Task 20.1 opened that track with
-`docs/phase-20-task-20-1-lan-sharing-threat-model.md`. The task is a design
-gate only; it does not enable any LAN listener, forwarding, DNS mutation,
-firewall change or gateway behavior.
+`docs/phase-20-task-20-1-lan-sharing-threat-model.md`. Task 20.3 implements
+authenticated LAN SOCKS/HTTP proxy inbounds on the dedicated Phase 20 branch
+only. The work is still not part of `main`, and it does not authorize gateway
+forwarding, DNS listener exposure, firewall mutation or wildcard binds.
 
 ## Consequences
 
@@ -56,10 +57,8 @@ firewall change or gateway behavior.
 - WatchdogVPN avoids creating an accidental unauthenticated LAN proxy path.
 - LAN sharing remains a planned core capability, but only through the dedicated
   Phase 20 design and validation track before Full CLI.
-- The future phase must define authentication or an explicit reason if a
-  protocol path cannot support it, explicit bind addresses, firewall UX,
-  kill-switch behavior for LAN-originated traffic, DNS leak validation,
-  NAT/gateway behavior where applicable, and teardown checks that prove no
-  listener or forwarding state remains.
+- Task 20.3 satisfies the initial authenticated proxy-listener requirement on
+  the branch, but firewall UX, LAN-client DNS behavior, kill-switch behavior,
+  gateway/NAT decisions and teardown proof remain Phase 20 gates before merge.
 - Future work that adds LAN sharing must update this decision instead of
   weakening the existing localhost-only inbounds silently.

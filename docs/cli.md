@@ -41,6 +41,7 @@ watchdog config set lan_sharing.socks_port <port>
 watchdog config set lan_sharing.http_port <port>
 watchdog config set lan_sharing.authentication_required <true|false>
 watchdog config set lan_sharing.firewall_managed <true|false>
+watchdog config lan-sharing-credentials [--show-secret] [--json]
 ```
 
 Preflight-only state-changing commands:
@@ -297,11 +298,14 @@ watchdog config set default-route-action block
 remains fail-closed until the dedicated system-proxy apply/restore task is
 implemented and installed-VM validated.
 
-## Phase 20 LAN Sharing Scaffold
+## Phase 20 LAN Sharing
 
-Phase 20 stores LAN sharing intent under `lan_sharing`, but Task 20.2 does not
-enable any runtime LAN listener, firewall rule, forwarding, DNS mutation or
-gateway behavior.
+Phase 20 stores LAN sharing intent under `lan_sharing`. On the dedicated Phase
+20 branch, Task 20.3 can expose authenticated SOCKS/HTTP LAN proxy listeners
+when `lan_sharing.enabled = true`.
+
+This remains branch-only until Phase 20 closes. It does not implement gateway
+routing, NAT, IP forwarding, DNS listener exposure or firewall rule management.
 
 Supported scaffold keys:
 
@@ -325,9 +329,33 @@ Validation rules:
 - enabled LAN sharing requires `mode = proxy`, an explicit non-loopback
   `bind_address`, and `authentication_required = true`.
 - SOCKS and HTTP ports must be in `1..65535` and must differ.
+- the runtime refuses to apply LAN sharing if `bind_address` is not assigned to
+  a local interface.
 
-Until later Phase 20 tasks implement runtime behavior, these keys are
-configuration scaffold only. Setting them does not expose a LAN service.
+When enabled and connected through the sing-box runtime, WatchdogVPN keeps the
+existing loopback inbounds and adds:
+
+- `watchdogvpn-lan-socks-in` on `bind_address:socks_port`;
+- `watchdogvpn-lan-http-in` on `bind_address:http_port`.
+
+Both LAN inbounds require generated username/password authentication. The
+credentials are stored in `lan-sharing-credentials.json` with private file
+permissions. Normal config JSON output does not print the password.
+
+Credential status:
+
+```sh
+watchdog config lan-sharing-credentials
+watchdog config lan-sharing-credentials --json
+watchdog config lan-sharing-credentials --show-secret
+```
+
+`--show-secret` is the explicit secret-output flag. Use it only in a trusted
+terminal.
+
+Firewall state is not managed in Task 20.3. Opening or restricting LAN access is
+the operator's responsibility until a later Phase 20 task implements managed
+firewall apply/teardown.
 
 ## Rule-Set Runtime Lifecycle
 

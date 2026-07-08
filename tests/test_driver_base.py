@@ -25,6 +25,7 @@ class BaseDriverContractTests(unittest.TestCase):
                 final_policy: str = "current_profile",
                 rule_set_tags=None,
                 rule_set_declarations=None,
+                lan_proxy=None,
             ) -> bool:
                 return True
 

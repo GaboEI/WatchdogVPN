@@ -19,6 +19,10 @@ from cli.ipc.errors import WatchdogIPCError
 from config.app_config import AppConfig
 from config.backup_manager import BackupManager
 from config.dns_policy_store import DNSPolicyStore
+from config.lan_sharing import (
+    lan_sharing_credentials_path,
+    load_or_create_lan_sharing_credentials,
+)
 from config.paths import resolve_config_dir
 from config.persistence import PersistentStoreError, dump_json
 from config.profile_store import ProfileStore
@@ -411,6 +415,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     config_routing_parser.add_argument("--json", action="store_true", help="Print JSON")
     config_routing_parser.set_defaults(handler=_config_routing_contract)
+
+    config_lan_credentials_parser = config_subparsers.add_parser(
+        "lan-sharing-credentials",
+        help="Show LAN sharing credential status",
+    )
+    config_lan_credentials_parser.add_argument("--json", action="store_true", help="Print JSON")
+    config_lan_credentials_parser.add_argument(
+        "--show-secret",
+        action="store_true",
+        help="Print the LAN sharing password explicitly",
+    )
+    config_lan_credentials_parser.set_defaults(handler=_config_lan_sharing_credentials)
 
     stats_parser = subparsers.add_parser("stats", help="Inspect local observability metrics")
     stats_subparsers = stats_parser.add_subparsers(dest="stats_command")
@@ -1132,10 +1148,60 @@ def _config_set(args: argparse.Namespace) -> int:
     config.setdefault(section, {})[key] = value
     config_store.save(config)
     data = {"key": args.key, "value": config_store.load()[section][key]}
+    warning = _lan_sharing_warning(args.key, data["value"])
+    if warning is not None:
+        data["warning"] = warning
     if args.json:
         _print_json(data)
     else:
+        if warning is not None:
+            print(f"Warning: {warning}", file=sys.stderr)
         print(f"Config set: {args.key}={data['value']}")
+    return 0
+
+
+def _lan_sharing_warning(key: str, value: object) -> str | None:
+    if key == "lan_sharing.enabled" and value is True:
+        return (
+            "LAN sharing is enabled for the next runtime apply; it exposes authenticated "
+            "SOCKS/HTTP listeners on the configured bind address and does not apply "
+            "firewall rules automatically in Task 20.3."
+        )
+    return None
+
+
+def _config_lan_sharing_credentials(args: argparse.Namespace) -> int:
+    config_store = AppConfig()
+    config = config_store.load()
+    lan_config = config.get("lan_sharing", {})
+    enabled = bool(lan_config.get("enabled", False))
+    data: dict[str, object] = {
+        "enabled": enabled,
+        "username": None,
+        "password_available": False,
+        "secret_included": False,
+    }
+    if enabled:
+        credentials = load_or_create_lan_sharing_credentials(
+            lan_sharing_credentials_path(config_store.path)
+        )
+        data["username"] = credentials["username"]
+        data["password_available"] = True
+        if args.show_secret:
+            data["password"] = credentials["password"]
+            data["secret_included"] = True
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"LAN sharing enabled: {'yes' if enabled else 'no'}")
+    if not enabled:
+        print("Credentials: not created")
+        return 0
+    print(f"Username: {data['username']}")
+    if args.show_secret:
+        print(f"Password: {data['password']}")
+    else:
+        print("Password: available; rerun with --show-secret to print it")
     return 0
 
 

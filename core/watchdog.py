@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ipaddress import ip_address
@@ -11,6 +13,11 @@ from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode
 from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
+from config.lan_sharing import (
+    LANProxyRuntimeConfig,
+    lan_sharing_credentials_path,
+    load_or_create_lan_sharing_credentials,
+)
 from config.persistence import PersistentStoreError, PersistentValidationError, strict_bool, strict_int
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
@@ -440,6 +447,16 @@ class WatchdogRuntime:
             mode = "global"
 
         options: dict[str, object] = {"mode": mode, "final_policy": final_policy}
+        lan_proxy = self._lan_proxy_runtime_config()
+        if lan_proxy is not None:
+            LOGGER.warning(
+                "lan_sharing_enabled bind_address=%s socks_port=%s http_port=%s firewall_managed=%s",
+                lan_proxy.bind_address,
+                lan_proxy.socks_port,
+                lan_proxy.http_port,
+                lan_proxy.firewall_managed,
+            )
+            options["lan_proxy"] = lan_proxy
         if routing_policy == "rule":
             groups = self.rule_store.list_groups()
             runtime_plan = self.rule_set_lifecycle.runtime_plan(groups)
@@ -453,6 +470,60 @@ class WatchdogRuntime:
             options["rule_set_tags"] = runtime_plan.tags
             options["rule_set_declarations"] = runtime_plan.declarations
         return options
+
+    def _lan_proxy_runtime_config(self) -> LANProxyRuntimeConfig | None:
+        config = self.app_config.load()
+        lan_config = config.get("lan_sharing", {})
+        if not lan_config.get("enabled", False):
+            return None
+
+        bind_address = str(lan_config["bind_address"])
+        if bind_address not in self._local_ip_addresses():
+            raise RuntimeError(
+                f"lan_sharing.bind_address is not assigned to this host: {bind_address}"
+            )
+        credentials = load_or_create_lan_sharing_credentials(
+            lan_sharing_credentials_path(self.app_config.path)
+        )
+        return LANProxyRuntimeConfig(
+            bind_address=bind_address,
+            socks_port=int(lan_config["socks_port"]),
+            http_port=int(lan_config["http_port"]),
+            username=credentials["username"],
+            password=credentials["password"],
+            firewall_managed=bool(lan_config["firewall_managed"]),
+        )
+
+    def _local_ip_addresses(self) -> set[str]:
+        try:
+            result = subprocess.run(
+                ["ip", "-j", "addr", "show"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise RuntimeError("cannot verify LAN sharing bind address: ip command unavailable") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            message = "cannot verify LAN sharing bind address"
+            if detail:
+                message += f": {detail}"
+            raise RuntimeError(message)
+        try:
+            interfaces = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("cannot verify LAN sharing bind address: invalid ip output") from exc
+        addresses: set[str] = set()
+        if not isinstance(interfaces, list):
+            return addresses
+        for interface in interfaces:
+            if not isinstance(interface, dict):
+                continue
+            for item in interface.get("addr_info", []):
+                if isinstance(item, dict) and isinstance(item.get("local"), str):
+                    addresses.add(item["local"])
+        return addresses
 
     def _runtime_app_policy(self) -> AppPolicy:
         result = self.app_policy_store.load_or_disabled()
@@ -802,6 +873,7 @@ class _RuntimeDriverRouter(BaseDriver):
         groups=None,
         app_policy=None,
         final_policy: str = "current_profile",
+        lan_proxy=None,
     ) -> bool:
         driver = self.runtime._driver_for_profile(profile, disconnect_current=False)
         options = self.runtime._connect_options()

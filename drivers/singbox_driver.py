@@ -20,6 +20,7 @@ from dns.singbox import (
     build_dns_hijack_route,
     build_singbox_dns_config,
 )
+from config.lan_sharing import LANProxyRuntimeConfig
 from drivers.base import BaseDriver
 from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
@@ -157,8 +158,11 @@ class SingBoxDriver(BaseDriver):
         except (FileNotFoundError, RuntimeError):
             return False
 
-    def _build_inbounds(self) -> list[dict[str, Any]]:
-        return [
+    def _build_inbounds(
+        self,
+        lan_proxy: LANProxyRuntimeConfig | None = None,
+    ) -> list[dict[str, Any]]:
+        inbounds: list[dict[str, Any]] = [
             {
                 "type": "socks",
                 "tag": "watchdogvpn-socks-in",
@@ -172,6 +176,31 @@ class SingBoxDriver(BaseDriver):
                 "listen_port": 2081,
             },
         ]
+        if lan_proxy is not None:
+            user = {
+                "username": lan_proxy.username,
+                "password": lan_proxy.password,
+            }
+            inbounds.extend(
+                [
+                    {
+                        "type": "socks",
+                        "tag": "watchdogvpn-lan-socks-in",
+                        "listen": lan_proxy.bind_address,
+                        "listen_port": lan_proxy.socks_port,
+                        "users": [dict(user)],
+                    },
+                    {
+                        "type": "http",
+                        "tag": "watchdogvpn-lan-http-in",
+                        "listen": lan_proxy.bind_address,
+                        "listen_port": lan_proxy.http_port,
+                        "users": [dict(user)],
+                        "set_system_proxy": False,
+                    },
+                ]
+            )
+        return inbounds
 
     def _build_tun_inbound(self) -> dict[str, Any]:
         return {
@@ -865,6 +894,7 @@ class SingBoxDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        lan_proxy: LANProxyRuntimeConfig | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
             raise ValueError(f"unsupported connection mode: {mode!r}")
@@ -875,7 +905,7 @@ class SingBoxDriver(BaseDriver):
         self._apply_dialer_options(outbound, profile)
         config: dict[str, Any] = {
             "log": {"level": "warning"},
-            "inbounds": self._build_inbounds(),
+            "inbounds": self._build_inbounds(lan_proxy),
             "outbounds": [outbound],
         }
         if self._mode_requires_tun(mode, app_policy):
@@ -977,6 +1007,7 @@ class SingBoxDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        lan_proxy: LANProxyRuntimeConfig | None = None,
     ) -> bool:
         binary = self.find_singbox_binary()
         if not binary:
@@ -985,16 +1016,18 @@ class SingBoxDriver(BaseDriver):
         self._clear_tun_cleanup_state()
         if tun_expected:
             self._tun_rule_baseline = self._ip_rule_lines()
-        self.generate_singbox_config(
-            profile,
-            dns_policy=dns_policy,
-            mode=mode,
-            groups=groups,
-            app_policy=app_policy,
-            final_policy=final_policy,
-            rule_set_tags=rule_set_tags,
-            rule_set_declarations=rule_set_declarations,
-        )
+        config_kwargs: dict[str, Any] = {
+            "dns_policy": dns_policy,
+            "mode": mode,
+            "groups": groups,
+            "app_policy": app_policy,
+            "final_policy": final_policy,
+            "rule_set_tags": rule_set_tags,
+            "rule_set_declarations": rule_set_declarations,
+        }
+        if lan_proxy is not None:
+            config_kwargs["lan_proxy"] = lan_proxy
+        self.generate_singbox_config(profile, **config_kwargs)
         config_path, log_path = self._ensure_runtime_paths()
         log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
