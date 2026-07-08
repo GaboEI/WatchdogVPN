@@ -37,7 +37,7 @@ hardening.
 | Bad VPN endpoint | Rotation may land on unusable node | the v2 rotation/runtime path validates state before accepting a connection |
 | DNS profile breaks resolution | User may lose name resolution | DNS v2 `apply`/`reset` snapshot the prior resolver state and restore it on request; `vpn_dns_rescue` remains available as a manual fallback |
 | Observability becomes browsing history | Local metrics or support exports may reveal destinations, process activity or provider choices | Phase 16 defaults to aggregate local counters; raw destination/process history is not silently enabled and must be opt-in, retention-bounded, purgeable and excluded from normal diagnostics exports |
-| Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | Current v2.0 mainline keeps generated SOCKS/HTTP and DNS hijack inbounds bound to `127.0.0.1`; intentional LAN proxy/gateway sharing is reserved for dedicated Phase 20 work |
+| Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | Current mainline keeps generated SOCKS/HTTP and DNS hijack inbounds bound to `127.0.0.1`; intentional LAN proxy/gateway sharing is branch-only Phase 20 work with explicit bind, authentication/exception, firewall, DNS, kill-switch and teardown gates |
 | Uninstall breaks DNS | Host may remain offline after removal | `vpn_dns_rescue` restores fallback DNS behavior |
 | Repeated timer executions overlap | Race conditions and route churn | rotation uses `flock`; timers are one-shot services |
 | User-specific bypass domains leak into new installs | New users inherit irrelevant routing policy | default bypass example starts empty |
@@ -55,10 +55,10 @@ hardening.
 - Automatic CLI installer verification is not yet cryptographically pinned.
 - GitHub Actions currently performs baseline validation, not full integration
   simulation.
-- LAN proxy/gateway sharing is a planned high-value Phase 20 capability, but it
-  must be built in a dedicated branch with authentication or an explicit
-  protocol exception, firewall UX, kill-switch validation, DNS leak validation
-  and teardown validation before it can reach `main`.
+- LAN proxy/gateway sharing is active Phase 20 branch-only work, but it must
+  satisfy the Task 20.1 threat model, VM-only validation, authentication or an
+  explicit protocol exception, firewall UX, kill-switch validation, DNS leak
+  validation and teardown validation before it can reach `main`.
 
 ### Must Not Happen
 

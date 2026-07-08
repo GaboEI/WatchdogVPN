@@ -4,7 +4,7 @@ Date: 2026-07-06
 
 ## Status
 
-Deferred to a dedicated future phase.
+Active design gate in Phase 20.
 
 ## Context
 
@@ -44,6 +44,11 @@ dedicated Phase 20 track, before the final Full CLI phase. That work must be
 developed on a separate branch, validated in VM network scenarios only, and
 merged back to `main` only after the branch proves the feature is correct,
 secure and fully validated.
+
+Phase 20 Task 20.1 opened that track with
+`docs/phase-20-task-20-1-lan-sharing-threat-model.md`. The task is a design
+gate only; it does not enable any LAN listener, forwarding, DNS mutation,
+firewall change or gateway behavior.
 
 ## Consequences
 
