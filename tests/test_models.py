@@ -49,6 +49,11 @@ class ModelTests(unittest.TestCase):
             tun_active=True,
             proxy_active=False,
             kill_switch_active=False,
+            lan_gateway_active=True,
+            lan_gateway_interface="enp0s8",
+            lan_gateway_client_cidr="192.168.50.0/24",
+            lan_gateway_dns_mode="manual",
+            lan_gateway_status="applied",
             status="connected",
         )
         restored = ConnectionState.from_dict(state.to_dict())

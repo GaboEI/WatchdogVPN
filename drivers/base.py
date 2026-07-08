@@ -21,13 +21,16 @@ class BaseDriver(ABC):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        lan_proxy=None,
+        lan_gateway=None,
     ) -> bool:
         """Connect the given profile.
 
-        dns_policy, mode, groups, app_policy, final_policy, and rule-set
-        runtime data are only consumed by drivers that embed DNS and routing
-        behavior in their own runtime config (currently sing-box); other
-        drivers accept and ignore them to keep a single BaseDriver contract.
+        dns_policy, mode, groups, app_policy, final_policy, rule-set runtime
+        data, and LAN proxy/gateway runtime data are only consumed by drivers that
+        embed DNS/routing/listener behavior in their own runtime config
+        (currently sing-box); other drivers accept and ignore them to keep a
+        single BaseDriver contract.
         """
 
     @abstractmethod

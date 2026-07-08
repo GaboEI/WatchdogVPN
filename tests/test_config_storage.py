@@ -269,6 +269,26 @@ class ConfigStorageTests(unittest.TestCase):
             self.assertEqual(loaded["rotation"]["test_timeout_seconds"], 5)
             self.assertEqual(loaded["rotation"]["latency_max_stale_seconds"], 300)
 
+    def test_app_config_default_lan_sharing_is_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded = AppConfig(Path(tmp) / "config.toml").load()
+
+            self.assertEqual(
+                loaded["lan_sharing"],
+                {
+                    "enabled": False,
+                    "mode": "disabled",
+                    "bind_address": "",
+                    "socks_port": 2080,
+                    "http_port": 2081,
+                    "authentication_required": True,
+                    "firewall_managed": False,
+                    "gateway_interface": "",
+                    "gateway_client_cidr": "",
+                    "gateway_dns_mode": "manual",
+                },
+            )
+
     def test_app_config_rejects_test_url_without_scheme(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
@@ -292,6 +312,123 @@ class ConfigStorageTests(unittest.TestCase):
             path.write_text("[rotation]\ntest_timeout_seconds = 0\n", encoding="utf-8")
 
             with self.assertRaises(PersistentValidationError):
+                AppConfig(path).load()
+
+    def test_app_config_rejects_lan_sharing_wildcard_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[lan_sharing]\nbind_address = "0.0.0.0"\n', encoding="utf-8")
+
+            with self.assertRaisesRegex(PersistentValidationError, "wildcard"):
+                AppConfig(path).load()
+
+    def test_app_config_test_fixture_can_allow_lan_sharing_wildcard_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[lan_sharing]\nbind_address = "0.0.0.0"\n', encoding="utf-8")
+
+            with patch.dict("os.environ", {"WATCHDOGVPN_TEST_ALLOW_WILDCARD_LAN_BIND": "1"}):
+                loaded = AppConfig(path).load()
+
+            self.assertEqual(loaded["lan_sharing"]["bind_address"], "0.0.0.0")
+
+    def test_app_config_rejects_enabled_lan_sharing_without_explicit_lan_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[lan_sharing]\nenabled = true\nmode = "proxy"\n', encoding="utf-8")
+
+            with self.assertRaisesRegex(PersistentValidationError, "explicit bind_address"):
+                AppConfig(path).load()
+
+    def test_app_config_rejects_enabled_lan_sharing_loopback_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                '[lan_sharing]\nenabled = true\nmode = "proxy"\nbind_address = "127.0.0.1"\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(PersistentValidationError, "non-loopback"):
+                AppConfig(path).load()
+
+    def test_app_config_accepts_disabled_lan_sharing_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[lan_sharing]",
+                        'mode = "proxy"',
+                        'bind_address = "192.168.0.228"',
+                        "socks_port = 2080",
+                        "http_port = 2081",
+                        "authentication_required = true",
+                        "firewall_managed = false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = AppConfig(path).load()
+
+            self.assertFalse(loaded["lan_sharing"]["enabled"])
+            self.assertEqual(loaded["lan_sharing"]["bind_address"], "192.168.0.228")
+
+    def test_app_config_accepts_enabled_lan_gateway_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[lan_sharing]",
+                        "enabled = true",
+                        'mode = "gateway"',
+                        "firewall_managed = true",
+                        'gateway_interface = "enp0s8"',
+                        'gateway_client_cidr = "192.168.50.0/24"',
+                        'gateway_dns_mode = "manual"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = AppConfig(path).load()
+
+            self.assertEqual(loaded["lan_sharing"]["mode"], "gateway")
+            self.assertEqual(loaded["lan_sharing"]["gateway_interface"], "enp0s8")
+            self.assertEqual(loaded["lan_sharing"]["gateway_client_cidr"], "192.168.50.0/24")
+
+    def test_app_config_rejects_enabled_lan_gateway_without_managed_firewall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[lan_sharing]",
+                        "enabled = true",
+                        'mode = "gateway"',
+                        'gateway_interface = "enp0s8"',
+                        'gateway_client_cidr = "192.168.50.0/24"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(PersistentValidationError, "firewall_managed"):
+                AppConfig(path).load()
+
+    def test_app_config_rejects_lan_gateway_ipv6_client_cidr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                '[lan_sharing]\ngateway_client_cidr = "fd00::/64"\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(PersistentValidationError, "must be IPv4"):
                 AppConfig(path).load()
 
     def test_config_paths_follow_environment_overrides(self) -> None:

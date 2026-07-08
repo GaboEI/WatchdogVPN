@@ -34,6 +34,14 @@ watchdogvpn config reset [language|tui|reporting|all] --yes
 watchdog config set routing-policy <rule|global>
 watchdog config set capture-modes <local_proxy|local_proxy,tun|local_proxy,system_proxy|local_proxy,tun,system_proxy>
 watchdog config set default-route-action <current|direct|block>
+watchdog config set lan_sharing.enabled <true|false>
+watchdog config set lan_sharing.mode <disabled|proxy|gateway>
+watchdog config set lan_sharing.bind_address <ip-address>
+watchdog config set lan_sharing.socks_port <port>
+watchdog config set lan_sharing.http_port <port>
+watchdog config set lan_sharing.authentication_required <true|false>
+watchdog config set lan_sharing.firewall_managed <true|false>
+watchdog config lan-sharing-credentials [--show-secret] [--json]
 ```
 
 Preflight-only state-changing commands:
@@ -289,6 +297,75 @@ watchdog config set default-route-action block
 `system_proxy` may be represented only with `local_proxy`, but runtime connect
 remains fail-closed until the dedicated system-proxy apply/restore task is
 implemented and installed-VM validated.
+
+## Phase 20 LAN Sharing
+
+Phase 20 stores LAN sharing intent under `lan_sharing`. On the dedicated Phase
+20 branch, Task 20.3 can expose authenticated SOCKS/HTTP LAN proxy listeners
+when `lan_sharing.enabled = true` and `lan_sharing.mode = proxy`. Task 20.6
+adds disabled-by-default IPv4 LAN gateway mode when
+`lan_sharing.mode = gateway`.
+
+This remains branch-only until Phase 20 closes. Gateway mode is VM/lab-only
+until Task 20.7 completes the matrix and no HIGH/MEDIUM findings remain.
+
+Supported scaffold keys:
+
+```sh
+watchdog config set lan_sharing.enabled <true|false>
+watchdog config set lan_sharing.mode <disabled|proxy|gateway>
+watchdog config set lan_sharing.bind_address <ip-address>
+watchdog config set lan_sharing.socks_port <port>
+watchdog config set lan_sharing.http_port <port>
+watchdog config set lan_sharing.authentication_required <true|false>
+watchdog config set lan_sharing.firewall_managed <true|false>
+watchdog config set lan_sharing.gateway_interface <interface>
+watchdog config set lan_sharing.gateway_client_cidr <ipv4-cidr>
+watchdog config set lan_sharing.gateway_dns_mode manual
+```
+
+Gateway mode requires TUN capture, a concrete non-loopback interface,
+`firewall_managed = true`, manual LAN-client DNS and an IPv4 client CIDR. It
+uses WatchdogVPN-owned nftables rules and temporary IPv4 forwarding with
+rollback on disconnect or failed apply.
+
+Validation rules:
+
+- LAN sharing is disabled by default.
+- `mode` must be `disabled` or `proxy`.
+- `bind_address` must be an IP address when set.
+- wildcard binds such as `0.0.0.0` and `::` are rejected outside explicit test
+  fixtures.
+- enabled LAN sharing requires `mode = proxy`, an explicit non-loopback
+  `bind_address`, and `authentication_required = true`.
+- SOCKS and HTTP ports must be in `1..65535` and must differ.
+- the runtime refuses to apply LAN sharing if `bind_address` is not assigned to
+  a local interface.
+
+When enabled and connected through the sing-box runtime, WatchdogVPN keeps the
+existing loopback inbounds and adds:
+
+- `watchdogvpn-lan-socks-in` on `bind_address:socks_port`;
+- `watchdogvpn-lan-http-in` on `bind_address:http_port`.
+
+Both LAN inbounds require generated username/password authentication. The
+credentials are stored in `lan-sharing-credentials.json` with private file
+permissions. Normal config JSON output does not print the password.
+
+Credential status:
+
+```sh
+watchdog config lan-sharing-credentials
+watchdog config lan-sharing-credentials --json
+watchdog config lan-sharing-credentials --show-secret
+```
+
+`--show-secret` is the explicit secret-output flag. Use it only in a trusted
+terminal.
+
+Firewall state is not managed in Task 20.3. Opening or restricting LAN access is
+the operator's responsibility until a later Phase 20 task implements managed
+firewall apply/teardown.
 
 ## Rule-Set Runtime Lifecycle
 

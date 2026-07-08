@@ -20,6 +20,7 @@ from dns.singbox import (
     build_dns_hijack_route,
     build_singbox_dns_config,
 )
+from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
 from drivers.base import BaseDriver
 from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
@@ -35,6 +36,10 @@ PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
 DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
 DEFAULT_RULE_TABLES = {"local", "main", "default"}
 SING_BOX_AUTO_REDIRECT_MARKS = {"0x2023", "0x2024"}
+LAN_GATEWAY_NFT_TABLE = "watchdogvpn_lan_gateway"
+LAN_GATEWAY_FORWARD_CHAIN = "forward"
+LAN_GATEWAY_POSTROUTING_CHAIN = "postrouting"
+IPV4_FORWARD_PATH = Path("/proc/sys/net/ipv4/ip_forward")
 VIRTUAL_INTERFACE_PREFIXES = (
     "lo",
     "tun",
@@ -130,6 +135,8 @@ class SingBoxDriver(BaseDriver):
         self._tun_rule_baseline: tuple[str, ...] = ()
         self._tun_cleanup_rule_prefs: tuple[str, ...] = ()
         self._tun_cleanup_route_tables: tuple[str, ...] = ()
+        self._lan_gateway_active: LANGatewayRuntimeConfig | None = None
+        self._lan_gateway_ip_forward_snapshot: str | None = None
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def find_singbox_binary(self) -> str | None:
@@ -157,8 +164,11 @@ class SingBoxDriver(BaseDriver):
         except (FileNotFoundError, RuntimeError):
             return False
 
-    def _build_inbounds(self) -> list[dict[str, Any]]:
-        return [
+    def _build_inbounds(
+        self,
+        lan_proxy: LANProxyRuntimeConfig | None = None,
+    ) -> list[dict[str, Any]]:
+        inbounds: list[dict[str, Any]] = [
             {
                 "type": "socks",
                 "tag": "watchdogvpn-socks-in",
@@ -172,6 +182,31 @@ class SingBoxDriver(BaseDriver):
                 "listen_port": 2081,
             },
         ]
+        if lan_proxy is not None:
+            user = {
+                "username": lan_proxy.username,
+                "password": lan_proxy.password,
+            }
+            inbounds.extend(
+                [
+                    {
+                        "type": "socks",
+                        "tag": "watchdogvpn-lan-socks-in",
+                        "listen": lan_proxy.bind_address,
+                        "listen_port": lan_proxy.socks_port,
+                        "users": [dict(user)],
+                    },
+                    {
+                        "type": "http",
+                        "tag": "watchdogvpn-lan-http-in",
+                        "listen": lan_proxy.bind_address,
+                        "listen_port": lan_proxy.http_port,
+                        "users": [dict(user)],
+                        "set_system_proxy": False,
+                    },
+                ]
+            )
+        return inbounds
 
     def _build_tun_inbound(self) -> dict[str, Any]:
         return {
@@ -548,6 +583,158 @@ class SingBoxDriver(BaseDriver):
             check=False,
         )
 
+    def _run_gateway_required(self, command: list[str]) -> bool:
+        result = subprocess.run(command, text=True, capture_output=True, check=False)
+        if result.returncode == 0:
+            return True
+        detail = (result.stderr or result.stdout or "").strip()
+        self._append_log(f"lan_gateway: command failed: {' '.join(command)} {detail}\n")
+        return False
+
+    def _gateway_nft_rule(self, *tokens: str) -> list[str]:
+        return [
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            LAN_GATEWAY_NFT_TABLE,
+            LAN_GATEWAY_FORWARD_CHAIN,
+            *tokens,
+        ]
+
+    def _gateway_nat_rule(self, *tokens: str) -> list[str]:
+        return [
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            LAN_GATEWAY_NFT_TABLE,
+            LAN_GATEWAY_POSTROUTING_CHAIN,
+            *tokens,
+        ]
+
+    def _read_ipv4_forward(self) -> str:
+        try:
+            return IPV4_FORWARD_PATH.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError("lan_gateway: cannot read net.ipv4.ip_forward") from exc
+
+    def _write_ipv4_forward(self, value: str) -> None:
+        try:
+            IPV4_FORWARD_PATH.write_text(f"{value}\n", encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError("lan_gateway: cannot write net.ipv4.ip_forward") from exc
+
+    def _cleanup_lan_gateway(self, *, force_table: bool = False) -> None:
+        gateway_state_seen = (
+            self._lan_gateway_active is not None
+            or self._lan_gateway_ip_forward_snapshot is not None
+        )
+        if not gateway_state_seen and not force_table:
+            return
+        if (gateway_state_seen or force_table) and shutil.which("nft"):
+            self._run_cleanup_command(["nft", "delete", "table", "inet", LAN_GATEWAY_NFT_TABLE])
+        if self._lan_gateway_ip_forward_snapshot is not None:
+            try:
+                self._write_ipv4_forward(self._lan_gateway_ip_forward_snapshot)
+            except RuntimeError as exc:
+                self._append_log(f"{exc}\n")
+        self._lan_gateway_active = None
+        self._lan_gateway_ip_forward_snapshot = None
+
+    def _apply_lan_gateway(self, gateway: LANGatewayRuntimeConfig) -> bool:
+        if not gateway.firewall_managed:
+            self._append_log("lan_gateway: firewall_managed=false is not supported\n")
+            return False
+        if gateway.dns_mode != "manual":
+            self._append_log("lan_gateway: only manual DNS mode is supported\n")
+            return False
+        if not self._tun_expected:
+            self._append_log("lan_gateway: TUN capture is required\n")
+            return False
+        if not shutil.which("nft"):
+            self._append_log("lan_gateway: nftables is required\n")
+            return False
+
+        self._cleanup_lan_gateway(force_table=True)
+        try:
+            self._lan_gateway_ip_forward_snapshot = self._read_ipv4_forward()
+        except RuntimeError as exc:
+            self._append_log(f"{exc}\n")
+            return False
+
+        commands = [
+            ["nft", "add", "table", "inet", LAN_GATEWAY_NFT_TABLE],
+            [
+                "nft",
+                "add",
+                "chain",
+                "inet",
+                LAN_GATEWAY_NFT_TABLE,
+                LAN_GATEWAY_FORWARD_CHAIN,
+                "{",
+                "type",
+                "filter",
+                "hook",
+                "forward",
+                "priority",
+                "0;",
+                "policy",
+                "drop;",
+                "}",
+            ],
+            [
+                "nft",
+                "add",
+                "chain",
+                "inet",
+                LAN_GATEWAY_NFT_TABLE,
+                LAN_GATEWAY_POSTROUTING_CHAIN,
+                "{",
+                "type",
+                "nat",
+                "hook",
+                "postrouting",
+                "priority",
+                "srcnat;",
+                "policy",
+                "accept;",
+                "}",
+            ],
+            self._gateway_nft_rule("ct", "state", "established,related", "accept"),
+            self._gateway_nft_rule(
+                "iifname",
+                gateway.lan_interface,
+                "oifname",
+                gateway.tunnel_interface,
+                "ip",
+                "saddr",
+                gateway.client_cidr,
+                "accept",
+            ),
+            self._gateway_nft_rule("iifname", gateway.lan_interface, "reject"),
+            self._gateway_nat_rule(
+                "oifname",
+                gateway.tunnel_interface,
+                "ip",
+                "saddr",
+                gateway.client_cidr,
+                "masquerade",
+            ),
+        ]
+        for command in commands:
+            if not self._run_gateway_required(command):
+                self._cleanup_lan_gateway()
+                return False
+        try:
+            self._write_ipv4_forward("1")
+        except RuntimeError as exc:
+            self._append_log(f"{exc}\n")
+            self._cleanup_lan_gateway()
+            return False
+        self._lan_gateway_active = gateway
+        return True
+
     def _ip_rule_lines(self) -> tuple[str, ...]:
         if not shutil.which("ip"):
             return ()
@@ -865,6 +1052,7 @@ class SingBoxDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        lan_proxy: LANProxyRuntimeConfig | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
             raise ValueError(f"unsupported connection mode: {mode!r}")
@@ -875,7 +1063,7 @@ class SingBoxDriver(BaseDriver):
         self._apply_dialer_options(outbound, profile)
         config: dict[str, Any] = {
             "log": {"level": "warning"},
-            "inbounds": self._build_inbounds(),
+            "inbounds": self._build_inbounds(lan_proxy),
             "outbounds": [outbound],
         }
         if self._mode_requires_tun(mode, app_policy):
@@ -977,6 +1165,8 @@ class SingBoxDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        lan_proxy: LANProxyRuntimeConfig | None = None,
+        lan_gateway: LANGatewayRuntimeConfig | None = None,
     ) -> bool:
         binary = self.find_singbox_binary()
         if not binary:
@@ -985,16 +1175,18 @@ class SingBoxDriver(BaseDriver):
         self._clear_tun_cleanup_state()
         if tun_expected:
             self._tun_rule_baseline = self._ip_rule_lines()
-        self.generate_singbox_config(
-            profile,
-            dns_policy=dns_policy,
-            mode=mode,
-            groups=groups,
-            app_policy=app_policy,
-            final_policy=final_policy,
-            rule_set_tags=rule_set_tags,
-            rule_set_declarations=rule_set_declarations,
-        )
+        config_kwargs: dict[str, Any] = {
+            "dns_policy": dns_policy,
+            "mode": mode,
+            "groups": groups,
+            "app_policy": app_policy,
+            "final_policy": final_policy,
+            "rule_set_tags": rule_set_tags,
+            "rule_set_declarations": rule_set_declarations,
+        }
+        if lan_proxy is not None:
+            config_kwargs["lan_proxy"] = lan_proxy
+        self.generate_singbox_config(profile, **config_kwargs)
         config_path, log_path = self._ensure_runtime_paths()
         log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
@@ -1010,6 +1202,11 @@ class SingBoxDriver(BaseDriver):
         if self._process.poll() is None and self.health_check() == "ok":
             if self._tun_expected:
                 self._capture_tun_cleanup_state()
+            if lan_gateway is not None and not self._apply_lan_gateway(lan_gateway):
+                self._connected_at = None
+                self._active_profile = None
+                self.disconnect()
+                return False
             self._connected_at = datetime.now(timezone.utc)
             return True
         self._connected_at = None
@@ -1043,6 +1240,7 @@ class SingBoxDriver(BaseDriver):
                         stopped = False
                         return False
         finally:
+            self._cleanup_lan_gateway()
             process_stopped = process is None or process.poll() is not None
             if cleanup_tun_residue and process_stopped:
                 self._cleanup_tun_residue()
@@ -1087,6 +1285,21 @@ class SingBoxDriver(BaseDriver):
                 mode="sing-box",
                 tun_active=tun_active,
                 proxy_active=True,
+                lan_gateway_active=self._lan_gateway_active is not None,
+                lan_gateway_interface=(
+                    self._lan_gateway_active.lan_interface if self._lan_gateway_active else ""
+                ),
+                lan_gateway_client_cidr=(
+                    self._lan_gateway_active.client_cidr if self._lan_gateway_active else ""
+                ),
+                lan_gateway_dns_mode=(
+                    self._lan_gateway_active.dns_mode if self._lan_gateway_active else ""
+                ),
+                lan_gateway_status=(
+                    "applied"
+                    if self._lan_gateway_active is not None and tun_active
+                    else "degraded" if self._lan_gateway_active is not None else "disabled"
+                ),
                 status="connected",
             )
         if self._tun_expected:

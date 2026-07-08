@@ -36,6 +36,11 @@ class ConnectionState:
     tun_active: bool = False
     proxy_active: bool = False
     kill_switch_active: bool = False
+    lan_gateway_active: bool = False
+    lan_gateway_interface: str = ""
+    lan_gateway_client_cidr: str = ""
+    lan_gateway_dns_mode: str = ""
+    lan_gateway_status: str = "disabled"
     status: str = "standby"
 
     def __post_init__(self) -> None:
@@ -56,5 +61,10 @@ class ConnectionState:
             tun_active=bool(data.get("tun_active", False)),
             proxy_active=bool(data.get("proxy_active", False)),
             kill_switch_active=bool(data.get("kill_switch_active", False)),
+            lan_gateway_active=bool(data.get("lan_gateway_active", False)),
+            lan_gateway_interface=str(data.get("lan_gateway_interface", "")),
+            lan_gateway_client_cidr=str(data.get("lan_gateway_client_cidr", "")),
+            lan_gateway_dns_mode=str(data.get("lan_gateway_dns_mode", "")),
+            lan_gateway_status=str(data.get("lan_gateway_status", "disabled")),
             status=str(data.get("status", "standby")),
         )

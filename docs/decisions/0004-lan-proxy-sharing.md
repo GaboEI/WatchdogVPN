@@ -4,7 +4,7 @@ Date: 2026-07-06
 
 ## Status
 
-Deferred to a dedicated future phase.
+Active design gate in Phase 20.
 
 ## Context
 
@@ -45,16 +45,28 @@ developed on a separate branch, validated in VM network scenarios only, and
 merged back to `main` only after the branch proves the feature is correct,
 secure and fully validated.
 
+Phase 20 Task 20.1 opened that track with
+`docs/phase-20-task-20-1-lan-sharing-threat-model.md`. Task 20.3 implements
+authenticated LAN SOCKS/HTTP proxy inbounds on the dedicated Phase 20 branch
+only. Task 20.5 accepts gateway/router mode for the same dedicated branch under
+`docs/phase-20-task-20-5-gateway-router-design-gate.md`, with
+disabled-by-default IPv4 forwarding/NAT, explicit interface selection, manual
+client setup, DNS and kill-switch contracts, reversible firewall ownership and
+VM-only validation. The work is still not part of `main`, and it does not
+authorize wildcard binds, automatic DHCP/router mutation, IPv6 forwarding or
+persistent forwarding changes.
+
 ## Consequences
 
 - No default LAN exposure is introduced.
 - WatchdogVPN avoids creating an accidental unauthenticated LAN proxy path.
 - LAN sharing remains a planned core capability, but only through the dedicated
   Phase 20 design and validation track before Full CLI.
-- The future phase must define authentication or an explicit reason if a
-  protocol path cannot support it, explicit bind addresses, firewall UX,
-  kill-switch behavior for LAN-originated traffic, DNS leak validation,
-  NAT/gateway behavior where applicable, and teardown checks that prove no
-  listener or forwarding state remains.
+- Task 20.3 satisfies the initial authenticated proxy-listener requirement on
+  the branch, and Task 20.5 decides that gateway/router remains in Phase 20
+  instead of being split again.
+- Gateway/router implementation must stay disabled by default, explicit,
+  reversible and VM-validated; Task 20.7 still owns final matrix validation and
+  the no-HIGH/MEDIUM merge gate.
 - Future work that adds LAN sharing must update this decision instead of
   weakening the existing localhost-only inbounds silently.

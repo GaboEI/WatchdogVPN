@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ipaddress import ip_address
@@ -11,6 +13,12 @@ from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode
 from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
+from config.lan_sharing import (
+    LANGatewayRuntimeConfig,
+    LANProxyRuntimeConfig,
+    lan_sharing_credentials_path,
+    load_or_create_lan_sharing_credentials,
+)
 from config.persistence import PersistentStoreError, PersistentValidationError, strict_bool, strict_int
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
@@ -393,7 +401,28 @@ class WatchdogRuntime:
         return self.driver.health_check()
 
     def status(self) -> ConnectionState:
-        return self.driver.status()
+        return self._with_lan_gateway_status(self.driver.status())
+
+    def _with_lan_gateway_status(self, state: ConnectionState) -> ConnectionState:
+        config_gateway = False
+        try:
+            config = self.app_config.load()
+            lan_config = config.get("lan_sharing", {})
+            config_gateway = bool(lan_config.get("enabled", False)) and lan_config.get("mode") == "gateway"
+        except (PersistentStoreError, PersistentValidationError):
+            lan_config = {}
+
+        if state.lan_gateway_active:
+            state.lan_gateway_status = "applied" if state.tun_active else "degraded"
+            return state
+        if config_gateway:
+            state.lan_gateway_status = "configured"
+            state.lan_gateway_interface = str(lan_config.get("gateway_interface", ""))
+            state.lan_gateway_client_cidr = str(lan_config.get("gateway_client_cidr", ""))
+            state.lan_gateway_dns_mode = str(lan_config.get("gateway_dns_mode", "manual"))
+            return state
+        state.lan_gateway_status = "disabled"
+        return state
 
     def _active_profile(self) -> Profile | None:
         active_profile_id = str(self.state_manager.get("active_profile_id", ""))
@@ -440,6 +469,26 @@ class WatchdogRuntime:
             mode = "global"
 
         options: dict[str, object] = {"mode": mode, "final_policy": final_policy}
+        lan_proxy = self._lan_proxy_runtime_config()
+        if lan_proxy is not None:
+            LOGGER.warning(
+                "lan_sharing_enabled bind_address=%s socks_port=%s http_port=%s firewall_managed=%s",
+                lan_proxy.bind_address,
+                lan_proxy.socks_port,
+                lan_proxy.http_port,
+                lan_proxy.firewall_managed,
+            )
+            options["lan_proxy"] = lan_proxy
+        lan_gateway = self._lan_gateway_runtime_config(capture_modes)
+        if lan_gateway is not None:
+            LOGGER.warning(
+                "lan_gateway_enabled interface=%s client_cidr=%s dns_mode=%s firewall_managed=%s",
+                lan_gateway.lan_interface,
+                lan_gateway.client_cidr,
+                lan_gateway.dns_mode,
+                lan_gateway.firewall_managed,
+            )
+            options["lan_gateway"] = lan_gateway
         if routing_policy == "rule":
             groups = self.rule_store.list_groups()
             runtime_plan = self.rule_set_lifecycle.runtime_plan(groups)
@@ -453,6 +502,109 @@ class WatchdogRuntime:
             options["rule_set_tags"] = runtime_plan.tags
             options["rule_set_declarations"] = runtime_plan.declarations
         return options
+
+    def _lan_proxy_runtime_config(self) -> LANProxyRuntimeConfig | None:
+        config = self.app_config.load()
+        lan_config = config.get("lan_sharing", {})
+        if not lan_config.get("enabled", False) or lan_config.get("mode") != "proxy":
+            return None
+
+        bind_address = str(lan_config["bind_address"])
+        if bind_address not in self._local_ip_addresses():
+            raise RuntimeError(
+                f"lan_sharing.bind_address is not assigned to this host: {bind_address}"
+            )
+        credentials = load_or_create_lan_sharing_credentials(
+            lan_sharing_credentials_path(self.app_config.path)
+        )
+        return LANProxyRuntimeConfig(
+            bind_address=bind_address,
+            socks_port=int(lan_config["socks_port"]),
+            http_port=int(lan_config["http_port"]),
+            username=credentials["username"],
+            password=credentials["password"],
+            firewall_managed=bool(lan_config["firewall_managed"]),
+        )
+
+    def _lan_gateway_runtime_config(
+        self,
+        capture_modes: tuple[str, ...],
+    ) -> LANGatewayRuntimeConfig | None:
+        config = self.app_config.load()
+        lan_config = config.get("lan_sharing", {})
+        if not lan_config.get("enabled", False) or lan_config.get("mode") != "gateway":
+            return None
+        if "tun" not in capture_modes:
+            raise RuntimeError("lan_sharing gateway mode requires capture_modes to include tun")
+
+        interface_name = str(lan_config["gateway_interface"])
+        interfaces = self._local_interface_ipv4_addresses()
+        if interface_name not in interfaces:
+            raise RuntimeError(
+                f"lan_sharing.gateway_interface is not assigned to this host: {interface_name}"
+            )
+        if interface_name == "lo":
+            raise RuntimeError("lan_sharing.gateway_interface must be non-loopback")
+        if not interfaces[interface_name]:
+            raise RuntimeError(
+                f"lan_sharing.gateway_interface has no IPv4 address: {interface_name}"
+            )
+        return LANGatewayRuntimeConfig(
+            lan_interface=interface_name,
+            client_cidr=str(lan_config["gateway_client_cidr"]),
+            dns_mode=str(lan_config["gateway_dns_mode"]),
+            firewall_managed=bool(lan_config["firewall_managed"]),
+            tunnel_interface=str(config.get("kill_switch", {}).get("tunnel_interface", "wdvpn-tun0")),
+        )
+
+    def _local_ip_addresses(self) -> set[str]:
+        return {
+            address
+            for addresses in self._local_interface_addresses().values()
+            for address in addresses
+        }
+
+    def _local_interface_ipv4_addresses(self) -> dict[str, set[str]]:
+        return self._local_interface_addresses(family="inet")
+
+    def _local_interface_addresses(self, family: str | None = None) -> dict[str, set[str]]:
+        try:
+            result = subprocess.run(
+                ["ip", "-j", "addr", "show"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise RuntimeError("cannot verify LAN sharing interface state: ip command unavailable") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            message = "cannot verify LAN sharing interface state"
+            if detail:
+                message += f": {detail}"
+            raise RuntimeError(message)
+        try:
+            interfaces = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("cannot verify LAN sharing interface state: invalid ip output") from exc
+        addresses: dict[str, set[str]] = {}
+        if not isinstance(interfaces, list):
+            return addresses
+        for interface in interfaces:
+            if not isinstance(interface, dict):
+                continue
+            name = interface.get("ifname")
+            if not isinstance(name, str):
+                continue
+            interface_addresses = addresses.setdefault(name, set())
+            for item in interface.get("addr_info", []):
+                if (
+                    isinstance(item, dict)
+                    and (family is None or item.get("family") == family)
+                    and isinstance(item.get("local"), str)
+                ):
+                    interface_addresses.add(item["local"])
+        return addresses
 
     def _runtime_app_policy(self) -> AppPolicy:
         result = self.app_policy_store.load_or_disabled()
@@ -785,6 +937,11 @@ class WatchdogRuntime:
             kill_switch_active=(
                 state.kill_switch_active if kill_switch_active is None else kill_switch_active
             ),
+            lan_gateway_active=state.lan_gateway_active,
+            lan_gateway_interface=state.lan_gateway_interface,
+            lan_gateway_client_cidr=state.lan_gateway_client_cidr,
+            lan_gateway_dns_mode=state.lan_gateway_dns_mode,
+            lan_gateway_status=state.lan_gateway_status,
             status="recovered",
         )
 
@@ -802,6 +959,8 @@ class _RuntimeDriverRouter(BaseDriver):
         groups=None,
         app_policy=None,
         final_policy: str = "current_profile",
+        lan_proxy=None,
+        lan_gateway=None,
     ) -> bool:
         driver = self.runtime._driver_for_profile(profile, disconnect_current=False)
         options = self.runtime._connect_options()
