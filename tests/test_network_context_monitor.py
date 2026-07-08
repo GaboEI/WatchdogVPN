@@ -91,13 +91,54 @@ class NetworkContextMonitorTests(unittest.TestCase):
         self.assertEqual(len(observation.active_networks), 1)
         self.assertEqual(observation.active_networks[0].interface_type, "wifi")
         self.assertEqual(observation.active_networks[0].bssid, "aa:bb:cc:dd:ee:ff")
-        rendered = repr(observation.to_dict())
+        redacted = observation.to_dict()
+        rendered = repr(redacted)
         self.assertIn("<redacted-interface>", rendered)
         self.assertIn("<redacted-ssid>", rendered)
         self.assertIn("<redacted-bssid>", rendered)
+        self.assertIn("<not-observed-gateway>", rendered)
         self.assertNotIn("Home Wi-Fi", rendered)
         self.assertNotIn("wlp3s0", rendered)
         self.assertNotIn("aa:bb:cc:dd:ee:ff", rendered)
+        self.assertEqual(
+            redacted["active_networks"][0]["gateway_identifier"],
+            "<not-observed-gateway>",
+        )
+
+    def test_redacted_observation_distinguishes_absent_from_redacted_values(self) -> None:
+        observation = NetworkObservation(
+            status=MonitorStatus.OBSERVED,
+            active_networks=(
+                ActiveNetwork(
+                    source="test",
+                    interface_name="eth0",
+                    interface_type="ethernet",
+                    gateway_identifier="192.0.2.1",
+                ),
+                ActiveNetwork(source="test", interface_type="loopback"),
+            ),
+            default_route_interfaces=("eth0",),
+        )
+
+        redacted = observation.to_dict()
+
+        self.assertEqual(
+            redacted["active_networks"][0]["interface_name"],
+            "<redacted-interface>",
+        )
+        self.assertEqual(
+            redacted["active_networks"][0]["ssid"],
+            "<not-observed-ssid>",
+        )
+        self.assertEqual(
+            redacted["active_networks"][0]["gateway_identifier"],
+            "<redacted-gateway>",
+        )
+        self.assertEqual(
+            redacted["active_networks"][1]["interface_name"],
+            "<not-observed-interface>",
+        )
+        self.assertEqual(redacted["default_route_interfaces"], ["<redacted-interface>"])
 
     def test_missing_nmcli_degrades_to_partial_route_only(self) -> None:
         runner = FakeRunner(

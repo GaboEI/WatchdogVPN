@@ -40,7 +40,10 @@ The command runner is injectable for tests. The default runner uses
 
 `ActiveNetwork` may hold transient raw SSID/BSSID/interface/gateway values only
 in memory for immediate policy evaluation. The default `to_dict()` path redacts
-SSID, BSSID, interface names and gateway identifiers.
+SSID, BSSID, interface names and gateway identifiers. Redacted output
+distinguishes observed sensitive values, such as `<redacted-ssid>`, from
+unavailable values, such as `<not-observed-ssid>`, so diagnostics can remain
+honest without exposing local network context.
 
 ## Policy Evaluation
 
@@ -88,6 +91,8 @@ Task 21.3 adds tests for:
 - NetworkManager/default-route observation;
 - `nmcli` escaped separator parsing for BSSID values;
 - default redaction of SSID/BSSID/interface values;
+- explicit distinction between redacted observed values and not-observed
+  values;
 - missing `nmcli` partial fallback;
 - missing `nmcli` and `ip` unsupported fallback;
 - transient interface/default-route change detection;

@@ -566,4 +566,4 @@ def _sha256(value: str) -> str:
 
 
 def _redacted_marker(value: str, label: str) -> str:
-    return f"<redacted-{label}>" if value else ""
+    return f"<redacted-{label}>" if value else f"<not-observed-{label}>"
