@@ -102,6 +102,12 @@ sudo env WATCHDOGVPN_VM_SMOKE=1 \
   --client-cidr "$CLIENT_CIDR" \
   --tun-interface "$TUN_INTERFACE"
 
+echo "== phase20.7 namespace gateway lab =="
+sudo env WATCHDOGVPN_VM_SMOKE=1 \
+  WATCHDOGVPN_REPO_DIR="$INSTALLED_LIB" \
+  PYTHONPATH="$INSTALLED_LIB" \
+  python3 tests/vm/phase20_7_gateway_namespace_validation.py
+
 echo "== post state =="
 snapshot_state after
 cat "$tmp_dir/after.ip_forward"
