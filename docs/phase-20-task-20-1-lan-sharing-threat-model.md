@@ -24,8 +24,9 @@ Phase 20 has two tracks:
 - LAN proxy sharing: selected LAN clients use WatchdogVPN's SOCKS/HTTP proxy
   listener through an explicit LAN bind address.
 - Gateway/router mode: selected LAN clients use the WatchdogVPN host as a
-  routed gateway. This is not automatically accepted by Task 20.1; it requires
-  the later Task 20.5 design gate before implementation.
+  routed gateway. Task 20.5 accepts this for the Phase 20 branch only, under
+  the stricter contract in
+  `docs/phase-20-task-20-5-gateway-router-design-gate.md`.
 
 The current local-host behavior remains unchanged: loopback SOCKS/HTTP
 listeners stay available for local applications and health checks.
@@ -61,18 +62,22 @@ Supported only after Tasks 20.2-20.4 implement and validate it:
 
 ### Gateway/Router Mode
 
-Not accepted for implementation by Task 20.1. Task 20.5 must decide whether to
-keep it in Phase 20 or split it into a later dedicated phase.
+Accepted by Task 20.5 for implementation in Task 20.6 on the dedicated Phase
+20 branch only. It remains rejected on `main` until Task 20.7 completes VM-only
+validation and clears all HIGH/MEDIUM findings.
 
-If accepted later, it must define:
+Minimum contract:
 
 - explicit LAN-facing interface;
 - explicit upstream/protected path;
-- no automatic persistent `net.ipv4.ip_forward` or IPv6 forwarding changes
-  without rollback;
+- no automatic persistent `net.ipv4.ip_forward` changes;
+- IPv4 forwarding may be enabled only for the active gateway session with
+  snapshot/rollback;
+- IPv6 forwarding, router advertisements and automatic DHCP/router mutation
+  remain rejected;
 - NAT/firewall ownership and teardown;
 - DNS behavior for LAN clients;
-- route advertisement or manual client setup wording;
+- manual client setup wording;
 - kill-switch behavior for LAN-originated traffic;
 - multi-VM validation with a separate LAN client.
 
@@ -150,7 +155,7 @@ For LAN proxy sharing:
   failure;
 - teardown must leave no stale listener that can later route direct.
 
-For gateway/router mode, if accepted later:
+For gateway/router mode:
 
 - forwarding/NAT must be covered by kill-switch behavior;
 - route and firewall teardown must be proven after normal disconnect, failed

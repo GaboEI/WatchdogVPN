@@ -48,8 +48,13 @@ secure and fully validated.
 Phase 20 Task 20.1 opened that track with
 `docs/phase-20-task-20-1-lan-sharing-threat-model.md`. Task 20.3 implements
 authenticated LAN SOCKS/HTTP proxy inbounds on the dedicated Phase 20 branch
-only. The work is still not part of `main`, and it does not authorize gateway
-forwarding, DNS listener exposure, firewall mutation or wildcard binds.
+only. Task 20.5 accepts gateway/router mode for the same dedicated branch under
+`docs/phase-20-task-20-5-gateway-router-design-gate.md`, with
+disabled-by-default IPv4 forwarding/NAT, explicit interface selection, manual
+client setup, DNS and kill-switch contracts, reversible firewall ownership and
+VM-only validation. The work is still not part of `main`, and it does not
+authorize wildcard binds, automatic DHCP/router mutation, IPv6 forwarding or
+persistent forwarding changes.
 
 ## Consequences
 
@@ -58,7 +63,10 @@ forwarding, DNS listener exposure, firewall mutation or wildcard binds.
 - LAN sharing remains a planned core capability, but only through the dedicated
   Phase 20 design and validation track before Full CLI.
 - Task 20.3 satisfies the initial authenticated proxy-listener requirement on
-  the branch, but firewall UX, LAN-client DNS behavior, kill-switch behavior,
-  gateway/NAT decisions and teardown proof remain Phase 20 gates before merge.
+  the branch, and Task 20.5 decides that gateway/router remains in Phase 20
+  instead of being split again.
+- Gateway/router implementation must stay disabled by default, explicit,
+  reversible and VM-validated; Task 20.7 still owns final matrix validation and
+  the no-HIGH/MEDIUM merge gate.
 - Future work that adds LAN sharing must update this decision instead of
   weakening the existing localhost-only inbounds silently.

@@ -76,4 +76,6 @@ authenticated proxy mode. It does not implement or validate:
 - LAN DNS listener exposure;
 - separate-client VM topology beyond host-reachable LAN bind proof.
 
-Gateway/router mode remains gated by Task 20.5.
+Gateway/router mode was left for Task 20.5 to decide. Task 20.5 later accepted
+gateway/router implementation for the Phase 20 branch under a stricter design
+contract before Task 20.6.
