@@ -83,12 +83,11 @@ archive off the local machine.
 Before the final CLI is frozen, WatchdogVPN will align its routing model so
 Rule/Global are routing policies, Proxy/TUN/LAN are capture or entry
 mechanisms, and Direct/Current/Block/Group are route actions. After that,
-WatchdogVPN is expected to grow a carefully gated LAN sharing track for network
-operators: LAN proxy sharing and, later, full gateway/router mode for devices
-that intentionally use the WatchdogVPN host as their protected path. That work
-is not enabled in the current mainline runtime; it requires a dedicated branch,
-VM-only network validation, explicit bind/firewall controls, kill-switch
-coverage and DNS leak validation before merge.
+WatchdogVPN includes a carefully gated LAN sharing track for network operators:
+authenticated LAN proxy sharing and full gateway/router mode for devices that
+intentionally use the WatchdogVPN host as their protected path. This remains
+disabled by default and requires explicit bind/firewall controls, kill-switch
+coverage, DNS honesty and teardown validation.
 
 Before the final CLI is frozen, WatchdogVPN will also add network-context
 automation and unified diagnostics. That track is expected to cover

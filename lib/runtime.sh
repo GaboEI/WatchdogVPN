@@ -13,6 +13,7 @@ PYTHON_RUNTIME_PACKAGES=(
   drivers
   metrics
   models
+  network_context
   node_groups
   parsers
   providers

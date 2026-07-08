@@ -88,8 +88,9 @@ censorship-resistant by default.
   account state.
 - No final CLI/TUI model that collapses Rule/Global, Proxy/TUN/LAN and
   Direct/Current/Block/Group into one confusing mode.
-- No LAN proxy/gateway work directly on `main`; it must be built on a
-  dedicated branch and merged only after VM-only validation.
+- No high-risk network exposure work directly on `main`; LAN proxy/gateway was
+  built on a dedicated branch and merged only after VM-only validation. Future
+  comparable work must follow the same branch-and-audit pattern.
 - No final CLI freeze before network-context automation, unified diagnostics
   and redacted support export are designed and audited.
 - No final TUI work until the CLI-backed behavior is complete and field-tested.
