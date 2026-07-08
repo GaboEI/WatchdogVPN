@@ -21,11 +21,13 @@ prove.
 
 ## Decision
 
-Explicit proxy-chain and route-chain actions are deferred out of v2.0.0 and
-into a later v2.x phase.
+Explicit proxy-chain and route-chain actions are split out of Phase 19 and
+scheduled for a dedicated v2 phase before the final Full CLI and v2.0.0
+release.
 
-v2.0.0 keeps the route-action model open, but it does not accept or silently
-coerce chain actions. Current accepted route actions remain:
+Until that dedicated phase lands, the current runtime keeps the route-action
+model open, but it does not accept or silently coerce chain actions. Current
+accepted route actions remain:
 
 - `direct`;
 - `current` / `current_profile`;
@@ -33,12 +35,13 @@ coerce chain actions. Current accepted route actions remain:
 - `group:<name>` and `auto_select` where the existing rule/app-policy runtime
   supports them.
 
-`chain:<name>` and similar future chain actions must fail validation until a
-dedicated phase defines and validates the complete contract.
+`chain:<name>` and similar future chain actions must fail validation until the
+dedicated v2 chain phase defines, implements and validates the complete
+contract.
 
 ## Future Chain Contract
 
-Before chain actions can be accepted, the later phase must define:
+Before chain actions can be accepted, the dedicated v2 chain phase must define:
 
 - persistent chain syntax and migration rules;
 - allowed hop types and whether chains can reference profiles, node groups, or
@@ -58,10 +61,12 @@ Before chain actions can be accepted, the later phase must define:
 
 ## Consequences
 
-- v2.0.0 avoids a half-built chain feature that could misroute traffic or hide
-  DNS behavior.
+- v2.0.0 still includes proxy-chain/route-chain work, but in its own dedicated
+  phase instead of as a partial Phase 19 add-on.
+- Phase 19 avoids a half-built chain feature that could misroute traffic or
+  hide DNS behavior.
 - Existing route actions remain stable and inspectable.
-- Future chain work can add a new route-action namespace without rewriting the
-  Phase 19 routing/capture contract.
-- Validators must continue to reject `chain:<name>` until the dedicated v2.x
+- The dedicated chain phase can add the new route-action namespace without
+  rewriting the Phase 19 routing/capture contract.
+- Validators must continue to reject `chain:<name>` until that dedicated v2
   phase lands.

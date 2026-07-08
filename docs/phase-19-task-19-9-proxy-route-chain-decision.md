@@ -4,12 +4,14 @@ Date: 2026-07-08
 
 ## Decision
 
-Explicit proxy-chain and route-chain actions are deferred out of v2.0.0 and
-reserved for a later v2.x phase.
+Explicit proxy-chain and route-chain actions are split out of Phase 19 and
+scheduled for a dedicated v2 phase before the final Full CLI and v2.0.0
+release.
 
-The product model stays open to future chain actions, but current v2.0.0
-validators must not accept `chain:<name>` or silently map it to the current
-profile, a node group, or direct routing.
+The product model stays open to chain actions, but current Phase 19 validators
+must not accept `chain:<name>` or silently map it to the current profile, a
+node group, or direct routing before the dedicated chain phase implements the
+full runtime contract.
 
 The architectural decision is recorded in
 [`docs/decisions/0007-proxy-route-chain-decision.md`](decisions/0007-proxy-route-chain-decision.md).
