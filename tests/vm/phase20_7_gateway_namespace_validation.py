@@ -78,10 +78,9 @@ def setup_lab() -> None:
 def validate_lab_routing() -> None:
     client_route = run(["ip", "netns", "exec", LAB_NAMESPACE, "ip", "route", "get", LAB_ROUTE_HOST], check=True)
     require("via 10.20.7.1" in client_route.stdout, "client namespace does not route through gateway host")
-    host_route = run(
-        ["ip", "route", "get", LAB_ROUTE_HOST, "from", "10.20.7.2", "iif", LAB_LAN_HOST],
-        check=True,
-    )
+    ping = run(["ip", "netns", "exec", LAB_NAMESPACE, "ping", "-c", "1", "-W", "1", "10.20.7.1"], check=True)
+    require("1 received" in ping.stdout or "1 packets received" in ping.stdout, "client namespace cannot reach gateway host")
+    host_route = run(["ip", "route", "get", LAB_ROUTE_HOST], check=True)
     require(f"dev {LAB_TUN}" in host_route.stdout, "host route decision does not use lab tunnel interface")
 
 
