@@ -65,6 +65,7 @@ watchdog stats status [--json]
 watchdog stats summary [--json]
 watchdog stats purge --yes
 watchdog stats privacy-mode <off|aggregate|detailed>
+watchdog rules explain [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
 watchdog ruleset status [--json]
 watchdog ruleset refresh [RULE_SET_ID ...] [--referenced-only] [--force] [--json]
 ```
@@ -207,6 +208,51 @@ watchdog stats privacy-mode detailed
 `off` disables metrics recording. `aggregate` enables aggregate counters.
 `detailed` stores the policy mode value but does not enable request history,
 because detailed history is not implemented in Phase 16.
+
+## Rule Diagnostics
+
+### `watchdog rules explain`
+
+Explains the configured routing decision for hypothetical traffic without
+observing live packets or changing connectivity.
+
+```sh
+watchdog rules explain --domain example.com
+watchdog rules explain --ip 203.0.113.42 --json
+watchdog rules explain --domain example.com --process-name curl
+```
+
+The command reports the Phase 19 routing shape:
+
+- `routing_policy`: `rule` evaluates route rules; `global` ignores route rules
+  and uses the default route action for captured traffic;
+- `capture_modes`: reported for context only; the diagnostic does not start or
+  modify capture;
+- `default_route_action`: used when no rule matches under `rule`, and always
+  used under `global`;
+- `active_mode`: displayed only as a compatibility mirror and never used as the
+  diagnostic decision source.
+
+JSON output is a superset of the older rule-explanation model. Existing fields
+such as `matched`, `priority_path`, `skipped_conditions`,
+`unevaluated_rule_sets` and `confidence` remain present, with additional route
+diagnostic fields including `route_action`, `route_action_status`,
+`route_source`, `routing`, `rule_evaluation`, `no_rule_match`,
+`diagnostic_scope` and `runtime_observation`.
+
+Confidence remains intentionally conservative:
+
+- `definitive`: static configuration is enough to state the route action;
+- `partial`: more input is needed, or app-policy matchers exist that cannot be
+  evaluated from the supplied fields;
+- `runtime-required`: remote or built-in rule-set contents can affect the
+  result and require the runtime;
+- `unknown`: the input is insufficient to diagnose a rule-policy decision.
+
+Rule-set references are not expanded by the Python diagnostic. They are
+reported as unevaluated with trust/cache status loaded from
+`ruleset-trust.json`, including missing policy, `stale`, `failed`,
+`fail-closed` and `warn-and-skip` states when available.
 
 ## Rule-Set Runtime Lifecycle
 

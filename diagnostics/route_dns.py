@@ -3,12 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app_policy.models import AppPolicy, AppPolicyAction
+from app_policy.models import AppPolicy
 from dns.models import DNSChannelName, DNSMode, DNSPolicy, DNSRuleAction
+from diagnostics.routing import (
+    RouteDiagnostic,
+    app_policy_has_unevaluated_matchers,
+    diagnose_route,
+    matching_app_policy_action,
+)
 from node_groups.models import group_target
-from rules.explanation import RuleExplanation, RuleExplanationConfidence, RuleExplainer
-from rules.rule_engine import TrafficInfo
+from rules.explanation import RuleExplanationConfidence
 from rules.models import RuleGroup
+from rules.rule_engine import TrafficInfo
+from rules.ruleset_trust import RuleSetTrustRegistry
 
 
 DNS_ROUTE_BY_ACTION = {
@@ -29,7 +36,7 @@ class RouteDNSDiagnostic:
     dns_channel: str | None
     dns_path: str
     dns_reason: str
-    rule_explanation: RuleExplanation
+    route_diagnostic: RouteDiagnostic
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,7 +59,12 @@ class RouteDNSDiagnostic:
                 "path": self.dns_path,
                 "reason": self.dns_reason,
             },
-            "rule_explanation": self.rule_explanation.to_dict(),
+            "route_diagnostic": self.route_diagnostic.to_dict(),
+            "rule_explanation": (
+                self.route_diagnostic.rule_explanation.to_dict()
+                if self.route_diagnostic.rule_explanation
+                else None
+            ),
         }
 
 
@@ -62,30 +74,23 @@ def diagnose_route_dns(
     rule_groups: list[RuleGroup],
     dns_policy: DNSPolicy,
     app_policy: AppPolicy | None = None,
-    final_policy: str = "current_profile",
+    routing_state: dict[str, Any] | None = None,
+    trust_registry: RuleSetTrustRegistry | None = None,
 ) -> RouteDNSDiagnostic:
-    explanation = RuleExplainer(final_policy=final_policy).explain(
-        traffic,
-        rule_groups,
+    route_diagnostic = diagnose_route(
+        traffic=traffic,
+        rule_groups=rule_groups,
+        routing_state=routing_state,
+        trust_registry=trust_registry,
+        app_policy=app_policy,
     )
-    route_action = explanation.matched.action if explanation.matched else None
-    route_source = explanation.matched.to_dict() if explanation.matched else None
-    if app_policy is not None and app_policy.enabled:
-        app_action = _matching_app_policy_action(app_policy, traffic)
-        if app_action is not None:
-            route_action = app_action
-            route_source = {
-                "source": "app-policy",
-                "action": app_action,
-                "group_name": None,
-                "rule_id": None,
-            }
-
-    confidence = explanation.confidence
+    route_action = route_diagnostic.route_action
+    route_source = route_diagnostic.route_source
+    confidence = route_diagnostic.confidence
     if (
         app_policy is not None
         and app_policy.enabled
-        and _app_policy_has_unevaluated_matchers(app_policy)
+        and app_policy_has_unevaluated_matchers(app_policy)
         and confidence != RuleExplanationConfidence.RUNTIME_REQUIRED
     ):
         confidence = RuleExplanationConfidence.PARTIAL
@@ -103,7 +108,7 @@ def diagnose_route_dns(
             dns_channel=None,
             dns_path="unknown",
             dns_reason="dns diagnostics require a domain input",
-            rule_explanation=explanation,
+            route_diagnostic=route_diagnostic,
         )
 
     if confidence == RuleExplanationConfidence.RUNTIME_REQUIRED:
@@ -115,7 +120,7 @@ def diagnose_route_dns(
             dns_channel=None,
             dns_path="unknown",
             dns_reason="routing depends on runtime-evaluated rule sets",
-            rule_explanation=explanation,
+            route_diagnostic=route_diagnostic,
         )
 
     dns_channel, dns_reason = _dns_channel_for_traffic(
@@ -135,51 +140,8 @@ def diagnose_route_dns(
         dns_channel=dns_channel.value if dns_channel else None,
         dns_path=dns_path,
         dns_reason=dns_reason,
-        rule_explanation=explanation,
+        route_diagnostic=route_diagnostic,
     )
-
-
-def _matching_app_policy_action(policy: AppPolicy, traffic: TrafficInfo) -> str | None:
-    for rule in policy.rules:
-        if not rule.enabled:
-            continue
-        if _app_policy_rule_matches(rule.match, traffic):
-            return _app_policy_action_value(rule.action)
-    if policy.mode.value == "whitelist":
-        return _app_policy_action_value(policy.default_action)
-    default_action = _app_policy_action_value(policy.default_action)
-    if default_action != AppPolicyAction.CURRENT.value:
-        return default_action
-    return None
-
-
-def _app_policy_rule_matches(
-    match: dict[str, list[str] | list[int]],
-    traffic: TrafficInfo,
-) -> bool:
-    for key, values in match.items():
-        if key == "process_name" and traffic.process_name not in values:
-            return False
-        if key == "process_path" and traffic.process_path not in values:
-            return False
-        if key == "process_path_regex":
-            return False
-        if key in {"user", "user_id"}:
-            return False
-    return True
-
-
-def _app_policy_has_unevaluated_matchers(policy: AppPolicy) -> bool:
-    for rule in policy.rules:
-        if not rule.enabled:
-            continue
-        if set(rule.match) & {"process_path_regex", "user", "user_id"}:
-            return True
-    return False
-
-
-def _app_policy_action_value(action: AppPolicyAction | str) -> str:
-    return action.value if isinstance(action, AppPolicyAction) else str(action)
 
 
 def _dns_channel_for_traffic(
@@ -216,7 +178,7 @@ def _app_policy_dns_channel(
 ) -> tuple[DNSChannelName | None, str] | None:
     if policy is None or not policy.enabled:
         return None
-    action = _matching_app_policy_action(policy, traffic)
+    action = matching_app_policy_action(policy, traffic)
     if action is None:
         return None
     if action == "direct":

@@ -38,6 +38,7 @@ from dns.state_manager import (
 from dns.tester import DNSTester
 from daemon.protocol import Response
 from diagnostics.route_dns import RouteDNSDiagnostic, diagnose_route_dns
+from diagnostics.routing import RouteDiagnostic, diagnose_route
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
 from models.profile import Profile
@@ -49,8 +50,6 @@ from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 from rotation import pool_builder
 from rules.explanation import (
-    RuleExplainer,
-    RuleExplanation,
     RuleExplanationConfidence,
 )
 from rules.importer import RuleImportError, build_rule_import_plan
@@ -342,6 +341,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dns_diagnose_parser.add_argument("--network", help="Network transport, for example tcp")
     dns_diagnose_parser.add_argument("--process-name", help="Process executable name")
     dns_diagnose_parser.add_argument("--process-path", help="Exact process executable path")
+    dns_diagnose_parser.add_argument("--ruleset-trust-file", help="Rule-set trust registry JSON file")
     dns_diagnose_parser.add_argument("--json", action="store_true", help="Print JSON")
     dns_diagnose_parser.set_defaults(handler=_dns_diagnose)
 
@@ -1266,14 +1266,17 @@ def _rules_explain(args: argparse.Namespace) -> int:
     )
     trust_path = Path(args.ruleset_trust_file) if args.ruleset_trust_file else None
     trust_registry = RuleSetTrustStore(trust_path).load()
-    explanation = RuleExplainer(trust_registry=trust_registry).explain(
-        traffic,
-        RuleStore().list_groups(),
+    diagnostic = diagnose_route(
+        traffic=traffic,
+        rule_groups=RuleStore().list_groups(),
+        routing_state=StateManager().load(),
+        trust_registry=trust_registry,
+        app_policy=AppPolicyStore().load_or_disabled().policy,
     )
     if args.json:
-        _print_json(explanation.to_dict())
+        _print_json(diagnostic.to_dict())
     else:
-        _print_rule_explanation(explanation)
+        _print_route_diagnostic(diagnostic)
     return 0
 
 
@@ -1491,32 +1494,60 @@ def _ruleset_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_rule_explanation(explanation: RuleExplanation) -> None:
-    data = explanation.to_dict()
+def _print_route_diagnostic(diagnostic: RouteDiagnostic) -> None:
+    data = diagnostic.to_dict()
+    routing = data["routing"]
     confidence = RuleExplanationConfidence(data["confidence"])
-    matched = data.get("matched") if isinstance(data.get("matched"), dict) else None
 
-    print("Rule explanation: configured policy only, not live traffic observation.")
+    print("Route diagnostic: configured policy only, not live traffic observation.")
+    print(f"Routing policy: {routing['routing_policy']}")
+    print(f"Capture modes: {','.join(routing['capture_modes'])}")
+    print(f"Default route action: {routing['default_route_action']}")
+    print("Compatibility active_mode: display only")
     print(f"Confidence: {confidence.value}")
     print(f"Input: {_format_rule_explain_input(data['input_traffic'])}")
 
-    if confidence == RuleExplanationConfidence.DEFINITIVE and matched:
-        print(f"Decision: configured policy would use action '{matched['action']}'.")
-        if matched.get("source") == "rule":
-            print(f"Matched rule: {matched.get('group_name')}/{matched.get('rule_id')}")
-        else:
-            print("Matched rule: final fallback")
+    route_action = data.get("route_action") or "unknown"
+    if confidence == RuleExplanationConfidence.DEFINITIVE and route_action != "unknown":
+        print(f"Decision: configured policy would use action '{route_action}'.")
     elif confidence == RuleExplanationConfidence.PARTIAL:
         print("Decision: incomplete; more input is needed before stating a final action.")
-        if matched:
-            print(f"Candidate local action: {matched['action']} ({matched['source']})")
+        if route_action != "unknown":
+            print(f"Candidate local action: {route_action}")
     elif confidence == RuleExplanationConfidence.RUNTIME_REQUIRED:
         print("Decision: cannot be determined statically.")
         print("Reason: runtime-evaluated rule sets may change the result.")
-        if matched:
-            print(f"Candidate local action: {matched['action']} ({matched['source']})")
+        if route_action != "unknown":
+            print(f"Candidate local action: {route_action}")
     else:
         print("Decision: unknown; provide a domain, IP, port, protocol, network, or process.")
+
+    if data["rule_evaluation"] == "ignored-by-global-policy":
+        print("Rule evaluation: ignored by global routing policy.")
+    else:
+        print("Rule evaluation: enabled by rule routing policy.")
+
+    status = data["route_action_status"]
+    if status == "applies":
+        print(f"Route action: {route_action}")
+    elif status == "candidate":
+        print(f"Candidate route action: {route_action}")
+    else:
+        print("Route action: unknown")
+
+    source = data.get("route_source")
+    if isinstance(source, dict):
+        if source.get("source") == "rule":
+            print(f"Matched rule: {source.get('group_name')}/{source.get('rule_id')}")
+        elif source.get("source") == "final":
+            print("Matched rule: none; default route action applies.")
+        elif source.get("source") == "app-policy":
+            print("Matched policy: app-policy")
+        elif source.get("source") == "routing-policy":
+            print("Matched policy: global routing policy")
+
+    if data.get("no_rule_match") is True:
+        print("No configured route rule matched.")
 
     skipped = data.get("skipped_conditions", [])
     if isinstance(skipped, list) and skipped:
@@ -1839,11 +1870,15 @@ def _dns_diagnose(args: argparse.Namespace) -> int:
         process_name=args.process_name,
         process_path=args.process_path,
     )
+    trust_path = Path(args.ruleset_trust_file) if args.ruleset_trust_file else None
+    trust_registry = RuleSetTrustStore(trust_path).load()
     diagnostic = diagnose_route_dns(
         traffic=traffic,
         rule_groups=RuleStore().list_groups(),
         dns_policy=_load_dns_policy(args),
         app_policy=AppPolicyStore().load_or_disabled().policy,
+        routing_state=StateManager().load(),
+        trust_registry=trust_registry,
     )
     if args.json:
         _print_json(diagnostic.to_dict())

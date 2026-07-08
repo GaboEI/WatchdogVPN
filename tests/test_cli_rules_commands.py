@@ -6,6 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from app_policy.models import AppPolicy, AppPolicyRule
+from app_policy.store import AppPolicyStore
+from config.state_manager import StateManager
 from rules.models import Rule, RuleGroup
 from rules.rule_store import RuleStore
 from rules.ruleset_trust import RuleSetTrustPolicy, RuleSetTrustRegistry
@@ -498,6 +501,103 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertEqual(data["matched"]["group_name"], "block")
         self.assertEqual(data["matched"]["rule_id"], "ads")
         self.assertEqual(data["priority_path"][0]["result"], "matched")
+        self.assertEqual(data["diagnostic_scope"], "configured-policy-only")
+        self.assertFalse(data["runtime_observation"])
+        self.assertEqual(data["routing"]["routing_policy"], "rule")
+        self.assertEqual(data["routing"]["active_mode_role"], "compatibility-display-only")
+        self.assertEqual(data["route_action"], "block")
+
+    def test_explain_json_uses_default_route_action_not_active_mode_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            StateManager(Path(tmp) / "state.toml").save(
+                {
+                    "routing_policy": "rule",
+                    "capture_modes": "local_proxy",
+                    "default_route_action": "block",
+                    "active_mode": "global",
+                }
+            )
+
+            result = self.run_watchdog(
+                ["rules", "explain", "--domain", "unmatched.example", "--json"],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["routing"]["routing_policy"], "rule")
+        self.assertEqual(data["routing"]["default_route_action"], "block")
+        self.assertEqual(data["routing"]["active_mode"], "global")
+        self.assertEqual(data["route_action"], "block")
+        self.assertEqual(data["route_source"]["source"], "final")
+        self.assertTrue(data["no_rule_match"])
+
+    def test_explain_json_global_policy_ignores_matching_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            StateManager(Path(tmp) / "state.toml").save(
+                {
+                    "routing_policy": "global",
+                    "capture_modes": "local_proxy",
+                    "default_route_action": "direct",
+                    "active_mode": "global",
+                }
+            )
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(
+                            id="would-block-under-rule-policy",
+                            action="block",
+                            conditions={"domain": ["example.com"]},
+                        )
+                    ],
+                ),
+            )
+
+            result = self.run_watchdog(
+                ["rules", "explain", "--domain", "example.com", "--json"],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["routing"]["routing_policy"], "global")
+        self.assertEqual(data["route_action"], "direct")
+        self.assertEqual(data["route_source"]["source"], "routing-policy")
+        self.assertEqual(data["rule_evaluation"], "ignored-by-global-policy")
+        self.assertIsNone(data["rule_explanation"])
+
+    def test_explain_json_process_app_policy_reports_policy_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            AppPolicyStore(Path(tmp) / "app-policy.json").save(
+                AppPolicy(
+                    enabled=True,
+                    rules=[
+                        AppPolicyRule(
+                            id="curl-block",
+                            action="block",
+                            match={"process_name": ["curl"]},
+                        )
+                    ],
+                )
+            )
+
+            result = self.run_watchdog(
+                [
+                    "rules",
+                    "explain",
+                    "--domain",
+                    "example.com",
+                    "--process-name",
+                    "curl",
+                    "--json",
+                ],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["route_action"], "block")
+        self.assertEqual(data["route_source"]["source"], "app-policy")
 
     def test_definitive_text_can_state_configured_policy_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

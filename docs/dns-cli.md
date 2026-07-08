@@ -53,10 +53,22 @@ DNS lookup.
 ./bin/watchdog dns diagnose --domain example.com --process-name curl --json
 ```
 
+Route calculation uses the same Phase 19 diagnostic contract as
+`watchdog rules explain`: `routing_policy=global` ignores route rules and uses
+the default route action, while `routing_policy=rule` evaluates rule groups and
+falls back to `default_route_action` on no match. The legacy `active_mode`
+field is reported only as a compatibility mirror and is not used as the route
+decision source.
+
 The output includes a confidence value. `definitive` means the configured
 static policy was enough to answer. `partial`, `runtime-required` or `unknown`
 mean the command could not honestly prove the full runtime decision from the
 provided inputs.
+
+JSON output includes `route_diagnostic`, which contains the route source,
+route-action status, rule-evaluation status and rule-set diagnostics used
+before DNS channel selection. Use `--ruleset-trust-file` to inspect an
+alternate rule-set trust registry during tests or support workflows.
 
 ## Apply
 

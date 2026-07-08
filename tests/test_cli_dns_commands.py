@@ -15,6 +15,7 @@ import cli.main
 from app_policy.models import AppPolicy, AppPolicyRule
 from app_policy.store import AppPolicyStore
 from config.dns_policy_store import DNSPolicyStore
+from config.state_manager import StateManager
 from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
 from dns.resolver_inventory import ResolverInventory, ResolverManager
 from dns.state_manager import DNSStateError, DNSStateSnapshot
@@ -147,6 +148,28 @@ class CliDNSCommandTests(unittest.TestCase):
         self.assertEqual(data["route"]["action"], "direct")
         self.assertEqual(data["dns"]["channel"], "direct")
         self.assertEqual(data["dns"]["path"], "direct")
+        self.assertEqual(data["route_diagnostic"]["route_action"], "direct")
+
+    def test_dns_diagnose_uses_routing_state_default_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            StateManager(Path(tmp) / "state.toml").save(
+                {
+                    "routing_policy": "rule",
+                    "capture_modes": "local_proxy",
+                    "default_route_action": "block",
+                    "active_mode": "global",
+                }
+            )
+
+            result = self.run_watchdog(
+                ["dns", "diagnose", "--domain", "unmatched.example", "--json"],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["route"]["action"], "block")
+        self.assertEqual(data["route_diagnostic"]["routing"]["default_route_action"], "block")
+        self.assertEqual(data["dns"]["path"], "blocked")
 
     def test_dns_diagnose_text_reports_app_policy_dns_rejection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
