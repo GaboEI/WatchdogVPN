@@ -18,6 +18,10 @@ mode or system proxy state.
 `diagnostics.support_export.build_redacted_support_export()` accepts a
 `UnifiedDiagnostics` object and returns a JSON-ready `RedactedSupportExport`.
 
+`UnifiedDiagnostics.support_export_ready = true` means only that the redacted
+support export path exists and is available. It does not grant permission to
+export without review.
+
 The function requires explicit `user_reviewed=True`. Calling it without that
 flag raises `SupportExportReviewRequired`, so callers cannot silently create a
 support export without a user-review step.

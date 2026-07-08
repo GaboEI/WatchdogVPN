@@ -98,6 +98,33 @@ class SupportExportTests(unittest.TestCase):
         with self.assertRaises(SupportExportReviewRequired):
             build_redacted_support_export(diagnostics)
 
+    def test_support_export_ready_only_means_redacted_path_available(self) -> None:
+        diagnostics = collect_unified_diagnostics(
+            app_config={section: dict(values) for section, values in DEFAULT_CONFIG.items()},
+            routing_state={},
+            dns_policy=DNSPolicy(),
+            resolver_inventory=None,
+            providers=[],
+            profiles=[],
+            runtime_state=None,
+            network_policy=NetworkContextPolicy(),
+            network_observation=NetworkObservation(status=MonitorStatus.UNSUPPORTED),
+            route_table_snapshot=None,
+            which=lambda command: None,
+        )
+
+        self.assertTrue(diagnostics.to_dict()["support_export_ready"])
+        with self.assertRaises(SupportExportReviewRequired):
+            build_redacted_support_export(diagnostics)
+
+        export = build_redacted_support_export(
+            diagnostics,
+            user_reviewed=True,
+        ).to_dict()
+        self.assertTrue(export["payload"]["support_export_ready"])
+        self.assertTrue(export["redaction_guards"]["user_review_required"])
+        self.assertTrue(export["user_reviewed"])
+
     def test_support_export_redacts_seeded_operational_secrets(self) -> None:
         app_config = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
         app_config["lan_sharing"].update(

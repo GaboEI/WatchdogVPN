@@ -36,8 +36,11 @@ mode or system proxy state.
 - `recent_failures`: non-sensitive failure categories;
 - `diagnostics`: collection errors or partial-state notes.
 
-The engine sets `support_export_ready = false` to make the Task 21.6 boundary
-explicit.
+At Task 21.4 close time the engine set `support_export_ready = false` to make
+the Task 21.6 boundary explicit. Task 21.6 later changed this field to `true`.
+After Task 21.6, `support_export_ready = true` means only that a redacted
+support export path exists and is available. It does not mean export may happen
+without explicit user review.
 
 ## Privacy And Honesty
 
@@ -63,6 +66,8 @@ Honesty rules:
 - recent failures report categories only, not raw events;
 - enabled network-context connect/disconnect intents are still reported with
   `runtime_action_executed = false`.
+- `support_export_ready` reports redacted export path availability only; the
+  support export builder still requires explicit `user_reviewed = true`.
 
 ## Read-Only Inputs
 

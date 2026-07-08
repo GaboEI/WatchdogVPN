@@ -13,7 +13,9 @@ state, start or stop daemon connections, rotate profiles, or change DNS,
 routes, firewall, forwarding, LAN sharing, gateway mode or system proxy state.
 
 This task also does not implement support export. User-reviewed support export
-remains Task 21.6.
+remains Task 21.6. After Task 21.6, `support_export_ready = true` means only
+that the redacted export path is available; export still requires explicit
+user review.
 
 ## Provider Summary
 
@@ -107,7 +109,7 @@ Task 21.5 adds/updates tests for:
 - unparseable expiry as reported but unknown health;
 - provider profile health aggregation;
 - provider URLs remaining excluded;
-- unified diagnostics still marking support export unavailable.
+- unified diagnostics still preserving the Task 21.6 support-export boundary.
 
 ## Task 21.5 Acceptance
 
