@@ -187,8 +187,6 @@ git diff --check
 PYTHONPYCACHEPREFIX=/tmp/watchdogvpn-pycache python3 -m compileall -q .
 ```
 
-Results are recorded in the Task 20.7 closure commit.
-
 Final closure results:
 
 - shell unit checks passed;
