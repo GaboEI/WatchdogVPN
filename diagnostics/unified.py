@@ -4,16 +4,19 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
+from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager, parse_capture_modes
 from dns.models import DNSChannelName, DNSPolicy
 from dns.resolver_inventory import ResolverInventory, detect_resolver_manager
 from models.connection_state import ConnectionState
+from models.profile import Profile
 from models.provider import Provider
 from network_context.monitor import (
     NetworkContextDecision,
@@ -107,6 +110,7 @@ def collect_unified_diagnostics(
     dns_policy: DNSPolicy | None = None,
     resolver_inventory: ResolverInventory | None = None,
     providers: Iterable[Provider] | None = None,
+    profiles: Iterable[Profile] | None = None,
     runtime_state: ConnectionState | dict[str, Any] | None = None,
     network_policy: NetworkContextPolicy | None = None,
     network_observation: NetworkObservation | None = None,
@@ -153,6 +157,13 @@ def collect_unified_diagnostics(
             providers = []
             diagnostics.append(f"provider state unavailable: {exc}")
     providers = list(providers)
+    if profiles is None:
+        try:
+            profiles = ProfileStore().list()
+        except Exception as exc:
+            profiles = []
+            diagnostics.append(f"profile state unavailable: {exc}")
+    profiles = list(profiles)
     if network_policy is None:
         try:
             network_policy = NetworkContextPolicyStore().load()
@@ -198,7 +209,7 @@ def collect_unified_diagnostics(
             "observation": network_observation.to_dict(redact=True),
             "decision": network_decision.to_dict(),
         },
-        providers=_provider_summary(providers),
+        providers=_provider_summary(providers, profiles),
         recent_failures=recent_failures,
         diagnostics=tuple(diagnostics),
     )
@@ -472,10 +483,15 @@ def _lan_summary(
     }
 
 
-def _provider_summary(providers: list[Provider]) -> dict[str, Any]:
+def _provider_summary(providers: list[Provider], profiles: list[Profile]) -> dict[str, Any]:
     provider_items: list[dict[str, Any]] = []
+    profiles_by_provider = _profiles_by_provider(profiles)
     for provider in providers:
         metadata_keys = sorted(str(key) for key in provider.metadata)
+        provider_profiles = profiles_by_provider.get(provider.id, [])
+        health = _provider_health_summary(provider, provider_profiles)
+        quota = _provider_quota_summary(provider.metadata)
+        expiry = _provider_expiry_summary(provider.metadata)
         provider_items.append(
             {
                 "id": provider.id,
@@ -489,9 +505,10 @@ def _provider_summary(providers: list[Provider]) -> dict[str, Any]:
                 "auto_update": provider.auto_update,
                 "update_interval_hours": provider.update_interval_hours,
                 "metadata_keys": metadata_keys,
-                "metadata_value_status": "deferred-to-task-21.5"
-                if metadata_keys
-                else "unknown",
+                "metadata_value_status": "summarized" if metadata_keys else "unknown",
+                "quota": quota,
+                "expiry": expiry,
+                "health": health,
             }
         )
     return {
@@ -499,6 +516,143 @@ def _provider_summary(providers: list[Provider]) -> dict[str, Any]:
         "items": provider_items,
         "url_values_included": False,
     }
+
+
+def _profiles_by_provider(profiles: list[Profile]) -> dict[str, list[Profile]]:
+    grouped: dict[str, list[Profile]] = {}
+    for profile in profiles:
+        if not profile.provider_id:
+            continue
+        grouped.setdefault(profile.provider_id, []).append(profile)
+    return grouped
+
+
+def _provider_health_summary(
+    provider: Provider,
+    profiles: list[Profile],
+) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+    enabled_count = 0
+    rotation_count = 0
+    last_health_check_values: list[datetime] = []
+    for profile in profiles:
+        status = str(profile.health_status or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if profile.enabled:
+            enabled_count += 1
+        if profile.in_rotation_pool:
+            rotation_count += 1
+        if profile.last_health_check is not None:
+            last_health_check_values.append(profile.last_health_check)
+    referenced_profile_count = len(provider.profiles)
+    observed_profile_count = len(profiles)
+    unknown_count = max(referenced_profile_count - observed_profile_count, 0)
+    if unknown_count:
+        status_counts["unknown"] = status_counts.get("unknown", 0) + unknown_count
+    if not status_counts and referenced_profile_count:
+        status_counts["unknown"] = referenced_profile_count
+    return {
+        "status": _aggregate_health_status(status_counts, referenced_profile_count),
+        "profile_count": referenced_profile_count,
+        "observed_profile_count": observed_profile_count,
+        "enabled_profile_count": enabled_count,
+        "rotation_profile_count": rotation_count,
+        "status_counts": dict(sorted(status_counts.items())),
+        "last_health_check": (
+            max(last_health_check_values).isoformat()
+            if last_health_check_values
+            else None
+        ),
+        "last_health_check_status": "known" if last_health_check_values else "unknown",
+    }
+
+
+def _aggregate_health_status(status_counts: dict[str, int], profile_count: int) -> str:
+    if profile_count == 0:
+        return "unknown"
+    if any(status in status_counts for status in ("down", "degraded")):
+        return "degraded"
+    if status_counts.get("ok", 0) == profile_count:
+        return "ok"
+    return "unknown"
+
+
+def _provider_quota_summary(metadata: dict[str, Any]) -> dict[str, Any]:
+    used = _first_metadata_value(metadata, ("traffic_used", "used", "quota_used"))
+    limit = _first_metadata_value(
+        metadata,
+        ("traffic_limit", "traffic_total", "total", "quota_total", "quota_limit"),
+    )
+    remaining = _first_metadata_value(
+        metadata,
+        ("traffic_remaining", "remaining", "quota_remaining"),
+    )
+    status = "unknown"
+    if used is not None or limit is not None or remaining is not None:
+        status = "reported"
+    return {
+        "status": status,
+        "used": str(used) if used is not None else None,
+        "limit": str(limit) if limit is not None else None,
+        "remaining": str(remaining) if remaining is not None else None,
+        "unlimited_assumed": False,
+    }
+
+
+def _provider_expiry_summary(metadata: dict[str, Any]) -> dict[str, Any]:
+    raw_value = _first_metadata_value(
+        metadata,
+        ("expires_at", "expire", "expires", "expiry", "valid_until"),
+    )
+    if raw_value is None:
+        return {
+            "status": "unknown",
+            "expires_at": None,
+            "expired": "unknown",
+        }
+    parsed = _parse_provider_expiry(str(raw_value))
+    if parsed is None:
+        return {
+            "status": "reported-unparsed",
+            "expires_at": str(raw_value),
+            "expired": "unknown",
+        }
+    now = datetime.now(timezone.utc)
+    return {
+        "status": "known",
+        "expires_at": parsed.isoformat(),
+        "expired": parsed < now,
+    }
+
+
+def _first_metadata_value(metadata: dict[str, Any], keys: tuple[str, ...]) -> Any | None:
+    for key in keys:
+        value = metadata.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _parse_provider_expiry(value: str) -> datetime | None:
+    normalized = value.strip()
+    if not normalized:
+        return None
+    try:
+        if normalized.isdigit():
+            number = int(normalized)
+            if number > 10_000_000_000:
+                number //= 1000
+            return datetime.fromtimestamp(number, tz=timezone.utc)
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        try:
+            parsed_date = date.fromisoformat(normalized)
+        except ValueError:
+            return None
+        return datetime.combine(parsed_date, datetime.max.time(), tzinfo=timezone.utc)
 
 
 def _recent_failure_summary(

@@ -15,6 +15,7 @@ from diagnostics.unified import (
 from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
 from dns.resolver_inventory import ResolverInventory, ResolverManager
 from models.connection_state import ConnectionState
+from models.profile import Profile, ProfileSource, ProtocolType
 from models.provider import Provider
 from network_context.models import (
     ActionIntent,
@@ -140,9 +141,39 @@ class UnifiedDiagnosticsTests(unittest.TestCase):
                     name="Provider A",
                     url="https://secret.example/sub",
                     last_updated=datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc),
-                    profiles=["node-a"],
-                    metadata={"traffic_used": "1 GB"},
+                    profiles=["node-a", "node-b"],
+                    metadata={
+                        "traffic_used": "1 GB",
+                        "traffic_limit": "10 GB",
+                        "expires_at": "2099-09-17",
+                    },
                 )
+            ],
+            profiles=[
+                Profile(
+                    id="node-a",
+                    name="Node A",
+                    protocol=ProtocolType.TROJAN,
+                    config={"host": "node-a.example", "port": 443},
+                    source=ProfileSource.SUBSCRIPTION,
+                    provider_id="provider-a",
+                    enabled=True,
+                    in_rotation_pool=True,
+                    health_status="ok",
+                    last_health_check=datetime(2026, 7, 8, 13, 0, tzinfo=timezone.utc),
+                ),
+                Profile(
+                    id="node-b",
+                    name="Node B",
+                    protocol=ProtocolType.TROJAN,
+                    config={"host": "node-b.example", "port": 443},
+                    source=ProfileSource.SUBSCRIPTION,
+                    provider_id="provider-a",
+                    enabled=True,
+                    in_rotation_pool=False,
+                    health_status="degraded",
+                    last_health_check=datetime(2026, 7, 8, 14, 0, tzinfo=timezone.utc),
+                ),
             ],
             runtime_state=ConnectionState(
                 active_profile_id="node-a",
@@ -190,7 +221,22 @@ class UnifiedDiagnosticsTests(unittest.TestCase):
         self.assertFalse(data["providers"]["url_values_included"])
         self.assertEqual(
             data["providers"]["items"][0]["metadata_value_status"],
-            "deferred-to-task-21.5",
+            "summarized",
+        )
+        self.assertEqual(data["providers"]["items"][0]["quota"]["status"], "reported")
+        self.assertEqual(data["providers"]["items"][0]["quota"]["used"], "1 GB")
+        self.assertEqual(data["providers"]["items"][0]["quota"]["limit"], "10 GB")
+        self.assertFalse(data["providers"]["items"][0]["quota"]["unlimited_assumed"])
+        self.assertEqual(data["providers"]["items"][0]["expiry"]["status"], "known")
+        self.assertFalse(data["providers"]["items"][0]["expiry"]["expired"])
+        self.assertEqual(data["providers"]["items"][0]["health"]["status"], "degraded")
+        self.assertEqual(
+            data["providers"]["items"][0]["health"]["status_counts"],
+            {"degraded": 1, "ok": 1},
+        )
+        self.assertEqual(
+            data["providers"]["items"][0]["health"]["last_health_check"],
+            "2026-07-08T14:00:00+00:00",
         )
         rendered = repr(data)
         self.assertNotIn("secret.example", rendered)
@@ -201,6 +247,71 @@ class UnifiedDiagnosticsTests(unittest.TestCase):
         self.assertIn("<redacted-interface>", rendered)
         self.assertIn("<redacted-lan-gateway-interface>", rendered)
         self.assertIn("dns_policy:unavailable", data["recent_failures"]["categories"])
+
+    def test_provider_metadata_missing_is_unknown_not_unlimited_or_healthy(self) -> None:
+        data = collect_unified_diagnostics(
+            app_config={section: dict(values) for section, values in DEFAULT_CONFIG.items()},
+            routing_state={},
+            dns_policy=DNSPolicy(),
+            resolver_inventory=None,
+            providers=[
+                Provider(
+                    id="provider-missing",
+                    name="Provider Missing",
+                    url="https://secret.example/sub",
+                    profiles=["missing-node"],
+                    metadata={},
+                )
+            ],
+            profiles=[],
+            runtime_state=None,
+            network_policy=NetworkContextPolicy(),
+            network_observation=NetworkObservation(status=MonitorStatus.UNSUPPORTED),
+            route_table_snapshot=observe_route_tables(
+                runner=FakeRunner({}),
+                which=lambda command: None,
+            ),
+        ).to_dict()
+
+        provider = data["providers"]["items"][0]
+
+        self.assertEqual(provider["quota"]["status"], "unknown")
+        self.assertFalse(provider["quota"]["unlimited_assumed"])
+        self.assertEqual(provider["expiry"]["status"], "unknown")
+        self.assertEqual(provider["expiry"]["expired"], "unknown")
+        self.assertEqual(provider["health"]["status"], "unknown")
+        self.assertEqual(provider["health"]["status_counts"], {"unknown": 1})
+        self.assertNotIn("secret.example", repr(data))
+
+    def test_provider_unparsed_expiry_is_not_treated_as_healthy(self) -> None:
+        data = collect_unified_diagnostics(
+            app_config={section: dict(values) for section, values in DEFAULT_CONFIG.items()},
+            routing_state={},
+            dns_policy=DNSPolicy(),
+            resolver_inventory=None,
+            providers=[
+                Provider(
+                    id="provider-expiry",
+                    name="Provider Expiry",
+                    url="https://secret.example/sub",
+                    profiles=[],
+                    metadata={"expires_at": "someday"},
+                )
+            ],
+            profiles=[],
+            runtime_state=None,
+            network_policy=NetworkContextPolicy(),
+            network_observation=NetworkObservation(status=MonitorStatus.UNSUPPORTED),
+            route_table_snapshot=observe_route_tables(
+                runner=FakeRunner({}),
+                which=lambda command: None,
+            ),
+        ).to_dict()
+
+        expiry = data["providers"]["items"][0]["expiry"]
+
+        self.assertEqual(expiry["status"], "reported-unparsed")
+        self.assertEqual(expiry["expired"], "unknown")
 
     def test_route_table_observer_degrades_when_ip_is_missing(self) -> None:
         snapshot = observe_route_tables(runner=FakeRunner({}), which=lambda command: None)
