@@ -101,3 +101,6 @@ adds runtime LAN listeners. The VM validation must prove at minimum:
 - disabling LAN sharing and reconnecting removes LAN listeners;
 - no gateway forwarding, route table, policy rule, DNS listener or firewall
   state is introduced by Task 20.3.
+
+Task 20.4 adds the reusable VM helper that validates LAN proxy fail-closed and
+proxy-DNS behavior for this runtime path.

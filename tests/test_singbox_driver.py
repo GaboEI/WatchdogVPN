@@ -151,6 +151,39 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             [{"username": "watchdogvpn", "password": "secret-pass"}],
         )
         self.assertFalse(inbounds["watchdogvpn-lan-http-in"]["set_system_proxy"])
+        self.assertNotIn("direct", {outbound["tag"] for outbound in config["outbounds"]})
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_lan_proxy_block_final_policy_rejects_without_direct_outbound(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+        lan_proxy = LANProxyRuntimeConfig(
+            bind_address="192.168.0.228",
+            socks_port=2080,
+            http_port=2081,
+            username="watchdogvpn",
+            password="secret-pass",
+        )
+
+        config = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            groups=[],
+            final_policy="block",
+            lan_proxy=lan_proxy,
+        )
+
+        self.assertEqual(config["route"]["rules"], [{"action": "reject"}])
+        self.assertFalse(
+            any(rule.get("outbound") == "direct" for rule in config["route"]["rules"])
+        )
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
