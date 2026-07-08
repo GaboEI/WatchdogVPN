@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from app_policy.models import AppPolicy, AppPolicyRule
-from config.lan_sharing import LANProxyRuntimeConfig
+from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
 from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
 from drivers.singbox_driver import SingBoxDriver
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -1248,6 +1248,85 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertIn(["ip", "-6", "route", "flush", "table", "2022"], commands)
 
     @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
+    def test_apply_lan_gateway_installs_nft_rules_then_enables_forwarding(self, which_mock) -> None:
+        gateway = LANGatewayRuntimeConfig(
+            lan_interface="enp0s8",
+            client_cidr="192.168.50.0/24",
+            tunnel_interface="wdvpn-tun0",
+        )
+        self.driver._tun_expected = True
+        commands: list[list[str]] = []
+
+        with (
+            patch.object(self.driver, "_run_cleanup_command") as cleanup_mock,
+            patch.object(self.driver, "_run_gateway_required", side_effect=lambda command: commands.append(command) or True),
+            patch.object(self.driver, "_read_ipv4_forward", return_value="0"),
+            patch.object(self.driver, "_write_ipv4_forward") as write_forward_mock,
+        ):
+            self.assertTrue(self.driver._apply_lan_gateway(gateway))
+
+        cleanup_mock.assert_called_once_with(["nft", "delete", "table", "inet", "watchdogvpn_lan_gateway"])
+        self.assertIn(["nft", "add", "table", "inet", "watchdogvpn_lan_gateway"], commands)
+        self.assertIn(
+            [
+                "nft",
+                "add",
+                "rule",
+                "inet",
+                "watchdogvpn_lan_gateway",
+                "forward",
+                "iifname",
+                "enp0s8",
+                "oifname",
+                "wdvpn-tun0",
+                "ip",
+                "saddr",
+                "192.168.50.0/24",
+                "accept",
+            ],
+            commands,
+        )
+        self.assertIn(
+            [
+                "nft",
+                "add",
+                "rule",
+                "inet",
+                "watchdogvpn_lan_gateway",
+                "postrouting",
+                "oifname",
+                "wdvpn-tun0",
+                "ip",
+                "saddr",
+                "192.168.50.0/24",
+                "masquerade",
+            ],
+            commands,
+        )
+        write_forward_mock.assert_called_once_with("1")
+        self.assertEqual(self.driver._lan_gateway_active, gateway)
+        self.assertEqual(self.driver._lan_gateway_ip_forward_snapshot, "0")
+
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
+    def test_cleanup_lan_gateway_removes_table_and_restores_forwarding(self, which_mock) -> None:
+        self.driver._lan_gateway_active = LANGatewayRuntimeConfig(
+            lan_interface="enp0s8",
+            client_cidr="192.168.50.0/24",
+        )
+        self.driver._lan_gateway_ip_forward_snapshot = "0"
+
+        with (
+            patch.object(self.driver, "_run_cleanup_command") as cleanup_mock,
+            patch.object(self.driver, "_write_ipv4_forward") as write_forward_mock,
+        ):
+            self.driver._cleanup_lan_gateway()
+
+        cleanup_mock.assert_called_once_with(["nft", "delete", "table", "inet", "watchdogvpn_lan_gateway"])
+        write_forward_mock.assert_called_once_with("0")
+        self.assertIsNone(self.driver._lan_gateway_active)
+        self.assertIsNone(self.driver._lan_gateway_ip_forward_snapshot)
+
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
     @patch.object(SingBoxDriver, "_run_capture_command")
     def test_singbox_auto_redirect_ready_requires_nft_table_and_base_chains(
         self, capture_mock, which_mock
@@ -1416,6 +1495,24 @@ table inet sing-box {
         self.assertIs(state.connected_at, unittest.mock.sentinel.connected_at)
         self.assertTrue(state.proxy_active)
         self.assertFalse(state.tun_active)
+
+    def test_status_reports_active_lan_gateway(self) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+        self.driver._lan_gateway_active = LANGatewayRuntimeConfig(
+            lan_interface="enp0s8",
+            client_cidr="192.168.50.0/24",
+            dns_mode="manual",
+        )
+
+        state = self.driver.status()
+
+        self.assertTrue(state.lan_gateway_active)
+        self.assertEqual(state.lan_gateway_interface, "enp0s8")
+        self.assertEqual(state.lan_gateway_client_cidr, "192.168.50.0/24")
+        self.assertEqual(state.lan_gateway_dns_mode, "manual")
 
     @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
     def test_status_reports_local_proxy_active_with_tun_capture(self, tun_mock) -> None:

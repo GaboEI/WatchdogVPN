@@ -198,6 +198,7 @@ class AmneziaWGDriver(BaseDriver):
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
         lan_proxy=None,
+        lan_gateway=None,
     ) -> bool:
         tool = self.find_quick_tool()
         if not tool:

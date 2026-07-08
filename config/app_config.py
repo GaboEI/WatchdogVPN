@@ -59,6 +59,9 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "http_port": 2081,
         "authentication_required": True,
         "firewall_managed": False,
+        "gateway_interface": "",
+        "gateway_client_cidr": "",
+        "gateway_dns_mode": "manual",
     },
 }
 
@@ -90,6 +93,9 @@ CONFIG_STRING_FIELDS = {
     ("rotation", "test_url"),
     ("lan_sharing", "mode"),
     ("lan_sharing", "bind_address"),
+    ("lan_sharing", "gateway_interface"),
+    ("lan_sharing", "gateway_client_cidr"),
+    ("lan_sharing", "gateway_dns_mode"),
 }
 
 MIN_WATCHDOG_CHECK_INTERVAL_SECONDS = 5
@@ -212,8 +218,8 @@ def _validate_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
 
 def _validate_lan_sharing(config: dict[str, Any]) -> None:
     mode = config["mode"]
-    if mode not in {"disabled", "proxy"}:
-        raise PersistentValidationError("lan_sharing.mode must be one of: disabled, proxy")
+    if mode not in {"disabled", "proxy", "gateway"}:
+        raise PersistentValidationError("lan_sharing.mode must be one of: disabled, proxy, gateway")
 
     socks_port = config["socks_port"]
     http_port = config["http_port"]
@@ -227,11 +233,33 @@ def _validate_lan_sharing(config: dict[str, Any]) -> None:
     config["bind_address"] = bind_address
     if bind_address:
         _validate_lan_bind_address(bind_address)
+
+    gateway_interface = config["gateway_interface"].strip()
+    config["gateway_interface"] = gateway_interface
+    if gateway_interface:
+        _validate_gateway_interface(gateway_interface)
+    gateway_client_cidr = config["gateway_client_cidr"].strip()
+    config["gateway_client_cidr"] = gateway_client_cidr
+    if gateway_client_cidr:
+        _validate_gateway_client_cidr(gateway_client_cidr)
+    gateway_dns_mode = config["gateway_dns_mode"].strip()
+    config["gateway_dns_mode"] = gateway_dns_mode
+    if gateway_dns_mode not in {"manual"}:
+        raise PersistentValidationError("lan_sharing.gateway_dns_mode must be manual")
+
     if not config["enabled"]:
         return
 
-    if mode != "proxy":
-        raise PersistentValidationError("lan_sharing.enabled requires lan_sharing.mode = 'proxy'")
+    if mode == "proxy":
+        _validate_enabled_lan_proxy(config, bind_address)
+        return
+    if mode == "gateway":
+        _validate_enabled_lan_gateway(config, gateway_interface, gateway_client_cidr)
+        return
+    raise PersistentValidationError("lan_sharing.enabled requires lan_sharing.mode = 'proxy' or 'gateway'")
+
+
+def _validate_enabled_lan_proxy(config: dict[str, Any], bind_address: str) -> None:
     if not bind_address:
         raise PersistentValidationError("lan_sharing.enabled requires an explicit bind_address")
     address = ipaddress.ip_address(bind_address)
@@ -239,6 +267,19 @@ def _validate_lan_sharing(config: dict[str, Any]) -> None:
         raise PersistentValidationError("lan_sharing.bind_address must be a non-loopback LAN address when enabled")
     if not config["authentication_required"]:
         raise PersistentValidationError("lan_sharing.enabled requires authentication_required = true")
+
+
+def _validate_enabled_lan_gateway(
+    config: dict[str, Any],
+    gateway_interface: str,
+    gateway_client_cidr: str,
+) -> None:
+    if not gateway_interface:
+        raise PersistentValidationError("lan_sharing.gateway mode requires gateway_interface")
+    if not gateway_client_cidr:
+        raise PersistentValidationError("lan_sharing.gateway mode requires gateway_client_cidr")
+    if not config["firewall_managed"]:
+        raise PersistentValidationError("lan_sharing.gateway mode requires firewall_managed = true")
 
 
 def _validate_lan_bind_address(value: str) -> None:
@@ -252,3 +293,27 @@ def _validate_lan_bind_address(value: str) -> None:
         raise PersistentValidationError("lan_sharing.bind_address must not be a wildcard address")
     if address.is_multicast:
         raise PersistentValidationError("lan_sharing.bind_address must not be multicast")
+
+
+def _validate_gateway_interface(value: str) -> None:
+    if value in {"lo", "all", "*"}:
+        raise PersistentValidationError("lan_sharing.gateway_interface must be a concrete non-loopback interface")
+    if any(char.isspace() for char in value):
+        raise PersistentValidationError("lan_sharing.gateway_interface must not contain whitespace")
+    if "/" in value or "\x00" in value:
+        raise PersistentValidationError("lan_sharing.gateway_interface contains invalid characters")
+
+
+def _validate_gateway_client_cidr(value: str) -> None:
+    try:
+        network = ipaddress.ip_network(value, strict=False)
+    except ValueError as exc:
+        raise PersistentValidationError("lan_sharing.gateway_client_cidr must be an IP network") from exc
+    if network.version != 4:
+        raise PersistentValidationError("lan_sharing.gateway_client_cidr must be IPv4")
+    if network.prefixlen == 0:
+        raise PersistentValidationError("lan_sharing.gateway_client_cidr must not be 0.0.0.0/0")
+    if network.is_loopback:
+        raise PersistentValidationError("lan_sharing.gateway_client_cidr must not be loopback")
+    if network.is_multicast:
+        raise PersistentValidationError("lan_sharing.gateway_client_cidr must not be multicast")

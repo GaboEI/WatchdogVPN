@@ -89,9 +89,10 @@ Required behavior:
 - Diagnostics must distinguish "not applied", "applied by WatchdogVPN" and
   "external/unmanaged" firewall state.
 
-Task 20.6 may choose nftables or iptables based on the existing project
-patterns and target platform support, but the chosen backend must be validated
-in VM before Task 20.7 can close.
+Task 20.6 chose nftables for the first gateway implementation. If nftables is
+not available, gateway apply fails closed instead of installing partial
+iptables-equivalent state. This backend must be validated in VM before Task
+20.7 can close.
 
 ## DNS Contract
 

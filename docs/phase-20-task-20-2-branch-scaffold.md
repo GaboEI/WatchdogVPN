@@ -56,7 +56,7 @@ This keeps accidental broad exposure invalid before runtime code exists.
 
 ```sh
 watchdog config set lan_sharing.enabled <true|false>
-watchdog config set lan_sharing.mode <disabled|proxy>
+watchdog config set lan_sharing.mode <disabled|proxy|gateway>
 watchdog config set lan_sharing.bind_address <ip-address>
 watchdog config set lan_sharing.socks_port <port>
 watchdog config set lan_sharing.http_port <port>

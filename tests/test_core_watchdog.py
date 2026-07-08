@@ -48,6 +48,7 @@ class FakeDriver(BaseDriver):
         self.last_rule_set_tags = "unset"
         self.last_rule_set_declarations = "unset"
         self.last_lan_proxy = "unset"
+        self.last_lan_gateway = "unset"
 
     def connect(
         self,
@@ -61,6 +62,7 @@ class FakeDriver(BaseDriver):
         rule_set_tags=None,
         rule_set_declarations=None,
         lan_proxy=None,
+        lan_gateway=None,
     ) -> bool:
         self.last_dns_policy = dns_policy
         self.last_mode = mode
@@ -70,6 +72,7 @@ class FakeDriver(BaseDriver):
         self.last_rule_set_tags = rule_set_tags
         self.last_rule_set_declarations = rule_set_declarations
         self.last_lan_proxy = lan_proxy
+        self.last_lan_gateway = lan_gateway
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -110,6 +113,8 @@ class EventDriver(FakeDriver):
         final_policy: str = "current_profile",
         rule_set_tags=None,
         rule_set_declarations=None,
+        lan_proxy=None,
+        lan_gateway=None,
     ) -> bool:
         self.events.append(f"{self.name}:connect:{profile.id}")
         return super().connect(
@@ -121,6 +126,8 @@ class EventDriver(FakeDriver):
             final_policy=final_policy,
             rule_set_tags=rule_set_tags,
             rule_set_declarations=rule_set_declarations,
+            lan_proxy=lan_proxy,
+            lan_gateway=lan_gateway,
         )
 
     def disconnect(self) -> bool:
@@ -1435,6 +1442,65 @@ class WatchdogIntegrationTests(unittest.TestCase):
         runtime._local_ip_addresses = Mock(return_value={"10.0.0.5"})
 
         with self.assertRaisesRegex(RuntimeError, "not assigned to this host"):
+            runtime.connect(self.profile)
+        driver.connect_mock.assert_not_called()
+
+    def test_connect_forwards_enabled_lan_gateway_runtime_config(self) -> None:
+        driver = FakeDriver()
+        config_path = Path(self.tmpdir.name) / "config.toml"
+        app_config = AppConfig(config_path)
+        config = app_config.load()
+        config["lan_sharing"].update(
+            {
+                "enabled": True,
+                "mode": "gateway",
+                "firewall_managed": True,
+                "gateway_interface": "enp0s8",
+                "gateway_client_cidr": "192.168.50.0/24",
+                "gateway_dns_mode": "manual",
+            }
+        )
+        app_config.save(config)
+        self.state_manager.save(
+            {
+                **self.state_manager.load(),
+                "routing_state_version": "1",
+                "routing_policy": "global",
+                "capture_modes": "local_proxy,tun",
+                "default_route_action": "current",
+            }
+        )
+        runtime = self._make_runtime(driver)
+        runtime.app_config = app_config
+        runtime._local_interface_ipv4_addresses = Mock(return_value={"enp0s8": {"192.168.50.1"}})
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(driver.last_lan_gateway.lan_interface, "enp0s8")
+        self.assertEqual(driver.last_lan_gateway.client_cidr, "192.168.50.0/24")
+        self.assertEqual(driver.last_lan_gateway.dns_mode, "manual")
+        self.assertTrue(driver.last_lan_gateway.firewall_managed)
+        self.assertEqual(driver.last_lan_gateway.tunnel_interface, "wdvpn-tun0")
+
+    def test_connect_refuses_lan_gateway_without_tun_capture(self) -> None:
+        driver = FakeDriver()
+        config_path = Path(self.tmpdir.name) / "config.toml"
+        app_config = AppConfig(config_path)
+        config = app_config.load()
+        config["lan_sharing"].update(
+            {
+                "enabled": True,
+                "mode": "gateway",
+                "firewall_managed": True,
+                "gateway_interface": "enp0s8",
+                "gateway_client_cidr": "192.168.50.0/24",
+            }
+        )
+        app_config.save(config)
+        runtime = self._make_runtime(driver)
+        runtime.app_config = app_config
+
+        with self.assertRaisesRegex(RuntimeError, "requires capture_modes to include tun"):
             runtime.connect(self.profile)
         driver.connect_mock.assert_not_called()
 

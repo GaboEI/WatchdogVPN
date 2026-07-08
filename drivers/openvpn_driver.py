@@ -132,6 +132,7 @@ class OpenVPNDriver(BaseDriver):
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
         lan_proxy=None,
+        lan_gateway=None,
     ) -> bool:
         binary = self.find_openvpn_binary()
         if not binary:

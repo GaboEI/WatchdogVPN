@@ -28,6 +28,18 @@ class LANProxyRuntimeConfig:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class LANGatewayRuntimeConfig:
+    lan_interface: str
+    client_cidr: str
+    dns_mode: str = "manual"
+    firewall_managed: bool = True
+    tunnel_interface: str = "wdvpn-tun0"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def lan_sharing_credentials_path(config_path: Path) -> Path:
     return config_path.parent / LAN_SHARING_CREDENTIALS_NAME
 

@@ -283,6 +283,9 @@ class ConfigStorageTests(unittest.TestCase):
                     "http_port": 2081,
                     "authentication_required": True,
                     "firewall_managed": False,
+                    "gateway_interface": "",
+                    "gateway_client_cidr": "",
+                    "gateway_dns_mode": "manual",
                 },
             )
 
@@ -371,6 +374,62 @@ class ConfigStorageTests(unittest.TestCase):
 
             self.assertFalse(loaded["lan_sharing"]["enabled"])
             self.assertEqual(loaded["lan_sharing"]["bind_address"], "192.168.0.228")
+
+    def test_app_config_accepts_enabled_lan_gateway_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[lan_sharing]",
+                        "enabled = true",
+                        'mode = "gateway"',
+                        "firewall_managed = true",
+                        'gateway_interface = "enp0s8"',
+                        'gateway_client_cidr = "192.168.50.0/24"',
+                        'gateway_dns_mode = "manual"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = AppConfig(path).load()
+
+            self.assertEqual(loaded["lan_sharing"]["mode"], "gateway")
+            self.assertEqual(loaded["lan_sharing"]["gateway_interface"], "enp0s8")
+            self.assertEqual(loaded["lan_sharing"]["gateway_client_cidr"], "192.168.50.0/24")
+
+    def test_app_config_rejects_enabled_lan_gateway_without_managed_firewall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        "[lan_sharing]",
+                        "enabled = true",
+                        'mode = "gateway"',
+                        'gateway_interface = "enp0s8"',
+                        'gateway_client_cidr = "192.168.50.0/24"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(PersistentValidationError, "firewall_managed"):
+                AppConfig(path).load()
+
+    def test_app_config_rejects_lan_gateway_ipv6_client_cidr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                '[lan_sharing]\ngateway_client_cidr = "fd00::/64"\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(PersistentValidationError, "must be IPv4"):
+                AppConfig(path).load()
 
     def test_config_paths_follow_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -91,6 +91,9 @@ CONFIG_SET_KEYS = frozenset(
         "lan_sharing.http_port",
         "lan_sharing.authentication_required",
         "lan_sharing.firewall_managed",
+        "lan_sharing.gateway_interface",
+        "lan_sharing.gateway_client_cidr",
+        "lan_sharing.gateway_dns_mode",
     }
 )
 CONFIG_INT_SET_KEYS = frozenset(
@@ -836,6 +839,11 @@ def _print_connection_state(state: dict) -> None:
     print(f"Active profile: {active_profile_id}")
     print(f"TUN: {_on_off(bool(state.get('tun_active', False)))}")
     print(f"Proxy: {_on_off(bool(state.get('proxy_active', False)))}")
+    print(f"LAN gateway: {_on_off(bool(state.get('lan_gateway_active', False)))}")
+    if state.get("lan_gateway_active"):
+        print(f"LAN gateway interface: {state.get('lan_gateway_interface') or '-'}")
+        print(f"LAN gateway clients: {state.get('lan_gateway_client_cidr') or '-'}")
+        print(f"LAN gateway DNS: {state.get('lan_gateway_dns_mode') or '-'}")
     print(f"Kill switch: {_on_off(bool(state.get('kill_switch_active', False)))}")
 
 
@@ -1162,6 +1170,13 @@ def _config_set(args: argparse.Namespace) -> int:
 
 def _lan_sharing_warning(key: str, value: object) -> str | None:
     if key == "lan_sharing.enabled" and value is True:
+        mode = str(AppConfig().load().get("lan_sharing", {}).get("mode", "disabled"))
+        if mode == "gateway":
+            return (
+                "LAN gateway is enabled for the next runtime apply; it may enable "
+                "temporary IPv4 forwarding and WatchdogVPN-owned NAT/firewall rules "
+                "for the configured interface in VM/lab-validated environments only."
+            )
         return (
             "LAN sharing is enabled for the next runtime apply; it exposes authenticated "
             "SOCKS/HTTP listeners on the configured bind address and does not apply "

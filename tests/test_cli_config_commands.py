@@ -228,6 +228,26 @@ class CliConfigCommandTests(unittest.TestCase):
             self.assertIn("authenticated SOCKS/HTTP listeners", data["warning"])
             self.assertNotIn("password", json.dumps(data).lower())
 
+    def test_set_lan_gateway_enabled_warns_about_forwarding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["config", "set", "lan_sharing.mode", "gateway"], tmp)
+            self.run_watchdog(["config", "set", "lan_sharing.firewall_managed", "true"], tmp)
+            self.run_watchdog(["config", "set", "lan_sharing.gateway_interface", "enp0s8"], tmp)
+            self.run_watchdog(
+                ["config", "set", "lan_sharing.gateway_client_cidr", "192.168.50.0/24"],
+                tmp,
+            )
+            result = self.run_watchdog(
+                ["config", "set", "lan_sharing.enabled", "true", "--json"],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            self.assertEqual(data["key"], "lan_sharing.enabled")
+            self.assertIs(data["value"], True)
+            self.assertIn("temporary IPv4 forwarding", data["warning"])
+            self.assertNotIn("password", json.dumps(data).lower())
+
     def test_lan_sharing_credentials_do_not_create_secret_when_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["config", "lan-sharing-credentials", "--json"], tmp)

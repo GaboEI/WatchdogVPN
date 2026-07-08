@@ -219,6 +219,7 @@ class OpenVPNCloakDriver(BaseDriver):
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
         lan_proxy=None,
+        lan_gateway=None,
     ) -> bool:
         openvpn_bin = self.find_openvpn_binary()
         ck_bin = self.find_ck_client_binary()
