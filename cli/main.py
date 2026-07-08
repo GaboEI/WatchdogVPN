@@ -839,8 +839,9 @@ def _print_connection_state(state: dict) -> None:
     print(f"Active profile: {active_profile_id}")
     print(f"TUN: {_on_off(bool(state.get('tun_active', False)))}")
     print(f"Proxy: {_on_off(bool(state.get('proxy_active', False)))}")
-    print(f"LAN gateway: {_on_off(bool(state.get('lan_gateway_active', False)))}")
-    if state.get("lan_gateway_active"):
+    lan_gateway_status = str(state.get("lan_gateway_status", "disabled"))
+    print(f"LAN gateway: {lan_gateway_status}")
+    if lan_gateway_status != "disabled" or state.get("lan_gateway_active"):
         print(f"LAN gateway interface: {state.get('lan_gateway_interface') or '-'}")
         print(f"LAN gateway clients: {state.get('lan_gateway_client_cidr') or '-'}")
         print(f"LAN gateway DNS: {state.get('lan_gateway_dns_mode') or '-'}")

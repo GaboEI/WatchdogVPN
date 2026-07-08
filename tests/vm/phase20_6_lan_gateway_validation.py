@@ -70,6 +70,7 @@ def main() -> int:
         require(args.lan_interface in table, "gateway interface missing from nft table")
         require(args.client_cidr in table, "client CIDR missing from nft table")
         require(args.tun_interface in table, "TUN interface missing from nft table")
+        require("hook forward" in table and "policy drop" in table, "forward chain is not default-drop")
         require("masquerade" in table, "NAT masquerade rule missing")
         require("reject" in table, "fail-closed reject rule missing")
         print("PHASE20_6_GATEWAY_APPLY_OK")

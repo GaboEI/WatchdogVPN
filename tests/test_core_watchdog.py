@@ -1504,6 +1504,77 @@ class WatchdogIntegrationTests(unittest.TestCase):
             runtime.connect(self.profile)
         driver.connect_mock.assert_not_called()
 
+    def test_status_reports_lan_gateway_disabled(self) -> None:
+        driver = FakeDriver()
+        runtime = self._make_runtime(driver)
+
+        state = runtime.status()
+
+        self.assertEqual(state.lan_gateway_status, "disabled")
+        self.assertFalse(state.lan_gateway_active)
+
+    def test_status_reports_lan_gateway_configured(self) -> None:
+        driver = FakeDriver()
+        config_path = Path(self.tmpdir.name) / "config.toml"
+        app_config = AppConfig(config_path)
+        config = app_config.load()
+        config["lan_sharing"].update(
+            {
+                "enabled": True,
+                "mode": "gateway",
+                "firewall_managed": True,
+                "gateway_interface": "enp0s8",
+                "gateway_client_cidr": "192.168.50.0/24",
+            }
+        )
+        app_config.save(config)
+        runtime = self._make_runtime(driver)
+        runtime.app_config = app_config
+
+        state = runtime.status()
+
+        self.assertEqual(state.lan_gateway_status, "configured")
+        self.assertFalse(state.lan_gateway_active)
+        self.assertEqual(state.lan_gateway_interface, "enp0s8")
+        self.assertEqual(state.lan_gateway_client_cidr, "192.168.50.0/24")
+        self.assertEqual(state.lan_gateway_dns_mode, "manual")
+
+    def test_status_reports_lan_gateway_applied(self) -> None:
+        driver = FakeDriver()
+        driver.status_mock.return_value = ConnectionState(
+            status="connected",
+            mode="sing-box",
+            tun_active=True,
+            proxy_active=True,
+            lan_gateway_active=True,
+            lan_gateway_interface="enp0s8",
+            lan_gateway_client_cidr="192.168.50.0/24",
+            lan_gateway_dns_mode="manual",
+        )
+        runtime = self._make_runtime(driver)
+
+        state = runtime.status()
+
+        self.assertEqual(state.lan_gateway_status, "applied")
+
+    def test_status_reports_lan_gateway_degraded(self) -> None:
+        driver = FakeDriver()
+        driver.status_mock.return_value = ConnectionState(
+            status="connected",
+            mode="sing-box",
+            tun_active=False,
+            proxy_active=True,
+            lan_gateway_active=True,
+            lan_gateway_interface="enp0s8",
+            lan_gateway_client_cidr="192.168.50.0/24",
+            lan_gateway_dns_mode="manual",
+        )
+        runtime = self._make_runtime(driver)
+
+        state = runtime.status()
+
+        self.assertEqual(state.lan_gateway_status, "degraded")
+
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_returns_reconnecting_below_attempt_threshold(self, _hc) -> None:
         driver = FakeDriver()

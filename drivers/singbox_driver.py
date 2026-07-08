@@ -680,7 +680,7 @@ class SingBoxDriver(BaseDriver):
                 "priority",
                 "0;",
                 "policy",
-                "accept;",
+                "drop;",
                 "}",
             ],
             [
@@ -1294,6 +1294,11 @@ class SingBoxDriver(BaseDriver):
                 ),
                 lan_gateway_dns_mode=(
                     self._lan_gateway_active.dns_mode if self._lan_gateway_active else ""
+                ),
+                lan_gateway_status=(
+                    "applied"
+                    if self._lan_gateway_active is not None and tun_active
+                    else "degraded" if self._lan_gateway_active is not None else "disabled"
                 ),
                 status="connected",
             )

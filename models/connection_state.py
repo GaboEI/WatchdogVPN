@@ -40,6 +40,7 @@ class ConnectionState:
     lan_gateway_interface: str = ""
     lan_gateway_client_cidr: str = ""
     lan_gateway_dns_mode: str = ""
+    lan_gateway_status: str = "disabled"
     status: str = "standby"
 
     def __post_init__(self) -> None:
@@ -64,5 +65,6 @@ class ConnectionState:
             lan_gateway_interface=str(data.get("lan_gateway_interface", "")),
             lan_gateway_client_cidr=str(data.get("lan_gateway_client_cidr", "")),
             lan_gateway_dns_mode=str(data.get("lan_gateway_dns_mode", "")),
+            lan_gateway_status=str(data.get("lan_gateway_status", "disabled")),
             status=str(data.get("status", "standby")),
         )

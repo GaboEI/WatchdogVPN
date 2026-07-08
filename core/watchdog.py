@@ -401,7 +401,28 @@ class WatchdogRuntime:
         return self.driver.health_check()
 
     def status(self) -> ConnectionState:
-        return self.driver.status()
+        return self._with_lan_gateway_status(self.driver.status())
+
+    def _with_lan_gateway_status(self, state: ConnectionState) -> ConnectionState:
+        config_gateway = False
+        try:
+            config = self.app_config.load()
+            lan_config = config.get("lan_sharing", {})
+            config_gateway = bool(lan_config.get("enabled", False)) and lan_config.get("mode") == "gateway"
+        except (PersistentStoreError, PersistentValidationError):
+            lan_config = {}
+
+        if state.lan_gateway_active:
+            state.lan_gateway_status = "applied" if state.tun_active else "degraded"
+            return state
+        if config_gateway:
+            state.lan_gateway_status = "configured"
+            state.lan_gateway_interface = str(lan_config.get("gateway_interface", ""))
+            state.lan_gateway_client_cidr = str(lan_config.get("gateway_client_cidr", ""))
+            state.lan_gateway_dns_mode = str(lan_config.get("gateway_dns_mode", "manual"))
+            return state
+        state.lan_gateway_status = "disabled"
+        return state
 
     def _active_profile(self) -> Profile | None:
         active_profile_id = str(self.state_manager.get("active_profile_id", ""))
@@ -916,6 +937,11 @@ class WatchdogRuntime:
             kill_switch_active=(
                 state.kill_switch_active if kill_switch_active is None else kill_switch_active
             ),
+            lan_gateway_active=state.lan_gateway_active,
+            lan_gateway_interface=state.lan_gateway_interface,
+            lan_gateway_client_cidr=state.lan_gateway_client_cidr,
+            lan_gateway_dns_mode=state.lan_gateway_dns_mode,
+            lan_gateway_status=state.lan_gateway_status,
             status="recovered",
         )
 

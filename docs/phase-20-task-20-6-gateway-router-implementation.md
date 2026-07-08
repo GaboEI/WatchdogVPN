@@ -49,12 +49,14 @@ When sing-box has started and the TUN path is healthy, the driver applies
 WatchdogVPN-owned nftables state:
 
 - table: `inet watchdogvpn_lan_gateway`;
-- filter hook: `forward`;
+- filter hook: `forward` with default policy `drop`;
 - NAT hook: `postrouting`;
 - accepts established/related forwarding;
 - accepts LAN client traffic only from the configured LAN interface and CIDR
   toward `wdvpn-tun0`;
 - rejects other forwarded traffic arriving from the configured LAN interface;
+- drops new traffic initiated from the tunnel side toward LAN clients unless it
+  is part of an established/related flow;
 - masquerades only the configured LAN client CIDR toward `wdvpn-tun0`.
 
 Only after those rules are installed does WatchdogVPN write
@@ -82,9 +84,13 @@ Connection state now includes:
 - `lan_gateway_active`;
 - `lan_gateway_interface`;
 - `lan_gateway_client_cidr`;
-- `lan_gateway_dns_mode`.
+- `lan_gateway_dns_mode`;
+- `lan_gateway_status`: one of `disabled`, `configured`, `applied` or
+  `degraded`.
 
-Plain `watchdog status` prints LAN gateway state when active.
+Plain `watchdog status` prints LAN gateway state. A configured-but-not-applied
+gateway reports `configured`; an applied gateway with inactive TUN reports
+`degraded`.
 
 ## Validation
 
@@ -96,7 +102,8 @@ Local unit coverage pins:
 - refusal when gateway mode is enabled without TUN capture;
 - nftables gateway rules before forwarding is enabled;
 - forwarding snapshot restore on cleanup;
-- connection state reporting active gateway details.
+- connection state reporting disabled/configured/applied/degraded gateway
+  states.
 
 Installed VM validation was required because this task mutates real forwarding
 and firewall state.
@@ -134,3 +141,21 @@ Observed result:
 - post-state `net.ipv4.ip_forward = 0`;
 - post-state gateway nftables table absent;
 - post-state policy rules and routes unchanged.
+
+## Corrective Follow-Up
+
+Post-implementation review found two gaps against the Task 20.5 design gate:
+
+- the initial forward chain used default policy `accept`, leaving new
+  tunnel-to-LAN forwarded traffic dependent on the remote side not having a
+  useful route back to LAN clients;
+- diagnostics exposed a binary `lan_gateway_active` flag but not the four
+  required states.
+
+Both were fixed before Task 20.7:
+
+- the gateway forward chain now uses default policy `drop` and only permits
+  explicit established/related and LAN-to-TUN flows;
+- connection state now reports `lan_gateway_status` as `disabled`,
+  `configured`, `applied` or `degraded`;
+- local tests and the VM helper pin the default-drop firewall contract.

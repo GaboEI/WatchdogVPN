@@ -1271,6 +1271,27 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             [
                 "nft",
                 "add",
+                "chain",
+                "inet",
+                "watchdogvpn_lan_gateway",
+                "forward",
+                "{",
+                "type",
+                "filter",
+                "hook",
+                "forward",
+                "priority",
+                "0;",
+                "policy",
+                "drop;",
+                "}",
+            ],
+            commands,
+        )
+        self.assertIn(
+            [
+                "nft",
+                "add",
                 "rule",
                 "inet",
                 "watchdogvpn_lan_gateway",
@@ -1513,6 +1534,25 @@ table inet sing-box {
         self.assertEqual(state.lan_gateway_interface, "enp0s8")
         self.assertEqual(state.lan_gateway_client_cidr, "192.168.50.0/24")
         self.assertEqual(state.lan_gateway_dns_mode, "manual")
+        self.assertEqual(state.lan_gateway_status, "degraded")
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
+    def test_status_reports_applied_lan_gateway_when_tun_is_active(self, tun_mock) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+        self.driver._tun_expected = True
+        self.driver._lan_gateway_active = LANGatewayRuntimeConfig(
+            lan_interface="enp0s8",
+            client_cidr="192.168.50.0/24",
+            dns_mode="manual",
+        )
+
+        state = self.driver.status()
+
+        self.assertTrue(state.lan_gateway_active)
+        self.assertEqual(state.lan_gateway_status, "applied")
 
     @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
     def test_status_reports_local_proxy_active_with_tun_capture(self, tun_mock) -> None:
