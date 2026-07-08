@@ -54,7 +54,7 @@ def which_ip_only(command: str) -> str | None:
 
 
 class UnifiedDiagnosticsTests(unittest.TestCase):
-    def test_collects_structured_unified_diagnostics_without_support_export(self) -> None:
+    def test_collects_structured_unified_diagnostics_with_support_export_available(self) -> None:
         app_config = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
         app_config["lan_sharing"].update(
             {
@@ -197,7 +197,7 @@ class UnifiedDiagnosticsTests(unittest.TestCase):
 
         data = diagnostics.to_dict()
 
-        self.assertFalse(data["support_export_ready"])
+        self.assertTrue(data["support_export_ready"])
         self.assertEqual(data["routing"]["routing_policy"], "global")
         self.assertEqual(data["capture"]["tun"]["runtime_status"], "active")
         self.assertEqual(data["route_tables"]["status"], "observed")

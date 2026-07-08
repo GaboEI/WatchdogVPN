@@ -188,7 +188,7 @@ def collect_unified_diagnostics(
     return UnifiedDiagnostics(
         schema_version=1,
         generated_by="watchdogvpn-unified-diagnostics",
-        support_export_ready=False,
+        support_export_ready=True,
         routing=routing,
         capture=capture,
         route_tables=route_table_snapshot,
