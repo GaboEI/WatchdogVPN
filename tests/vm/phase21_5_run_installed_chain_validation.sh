@@ -25,7 +25,9 @@ snapshot_state() {
   else
     : > "$tmp_dir/$prefix.resolv_conf_sha256"
   fi
-  sudo nft list ruleset > "$tmp_dir/$prefix.nft_ruleset" 2>&1 || true
+  sudo nft list ruleset > "$tmp_dir/$prefix.nft_ruleset.raw" 2>&1 || true
+  sed -E 's/counter packets [0-9]+ bytes [0-9]+/counter packets 0 bytes 0/g' \
+    "$tmp_dir/$prefix.nft_ruleset.raw" > "$tmp_dir/$prefix.nft_ruleset"
 }
 
 assert_same() {

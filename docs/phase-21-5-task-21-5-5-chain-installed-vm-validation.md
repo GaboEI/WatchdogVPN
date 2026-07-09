@@ -29,6 +29,8 @@ It performs the standard installed-VM flow:
 - runs `./doctor.sh` and requires `FAIL=0`;
 - snapshots policy rules, IPv4 routes, IPv6 routes, addresses, TCP listeners,
   resolver checksum, sing-box processes and nftables ruleset;
+- keeps raw nftables ruleset evidence while comparing a counter-normalized
+  ruleset so packet/byte counter increments do not masquerade as firewall drift;
 - runs the Python chain proof with the installed package path;
 - tails daemon logs into the evidence directory;
 - snapshots post-state and fails on route, rule, DNS, firewall or listener drift.
