@@ -74,6 +74,8 @@ watchdog connect <profile_id> [--json]
 watchdog disconnect [--json]
 watchdog status [--json]
 watchdog rotate [--force] [--json]
+watchdog doctor [--json]
+watchdog setup [--dry-run] [--yes] [--json]
 watchdog uninstall --keep-data --yes
 watchdog uninstall --keep-data --dry-run [--json]
 watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
@@ -295,6 +297,55 @@ The profile and provider stores do not currently define an automatic
 store-level backup contract for these direct mutations. Task 22.3 therefore
 adds redacted rollback guidance and JSON rollback points for destructive
 removes without writing secret-bearing backup documents.
+
+## Setup And Doctor
+
+### `watchdog setup`
+
+Configures local first-run preferences and policy defaults without starting
+runtime services or contacting provider URLs.
+
+```sh
+watchdog setup --dry-run --json --language es --dns-mode auto
+watchdog setup --yes --acknowledge-backup-warning --language es --autoconnect enable
+watchdog setup --yes --acknowledge-backup-warning --profile-uri URI
+watchdog setup --yes --acknowledge-backup-warning --provider-url URL --provider-name NAME
+```
+
+Supported setup fields:
+
+- `--language LANG`: sets manual selected language in selection state;
+- `--autostart enable|disable`: stores app autostart intent;
+- `--autoconnect enable|disable`: stores VPN autoconnect intent;
+- `--profile-uri URI`: imports one local profile URI without printing raw config;
+- `--provider-url URL`: stores one provider definition without fetching nodes;
+- `--kill-switch enable|disable`: sets local kill-switch policy;
+- `--dns-mode auto|off|custom|advanced`: sets DNS policy mode;
+- `--app-policy enable|disable`: sets app-policy enabled state;
+- `--app-policy-mode blacklist|whitelist`: sets app-policy mode;
+- `--app-policy-default-action current|direct|block`: sets app-policy default.
+
+`setup --dry-run` validates the plan and does not write local state. Real setup
+writes require both `--yes` and `--acknowledge-backup-warning`. A pre-setup
+backup is created before writes. Setup does not connect, disconnect, rotate,
+apply DNS, change routes, edit firewall rules, mutate system proxy settings,
+start services or refresh providers.
+
+JSON output includes `operations`, `sections`, `backup_path`,
+`network_fetch_performed=false` and `runtime_action_executed=false`.
+
+### `watchdog doctor`
+
+Runs the repository `doctor.sh` through argv-list subprocess execution.
+
+```sh
+watchdog doctor
+watchdog doctor --json
+```
+
+The Python wrapper does not reimplement doctor logic. JSON mode captures
+doctor stdout/stderr and exit code in one JSON document. The command is
+read-only and does not use `sudo`.
 
 ## Uninstall Flow
 

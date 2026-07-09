@@ -65,6 +65,7 @@ from models.provider import Provider
 from node_groups.models import NodeGroup, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore, NodeGroupStoreError
 from parsers import ParseError
+from parsers import parse_uri
 from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 from rotation import pool_builder
@@ -194,6 +195,41 @@ def _build_parser() -> argparse.ArgumentParser:
     rotate_parser.add_argument("--force", action="store_true", help="Force rotation even if conservative checks apply")
     rotate_parser.add_argument("--json", action="store_true", help="Print JSON")
     rotate_parser.set_defaults(handler=_connection_rotate)
+
+    doctor_parser = subparsers.add_parser("doctor", help="Run the repository doctor")
+    doctor_parser.add_argument("--json", action="store_true", help="Print JSON")
+    doctor_parser.add_argument("--doctor-script", help=argparse.SUPPRESS)
+    doctor_parser.set_defaults(handler=_doctor)
+
+    setup_parser = subparsers.add_parser("setup", help="Configure local WatchdogVPN defaults")
+    setup_parser.add_argument("--dry-run", action="store_true", help="Show setup plan without writing local state")
+    setup_parser.add_argument("--yes", action="store_true", help="Apply local setup changes")
+    setup_parser.add_argument("--json", action="store_true", help="Print JSON")
+    setup_parser.add_argument("--language", help="Set selected language, for example en or es")
+    setup_parser.add_argument("--autostart", choices=["enable", "disable"], help="Set app autostart intent")
+    setup_parser.add_argument("--autoconnect", choices=["enable", "disable"], help="Set VPN autoconnect intent")
+    setup_parser.add_argument("--profile-uri", help="Import one local profile URI")
+    setup_parser.add_argument("--provider-url", help="Store one provider subscription URL without refreshing it")
+    setup_parser.add_argument("--provider-name", help="Provider label for --provider-url")
+    setup_parser.add_argument("--kill-switch", choices=["enable", "disable"], help="Set kill switch policy")
+    setup_parser.add_argument("--dns-mode", choices=[item.value for item in DNSMode], help="Set DNS policy mode")
+    setup_parser.add_argument("--app-policy", choices=["enable", "disable"], help="Set app policy enabled state")
+    setup_parser.add_argument(
+        "--app-policy-mode",
+        choices=[item.value for item in AppPolicyMode],
+        help="Set app policy mode",
+    )
+    setup_parser.add_argument(
+        "--app-policy-default-action",
+        choices=[item.value for item in AppPolicyAction],
+        help="Set app policy default action",
+    )
+    setup_parser.add_argument(
+        "--acknowledge-backup-warning",
+        action="store_true",
+        help="Acknowledge that local setup changes should be backed up",
+    )
+    setup_parser.set_defaults(handler=_setup)
 
     uninstall_parser = subparsers.add_parser(
         "uninstall",
@@ -733,6 +769,245 @@ def _connection_rotate(args: argparse.Namespace) -> int:
         success_label="Rotation requested",
         command="rotate",
     )
+
+
+def _doctor(args: argparse.Namespace) -> int:
+    script = _doctor_script_path(args.doctor_script)
+    command = [str(script)]
+    if args.json:
+        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        _print_json(
+            {
+                "command": command,
+                "doctor_exit_code": int(completed.returncode),
+                "doctor_stdout": completed.stdout,
+                "doctor_stderr": completed.stderr,
+                "read_only": True,
+                "mutates_runtime": False,
+            }
+        )
+        return int(completed.returncode)
+    completed = subprocess.run(command, check=False)
+    return int(completed.returncode)
+
+
+def _doctor_script_path(value: str | None) -> Path:
+    if value:
+        candidates = [Path(value).expanduser()]
+    elif os.environ.get("WATCHDOGVPN_DOCTOR_SCRIPT"):
+        candidates = [Path(os.environ["WATCHDOGVPN_DOCTOR_SCRIPT"]).expanduser()]
+    else:
+        candidates = []
+        if os.environ.get("WATCHDOGVPN_REPO_DIR"):
+            candidates.append(Path(os.environ["WATCHDOGVPN_REPO_DIR"]).expanduser() / "doctor.sh")
+        candidates.append(Path.cwd() / "doctor.sh")
+        candidates.append(Path(__file__).resolve().parents[1] / "doctor.sh")
+    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+    if not script.exists():
+        raise FileNotFoundError(
+            "doctor.sh not found; run from the WatchdogVPN checkout or set WATCHDOGVPN_REPO_DIR"
+        )
+    if not os.access(script, os.X_OK):
+        raise PermissionError(f"doctor script is not executable: {script}")
+    return script
+
+
+def _setup(args: argparse.Namespace) -> int:
+    plan = _setup_plan(args)
+    if not args.dry_run and plan["has_changes"] and not args.yes:
+        raise ParseError("setup requires --yes to write local state, or --dry-run to preview")
+    if not args.acknowledge_backup_warning and not args.dry_run and plan["has_changes"]:
+        raise ParseError("setup requires --acknowledge-backup-warning before writing local setup changes")
+
+    backup_path = None
+    if not args.dry_run and plan["has_changes"]:
+        backup_path = _create_setup_backup(plan)
+        _apply_setup(args, plan)
+    data = {
+        **plan,
+        "dry_run": bool(args.dry_run),
+        "applied": bool(not args.dry_run and plan["has_changes"]),
+        "backup_path": str(backup_path) if backup_path else None,
+        "backup_warning_acknowledged": bool(args.acknowledge_backup_warning),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    _print_setup_plan(data)
+    return 0
+
+
+def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
+    operations: list[dict[str, object]] = []
+    if args.language:
+        operations.append({"target": "selection-state", "key": "selected_language", "value": args.language})
+        operations.append({"target": "selection-state", "key": "language_mode", "value": "manual"})
+    if args.autostart:
+        operations.append(
+            {
+                "target": "selection-state",
+                "key": "app_autostart_enabled",
+                "value": args.autostart == "enable",
+            }
+        )
+    if args.autoconnect:
+        operations.append(
+            {
+                "target": "selection-state",
+                "key": "vpn_autoconnect_enabled",
+                "value": args.autoconnect == "enable",
+            }
+        )
+    if args.profile_uri:
+        profile = parse_uri(args.profile_uri)
+        operations.append(
+            {
+                "target": "profiles",
+                "action": "import-profile-uri",
+                "profile": _profile_summary(profile),
+            }
+        )
+    if args.provider_url:
+        provider = _setup_provider_document(args.provider_url, args.provider_name)
+        operations.append(
+            {
+                "target": "providers",
+                "action": "store-provider-url",
+                "provider": _provider_summary(provider),
+                "network_fetch_performed": False,
+            }
+        )
+    if args.kill_switch:
+        operations.append(
+            {
+                "target": "settings",
+                "key": "kill_switch.enabled",
+                "value": args.kill_switch == "enable",
+            }
+        )
+    if args.dns_mode:
+        operations.append({"target": "dns-policy", "key": "mode", "value": args.dns_mode})
+    if args.app_policy:
+        operations.append(
+            {
+                "target": "app-policy",
+                "key": "enabled",
+                "value": args.app_policy == "enable",
+            }
+        )
+    if args.app_policy_mode:
+        operations.append({"target": "app-policy", "key": "mode", "value": args.app_policy_mode})
+    if args.app_policy_default_action:
+        operations.append(
+            {
+                "target": "app-policy",
+                "key": "default_action",
+                "value": args.app_policy_default_action,
+            }
+        )
+    sections = sorted({str(item["target"]) for item in operations})
+    return {
+        "has_changes": bool(operations),
+        "operations": operations,
+        "sections": sections,
+        "backup_warning": BACKUP_SENSITIVE_WARNING,
+        "network_fetch_performed": False,
+        "runtime_action_executed": False,
+    }
+
+
+def _apply_setup(args: argparse.Namespace, plan: dict[str, object]) -> None:
+    sections = set(plan.get("sections", []))
+    state_manager = StateManager()
+    state = state_manager.load()
+    app_config_store = AppConfig()
+    app_config = app_config_store.load()
+    dns_store = DNSPolicyStore()
+    dns_policy = dns_store.load()
+    app_policy_store = AppPolicyStore()
+    app_policy = app_policy_store.load()
+
+    if args.language:
+        state["selected_language"] = args.language
+        state["language_mode"] = "manual"
+    if args.autostart:
+        state["app_autostart_enabled"] = args.autostart == "enable"
+    if args.autoconnect:
+        state["vpn_autoconnect_enabled"] = args.autoconnect == "enable"
+    if args.kill_switch:
+        app_config["kill_switch"]["enabled"] = args.kill_switch == "enable"
+    if args.dns_mode:
+        dns_policy.mode = DNSMode(args.dns_mode)
+        dns_policy = DNSPolicy.from_dict(dns_policy.to_dict())
+    if args.app_policy:
+        app_policy.enabled = args.app_policy == "enable"
+    if args.app_policy_mode:
+        app_policy.mode = AppPolicyMode(args.app_policy_mode)
+    if args.app_policy_default_action:
+        app_policy.default_action = AppPolicyAction(args.app_policy_default_action)
+    app_policy = AppPolicy.from_dict(app_policy.to_dict())
+
+    if args.profile_uri:
+        profile = ManualProvider(rotation_prompt=lambda _profile: False).from_uri(args.profile_uri)
+        ProfileStore().add(profile)
+    if args.provider_url:
+        ProviderStore().add(_setup_provider_document(args.provider_url, args.provider_name))
+
+    if "selection-state" in sections:
+        state_manager.save(state)
+    if "settings" in sections:
+        app_config_store.save(app_config)
+    if "dns-policy" in sections:
+        dns_store.save(dns_policy)
+    if "app-policy" in sections:
+        app_policy_store.save(app_policy)
+
+
+def _create_setup_backup(plan: dict[str, object]) -> Path:
+    sections = [str(section) for section in plan.get("sections", [])]
+    return BackupManager().create_backup(
+        reason="pre-setup",
+        sections=sections,
+    ).path
+
+
+def _setup_provider_document(url: str, name: str | None) -> Provider:
+    label = name or _setup_provider_id(url)
+    return Provider(
+        id=_setup_provider_id(label),
+        name=label,
+        url=url,
+        last_updated=None,
+        profiles=[],
+        rotation_enabled=False,
+        metadata={"setup_staged_without_fetch": True},
+    )
+
+
+def _setup_provider_id(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9_-]+", "-", value.strip().lower())
+    slug = slug.strip("-_")
+    return slug[:64] or "provider"
+
+
+def _print_setup_plan(data: dict[str, object]) -> None:
+    print("WatchdogVPN setup plan")
+    print(f"Dry run: {_on_off(bool(data['dry_run']))}")
+    print(f"Applied: {_on_off(bool(data['applied']))}")
+    print(f"Runtime action executed: {_on_off(bool(data['runtime_action_executed']))}")
+    print(f"Network fetch performed: {_on_off(bool(data['network_fetch_performed']))}")
+    print(f"Backup: {data.get('backup_path') or '-'}")
+    operations = data.get("operations", [])
+    if not operations:
+        print("Operations: none")
+        print("Use --dry-run with setup flags to preview local setup changes.")
+        return
+    print("Operations:")
+    if isinstance(operations, list):
+        for item in operations:
+            if isinstance(item, dict):
+                label = item.get("key") or item.get("action") or item.get("target")
+                print(f"  {item.get('target')}: {label}")
 
 
 def _uninstall(args: argparse.Namespace) -> int:
