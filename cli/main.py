@@ -54,7 +54,7 @@ from diagnostics.chain_routes import ChainRouteDiagnostic, diagnose_chain_route_
 from diagnostics.routing import RouteDiagnostic, diagnose_route
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
-from models.profile import Profile
+from models.profile import Profile, profile_resilience_category
 from models.provider import Provider
 from node_groups.models import NodeGroup, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore, NodeGroupStoreError
@@ -239,6 +239,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_source.add_argument("--uri", help="Import one profile URI")
     add_source.add_argument("--file", help="Import profile content from file")
     add_source.add_argument("--text", action="store_true", help="Read profile content from stdin or editor")
+    add_parser.add_argument("--json", action="store_true", help="Print JSON")
     add_parser.set_defaults(handler=_profile_add)
 
     list_parser = profile_subparsers.add_parser("list", help="List saved profiles")
@@ -248,15 +249,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     remove_parser = profile_subparsers.add_parser("remove", help="Remove a saved profile")
     remove_parser.add_argument("profile_id")
+    remove_parser.add_argument("--json", action="store_true", help="Print JSON")
     remove_parser.set_defaults(handler=_profile_remove)
 
     enable_parser = profile_subparsers.add_parser("enable", help="Enable a saved profile")
     enable_parser.add_argument("profile_id")
+    enable_parser.add_argument("--json", action="store_true", help="Print JSON")
     enable_parser.set_defaults(handler=_profile_set_enabled)
     enable_parser.set_defaults(enabled=True)
 
     disable_parser = profile_subparsers.add_parser("disable", help="Disable a saved profile")
     disable_parser.add_argument("profile_id")
+    disable_parser.add_argument("--json", action="store_true", help="Print JSON")
     disable_parser.set_defaults(handler=_profile_set_enabled)
     disable_parser.set_defaults(enabled=False)
 
@@ -265,6 +269,9 @@ def _build_parser() -> argparse.ArgumentParser:
     rotation_group = rotation_parser.add_mutually_exclusive_group(required=True)
     rotation_group.add_argument("--enable", action="store_true", help="Add profile to rotation pool")
     rotation_group.add_argument("--disable", action="store_true", help="Remove profile from rotation pool")
+    rotation_group.add_argument("--on", action="store_true", help="Alias for --enable")
+    rotation_group.add_argument("--off", action="store_true", help="Alias for --disable")
+    rotation_parser.add_argument("--json", action="store_true", help="Print JSON")
     rotation_parser.set_defaults(handler=_profile_rotation)
 
     provider_parser = subparsers.add_parser("provider", help="Manage external providers")
@@ -273,6 +280,7 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_add_parser = provider_subparsers.add_parser("add", help="Add an external provider")
     provider_add_parser.add_argument("url", nargs="?", help="External provider subscription URL")
     provider_add_parser.add_argument("--name", help="Free-form provider label")
+    provider_add_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_add_parser.set_defaults(handler=_provider_add)
 
     provider_list_parser = provider_subparsers.add_parser("list", help="List external providers")
@@ -288,16 +296,19 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_update_target = provider_update_parser.add_mutually_exclusive_group(required=True)
     provider_update_target.add_argument("provider_id", nargs="?", help="Provider ID")
     provider_update_target.add_argument("--all", action="store_true", help="Update all providers")
+    provider_update_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_update_parser.set_defaults(handler=_provider_update)
 
     provider_remove_parser = provider_subparsers.add_parser("remove", help="Remove provider and owned nodes")
     provider_remove_parser.add_argument("provider_id")
+    provider_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_remove_parser.set_defaults(handler=_provider_remove)
 
     provider_edit_parser = provider_subparsers.add_parser("edit", help="Edit provider metadata")
     provider_edit_parser.add_argument("provider_id")
     provider_edit_parser.add_argument("--name", help="New free-form provider label")
     provider_edit_parser.add_argument("--url", help="New subscription URL")
+    provider_edit_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_edit_parser.set_defaults(handler=_provider_edit)
 
     provider_rotation_parser = provider_subparsers.add_parser("rotation", help="Enable or disable provider rotation")
@@ -305,6 +316,7 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_rotation_group = provider_rotation_parser.add_mutually_exclusive_group(required=True)
     provider_rotation_group.add_argument("--enable", action="store_true", help="Enable provider rotation")
     provider_rotation_group.add_argument("--disable", action="store_true", help="Disable provider rotation")
+    provider_rotation_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_rotation_parser.set_defaults(handler=_provider_rotation)
 
     provider_node_parser = provider_subparsers.add_parser("node", help="Change provider node settings")
@@ -314,6 +326,7 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_node_group = provider_node_parser.add_mutually_exclusive_group(required=True)
     provider_node_group.add_argument("--enable", action="store_true", help="Enable node rotation")
     provider_node_group.add_argument("--disable", action="store_true", help="Disable node rotation")
+    provider_node_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_node_parser.set_defaults(handler=_provider_node)
 
     node_group_parser = subparsers.add_parser("node-group", help="Manage node groups")
@@ -1065,9 +1078,20 @@ def _profile_add(args: argparse.Namespace) -> int:
         raise AssertionError("unreachable profile add source")
 
     imported = provider.last_imported or [profile]
+    data = {
+        "imported_count": len(imported),
+        "profiles": [_profile_summary(item) for item in imported],
+    }
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Imported {len(imported)} profile(s).")
     for item in imported:
-        print(f"{item.id}\t{item.protocol.value}\t{item.name}\trotation={_on_off(item.in_rotation_pool)}")
+        summary = _profile_summary(item)
+        print(
+            f"{item.id}\t{item.protocol.value}\t{summary['resilience_category']}\t"
+            f"{item.name}\trotation={_on_off(item.in_rotation_pool)}"
+        )
     return 0
 
 
@@ -1077,24 +1101,26 @@ def _profile_list(args: argparse.Namespace) -> int:
         profiles = pool_builder.build_pool(store, ProviderStore(), AppConfig().load())
     else:
         profiles = store.list()
+    data = [_profile_summary(profile) for profile in profiles]
     if args.json:
-        print(json.dumps([profile.to_dict() for profile in profiles], indent=2, sort_keys=True))
+        _print_json(data)
         return 0
     if not profiles:
         print("No profiles found.")
         return 0
-    print("ID\tProtocol\tSource\tEnabled\tRotation\tHealth\tName")
-    for profile in profiles:
+    print("ID\tProtocol\tCategory\tSource\tEnabled\tRotation\tHealth\tName")
+    for item in data:
         print(
             "\t".join(
                 [
-                    profile.id,
-                    profile.protocol.value,
-                    profile.source.value,
-                    _on_off(profile.enabled),
-                    _on_off(profile.in_rotation_pool),
-                    profile.health_status,
-                    profile.name,
+                    str(item["id"]),
+                    str(item["protocol"]),
+                    str(item["resilience_category"]),
+                    str(item["source"]),
+                    _on_off(bool(item["enabled"])),
+                    _on_off(bool(item["in_rotation_pool"])),
+                    str(item["health_status"]),
+                    str(item["name"]),
                 ]
             )
         )
@@ -1105,7 +1131,19 @@ def _profile_remove(args: argparse.Namespace) -> int:
     store = ProfileStore()
     profile = _require_profile(store, args.profile_id)
     store.remove(profile.id)
+    data = {
+        "removed": _profile_summary(profile),
+        "rollback_point": {
+            "kind": "profile-document",
+            "profile": _profile_summary(profile),
+            "raw_profile_config_included": False,
+        },
+    }
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Removed profile: {profile.id}")
+    print("Rollback: re-import the profile from the original local URI/file/provider source.")
     return 0
 
 
@@ -1114,6 +1152,10 @@ def _profile_set_enabled(args: argparse.Namespace) -> int:
     profile = _require_profile(store, args.profile_id)
     profile.enabled = bool(args.enabled)
     store.update(profile)
+    data = {"profile": _profile_summary(profile)}
+    if args.json:
+        _print_json(data)
+        return 0
     state = "enabled" if profile.enabled else "disabled"
     print(f"Profile {state}: {profile.id}")
     return 0
@@ -1122,8 +1164,12 @@ def _profile_set_enabled(args: argparse.Namespace) -> int:
 def _profile_rotation(args: argparse.Namespace) -> int:
     store = ProfileStore()
     profile = _require_profile(store, args.profile_id)
-    profile.in_rotation_pool = bool(args.enable)
+    profile.in_rotation_pool = bool(args.enable or args.on)
     store.update(profile)
+    data = {"profile": _profile_summary(profile)}
+    if args.json:
+        _print_json(data)
+        return 0
     state = "enabled" if profile.in_rotation_pool else "disabled"
     print(f"Profile rotation {state}: {profile.id}")
     return 0
@@ -1133,6 +1179,10 @@ def _provider_add(args: argparse.Namespace) -> int:
     url = args.url or _prompt_required("Provider URL")
     name = args.name if args.name is not None else _prompt_optional("Provider name")
     provider = SubscriptionProvider().add(url, name)
+    data = {"provider": _provider_summary(provider)}
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Added provider: {provider.id}")
     print(f"Name: {provider.name}")
     print(f"Profiles: {len(provider.profiles)}")
@@ -1208,18 +1258,36 @@ def _provider_update(args: argparse.Namespace) -> int:
     provider = SubscriptionProvider()
     if args.all:
         results = provider.update_all()
+        if args.json:
+            _print_json({"updated": results})
+            return 0
         for provider_id, result in results.items():
             print(f"{provider_id}\t{result}")
         return 0
     changes = provider.update(args.provider_id)
+    if args.json:
+        _print_json({"provider_id": args.provider_id, "changes": changes})
+        return 0
     print(f"Provider updated: {args.provider_id} changes={changes}")
     return 0
 
 
 def _provider_remove(args: argparse.Namespace) -> int:
-    _require_provider(ProviderStore(), args.provider_id)
+    provider = _require_provider(ProviderStore(), args.provider_id)
     SubscriptionProvider().remove(args.provider_id)
+    data = {
+        "removed": _provider_summary(provider),
+        "rollback_point": {
+            "kind": "provider-redacted-summary",
+            "provider": _provider_summary(provider),
+            "subscription_url_included": False,
+        },
+    }
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Removed provider: {args.provider_id}")
+    print("Rollback: add the provider again from the original subscription URL.")
     return 0
 
 
@@ -1233,6 +1301,10 @@ def _provider_edit(args: argparse.Namespace) -> int:
     if args.url is not None:
         provider.url = args.url
     provider_store.update(provider)
+    data = {"provider": _provider_summary(provider)}
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Updated provider: {provider.id}")
     print(f"Name: {provider.name}")
     print(f"URL: {_redact_url(provider.url)}")
@@ -1244,6 +1316,10 @@ def _provider_rotation(args: argparse.Namespace) -> int:
     provider = _require_provider(provider_store, args.provider_id)
     provider.rotation_enabled = bool(args.enable)
     provider_store.update(provider)
+    data = {"provider": _provider_summary(provider)}
+    if args.json:
+        _print_json(data)
+        return 0
     state = "enabled" if provider.rotation_enabled else "disabled"
     print(f"Provider rotation {state}: {provider.id}")
     return 0
@@ -1257,6 +1333,13 @@ def _provider_node(args: argparse.Namespace) -> int:
         raise ParseError(f"node does not belong to provider: {args.node_id}")
     profile.in_rotation_pool = bool(args.enable)
     profile_store.update(profile)
+    data = {
+        "provider": _provider_summary(provider),
+        "node": _profile_summary(profile),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
     state = "enabled" if profile.in_rotation_pool else "disabled"
     print(f"Provider node rotation {state}: {profile.id}")
     return 0
@@ -2615,14 +2698,18 @@ def _print_node_group_auto_test(data: dict) -> None:
 def _require_profile(store: ProfileStore, profile_id: str) -> Profile:
     profile = store.get(profile_id)
     if profile is None:
-        raise ParseError(f"profile not found: {profile_id}")
+        raise ParseError(
+            f"profile not found: {profile_id}; run `watchdog profile list` to inspect saved profiles"
+        )
     return profile
 
 
 def _require_provider(store: ProviderStore, provider_id: str) -> Provider:
     provider = store.get(provider_id)
     if provider is None:
-        raise ProviderNotFoundError(f"provider not found: {provider_id}")
+        raise ProviderNotFoundError(
+            f"provider not found: {provider_id}; run `watchdog provider list` to inspect saved providers"
+        )
     return provider
 
 
@@ -2637,6 +2724,24 @@ def _node_group_summary(group: NodeGroup) -> dict:
     return group.to_dict()
 
 
+def _profile_summary(profile: Profile) -> dict[str, object]:
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "protocol": profile.protocol.value,
+        "resilience_category": profile_resilience_category(profile).value,
+        "source": profile.source.value,
+        "provider_id": profile.provider_id,
+        "in_rotation_pool": profile.in_rotation_pool,
+        "enabled": profile.enabled,
+        "health_status": profile.health_status,
+        "latency_ms": profile.latency_ms,
+        "last_health_check": profile.last_health_check.isoformat() if profile.last_health_check else None,
+        "last_latency_check": profile.last_latency_check.isoformat() if profile.last_latency_check else None,
+        "config_included": False,
+    }
+
+
 def _provider_summary(provider: Provider) -> dict:
     metadata = provider.metadata or {}
     return {
@@ -2648,7 +2753,7 @@ def _provider_summary(provider: Provider) -> dict:
         "last_updated": provider.last_updated.isoformat() if provider.last_updated else None,
         "traffic": _traffic_label(metadata),
         "expires_at": metadata.get("expires_at") or metadata.get("expire") or metadata.get("expires"),
-        "metadata": metadata,
+        "metadata_included": False,
     }
 
 

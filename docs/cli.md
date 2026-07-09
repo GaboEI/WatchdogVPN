@@ -182,6 +182,95 @@ Lifecycle JSON remains a daemon response envelope with an added
 Daemon-unreachable JSON uses the same envelope with `ok=false`,
 `daemon_reachable=false`, `actual_runtime_state=unknown` and recovery hints.
 
+## Profiles And Providers
+
+The Python profile and provider commands are local state commands. They do not
+connect, disconnect, rotate live runtime state, mutate DNS, routes, firewall or
+system proxy settings.
+
+### `watchdog profile`
+
+Imports, lists and updates saved profiles.
+
+```sh
+watchdog profile add --clipboard [--json]
+watchdog profile add --uri URI [--json]
+watchdog profile add --file PATH [--json]
+watchdog profile add --text [--json]
+watchdog profile list [--json] [--pool]
+watchdog profile remove <id> [--json]
+watchdog profile enable <id> [--json]
+watchdog profile disable <id> [--json]
+watchdog profile rotation <id> --enable [--json]
+watchdog profile rotation <id> --disable [--json]
+watchdog profile rotation <id> --on [--json]
+watchdog profile rotation <id> --off [--json]
+```
+
+Human output shows profile ID, protocol, source, enabled state, rotation state,
+health state, name and resilience category where applicable. The category is a
+local classification only:
+
+```text
+resilient
+compatibility
+```
+
+It must not be read as a guarantee of censorship resistance, availability or
+successful connection through any specific network.
+
+Profile JSON uses redacted summary objects. It includes stable fields such as
+`id`, `name`, `protocol`, `resilience_category`, `source`, `provider_id`,
+`enabled`, `in_rotation_pool`, `health_status`, latency timestamps and
+`config_included=false`. It does not include raw profile config, private keys,
+endpoint tokens or imported URI payloads.
+
+Profile mutation commands validate that the target profile exists before
+writing. Remove output includes a redacted rollback point and recovery wording,
+but it does not include the raw profile config. To restore a removed profile,
+re-import it from the original URI, file or provider source.
+
+### `watchdog provider`
+
+Imports, lists and updates external provider definitions and provider-owned
+nodes.
+
+```sh
+watchdog provider add <url> [--name NAME] [--json]
+watchdog provider list [--json]
+watchdog provider stats <id> [--json]
+watchdog provider update <id> [--json]
+watchdog provider update --all [--json]
+watchdog provider remove <id> [--json]
+watchdog provider edit <id> [--name NAME] [--url URL] [--json]
+watchdog provider rotation <id> --enable [--json]
+watchdog provider rotation <id> --disable [--json]
+watchdog provider node <provider_id> <node_id> --rotation --enable [--json]
+watchdog provider node <provider_id> <node_id> --rotation --disable [--json]
+```
+
+Human output never prints raw subscription URLs. Provider stats print a redacted
+URL and aggregate counts only. Provider list output shows provider ID, local
+name, rotation state, node count, update time and trusted summary metadata such
+as traffic and expiry when present.
+
+Provider JSON uses redacted summary objects. It includes provider ID, local
+name, redacted URL, rotation state, node count, last update, traffic/expiry
+summary and `metadata_included=false`. It does not include raw provider
+metadata, subscription URLs, endpoint tokens, private keys or raw profile
+configs.
+
+Provider mutation commands validate that the provider exists before target
+writes. Provider node mutation also validates that the node belongs to the
+selected provider. Remove output includes a redacted rollback point and
+recovery wording, but it does not include the subscription URL. To restore a
+removed provider, add it again from the original subscription URL.
+
+The profile and provider stores do not currently define an automatic
+store-level backup contract for these direct mutations. Task 22.3 therefore
+adds redacted rollback guidance and JSON rollback points for destructive
+removes without writing secret-bearing backup documents.
+
 ## Uninstall Flow
 
 ### `watchdog uninstall`
