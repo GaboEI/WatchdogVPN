@@ -81,9 +81,19 @@ class CliRulesCommandTests(unittest.TestCase):
 
             enabled = self.run_watchdog(["rules", "enable", "custom", "--json"], tmp)
             disabled = self.run_watchdog(["rules", "disable", "custom", "--json"], tmp)
+            enabled_data = json.loads(enabled.stdout)
+            disabled_data = json.loads(disabled.stdout)
+            enabled_backup_exists = Path(enabled_data["backup_path"]).exists()
+            disabled_backup_exists = Path(disabled_data["backup_path"]).exists()
 
-        self.assertTrue(json.loads(enabled.stdout)["group"]["enabled"])
-        self.assertFalse(json.loads(disabled.stdout)["group"]["enabled"])
+        self.assertTrue(enabled_data["group"]["enabled"])
+        self.assertFalse(disabled_data["group"]["enabled"])
+        self.assertTrue(enabled_backup_exists)
+        self.assertTrue(disabled_backup_exists)
+        self.assertEqual(
+            enabled_data["rollback_point"]["kind"],
+            "existing-group-backup",
+        )
 
     def test_add_and_remove_rule_persist_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,11 +119,17 @@ class CliRulesCommandTests(unittest.TestCase):
                 ["rules", "remove-rule", "custom", "example-direct", "--json"],
                 tmp,
             )
+            added_data = json.loads(added.stdout)
+            removed_data = json.loads(removed.stdout)
+            added_backup_exists = Path(added_data["backup_path"]).exists()
+            removed_backup_exists = Path(removed_data["backup_path"]).exists()
 
-        added_data = json.loads(added.stdout)
         self.assertEqual(added_data["added"]["conditions"]["domain"], ["example.com"])
         self.assertEqual(added_data["added"]["conditions"]["port"], ["443"])
-        self.assertEqual(json.loads(removed.stdout)["group"]["rules"], [])
+        self.assertTrue(added_backup_exists)
+        self.assertEqual(added_data["rollback_point"]["section"], "routing-rules")
+        self.assertEqual(removed_data["group"]["rules"], [])
+        self.assertTrue(removed_backup_exists)
 
     def test_add_rule_rejects_invalid_condition_without_mutating_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -138,6 +154,17 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertEqual(result.returncode, 65)
         self.assertIn("unsupported rule condition", result.stderr)
         self.assertEqual(json.loads(status.stdout)[0]["rules"], [])
+
+    def test_missing_rule_group_prints_recovery_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["rules", "enable", "missing"],
+                tmp,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("watchdog rules list", result.stderr)
 
     def test_export_group_json_and_output_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -230,10 +257,12 @@ class CliRulesCommandTests(unittest.TestCase):
             )
             data = json.loads(result.stdout)
             backup_exists = Path(data["backup_path"]).exists()
+            section_backup_exists = Path(data["section_backup_path"]).exists()
             status = self.run_watchdog(["rules", "export", "custom", "--json"], tmp)
 
         self.assertTrue(data["replaced"])
         self.assertTrue(backup_exists)
+        self.assertTrue(section_backup_exists)
         self.assertEqual(json.loads(status.stdout)["rules"][0]["id"], "new")
 
     def test_import_group_rejects_invalid_schema_without_mutating_existing_group(self) -> None:
@@ -340,14 +369,17 @@ class CliRulesCommandTests(unittest.TestCase):
                 ["rules", "import", str(import_file), "--name", "simple-list", "--json"],
                 tmp,
             )
+            written_data = json.loads(written.stdout)
+            section_backup_exists = Path(written_data["section_backup_path"]).exists()
 
         preview_data = json.loads(preview.stdout)
-        written_data = json.loads(written.stdout)
         self.assertTrue(preview_data["dry_run"])
+        self.assertIsNone(preview_data["section_backup_path"])
         self.assertEqual(preview_data["rollback_point"], {"kind": "preview-only"})
         self.assertEqual(preview_data["source_format"], "simple-domain-ip-list")
         self.assertEqual(preview_data["accepted_rule_count"], 3)
         self.assertEqual(written_data["accepted_rule_count"], 3)
+        self.assertTrue(section_backup_exists)
         self.assertEqual(written_data["rollback_point"], {"kind": "new-group-delete", "group": "simple-list"})
         self.assertEqual(written_data["imported"]["rules"][0]["conditions"], {"domain": ["example.com"]})
         self.assertEqual(

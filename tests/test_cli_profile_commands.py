@@ -54,7 +54,11 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertEqual(len(profiles), 1)
             self.assertEqual(profiles[0]["id"], "demo")
             self.assertEqual(profiles[0]["protocol"], "vless")
+            self.assertEqual(profiles[0]["resilience_category"], "resilient")
             self.assertFalse(profiles[0]["in_rotation_pool"])
+            self.assertFalse(profiles[0]["config_included"])
+            self.assertNotIn("config", profiles[0])
+            self.assertNotIn("uuid", result.stdout)
 
     def test_profile_add_file_and_list_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -68,6 +72,7 @@ class CliProfileCommandTests(unittest.TestCase):
             profiles = json.loads(result.stdout)
             self.assertEqual([profile["id"] for profile in profiles], ["trojan-demo"])
             self.assertTrue(profiles[0]["in_rotation_pool"])
+            self.assertEqual(profiles[0]["resilience_category"], "resilient")
 
     def test_profile_add_text_from_stdin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -80,6 +85,7 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertIn("Imported 1 profile(s).", result.stdout)
             listed = self.run_watchdog(["profile", "list", "--json"], tmp)
             self.assertEqual(json.loads(listed.stdout)[0]["protocol"], "hysteria2")
+            self.assertNotIn("password", listed.stdout)
 
     def test_profile_add_empty_uri_reports_parse_error_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -97,20 +103,39 @@ class CliProfileCommandTests(unittest.TestCase):
                 tmp,
             )
             self.run_watchdog(["profile", "disable", "demo"], tmp)
-            self.run_watchdog(["profile", "rotation", "demo", "--enable"], tmp)
+            self.run_watchdog(["profile", "rotation", "demo", "--on"], tmp)
 
             profiles = json.loads(self.run_watchdog(["profile", "list", "--json"], tmp).stdout)
             self.assertFalse(profiles[0]["enabled"])
             self.assertTrue(profiles[0]["in_rotation_pool"])
 
             self.run_watchdog(["profile", "enable", "demo"], tmp)
-            self.run_watchdog(["profile", "rotation", "demo", "--disable"], tmp)
+            self.run_watchdog(["profile", "rotation", "demo", "--off"], tmp)
             profiles = json.loads(self.run_watchdog(["profile", "list", "--json"], tmp).stdout)
             self.assertTrue(profiles[0]["enabled"])
             self.assertFalse(profiles[0]["in_rotation_pool"])
 
-            self.run_watchdog(["profile", "remove", "demo"], tmp)
+            removed = self.run_watchdog(["profile", "remove", "demo", "--json"], tmp)
+            removed_data = json.loads(removed.stdout)
+            self.assertEqual(removed_data["removed"]["id"], "demo")
+            self.assertFalse(removed_data["rollback_point"]["raw_profile_config_included"])
             self.assertEqual(json.loads(self.run_watchdog(["profile", "list", "--json"], tmp).stdout), [])
+
+    def test_profile_mutations_json_are_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                ["profile", "add", "--uri", "trojan://secret-password@example.com:443#trojan-demo", "--json"],
+                tmp,
+            )
+            disabled = self.run_watchdog(["profile", "disable", "trojan-demo", "--json"], tmp)
+            rotation = self.run_watchdog(["profile", "rotation", "trojan-demo", "--enable", "--json"], tmp)
+
+            for result in (added, disabled, rotation):
+                self.assertNotIn("secret-password", result.stdout)
+                self.assertNotIn('"config":', result.stdout)
+            self.assertEqual(json.loads(added.stdout)["profiles"][0]["resilience_category"], "resilient")
+            self.assertFalse(json.loads(disabled.stdout)["profile"]["enabled"])
+            self.assertTrue(json.loads(rotation.stdout)["profile"]["in_rotation_pool"])
 
     def test_profile_missing_id_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -118,6 +143,7 @@ class CliProfileCommandTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("profile not found: missing", result.stderr)
+            self.assertIn("watchdog profile list", result.stderr)
 
     def test_profile_list_persistent_validation_error_has_no_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

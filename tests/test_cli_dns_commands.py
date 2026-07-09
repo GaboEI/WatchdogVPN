@@ -249,6 +249,8 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertEqual(result, 0)
             data = json.loads(stdout.getvalue())
             self.assertEqual(data["status"], "dry-run")
+            self.assertEqual(data["rollback_snapshot"]["path"], str(snapshot_path))
+            self.assertEqual(data["rollback_snapshot"]["status"], "missing")
             self.assertFalse(snapshot_path.exists())
 
     def test_dns_apply_dry_run_allows_non_standard_entrypoint_port_for_planning(self) -> None:
@@ -309,6 +311,39 @@ class CliDNSCommandTests(unittest.TestCase):
             saved = json.loads(snapshot_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["inventory"]["manager"], "resolv_conf")
             controller_cls.return_value.apply.assert_called_once()
+
+    def test_dns_apply_json_reports_rollback_snapshot_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "dns-state.json"
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 203.0.113.53\n", encoding="utf-8")
+            snapshot = _snapshot(resolv_conf)
+
+            with patch("cli.main.detect_resolver_manager", return_value=_inventory(resolv_conf)):
+                with patch("cli.main.SystemDNSStateManager") as manager_cls:
+                    manager_cls.return_value.save_state.return_value = snapshot
+                    with patch("cli.main.DNSHijackController") as controller_cls:
+                        controller_cls.return_value.apply.return_value = FakeApplyResult(snapshot)
+                        with redirect_stdout(StringIO()) as stdout:
+                            result = cli.main.main(
+                                [
+                                    "dns",
+                                    "apply",
+                                    "--yes",
+                                    "--json",
+                                    "--skip-entrypoint-check",
+                                    "--snapshot-file",
+                                    str(snapshot_path),
+                                    "--resolv-conf-path",
+                                    str(resolv_conf),
+                                ]
+                            )
+
+        self.assertEqual(result, 0)
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["rollback_snapshot"]["path"], str(snapshot_path))
+        self.assertTrue(data["rollback_snapshot"]["will_create"])
+        self.assertTrue(data["snapshot_saved"])
 
     def test_dns_apply_does_not_mutate_when_snapshot_save_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

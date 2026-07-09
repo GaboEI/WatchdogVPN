@@ -92,6 +92,9 @@ class CliProviderCommandTests(unittest.TestCase):
             self.assertEqual(providers[0]["url"], "https://netz.tg/<redacted>")
             self.assertEqual(providers[0]["traffic"], "51.6 GB/1000.0 GB")
             self.assertEqual(providers[0]["expires_at"], "2026-09-17")
+            self.assertFalse(providers[0]["metadata_included"])
+            self.assertNotIn("private-token", result.stdout)
+            self.assertNotIn("metadata", providers[0])
 
     def test_provider_stats_json_counts_nodes_and_protocols(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,14 +107,44 @@ class CliProviderCommandTests(unittest.TestCase):
             self.assertEqual(stats["enabled_nodes"], 2)
             self.assertEqual(stats["rotation_nodes"], 2)
             self.assertEqual(stats["protocols"], {"trojan": 2})
+            self.assertEqual(stats["url"], "https://netz.tg/<redacted>")
+            self.assertFalse(stats["metadata_included"])
+            self.assertNotIn("private-token", result.stdout)
 
     def test_provider_edit_rotation_node_and_remove(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.seed_provider(tmp)
 
-            self.run_watchdog(["provider", "edit", "netz.tg", "--name", "new name", "--url", "https://netz.tg/new-token"], tmp)
-            self.run_watchdog(["provider", "rotation", "netz.tg", "--disable"], tmp)
-            self.run_watchdog(["provider", "node", "netz.tg", "netz.tg:austria", "--rotation", "--disable"], tmp)
+            edited = self.run_watchdog(
+                [
+                    "provider",
+                    "edit",
+                    "netz.tg",
+                    "--name",
+                    "new name",
+                    "--url",
+                    "https://netz.tg/new-token",
+                    "--json",
+                ],
+                tmp,
+            )
+            rotation = self.run_watchdog(["provider", "rotation", "netz.tg", "--disable", "--json"], tmp)
+            node = self.run_watchdog(
+                [
+                    "provider",
+                    "node",
+                    "netz.tg",
+                    "netz.tg:austria",
+                    "--rotation",
+                    "--disable",
+                    "--json",
+                ],
+                tmp,
+            )
+
+            self.assertNotIn("new-token", edited.stdout)
+            self.assertFalse(json.loads(rotation.stdout)["provider"]["rotation_enabled"])
+            self.assertFalse(json.loads(node.stdout)["node"]["in_rotation_pool"])
 
             provider = ProviderStore(Path(tmp) / "providers.json").get("netz.tg")
             profile = ProfileStore(Path(tmp) / "profiles.json").get("netz.tg:austria")
@@ -124,7 +157,11 @@ class CliProviderCommandTests(unittest.TestCase):
             self.assertFalse(provider.rotation_enabled)
             self.assertFalse(profile.in_rotation_pool)
 
-            self.run_watchdog(["provider", "remove", "netz.tg"], tmp)
+            removed = self.run_watchdog(["provider", "remove", "netz.tg", "--json"], tmp)
+            removed_data = json.loads(removed.stdout)
+            self.assertEqual(removed_data["removed"]["id"], "netz.tg")
+            self.assertFalse(removed_data["rollback_point"]["subscription_url_included"])
+            self.assertNotIn("new-token", removed.stdout)
             self.assertIsNone(ProviderStore(Path(tmp) / "providers.json").get("netz.tg"))
             self.assertEqual(ProfileStore(Path(tmp) / "profiles.json").list(), [])
 
@@ -135,7 +172,7 @@ class CliProviderCommandTests(unittest.TestCase):
             manager.add.return_value = provider
 
             with redirect_stdout(StringIO()):
-                result = cli.main.main(["provider", "add", "https://netz.tg/private-token", "--name", "netz"])
+                result = cli.main.main(["provider", "add", "https://netz.tg/private-token", "--name", "netz", "--json"])
 
         self.assertEqual(result, 0)
         manager.add.assert_called_once_with("https://netz.tg/private-token", "netz")
@@ -146,10 +183,36 @@ class CliProviderCommandTests(unittest.TestCase):
             manager.update_all.return_value = {"netz.tg": 2}
 
             with redirect_stdout(StringIO()):
-                result = cli.main.main(["provider", "update", "--all"])
+                result = cli.main.main(["provider", "update", "--all", "--json"])
 
         self.assertEqual(result, 0)
         manager.update_all.assert_called_once_with()
+
+    def test_provider_update_single_json_uses_subscription_provider(self) -> None:
+        with patch("cli.main.SubscriptionProvider") as provider_cls:
+            manager = provider_cls.return_value
+            manager.update.return_value = 3
+
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["provider", "update", "netz.tg", "--json"])
+
+        self.assertEqual(result, 0)
+        manager.update.assert_called_once_with("netz.tg")
+        self.assertEqual(json.loads(stdout.getvalue()), {"changes": 3, "provider_id": "netz.tg"})
+
+    def test_provider_add_json_redacts_subscription_url(self) -> None:
+        provider = _provider()
+        with patch("cli.main.SubscriptionProvider") as provider_cls:
+            manager = provider_cls.return_value
+            manager.add.return_value = provider
+
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["provider", "add", "https://netz.tg/private-token", "--name", "netz", "--json"])
+
+        self.assertEqual(result, 0)
+        self.assertNotIn("private-token", stdout.getvalue())
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["provider"]["url"], "https://netz.tg/<redacted>")
 
     def test_provider_missing_id_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,6 +220,7 @@ class CliProviderCommandTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("provider not found: missing", result.stderr)
+            self.assertIn("watchdog provider list", result.stderr)
 
     def test_provider_add_invalid_url_fails_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

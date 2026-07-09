@@ -70,17 +70,319 @@ watchdogvpn tui
 Python runtime commands:
 
 ```sh
+watchdog connect <profile_id> [--json]
+watchdog disconnect [--json]
+watchdog status [--json]
+watchdog rotate [--force] [--json]
+watchdog version [--json]
+watchdog panic sleep|wake|status
+watchdog doctor [--json]
+watchdog setup [--dry-run] [--yes] [--json]
 watchdog uninstall --keep-data --yes
+watchdog uninstall --keep-data --dry-run [--json]
 watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
 watchdog uninstall --delete-all-data --confirm-delete DELETE --backup-output ~/watchdogvpn-pre-delete.zip --yes
 watchdog stats status [--json]
 watchdog stats summary [--json]
-watchdog stats purge --yes
-watchdog stats privacy-mode <off|aggregate|detailed>
+watchdog stats purge --yes [--json]
+watchdog stats privacy-mode <off|aggregate|detailed> [--json]
+watchdog backup create [--output PATH] [--section SECTION] [--json]
+watchdog backup export [--output PATH] [--section SECTION] [--json]
+watchdog backup inspect PATH [--json]
+watchdog backup restore PATH [--dry-run] [--section SECTION] [--mode replace|merge] [--json]
+watchdog backup import PATH [--dry-run] [--section SECTION] [--mode replace|merge] [--json]
+watchdog rules list [--json]
 watchdog rules explain [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
+watchdog rules enable <group> [--json]
+watchdog rules disable <group> [--json]
+watchdog rules add-rule <group> <rule_id> --action ACTION --condition KEY=VALUE [--json]
+watchdog rules remove-rule <group> <rule_id> [--json]
+watchdog rules import <file> [--replace] [--dry-run] [--json]
+watchdog rules export <group> (--output PATH|--json)
 watchdog ruleset status [--json]
 watchdog ruleset refresh [RULE_SET_ID ...] [--referenced-only] [--force] [--json]
+watchdog app-policy status [--json]
+watchdog app-policy enable|disable [--json]
+watchdog app-policy mode <blacklist|whitelist> [--json]
+watchdog app-policy default-action <current|direct|block> [--json]
+watchdog app-policy add --process-name NAME --action ACTION [--id ID] [--json]
+watchdog app-policy add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog app-policy remove <id> [--json]
+watchdog node-group list [--json]
+watchdog node-group create <name> [--json]
+watchdog node-group add-profile <group> <profile> [--json]
+watchdog node-group select <group> <profile|auto> [--json]
+watchdog node-group auto-test <group> [--json]
 ```
+
+## Connection Lifecycle
+
+The Python lifecycle commands use the daemon IPC path:
+
+```text
+watchdog CLI -> daemon IPC socket -> RuntimeWorker -> WatchdogRuntime/driver
+```
+
+They do not directly mutate DNS, routes, firewall, interfaces or driver
+processes from the CLI process.
+
+### `watchdog connect`
+
+Requests a daemon-managed connection to a saved profile.
+
+```sh
+watchdog connect <profile_id>
+watchdog connect <profile_id> --json
+```
+
+Human output reports daemon reachability, desired state, actual runtime state,
+active profile, proxy/TUN state, LAN gateway state, kill switch state and
+failure/degraded status.
+
+### `watchdog disconnect`
+
+Requests daemon-managed disconnect and cleanup.
+
+```sh
+watchdog disconnect
+watchdog disconnect --json
+```
+
+Disconnect cleanup is owned by the daemon/runtime layer:
+
+- child process cleanup is handled by driver disconnect;
+- TUN/interface/route cleanup applies where owned runtime state was created;
+- DNS/system state restore uses the saved runtime snapshot when present;
+- owned local proxy listeners are removed by driver disconnect where
+  applicable.
+
+The CLI prints these cleanup expectations but does not claim installed runtime
+cleanup proof unless a VM/lab validation task recorded it.
+
+### `watchdog status`
+
+Shows daemon-reported runtime state and local desired state.
+
+```sh
+watchdog status
+watchdog status --json
+```
+
+The command distinguishes daemon reachability, desired state, actual runtime
+state, active runtime state, clean disconnect state and failure/degraded state.
+
+### `watchdog rotate`
+
+Requests a daemon-managed manual rotation.
+
+```sh
+watchdog rotate
+watchdog rotate --force
+watchdog rotate --json
+```
+
+Manual rotation still goes through `RuntimeWorker` and
+`WatchdogRuntime.rotate_now()`. It does not bypass lifecycle safety in the CLI.
+
+### Lifecycle JSON
+
+Lifecycle JSON remains a daemon response envelope with an added
+`payload.lifecycle` object:
+
+```json
+{
+  "version": 1,
+  "type": "response",
+  "ok": true,
+  "payload": {
+    "state": {},
+    "lifecycle": {
+      "daemon_reachable": true,
+      "desired_state": "off",
+      "actual_runtime_state": "standby",
+      "disconnected_cleanly": true,
+      "failure_or_degraded": false
+    }
+  },
+  "error": null
+}
+```
+
+Daemon-unreachable JSON uses the same envelope with `ok=false`,
+`daemon_reachable=false`, `actual_runtime_state=unknown` and recovery hints.
+
+## Profiles And Providers
+
+The Python profile and provider commands are local state commands. They do not
+connect, disconnect, rotate live runtime state, mutate DNS, routes, firewall or
+system proxy settings.
+
+### `watchdog profile`
+
+Imports, lists and updates saved profiles.
+
+```sh
+watchdog profile add --clipboard [--json]
+watchdog profile add --uri URI [--json]
+watchdog profile add --file PATH [--json]
+watchdog profile add --text [--json]
+watchdog profile list [--json] [--pool]
+watchdog profile remove <id> [--json]
+watchdog profile enable <id> [--json]
+watchdog profile disable <id> [--json]
+watchdog profile rotation <id> --enable [--json]
+watchdog profile rotation <id> --disable [--json]
+watchdog profile rotation <id> --on [--json]
+watchdog profile rotation <id> --off [--json]
+```
+
+Human output shows profile ID, protocol, source, enabled state, rotation state,
+health state, name and resilience category where applicable. The category is a
+local classification only:
+
+```text
+resilient
+compatibility
+```
+
+It must not be read as a guarantee of censorship resistance, availability or
+successful connection through any specific network.
+
+Profile JSON uses redacted summary objects. It includes stable fields such as
+`id`, `name`, `protocol`, `resilience_category`, `source`, `provider_id`,
+`enabled`, `in_rotation_pool`, `health_status`, latency timestamps and
+`config_included=false`. It does not include raw profile config, private keys,
+endpoint tokens or imported URI payloads.
+
+Profile mutation commands validate that the target profile exists before
+writing. Remove output includes a redacted rollback point and recovery wording,
+but it does not include the raw profile config. To restore a removed profile,
+re-import it from the original URI, file or provider source.
+
+### `watchdog provider`
+
+Imports, lists and updates external provider definitions and provider-owned
+nodes.
+
+```sh
+watchdog provider add <url> [--name NAME] [--json]
+watchdog provider list [--json]
+watchdog provider stats <id> [--json]
+watchdog provider update <id> [--json]
+watchdog provider update --all [--json]
+watchdog provider remove <id> [--json]
+watchdog provider edit <id> [--name NAME] [--url URL] [--json]
+watchdog provider rotation <id> --enable [--json]
+watchdog provider rotation <id> --disable [--json]
+watchdog provider node <provider_id> <node_id> --rotation --enable [--json]
+watchdog provider node <provider_id> <node_id> --rotation --disable [--json]
+```
+
+Human output never prints raw subscription URLs. Provider stats print a redacted
+URL and aggregate counts only. Provider list output shows provider ID, local
+name, rotation state, node count, update time and trusted summary metadata such
+as traffic and expiry when present.
+
+Provider JSON uses redacted summary objects. It includes provider ID, local
+name, redacted URL, rotation state, node count, last update, traffic/expiry
+summary and `metadata_included=false`. It does not include raw provider
+metadata, subscription URLs, endpoint tokens, private keys or raw profile
+configs.
+
+Provider mutation commands validate that the provider exists before target
+writes. Provider node mutation also validates that the node belongs to the
+selected provider. Remove output includes a redacted rollback point and
+recovery wording, but it does not include the subscription URL. To restore a
+removed provider, add it again from the original subscription URL.
+
+The profile and provider stores do not currently define an automatic
+store-level backup contract for these direct mutations. Task 22.3 therefore
+adds redacted rollback guidance and JSON rollback points for destructive
+removes without writing secret-bearing backup documents.
+
+## Version And Panic
+
+### `watchdog version`
+
+Prints the Python CLI version using the same release marker as
+`watchdogvpn version`.
+
+```sh
+watchdog version
+watchdog version --json
+```
+
+Human output:
+
+```text
+WatchdogVPN v0.3.1
+```
+
+JSON output includes `product`, `version` and `python_cli=true`.
+
+### `watchdog panic`
+
+Delegates to the standalone panic button script as an argv-list subprocess.
+The Python CLI does not reimplement panic behavior.
+
+```sh
+watchdog panic status
+watchdog panic sleep
+watchdog panic wake
+```
+
+`status` reports the current panic/sleep state. `sleep` and `wake` preserve
+the existing `watchdog_panic` behavior, including daemon, firewall,
+domain-bypass and autostart effects documented in `docs/security.md`.
+
+## Setup And Doctor
+
+### `watchdog setup`
+
+Configures local first-run preferences and policy defaults without starting
+runtime services or contacting provider URLs.
+
+```sh
+watchdog setup --dry-run --json --language es --dns-mode auto
+watchdog setup --yes --acknowledge-backup-warning --language es --autoconnect enable
+watchdog setup --yes --acknowledge-backup-warning --profile-uri URI
+watchdog setup --yes --acknowledge-backup-warning --provider-url URL --provider-name NAME
+```
+
+Supported setup fields:
+
+- `--language LANG`: sets manual selected language in selection state;
+- `--autostart enable|disable`: stores app autostart intent;
+- `--autoconnect enable|disable`: stores VPN autoconnect intent;
+- `--profile-uri URI`: imports one local profile URI without printing raw config;
+- `--provider-url URL`: stores one provider definition without fetching nodes;
+- `--kill-switch enable|disable`: sets local kill-switch policy;
+- `--dns-mode auto|off|custom|advanced`: sets DNS policy mode;
+- `--app-policy enable|disable`: sets app-policy enabled state;
+- `--app-policy-mode blacklist|whitelist`: sets app-policy mode;
+- `--app-policy-default-action current|direct|block`: sets app-policy default.
+
+`setup --dry-run` validates the plan and does not write local state. Real setup
+writes require both `--yes` and `--acknowledge-backup-warning`. A pre-setup
+backup is created before writes. Setup does not connect, disconnect, rotate,
+apply DNS, change routes, edit firewall rules, mutate system proxy settings,
+start services or refresh providers.
+
+JSON output includes `operations`, `sections`, `backup_path`,
+`network_fetch_performed=false` and `runtime_action_executed=false`.
+
+### `watchdog doctor`
+
+Runs the repository `doctor.sh` through argv-list subprocess execution.
+
+```sh
+watchdog doctor
+watchdog doctor --json
+```
+
+The Python wrapper does not reimplement doctor logic. JSON mode captures
+doctor stdout/stderr and exit code in one JSON document. The command is
+read-only and does not use `sudo`.
 
 ## Uninstall Flow
 
@@ -94,6 +396,7 @@ checkout path if launching from another directory.
 
 ```sh
 watchdog uninstall --keep-data --yes
+watchdog uninstall --keep-data --dry-run --json
 watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
 watchdog uninstall --delete-all-data --confirm-delete DELETE --backup-output ~/watchdogvpn-pre-delete.zip --yes
 ```
@@ -114,6 +417,64 @@ from the named environment variable and is not written to the backup manifest.
 
 Backup output paths inside WatchdogVPN-owned paths are rejected so a pre-delete
 backup is not deleted by the same uninstall operation.
+
+`--dry-run` is plan-only in the Python CLI wrapper: it does not invoke
+`uninstall.sh`, create backups or remove files. Real uninstall execution
+requires `--yes`. JSON output includes the selected mode, dry-run state,
+backup path, encryption state, argv-form command, product-managed files,
+preserved user state, logs, backups and systemd unit contract.
+
+## Backup Archives
+
+### `watchdog backup create` / `watchdog backup export`
+
+Creates a normal WatchdogVPN backup archive through `BackupManager`.
+
+```sh
+watchdog backup create --output ~/watchdogvpn-backup.zip
+watchdog backup create --section profiles --section providers --json
+watchdog backup export --output ~/watchdogvpn-backup.zip --encrypt --password-env WATCHDOGVPN_BACKUP_PASSWORD
+```
+
+Section names are validated by the backup manager. By default, diagnostics are
+not included. Normal backups are sensitive archives and may contain private
+keys, provider tokens, subscription URLs, routing policy, app policy, route
+chains and local selection state. Backup JSON reports `normal_backup=true`,
+`support_export=false` and `redacted_export=false` so automation does not
+confuse full backups with redacted support exports.
+
+Encrypted backups read the password from `--password-env`; passwords are not
+accepted in command arguments or written to the manifest.
+
+### `watchdog backup inspect`
+
+Validates a backup archive manifest and section schema without printing section
+payloads.
+
+```sh
+watchdog backup inspect ~/watchdogvpn-backup.zip --json
+```
+
+JSON output includes path, schema version, format, creation time, reason,
+section names, encryption state and sensitive-data warning. It does not print
+profile configs, provider metadata, subscription URLs, endpoint tokens, private
+keys or raw backup section payloads.
+
+### `watchdog backup restore` / `watchdog backup import`
+
+Validates and restores a backup archive through `BackupManager`.
+
+```sh
+watchdog backup restore ~/watchdogvpn-backup.zip --dry-run --json
+watchdog backup restore ~/watchdogvpn-backup.zip --confirm RESTORE-WATCHDOGVPN-BACKUP
+watchdog backup import ~/watchdogvpn-backup.zip --mode merge --section routing-rules
+```
+
+Dry-run restore validates the archive, selected sections and merge-section
+compatibility without writing local state or creating a pre-restore backup.
+Real replace restore requires the literal confirmation
+`RESTORE-WATCHDOGVPN-BACKUP`; real restore creates a pre-restore backup and
+returns `pre_restore_backup` in JSON.
 
 ## Runtime Commands
 
@@ -169,6 +530,32 @@ VPN
 
 ## Observability Stats
 
+## DNS Policy And State
+
+The Python DNS commands expose DNS policy status, resolver testing,
+configured-policy diagnostics and bounded apply/reset operations.
+
+```sh
+watchdog dns status [--json]
+watchdog dns test [--json]
+watchdog dns diagnose [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
+watchdog dns apply --dry-run [--json]
+watchdog dns apply --yes [--json]
+watchdog dns reset --yes [--json]
+```
+
+`dns status`, `dns test` and `dns diagnose` are read-only. `dns apply --dry-run`
+returns the apply plan without creating a DNS snapshot or mutating resolver
+state. Real apply requires `--yes`, refuses non-standard system resolver ports,
+saves or reuses rollback snapshot metadata and returns `rollback_snapshot` plus
+`snapshot_saved` in JSON. `dns reset` requires `--yes`, restores from the saved
+snapshot, removes the snapshot file after successful restore and returns
+`rollback_snapshot.restored=true` in JSON.
+
+Normal tests and local CLI validation must use mocked managers or isolated
+temporary resolver files. Do not run DNS apply/reset against the workstation's
+real resolver paths unless an explicit VM/lab validation task calls for it.
+
 ### `watchdog stats status`
 
 Shows local observability metrics state.
@@ -203,9 +590,13 @@ Purges the local metrics store.
 
 ```sh
 watchdog stats purge --yes
+watchdog stats purge --yes --json
 ```
 
 The command refuses to run without `--yes`.
+
+JSON output reports whether a file was purged, does not include metric buckets
+or raw counters, and keeps `history_included=false`.
 
 ### `watchdog stats privacy-mode`
 
@@ -215,13 +606,99 @@ Sets the local metrics privacy mode.
 watchdog stats privacy-mode off
 watchdog stats privacy-mode aggregate
 watchdog stats privacy-mode detailed
+watchdog stats privacy-mode detailed --json
 ```
 
 `off` disables metrics recording. `aggregate` enables aggregate counters.
 `detailed` stores the policy mode value but does not enable request history,
 because detailed history is not implemented in Phase 16.
 
+JSON output keeps `detailed_history_supported=false` and
+`history_included=false` even when the selected mode is `detailed`.
+
 ## Rule Diagnostics
+
+## Routing Policy Commands
+
+The Python policy commands mutate local policy stores only. They do not connect,
+disconnect, refresh providers, apply DNS, edit firewall rules, change routes or
+start capture.
+
+### `watchdog rules`
+
+Manages local routing rule groups.
+
+```sh
+watchdog rules list [--json]
+watchdog rules enable <group> [--json]
+watchdog rules disable <group> [--json]
+watchdog rules add-rule <group> <rule_id> --action ACTION --condition KEY=VALUE [--json]
+watchdog rules remove-rule <group> <rule_id> [--json]
+watchdog rules import <file> [--replace] [--dry-run] [--json]
+watchdog rules export <group> (--output PATH|--json)
+```
+
+Rule list JSON returns rule-group summaries with `name`, `enabled`,
+`priority`, `rule_count` and `rules`. Mutation JSON returns the changed group,
+`backup_path` when a group-level backup is created and a `rollback_point`.
+`rules import` also returns `section_backup_path` for the pre-import routing
+rules backup. Dry-run imports do not write policy or backups and return
+`rollback_point.kind = "preview-only"`.
+
+Every real `rules` mutation validates the target group/rule before writing.
+Group enable/disable, add-rule, remove-rule and replace import create a backup
+before the active group changes. New imports create a section backup and report
+that rollback is deleting the imported group.
+
+### `watchdog app-policy`
+
+Manages local Linux app/process routing policy.
+
+```sh
+watchdog app-policy status [--json]
+watchdog app-policy enable [--json]
+watchdog app-policy disable [--json]
+watchdog app-policy mode <blacklist|whitelist> [--json]
+watchdog app-policy default-action <current|direct|block> [--json]
+watchdog app-policy add --process-name NAME --action ACTION [--id ID] [--json]
+watchdog app-policy add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog app-policy remove <id> [--json]
+```
+
+Status JSON returns `valid`, `error`, `policy`, `rule_count`,
+`enabled_rule_count` and `rules`. Rule entries include `match_confidence`.
+Mutation JSON adds `backup_path` and a `rollback_point` with
+`kind = "section-backup"` and `section = "app-policy"`.
+
+Every app-policy mutation validates the resulting policy before writing and
+creates a restorable app-policy backup first. Missing or duplicate rule IDs
+include recovery wording pointing operators back to
+`watchdog app-policy status`.
+
+### `watchdog node-group`
+
+Manages local node groups and manual/auto selection intent.
+
+```sh
+watchdog node-group list [--json]
+watchdog node-group create <name> [--json]
+watchdog node-group add-profile <group> <profile> [--json]
+watchdog node-group select <group> <profile|auto> [--json]
+watchdog node-group auto-test <group> [--json]
+```
+
+Node-group list JSON returns the stored group document. Mutation JSON returns
+the changed `group`, `backup_path` and a `rollback_point` with
+`kind = "section-backup"` and `section = "node-groups"`. `add-profile` also
+returns `added_profile_id`; manual `select` returns `selected_profile_id`.
+
+Every node-group mutation validates the target group and profile references
+before writing and creates a restorable node-groups backup first. Missing
+profiles point operators to `watchdog profile list`; duplicate or missing
+groups point operators to `watchdog node-group list`.
+
+`watchdog node-group auto-test` is a daemon IPC command. It asks the daemon to
+evaluate the configured group and does not mutate local policy by itself.
 
 ### `watchdog rules explain`
 
@@ -703,6 +1180,7 @@ instead of parsing user-facing text.
 - Use `./update.sh --skip-doctor` from a clean, current checkout when updating
   installed runtime files.
 - If you need to put WatchdogVPN completely to sleep (daemon, kill switch,
-  domain-bypass routing) without uninstalling it, run `watchdog_panic sleep`;
-  `watchdog_panic wake` resumes it. See `docs/security.md`
+  domain-bypass routing) without uninstalling it, run `watchdog panic sleep`;
+  `watchdog panic wake` resumes it. The standalone `watchdog_panic` script
+  remains available for emergency use. See `docs/security.md`
   "WatchdogVPN Panic Button".
