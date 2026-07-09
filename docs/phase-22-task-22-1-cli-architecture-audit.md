@@ -162,6 +162,18 @@ No HIGH or MEDIUM findings were identified.
 - For runtime/network-affecting commands, prepare operator-run VM/lab
   validation instead of running disruptive checks directly.
 
+## Phase 22 Closure Note
+
+Task 22.7 resolved the remaining Python CLI inventory gaps identified in this
+audit:
+
+- `watchdog backup ...` was added in Task 22.5;
+- `watchdog setup` and `watchdog doctor` were added in Task 22.6;
+- `watchdog version` and `watchdog panic sleep|wake|status` were added in
+  Task 22.7;
+- nested command groups now require a subcommand and no longer fall through to
+  root help.
+
 ## Validation
 
 Task 22.1 validation:

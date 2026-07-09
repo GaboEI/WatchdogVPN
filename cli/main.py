@@ -196,6 +196,16 @@ def _build_parser() -> argparse.ArgumentParser:
     rotate_parser.add_argument("--json", action="store_true", help="Print JSON")
     rotate_parser.set_defaults(handler=_connection_rotate)
 
+    version_parser = subparsers.add_parser("version", help="Print WatchdogVPN version")
+    version_parser.add_argument("--json", action="store_true", help="Print JSON")
+    version_parser.add_argument("--version-source", help=argparse.SUPPRESS)
+    version_parser.set_defaults(handler=_version)
+
+    panic_parser = subparsers.add_parser("panic", help="Run the WatchdogVPN panic button")
+    panic_parser.add_argument("mode", choices=["sleep", "wake", "status"], help="Panic mode")
+    panic_parser.add_argument("--panic-script", help=argparse.SUPPRESS)
+    panic_parser.set_defaults(handler=_panic)
+
     doctor_parser = subparsers.add_parser("doctor", help="Run the repository doctor")
     doctor_parser.add_argument("--json", action="store_true", help="Print JSON")
     doctor_parser.add_argument("--doctor-script", help=argparse.SUPPRESS)
@@ -274,6 +284,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     backup_parser = subparsers.add_parser("backup", help="Create, inspect and restore backups")
     backup_subparsers = backup_parser.add_subparsers(dest="backup_command")
+    backup_subparsers.required = True
 
     backup_create_parser = backup_subparsers.add_parser("create", help="Create a backup archive")
     _add_backup_create_args(backup_create_parser)
@@ -299,6 +310,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     profile_parser = subparsers.add_parser("profile", help="Manage local profiles")
     profile_subparsers = profile_parser.add_subparsers(dest="profile_command")
+    profile_subparsers.required = True
 
     add_parser = profile_subparsers.add_parser("add", help="Add a manual profile")
     add_source = add_parser.add_mutually_exclusive_group(required=True)
@@ -343,6 +355,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     provider_parser = subparsers.add_parser("provider", help="Manage external providers")
     provider_subparsers = provider_parser.add_subparsers(dest="provider_command")
+    provider_subparsers.required = True
 
     provider_add_parser = provider_subparsers.add_parser("add", help="Add an external provider")
     provider_add_parser.add_argument("url", nargs="?", help="External provider subscription URL")
@@ -398,6 +411,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     node_group_parser = subparsers.add_parser("node-group", help="Manage node groups")
     node_group_subparsers = node_group_parser.add_subparsers(dest="node_group_command")
+    node_group_subparsers.required = True
 
     node_group_list_parser = node_group_subparsers.add_parser("list", help="List node groups")
     node_group_list_parser.add_argument("--json", action="store_true", help="Print JSON")
@@ -433,6 +447,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     dns_parser = subparsers.add_parser("dns", help="Manage DNS v2 policy and state")
     dns_subparsers = dns_parser.add_subparsers(dest="dns_command")
+    dns_subparsers.required = True
 
     dns_status_parser = dns_subparsers.add_parser("status", help="Show DNS v2 status")
     _add_dns_common_paths(dns_status_parser)
@@ -492,6 +507,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     config_parser = subparsers.add_parser("config", help="Manage WatchdogVPN configuration")
     config_subparsers = config_parser.add_subparsers(dest="config_command")
+    config_subparsers.required = True
 
     config_set_parser = config_subparsers.add_parser("set", help="Set a configuration value")
     config_set_parser.add_argument("key", help="Configuration key, for example mode or rotation.test_url")
@@ -520,6 +536,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     stats_parser = subparsers.add_parser("stats", help="Inspect local observability metrics")
     stats_subparsers = stats_parser.add_subparsers(dest="stats_command")
+    stats_subparsers.required = True
 
     stats_status_parser = stats_subparsers.add_parser("status", help="Show metrics status")
     stats_status_parser.add_argument("--json", action="store_true", help="Print JSON")
@@ -545,6 +562,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     rules_parser = subparsers.add_parser("rules", help="Inspect configured routing rules")
     rules_subparsers = rules_parser.add_subparsers(dest="rules_command")
+    rules_subparsers.required = True
 
     rules_list_parser = rules_subparsers.add_parser("list", help="List routing rule groups")
     rules_list_parser.add_argument("--json", action="store_true", help="Print JSON")
@@ -635,6 +653,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Inspect and refresh trusted remote or built-in rule sets",
     )
     ruleset_subparsers = ruleset_parser.add_subparsers(dest="ruleset_command")
+    ruleset_subparsers.required = True
 
     ruleset_status_parser = ruleset_subparsers.add_parser("status", help="Show rule-set trust and cache status")
     ruleset_status_parser.add_argument("--json", action="store_true", help="Print JSON")
@@ -660,6 +679,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Manage minimal Linux app/process policy",
     )
     app_policy_subparsers = app_policy_parser.add_subparsers(dest="app_policy_command")
+    app_policy_subparsers.required = True
 
     app_policy_status_parser = app_policy_subparsers.add_parser("status", help="Show app policy")
     app_policy_status_parser.add_argument("--json", action="store_true", help="Print JSON")
@@ -769,6 +789,57 @@ def _connection_rotate(args: argparse.Namespace) -> int:
         success_label="Rotation requested",
         command="rotate",
     )
+
+
+def _version(args: argparse.Namespace) -> int:
+    version = _watchdogvpn_version(args.version_source)
+    if args.json:
+        _print_json(
+            {
+                "product": "WatchdogVPN",
+                "version": version,
+                "python_cli": True,
+            }
+        )
+    else:
+        print(f"WatchdogVPN {version}")
+    return 0
+
+
+def _watchdogvpn_version(source: str | None = None) -> str:
+    path = Path(source).expanduser() if source else Path(__file__).resolve().parents[1] / "bin" / "watchdogvpn"
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r'^VERSION="([^"]+)"$', text, flags=re.MULTILINE)
+    if not match:
+        raise ParseError(f"WatchdogVPN version marker not found in {path}")
+    return match.group(1)
+
+
+def _panic(args: argparse.Namespace) -> int:
+    script = _panic_script_path(args.panic_script)
+    completed = subprocess.run([str(script), args.mode], check=False)
+    return int(completed.returncode)
+
+
+def _panic_script_path(value: str | None) -> Path:
+    if value:
+        candidates = [Path(value).expanduser()]
+    elif os.environ.get("WATCHDOGVPN_PANIC_SCRIPT"):
+        candidates = [Path(os.environ["WATCHDOGVPN_PANIC_SCRIPT"]).expanduser()]
+    else:
+        candidates = [
+            Path.cwd() / "bin" / "watchdog_panic",
+            Path(__file__).resolve().parents[1] / "bin" / "watchdog_panic",
+            Path("/usr/local/bin/watchdog_panic"),
+        ]
+    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+    if not script.exists():
+        raise FileNotFoundError(
+            "watchdog_panic not found; run from the WatchdogVPN checkout or set WATCHDOGVPN_PANIC_SCRIPT"
+        )
+    if not os.access(script, os.X_OK):
+        raise PermissionError(f"panic script is not executable: {script}")
+    return script
 
 
 def _doctor(args: argparse.Namespace) -> int:

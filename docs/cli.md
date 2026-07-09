@@ -74,6 +74,8 @@ watchdog connect <profile_id> [--json]
 watchdog disconnect [--json]
 watchdog status [--json]
 watchdog rotate [--force] [--json]
+watchdog version [--json]
+watchdog panic sleep|wake|status
 watchdog doctor [--json]
 watchdog setup [--dry-run] [--yes] [--json]
 watchdog uninstall --keep-data --yes
@@ -297,6 +299,41 @@ The profile and provider stores do not currently define an automatic
 store-level backup contract for these direct mutations. Task 22.3 therefore
 adds redacted rollback guidance and JSON rollback points for destructive
 removes without writing secret-bearing backup documents.
+
+## Version And Panic
+
+### `watchdog version`
+
+Prints the Python CLI version using the same release marker as
+`watchdogvpn version`.
+
+```sh
+watchdog version
+watchdog version --json
+```
+
+Human output:
+
+```text
+WatchdogVPN v0.3.1
+```
+
+JSON output includes `product`, `version` and `python_cli=true`.
+
+### `watchdog panic`
+
+Delegates to the standalone panic button script as an argv-list subprocess.
+The Python CLI does not reimplement panic behavior.
+
+```sh
+watchdog panic status
+watchdog panic sleep
+watchdog panic wake
+```
+
+`status` reports the current panic/sleep state. `sleep` and `wake` preserve
+the existing `watchdog_panic` behavior, including daemon, firewall,
+domain-bypass and autostart effects documented in `docs/security.md`.
 
 ## Setup And Doctor
 
@@ -1143,6 +1180,7 @@ instead of parsing user-facing text.
 - Use `./update.sh --skip-doctor` from a clean, current checkout when updating
   installed runtime files.
 - If you need to put WatchdogVPN completely to sleep (daemon, kill switch,
-  domain-bypass routing) without uninstalling it, run `watchdog_panic sleep`;
-  `watchdog_panic wake` resumes it. See `docs/security.md`
+  domain-bypass routing) without uninstalling it, run `watchdog panic sleep`;
+  `watchdog panic wake` resumes it. The standalone `watchdog_panic` script
+  remains available for emergency use. See `docs/security.md`
   "WatchdogVPN Panic Button".
