@@ -56,7 +56,9 @@ class CliConnectionCommandTests(unittest.TestCase):
         client_cls.return_value.connect.assert_called_once_with("p1")
         self.assertIn("Connected", stdout.getvalue())
         self.assertIn("Profile: p1", stdout.getvalue())
+        self.assertIn("Daemon: reachable", stdout.getvalue())
         self.assertIn("Status: connected", stdout.getvalue())
+        self.assertIn("Actual runtime state: connected", stdout.getvalue())
 
     def test_disconnect_json_outputs_response_envelope(self) -> None:
         response = Response(ok=True, payload={"state": {"status": "standby", "mode": "standby"}})
@@ -69,7 +71,36 @@ class CliConnectionCommandTests(unittest.TestCase):
         data = json.loads(stdout.getvalue())
         self.assertEqual(data["type"], "response")
         self.assertTrue(data["ok"])
+        self.assertTrue(data["payload"]["lifecycle"]["daemon_reachable"])
+        self.assertTrue(data["payload"]["lifecycle"]["disconnected_cleanly"])
+        self.assertTrue(data["payload"]["lifecycle"]["cleanup_expectations"]["applies"])
         client_cls.return_value.disconnect.assert_called_once_with()
+
+    def test_disconnect_human_output_documents_cleanup_expectations(self) -> None:
+        response = Response(
+            ok=True,
+            payload={
+                "state": {
+                    "status": "standby",
+                    "mode": "standby",
+                    "proxy_active": False,
+                    "tun_active": False,
+                    "lan_gateway_status": "disabled",
+                }
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.disconnect.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["disconnect"])
+
+        self.assertEqual(result, 0)
+        output = stdout.getvalue()
+        self.assertIn("Disconnected", output)
+        self.assertIn("Disconnected cleanly: on", output)
+        self.assertIn("Cleanup expectations:", output)
+        self.assertIn("process_cleanup", output)
+        self.assertIn("dns_restore", output)
 
     def test_status_uses_ipc_client(self) -> None:
         response = Response(ok=True, payload={"state": {"status": "standby", "mode": "standby"}})
@@ -81,6 +112,36 @@ class CliConnectionCommandTests(unittest.TestCase):
         self.assertEqual(result, 0)
         client_cls.return_value.status.assert_called_once_with()
         self.assertIn("Status: standby", stdout.getvalue())
+        self.assertIn("Desired state:", stdout.getvalue())
+        self.assertIn("Disconnected cleanly:", stdout.getvalue())
+
+    def test_status_json_includes_lifecycle_contract(self) -> None:
+        response = Response(
+            ok=True,
+            payload={
+                "state": {
+                    "status": "connected",
+                    "mode": "rules",
+                    "active_profile_id": "p1",
+                    "proxy_active": True,
+                    "tun_active": False,
+                    "kill_switch_active": False,
+                }
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.status.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["status", "--json"])
+
+        self.assertEqual(result, 0)
+        data = json.loads(stdout.getvalue())
+        lifecycle = data["payload"]["lifecycle"]
+        self.assertTrue(lifecycle["daemon_reachable"])
+        self.assertEqual(lifecycle["actual_runtime_state"], "connected")
+        self.assertEqual(lifecycle["active_profile_id"], "p1")
+        self.assertTrue(lifecycle["runtime_active"])
+        self.assertFalse(lifecycle["disconnected_cleanly"])
 
     def test_rotate_passes_force_flag(self) -> None:
         response = Response(ok=True, payload={"state": {"status": "recovered", "mode": "rules"}})
@@ -92,6 +153,30 @@ class CliConnectionCommandTests(unittest.TestCase):
         self.assertEqual(result, 0)
         client_cls.return_value.rotate.assert_called_once_with(force=True)
 
+    def test_rotate_json_reports_runtime_safety_path(self) -> None:
+        response = Response(
+            ok=True,
+            payload={
+                "state": {
+                    "status": "recovered",
+                    "mode": "rules",
+                    "active_profile_id": "p2",
+                    "proxy_active": True,
+                }
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.rotate.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["rotate", "--json"])
+
+        self.assertEqual(result, 0)
+        client_cls.return_value.rotate.assert_called_once_with(force=False)
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["payload"]["lifecycle"]["command"], "rotate")
+        self.assertEqual(data["payload"]["lifecycle"]["actual_runtime_state"], "recovered")
+        self.assertFalse(data["payload"]["lifecycle"]["cleanup_expectations"]["applies"])
+
     def test_daemon_error_response_returns_70(self) -> None:
         response = Response(ok=False, error="profile not found: missing")
         with patch("cli.main.WatchdogIPCClient") as client_cls:
@@ -101,6 +186,19 @@ class CliConnectionCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 70)
         self.assertIn("profile not found: missing", stderr.getvalue())
+        self.assertIn("hint: run: watchdog profile list", stderr.getvalue())
+
+    def test_daemon_error_json_includes_recovery_hints(self) -> None:
+        response = Response(ok=False, error="profile not found: missing")
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.connect.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["connect", "missing", "--json"])
+
+        self.assertEqual(result, 70)
+        data = json.loads(stdout.getvalue())
+        self.assertFalse(data["payload"]["lifecycle"]["profile_available"])
+        self.assertIn("watchdog profile list", data["payload"]["recovery_hints"][0])
 
     def test_ipc_error_uses_exception_exit_code(self) -> None:
         with patch("cli.main.WatchdogIPCClient") as client_cls:
@@ -110,6 +208,43 @@ class CliConnectionCommandTests(unittest.TestCase):
 
         self.assertEqual(result, DaemonNotRunningError.exit_code)
         self.assertIn("WatchdogVPN daemon is not running", stderr.getvalue())
+        self.assertIn("hint: start the daemon", stderr.getvalue())
+
+    def test_ipc_error_json_reports_daemon_unreachable(self) -> None:
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.status.side_effect = DaemonNotRunningError()
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["status", "--json"])
+
+        self.assertEqual(result, DaemonNotRunningError.exit_code)
+        data = json.loads(stdout.getvalue())
+        self.assertFalse(data["ok"])
+        self.assertFalse(data["payload"]["lifecycle"]["daemon_reachable"])
+        self.assertEqual(data["payload"]["lifecycle"]["actual_runtime_state"], "unknown")
+        self.assertIn("sudo systemctl start watchdogvpn", data["payload"]["recovery_hints"][0])
+
+    def test_status_human_marks_failure_or_degraded_state(self) -> None:
+        response = Response(
+            ok=True,
+            payload={
+                "state": {
+                    "status": "connected",
+                    "mode": "tun",
+                    "active_profile_id": "p1",
+                    "tun_active": True,
+                    "proxy_active": True,
+                    "lan_gateway_status": "degraded",
+                }
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.status.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["status"])
+
+        self.assertEqual(result, 0)
+        self.assertIn("LAN gateway: degraded", stdout.getvalue())
+        self.assertIn("Failure/degraded: on", stdout.getvalue())
 
 
 class CliConnectionCommandEndToEndTests(unittest.TestCase):

@@ -631,41 +631,58 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _connection_connect(args: argparse.Namespace) -> int:
-    response = WatchdogIPCClient().connect(args.profile_id)
+    try:
+        response = WatchdogIPCClient().connect(args.profile_id)
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("connect", args, exc)
     return _connection_response_output(
         response,
         json_output=bool(args.json),
         success_label="Connected",
+        command="connect",
     )
 
 
 def _connection_disconnect(args: argparse.Namespace) -> int:
-    response = WatchdogIPCClient().disconnect()
+    try:
+        response = WatchdogIPCClient().disconnect()
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("disconnect", args, exc)
     return _connection_response_output(
         response,
         json_output=bool(args.json),
         success_label="Disconnected",
+        command="disconnect",
     )
 
 
 def _connection_status(args: argparse.Namespace) -> int:
-    response = WatchdogIPCClient().status()
+    try:
+        response = WatchdogIPCClient().status()
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("status", args, exc)
     if args.json:
-        _print_json(response.to_dict())
+        _print_json(_connection_response_document(response, command="status"))
         return 0 if response.ok else 70
     if not response.ok:
         _error(response.error or "daemon command failed")
+        for hint in _connection_recovery_hints(response.error or "daemon command failed"):
+            print(f"hint: {hint}", file=sys.stderr)
         return 70
-    _print_connection_state(response.payload.get("state", {}))
+    _print_connection_state(response.payload.get("state", {}), command="status")
     return 0
 
 
 def _connection_rotate(args: argparse.Namespace) -> int:
-    response = WatchdogIPCClient().rotate(force=bool(args.force))
+    try:
+        response = WatchdogIPCClient().rotate(force=bool(args.force))
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("rotate", args, exc)
     return _connection_response_output(
         response,
         json_output=bool(args.json),
         success_label="Rotation requested",
+        command="rotate",
     )
 
 
@@ -821,23 +838,194 @@ def _print_uninstall_plan(data: dict[str, object]) -> None:
     print("  " + " ".join(str(part) for part in data["command"]))
 
 
-def _connection_response_output(response: Response, json_output: bool, success_label: str) -> int:
+def _connection_response_output(
+    response: Response,
+    json_output: bool,
+    success_label: str,
+    *,
+    command: str,
+) -> int:
     if json_output:
-        _print_json(response.to_dict())
+        _print_json(_connection_response_document(response, command=command))
         return 0 if response.ok else 70
     if not response.ok:
         _error(response.error or "daemon command failed")
+        for hint in _connection_recovery_hints(response.error or "daemon command failed"):
+            print(f"hint: {hint}", file=sys.stderr)
         return 70
     print(success_label)
     if "profile_id" in response.payload:
         print(f"Profile: {response.payload['profile_id']}")
     if "state" in response.payload:
-        _print_connection_state(response.payload["state"])
+        _print_connection_state(response.payload["state"], command=command)
     return 0
 
 
-def _print_connection_state(state: dict) -> None:
+def _connection_ipc_error_output(command: str, args: argparse.Namespace, exc: WatchdogIPCError) -> int:
+    if bool(getattr(args, "json", False)):
+        _print_json(_connection_error_document(command, str(exc), exit_code=exc.exit_code))
+    else:
+        _error(str(exc))
+        for hint in _connection_recovery_hints(str(exc)):
+            print(f"hint: {hint}", file=sys.stderr)
+    return exc.exit_code
+
+
+def _connection_response_document(response: Response, *, command: str) -> dict[str, object]:
+    data = response.to_dict()
+    payload = dict(data.get("payload") or {})
+    state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+    payload["lifecycle"] = _connection_lifecycle_summary(
+        command=command,
+        daemon_reachable=True,
+        state=state if isinstance(state, dict) else {},
+        error=response.error,
+    )
+    if response.error:
+        payload["recovery_hints"] = _connection_recovery_hints(response.error)
+    data["payload"] = payload
+    return data
+
+
+def _connection_error_document(command: str, error: str, *, exit_code: int) -> dict[str, object]:
+    return {
+        "version": 1,
+        "type": "response",
+        "ok": False,
+        "payload": {
+            "lifecycle": _connection_lifecycle_summary(
+                command=command,
+                daemon_reachable=False,
+                state={},
+                error=error,
+            ),
+            "recovery_hints": _connection_recovery_hints(error),
+            "exit_code": exit_code,
+        },
+        "error": error,
+    }
+
+
+def _connection_lifecycle_summary(
+    *,
+    command: str,
+    daemon_reachable: bool,
+    state: dict[str, object],
+    error: str | None,
+) -> dict[str, object]:
+    desired_state = _connection_desired_state()
+    runtime_status = str(state.get("status") or "unknown")
+    proxy_active = bool(state.get("proxy_active", False))
+    tun_active = bool(state.get("tun_active", False))
+    lan_gateway_status = str(state.get("lan_gateway_status") or "disabled")
+    runtime_active = proxy_active or tun_active or bool(state.get("lan_gateway_active", False))
+    disconnected_cleanly = (
+        daemon_reachable
+        and desired_state == "off"
+        and runtime_status in {"standby", "disconnected", "unknown"}
+        and not runtime_active
+        and lan_gateway_status in {"disabled", "configured", ""}
+    )
+    failure_statuses = {
+        "all_failed",
+        "kill_switch_active",
+        "normal_network_temp",
+        "rotation_unavailable",
+        "waiting_retry",
+    }
+    failure_or_degraded = (
+        bool(error)
+        or runtime_status in failure_statuses
+        or lan_gateway_status == "degraded"
+    )
+    profile_id = state.get("active_profile_id") or ""
+    return {
+        "command": command,
+        "daemon_reachable": daemon_reachable,
+        "desired_state": desired_state,
+        "actual_runtime_state": runtime_status,
+        "active_profile_id": profile_id,
+        "runtime_active": runtime_active,
+        "proxy_active": proxy_active,
+        "tun_active": tun_active,
+        "kill_switch_active": bool(state.get("kill_switch_active", False)),
+        "lan_gateway_status": lan_gateway_status,
+        "profile_available": not (error and "profile not found" in error),
+        "runtime_available": daemon_reachable and not (error and "unavailable" in error.lower()),
+        "disconnected_cleanly": disconnected_cleanly,
+        "failure_or_degraded": failure_or_degraded,
+        "cleanup_expectations": _connection_cleanup_expectations(command, state),
+    }
+
+
+def _connection_desired_state() -> str:
+    try:
+        state = StateManager().load()
+    except PersistentStoreError:
+        return "unknown"
+    desired = state.get("vpn_desired_state", "off")
+    return str(desired or "off")
+
+
+def _connection_cleanup_expectations(command: str, state: dict[str, object]) -> dict[str, object]:
+    if command != "disconnect":
+        return {
+            "applies": False,
+            "reason": "cleanup proof applies to disconnect and lower runtime layers",
+        }
+    return {
+        "applies": True,
+        "process_cleanup": "daemon runtime driver disconnect is responsible for child process cleanup",
+        "interface_cleanup": "driver cleanup applies where TUN or gateway mode created interfaces/routes",
+        "dns_restore": "runtime disconnect restores saved DNS snapshot when present",
+        "orphan_listener_cleanup": "driver disconnect removes owned local proxy listeners where applicable",
+        "post_state": {
+            "proxy_active": bool(state.get("proxy_active", False)),
+            "tun_active": bool(state.get("tun_active", False)),
+            "lan_gateway_status": str(state.get("lan_gateway_status") or "disabled"),
+        },
+    }
+
+
+def _connection_recovery_hints(error: str) -> list[str]:
+    lowered = error.lower()
+    if "daemon is not running" in lowered:
+        return [
+            "start the daemon with: sudo systemctl start watchdogvpn",
+            "for development, run: python3 -m daemon.main --standalone",
+        ]
+    if "stale" in lowered:
+        return ["restart the daemon with: sudo systemctl restart watchdogvpn"]
+    if "permission denied" in lowered:
+        return ["add your user to the watchdogvpn group, then log out and back in"]
+    if "did not respond" in lowered or "timed out" in lowered:
+        return ["check daemon logs with: sudo journalctl -u watchdogvpn"]
+    if "profile not found" in lowered:
+        return ["run: watchdog profile list"]
+    if "connect failed" in lowered:
+        return [
+            "run: watchdog status",
+            "run diagnostics for the selected profile and check daemon logs",
+        ]
+    if "disconnect failed" in lowered:
+        return [
+            "run: watchdog status",
+            "check daemon logs and run DNS/reset cleanup if DNS state remains changed",
+        ]
+    return []
+
+
+def _print_connection_state(state: dict, *, command: str) -> None:
+    lifecycle = _connection_lifecycle_summary(
+        command=command,
+        daemon_reachable=True,
+        state=state,
+        error=None,
+    )
+    print(f"Daemon: {'reachable' if lifecycle['daemon_reachable'] else 'unreachable'}")
+    print(f"Desired state: {lifecycle['desired_state']}")
     print(f"Status: {state.get('status', 'unknown')}")
+    print(f"Actual runtime state: {lifecycle['actual_runtime_state']}")
     print(f"Mode: {state.get('mode', '-')}")
     active_profile_id = state.get("active_profile_id") or "-"
     print(f"Active profile: {active_profile_id}")
@@ -850,6 +1038,14 @@ def _print_connection_state(state: dict) -> None:
         print(f"LAN gateway clients: {state.get('lan_gateway_client_cidr') or '-'}")
         print(f"LAN gateway DNS: {state.get('lan_gateway_dns_mode') or '-'}")
     print(f"Kill switch: {_on_off(bool(state.get('kill_switch_active', False)))}")
+    print(f"Disconnected cleanly: {_on_off(bool(lifecycle['disconnected_cleanly']))}")
+    print(f"Failure/degraded: {_on_off(bool(lifecycle['failure_or_degraded']))}")
+    if command == "disconnect":
+        print("Cleanup expectations:")
+        cleanup = lifecycle["cleanup_expectations"]
+        if isinstance(cleanup, dict):
+            for key in ("process_cleanup", "interface_cleanup", "dns_restore", "orphan_listener_cleanup"):
+                print(f"  {key}: {cleanup.get(key)}")
 
 
 def _profile_add(args: argparse.Namespace) -> int:

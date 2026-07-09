@@ -70,6 +70,10 @@ watchdogvpn tui
 Python runtime commands:
 
 ```sh
+watchdog connect <profile_id> [--json]
+watchdog disconnect [--json]
+watchdog status [--json]
+watchdog rotate [--force] [--json]
 watchdog uninstall --keep-data --yes
 watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
 watchdog uninstall --delete-all-data --confirm-delete DELETE --backup-output ~/watchdogvpn-pre-delete.zip --yes
@@ -81,6 +85,102 @@ watchdog rules explain [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json
 watchdog ruleset status [--json]
 watchdog ruleset refresh [RULE_SET_ID ...] [--referenced-only] [--force] [--json]
 ```
+
+## Connection Lifecycle
+
+The Python lifecycle commands use the daemon IPC path:
+
+```text
+watchdog CLI -> daemon IPC socket -> RuntimeWorker -> WatchdogRuntime/driver
+```
+
+They do not directly mutate DNS, routes, firewall, interfaces or driver
+processes from the CLI process.
+
+### `watchdog connect`
+
+Requests a daemon-managed connection to a saved profile.
+
+```sh
+watchdog connect <profile_id>
+watchdog connect <profile_id> --json
+```
+
+Human output reports daemon reachability, desired state, actual runtime state,
+active profile, proxy/TUN state, LAN gateway state, kill switch state and
+failure/degraded status.
+
+### `watchdog disconnect`
+
+Requests daemon-managed disconnect and cleanup.
+
+```sh
+watchdog disconnect
+watchdog disconnect --json
+```
+
+Disconnect cleanup is owned by the daemon/runtime layer:
+
+- child process cleanup is handled by driver disconnect;
+- TUN/interface/route cleanup applies where owned runtime state was created;
+- DNS/system state restore uses the saved runtime snapshot when present;
+- owned local proxy listeners are removed by driver disconnect where
+  applicable.
+
+The CLI prints these cleanup expectations but does not claim installed runtime
+cleanup proof unless a VM/lab validation task recorded it.
+
+### `watchdog status`
+
+Shows daemon-reported runtime state and local desired state.
+
+```sh
+watchdog status
+watchdog status --json
+```
+
+The command distinguishes daemon reachability, desired state, actual runtime
+state, active runtime state, clean disconnect state and failure/degraded state.
+
+### `watchdog rotate`
+
+Requests a daemon-managed manual rotation.
+
+```sh
+watchdog rotate
+watchdog rotate --force
+watchdog rotate --json
+```
+
+Manual rotation still goes through `RuntimeWorker` and
+`WatchdogRuntime.rotate_now()`. It does not bypass lifecycle safety in the CLI.
+
+### Lifecycle JSON
+
+Lifecycle JSON remains a daemon response envelope with an added
+`payload.lifecycle` object:
+
+```json
+{
+  "version": 1,
+  "type": "response",
+  "ok": true,
+  "payload": {
+    "state": {},
+    "lifecycle": {
+      "daemon_reachable": true,
+      "desired_state": "off",
+      "actual_runtime_state": "standby",
+      "disconnected_cleanly": true,
+      "failure_or_degraded": false
+    }
+  },
+  "error": null
+}
+```
+
+Daemon-unreachable JSON uses the same envelope with `ok=false`,
+`daemon_reachable=false`, `actual_runtime_state=unknown` and recovery hints.
 
 ## Uninstall Flow
 
