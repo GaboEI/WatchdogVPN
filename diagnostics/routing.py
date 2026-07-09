@@ -5,6 +5,7 @@ from typing import Any
 
 from app_policy.models import AppPolicy, AppPolicyAction
 from config.state_manager import parse_capture_modes
+from diagnostics.chain_routes import ChainRouteDiagnostic
 from rules.explanation import RuleExplanation, RuleExplanationConfidence, RuleExplainer
 from rules.models import RuleGroup
 from rules.rule_engine import TrafficInfo
@@ -31,6 +32,7 @@ class RouteDiagnostic:
     rule_evaluation: str
     no_rule_match: bool | None
     rule_explanation: RuleExplanation | None
+    chain_diagnostic: ChainRouteDiagnostic | None = None
 
     def to_dict(self) -> dict[str, Any]:
         rule_data = self.rule_explanation.to_dict() if self.rule_explanation else {}
@@ -79,6 +81,11 @@ class RouteDiagnostic:
             "rule_explanation": (
                 self.rule_explanation.to_dict() if self.rule_explanation else None
             ),
+            "chain": (
+                self.chain_diagnostic.to_dict()
+                if self.chain_diagnostic is not None
+                else None
+            ),
         }
 
 
@@ -89,6 +96,7 @@ def diagnose_route(
     routing_state: dict[str, Any] | None = None,
     trust_registry: RuleSetTrustRegistry | None = None,
     app_policy: AppPolicy | None = None,
+    chain_diagnostic: ChainRouteDiagnostic | None = None,
 ) -> RouteDiagnostic:
     state = _routing_state(routing_state)
     policy = state["routing_policy"]
@@ -111,6 +119,7 @@ def diagnose_route(
             rule_evaluation="ignored-by-global-policy",
             no_rule_match=None,
             rule_explanation=None,
+            chain_diagnostic=chain_diagnostic,
         )
 
     explanation = RuleExplainer(
@@ -156,6 +165,7 @@ def diagnose_route(
         rule_evaluation="evaluated",
         no_rule_match=no_rule_match,
         rule_explanation=explanation,
+        chain_diagnostic=chain_diagnostic,
     )
 
 

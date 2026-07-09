@@ -50,6 +50,7 @@ from dns.state_manager import (
 from dns.tester import DNSTester
 from daemon.protocol import Response
 from diagnostics.route_dns import RouteDNSDiagnostic, diagnose_route_dns
+from diagnostics.chain_routes import ChainRouteDiagnostic, diagnose_chain_route_action
 from diagnostics.routing import RouteDiagnostic, diagnose_route
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
@@ -74,6 +75,9 @@ from rules.ruleset_lifecycle import (
     referenced_rule_set_ids,
 )
 from rules.ruleset_trust_store import RuleSetTrustStore
+from route_chains.models import chain_target
+from route_chains.runtime import ChainRuntimeResolver
+from route_chains.store import RouteChainStore
 
 
 DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
@@ -1504,13 +1508,29 @@ def _rules_explain(args: argparse.Namespace) -> int:
     )
     trust_path = Path(args.ruleset_trust_file) if args.ruleset_trust_file else None
     trust_registry = RuleSetTrustStore(trust_path).load()
+    rule_groups = RuleStore().list_groups()
+    routing_state = StateManager().load()
+    app_policy = AppPolicyStore().load_or_disabled().policy
     diagnostic = diagnose_route(
         traffic=traffic,
-        rule_groups=RuleStore().list_groups(),
-        routing_state=StateManager().load(),
+        rule_groups=rule_groups,
+        routing_state=routing_state,
         trust_registry=trust_registry,
-        app_policy=AppPolicyStore().load_or_disabled().policy,
+        app_policy=app_policy,
     )
+    chain_diagnostic = _chain_diagnostic_for_action(
+        diagnostic.route_action,
+        dns_policy=DNSPolicyStore().load(),
+    )
+    if chain_diagnostic is not None:
+        diagnostic = diagnose_route(
+            traffic=traffic,
+            rule_groups=rule_groups,
+            routing_state=routing_state,
+            trust_registry=trust_registry,
+            app_policy=app_policy,
+            chain_diagnostic=chain_diagnostic,
+        )
     if args.json:
         _print_json(diagnostic.to_dict())
     else:
@@ -1786,6 +1806,11 @@ def _print_route_diagnostic(diagnostic: RouteDiagnostic) -> None:
 
     if data.get("no_rule_match") is True:
         print("No configured route rule matched.")
+
+    if diagnostic.chain_diagnostic is not None:
+        print("Chain diagnostic:")
+        for line in diagnostic.chain_diagnostic.to_human_lines():
+            print(f"  {line}")
 
     skipped = data.get("skipped_conditions", [])
     if isinstance(skipped, list) and skipped:
@@ -2110,14 +2135,32 @@ def _dns_diagnose(args: argparse.Namespace) -> int:
     )
     trust_path = Path(args.ruleset_trust_file) if args.ruleset_trust_file else None
     trust_registry = RuleSetTrustStore(trust_path).load()
+    rule_groups = RuleStore().list_groups()
+    routing_state = StateManager().load()
+    app_policy = AppPolicyStore().load_or_disabled().policy
+    dns_policy = _load_dns_policy(args)
     diagnostic = diagnose_route_dns(
         traffic=traffic,
-        rule_groups=RuleStore().list_groups(),
-        dns_policy=_load_dns_policy(args),
-        app_policy=AppPolicyStore().load_or_disabled().policy,
-        routing_state=StateManager().load(),
+        rule_groups=rule_groups,
+        dns_policy=dns_policy,
+        app_policy=app_policy,
+        routing_state=routing_state,
         trust_registry=trust_registry,
     )
+    chain_diagnostic = _chain_diagnostic_for_action(
+        diagnostic.route_action,
+        dns_policy=dns_policy,
+    )
+    if chain_diagnostic is not None:
+        diagnostic = diagnose_route_dns(
+            traffic=traffic,
+            rule_groups=rule_groups,
+            dns_policy=dns_policy,
+            app_policy=app_policy,
+            routing_state=routing_state,
+            trust_registry=trust_registry,
+            chain_diagnostic=chain_diagnostic,
+        )
     if args.json:
         _print_json(diagnostic.to_dict())
     else:
@@ -2298,6 +2341,26 @@ def _print_route_dns_diagnostic(diagnostic: RouteDNSDiagnostic) -> None:
     print(f"DNS channel: {diagnostic.dns_channel or '-'}")
     print(f"DNS path: {diagnostic.dns_path}")
     print(f"Reason: {diagnostic.dns_reason}")
+    if diagnostic.chain_diagnostic is not None:
+        print("Chain diagnostic:")
+        for line in diagnostic.chain_diagnostic.to_human_lines():
+            print(f"  {line}")
+
+
+def _chain_diagnostic_for_action(
+    route_action: str | None,
+    *,
+    dns_policy: DNSPolicy,
+) -> ChainRouteDiagnostic | None:
+    if route_action is None or chain_target(route_action) is None:
+        return None
+    return diagnose_chain_route_action(
+        route_action,
+        chain_document=RouteChainStore().load(),
+        dns_policy=dns_policy,
+        resolver=ChainRuntimeResolver(),
+        config=AppConfig().load(),
+    )
 
 
 def _require_dns_entrypoint(entrypoint: LocalDNSEntryPoint, timeout: float) -> None:

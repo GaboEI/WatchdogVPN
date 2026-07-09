@@ -8,7 +8,13 @@ from pathlib import Path
 
 from app_policy.models import AppPolicy, AppPolicyRule
 from app_policy.store import AppPolicyStore
+from config.dns_policy_store import DNSPolicyStore
+from config.profile_store import ProfileStore
 from config.state_manager import StateManager
+from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
+from models.profile import Profile, ProfileSource, ProtocolType
+from route_chains.models import ChainHop, RouteChain, RouteChainDocument
+from route_chains.store import RouteChainStore
 from rules.models import Rule, RuleGroup
 from rules.rule_store import RuleStore
 from rules.ruleset_trust import RuleSetTrustPolicy, RuleSetTrustRegistry
@@ -598,6 +604,74 @@ class CliRulesCommandTests(unittest.TestCase):
         data = json.loads(result.stdout)
         self.assertEqual(data["route_action"], "block")
         self.assertEqual(data["route_source"]["source"], "app-policy")
+
+    def test_explain_json_includes_redacted_chain_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ProfileStore(Path(tmp) / "profiles.json").add(
+                Profile(
+                    id="secret-profile-token-1234567890abcdef",
+                    name="secret-profile-token-1234567890abcdef",
+                    protocol=ProtocolType.VLESS,
+                    config={
+                        "host": "secret-profile-token-1234567890abcdef.example",
+                        "port": 443,
+                        "uuid": "secret-profile-token-1234567890abcdef",
+                    },
+                    source=ProfileSource.MANUAL,
+                )
+            )
+            RouteChainStore(Path(tmp) / "chains.json").save(
+                RouteChainDocument(
+                    chains=[
+                        RouteChain(
+                            id="work-safe",
+                            enabled=True,
+                            hops=[
+                                ChainHop(
+                                    type="profile",
+                                    target="secret-profile-token-1234567890abcdef",
+                                )
+                            ],
+                        )
+                    ]
+                )
+            )
+            DNSPolicyStore(Path(tmp) / "dns-policy.json").save(
+                DNSPolicy(
+                    channels={
+                        DNSChannelName.PROXY: DNSChannel(
+                            name=DNSChannelName.PROXY,
+                            resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                        )
+                    }
+                )
+            )
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(
+                            id="chain",
+                            action="chain:work-safe",
+                            conditions={"domain": ["example.com"]},
+                        )
+                    ],
+                ),
+            )
+
+            result = self.run_watchdog(
+                ["rules", "explain", "--domain", "example.com", "--json"],
+                tmp,
+            )
+
+        data = json.loads(result.stdout)
+        rendered = json.dumps(data)
+        self.assertEqual(data["chain"]["chain_id"], "work-safe")
+        self.assertEqual(data["chain"]["status"], "resolved")
+        self.assertEqual(data["chain"]["confidence"], "predicted")
+        self.assertEqual(data["chain"]["hop_order"][0]["target"], "<redacted-profile-target>")
+        self.assertNotIn("secret-profile-token", rendered)
 
     def test_definitive_text_can_state_configured_policy_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
