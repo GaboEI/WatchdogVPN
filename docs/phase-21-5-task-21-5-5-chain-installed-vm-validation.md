@@ -51,6 +51,8 @@ It creates a local, deterministic lab inside the VM:
 - hop 2 detouring through hop 1;
 - a separate global-chain config proving proxy DNS detours through the final
   chain hop;
+- a local bootstrap resolver for sing-box outbound-domain resolver
+  compatibility, without changing the chain-owned proxy DNS path under test;
 - blocked-chain failure injection that must emit native reject rules;
 - a real curl request through the local sing-box SOCKS inbound.
 

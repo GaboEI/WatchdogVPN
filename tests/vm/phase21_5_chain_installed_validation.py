@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -162,17 +162,6 @@ class SocksBridge:
                 _bridge_bidirectional(client, upstream)
 
 
-class LocalHealthSingBoxDriver(SingBoxDriver):
-    def health_check(self) -> str:
-        process = self._process
-        if process is None or process.poll() is not None:
-            return "down"
-        if not self._wait_for_proxy_port():
-            self._append_log("health_check: local proxy ports are not responding\n")
-            return "degraded"
-        return "ok"
-
-
 def _recv_exact(sock: socket.socket, size: int) -> bytes:
     data = b""
     while len(data) < size:
@@ -284,6 +273,10 @@ def profile(profile_id: str, name: str, port: int) -> Profile:
 def dns_policy() -> DNSPolicy:
     return DNSPolicy(
         channels={
+            DNSChannelName.BOOTSTRAP: DNSChannel(
+                name=DNSChannelName.BOOTSTRAP,
+                resolvers=[Resolver(uri="local")],
+            ),
             DNSChannelName.PROXY: DNSChannel(
                 name=DNSChannelName.PROXY,
                 resolvers=[Resolver(uri="udp://127.0.0.1:53535")],
@@ -414,6 +407,10 @@ def assert_global_dns_detour(driver: SingBoxDriver, active: Profile, plan: Chain
         },
         "global chain final route does not target final chain hop",
     )
+    require(
+        config["route"].get("default_domain_resolver") == "watchdogvpn-bootstrap-1",
+        "global chain config is missing bootstrap default_domain_resolver",
+    )
     print("PHASE21_5_GLOBAL_CHAIN_DNS_DETOUR_OK")
 
 
@@ -445,6 +442,47 @@ def singbox_check(driver: SingBoxDriver, config_path: Path | None) -> None:
         detail = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"sing-box check failed: {detail}")
     print("PHASE21_5_SINGBOX_CHECK_OK")
+
+
+def start_singbox_runtime(driver: SingBoxDriver) -> subprocess.Popen[str]:
+    binary = driver.find_singbox_binary()
+    config_path, log_path = driver._ensure_runtime_paths()
+    require(binary is not None, "sing-box binary is required")
+    require(config_path.exists(), "sing-box config path is missing")
+    log_file = log_path.open("w", encoding="utf-8")
+    process = subprocess.Popen(
+        [binary, "run", "-c", str(config_path)],
+        text=True,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+    )
+    log_file.close()
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            detail = log_path.read_text(encoding="utf-8", errors="replace")
+            raise RuntimeError(f"sing-box exited during startup: {detail.strip()}")
+        try:
+            wait_port("127.0.0.1", 2080, open_expected=True, timeout=0.2)
+            print("PHASE21_5_SINGBOX_RUNTIME_STARTED_OK")
+            return process
+        except AssertionError:
+            time.sleep(0.05)
+    detail = log_path.read_text(encoding="utf-8", errors="replace")
+    raise RuntimeError(f"sing-box local proxy did not become ready: {detail.strip()}")
+
+
+def stop_singbox_runtime(driver: SingBoxDriver, process: subprocess.Popen[str]) -> None:
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+    finally:
+        driver._cleanup_runtime()
 
 
 def curl_chain(target_port: int) -> str:
@@ -483,7 +521,7 @@ def main() -> int:
                 first = profile("phase21-5-hop-one", "phase21-5-hop-one", hop_one.port)
                 second = profile("phase21-5-hop-two", "phase21-5-hop-two", hop_two.port)
                 plan = chain_plan(first, second)
-                driver = LocalHealthSingBoxDriver()
+                driver = SingBoxDriver()
                 config = driver.generate_singbox_config(
                     active,
                     dns_policy=dns_policy(),
@@ -497,7 +535,7 @@ def main() -> int:
                 assert_global_dns_detour(driver, active, plan)
                 assert_blocked_contract(driver, active, blocked_plan(first))
 
-                connected = driver.connect(
+                driver.generate_singbox_config(
                     active,
                     dns_policy=dns_policy(),
                     mode="rules",
@@ -505,8 +543,7 @@ def main() -> int:
                     final_policy=CHAIN_ACTION,
                     chain_runtime_plans={CHAIN_ACTION: plan},
                 )
-                require(connected, "sing-box chain runtime did not connect")
-                print("PHASE21_5_SINGBOX_RUNTIME_STARTED_OK")
+                process = start_singbox_runtime(driver)
                 try:
                     output = curl_chain(http_target.port)
                     require(output.encode("utf-8") == HTTP_BODY, "unexpected HTTP proof body")
@@ -521,7 +558,7 @@ def main() -> int:
                     )
                     print("PHASE21_5_CHAIN_TRAFFIC_PROOF_OK")
                 finally:
-                    require(driver.disconnect(), "sing-box disconnect failed")
+                    stop_singbox_runtime(driver, process)
                     wait_port("127.0.0.1", 2080, open_expected=False)
                     wait_port("127.0.0.1", 2081, open_expected=False)
                     print("PHASE21_5_CHAIN_TEARDOWN_OK")
@@ -529,8 +566,8 @@ def main() -> int:
                 evidence = {
                     "chain_action": CHAIN_ACTION,
                     "route_outbound_tag": plan.route_outbound_tag,
-                    "hop_one_records": [record.__dict__ for record in hop_one.records],
-                    "hop_two_records": [record.__dict__ for record in hop_two.records],
+                    "hop_one_records": [asdict(record) for record in hop_one.records],
+                    "hop_two_records": [asdict(record) for record in hop_two.records],
                     "http_paths": http_target.seen_paths,
                     "dns_proxy_detour": "watchdogvpn-chain-vm-chain-proof-hop-2",
                     "validation": "installed-vm-local-chain-proof",
