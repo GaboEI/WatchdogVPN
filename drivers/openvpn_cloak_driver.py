@@ -218,6 +218,7 @@ class OpenVPNCloakDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
     ) -> bool:

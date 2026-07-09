@@ -5,12 +5,24 @@ import unittest
 from pathlib import Path
 
 from config.persistence import PersistentValidationError
+from config.profile_store import ProfileStore
+from config.provider_store import ProviderStore
+from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
+from models.profile import Profile, ProfileSource, ProtocolType
+from node_groups.models import NodeGroup
+from node_groups.store import NodeGroupStore
 from route_chains.models import (
     ChainHop,
     RouteChain,
     RouteChainDocument,
     chain_target,
     redact_chain_document,
+)
+from route_chains.runtime import (
+    ChainDNSPathStatus,
+    ChainRuntimeResolver,
+    ChainRuntimeStatus,
+    chain_hop_outbound_tag,
 )
 from route_chains.store import RouteChainStore
 from route_chains.validation import (
@@ -258,6 +270,220 @@ class RouteChainStoreTests(unittest.TestCase):
 
             with self.assertRaises(PersistentValidationError):
                 RouteChainStore(path).load()
+
+
+class ChainRuntimeResolverTests(unittest.TestCase):
+    def test_resolves_valid_profile_hop_chain(self) -> None:
+        with self._stores() as stores:
+            stores["profiles"].add(_profile("profile-one"))
+            stores["chains"].save(
+                RouteChainDocument(
+                    chains=[
+                        RouteChain(
+                            id="work-safe",
+                            enabled=True,
+                            hops=[ChainHop(type="profile", target="profile-one")],
+                        )
+                    ]
+                )
+            )
+
+            plan = stores["resolver"].resolve_action(
+                "chain:work-safe",
+                dns_policy=_chain_dns_policy(),
+                config={},
+            )
+
+            self.assertIsNotNone(plan)
+            self.assertEqual(plan.status, ChainRuntimeStatus.RESOLVED)
+            self.assertEqual(plan.route_outbound_tag, "watchdogvpn-chain-work-safe-hop-1")
+            self.assertEqual(plan.hops[0].resolved_profile_id, "profile-one")
+
+    def test_resolves_valid_group_hop_chain_deterministically(self) -> None:
+        with self._stores() as stores:
+            stores["profiles"].add(_profile("profile-b"))
+            stores["profiles"].add(_profile("profile-a"))
+            stores["groups"].add(
+                NodeGroup(
+                    name="primary",
+                    member_profile_ids=["profile-b", "profile-a"],
+                )
+            )
+            stores["chains"].save(
+                RouteChainDocument(
+                    chains=[
+                        RouteChain(
+                            id="work-safe",
+                            enabled=True,
+                            hops=[ChainHop(type="group", target="primary")],
+                        )
+                    ]
+                )
+            )
+
+            plan = stores["resolver"].resolve_action(
+                "chain:work-safe",
+                dns_policy=_chain_dns_policy(),
+                config={},
+            )
+
+            self.assertIsNotNone(plan)
+            self.assertEqual(plan.status, ChainRuntimeStatus.RESOLVED)
+            self.assertEqual(plan.hops[0].resolved_profile_id, "profile-a")
+
+    def test_missing_chain_and_disabled_chain_fail_closed(self) -> None:
+        with self._stores() as stores:
+            stores["chains"].save(
+                RouteChainDocument(
+                    chains=[
+                        RouteChain(
+                            id="disabled",
+                            enabled=False,
+                            hops=[ChainHop(type="profile", target="profile-one")],
+                        )
+                    ]
+                )
+            )
+
+            missing = stores["resolver"].resolve_action(
+                "chain:missing",
+                dns_policy=_chain_dns_policy(),
+                config={},
+            )
+            disabled = stores["resolver"].resolve_action(
+                "chain:disabled",
+                dns_policy=_chain_dns_policy(),
+                config={},
+            )
+
+            self.assertEqual(missing.status, ChainRuntimeStatus.BLOCKED)
+            self.assertEqual(missing.failure_reason, "missing_chain")
+            self.assertEqual(disabled.status, ChainRuntimeStatus.BLOCKED)
+            self.assertEqual(disabled.failure_reason, "disabled_chain")
+
+    def test_missing_profile_missing_group_and_empty_group_fail_closed(self) -> None:
+        with self._stores() as stores:
+            stores["groups"].add(NodeGroup(name="empty", member_profile_ids=[]))
+            stores["chains"].save(
+                RouteChainDocument(
+                    chains=[
+                        RouteChain(
+                            id="missing-profile",
+                            enabled=True,
+                            hops=[ChainHop(type="profile", target="nope")],
+                        ),
+                        RouteChain(
+                            id="missing-group",
+                            enabled=True,
+                            hops=[ChainHop(type="group", target="nope")],
+                        ),
+                        RouteChain(
+                            id="empty-group",
+                            enabled=True,
+                            hops=[ChainHop(type="group", target="empty")],
+                        ),
+                    ]
+                )
+            )
+
+            missing_profile = stores["resolver"].resolve_action(
+                "chain:missing-profile",
+                dns_policy=_chain_dns_policy(),
+                config={},
+            )
+            missing_group = stores["resolver"].resolve_action(
+                "chain:missing-group",
+                dns_policy=_chain_dns_policy(),
+                config={},
+            )
+            empty_group = stores["resolver"].resolve_action(
+                "chain:empty-group",
+                dns_policy=_chain_dns_policy(),
+                config={},
+            )
+
+            self.assertEqual(missing_profile.failure_reason, "missing_profile")
+            self.assertEqual(missing_group.failure_reason, "missing_group")
+            self.assertEqual(empty_group.failure_reason, "empty_group_resolution")
+            self.assertTrue(all(not plan.resolved for plan in (missing_profile, missing_group, empty_group)))
+
+    def test_dns_path_unavailable_fails_closed_after_hops_resolve(self) -> None:
+        with self._stores() as stores:
+            stores["profiles"].add(_profile("profile-one"))
+            stores["chains"].save(
+                RouteChainDocument(
+                    chains=[
+                        RouteChain(
+                            id="work-safe",
+                            enabled=True,
+                            hops=[ChainHop(type="profile", target="profile-one")],
+                        )
+                    ]
+                )
+            )
+
+            plan = stores["resolver"].resolve_action(
+                "chain:work-safe",
+                dns_policy=DNSPolicy(),
+                config={},
+            )
+
+            self.assertEqual(plan.status, ChainRuntimeStatus.BLOCKED)
+            self.assertEqual(plan.dns_path_status, ChainDNSPathStatus.UNAVAILABLE)
+            self.assertEqual(plan.failure_reason, "dns_path_unavailable")
+
+    def test_outbound_tag_stability(self) -> None:
+        self.assertEqual(chain_hop_outbound_tag("work-safe", 1), "watchdogvpn-chain-work-safe-hop-1")
+        self.assertEqual(chain_hop_outbound_tag("work-safe", 2), "watchdogvpn-chain-work-safe-hop-2")
+
+    def _stores(self):
+        class StoreContext:
+            def __enter__(self):
+                self.tmpdir = tempfile.TemporaryDirectory()
+                root = Path(self.tmpdir.name)
+                profile_store = ProfileStore(root / "profiles.json")
+                provider_store = ProviderStore(root / "providers.json")
+                group_store = NodeGroupStore(root / "node_groups.json")
+                chain_store = RouteChainStore(root / "chains.json")
+                resolver = ChainRuntimeResolver(
+                    chain_store=chain_store,
+                    profile_store=profile_store,
+                    node_group_store=group_store,
+                    provider_store=provider_store,
+                )
+                return {
+                    "profiles": profile_store,
+                    "providers": provider_store,
+                    "groups": group_store,
+                    "chains": chain_store,
+                    "resolver": resolver,
+                }
+
+            def __exit__(self, exc_type, exc, tb):
+                self.tmpdir.cleanup()
+
+        return StoreContext()
+
+
+def _profile(profile_id: str) -> Profile:
+    return Profile(
+        id=profile_id,
+        name=profile_id,
+        protocol=ProtocolType.VLESS,
+        config={"host": f"{profile_id}.example", "port": 443, "uuid": profile_id},
+        source=ProfileSource.MANUAL,
+    )
+
+
+def _chain_dns_policy() -> DNSPolicy:
+    return DNSPolicy(
+        channels={
+            DNSChannelName.PROXY: DNSChannel(
+                name=DNSChannelName.PROXY,
+                resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+            )
+        }
+    )
 
 
 if __name__ == "__main__":

@@ -3,6 +3,11 @@ from __future__ import annotations
 import unittest
 
 from app_policy.models import AppPolicy, AppPolicyRule
+from route_chains.runtime import (
+    ChainDNSPathStatus,
+    ChainRuntimePlan,
+    ChainRuntimeStatus,
+)
 from rules.models import Rule, RuleGroup
 from rules.singbox import build_singbox_route_rules
 
@@ -44,6 +49,55 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
         self.assertEqual(rules[0]["outbound"], "vps")
         self.assertEqual(rules[1]["outbound"], "vps")
         self.assertEqual(rules[2]["outbound"], "vps")
+
+    def test_chain_action_targets_resolved_chain_outbound(self) -> None:
+        group = RuleGroup(
+            name="custom",
+            rules=[Rule(id="c1", action="chain:work-safe", conditions={"domain": ["a.com"]})],
+        )
+        plan = _resolved_chain_plan("chain:work-safe", "watchdogvpn-chain-work-safe-hop-2")
+
+        rules = build_singbox_route_rules(
+            [group],
+            current_outbound_tag="vps",
+            chain_runtime_plans={"chain:work-safe": plan},
+        )
+
+        self.assertEqual(
+            rules[0],
+            {
+                "domain": ["a.com"],
+                "action": "route",
+                "outbound": "watchdogvpn-chain-work-safe-hop-2",
+            },
+        )
+
+    def test_missing_or_blocked_chain_action_rejects_without_fallback(self) -> None:
+        group = RuleGroup(
+            name="custom",
+            rules=[
+                Rule(id="missing", action="chain:missing", conditions={"domain": ["a.com"]}),
+                Rule(id="blocked", action="chain:blocked", conditions={"domain": ["b.com"]}),
+            ],
+        )
+        blocked = ChainRuntimePlan(
+            route_action="chain:blocked",
+            chain_id="blocked",
+            status=ChainRuntimeStatus.BLOCKED,
+            dns_path_status=ChainDNSPathStatus.UNAVAILABLE,
+            failure_reason="dns_path_unavailable",
+        )
+
+        rules = build_singbox_route_rules(
+            [group],
+            current_outbound_tag="vps",
+            chain_runtime_plans={"chain:blocked": blocked},
+        )
+
+        self.assertEqual(rules[0], {"domain": ["a.com"], "action": "reject"})
+        self.assertEqual(rules[1], {"domain": ["b.com"], "action": "reject"})
+        self.assertNotEqual(rules[0].get("outbound"), "vps")
+        self.assertNotEqual(rules[1].get("outbound"), "direct")
 
     def test_disabled_rule_and_group_are_skipped(self) -> None:
         disabled_group = RuleGroup(
@@ -146,6 +200,28 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
     def test_final_policy_direct(self) -> None:
         rules = build_singbox_route_rules([], current_outbound_tag="vps", final_policy="direct")
         self.assertEqual(rules, [{"action": "route", "outbound": "direct"}])
+
+    def test_final_policy_chain_uses_plan_or_rejects(self) -> None:
+        plan = _resolved_chain_plan("chain:work-safe", "watchdogvpn-chain-work-safe-hop-1")
+
+        resolved = build_singbox_route_rules(
+            [],
+            current_outbound_tag="vps",
+            final_policy="chain:work-safe",
+            chain_runtime_plans={"chain:work-safe": plan},
+        )
+        missing = build_singbox_route_rules(
+            [],
+            current_outbound_tag="vps",
+            final_policy="chain:missing",
+            chain_runtime_plans={},
+        )
+
+        self.assertEqual(
+            resolved,
+            [{"action": "route", "outbound": "watchdogvpn-chain-work-safe-hop-1"}],
+        )
+        self.assertEqual(missing, [{"action": "reject"}])
 
     def test_multi_value_conditions_preserved_as_lists(self) -> None:
         group = RuleGroup(
@@ -284,6 +360,16 @@ class BuildSingboxRouteRulesTests(unittest.TestCase):
         )
 
         self.assertEqual(rules, [{"action": "route", "outbound": "vps"}])
+
+def _resolved_chain_plan(action: str, outbound_tag: str) -> ChainRuntimePlan:
+    _, chain_id = action.split(":", 1)
+    return ChainRuntimePlan(
+        route_action=action,
+        chain_id=chain_id,
+        status=ChainRuntimeStatus.RESOLVED,
+        dns_path_status=ChainDNSPathStatus.CHAIN_OWNED,
+        route_outbound_tag=outbound_tag,
+    )
 
 
 if __name__ == "__main__":

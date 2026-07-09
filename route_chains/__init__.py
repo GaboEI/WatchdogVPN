@@ -14,6 +14,16 @@ from .models import (
     redact_chain_document,
     validate_chain_id,
 )
+from .runtime import (
+    ChainDNSPathStatus,
+    ChainHopRuntimeStatus,
+    ChainRuntimeHopPlan,
+    ChainRuntimePlan,
+    ChainRuntimeResolver,
+    ChainRuntimeStatus,
+    chain_dns_path_status,
+    chain_hop_outbound_tag,
+)
 from .store import RouteChainStore
 from .validation import (
     ChainValidationFinding,
@@ -29,12 +39,20 @@ __all__ = [
     "ChainFailurePolicy",
     "ChainHealthPolicy",
     "ChainHop",
+    "ChainDNSPathStatus",
+    "ChainHopRuntimeStatus",
+    "ChainRuntimeHopPlan",
+    "ChainRuntimePlan",
+    "ChainRuntimeResolver",
+    "ChainRuntimeStatus",
     "ChainHopType",
     "RouteChain",
     "RouteChainDocument",
     "RouteChainStore",
     "ChainValidationFinding",
     "chain_target",
+    "chain_dns_path_status",
+    "chain_hop_outbound_tag",
     "redact_chain_document",
     "validate_chain_action_reference",
     "validate_chain_id",

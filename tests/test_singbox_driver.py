@@ -11,6 +11,13 @@ from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
 from drivers.singbox_driver import SingBoxDriver
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.wg_config import parse_wg_config
+from route_chains.runtime import (
+    ChainDNSPathStatus,
+    ChainHopRuntimeStatus,
+    ChainRuntimeHopPlan,
+    ChainRuntimePlan,
+    ChainRuntimeStatus,
+)
 from rules.models import Rule, RuleGroup
 
 
@@ -477,6 +484,163 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         )
         direct_outbounds = [o for o in config["outbounds"] if o.get("tag") == "direct"]
         self.assertEqual(len(direct_outbounds), 1)
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_maps_chain_plan_to_stable_detour_tags(
+        self, bind_mock, write_mock
+    ) -> None:
+        active = self._profile(
+            ProtocolType.VLESS,
+            id="active",
+            name="active",
+            host="active.example",
+            port=443,
+            uuid="active",
+        )
+        hop_one = self._profile(
+            ProtocolType.VLESS,
+            id="hop-one",
+            name="hop-one",
+            host="hop-one.example",
+            port=443,
+            uuid="hop-one",
+        )
+        hop_two = self._profile(
+            ProtocolType.VLESS,
+            id="hop-two",
+            name="hop-two",
+            host="hop-two.example",
+            port=443,
+            uuid="hop-two",
+        )
+        plan = ChainRuntimePlan(
+            route_action="chain:work-safe",
+            chain_id="work-safe",
+            status=ChainRuntimeStatus.RESOLVED,
+            dns_path_status=ChainDNSPathStatus.CHAIN_OWNED,
+            route_outbound_tag="watchdogvpn-chain-work-safe-hop-2",
+            hops=(
+                ChainRuntimeHopPlan(
+                    index=1,
+                    hop_type="profile",
+                    target="hop-one",
+                    status=ChainHopRuntimeStatus.RESOLVED,
+                    outbound_tag="watchdogvpn-chain-work-safe-hop-1",
+                    resolved_profile_id="hop-one",
+                    resolved_profile=hop_one,
+                ),
+                ChainRuntimeHopPlan(
+                    index=2,
+                    hop_type="profile",
+                    target="hop-two",
+                    status=ChainHopRuntimeStatus.RESOLVED,
+                    outbound_tag="watchdogvpn-chain-work-safe-hop-2",
+                    resolved_profile_id="hop-two",
+                    resolved_profile=hop_two,
+                ),
+            ),
+        )
+
+        config = self.driver.generate_singbox_config(
+            active,
+            mode="rules",
+            groups=[
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(
+                            id="chain",
+                            action="chain:work-safe",
+                            conditions={"domain": ["example.com"]},
+                        )
+                    ],
+                )
+            ],
+            chain_runtime_plans={"chain:work-safe": plan},
+        )
+
+        outbounds = {outbound["tag"]: outbound for outbound in config["outbounds"]}
+        self.assertNotIn("detour", outbounds["watchdogvpn-chain-work-safe-hop-1"])
+        self.assertEqual(
+            outbounds["watchdogvpn-chain-work-safe-hop-2"]["detour"],
+            "watchdogvpn-chain-work-safe-hop-1",
+        )
+        self.assertEqual(
+            config["route"]["rules"][0],
+            {
+                "domain": ["example.com"],
+                "action": "route",
+                "outbound": "watchdogvpn-chain-work-safe-hop-2",
+            },
+        )
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_uses_chain_outbound_for_global_chain_dns(
+        self, bind_mock, write_mock
+    ) -> None:
+        active = self._profile(
+            ProtocolType.VLESS,
+            id="active",
+            name="active",
+            host="active.example",
+            port=443,
+            uuid="active",
+        )
+        hop_one = self._profile(
+            ProtocolType.VLESS,
+            id="hop-one",
+            name="hop-one",
+            host="hop-one.example",
+            port=443,
+            uuid="hop-one",
+        )
+        plan = ChainRuntimePlan(
+            route_action="chain:work-safe",
+            chain_id="work-safe",
+            status=ChainRuntimeStatus.RESOLVED,
+            dns_path_status=ChainDNSPathStatus.CHAIN_OWNED,
+            route_outbound_tag="watchdogvpn-chain-work-safe-hop-1",
+            hops=(
+                ChainRuntimeHopPlan(
+                    index=1,
+                    hop_type="profile",
+                    target="hop-one",
+                    status=ChainHopRuntimeStatus.RESOLVED,
+                    outbound_tag="watchdogvpn-chain-work-safe-hop-1",
+                    resolved_profile_id="hop-one",
+                    resolved_profile=hop_one,
+                ),
+            ),
+        )
+        dns_policy = DNSPolicy(
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                )
+            }
+        )
+
+        config = self.driver.generate_singbox_config(
+            active,
+            dns_policy=dns_policy,
+            mode="global",
+            final_policy="chain:work-safe",
+            chain_runtime_plans={"chain:work-safe": plan},
+        )
+
+        proxy_servers = [
+            server
+            for server in config["dns"]["servers"]
+            if server.get("tag") == "watchdogvpn-proxy-1"
+        ]
+        self.assertEqual(proxy_servers[0]["detour"], "watchdogvpn-chain-work-safe-hop-1")
+        self.assertEqual(
+            config["route"]["rules"][-1],
+            {"action": "route", "outbound": "watchdogvpn-chain-work-safe-hop-1"},
+        )
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
@@ -989,6 +1153,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                 final_policy="current_profile",
                 rule_set_tags=None,
                 rule_set_declarations=None,
+                chain_runtime_plans=None,
             )
             popen_mock.assert_called_once()
             self.assertIs(self.driver._process, process)
@@ -1026,6 +1191,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                 final_policy="current_profile",
                 rule_set_tags=None,
                 rule_set_declarations=None,
+                chain_runtime_plans=None,
             )
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)

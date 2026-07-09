@@ -34,9 +34,9 @@ class RuleModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Rule(id="r1", action="teleport", conditions={"domain": ["example.com"]})
 
-    def test_rule_rejects_deferred_chain_action(self) -> None:
-        with self.assertRaises(ValueError):
-            Rule(id="r1", action="chain:primary", conditions={"domain": ["example.com"]})
+    def test_rule_accepts_chain_action_syntax(self) -> None:
+        rule = Rule(id="r1", action="chain:primary", conditions={"domain": ["example.com"]})
+        self.assertEqual(rule.action, "chain:primary")
 
     def test_rule_rejects_group_action_without_id(self) -> None:
         with self.assertRaises(ValueError):

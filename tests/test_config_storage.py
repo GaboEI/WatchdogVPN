@@ -120,7 +120,7 @@ class ConfigStorageTests(unittest.TestCase):
             'capture_modes = "tun"\n',
             'capture_modes = "tun,system_proxy"\n',
             'default_route_action = "group:alpha"\n',
-            'default_route_action = "chain:primary"\n',
+            'default_route_action = "chain:Bad Name"\n',
         ]
         with tempfile.TemporaryDirectory() as tmp:
             for index, content in enumerate(invalid_docs):
@@ -129,6 +129,26 @@ class ConfigStorageTests(unittest.TestCase):
 
                 with self.assertRaises(PersistentValidationError):
                     StateManager(path).load()
+
+    def test_state_manager_accepts_chain_default_route_action_syntax(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            path.write_text(
+                "\n".join(
+                    [
+                        'routing_state_version = "1"',
+                        'routing_policy = "global"',
+                        'capture_modes = "local_proxy"',
+                        'default_route_action = "chain:primary"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            state = StateManager(path).load()
+
+            self.assertEqual(state["default_route_action"], "chain:primary")
 
     def test_state_manager_accepts_system_proxy_only_with_local_proxy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

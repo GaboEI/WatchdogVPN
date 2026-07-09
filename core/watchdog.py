@@ -37,6 +37,9 @@ from node_groups.models import NodeGroup, NodeGroupSelectionMode, group_target
 from node_groups.resolver import resolve_candidates as resolve_node_group_candidates
 from node_groups.scoring import rank_candidates
 from node_groups.store import NodeGroupStore
+from route_chains.models import chain_target
+from route_chains.runtime import ChainRuntimePlan, ChainRuntimeResolver
+from route_chains.store import RouteChainStore
 from rotation import health_checker, pool_builder
 from rotation.recovery import Recovery
 from rotation.rotation_engine import RotationEngine
@@ -93,6 +96,7 @@ class WatchdogRuntime:
     rule_set_lifecycle: RuleSetLifecycleManager = field(default_factory=RuleSetLifecycleManager)
     app_policy_store: AppPolicyStore = field(default_factory=AppPolicyStore)
     node_group_store: NodeGroupStore = field(default_factory=NodeGroupStore)
+    route_chain_store: RouteChainStore = field(default_factory=RouteChainStore)
     driver_selector: DriverSelector = field(default_factory=lambda: select_driver)
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
@@ -449,13 +453,18 @@ class WatchdogRuntime:
                 "system_proxy capture is not implemented yet; use local_proxy or tun"
             )
 
-        final_policy = {
-            "current": "current_profile",
-            "direct": "direct",
-            "block": "block",
-        }.get(default_action)
+        if chain_target(default_action) is not None:
+            final_policy = default_action
+        else:
+            final_policy = {
+                "current": "current_profile",
+                "direct": "direct",
+                "block": "block",
+            }.get(default_action)
         if final_policy is None:
-            raise PersistentValidationError("default_route_action must be one of: current, direct, block")
+            raise PersistentValidationError(
+                "default_route_action must be one of: current, direct, block, or chain:<id>"
+            )
 
         if routing_policy == "rule":
             mode = "rules"
@@ -469,6 +478,9 @@ class WatchdogRuntime:
             mode = "global"
 
         options: dict[str, object] = {"mode": mode, "final_policy": final_policy}
+        runtime_config = self.app_config.load()
+        dns_policy = self.dns_policy_store.load()
+        chain_actions = {default_action} if chain_target(default_action) is not None else set()
         lan_proxy = self._lan_proxy_runtime_config()
         if lan_proxy is not None:
             LOGGER.warning(
@@ -491,6 +503,9 @@ class WatchdogRuntime:
             options["lan_gateway"] = lan_gateway
         if routing_policy == "rule":
             groups = self.rule_store.list_groups()
+            app_policy = self._runtime_app_policy()
+            chain_actions.update(_chain_actions_from_rule_groups(groups))
+            chain_actions.update(_chain_actions_from_app_policy(app_policy))
             runtime_plan = self.rule_set_lifecycle.runtime_plan(groups)
             if runtime_plan.results:
                 LOGGER.info(
@@ -498,10 +513,39 @@ class WatchdogRuntime:
                     [result.to_dict() for result in runtime_plan.results],
                 )
             options["groups"] = groups
-            options["app_policy"] = self._runtime_app_policy()
+            options["app_policy"] = app_policy
             options["rule_set_tags"] = runtime_plan.tags
             options["rule_set_declarations"] = runtime_plan.declarations
+        chain_runtime_plans = self._chain_runtime_plans(
+            chain_actions,
+            dns_policy=dns_policy,
+            config=runtime_config,
+        )
+        if chain_runtime_plans:
+            options["chain_runtime_plans"] = chain_runtime_plans
         return options
+
+    def _chain_runtime_plans(
+        self,
+        actions: set[str],
+        *,
+        dns_policy: DNSPolicy,
+        config: dict,
+    ) -> dict[str, ChainRuntimePlan]:
+        if not actions:
+            return {}
+        resolver = ChainRuntimeResolver(
+            chain_store=self.route_chain_store,
+            profile_store=self.profile_store,
+            node_group_store=self.node_group_store,
+            provider_store=self.provider_store,
+        )
+        plans: dict[str, ChainRuntimePlan] = {}
+        for action in sorted(actions):
+            plan = resolver.resolve_action(action, dns_policy=dns_policy, config=config)
+            if plan is not None:
+                plans[action] = plan
+        return plans
 
     def _lan_proxy_runtime_config(self) -> LANProxyRuntimeConfig | None:
         config = self.app_config.load()
@@ -961,6 +1005,7 @@ class _RuntimeDriverRouter(BaseDriver):
         final_policy: str = "current_profile",
         lan_proxy=None,
         lan_gateway=None,
+        chain_runtime_plans=None,
     ) -> bool:
         driver = self.runtime._driver_for_profile(profile, disconnect_current=False)
         options = self.runtime._connect_options()
@@ -982,6 +1027,31 @@ class _RuntimeDriverRouter(BaseDriver):
 
     def is_available(self) -> bool:
         return self.runtime.driver.is_available()
+
+
+def _chain_actions_from_rule_groups(groups: list) -> set[str]:
+    actions: set[str] = set()
+    for group in groups:
+        if not group.enabled:
+            continue
+        for rule in group.rules:
+            if rule.enabled and chain_target(rule.action) is not None:
+                actions.add(rule.action)
+    return actions
+
+
+def _chain_actions_from_app_policy(policy: AppPolicy) -> set[str]:
+    if not policy.enabled:
+        return set()
+    actions = {
+        str(rule.action)
+        for rule in policy.rules
+        if rule.enabled and chain_target(rule.action) is not None
+    }
+    default_action = str(policy.default_action)
+    if chain_target(default_action) is not None:
+        actions.add(default_action)
+    return actions
 
 
 def build_watchdog(profile: Profile | None = None) -> WatchdogRuntime:

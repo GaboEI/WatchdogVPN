@@ -22,6 +22,7 @@ from config.persistence import (
     file_lock,
     strict_bool,
 )
+from route_chains.models import chain_target
 
 
 DEFAULT_STATE = {
@@ -237,8 +238,13 @@ def _validate_routing_fields(state: dict[str, Any], path: Path) -> None:
         )
     if state["routing_policy"] not in ALLOWED_ROUTING_POLICIES:
         raise PersistentValidationError("routing_policy must be one of: rule, global")
-    if state["default_route_action"] not in ALLOWED_DEFAULT_ROUTE_ACTIONS:
-        raise PersistentValidationError("default_route_action must be one of: current, direct, block")
+    if (
+        state["default_route_action"] not in ALLOWED_DEFAULT_ROUTE_ACTIONS
+        and chain_target(state["default_route_action"]) is None
+    ):
+        raise PersistentValidationError(
+            "default_route_action must be one of: current, direct, block, or chain:<id>"
+        )
     state["capture_modes"] = ",".join(parse_capture_modes(state["capture_modes"]))
 
 
