@@ -33,6 +33,8 @@ from models.profile import Profile
 from models.provider import Provider
 from node_groups.models import NodeGroup
 from node_groups.store import NodeGroupStore
+from route_chains.models import RouteChain, RouteChainDocument
+from route_chains.store import RouteChainStore
 from rules.models import RuleGroup, validate_group_name
 from rules.rule_store import RuleStore
 
@@ -61,8 +63,8 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 BACKUP_SENSITIVE_WARNING = (
     "Backup may contain private keys, passwords, provider tokens, subscription "
-    "URLs, routing policy, app policy and local selection state. Store and share "
-    "it as sensitive data."
+    "URLs, routing policy, app policy, route chains and local selection state. "
+    "Store and share it as sensitive data."
 )
 
 SECTION_FILE_BY_NAME = {
@@ -73,6 +75,7 @@ SECTION_FILE_BY_NAME = {
     "routing-rules": "routing-rules.json",
     "app-policy": "app-policy.json",
     "node-groups": "node-groups.json",
+    "route-chains": "route-chains.json",
     "selection-state": "selection-state.json",
     "dns-policy": "dns-policy.json",
     "metrics-policy": "metrics-policy.json",
@@ -88,7 +91,7 @@ BACKUP_ENTRIES = ("manifest.json",) + tuple(
     SECTION_FILE_BY_NAME[section] for section in DEFAULT_SECTION_NAMES
 )
 SUPPORTED_BACKUP_ENTRIES = ("manifest.json",) + tuple(SECTION_FILE_BY_NAME.values())
-MERGE_SECTION_NAMES = ("routing-rules", "app-policy", "node-groups")
+MERGE_SECTION_NAMES = ("routing-rules", "app-policy", "node-groups", "route-chains")
 RESTORE_REPLACE_CONFIRMATION = "RESTORE-WATCHDOGVPN-BACKUP"
 AUTO_BACKUP_REASONS = (
     "pre-restore",
@@ -482,6 +485,11 @@ class BackupManager:
                 for group in NodeGroupStore(self.config_dir / "node_groups.json").list()
             ]
             selected_payloads["node-groups.json"] = _section({"items": node_groups})
+        if "route-chains" in requested:
+            route_chains = RouteChainStore(self.config_dir / "chains.json").load()
+            selected_payloads["route-chains.json"] = _section(
+                {"document": route_chains.to_dict()}
+            )
         if "selection-state" in requested:
             selection_state = StateManager(self.config_dir / "state.toml").load()
             selected_payloads["selection-state.json"] = _section({"state": selection_state})
@@ -632,6 +640,11 @@ class BackupManager:
             for item in _require_list(data.get("items"), "node-groups.items"):
                 NodeGroup.from_dict(_require_object(item, "node group"))
             return data
+        if entry == "route-chains.json":
+            RouteChainDocument.from_dict(
+                _require_object(data.get("document"), "route-chains.document")
+            )
+            return data
         if entry == "selection-state.json":
             _validate_state(
                 _require_object(data.get("state"), "selection-state.state"),
@@ -677,6 +690,7 @@ class BackupManager:
             self.config_dir / "providers.json",
             self.config_dir / "app-policy.json",
             self.config_dir / "node_groups.json",
+            self.config_dir / "chains.json",
             self.config_dir / "state.toml",
             self.config_dir / "dns-policy.json",
             self.config_dir / "metrics.json",
@@ -735,6 +749,10 @@ class BackupManager:
                 )
             elif entry == "node-groups.json":
                 self._write_json_file(self.config_dir / "node_groups.json", data["items"])
+            elif entry == "route-chains.json":
+                RouteChainStore(self.config_dir / "chains.json").save(
+                    RouteChainDocument.from_dict(data["document"])
+                )
             elif entry == "selection-state.json":
                 StateManager(self.config_dir / "state.toml").save(
                     self._selection_state_document(data["state"])
@@ -766,6 +784,8 @@ class BackupManager:
                 self._merge_app_policy(data["policy"], timestamp=timestamp)
             elif entry == "node-groups.json":
                 self._merge_node_groups(data["items"], timestamp=timestamp)
+            elif entry == "route-chains.json":
+                self._merge_route_chains(data["document"], timestamp=timestamp)
 
     def _write_json_file(self, path: Path, value: object) -> None:
         dump_json(path, value)
@@ -854,6 +874,23 @@ class BackupManager:
             )
             existing_names.add(group_data["name"])
             store.add(NodeGroup.from_dict(group_data))
+
+    def _merge_route_chains(self, document: dict[str, Any], *, timestamp: str) -> None:
+        imported_document = RouteChainDocument.from_dict(document)
+        store = RouteChainStore(self.config_dir / "chains.json")
+        local = store.load()
+        existing_ids = {chain.id for chain in local.chains}
+        merged = list(local.chains)
+        for imported in imported_document.chains:
+            chain_data = imported.to_dict()
+            chain_data["id"] = _unique_timestamped_name(
+                imported.id,
+                existing_ids,
+                timestamp=timestamp,
+            )
+            existing_ids.add(chain_data["id"])
+            merged.append(RouteChain.from_dict(chain_data))
+        store.save(RouteChainDocument(chains=merged))
 
 
 @dataclass(frozen=True, slots=True)

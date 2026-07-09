@@ -17,6 +17,7 @@ PYTHON_RUNTIME_PACKAGES=(
   node_groups
   parsers
   providers
+  route_chains
   rotation
   rules
 )

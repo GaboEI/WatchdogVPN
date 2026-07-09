@@ -57,6 +57,7 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'migrate_watchdogvpn_shared_state' "r
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_package_tree' "runtime install must install Python packages for daemon and v2 CLI wrappers"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'PYTHON_PACKAGE_DIR="${PYTHON_PACKAGE_DIR:-/usr/local/lib/watchdogvpn}"' "Python runtime package directory must be outside the user home"
 assert_contains "$ROOT_DIR/lib/runtime.sh" '  node_groups' "runtime install must include node_groups package required by daemon imports"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '  route_chains' "runtime install must include route_chains package required by backup/config imports"
 if grep -Fq 'create_root_dir /var/lib/watchdogvpn 0755' "$ROOT_DIR/lib/runtime.sh"; then
   printf 'FAIL: runtime install must not pre-create /var/lib/watchdogvpn as root-owned state\n' >&2
   exit 1
