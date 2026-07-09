@@ -359,7 +359,7 @@ def rule_groups() -> list[RuleGroup]:
     ]
 
 
-def assert_config_contract(config: dict[str, Any], *, target_port: int) -> None:
+def assert_rules_config_contract(config: dict[str, Any], *, target_port: int) -> None:
     outbounds = {item["tag"]: item for item in config["outbounds"]}
     hop1 = outbounds[f"watchdogvpn-chain-{CHAIN_ID}-hop-1"]
     hop2 = outbounds[f"watchdogvpn-chain-{CHAIN_ID}-hop-2"]
@@ -380,15 +380,6 @@ def assert_config_contract(config: dict[str, Any], *, target_port: int) -> None:
         ),
         "domain route rule does not target final chain hop",
     )
-    proxy_servers = [
-        server for server in config.get("dns", {}).get("servers", [])
-        if server.get("tag") == "watchdogvpn-proxy-1"
-    ]
-    require(proxy_servers, "proxy DNS server is missing")
-    require(
-        proxy_servers[0].get("detour") == hop2["tag"],
-        "proxy DNS server does not detour through final chain hop",
-    )
     require(
         not any(
             rule.get("action") == "route" and rule.get("outbound") == "direct"
@@ -397,6 +388,33 @@ def assert_config_contract(config: dict[str, Any], *, target_port: int) -> None:
         "chain route unexpectedly falls back to direct",
     )
     require(target_port > 0, "target HTTP port was not allocated")
+
+
+def assert_global_dns_detour(driver: SingBoxDriver, active: Profile, plan: ChainRuntimePlan) -> None:
+    config = driver.generate_singbox_config(
+        active,
+        dns_policy=dns_policy(),
+        mode="global",
+        final_policy=CHAIN_ACTION,
+        chain_runtime_plans={CHAIN_ACTION: plan},
+    )
+    proxy_servers = [
+        server for server in config.get("dns", {}).get("servers", [])
+        if server.get("tag") == "watchdogvpn-proxy-1"
+    ]
+    require(proxy_servers, "proxy DNS server is missing")
+    require(
+        proxy_servers[0].get("detour") == plan.route_outbound_tag,
+        "global proxy DNS server does not detour through final chain hop",
+    )
+    require(
+        config["route"]["rules"][-1] == {
+            "action": "route",
+            "outbound": plan.route_outbound_tag,
+        },
+        "global chain final route does not target final chain hop",
+    )
+    print("PHASE21_5_GLOBAL_CHAIN_DNS_DETOUR_OK")
 
 
 def assert_blocked_contract(driver: SingBoxDriver, active: Profile, blocked: ChainRuntimePlan) -> None:
@@ -474,8 +492,9 @@ def main() -> int:
                     final_policy=CHAIN_ACTION,
                     chain_runtime_plans={CHAIN_ACTION: plan},
                 )
-                assert_config_contract(config, target_port=http_target.port)
+                assert_rules_config_contract(config, target_port=http_target.port)
                 singbox_check(driver, driver._config_path)
+                assert_global_dns_detour(driver, active, plan)
                 assert_blocked_contract(driver, active, blocked_plan(first))
 
                 connected = driver.connect(

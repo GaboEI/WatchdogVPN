@@ -49,7 +49,8 @@ It creates a local, deterministic lab inside the VM:
   `watchdogvpn-chain-vm-chain-proof-hop-1` and
   `watchdogvpn-chain-vm-chain-proof-hop-2`;
 - hop 2 detouring through hop 1;
-- proxy DNS detouring through the final chain hop;
+- a separate global-chain config proving proxy DNS detours through the final
+  chain hop;
 - blocked-chain failure injection that must emit native reject rules;
 - a real curl request through the local sing-box SOCKS inbound.
 
@@ -69,7 +70,7 @@ group or a shorter chain. It also proves:
 - sing-box accepts the generated chain config via `sing-box check`;
 - route rules target the final chain hop;
 - hop order is preserved as hop 1, then hop 2, then final destination;
-- final-hop DNS detour is present in generated config;
+- final-hop DNS detour is present in generated global-chain config;
 - DNS-unavailable or blocked plans fail closed to reject;
 - local proxy listeners clean up after disconnect;
 - route, rule, resolver and nftables state do not drift for this local-proxy
