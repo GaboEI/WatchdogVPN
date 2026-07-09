@@ -81,24 +81,27 @@ Implemented nested command coverage includes:
 - ruleset status/refresh;
 - app-policy status/enable/disable/mode/default-action/add/remove.
 
-## Phase 22 Gaps
+## Phase 22 Initial Gaps
 
-Known gaps against the Phase 22 plan:
+Known gaps against the Phase 22 plan at Task 22.1 audit time:
 
-- `watchdog backup ...` is not yet a top-level CLI group.
-- `watchdog setup` is not yet implemented.
-- `watchdog doctor` is not yet implemented in the Python CLI surface.
-- `watchdog version` is not yet implemented in the Python CLI surface.
-- `watchdog panic sleep|wake|status` is not yet implemented as a thin
+- `watchdog backup ...` was initially missing as a top-level CLI group.
+- `watchdog setup` was initially missing.
+- `watchdog doctor` was initially missing in the Python CLI surface.
+- `watchdog version` was initially missing in the Python CLI surface.
+- `watchdog panic sleep|wake|status` was initially missing as a thin
   passthrough to `bin/watchdog_panic`.
-- Some existing mutation commands do not yet expose JSON output.
-- Some existing mutation commands do not yet create backups where the Phase 22
-  contract will require backups.
+- Some existing mutation commands initially lacked JSON output.
+- Some existing mutation commands initially lacked backups where the Phase 22
+  contract required backups.
 - JSON output schemas are implemented command-by-command but not yet documented
   as stable contracts.
 - Nested command invocations without a subcommand fall back to the root parser
   help behavior instead of command-specific help. This is a usability gap, not
   a framework blocker.
+
+These gaps were closed by Tasks 22.5, 22.6 and 22.7. See the Phase 22 closure
+note below and `docs/qa-audit-2026-07-09-phase-22-full-cli-interface.md`.
 
 ## Subprocess Audit
 
@@ -144,7 +147,7 @@ Phase 22 must make mutation safety consistent across all command groups:
 | --- | --- | --- | --- |
 | AUD-P22-001 | INFO | Accepted | Argparse remains fit for Phase 22. The known problems are command completeness and contract consistency, not framework capability. |
 | AUD-P22-002 | INFO | Accepted | `watchdog panic sleep|wake|status` is missing from the Python CLI and must be added later as a thin passthrough to `bin/watchdog_panic`, without reimplementing panic logic in Python. |
-| AUD-P22-003 | INFO | Accepted | Top-level `backup`, `setup`, `doctor` and `version` commands are still missing from the Python CLI surface. These are Phase 22 implementation tasks, not Task 22.1 blockers. |
+| AUD-P22-003 | INFO | Accepted | Top-level `backup`, `setup`, `doctor` and `version` commands were missing from the Python CLI surface at Task 22.1 time. These were Phase 22 implementation tasks, not Task 22.1 blockers. |
 | AUD-P22-004 | LOW | Accepted | Nested command groups without a subcommand show root-level help instead of group-specific help. This is a usability issue to fix while completing command groups, but it does not block the architecture decision. |
 | AUD-P22-005 | LOW | Accepted | JSON coverage and backup behavior are not yet uniform across mutation commands. Phase 22 should address this per command group and pin stable schemas with tests. |
 
