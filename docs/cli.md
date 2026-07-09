@@ -81,9 +81,28 @@ watchdog stats status [--json]
 watchdog stats summary [--json]
 watchdog stats purge --yes
 watchdog stats privacy-mode <off|aggregate|detailed>
+watchdog rules list [--json]
 watchdog rules explain [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
+watchdog rules enable <group> [--json]
+watchdog rules disable <group> [--json]
+watchdog rules add-rule <group> <rule_id> --action ACTION --condition KEY=VALUE [--json]
+watchdog rules remove-rule <group> <rule_id> [--json]
+watchdog rules import <file> [--replace] [--dry-run] [--json]
+watchdog rules export <group> (--output PATH|--json)
 watchdog ruleset status [--json]
 watchdog ruleset refresh [RULE_SET_ID ...] [--referenced-only] [--force] [--json]
+watchdog app-policy status [--json]
+watchdog app-policy enable|disable [--json]
+watchdog app-policy mode <blacklist|whitelist> [--json]
+watchdog app-policy default-action <current|direct|block> [--json]
+watchdog app-policy add --process-name NAME --action ACTION [--id ID] [--json]
+watchdog app-policy add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog app-policy remove <id> [--json]
+watchdog node-group list [--json]
+watchdog node-group create <name> [--json]
+watchdog node-group add-profile <group> <profile> [--json]
+watchdog node-group select <group> <profile|auto> [--json]
+watchdog node-group auto-test <group> [--json]
 ```
 
 ## Connection Lifecycle
@@ -411,6 +430,88 @@ watchdog stats privacy-mode detailed
 because detailed history is not implemented in Phase 16.
 
 ## Rule Diagnostics
+
+## Routing Policy Commands
+
+The Python policy commands mutate local policy stores only. They do not connect,
+disconnect, refresh providers, apply DNS, edit firewall rules, change routes or
+start capture.
+
+### `watchdog rules`
+
+Manages local routing rule groups.
+
+```sh
+watchdog rules list [--json]
+watchdog rules enable <group> [--json]
+watchdog rules disable <group> [--json]
+watchdog rules add-rule <group> <rule_id> --action ACTION --condition KEY=VALUE [--json]
+watchdog rules remove-rule <group> <rule_id> [--json]
+watchdog rules import <file> [--replace] [--dry-run] [--json]
+watchdog rules export <group> (--output PATH|--json)
+```
+
+Rule list JSON returns rule-group summaries with `name`, `enabled`,
+`priority`, `rule_count` and `rules`. Mutation JSON returns the changed group,
+`backup_path` when a group-level backup is created and a `rollback_point`.
+`rules import` also returns `section_backup_path` for the pre-import routing
+rules backup. Dry-run imports do not write policy or backups and return
+`rollback_point.kind = "preview-only"`.
+
+Every real `rules` mutation validates the target group/rule before writing.
+Group enable/disable, add-rule, remove-rule and replace import create a backup
+before the active group changes. New imports create a section backup and report
+that rollback is deleting the imported group.
+
+### `watchdog app-policy`
+
+Manages local Linux app/process routing policy.
+
+```sh
+watchdog app-policy status [--json]
+watchdog app-policy enable [--json]
+watchdog app-policy disable [--json]
+watchdog app-policy mode <blacklist|whitelist> [--json]
+watchdog app-policy default-action <current|direct|block> [--json]
+watchdog app-policy add --process-name NAME --action ACTION [--id ID] [--json]
+watchdog app-policy add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog app-policy remove <id> [--json]
+```
+
+Status JSON returns `valid`, `error`, `policy`, `rule_count`,
+`enabled_rule_count` and `rules`. Rule entries include `match_confidence`.
+Mutation JSON adds `backup_path` and a `rollback_point` with
+`kind = "section-backup"` and `section = "app-policy"`.
+
+Every app-policy mutation validates the resulting policy before writing and
+creates a restorable app-policy backup first. Missing or duplicate rule IDs
+include recovery wording pointing operators back to
+`watchdog app-policy status`.
+
+### `watchdog node-group`
+
+Manages local node groups and manual/auto selection intent.
+
+```sh
+watchdog node-group list [--json]
+watchdog node-group create <name> [--json]
+watchdog node-group add-profile <group> <profile> [--json]
+watchdog node-group select <group> <profile|auto> [--json]
+watchdog node-group auto-test <group> [--json]
+```
+
+Node-group list JSON returns the stored group document. Mutation JSON returns
+the changed `group`, `backup_path` and a `rollback_point` with
+`kind = "section-backup"` and `section = "node-groups"`. `add-profile` also
+returns `added_profile_id`; manual `select` returns `selected_profile_id`.
+
+Every node-group mutation validates the target group and profile references
+before writing and creates a restorable node-groups backup first. Missing
+profiles point operators to `watchdog profile list`; duplicate or missing
+groups point operators to `watchdog node-group list`.
+
+`watchdog node-group auto-test` is a daemon IPC command. It asks the daemon to
+evaluate the configured group and does not mutate local policy by itself.
 
 ### `watchdog rules explain`
 

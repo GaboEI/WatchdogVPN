@@ -61,6 +61,16 @@ class CliAppPolicyCommandTests(unittest.TestCase):
         self.assertFalse(data["policy"]["enabled"])
         self.assertEqual(data["policy"]["mode"], "whitelist")
 
+    def test_mutations_return_backup_and_rollback_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["app-policy", "enable", "--json"], tmp)
+            data = json.loads(result.stdout)
+            backup_exists = Path(data["backup_path"]).exists()
+
+        self.assertTrue(backup_exists)
+        self.assertEqual(data["rollback_point"]["kind"], "section-backup")
+        self.assertEqual(data["rollback_point"]["section"], "app-policy")
+
     def test_default_action_persists_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(
@@ -129,7 +139,9 @@ class CliAppPolicyCommandTests(unittest.TestCase):
                 tmp,
             )
             added = json.loads(result.stdout)["added"]
+            added_data = json.loads(result.stdout)
             rule_id = added["id"]
+            added_backup_exists = Path(added_data["backup_path"]).exists()
             self.assertEqual(added["action"], "block")
             self.assertEqual(added["match"], {"process_name": ["curl"]})
 
@@ -138,10 +150,48 @@ class CliAppPolicyCommandTests(unittest.TestCase):
             self.assertEqual(status_data["rule_count"], 1)
             self.assertEqual(status_data["rules"][0]["match_confidence"], "low")
 
-            self.run_watchdog(["app-policy", "remove", rule_id], tmp)
+            removed = self.run_watchdog(["app-policy", "remove", rule_id, "--json"], tmp)
+            removed_data = json.loads(removed.stdout)
+            removed_backup_exists = Path(removed_data["backup_path"]).exists()
             status = self.run_watchdog(["app-policy", "status", "--json"], tmp)
 
+        self.assertTrue(added_backup_exists)
+        self.assertTrue(removed_backup_exists)
         self.assertEqual(json.loads(status.stdout)["rule_count"], 0)
+
+    def test_duplicate_rule_id_returns_recovery_hint_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(
+                [
+                    "app-policy",
+                    "add",
+                    "--process-name",
+                    "curl",
+                    "--action",
+                    "block",
+                    "--id",
+                    "curl-block",
+                ],
+                tmp,
+            )
+            result = self.run_watchdog(
+                [
+                    "app-policy",
+                    "add",
+                    "--process-name",
+                    "curl",
+                    "--action",
+                    "block",
+                    "--id",
+                    "curl-block",
+                ],
+                tmp,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 65)
+        self.assertIn("watchdog app-policy status", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_add_group_action_rule(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

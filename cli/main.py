@@ -338,6 +338,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     node_group_create_parser = node_group_subparsers.add_parser("create", help="Create a node group")
     node_group_create_parser.add_argument("name")
+    node_group_create_parser.add_argument("--json", action="store_true", help="Print JSON")
     node_group_create_parser.set_defaults(handler=_node_group_create)
 
     node_group_add_profile_parser = node_group_subparsers.add_parser(
@@ -345,6 +346,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     node_group_add_profile_parser.add_argument("group")
     node_group_add_profile_parser.add_argument("profile")
+    node_group_add_profile_parser.add_argument("--json", action="store_true", help="Print JSON")
     node_group_add_profile_parser.set_defaults(handler=_node_group_add_profile)
 
     node_group_auto_test_parser = node_group_subparsers.add_parser(
@@ -359,6 +361,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     node_group_select_parser.add_argument("group")
     node_group_select_parser.add_argument("selection", help="Profile ID or 'auto'")
+    node_group_select_parser.add_argument("--json", action="store_true", help="Print JSON")
     node_group_select_parser.set_defaults(handler=_node_group_select)
 
     dns_parser = subparsers.add_parser("dns", help="Manage DNS v2 policy and state")
@@ -1376,30 +1379,79 @@ def _node_group_list(args: argparse.Namespace) -> int:
 def _node_group_create(args: argparse.Namespace) -> int:
     store = NodeGroupStore()
     if store.get(args.name) is not None:
-        raise ParseError(f"node group already exists: {args.name}")
+        raise ParseError(
+            f"node group already exists: {args.name}; run `watchdog node-group list` to inspect node groups"
+        )
     group = NodeGroup(name=args.name)
+    backup_path = _create_section_backup("node-groups")
     store.add(group)
+    data = {
+        "group": _node_group_summary(group),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Created node group: {group.name}")
+    print(f"Backup: {backup_path}")
     return 0
 
 
 def _node_group_add_profile(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
     profile = _require_profile(ProfileStore(), args.profile)
-    group = NodeGroupStore().add_member_profile(args.group, profile.id)
+    backup_path = _create_section_backup("node-groups")
+    group = store.add_member_profile(args.group, profile.id)
+    data = {
+        "group": _node_group_summary(group),
+        "added_profile_id": profile.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Added profile to node group: {group.name} profile={profile.id}")
+    print(f"Backup: {backup_path}")
     return 0
 
 
 def _node_group_select(args: argparse.Namespace) -> int:
     store = NodeGroupStore()
     _require_node_group(store, args.group)
+    backup_path = None
     if args.selection == "auto":
+        backup_path = _create_section_backup("node-groups")
         group = store.set_selection(args.group, NodeGroupSelectionMode.AUTO)
+        data = {
+            "group": _node_group_summary(group),
+            "selection": "auto",
+            "backup_path": str(backup_path),
+            "rollback_point": _section_backup_rollback("node-groups", backup_path),
+        }
+        if args.json:
+            _print_json(data)
+            return 0
         print(f"Node group selection set to auto: {group.name}")
+        print(f"Backup: {backup_path}")
         return 0
     profile = _require_profile(ProfileStore(), args.selection)
+    backup_path = _create_section_backup("node-groups")
     group = store.set_selection(args.group, NodeGroupSelectionMode.MANUAL, profile.id)
+    data = {
+        "group": _node_group_summary(group),
+        "selection": "manual",
+        "selected_profile_id": profile.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Node group selection pinned: {group.name} profile={profile.id}")
+    print(f"Backup: {backup_path}")
     return 0
 
 
@@ -1843,6 +1895,12 @@ def _rules_list(args: argparse.Namespace) -> int:
 
 def _rules_set_group_enabled(args: argparse.Namespace) -> int:
     store = RuleStore()
+    existing = store.get_group(args.group)
+    if existing is None:
+        raise RuleStoreError(
+            f"rule group not found: {args.group}; run `watchdog rules list` to inspect rule groups"
+        )
+    backup_path = store.replace_group(existing, backup_existing=True)
     if args.enabled:
         store.enable_group(args.group)
     else:
@@ -1850,15 +1908,27 @@ def _rules_set_group_enabled(args: argparse.Namespace) -> int:
     group = store.get_group(args.group)
     if group is None:
         raise RuleStoreError(f"rule group not found: {args.group}")
-    data = {"group": group.to_dict()}
+    data = {
+        "group": group.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
     if args.json:
         _print_json(data)
     else:
         print(f"Rule group {'enabled' if group.enabled else 'disabled'}: {group.name}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
     return 0
 
 
 def _rules_add_rule(args: argparse.Namespace) -> int:
+    store = RuleStore()
+    existing = store.get_group(args.group)
+    if existing is None:
+        raise RuleStoreError(
+            f"rule group not found: {args.group}; run `watchdog rules list` to inspect rule groups"
+        )
     try:
         rule = Rule(
             id=args.rule_id,
@@ -1867,24 +1937,54 @@ def _rules_add_rule(args: argparse.Namespace) -> int:
         )
     except ValueError as exc:
         raise ParseError(str(exc)) from exc
-    group = RuleStore().add_rule(args.group, rule)
-    data = {"added": rule.to_dict(), "group": group.to_dict()}
+    if any(existing_rule.id == rule.id for existing_rule in existing.rules):
+        raise RuleStoreError(
+            f"rule already exists: {rule.id}; run `watchdog rules export {args.group} --json` to inspect rules"
+        )
+    backup_path = store.replace_group(existing, backup_existing=True)
+    group = store.add_rule(args.group, rule)
+    data = {
+        "added": rule.to_dict(),
+        "group": group.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
     if args.json:
         _print_json(data)
     else:
         print(f"Added rule: {group.name}/{rule.id}")
         print(f"Action: {rule.action}")
         print(f"Conditions: {_format_rule_conditions(rule.conditions)}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
     return 0
 
 
 def _rules_remove_rule(args: argparse.Namespace) -> int:
-    group = RuleStore().remove_rule(args.group, args.rule_id)
-    data = {"removed": args.rule_id, "group": group.to_dict()}
+    store = RuleStore()
+    existing = store.get_group(args.group)
+    if existing is None:
+        raise RuleStoreError(
+            f"rule group not found: {args.group}; run `watchdog rules list` to inspect rule groups"
+        )
+    if not any(rule.id == args.rule_id for rule in existing.rules):
+        raise RuleStoreError(
+            f"rule not found: {args.rule_id}; run `watchdog rules export {args.group} --json` to inspect rules"
+        )
+    backup_path = store.replace_group(existing, backup_existing=True)
+    group = store.remove_rule(args.group, args.rule_id)
+    data = {
+        "removed": args.rule_id,
+        "group": group.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
     if args.json:
         _print_json(data)
     else:
         print(f"Removed rule: {group.name}/{args.rule_id}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
     return 0
 
 
@@ -1908,7 +2008,9 @@ def _rules_import(args: argparse.Namespace) -> int:
             f"rule group already exists: {group.name}; use --replace to overwrite"
         )
     backup_path = None
+    section_backup_path = None
     if not args.dry_run:
+        section_backup_path = _create_section_backup("routing-rules")
         backup_path = store.replace_group(group, backup_existing=bool(existing and args.replace))
     if args.dry_run:
         rollback_point = {"kind": "preview-only"}
@@ -1922,6 +2024,7 @@ def _rules_import(args: argparse.Namespace) -> int:
         "imported": group.to_dict(),
         "replaced": existing is not None,
         "backup_path": str(backup_path) if backup_path else None,
+        "section_backup_path": str(section_backup_path) if section_backup_path else None,
         "rollback_point": rollback_point,
         "accepted_rule_count": len(group.rules),
         "rejected": [item.to_dict() for item in plan.rejected],
@@ -1938,7 +2041,9 @@ def _rules_import(args: argparse.Namespace) -> int:
             print(f"Rejected entries: {len(plan.rejected)}")
         if backup_path:
             print(f"Backup: {backup_path}")
-        elif not args.dry_run:
+        if section_backup_path:
+            print(f"Section backup: {section_backup_path}")
+        if not args.dry_run and not backup_path:
             print(f"Rollback: remove imported group {group.name}")
     return 0
 
@@ -2182,12 +2287,15 @@ def _app_policy_set_enabled(args: argparse.Namespace) -> int:
     store = AppPolicyStore()
     policy = store.load()
     policy.enabled = bool(args.enabled)
+    policy = AppPolicy.from_dict(policy.to_dict())
+    backup_path = _create_section_backup("app-policy")
     store.save(policy)
-    data = _app_policy_status_data(policy)
+    data = _app_policy_mutation_data(policy, backup_path)
     if args.json:
         _print_json(data)
     else:
         print(f"App policy {'enabled' if policy.enabled else 'disabled'}.")
+        print(f"Backup: {backup_path}")
     return 0
 
 
@@ -2196,12 +2304,14 @@ def _app_policy_set_mode(args: argparse.Namespace) -> int:
     policy = store.load()
     policy.mode = AppPolicyMode(args.mode)
     policy = AppPolicy.from_dict(policy.to_dict())
+    backup_path = _create_section_backup("app-policy")
     store.save(policy)
-    data = _app_policy_status_data(policy)
+    data = _app_policy_mutation_data(policy, backup_path)
     if args.json:
         _print_json(data)
     else:
         print(f"App policy mode set to: {policy.mode.value}")
+        print(f"Backup: {backup_path}")
     return 0
 
 
@@ -2210,12 +2320,14 @@ def _app_policy_set_default_action(args: argparse.Namespace) -> int:
     policy = store.load()
     policy.default_action = AppPolicyAction(args.default_action)
     policy = AppPolicy.from_dict(policy.to_dict())
+    backup_path = _create_section_backup("app-policy")
     store.save(policy)
-    data = _app_policy_status_data(policy)
+    data = _app_policy_mutation_data(policy, backup_path)
     if args.json:
         _print_json(data)
     else:
         print(f"App policy default action set to: {policy.default_action.value}")
+        print(f"Backup: {backup_path}")
     return 0
 
 
@@ -2229,7 +2341,9 @@ def _app_policy_add(args: argparse.Namespace) -> int:
         match["process_path"] = [args.process_path]
     rule_id = args.id or _next_app_policy_rule_id(policy, match, args.action)
     if any(rule.id == rule_id for rule in policy.rules):
-        raise ValueError(f"app policy rule already exists: {rule_id}")
+        raise ParseError(
+            f"app policy rule already exists: {rule_id}; run `watchdog app-policy status` to inspect rules"
+        )
     rule = AppPolicyRule(
         id=rule_id,
         action=args.action,
@@ -2237,14 +2351,21 @@ def _app_policy_add(args: argparse.Namespace) -> int:
     )
     policy.rules.append(rule)
     policy = AppPolicy.from_dict(policy.to_dict())
+    backup_path = _create_section_backup("app-policy")
     store.save(policy)
-    data = {"added": rule.to_dict(), "policy": _app_policy_status_data(policy)}
+    data = {
+        "added": rule.to_dict(),
+        "policy": _app_policy_status_data(policy),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("app-policy", backup_path),
+    }
     if args.json:
         _print_json(data)
     else:
         print(f"Added app policy rule: {rule.id}")
         print(f"Action: {_app_policy_action_value(rule.action)}")
         print(f"Confidence: {rule.match_confidence.value}")
+        print(f"Backup: {backup_path}")
     return 0
 
 
@@ -2254,14 +2375,23 @@ def _app_policy_remove(args: argparse.Namespace) -> int:
     original_count = len(policy.rules)
     policy.rules = [rule for rule in policy.rules if rule.id != args.rule_id]
     if len(policy.rules) == original_count:
-        raise ValueError(f"app policy rule not found: {args.rule_id}")
+        raise ParseError(
+            f"app policy rule not found: {args.rule_id}; run `watchdog app-policy status` to inspect rules"
+        )
     policy = AppPolicy.from_dict(policy.to_dict())
+    backup_path = _create_section_backup("app-policy")
     store.save(policy)
-    data = {"removed": args.rule_id, "policy": _app_policy_status_data(policy)}
+    data = {
+        "removed": args.rule_id,
+        "policy": _app_policy_status_data(policy),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("app-policy", backup_path),
+    }
     if args.json:
         _print_json(data)
     else:
         print(f"Removed app policy rule: {args.rule_id}")
+        print(f"Backup: {backup_path}")
     return 0
 
 
@@ -2284,6 +2414,38 @@ def _app_policy_status_data(
             }
             for rule in policy.rules
         ],
+    }
+
+
+def _app_policy_mutation_data(policy: AppPolicy, backup_path: Path) -> dict[str, object]:
+    data = _app_policy_status_data(policy)
+    data["backup_path"] = str(backup_path)
+    data["rollback_point"] = _section_backup_rollback("app-policy", backup_path)
+    return data
+
+
+def _create_section_backup(section: str) -> Path:
+    return BackupManager().create_backup(
+        reason="pre-policy-mutation",
+        sections=[section],
+    ).path
+
+
+def _section_backup_rollback(section: str, backup_path: Path) -> dict[str, object]:
+    return {
+        "kind": "section-backup",
+        "section": section,
+        "path": str(backup_path),
+    }
+
+
+def _group_backup_rollback(section: str, backup_path: Path | None) -> dict[str, object] | None:
+    if backup_path is None:
+        return None
+    return {
+        "kind": "existing-group-backup",
+        "section": section,
+        "path": str(backup_path),
     }
 
 

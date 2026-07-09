@@ -47,14 +47,23 @@ class CliNodeGroupCommandTests(unittest.TestCase):
                 ["profile", "add", "--uri", "vless://uuid@example.com:443?encryption=none#demo"],
                 tmp,
             )
-            self.run_watchdog(["node-group", "create", "paris"], tmp)
-            self.run_watchdog(["node-group", "add-profile", "paris", "demo"], tmp)
-            self.run_watchdog(["node-group", "select", "paris", "demo"], tmp)
+            created = self.run_watchdog(["node-group", "create", "paris", "--json"], tmp)
+            added = self.run_watchdog(
+                ["node-group", "add-profile", "paris", "demo", "--json"],
+                tmp,
+            )
+            selected = self.run_watchdog(
+                ["node-group", "select", "paris", "demo", "--json"],
+                tmp,
+            )
 
             data = json.loads(
                 self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
             )
 
+            self.assertTrue(Path(json.loads(created.stdout)["backup_path"]).exists())
+            self.assertEqual(json.loads(added.stdout)["rollback_point"]["section"], "node-groups")
+            self.assertEqual(json.loads(selected.stdout)["selected_profile_id"], "demo")
             self.assertEqual(len(data), 1)
             self.assertEqual(data[0]["name"], "paris")
             self.assertEqual(data[0]["member_profile_ids"], ["demo"])
@@ -69,12 +78,14 @@ class CliNodeGroupCommandTests(unittest.TestCase):
             )
             self.run_watchdog(["node-group", "create", "paris"], tmp)
             self.run_watchdog(["node-group", "select", "paris", "demo"], tmp)
-            self.run_watchdog(["node-group", "select", "paris", "auto"], tmp)
+            auto = self.run_watchdog(["node-group", "select", "paris", "auto", "--json"], tmp)
 
             data = json.loads(
                 self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
             )
 
+            self.assertEqual(json.loads(auto.stdout)["selection"], "auto")
+            self.assertTrue(Path(json.loads(auto.stdout)["backup_path"]).exists())
             self.assertEqual(data[0]["selection_mode"], "auto")
             self.assertIsNone(data[0]["manual_profile_id"])
 
@@ -93,7 +104,7 @@ class CliNodeGroupCommandTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 65)
-            self.assertIn("node group already exists: paris", result.stderr)
+            self.assertIn("watchdog node-group list", result.stderr)
             self.assertEqual(data[0]["member_profile_ids"], ["demo"])
 
     def test_add_profile_rejects_missing_profile(self) -> None:
