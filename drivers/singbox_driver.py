@@ -25,6 +25,8 @@ from drivers.base import BaseDriver
 from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from route_chains.models import chain_target
+from route_chains.runtime import ChainRuntimePlan
 from rules.models import SIMPLE_RULE_ACTIONS, RuleGroup
 from rules.singbox import build_singbox_route_rules
 
@@ -63,6 +65,22 @@ def _merge_route_config(config: dict[str, Any], route_config: dict[str, Any]) ->
     if route_config.get("rule_set"):
         route.setdefault("rule_set", [])
         route["rule_set"].extend(route_config["rule_set"])
+
+
+def _dns_proxy_outbound_tag(
+    current_outbound_tag: str,
+    mode: str,
+    final_policy: str,
+    chain_runtime_plans: dict[str, ChainRuntimePlan] | None,
+) -> str:
+    if mode == "rules":
+        return current_outbound_tag
+    if chain_target(final_policy) is None:
+        return current_outbound_tag
+    plan = (chain_runtime_plans or {}).get(final_policy)
+    if plan is None or not plan.resolved or plan.route_outbound_tag is None:
+        return current_outbound_tag
+    return plan.route_outbound_tag
 
 
 def _app_policy_dns_rules(
@@ -243,6 +261,26 @@ class SingBoxDriver(BaseDriver):
             direct_outbound["bind_interface"] = bind_interface
         config["outbounds"].append(direct_outbound)
         return direct_outbound
+
+    def _append_chain_outbounds(
+        self,
+        config: dict[str, Any],
+        chain_runtime_plans: dict[str, ChainRuntimePlan],
+    ) -> None:
+        for plan in chain_runtime_plans.values():
+            if not plan.resolved:
+                continue
+            previous_tag: str | None = None
+            for hop in plan.hops:
+                if hop.resolved_profile is None or hop.outbound_tag is None:
+                    continue
+                outbound = self._protocol_to_outbound(hop.resolved_profile)
+                outbound["tag"] = hop.outbound_tag
+                self._apply_dialer_options(outbound, hop.resolved_profile)
+                if previous_tag is not None:
+                    outbound["detour"] = previous_tag
+                config["outbounds"].append(outbound)
+                previous_tag = hop.outbound_tag
 
     def _normalize_port(self, value: Any, default: int | None = None) -> int | None:
         if value is None:
@@ -1052,11 +1090,12 @@ class SingBoxDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy: LANProxyRuntimeConfig | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
             raise ValueError(f"unsupported connection mode: {mode!r}")
-        if final_policy not in SIMPLE_RULE_ACTIONS:
+        if final_policy not in SIMPLE_RULE_ACTIONS and chain_target(final_policy) is None:
             raise ValueError(f"unsupported final_policy: {final_policy!r}")
 
         outbound = self._protocol_to_outbound(profile)
@@ -1066,10 +1105,14 @@ class SingBoxDriver(BaseDriver):
             "inbounds": self._build_inbounds(lan_proxy),
             "outbounds": [outbound],
         }
+        self._append_chain_outbounds(config, chain_runtime_plans or {})
         if self._mode_requires_tun(mode, app_policy):
             config["inbounds"].append(self._build_tun_inbound())
         if dns_policy is not None:
-            dns_config = build_singbox_dns_config(dns_policy, outbound["tag"])
+            dns_config = build_singbox_dns_config(
+                dns_policy,
+                _dns_proxy_outbound_tag(outbound["tag"], mode, final_policy, chain_runtime_plans),
+            )
             if dns_config is not None:
                 dns_config.config["rules"] = [
                     *_app_policy_dns_rules(
@@ -1134,7 +1177,7 @@ class SingBoxDriver(BaseDriver):
             effective_final_policy = final_policy
         else:
             effective_groups = []
-            effective_final_policy = "direct" if mode == "direct" else "current_profile"
+            effective_final_policy = "direct" if mode == "direct" else final_policy
         if mode in {"rules", "direct"}:
             self._ensure_direct_outbound(
                 config, bind_interface=self._outbound_bind_interface(profile)
@@ -1145,6 +1188,7 @@ class SingBoxDriver(BaseDriver):
             app_policy=app_policy if mode == "rules" else None,
             final_policy=effective_final_policy,
             rule_set_tags=rule_set_tags if mode == "rules" else None,
+            chain_runtime_plans=chain_runtime_plans,
         )
         route_config: dict[str, Any] = {"rules": mode_route_rules}
         if mode == "rules" and rule_set_declarations:
@@ -1165,6 +1209,7 @@ class SingBoxDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy: LANProxyRuntimeConfig | None = None,
         lan_gateway: LANGatewayRuntimeConfig | None = None,
     ) -> bool:
@@ -1183,6 +1228,7 @@ class SingBoxDriver(BaseDriver):
             "final_policy": final_policy,
             "rule_set_tags": rule_set_tags,
             "rule_set_declarations": rule_set_declarations,
+            "chain_runtime_plans": chain_runtime_plans,
         }
         if lan_proxy is not None:
             config_kwargs["lan_proxy"] = lan_proxy

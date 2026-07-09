@@ -9,10 +9,13 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from config.app_config import AppConfig
+from app_policy.models import AppPolicy
+from app_policy.store import AppPolicyStore
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager, parse_capture_modes
+from diagnostics.chain_routes import diagnose_configured_chains
 from dns.models import DNSChannelName, DNSPolicy
 from dns.resolver_inventory import ResolverInventory, detect_resolver_manager
 from models.connection_state import ConnectionState
@@ -26,6 +29,11 @@ from network_context.monitor import (
 )
 from network_context.models import NetworkContextPolicy
 from network_context.store import NetworkContextPolicyStore
+from route_chains.models import RouteChainDocument
+from route_chains.runtime import ChainRuntimeResolver
+from route_chains.store import RouteChainStore
+from rules.models import RuleGroup
+from rules.rule_store import RuleStore
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -111,6 +119,10 @@ def collect_unified_diagnostics(
     resolver_inventory: ResolverInventory | None = None,
     providers: Iterable[Provider] | None = None,
     profiles: Iterable[Profile] | None = None,
+    rule_groups: Iterable[RuleGroup] | None = None,
+    app_policy: AppPolicy | None = None,
+    chain_document: RouteChainDocument | None = None,
+    chain_resolver: ChainRuntimeResolver | None = None,
     runtime_state: ConnectionState | dict[str, Any] | None = None,
     network_policy: NetworkContextPolicy | None = None,
     network_observation: NetworkObservation | None = None,
@@ -164,6 +176,27 @@ def collect_unified_diagnostics(
             profiles = []
             diagnostics.append(f"profile state unavailable: {exc}")
     profiles = list(profiles)
+    if rule_groups is None:
+        try:
+            rule_groups = RuleStore().list_groups()
+        except Exception as exc:
+            rule_groups = []
+            diagnostics.append(f"rule groups unavailable: {exc}")
+    rule_groups = list(rule_groups)
+    if app_policy is None:
+        try:
+            app_policy = AppPolicyStore().load()
+        except Exception as exc:
+            app_policy = AppPolicy.disabled_due_to_error(str(exc))
+            diagnostics.append(f"app policy unavailable: {exc}")
+    if chain_document is None:
+        try:
+            chain_document = RouteChainStore().load()
+        except Exception as exc:
+            chain_document = RouteChainDocument()
+            diagnostics.append(f"route chain state unavailable: {exc}")
+    if chain_resolver is None:
+        chain_resolver = ChainRuntimeResolver()
     if network_policy is None:
         try:
             network_policy = NetworkContextPolicyStore().load()
@@ -181,6 +214,17 @@ def collect_unified_diagnostics(
 
     state = _runtime_state(runtime_state)
     routing = _routing_summary(routing_state)
+    routing["chain_diagnostics"] = diagnose_configured_chains(
+        rule_groups=rule_groups,
+        app_policy=app_policy,
+        routing_state=routing_state,
+        chain_document=chain_document,
+        dns_policy=dns_policy,
+        resolver=chain_resolver,
+        config=app_config,
+        matched_route_action=None,
+        redact=True,
+    )
     capture = _capture_summary(routing, state)
     lan = _lan_summary(app_config, state)
     recent_failures = _recent_failure_summary(state, recent_failure_categories)

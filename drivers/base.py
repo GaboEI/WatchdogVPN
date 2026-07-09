@@ -6,6 +6,7 @@ from app_policy.models import AppPolicy
 from dns.models import DNSPolicy
 from models.connection_state import ConnectionState
 from models.profile import Profile
+from route_chains.runtime import ChainRuntimePlan
 
 
 class BaseDriver(ABC):
@@ -21,6 +22,7 @@ class BaseDriver(ABC):
         final_policy: str = "current_profile",
         rule_set_tags: dict[str, str] | None = None,
         rule_set_declarations: list[dict[str, str]] | None = None,
+        chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy=None,
         lan_gateway=None,
     ) -> bool:

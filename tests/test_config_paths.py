@@ -14,6 +14,7 @@ from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager
 from dns.state_manager import default_snapshot_path
+from route_chains.store import RouteChainStore
 from rules.rule_store import RuleStore
 
 
@@ -129,6 +130,7 @@ class ConfigPathResolutionTests(unittest.TestCase):
                 self.assertEqual(AppConfig().path, config_dir / "config.toml")
                 self.assertEqual(DNSPolicyStore().path, config_dir / "dns-policy.json")
                 self.assertEqual(RuleStore().path, config_dir / "rules")
+                self.assertEqual(RouteChainStore().path, config_dir / "chains.json")
                 self.assertEqual(default_snapshot_path(), config_dir / "dns-state.json")
                 self.assertEqual(_dns_snapshot_path(SimpleNamespace()), config_dir / "dns-state.json")
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode
+from route_chains.models import chain_target
+from route_chains.runtime import ChainRuntimePlan
 from rules.models import Rule, RuleGroup
 from rules.rule_engine import PRIORITY_TIER_ORDER, UNEVALUABLE_CONDITIONS, group_by_tier
 
@@ -16,6 +18,7 @@ from rules.rule_engine import PRIORITY_TIER_ORDER, UNEVALUABLE_CONDITIONS, group
 def _rule_to_singbox_rule(
     rule: Rule,
     resolve_outbound: Callable[[str], str],
+    reject_action: Callable[[str], bool],
     rule_set_tags: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     if not rule.enabled:
@@ -34,7 +37,7 @@ def _rule_to_singbox_rule(
         singbox_rule[key] = list(values)
     if rule_set_values:
         singbox_rule["rule_set"] = rule_set_values
-    if rule.action == "block":
+    if rule.action == "block" or reject_action(rule.action):
         singbox_rule["action"] = "reject"
     else:
         singbox_rule["action"] = "route"
@@ -42,8 +45,12 @@ def _rule_to_singbox_rule(
     return singbox_rule
 
 
-def _final_rule(final_policy: str, resolve_outbound: Callable[[str], str]) -> dict[str, Any]:
-    if final_policy == "block":
+def _final_rule(
+    final_policy: str,
+    resolve_outbound: Callable[[str], str],
+    reject_action: Callable[[str], bool] = lambda _action: False,
+) -> dict[str, Any]:
+    if final_policy == "block" or reject_action(final_policy):
         return {"action": "reject"}
     return {"action": "route", "outbound": resolve_outbound(final_policy)}
 
@@ -58,6 +65,7 @@ def _app_policy_action(value: AppPolicyAction | str) -> str:
 def _app_policy_rule_to_singbox_rule(
     rule,
     resolve_outbound: Callable[[str], str],
+    reject_action: Callable[[str], bool],
 ) -> dict[str, Any] | None:
     if not rule.enabled:
         return None
@@ -65,7 +73,7 @@ def _app_policy_rule_to_singbox_rule(
         key: list(values) for key, values in rule.match.items()
     }
     action = _app_policy_action(rule.action)
-    if action == "block":
+    if action == "block" or reject_action(action):
         singbox_rule["action"] = "reject"
     else:
         singbox_rule["action"] = "route"
@@ -76,18 +84,19 @@ def _app_policy_rule_to_singbox_rule(
 def _app_policy_rules(
     policy: AppPolicy | None,
     resolve_outbound: Callable[[str], str],
+    reject_action: Callable[[str], bool],
 ) -> list[dict[str, Any]]:
     if policy is None or not policy.enabled:
         return []
     rules = [
         singbox_rule
         for rule in policy.rules
-        if (singbox_rule := _app_policy_rule_to_singbox_rule(rule, resolve_outbound))
+        if (singbox_rule := _app_policy_rule_to_singbox_rule(rule, resolve_outbound, reject_action))
         is not None
     ]
     default_action = _app_policy_action(policy.default_action)
     if policy.mode == AppPolicyMode.WHITELIST or default_action != "current_profile":
-        rules.append(_final_rule(default_action, resolve_outbound))
+        rules.append(_final_rule(default_action, resolve_outbound, reject_action))
     return rules
 
 
@@ -98,6 +107,7 @@ def build_singbox_route_rules(
     app_policy: AppPolicy | None = None,
     final_policy: str = "current_profile",
     rule_set_tags: dict[str, str] | None = None,
+    chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
 ) -> list[dict[str, Any]]:
     """Translate rule groups into sing-box route.rules, in priority order.
 
@@ -119,7 +129,17 @@ def build_singbox_route_rules(
     sing-box `"action": "reject"` rule instead of an outbound reference.
     """
 
+    chain_runtime_plans = chain_runtime_plans or {}
+
+    def reject_action(action: str) -> bool:
+        if chain_target(action) is None:
+            return False
+        plan = chain_runtime_plans.get(action)
+        return plan is None or not plan.resolved or plan.route_outbound_tag is None
+
     def resolve_outbound(action: str) -> str:
+        if chain_target(action) is not None:
+            return str(chain_runtime_plans[action].route_outbound_tag)
         if action == "direct":
             return "direct"
         return current_outbound_tag
@@ -128,7 +148,7 @@ def build_singbox_route_rules(
     tiers = group_by_tier(groups)
     for tier in PRIORITY_TIER_ORDER:
         if tier == "app":
-            rules.extend(_app_policy_rules(app_policy, resolve_outbound))
+            rules.extend(_app_policy_rules(app_policy, resolve_outbound, reject_action))
         for group in tiers[tier]:
             if not group.enabled:
                 continue
@@ -136,9 +156,10 @@ def build_singbox_route_rules(
                 singbox_rule = _rule_to_singbox_rule(
                     rule,
                     resolve_outbound,
+                    reject_action,
                     rule_set_tags=rule_set_tags,
                 )
                 if singbox_rule is not None:
                     rules.append(singbox_rule)
-    rules.append(_final_rule(final_policy, resolve_outbound))
+    rules.append(_final_rule(final_policy, resolve_outbound, reject_action))
     return rules

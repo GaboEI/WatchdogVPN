@@ -11,6 +11,7 @@ from config.persistence import (
     strict_int,
 )
 from node_groups.models import group_target
+from route_chains.models import chain_target
 
 
 APP_POLICY_SCHEMA_VERSION = 1
@@ -70,12 +71,14 @@ def _validate_action(value: Any, field_name: str) -> AppPolicyAction | str:
     # how rules.models.Rule.action already stores group:<name> as a string.
     if group_target(action) is not None:
         return action
+    if chain_target(action) is not None:
+        return action
     try:
         return AppPolicyAction(action)
     except ValueError as exc:
         supported = ", ".join(item.value for item in AppPolicyAction)
         raise PersistentValidationError(
-            f"{field_name} must be one of: {supported}, or 'group:<name>'"
+            f"{field_name} must be one of: {supported}, 'group:<name>', or 'chain:<id>'"
         ) from exc
 
 

@@ -36,6 +36,8 @@ from models.profile import Profile, ProfileSource, ProtocolType
 from models.provider import Provider
 from node_groups.models import NodeGroup
 from node_groups.store import NodeGroupStore
+from route_chains.models import ChainHop, RouteChain, RouteChainDocument
+from route_chains.store import RouteChainStore
 from rules.models import Rule, RuleGroup
 from rules.rule_store import RuleStore
 
@@ -74,6 +76,11 @@ class BackupManagerTests(unittest.TestCase):
                 self.assertEqual(profiles["items"][0]["id"], "profile-one")
                 selection = json.loads(archive.read("selection-state.json"))
                 self.assertEqual(selection["state"]["active_profile_id"], "profile-one")
+                route_chains = json.loads(archive.read("route-chains.json"))
+                self.assertEqual(
+                    route_chains["document"]["chains"][0]["id"],
+                    "work-safe",
+                )
 
     def test_inspect_backup_rejects_path_traversal_duplicate_and_schema_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -546,7 +553,7 @@ class BackupManagerTests(unittest.TestCase):
             )
             backup = BackupManager(config_dir=source).create_backup(
                 Path(tmp) / "merge.zip",
-                sections=["routing-rules", "app-policy", "node-groups"],
+                sections=["routing-rules", "app-policy", "node-groups", "route-chains"],
             ).path
 
             with patch(
@@ -555,7 +562,7 @@ class BackupManagerTests(unittest.TestCase):
             ):
                 BackupManager(config_dir=target).restore_backup(
                     backup,
-                    sections=["routing-rules", "app-policy", "node-groups"],
+                    sections=["routing-rules", "app-policy", "node-groups", "route-chains"],
                     mode="merge",
                 )
 
@@ -567,6 +574,11 @@ class BackupManagerTests(unittest.TestCase):
             )
             self.assertIn("primary", node_group_names)
             self.assertIn("imported-primary-20260707120000", node_group_names)
+            chain_names = sorted(
+                chain.id for chain in RouteChainStore(target / "chains.json").list()
+            )
+            self.assertIn("work-safe", chain_names)
+            self.assertIn("imported-work-safe-20260707120000", chain_names)
             policy = AppPolicyStore(target / "app-policy.json").load()
             self.assertFalse(policy.enabled)
             self.assertEqual(policy.mode.value, "blacklist")
@@ -591,6 +603,35 @@ class BackupManagerTests(unittest.TestCase):
                     sections=["settings"],
                     mode="merge",
                 )
+
+    def test_route_chains_restore_rejects_invalid_document_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            clean = BackupManager(config_dir=root).create_backup(
+                root / "route-chains.zip",
+                sections=["route-chains"],
+            ).path
+            broken = root / "broken-route-chains.zip"
+            original = (root / "chains.json").read_text(encoding="utf-8")
+
+            with ZipFile(clean) as source, ZipFile(broken, "w", compression=ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename == "route-chains.json":
+                        payload = json.loads(data)
+                        payload["document"]["chains"][0]["hops"][0]["type"] = "chain"
+                        data = json.dumps(payload).encode()
+                    target.writestr(item.filename, data)
+
+            with self.assertRaisesRegex(BackupValidationError, "route_chain.hop.type"):
+                BackupManager(config_dir=root).restore_backup(
+                    broken,
+                    sections=["route-chains"],
+                    replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+                )
+
+            self.assertEqual((root / "chains.json").read_text(encoding="utf-8"), original)
 
     def test_selection_state_restore_rejects_missing_active_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -851,6 +892,25 @@ class BackupManagerTests(unittest.TestCase):
         AppPolicyStore(root / "app-policy.json").save(AppPolicy())
         NodeGroupStore(root / "node_groups.json").add(
             NodeGroup(name="primary", member_profile_ids=["profile-one"])
+        )
+        RouteChainStore(root / "chains.json").save(
+            RouteChainDocument(
+                chains=[
+                    RouteChain(
+                        id="work-safe",
+                        enabled=False,
+                        description="Local chain label",
+                        hops=[
+                            ChainHop(type="profile", target="profile-one"),
+                            ChainHop(
+                                type="group",
+                                target="primary",
+                                selection_policy="group_policy",
+                            ),
+                        ],
+                    )
+                ]
+            )
         )
         StateManager(root / "state.toml").save(
             {

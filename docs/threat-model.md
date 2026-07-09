@@ -38,6 +38,7 @@ hardening.
 | DNS profile breaks resolution | User may lose name resolution | DNS v2 `apply`/`reset` snapshot the prior resolver state and restore it on request; `vpn_dns_rescue` remains available as a manual fallback |
 | Observability becomes browsing history | Local metrics or support exports may reveal destinations, process activity or provider choices | Phase 16 defaults to aggregate local counters; raw destination/process history is not silently enabled and must be opt-in, retention-bounded, purgeable and excluded from normal diagnostics exports |
 | Network context becomes location history | SSID, BSSID, interface names, gateway details or route changes may reveal home/work/travel context | Phase 21 classifies network facts before implementation: raw SSID/BSSID/interface identifiers are sensitive local context, default persistence is rejected, and normal support exports must redact local network identifiers |
+| Chain routing silently uses a weaker path | A multi-hop route may collapse to current, direct or a shorter path while the operator believes all hops are active | Phase 21.5 defines `chain:<id>` as a first-class route action only after validation/runtime mapping; v2.0 chains use explicit profile/group hops, reject nested chains, own DNS by default and fail closed when unresolved |
 | Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | LAN sharing remains disabled by default. Local SOCKS/HTTP and DNS hijack inbounds stay loopback-only unless the operator explicitly enables authenticated LAN proxy mode or bounded gateway mode. Gateway mode is IPv4/manual/VM-validated, requires TUN capture, owns reversible firewall/NAT state and must clean up forwarding/firewall state on teardown. |
 | Uninstall breaks DNS | Host may remain offline after removal | `vpn_dns_rescue` restores fallback DNS behavior |
 | Repeated timer executions overlap | Race conditions and route churn | rotation uses `flock`; timers are one-shot services |
@@ -72,6 +73,9 @@ hardening.
 - Network-aware automation must not silently store raw location-identifying
   network context or perform automatic connect/disconnect actions without an
   explicit opt-in or confirmation path.
+- Chain route actions must not silently collapse to current, direct, group,
+  auto-select or a shorter chain when a hop, DNS path, health state or runtime
+  mapping is unavailable.
 
 ### Future Hardening
 

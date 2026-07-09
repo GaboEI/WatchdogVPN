@@ -6,6 +6,7 @@ from typing import Any
 
 from config.persistence import reject_unknown_keys, strict_bool, strict_int
 from node_groups.models import group_target
+from route_chains.models import chain_target
 
 
 RULE_FIELDS = {"id", "action", "conditions", "enabled"}
@@ -47,6 +48,8 @@ def _validate_rule_action(action: Any) -> str:
     if action in SIMPLE_RULE_ACTIONS:
         return action
     if group_target(action) is not None:
+        return action
+    if chain_target(action) is not None:
         return action
     raise ValueError(f"unsupported rule action: {action!r}")
 

@@ -41,6 +41,9 @@ contract.
 
 ## Future Chain Contract
 
+Phase 21.5 Task 21.5.1 and ADR 0008 define the accepted chain route-action
+contract.
+
 Before chain actions can be accepted, the dedicated v2 chain phase must define:
 
 - persistent chain syntax and migration rules;

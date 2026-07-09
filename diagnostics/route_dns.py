@@ -5,6 +5,7 @@ from typing import Any
 
 from app_policy.models import AppPolicy
 from dns.models import DNSChannelName, DNSMode, DNSPolicy, DNSRuleAction
+from diagnostics.chain_routes import ChainRouteDiagnostic
 from diagnostics.routing import (
     RouteDiagnostic,
     app_policy_has_unevaluated_matchers,
@@ -12,6 +13,7 @@ from diagnostics.routing import (
     matching_app_policy_action,
 )
 from node_groups.models import group_target
+from route_chains.models import chain_target
 from rules.explanation import RuleExplanationConfidence
 from rules.models import RuleGroup
 from rules.rule_engine import TrafficInfo
@@ -37,6 +39,7 @@ class RouteDNSDiagnostic:
     dns_path: str
     dns_reason: str
     route_diagnostic: RouteDiagnostic
+    chain_diagnostic: ChainRouteDiagnostic | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +63,11 @@ class RouteDNSDiagnostic:
                 "reason": self.dns_reason,
             },
             "route_diagnostic": self.route_diagnostic.to_dict(),
+            "chain": (
+                self.chain_diagnostic.to_dict()
+                if self.chain_diagnostic is not None
+                else None
+            ),
             "rule_explanation": (
                 self.route_diagnostic.rule_explanation.to_dict()
                 if self.route_diagnostic.rule_explanation
@@ -76,6 +84,7 @@ def diagnose_route_dns(
     app_policy: AppPolicy | None = None,
     routing_state: dict[str, Any] | None = None,
     trust_registry: RuleSetTrustRegistry | None = None,
+    chain_diagnostic: ChainRouteDiagnostic | None = None,
 ) -> RouteDNSDiagnostic:
     route_diagnostic = diagnose_route(
         traffic=traffic,
@@ -83,6 +92,7 @@ def diagnose_route_dns(
         routing_state=routing_state,
         trust_registry=trust_registry,
         app_policy=app_policy,
+        chain_diagnostic=chain_diagnostic,
     )
     route_action = route_diagnostic.route_action
     route_source = route_diagnostic.route_source
@@ -109,6 +119,7 @@ def diagnose_route_dns(
             dns_path="unknown",
             dns_reason="dns diagnostics require a domain input",
             route_diagnostic=route_diagnostic,
+            chain_diagnostic=chain_diagnostic,
         )
 
     if confidence == RuleExplanationConfidence.RUNTIME_REQUIRED:
@@ -121,6 +132,7 @@ def diagnose_route_dns(
             dns_path="unknown",
             dns_reason="routing depends on runtime-evaluated rule sets",
             route_diagnostic=route_diagnostic,
+            chain_diagnostic=chain_diagnostic,
         )
 
     dns_channel, dns_reason = _dns_channel_for_traffic(
@@ -141,6 +153,7 @@ def diagnose_route_dns(
         dns_path=dns_path,
         dns_reason=dns_reason,
         route_diagnostic=route_diagnostic,
+        chain_diagnostic=chain_diagnostic,
     )
 
 
@@ -164,6 +177,8 @@ def _dns_channel_for_traffic(
 
     if route_action and group_target(route_action) is not None:
         return DNSChannelName.PROXY, "group action follows the current selected profile"
+    if route_action and chain_target(route_action) is not None:
+        return DNSChannelName.PROXY, "chain action requires chain-owned proxy DNS path"
     channel_name = DNS_ROUTE_BY_ACTION.get(str(route_action or "current_profile"))
     if channel_name == "direct":
         return DNSChannelName.DIRECT, "route action uses direct DNS"

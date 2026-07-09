@@ -16,7 +16,7 @@ from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager
-from dns.models import DNSMode, DNSPolicy
+from dns.models import DNSChannel, DNSChannelName, DNSMode, DNSPolicy, Resolver
 from dns.state_manager import SystemDNSStateManager
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
@@ -27,6 +27,8 @@ from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 from rotation import pool_builder
 from rotation.health_checker import HealthCheckResult
+from route_chains.models import ChainHop, RouteChain, RouteChainDocument
+from route_chains.store import RouteChainStore
 from rules.models import Rule, RuleGroup
 from rules.rule_store import RuleStore
 from rules.ruleset_lifecycle import RuleSetLifecycleManager
@@ -47,6 +49,7 @@ class FakeDriver(BaseDriver):
         self.last_final_policy: str | None = None
         self.last_rule_set_tags = "unset"
         self.last_rule_set_declarations = "unset"
+        self.last_chain_runtime_plans = "unset"
         self.last_lan_proxy = "unset"
         self.last_lan_gateway = "unset"
 
@@ -61,6 +64,7 @@ class FakeDriver(BaseDriver):
         final_policy: str = "current_profile",
         rule_set_tags=None,
         rule_set_declarations=None,
+        chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
     ) -> bool:
@@ -71,6 +75,7 @@ class FakeDriver(BaseDriver):
         self.last_final_policy = final_policy
         self.last_rule_set_tags = rule_set_tags
         self.last_rule_set_declarations = rule_set_declarations
+        self.last_chain_runtime_plans = chain_runtime_plans
         self.last_lan_proxy = lan_proxy
         self.last_lan_gateway = lan_gateway
         return bool(self.connect_mock(profile))
@@ -113,6 +118,7 @@ class EventDriver(FakeDriver):
         final_policy: str = "current_profile",
         rule_set_tags=None,
         rule_set_declarations=None,
+        chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
     ) -> bool:
@@ -126,6 +132,7 @@ class EventDriver(FakeDriver):
             final_policy=final_policy,
             rule_set_tags=rule_set_tags,
             rule_set_declarations=rule_set_declarations,
+            chain_runtime_plans=chain_runtime_plans,
             lan_proxy=lan_proxy,
             lan_gateway=lan_gateway,
         )
@@ -649,6 +656,62 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(driver.last_mode, "rules")
         self.assertEqual(driver.last_app_policy, policy)
+
+    def test_connect_resolves_chain_runtime_plan_for_rule_action(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("active_mode", "rules")
+        self.profile_store.add(self.profile)
+        dns_policy_store = DNSPolicyStore(Path(self.tmpdir.name) / "dns-policy.json")
+        dns_policy_store.save(
+            DNSPolicy(
+                channels={
+                    DNSChannelName.PROXY: DNSChannel(
+                        name=DNSChannelName.PROXY,
+                        resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                    )
+                }
+            )
+        )
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        rule_store.add_group(
+            RuleGroup(
+                name="custom",
+                rules=[
+                    Rule(
+                        id="chain",
+                        action="chain:work-safe",
+                        conditions={"domain": ["example.com"]},
+                    )
+                ],
+            )
+        )
+        route_chain_store = RouteChainStore(Path(self.tmpdir.name) / "chains.json")
+        route_chain_store.save(
+            RouteChainDocument(
+                chains=[
+                    RouteChain(
+                        id="work-safe",
+                        enabled=True,
+                        hops=[ChainHop(type="profile", target=self.profile.id)],
+                    )
+                ]
+            )
+        )
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            dns_policy_store=dns_policy_store,
+            rule_store=rule_store,
+            route_chain_store=route_chain_store,
+        )
+
+        runtime.connect(self.profile)
+
+        plan = driver.last_chain_runtime_plans["chain:work-safe"]
+        self.assertTrue(plan.resolved)
+        self.assertEqual(plan.route_outbound_tag, "watchdogvpn-chain-work-safe-hop-1")
 
     def test_connect_fails_closed_when_app_policy_is_invalid(self) -> None:
         self.set_desired_state("off")
