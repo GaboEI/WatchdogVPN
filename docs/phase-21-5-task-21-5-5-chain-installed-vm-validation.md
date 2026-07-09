@@ -1,7 +1,7 @@
 # Phase 21.5 Task 21.5.5 - Chain Installed VM Validation
 
 Date: 2026-07-09
-Status: prepared for installed VM execution
+Status: closed
 
 ## Scope
 
@@ -108,6 +108,48 @@ Evidence is written to:
 /tmp/watchdogvpn-phase21-5-chain-evidence/phase21_5_chain_installed_validation.json
 /tmp/watchdogvpn-phase21-5-chain-evidence/watchdogvpn-daemon-tail.log
 ```
+
+## Installed VM Result
+
+The maintainer-run installed VM validation passed on 2026-07-09 at commit:
+
+```text
+84d8d6c1ab9c27b2cd75eacf13f1ac5afd58ae0e
+```
+
+Installed/source status:
+
+- branch `phase-21-5-proxy-route-chain-runtime`;
+- installed runtime matched source checkout at `84d8d6c1ab9c27b2cd75eacf13f1ac5afd58ae0e`;
+- `doctor` completed with `FAIL=0`;
+- expected warnings remained: VPN truth state was `DOWN` while the external VPN
+  was lowered, NTP was unsynchronized, and optional AmneziaWG tooling was not
+  installed.
+
+Validation markers:
+
+```text
+PHASE21_5_SINGBOX_CHECK_OK
+PHASE21_5_GLOBAL_CHAIN_DNS_DETOUR_OK
+PHASE21_5_FAIL_CLOSED_CONFIG_OK
+PHASE21_5_SINGBOX_RUNTIME_STARTED_OK
+PHASE21_5_CHAIN_TRAFFIC_PROOF_OK
+PHASE21_5_CHAIN_TEARDOWN_OK
+PHASE21_5_CHAIN_INSTALLED_VM_VALIDATION_OK
+PHASE21_5_NO_ROUTE_RULE_DNS_FIREWALL_DRIFT_OK
+PHASE21_5_NO_STALE_PROXY_LISTENERS_OK
+PHASE21_5_CHAIN_INSTALLED_VALIDATION_SCRIPT_OK
+```
+
+Observed system state:
+
+- pre/post policy rules stayed at local/main/default only;
+- pre/post IPv4 route table stayed unchanged;
+- resolver checksum did not drift;
+- counter-normalized nftables ruleset did not drift;
+- local sing-box proxy listeners were removed after teardown;
+- evidence was written to
+  `/tmp/watchdogvpn-phase21-5-chain-evidence/phase21_5_chain_installed_validation.json`.
 
 ## Limits
 
