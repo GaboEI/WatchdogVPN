@@ -109,7 +109,23 @@ class CliUninstallCommandTests(unittest.TestCase):
             )
 
             self.assertIn("Mode: keep-data", result.stdout)
-            self.assertEqual(json.loads(log.read_text(encoding="utf-8")), ["--dry-run", "--yes"])
+            self.assertFalse(log.exists())
+
+    def test_real_uninstall_requires_yes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            script, log = self.make_script(tmp)
+
+            result = self.run_watchdog(
+                ["uninstall", "--keep-data"],
+                tmp,
+                script,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("requires --yes", result.stderr)
+            self.assertFalse(log.exists())
 
     def test_json_output_remains_single_valid_document(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
@@ -124,8 +140,9 @@ class CliUninstallCommandTests(unittest.TestCase):
 
             data = json.loads(result.stdout)
             self.assertEqual(data["mode"], "keep-data")
-            self.assertEqual(data["uninstall_exit_code"], 0)
-            self.assertIn("--dry-run", data["uninstall_stdout"])
+            self.assertIsNone(data["uninstall_exit_code"])
+            self.assertEqual(data["uninstall_stdout"], "")
+            self.assertIn("product_managed_files", data["contract"])
 
     def test_backup_first_exports_backup_before_uninstall(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:

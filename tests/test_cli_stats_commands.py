@@ -101,6 +101,17 @@ class CliStatsCommandTests(unittest.TestCase):
             self.assertIn("Metrics purged.", accepted.stdout)
             self.assertFalse((Path(tmp) / "metrics.json").exists())
 
+    def test_stats_purge_json_reports_no_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.seed_metrics(tmp)
+
+            result = self.run_watchdog(["stats", "purge", "--yes", "--json"], tmp)
+
+        data = json.loads(result.stdout)
+        self.assertTrue(data["purged"])
+        self.assertFalse(data["history_included"])
+        self.assertFalse(data["detailed_history_supported"])
+
     def test_stats_privacy_mode_detailed_does_not_enable_history_support(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["stats", "privacy-mode", "detailed"], tmp)
@@ -111,6 +122,15 @@ class CliStatsCommandTests(unittest.TestCase):
             self.assertTrue(data["enabled"])
             self.assertEqual(data["redaction_mode"], "detailed")
             self.assertFalse(data["detailed_history_supported"])
+
+    def test_stats_privacy_mode_json_detailed_does_not_claim_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["stats", "privacy-mode", "detailed", "--json"], tmp)
+
+        data = json.loads(result.stdout)
+        self.assertEqual(data["redaction_mode"], "detailed")
+        self.assertFalse(data["history_included"])
+        self.assertFalse(data["detailed_history_supported"])
 
     def test_stats_privacy_mode_off_disables_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

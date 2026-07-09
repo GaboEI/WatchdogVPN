@@ -75,12 +75,18 @@ watchdog disconnect [--json]
 watchdog status [--json]
 watchdog rotate [--force] [--json]
 watchdog uninstall --keep-data --yes
+watchdog uninstall --keep-data --dry-run [--json]
 watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
 watchdog uninstall --delete-all-data --confirm-delete DELETE --backup-output ~/watchdogvpn-pre-delete.zip --yes
 watchdog stats status [--json]
 watchdog stats summary [--json]
-watchdog stats purge --yes
-watchdog stats privacy-mode <off|aggregate|detailed>
+watchdog stats purge --yes [--json]
+watchdog stats privacy-mode <off|aggregate|detailed> [--json]
+watchdog backup create [--output PATH] [--section SECTION] [--json]
+watchdog backup export [--output PATH] [--section SECTION] [--json]
+watchdog backup inspect PATH [--json]
+watchdog backup restore PATH [--dry-run] [--section SECTION] [--mode replace|merge] [--json]
+watchdog backup import PATH [--dry-run] [--section SECTION] [--mode replace|merge] [--json]
 watchdog rules list [--json]
 watchdog rules explain [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
 watchdog rules enable <group> [--json]
@@ -302,6 +308,7 @@ checkout path if launching from another directory.
 
 ```sh
 watchdog uninstall --keep-data --yes
+watchdog uninstall --keep-data --dry-run --json
 watchdog uninstall --backup-first --backup-output ~/watchdogvpn-backup.zip --yes
 watchdog uninstall --delete-all-data --confirm-delete DELETE --backup-output ~/watchdogvpn-pre-delete.zip --yes
 ```
@@ -322,6 +329,64 @@ from the named environment variable and is not written to the backup manifest.
 
 Backup output paths inside WatchdogVPN-owned paths are rejected so a pre-delete
 backup is not deleted by the same uninstall operation.
+
+`--dry-run` is plan-only in the Python CLI wrapper: it does not invoke
+`uninstall.sh`, create backups or remove files. Real uninstall execution
+requires `--yes`. JSON output includes the selected mode, dry-run state,
+backup path, encryption state, argv-form command, product-managed files,
+preserved user state, logs, backups and systemd unit contract.
+
+## Backup Archives
+
+### `watchdog backup create` / `watchdog backup export`
+
+Creates a normal WatchdogVPN backup archive through `BackupManager`.
+
+```sh
+watchdog backup create --output ~/watchdogvpn-backup.zip
+watchdog backup create --section profiles --section providers --json
+watchdog backup export --output ~/watchdogvpn-backup.zip --encrypt --password-env WATCHDOGVPN_BACKUP_PASSWORD
+```
+
+Section names are validated by the backup manager. By default, diagnostics are
+not included. Normal backups are sensitive archives and may contain private
+keys, provider tokens, subscription URLs, routing policy, app policy, route
+chains and local selection state. Backup JSON reports `normal_backup=true`,
+`support_export=false` and `redacted_export=false` so automation does not
+confuse full backups with redacted support exports.
+
+Encrypted backups read the password from `--password-env`; passwords are not
+accepted in command arguments or written to the manifest.
+
+### `watchdog backup inspect`
+
+Validates a backup archive manifest and section schema without printing section
+payloads.
+
+```sh
+watchdog backup inspect ~/watchdogvpn-backup.zip --json
+```
+
+JSON output includes path, schema version, format, creation time, reason,
+section names, encryption state and sensitive-data warning. It does not print
+profile configs, provider metadata, subscription URLs, endpoint tokens, private
+keys or raw backup section payloads.
+
+### `watchdog backup restore` / `watchdog backup import`
+
+Validates and restores a backup archive through `BackupManager`.
+
+```sh
+watchdog backup restore ~/watchdogvpn-backup.zip --dry-run --json
+watchdog backup restore ~/watchdogvpn-backup.zip --confirm RESTORE-WATCHDOGVPN-BACKUP
+watchdog backup import ~/watchdogvpn-backup.zip --mode merge --section routing-rules
+```
+
+Dry-run restore validates the archive, selected sections and merge-section
+compatibility without writing local state or creating a pre-restore backup.
+Real replace restore requires the literal confirmation
+`RESTORE-WATCHDOGVPN-BACKUP`; real restore creates a pre-restore backup and
+returns `pre_restore_backup` in JSON.
 
 ## Runtime Commands
 
@@ -377,6 +442,32 @@ VPN
 
 ## Observability Stats
 
+## DNS Policy And State
+
+The Python DNS commands expose DNS policy status, resolver testing,
+configured-policy diagnostics and bounded apply/reset operations.
+
+```sh
+watchdog dns status [--json]
+watchdog dns test [--json]
+watchdog dns diagnose [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
+watchdog dns apply --dry-run [--json]
+watchdog dns apply --yes [--json]
+watchdog dns reset --yes [--json]
+```
+
+`dns status`, `dns test` and `dns diagnose` are read-only. `dns apply --dry-run`
+returns the apply plan without creating a DNS snapshot or mutating resolver
+state. Real apply requires `--yes`, refuses non-standard system resolver ports,
+saves or reuses rollback snapshot metadata and returns `rollback_snapshot` plus
+`snapshot_saved` in JSON. `dns reset` requires `--yes`, restores from the saved
+snapshot, removes the snapshot file after successful restore and returns
+`rollback_snapshot.restored=true` in JSON.
+
+Normal tests and local CLI validation must use mocked managers or isolated
+temporary resolver files. Do not run DNS apply/reset against the workstation's
+real resolver paths unless an explicit VM/lab validation task calls for it.
+
 ### `watchdog stats status`
 
 Shows local observability metrics state.
@@ -411,9 +502,13 @@ Purges the local metrics store.
 
 ```sh
 watchdog stats purge --yes
+watchdog stats purge --yes --json
 ```
 
 The command refuses to run without `--yes`.
+
+JSON output reports whether a file was purged, does not include metric buckets
+or raw counters, and keeps `history_included=false`.
 
 ### `watchdog stats privacy-mode`
 
@@ -423,11 +518,15 @@ Sets the local metrics privacy mode.
 watchdog stats privacy-mode off
 watchdog stats privacy-mode aggregate
 watchdog stats privacy-mode detailed
+watchdog stats privacy-mode detailed --json
 ```
 
 `off` disables metrics recording. `aggregate` enables aggregate counters.
 `detailed` stores the policy mode value but does not enable request history,
 because detailed history is not implemented in Phase 16.
+
+JSON output keeps `detailed_history_supported=false` and
+`history_included=false` even when the selected mode is `detailed`.
 
 ## Rule Diagnostics
 

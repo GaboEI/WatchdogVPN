@@ -17,7 +17,13 @@ from app_policy.store import AppPolicyStore
 from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
 from config.app_config import AppConfig
-from config.backup_manager import BackupManager
+from config.backup_manager import (
+    BACKUP_SENSITIVE_WARNING,
+    BackupManager,
+    MERGE_SECTION_NAMES,
+    RESTORE_REPLACE_CONFIRMATION,
+    SUPPORTED_SECTION_NAMES,
+)
 from config.dns_policy_store import DNSPolicyStore
 from config.lan_sharing import (
     lan_sharing_credentials_path,
@@ -229,6 +235,31 @@ def _build_parser() -> argparse.ArgumentParser:
     uninstall_parser.add_argument("--uninstall-script", help=argparse.SUPPRESS)
     uninstall_parser.add_argument("--json", action="store_true", help="Print JSON")
     uninstall_parser.set_defaults(handler=_uninstall)
+
+    backup_parser = subparsers.add_parser("backup", help="Create, inspect and restore backups")
+    backup_subparsers = backup_parser.add_subparsers(dest="backup_command")
+
+    backup_create_parser = backup_subparsers.add_parser("create", help="Create a backup archive")
+    _add_backup_create_args(backup_create_parser)
+    backup_create_parser.set_defaults(handler=_backup_create)
+
+    backup_export_parser = backup_subparsers.add_parser("export", help="Alias for backup create")
+    _add_backup_create_args(backup_export_parser)
+    backup_export_parser.set_defaults(handler=_backup_create)
+
+    backup_inspect_parser = backup_subparsers.add_parser("inspect", help="Inspect and validate a backup archive")
+    backup_inspect_parser.add_argument("file")
+    backup_inspect_parser.add_argument("--password-env", help="Environment variable containing the encrypted-backup password")
+    backup_inspect_parser.add_argument("--json", action="store_true", help="Print JSON")
+    backup_inspect_parser.set_defaults(handler=_backup_inspect)
+
+    backup_restore_parser = backup_subparsers.add_parser("restore", help="Restore a backup archive")
+    _add_backup_restore_args(backup_restore_parser)
+    backup_restore_parser.set_defaults(handler=_backup_restore)
+
+    backup_import_parser = backup_subparsers.add_parser("import", help="Alias for backup restore")
+    _add_backup_restore_args(backup_import_parser)
+    backup_import_parser.set_defaults(handler=_backup_restore)
 
     profile_parser = subparsers.add_parser("profile", help="Manage local profiles")
     profile_subparsers = profile_parser.add_subparsers(dest="profile_command")
@@ -464,6 +495,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     stats_purge_parser = stats_subparsers.add_parser("purge", help="Purge local observability metrics")
     stats_purge_parser.add_argument("--yes", action="store_true", help="Confirm metrics purge")
+    stats_purge_parser.add_argument("--json", action="store_true", help="Print JSON")
     stats_purge_parser.set_defaults(handler=_stats_purge)
 
     stats_privacy_parser = stats_subparsers.add_parser("privacy-mode", help="Set metrics privacy mode")
@@ -472,6 +504,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=[item.value for item in MetricsRedactionMode],
         help="Metrics privacy mode",
     )
+    stats_privacy_parser.add_argument("--json", action="store_true", help="Print JSON")
     stats_privacy_parser.set_defaults(handler=_stats_privacy_mode)
 
     rules_parser = subparsers.add_parser("rules", help="Inspect configured routing rules")
@@ -704,6 +737,8 @@ def _connection_rotate(args: argparse.Namespace) -> int:
 
 def _uninstall(args: argparse.Namespace) -> int:
     mode = _uninstall_mode(args)
+    if not args.dry_run and not args.yes:
+        raise ParseError("uninstall requires --yes unless --dry-run is used")
     if mode == "delete-all-data" and args.confirm_delete != "DELETE" and not args.dry_run:
         raise ParseError("uninstall --delete-all-data requires --confirm-delete DELETE")
     if mode in {"backup-first", "delete-all-data"} and args.encrypt_backup and not args.backup_password_env:
@@ -731,7 +766,17 @@ def _uninstall(args: argparse.Namespace) -> int:
         "backup_path": str(backup_path) if backup_path is not None else None,
         "encrypted_backup": bool(args.encrypt_backup),
         "command": command,
+        "contract": _uninstall_contract(mode),
     }
+    if args.dry_run:
+        data["uninstall_exit_code"] = None
+        data["uninstall_stdout"] = ""
+        data["uninstall_stderr"] = ""
+        if args.json:
+            _print_json(data)
+            return 0
+        _print_uninstall_plan(data)
+        return 0
     if args.json:
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
         data["uninstall_exit_code"] = int(completed.returncode)
@@ -850,8 +895,191 @@ def _print_uninstall_plan(data: dict[str, object]) -> None:
     print(f"Dry run: {_on_off(bool(data['dry_run']))}")
     print(f"Backup: {data['backup_path'] or '-'}")
     print(f"Encrypted backup: {_on_off(bool(data['encrypted_backup']))}")
+    contract = data.get("contract", {})
+    if isinstance(contract, dict):
+        print("Product-managed files: " + ", ".join(contract.get("product_managed_files", [])))
+        print("Preserved user state: " + ", ".join(contract.get("preserved_user_state", [])))
+        print("Logs: " + str(contract.get("logs", "-")))
+        print("Systemd units: " + ", ".join(contract.get("systemd_units", [])))
     print("Command:")
     print("  " + " ".join(str(part) for part in data["command"]))
+
+
+def _uninstall_contract(mode: str) -> dict[str, object]:
+    preserved = ["/etc/watchdogvpn", "/var/lib/watchdogvpn", "/var/log/myvpn"]
+    if mode == "delete-all-data":
+        preserved = []
+    return {
+        "product_managed_files": [
+            "/usr/local/bin/watchdog",
+            "/usr/local/bin/watchdogvpn-daemon",
+            "/usr/local/bin/watchdog_panic",
+            "WatchdogVPN systemd units",
+        ],
+        "preserved_user_state": preserved,
+        "logs": "preserved" if mode != "delete-all-data" else "removed after pre-delete backup",
+        "backups": "never removed by the CLI; pre-delete backup must be outside WatchdogVPN-owned paths",
+        "systemd_units": [
+            "watchdogvpn.service",
+            "watchdogvpn-scheduled-rotation.service",
+            "watchdogvpn-scheduled-rotation.timer",
+            "vpn-domain-bypass.service",
+            "vpn-domain-bypass.timer",
+        ],
+        "requires_explicit_consent": True,
+    }
+
+
+def _add_backup_create_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--output", help="Backup output path; defaults to config backups directory")
+    parser.add_argument(
+        "--section",
+        action="append",
+        choices=SUPPORTED_SECTION_NAMES,
+        help="Backup section to include; repeat for multiple sections",
+    )
+    parser.add_argument("--encrypt", action="store_true", help="Encrypt backup using --password-env")
+    parser.add_argument("--password-env", help="Environment variable containing the encrypted-backup password")
+    parser.add_argument("--json", action="store_true", help="Print JSON")
+
+
+def _add_backup_restore_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("file")
+    parser.add_argument(
+        "--section",
+        action="append",
+        choices=SUPPORTED_SECTION_NAMES,
+        help="Restore section; repeat for multiple sections",
+    )
+    parser.add_argument("--mode", choices=["replace", "merge"], default="replace", help="Restore mode")
+    parser.add_argument("--confirm", help=f"Required literal {RESTORE_REPLACE_CONFIRMATION} for replace restore")
+    parser.add_argument("--password-env", help="Environment variable containing the encrypted-backup password")
+    parser.add_argument("--dry-run", action="store_true", help="Validate restore without writing local state")
+    parser.add_argument("--json", action="store_true", help="Print JSON")
+
+
+def _backup_create(args: argparse.Namespace) -> int:
+    if args.encrypt and not args.password_env:
+        raise ParseError("encrypted backup requires --password-env")
+    output_path = Path(args.output).expanduser() if args.output else None
+    password = _backup_password(args.password_env) if args.encrypt else None
+    result = BackupManager().create_backup(
+        output_path,
+        sections=args.section,
+        encrypt=bool(args.encrypt),
+        password=password,
+    )
+    data = _backup_manifest_summary(result.path, result.manifest, encrypted=bool(args.encrypt))
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Backup created: {result.path}")
+        print(f"Sections: {', '.join(data['sections'])}")
+        print(f"Encrypted: {_on_off(bool(data['encrypted']))}")
+        print(f"Sensitive: {_on_off(bool(data['sensitive']))}")
+        print(str(data["sensitive_warning"]))
+    return 0
+
+
+def _backup_inspect(args: argparse.Namespace) -> int:
+    password = _backup_password(args.password_env) if args.password_env else None
+    parsed = BackupManager().inspect_backup(Path(args.file).expanduser(), password=password)
+    data = _backup_manifest_summary(
+        Path(args.file).expanduser(),
+        parsed.manifest,
+        encrypted=bool(parsed.encrypted),
+    )
+    data["valid"] = True
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Backup: {data['path']}")
+        print(f"Valid: {_on_off(True)}")
+        print(f"Sections: {', '.join(data['sections'])}")
+        print(f"Encrypted: {_on_off(bool(data['encrypted']))}")
+        print(str(data["sensitive_warning"]))
+    return 0
+
+
+def _backup_restore(args: argparse.Namespace) -> int:
+    backup_path = Path(args.file).expanduser()
+    password = _backup_password(args.password_env) if args.password_env else None
+    manager = BackupManager()
+    parsed = manager.inspect_backup(backup_path, password=password)
+    selected_sections = args.section or list(parsed.manifest["sections"])
+    missing = sorted(set(selected_sections) - set(parsed.manifest["sections"]))
+    if missing:
+        raise ParseError(f"backup does not contain requested sections: {', '.join(missing)}")
+    if args.dry_run:
+        if args.mode == "merge":
+            unsupported = sorted(set(selected_sections) - set(MERGE_SECTION_NAMES))
+            if unsupported:
+                raise ParseError(f"merge restore does not support sections: {', '.join(unsupported)}")
+        data = {
+            **_backup_manifest_summary(backup_path, parsed.manifest, encrypted=bool(parsed.encrypted)),
+            "dry_run": True,
+            "restore_mode": args.mode,
+            "selected_sections": selected_sections,
+            "pre_restore_backup": None,
+            "restore_would_write": False,
+        }
+        if args.json:
+            _print_json(data)
+        else:
+            print(f"Restore dry run: {backup_path}")
+            print(f"Mode: {args.mode}")
+            print(f"Sections: {', '.join(selected_sections)}")
+            print("Restore would write: no")
+        return 0
+    result = manager.restore_backup(
+        backup_path,
+        sections=selected_sections,
+        mode=args.mode,
+        replace_confirmation=args.confirm,
+        password=password,
+    )
+    data = {
+        **_backup_manifest_summary(result.path, result.manifest, encrypted=bool(parsed.encrypted)),
+        "dry_run": False,
+        "restore_mode": args.mode,
+        "selected_sections": selected_sections,
+        "pre_restore_backup": str(result.pre_restore_backup),
+        "restore_would_write": True,
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Backup restored: {result.path}")
+        print(f"Mode: {args.mode}")
+        print(f"Sections: {', '.join(selected_sections)}")
+        print(f"Pre-restore backup: {result.pre_restore_backup}")
+    return 0
+
+
+def _backup_password(env_name: str | None) -> str:
+    if not env_name:
+        raise ParseError("backup password environment variable is required")
+    password = os.environ.get(env_name)
+    if not password:
+        raise ParseError("backup password environment variable is empty")
+    return password
+
+
+def _backup_manifest_summary(path: Path, manifest: dict[str, object], *, encrypted: bool) -> dict[str, object]:
+    return {
+        "path": str(path),
+        "schema_version": manifest.get("schema_version"),
+        "format": manifest.get("format"),
+        "created_at": manifest.get("created_at"),
+        "reason": manifest.get("reason"),
+        "sections": list(manifest.get("sections", [])),
+        "encrypted": encrypted,
+        "sensitive": bool(manifest.get("sensitive", True)),
+        "sensitive_warning": manifest.get("sensitive_warning", BACKUP_SENSITIVE_WARNING),
+        "normal_backup": True,
+        "support_export": False,
+        "redacted_export": False,
+    }
 
 
 def _connection_response_output(
@@ -1739,6 +1967,15 @@ def _stats_purge(args: argparse.Namespace) -> int:
     if not args.yes:
         raise ParseError("stats purge requires --yes")
     purged = MetricsStore().purge()
+    data = {
+        "purged": purged,
+        "metrics_status": "removed" if purged else "absent",
+        "history_included": False,
+        "detailed_history_supported": False,
+    }
+    if args.json:
+        _print_json(data)
+        return 0
     print("Metrics purged." if purged else "Metrics already absent.")
     return 0
 
@@ -1758,6 +1995,11 @@ def _stats_privacy_mode(args: argparse.Namespace) -> int:
         updated_at=current.updated_at,
     )
     store.save(updated)
+    data = _metrics_status_data(store)
+    data["history_included"] = False
+    if args.json:
+        _print_json(data)
+        return 0
     print(f"Metrics privacy mode: {mode.value}")
     print(f"Metrics enabled: {_on_off(enabled)}")
     if mode == MetricsRedactionMode.DETAILED:
@@ -2628,8 +2870,14 @@ def _dns_apply(args: argparse.Namespace) -> int:
             "systemd_link": entrypoint.systemd_link,
         },
         "snapshot_path": str(snapshot_path),
+        "rollback_snapshot": {
+            "path": str(snapshot_path),
+            "status": "present" if snapshot_path.exists() else "missing",
+            "will_create": False,
+        },
         "would_apply": policy.mode != DNSMode.OFF and policy.tun_hijack,
         "rollback_plan": "restore saved DNS state from snapshot",
+        "confirmation_required": True,
     }
     if args.dry_run:
         return _dns_apply_output(args, {**plan, "status": "dry-run"})
@@ -2650,6 +2898,7 @@ def _dns_apply(args: argparse.Namespace) -> int:
         if existing_snapshot is None:
             snapshot_for_apply = manager.save_state(systemd_link=args.systemd_link)
             _save_dns_snapshot(snapshot_path, snapshot_for_apply)
+            plan["rollback_snapshot"]["will_create"] = True
         else:
             snapshot_preexisting = True
     controller = DNSHijackController(manager, entrypoint=entrypoint)
@@ -2663,6 +2912,11 @@ def _dns_apply(args: argparse.Namespace) -> int:
         "status": "applied" if result.applied else "skipped",
         "reason": result.reason,
         "snapshot_saved": snapshot_preexisting or snapshot_for_apply is not None,
+        "rollback_snapshot": {
+            **plan["rollback_snapshot"],
+            "status": "present" if snapshot_preexisting or snapshot_for_apply is not None else "missing",
+            "preexisting": snapshot_preexisting,
+        },
     }
     return _dns_apply_output(args, data)
 
@@ -2681,7 +2935,13 @@ def _dns_reset(args: argparse.Namespace) -> int:
     data = {
         "status": "restored",
         "snapshot_path": str(snapshot_path),
+        "rollback_snapshot": {
+            "path": str(snapshot_path),
+            "status": "removed-after-restore",
+            "restored": True,
+        },
         "resolver_manager": snapshot.inventory.manager.value,
+        "confirmation_required": True,
     }
     if args.json:
         _print_json(data)
