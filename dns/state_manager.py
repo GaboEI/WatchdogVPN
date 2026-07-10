@@ -189,7 +189,7 @@ class SystemDNSStateManager:
             self._apply_for_manager(saved.inventory.manager, entrypoint, saved)
         except Exception as exc:
             self.restore_state(saved)
-            raise DNSStateError("failed to apply local DNS entry point") from exc
+            raise DNSStateError(f"failed to apply local DNS entry point: {exc}") from exc
         return saved
 
     def restore_state(self, snapshot: DNSStateSnapshot) -> None:
