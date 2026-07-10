@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 from phase23_cli_field_validation_plan import REQUIRED_PROTOCOLS, validate_manifest
@@ -114,7 +115,7 @@ def _print_layout(fixtures_dir: Path, provider_url_file: Path) -> None:
     print("Do not paste fixture contents or provider URLs into chat.")
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Prepare a private Phase 23 field validation manifest")
     parser.add_argument("--fixtures-dir", type=Path, default=Path("/tmp/watchdogvpn-phase23-fixtures"))
     parser.add_argument("--provider-url-file", type=Path, default=Path("/tmp/watchdogvpn-phase23-provider-url.txt"))
@@ -126,7 +127,7 @@ def main() -> int:
     parser.add_argument("--provider-node-id", default="phase23-provider:node-1")
     parser.add_argument("--allow-missing", action="store_true", help="write manifest even when fixture files are absent")
     parser.add_argument("--print-layout", action="store_true", help="print expected private fixture paths")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.print_layout:
         _print_layout(args.fixtures_dir, args.provider_url_file)

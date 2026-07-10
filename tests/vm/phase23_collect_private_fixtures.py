@@ -76,6 +76,11 @@ def main() -> int:
     parser.add_argument("--fixtures-dir", type=Path, default=Path("/tmp/watchdogvpn-phase23-fixtures"))
     parser.add_argument("--provider-url-file", type=Path, default=Path("/tmp/watchdogvpn-phase23-provider-url.txt"))
     parser.add_argument("--skip-provider", action="store_true")
+    parser.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="generate the manifest even when some protocol fixtures are not ready yet",
+    )
     args = parser.parse_args()
 
     print("This helper writes private local files only.")
@@ -90,7 +95,15 @@ def main() -> int:
 
     print()
     print("Generating private manifest...")
-    return prepare_manifest_main()
+    prepare_args = [
+        "--fixtures-dir",
+        str(args.fixtures_dir),
+        "--provider-url-file",
+        str(args.provider_url_file),
+    ]
+    if args.allow_missing:
+        prepare_args.append("--allow-missing")
+    return prepare_manifest_main(prepare_args)
 
 
 if __name__ == "__main__":

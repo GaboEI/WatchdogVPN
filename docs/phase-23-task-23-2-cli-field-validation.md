@@ -68,6 +68,20 @@ For single-line profile URLs, choose `p` and paste into the hidden prompt. For
 multi-line WireGuard/OpenVPN/JSON configs, choose `e` and paste into the local
 editor. Do not paste profile contents or provider URLs into chat.
 
+If only part of the protocol set is currently provisioned, generate a staged
+manifest and run only the ready protocols:
+
+```bash
+python3 tests/vm/phase23_collect_private_fixtures.py --allow-missing
+export WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak
+```
+
+This is partial evidence only. Task 23.2 remains open until the missing
+protocols are provisioned and provider URL import/update/connect coverage is
+executed, or a concrete unavailable reason and owner is recorded in the
+evidence findings. Use `--skip-provider` only when the provider URL is not
+available yet.
+
 Expected private fixture layout:
 
 ```bash
@@ -136,6 +150,7 @@ Dry-run the runner without executing commands:
 
 ```bash
 WATCHDOGVPN_PHASE23_MANIFEST=/tmp/watchdogvpn-phase23-field-manifest.json \
+WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak \
 tests/vm/phase23_run_cli_field_section.sh --dry-run all
 ```
 
@@ -151,6 +166,8 @@ Lower any external VPN that could mask WatchdogVPN behavior, then run:
 export WATCHDOGVPN_FIELD_VALIDATION=1
 export WATCHDOGVPN_PHASE23_MANIFEST=/tmp/watchdogvpn-phase23-field-manifest.json
 export WATCHDOGVPN_EXTERNAL_VPN_STATE=absent
+# Optional only for staged partial protocol execution:
+# export WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak
 
 tests/vm/phase23_run_cli_field_section.sh preflight
 tests/vm/phase23_run_cli_field_section.sh imports
@@ -216,6 +233,22 @@ python3 tests/vm/phase23_cli_field_validation_runner.py \
   --section all \
   --dry-run
 
+tests/vm/phase23_run_cli_field_section.sh \
+  --dry-run imports
+
+WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak \
+tests/vm/phase23_run_cli_field_section.sh \
+  --dry-run protocols
+
+python3 tests/vm/phase23_collect_private_fixtures.py \
+  --help
+
+python3 tests/vm/phase23_prepare_private_manifest.py \
+  --allow-missing \
+  --output /tmp/watchdogvpn-phase23-generated-manifest.json
+
+WATCHDOGVPN_PHASE23_MANIFEST=/tmp/watchdogvpn-phase23-generated-manifest.json \
+WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak \
 tests/vm/phase23_run_cli_field_section.sh \
   --dry-run all
 

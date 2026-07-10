@@ -61,16 +61,32 @@ class Runner:
         section: str,
         external_vpn_state: str,
         dry_run: bool,
+        selected_protocols: list[str] | None,
     ) -> None:
         self.plan = plan
         self.section = section
         self.external_vpn_state = external_vpn_state
         self.dry_run = dry_run
+        self.selected_protocol_names = selected_protocols
         self.evidence_dir = Path(str(plan["evidence_dir"]))
         self.command_index = 0
         self.failures: list[str] = []
         self.secrets: list[str] = []
         self.started_at = _utc_now()
+
+    def selected_profiles(self) -> list[dict[str, Any]]:
+        profiles = list(self.plan["profiles"])
+        if self.selected_protocol_names is None:
+            return profiles
+        selected = {protocol.strip() for protocol in self.selected_protocol_names if protocol.strip()}
+        available = {profile["protocol"] for profile in profiles}
+        unknown = sorted(selected - available)
+        if unknown:
+            raise FieldValidationError(f"unknown protocol selection: {', '.join(unknown)}")
+        selected_profiles = [profile for profile in profiles if profile["protocol"] in selected]
+        if not selected_profiles:
+            raise FieldValidationError("protocol selection did not match any manifest profiles")
+        return selected_profiles
 
     def require_guard(self) -> None:
         if self.dry_run:
@@ -208,7 +224,7 @@ class Runner:
         self.snapshot(f"baseline-{self.external_vpn_state}")
 
     def imports(self) -> None:
-        for profile in self.plan["profiles"]:
+        for profile in self.selected_profiles():
             self.run(
                 "profile-imports",
                 f"import-{profile['protocol']}",
@@ -218,7 +234,7 @@ class Runner:
         self.run("profile-imports", "profile-list-after-import", ["watchdog", "profile", "list", "--json"])
 
     def protocols(self) -> None:
-        for profile in self.plan["profiles"]:
+        for profile in self.selected_profiles():
             profile_id = profile["expected_id"]
             section = f"protocols-{self.external_vpn_state}-{profile['protocol']}"
             self.run(section, "connect", ["watchdog", "connect", profile_id, "--json"], timeout=180)
@@ -458,6 +474,7 @@ watchdog panic wake
             "started_at": self.started_at,
             "finished_at": _utc_now(),
             "dry_run": self.dry_run,
+            "protocols": self.selected_protocol_names or "all",
             "failures": self.failures,
             "failure_count": len(self.failures),
         }
@@ -514,6 +531,10 @@ def main() -> int:
         ],
     )
     parser.add_argument("--external-vpn-state", choices=["absent", "present"], default="absent")
+    parser.add_argument(
+        "--protocols",
+        help="comma-separated protocol subset for staged imports/protocol validation",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Write command records without executing commands")
     args = parser.parse_args()
 
@@ -524,6 +545,7 @@ def main() -> int:
             section=args.section,
             external_vpn_state=args.external_vpn_state,
             dry_run=bool(args.dry_run),
+            selected_protocols=args.protocols.split(",") if args.protocols else None,
         )
         return runner.dispatch()
     except (ManifestError, FieldValidationError, OSError, ValueError) as exc:

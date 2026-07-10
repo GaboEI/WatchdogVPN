@@ -33,6 +33,7 @@ Sections:
 Environment:
   WATCHDOGVPN_PHASE23_MANIFEST       default: /tmp/watchdogvpn-phase23-field-manifest.json
   WATCHDOGVPN_PHASE23_RUNBOOK        default: /tmp/watchdogvpn-phase23-cli-runbook.md
+  WATCHDOGVPN_PHASE23_PROTOCOLS      optional comma-separated staged subset
   WATCHDOGVPN_EXTERNAL_VPN_STATE     absent|present, default: absent
   WATCHDOGVPN_FIELD_VALIDATION=1     required for non-dry-run execution
 
@@ -112,6 +113,9 @@ args=(
   --section "$SECTION"
   --external-vpn-state "$EXTERNAL_VPN_STATE"
 )
+if [[ -n "${WATCHDOGVPN_PHASE23_PROTOCOLS:-}" ]]; then
+  args+=(--protocols "$WATCHDOGVPN_PHASE23_PROTOCOLS")
+fi
 if [[ "$DRY_RUN" == "1" ]]; then
   args+=(--dry-run)
 else
