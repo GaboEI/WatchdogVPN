@@ -176,7 +176,8 @@ assert_contains "$ROOT_DIR/uninstall.sh" '. "$ROOT_DIR/lib/runtime.sh"' "uninsta
 
 assert_contains "$ROOT_DIR/doctor.sh" 'Protocol Runtime Dependencies' "doctor must report protocol runtime dependency state"
 assert_contains "$ROOT_DIR/doctor.sh" 'singbox_available' "doctor must check sing-box availability"
-assert_contains "$ROOT_DIR/doctor.sh" 'amneziawg_userspace_available' "doctor must check AmneziaWG availability"
+assert_contains "$ROOT_DIR/doctor.sh" 'amneziawg_runtime_available' "doctor must check AmneziaWG availability the same way the driver does (userspace tool plus kernel module OR amneziawg-go fallback), not require both unconditionally"
+assert_not_contains "$ROOT_DIR/doctor.sh" 'amneziawg_userspace_available && amneziawg_kernel_module_available' "doctor must not require the kernel module unconditionally; the userspace amneziawg-go fallback is a real working runtime path"
 assert_contains "$ROOT_DIR/doctor.sh" 'cloak_available' "doctor must check Cloak client availability"
 assert_contains "$ROOT_DIR/doctor.sh" 'python_cryptography_available' "doctor must check the cryptography module"
 assert_not_contains "$ROOT_DIR/doctor.sh" 'install_official_singbox' "doctor must never call an installer function"

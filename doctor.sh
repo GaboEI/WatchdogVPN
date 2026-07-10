@@ -560,7 +560,7 @@ else
   mark_warn "sing-box not detected; most Custom VPS protocols will not run"
 fi
 
-if amneziawg_userspace_available && amneziawg_kernel_module_available; then
+if amneziawg_runtime_available; then
   mark_ok "AmneziaWG (or compatible WireGuard) tooling detected"
 else
   mark_warn "AmneziaWG tooling not fully detected; AmneziaWG profiles will not run"
