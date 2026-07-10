@@ -27,6 +27,7 @@ UAPI_SOCKET_DIR = Path("/run/wireguard")
 HANDSHAKE_TIMEOUT_SECONDS = 180
 MAX_ERROR_DETAIL_LENGTH = 500
 USERSPACE_LOG_TAIL_LINES = 20
+USERSPACE_LOG_TAIL_MAX_CHARS = 300
 SECRET_LINE_RE = re.compile(r"^\s*(?:PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
 ROUTE_TABLE = "51820"
 INTERFACE_CONFIG_KEYS = {
@@ -330,7 +331,14 @@ class AmneziaWGDriver(BaseDriver):
             lines = self._userspace_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             return ""
-        return "\n".join(lines[-max_lines:]).strip()
+        tail = "\n".join(lines[-max_lines:]).strip()
+        # Keep this tail's own most recent characters independent of the
+        # overall error-detail cap, so a verbose early banner from the
+        # subprocess itself cannot crowd out the connect() failure context
+        # this gets concatenated with.
+        if len(tail) > USERSPACE_LOG_TAIL_MAX_CHARS:
+            return f"...{tail[-USERSPACE_LOG_TAIL_MAX_CHARS:]}"
+        return tail
 
     def _start_userspace_interface(self) -> bool:
         userspace_tool = self.find_userspace_tool()
@@ -497,7 +505,13 @@ class AmneziaWGDriver(BaseDriver):
                 safe_lines.append(line)
         safe = "\n".join(safe_lines).strip()
         if len(safe) > MAX_ERROR_DETAIL_LENGTH:
-            return f"{safe[:MAX_ERROR_DETAIL_LENGTH]}..."
+            # Keep the tail, not the head: the most recent output (e.g. the
+            # actual stderr line or the last thing a subprocess printed
+            # before exiting) is consistently more actionable than a fixed,
+            # predictable prefix like "amneziawg interface creation failed
+            # with code 2". A long informational banner earlier in the
+            # message must not crowd out what happened right before failure.
+            return f"...{safe[-MAX_ERROR_DETAIL_LENGTH:]}"
         return safe
 
     def _set_last_error(self, message: str) -> None:

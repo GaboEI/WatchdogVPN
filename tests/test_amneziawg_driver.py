@@ -196,6 +196,26 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertFalse(self.driver.connect(self.profile))
         self.assertIn("awg was not found", self.driver.last_error)
 
+    def test_sanitize_error_detail_truncation_keeps_the_tail(self) -> None:
+        # A long, fixed-shape prefix (e.g. a subprocess banner) must not
+        # crowd out what happened most recently, which is consistently more
+        # actionable for field debugging than a predictable prefix.
+        text = f"{'banner ' * 200}most recent failure reason"
+        result = self.driver._sanitize_error_detail(text)
+        self.assertTrue(result.startswith("..."))
+        self.assertIn("most recent failure reason", result)
+
+    def test_userspace_log_tail_char_cap_keeps_the_end(self) -> None:
+        self.driver._write_config(self.profile)
+        self.driver._reset_log()
+        self.driver._userspace_log_path.write_text(
+            f"{'x' * 1000}\nreal failure line at the end", encoding="utf-8"
+        )
+
+        tail = self.driver._userspace_log_tail()
+        self.assertTrue(tail.startswith("..."))
+        self.assertIn("real failure line at the end", tail)
+
     @patch.object(AmneziaWGDriver, "_wait_for_uapi_socket", return_value=True)
     @patch.object(AmneziaWGDriver, "_wait_for_interface", return_value=True)
     @patch.object(AmneziaWGDriver, "find_userspace_tool", return_value="/usr/bin/amneziawg-go")
