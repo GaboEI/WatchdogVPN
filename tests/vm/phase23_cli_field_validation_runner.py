@@ -348,6 +348,12 @@ class Runner:
             print(f"PHASE23_SKIP {section} egress-http proxy_inactive")
 
     def provider(self) -> None:
+        # watchdog provider add/profile add do not accept a caller-chosen id -
+        # WatchdogVPN always generates its own. A static expected_provider_id/
+        # expected_node_id from the manifest is a placeholder that cannot
+        # match a real first-time provider add, the same gap the profile
+        # import path had before phase23-profile-id-map.json. Resolve both
+        # ids dynamically from real command output instead.
         provider = self.plan["provider"]
         url_path = Path(provider["url_file"])
         if self.dry_run:
@@ -358,18 +364,55 @@ class Runner:
                 raise FieldValidationError(f"provider URL file is empty: {url_path}")
             self.secrets.append(provider_url)
         redacted_url = "<provider-url-from-file>"
-        self.run(
+        add_rc = self.run(
             "provider",
             "provider-add",
             ["watchdog", "provider", "add", provider_url, "--name", provider["name"], "--json"],
             display_command=["watchdog", "provider", "add", redacted_url, "--name", provider["name"], "--json"],
             timeout=240,
         )
+        provider_id = provider["expected_provider_id"]
+        if not self.dry_run and add_rc == 0:
+            try:
+                payload = _extract_json_document(self.last_stdout)
+                real_id = payload.get("provider", {}).get("id") if isinstance(payload, dict) else None
+            except FieldValidationError as exc:
+                self.failures.append(f"provider:provider-add: {exc}")
+                real_id = None
+            if isinstance(real_id, str) and real_id:
+                provider_id = real_id
+            else:
+                self.failures.append("provider:provider-add: missing added provider id in JSON")
+
         self.run("provider", "provider-list", ["watchdog", "provider", "list", "--json"], timeout=60)
-        self.run("provider", "provider-stats", ["watchdog", "provider", "stats", provider["expected_provider_id"], "--json"])
-        self.run("provider", "provider-update", ["watchdog", "provider", "update", provider["expected_provider_id"], "--json"], timeout=240)
-        self.run("provider", "provider-stats-after-update", ["watchdog", "provider", "stats", provider["expected_provider_id"], "--json"])
-        self.run("provider", "connect-provider-node", ["watchdog", "connect", provider["expected_node_id"], "--json"], timeout=180)
+        self.run("provider", "provider-stats", ["watchdog", "provider", "stats", provider_id, "--json"])
+        self.run("provider", "provider-update", ["watchdog", "provider", "update", provider_id, "--json"], timeout=240)
+        stats_rc = self.run(
+            "provider", "provider-stats-after-update", ["watchdog", "provider", "stats", provider_id, "--json"]
+        )
+
+        node_id = provider["expected_node_id"]
+        if not self.dry_run and stats_rc == 0:
+            list_rc = self.run(
+                "provider", "profile-list-for-node-lookup", ["watchdog", "profile", "list", "--json"], timeout=60
+            )
+            if list_rc == 0:
+                try:
+                    profiles = _extract_json_document(self.last_stdout)
+                except FieldValidationError as exc:
+                    self.failures.append(f"provider:profile-list-for-node-lookup: {exc}")
+                    profiles = []
+                owned = [
+                    item
+                    for item in (profiles if isinstance(profiles, list) else [])
+                    if isinstance(item, dict) and item.get("provider_id") == provider_id
+                ]
+                if owned and isinstance(owned[0].get("id"), str):
+                    node_id = owned[0]["id"]
+                else:
+                    self.failures.append("provider:profile-list-for-node-lookup: no owned node found for provider")
+
+        self.run("provider", "connect-provider-node", ["watchdog", "connect", node_id, "--json"], timeout=180)
         self.run("provider", "status-provider-node", ["watchdog", "status", "--json"], timeout=60)
         self.egress_probes("provider")
         self.run("provider", "disconnect-provider-node", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
