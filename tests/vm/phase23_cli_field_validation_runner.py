@@ -287,6 +287,24 @@ class Runner:
                 return mapped
         return str(profile["expected_id"])
 
+    def resolved_profile_id(self, placeholder: str) -> str:
+        # dns()/kill_switch()/rotation() only have a manifest placeholder
+        # like "phase23-vless" (watchdog profile add never accepts a
+        # caller-chosen id), the same gap phase23-profile-id-map.json
+        # already fixed for protocols(). The protocol name is encoded in
+        # the placeholder itself, so reuse the same map imports() wrote.
+        protocol = placeholder.removeprefix("phase23-")
+        profile_id_map_path = self.evidence_dir / "phase23-profile-id-map.json"
+        if profile_id_map_path.is_file():
+            try:
+                profile_id_map = json.loads(profile_id_map_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return placeholder
+            mapped = profile_id_map.get(protocol)
+            if isinstance(mapped, str) and mapped:
+                return mapped
+        return placeholder
+
     def protocols(self) -> None:
         for profile in self.selected_profiles():
             profile_id = self.profile_id_for(profile)
@@ -460,18 +478,28 @@ class Runner:
         self.snapshot(f"post-app-policy-{self.external_vpn_state}")
 
     def dns(self) -> None:
+        # dns apply (non-dry-run) requires the local DNS entrypoint to
+        # already be listening, which is only true while connected (TUN/DNS
+        # hijack active) - "watchdog dns apply --yes" against a disconnected
+        # daemon fails closed with "local DNS entrypoint is not reachable",
+        # by design, not a bug. Connect first so apply/reset actually
+        # exercise the real runtime path instead of a precondition that
+        # never holds standalone.
         section = "dns"
+        profile_id = self.resolved_profile_id(self.plan["rotation"]["primary_profile_id"])
         self.run(section, "status-before", ["watchdog", "dns", "status", "--json"])
         self.run(section, "diagnose", ["watchdog", "dns", "diagnose", "--domain", self.plan["probe_domain"], "--json"])
         self.run(section, "apply-dry-run", ["watchdog", "dns", "apply", "--dry-run", "--json"])
+        self.run(section, "connect-for-apply", ["watchdog", "connect", profile_id, "--json"], timeout=180)
         self.run(section, "apply", ["watchdog", "dns", "apply", "--yes", "--json"], timeout=120)
         self.run(section, "status-after-apply", ["watchdog", "dns", "status", "--json"])
         self.run(section, "resolver-probe", ["getent", "hosts", self.plan["probe_domain"]], timeout=45)
         self.run(section, "reset", ["watchdog", "dns", "reset", "--yes", "--json"], timeout=120, ok_codes={0, 70})
+        self.run(section, "disconnect-after-dns", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.snapshot(f"post-dns-{self.external_vpn_state}")
 
     def kill_switch(self) -> None:
-        profile_id = self.plan["rotation"]["primary_profile_id"]
+        profile_id = self.resolved_profile_id(self.plan["rotation"]["primary_profile_id"])
         section = "kill-switch"
         self.run(section, "enable", ["watchdog", "setup", "--yes", "--acknowledge-backup-warning", "--kill-switch", "enable", "--json"])
         self.run(section, "connect", ["watchdog", "connect", profile_id, "--json"], timeout=180)
@@ -486,10 +514,13 @@ class Runner:
         rotation = self.plan["rotation"]
         provider = self.plan["provider"]
         section = "rotation"
-        self.run(section, "primary-rotation-on", ["watchdog", "profile", "rotation", rotation["primary_profile_id"], "--enable", "--json"])
-        self.run(section, "secondary-rotation-on", ["watchdog", "profile", "rotation", rotation["secondary_profile_id"], "--enable", "--json"])
+        primary_id = self.resolved_profile_id(rotation["primary_profile_id"])
+        secondary_id = self.resolved_profile_id(rotation["secondary_profile_id"])
+        all_failed_ids = [self.resolved_profile_id(pid) for pid in rotation["all_failed_profile_ids"]]
+        self.run(section, "primary-rotation-on", ["watchdog", "profile", "rotation", primary_id, "--enable", "--json"])
+        self.run(section, "secondary-rotation-on", ["watchdog", "profile", "rotation", secondary_id, "--enable", "--json"])
         self.run(section, "pool-list", ["watchdog", "profile", "list", "--pool", "--json"])
-        self.run(section, "connect-primary", ["watchdog", "connect", rotation["primary_profile_id"], "--json"], timeout=180)
+        self.run(section, "connect-primary", ["watchdog", "connect", primary_id, "--json"], timeout=180)
         self.run(section, "rotate-force", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
         self.run(section, "status-after-rotate", ["watchdog", "status", "--json"], ok_codes={0, 69})
         self.run(section, "provider-rotation-on", ["watchdog", "provider", "rotation", provider["expected_provider_id"], "--enable", "--json"], ok_codes={0, 65, 70})
@@ -500,11 +531,11 @@ class Runner:
             ok_codes={0, 65, 70},
         )
         self.run(section, "rotate-provider", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
-        for profile_id in rotation["all_failed_profile_ids"]:
+        for profile_id in all_failed_ids:
             self.run(section, f"disable-{profile_id}", ["watchdog", "profile", "disable", profile_id, "--json"], ok_codes={0, 65, 70})
         self.run(section, "rotate-all-failed", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
         self.run(section, "status-all-failed", ["watchdog", "status", "--json"], ok_codes={0, 69})
-        for profile_id in rotation["all_failed_profile_ids"]:
+        for profile_id in all_failed_ids:
             self.run(section, f"reenable-{profile_id}", ["watchdog", "profile", "enable", profile_id, "--json"], ok_codes={0, 65, 70})
         self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.snapshot(f"post-rotation-{self.external_vpn_state}")
