@@ -275,7 +275,9 @@ normalization gaps:
   `sudo`, which cannot work under the daemon unit's `NoNewPrivileges=true`, and
   plain WireGuard tooling cannot run real AmneziaWG exports with obfuscation
   keys anyway. AmneziaWG runtime availability now requires AmneziaWG-specific
-  quick/tooling; standard WireGuard remains a separate compatibility protocol.
+  quick/tooling plus either the `amneziawg` kernel module or the official
+  `amneziawg-go` userspace fallback; standard WireGuard remains a separate
+  compatibility protocol.
 
 Manual provider import now normalizes those serialized profile JSON variants
 before saving them. The generated WireGuard config passes `sing-box check`

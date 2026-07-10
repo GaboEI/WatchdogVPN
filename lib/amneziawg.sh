@@ -28,6 +28,14 @@ amneziawg_kernel_module_available() {
   [[ -d /sys/module/amneziawg ]] || modinfo amneziawg >/dev/null 2>&1
 }
 
+amneziawg_userspace_fallback_available() {
+  have_cmd amneziawg-go || [[ -x /usr/local/bin/amneziawg-go ]] || [[ -x /usr/bin/amneziawg-go ]]
+}
+
+amneziawg_runtime_available() {
+  amneziawg_userspace_available && (amneziawg_kernel_module_available || amneziawg_userspace_fallback_available)
+}
+
 print_amneziawg_dependency_notice() {
   cat <<EOF
 AmneziaWG runtime check:
@@ -40,6 +48,7 @@ AmneziaWG runtime check:
   If you plan to use AmneziaWG profiles, install manually before connecting:
     Tools:         $AMNEZIAWG_TOOLS_UPSTREAM
     Kernel module: $AMNEZIAWG_KERNEL_MODULE_UPSTREAM
+    Userspace fallback: https://github.com/amnezia-vpn/amneziawg-go
 
   Standard WireGuard tooling (wg-quick/wg, wireguard kernel module) is not a
   substitute for AmneziaWG-specific profiles. Use standard WireGuard profiles
@@ -48,7 +57,7 @@ EOF
 }
 
 check_amneziawg_dependency() {
-  if amneziawg_userspace_available && amneziawg_kernel_module_available; then
+  if amneziawg_runtime_available; then
     ok "AmneziaWG tooling detected"
     return 0
   fi
@@ -106,7 +115,7 @@ amneziawg_setup_commands() {
 guide_amneziawg_setup() {
   local attempt max_attempts=3 answer commands
 
-  if amneziawg_userspace_available && amneziawg_kernel_module_available; then
+  if amneziawg_runtime_available; then
     ok "AmneziaWG tooling detected"
     return 0
   fi
@@ -142,14 +151,16 @@ guide_amneziawg_setup() {
       return 0
     fi
 
-    if amneziawg_userspace_available && amneziawg_kernel_module_available; then
+    if amneziawg_runtime_available; then
       ok "AmneziaWG detected - setup complete"
       return 0
     fi
 
     warn "AmneziaWG still not detected after attempt $attempt/$max_attempts"
     amneziawg_userspace_available || printf '  still missing: awg-quick/amneziawg-quick userspace tools\n'
-    amneziawg_kernel_module_available || printf '  still missing: amneziawg kernel module - a reboot may be required after a kernel/header update\n'
+    if ! amneziawg_kernel_module_available && ! amneziawg_userspace_fallback_available; then
+      printf '  still missing: amneziawg kernel module or amneziawg-go userspace fallback\n'
+    fi
   done
 
   warn "AmneziaWG setup did not complete after $max_attempts attempts"

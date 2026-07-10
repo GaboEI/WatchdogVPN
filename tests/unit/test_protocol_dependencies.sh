@@ -83,6 +83,8 @@ assert_sha256_shape "$CLOAK_SHA256_LINUX_ARM64" "CLOAK_SHA256_LINUX_ARM64 must b
 
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_userspace_available' "amneziawg lib must define a userspace tooling check"
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_kernel_module_available' "amneziawg lib must define a kernel module check"
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_userspace_fallback_available' "amneziawg lib must define a userspace fallback check"
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_runtime_available' "amneziawg lib must combine native module and userspace fallback checks"
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'guide_amneziawg_setup()' "amneziawg lib must define a guided setup wizard"
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_setup_commands_ubuntu' "amneziawg lib must provide exact Ubuntu setup commands"
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_setup_commands_debian' "amneziawg lib must provide exact Debian setup commands"
