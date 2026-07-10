@@ -52,7 +52,51 @@ changes.
 
 ## Manifest
 
-Start from:
+Do not edit the JSON by hand unless you are comfortable doing so. The safer
+operator path is to put the private fixtures in one local directory and let the
+manifest helper write the JSON.
+
+Expected private fixture layout:
+
+```bash
+python3 tests/vm/phase23_prepare_private_manifest.py \
+  --print-layout
+```
+
+Default paths:
+
+```text
+/tmp/watchdogvpn-phase23-fixtures/phase23-vless.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-vmess.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-trojan.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-hysteria2.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-tuic.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-shadowsocks.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-wireguard.conf
+/tmp/watchdogvpn-phase23-fixtures/phase23-amneziawg.conf
+/tmp/watchdogvpn-phase23-fixtures/phase23-openvpn.ovpn
+/tmp/watchdogvpn-phase23-fixtures/phase23-openvpn-cloak.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-socks.json
+/tmp/watchdogvpn-phase23-fixtures/phase23-http.json
+/tmp/watchdogvpn-phase23-provider-url.txt
+```
+
+After placing the files locally, generate the private manifest:
+
+```bash
+python3 tests/vm/phase23_prepare_private_manifest.py
+```
+
+The helper writes:
+
+```text
+/tmp/watchdogvpn-phase23-field-manifest.json
+```
+
+It validates file presence, writes the manifest with mode `0600`, and does not
+print profile contents or the provider URL.
+
+The low-level template remains available at:
 
 ```text
 tests/vm/phase23_cli_field_validation_manifest.example.json
@@ -164,6 +208,7 @@ tests/vm/phase23_run_cli_field_section.sh \
   --dry-run all
 
 python3 -m py_compile \
+  tests/vm/phase23_prepare_private_manifest.py \
   tests/vm/phase23_cli_field_validation_plan.py \
   tests/vm/phase23_cli_field_validation_runner.py
 
