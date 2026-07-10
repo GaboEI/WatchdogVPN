@@ -42,6 +42,9 @@ The runner:
 - refreshes sudo through the wrapper before real operator-run sections and uses
   non-interactive sudo for nftables snapshots, so expired sudo credentials do
   not turn a firewall snapshot into a hanging command;
+- restarts `watchdogvpn.service` after the installed runtime update in
+  preflight, because replacing installed Python files does not make an already
+  running daemon reload imported modules;
 - executes commands with Python subprocess argv lists, never `shell=True`;
 - captures command, redacted stdout/stderr, return code and timestamps as JSON;
 - redacts the provider URL loaded from `provider.url_file`;

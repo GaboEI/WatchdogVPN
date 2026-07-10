@@ -231,6 +231,8 @@ class Runner:
             timeout=30,
         )
         self.run("preflight", "update-installed-runtime", ["./update.sh", "--yes"], timeout=600)
+        self.run("preflight", "restart-daemon-after-update", ["sudo", "systemctl", "restart", "watchdogvpn.service"], timeout=120)
+        self.run("preflight", "daemon-active-after-restart", ["systemctl", "is-active", "watchdogvpn.service"], timeout=30)
         self.run("preflight", "watchdog-doctor", ["watchdog", "doctor", "--json"], timeout=180)
         self.run("preflight", "watchdog-status", ["watchdog", "status", "--json"], timeout=60)
         self.run("preflight", "profile-list", ["watchdog", "profile", "list", "--json"], timeout=60)
