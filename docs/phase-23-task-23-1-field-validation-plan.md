@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `phase-23-cli-field-validation`
-Status: planned, pending maintainer approval before execution
+Status: approved for Task 23.2 execution after maintainer review
 
 ## Scope
 
@@ -12,6 +12,28 @@ proxy or reboot validation.
 
 Task 23.2 must execute this plan through the CLI only. The TUI is not valid
 evidence for Phase 23.
+
+## Carried-Forward Evidence Not Re-Litigated
+
+LAN proxy, LAN gateway and route-chain runtime behavior are intentionally not
+separate rows in the Phase 23 matrix. They already closed with their own
+dedicated VM/lab validation and audit gates:
+
+- LAN proxy/gateway behavior closed in Phase 20, including Task 20.7's
+  installed VM matrix and namespace LAN-client gateway lab. That evidence
+  covered authenticated LAN proxy fail-closed/proxy-DNS behavior, gateway
+  apply/cleanup, pre/post `ip_forward=0`, unchanged rules/routes/resolver hash,
+  no stale listener ports and no residual gateway nftables table.
+- Route chains closed in Phase 21.5, including Task 21.5.5's installed VM
+  chain validation. That evidence covered chain config generation, hop order,
+  final-hop route targeting, global-chain DNS detour, fail-closed reject
+  generation, local traffic proof, teardown, and no route/rule/DNS/firewall or
+  listener drift.
+
+Phase 23 may still record a new finding against LAN or route-chain behavior if
+Task 23.2 exposes a regression through normal CLI lifecycle/status/cleanup
+coverage, but the Phase 23 matrix does not re-run those already-closed
+specialized matrices by default.
 
 ## Safety Gate
 
