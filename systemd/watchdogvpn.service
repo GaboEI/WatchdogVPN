@@ -11,7 +11,13 @@ User=watchdogvpn
 Group=watchdogvpn
 WorkingDirectory=/var/lib/watchdogvpn
 
-RuntimeDirectory=watchdogvpn
+# "wireguard" is a second name, not a typo: wireguard-go/amneziawg-go
+# hardcode their userspace configuration socket at /run/wireguard/<iface>.sock
+# and mkdir that path themselves. Under ProtectSystem=strict the rest of /run
+# is read-only, so without this the socket is never created and awg/wg
+# setconf fails with "Unable to modify interface: Protocol not supported"
+# even though the userspace TUN interface itself comes up.
+RuntimeDirectory=watchdogvpn wireguard
 RuntimeDirectoryMode=0750
 StateDirectory=watchdogvpn
 StateDirectoryMode=2770
