@@ -219,7 +219,7 @@ matrix, "VPN" means `current`.
 | M7.3 | all-failed | Disable or isolate every rotation candidate in the VM; `watchdog rotate --force --json`; `watchdog status --json`; egress probe | Runtime fails closed or stays on a safe state; no silent direct fallback occurs. |
 | M7.4 | cleanup | Re-enable original candidates or restore backup; `watchdog disconnect --json`; repeat M0.3 snapshots | Original rotation state is restored and no route/DNS/firewall residue remains. |
 
-Do not edit `rotation/rotation_engine.py` during Task 23.1.
+Do not edit `rotation/rotation_engine.py` during Phase 23 field validation.
 
 ### M8 - Reboot And Manual-Off Behavior
 
