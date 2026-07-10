@@ -20,8 +20,12 @@ RUNTIME_PREFIX = "watchdogvpn-awg-"
 INTERFACE_NAME = "watchdogvpn_awg"
 CONFIG_NAME = f"{INTERFACE_NAME}.conf"
 LOG_NAME = "awg.log"
+# wireguard-go/amneziawg-go hardcode their userspace configuration socket at
+# /run/wireguard/<iface>.sock and never expose an override for it.
+UAPI_SOCKET_DIR = Path("/run/wireguard")
 HANDSHAKE_TIMEOUT_SECONDS = 180
 MAX_ERROR_DETAIL_LENGTH = 500
+USERSPACE_LOG_TAIL_LINES = 20
 SECRET_LINE_RE = re.compile(r"^\s*(?:PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
 ROUTE_TABLE = "51820"
 INTERFACE_CONFIG_KEYS = {
@@ -291,6 +295,35 @@ class AmneziaWGDriver(BaseDriver):
             time.sleep(0.1)
         return self._interface_exists()
 
+    def _uapi_socket_path(self) -> Path:
+        return UAPI_SOCKET_DIR / f"{INTERFACE_NAME}.sock"
+
+    def _wait_for_uapi_socket(self, timeout: float = 5.0) -> bool:
+        # ip link show reports the TUN interface as soon as it is created,
+        # but amneziawg-go opens its UAPI configuration socket slightly
+        # after that. Without this wait, awg setconf can race ahead of a
+        # listener that does not exist yet and fail with
+        # "Unable to modify interface: Protocol not supported".
+        deadline = time.monotonic() + timeout
+        socket_path = self._uapi_socket_path()
+        while time.monotonic() < deadline:
+            if socket_path.exists():
+                return True
+            process = self._userspace_process
+            if process is not None and process.poll() is not None:
+                return False
+            time.sleep(0.05)
+        return socket_path.exists()
+
+    def _userspace_log_tail(self, max_lines: int = USERSPACE_LOG_TAIL_LINES) -> str:
+        if self._log_path is None:
+            return ""
+        try:
+            lines = self._log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ""
+        return "\n".join(lines[-max_lines:]).strip()
+
     def _start_userspace_interface(self) -> bool:
         userspace_tool = self.find_userspace_tool()
         if not userspace_tool:
@@ -307,7 +340,13 @@ class AmneziaWGDriver(BaseDriver):
         finally:
             log_file.close()
         self._log(f"connect: started {userspace_tool} {INTERFACE_NAME}")
-        return self._wait_for_interface()
+        if not self._wait_for_interface():
+            self._log(f"connect: {INTERFACE_NAME} did not appear via ip link show")
+            return False
+        if not self._wait_for_uapi_socket():
+            self._log(f"connect: uapi socket did not appear at {self._uapi_socket_path()}")
+            return False
+        return True
 
     def _create_interface(self) -> None:
         ip_tool = self.find_ip_tool()
@@ -324,12 +363,19 @@ class AmneziaWGDriver(BaseDriver):
             self._log(result.stderr.rstrip())
         if result.returncode == 0:
             return
-        if self._start_userspace_interface():
+        userspace_tool = self.find_userspace_tool()
+        if userspace_tool and self._start_userspace_interface():
             return
+        fallback_detail = (
+            f"userspace fallback via {userspace_tool} did not become ready"
+            if userspace_tool
+            else "amneziawg-go was not found for a userspace fallback"
+        )
         detail = (
             f"amneziawg interface creation failed with code {result.returncode}\n"
             f"stdout:\n{result.stdout.strip()}\n"
-            f"stderr:\n{result.stderr.strip()}"
+            f"stderr:\n{result.stderr.strip()}\n"
+            f"{fallback_detail}"
         )
         raise RuntimeError(detail)
 
@@ -476,7 +522,12 @@ class AmneziaWGDriver(BaseDriver):
             self._create_interface()
             self._configure_interface(parsed)
         except (OSError, RuntimeError, ValueError) as exc:
-            self._set_last_error(str(exc))
+            detail = str(exc)
+            if self._userspace_process is not None:
+                tail = self._userspace_log_tail()
+                if tail:
+                    detail = f"{detail}\namneziawg-go log tail:\n{tail}"
+            self._set_last_error(detail)
             self._log(f"connect: {self.last_error}")
             self.disconnect()
             self._cleanup_runtime()

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from drivers.amneziawg_driver import (
@@ -194,11 +196,12 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertFalse(self.driver.connect(self.profile))
         self.assertIn("awg was not found", self.driver.last_error)
 
+    @patch.object(AmneziaWGDriver, "_wait_for_uapi_socket", return_value=True)
     @patch.object(AmneziaWGDriver, "_wait_for_interface", return_value=True)
     @patch.object(AmneziaWGDriver, "find_userspace_tool", return_value="/usr/bin/amneziawg-go")
     @patch("drivers.amneziawg_driver.subprocess.Popen")
     @patch("drivers.amneziawg_driver.subprocess.run")
-    def test_create_interface_uses_userspace_fallback(self, run_mock, popen_mock, _go, _wait) -> None:
+    def test_create_interface_uses_userspace_fallback(self, run_mock, popen_mock, _go, _wait, _socket) -> None:
         run_mock.return_value.returncode = 2
         run_mock.return_value.stdout = ""
         run_mock.return_value.stderr = "Unknown device type"
@@ -209,6 +212,54 @@ class AmneziaWGDriverTests(unittest.TestCase):
 
         popen_mock.assert_called_once()
         self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/amneziawg-go", INTERFACE_NAME])
+
+    @patch.object(AmneziaWGDriver, "_wait_for_uapi_socket", return_value=False)
+    @patch.object(AmneziaWGDriver, "_wait_for_interface", return_value=True)
+    @patch.object(AmneziaWGDriver, "find_userspace_tool", return_value="/usr/bin/amneziawg-go")
+    @patch("drivers.amneziawg_driver.subprocess.Popen")
+    @patch("drivers.amneziawg_driver.subprocess.run")
+    def test_create_interface_fails_when_uapi_socket_never_appears(
+        self, run_mock, popen_mock, _go, _wait, _socket
+    ) -> None:
+        run_mock.return_value.returncode = 2
+        run_mock.return_value.stdout = ""
+        run_mock.return_value.stderr = "Unknown device type"
+
+        self.driver._write_config(self.profile)
+        self.driver._reset_log()
+        with self.assertRaises(RuntimeError) as ctx:
+            self.driver._create_interface()
+
+        self.assertIn("did not become ready", str(ctx.exception))
+
+    def test_wait_for_uapi_socket_true_when_socket_exists(self) -> None:
+        with (
+            patch.object(type(self.driver), "_uapi_socket_path") as socket_path_mock,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            socket_path = Path(tmp) / f"{INTERFACE_NAME}.sock"
+            socket_path.write_text("")
+            socket_path_mock.return_value = socket_path
+            self.assertTrue(self.driver._wait_for_uapi_socket(timeout=0.2))
+
+    def test_wait_for_uapi_socket_false_when_missing(self) -> None:
+        with (
+            patch.object(type(self.driver), "_uapi_socket_path") as socket_path_mock,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            socket_path_mock.return_value = Path(tmp) / f"{INTERFACE_NAME}.sock"
+            self.assertFalse(self.driver._wait_for_uapi_socket(timeout=0.1))
+
+    def test_userspace_log_tail_reads_recent_lines(self) -> None:
+        self.driver._write_config(self.profile)
+        self.driver._reset_log()
+        self.driver._log("line one")
+        self.driver._log("line two")
+
+        self.assertEqual(self.driver._userspace_log_tail(), "line one\nline two")
+
+    def test_userspace_log_tail_empty_without_runtime_dir(self) -> None:
+        self.assertEqual(self.driver._userspace_log_tail(), "")
 
     # --- Disconnect ---
 
