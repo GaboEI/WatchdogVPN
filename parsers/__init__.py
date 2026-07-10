@@ -2,6 +2,7 @@
 
 from .amneziavpn_format import is_amneziavpn_format, parse_amneziavpn
 from .clash_yaml import parse_clash_yaml
+from .hysteria2_yaml import parse_hysteria2_yaml
 from .openvpn_config import parse_openvpn_config
 from .singbox_json import parse_singbox_json
 from .subscription import fetch_and_parse
@@ -15,6 +16,7 @@ __all__ = [
     "is_amneziavpn_format",
     "parse_amneziavpn",
     "parse_clash_yaml",
+    "parse_hysteria2_yaml",
     "parse_openvpn_config",
     "parse_singbox_json",
     "parse_uri",

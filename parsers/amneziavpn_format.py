@@ -31,6 +31,7 @@ _DNS_PLACEHOLDER = re.compile(r"\$PRIMARY_DNS|\$SECONDARY_DNS")
 
 _CONTAINER_PARSERS: dict[str, str] = {
     "amnezia-openvpn-cloak": "openvpn_cloak",
+    "amnezia-awg2": "amneziawg",
 }
 
 
@@ -141,6 +142,39 @@ def _parse_openvpn_cloak(
     )
 
 
+def _parse_amneziawg(
+    container: dict[str, Any],
+    host: str,
+    description: str,
+) -> Profile:
+    awg_section = container.get("awg") or {}
+    try:
+        awg_config: dict[str, Any] = json.loads(awg_section.get("last_config") or "{}")
+    except json.JSONDecodeError as exc:
+        raise ParseError(f"amneziavpn: invalid awg.last_config JSON: {exc}") from exc
+
+    raw_config = awg_config.get("config") or ""
+    if not raw_config.strip():
+        raise ParseError("amneziavpn: empty amneziawg config")
+
+    client_id = awg_config.get("clientId") or ""
+    profile_id = f"awg-{host}-{client_id[:8]}" if client_id else f"awg-{host}"
+    name = description or f"amneziawg-{host}"
+
+    return Profile(
+        id=profile_id,
+        name=name,
+        protocol=ProtocolType.AMNEZIAWG,
+        config={
+            "raw": raw_config,
+            "host": host,
+            "client_id": client_id,
+            "port": awg_config.get("port") or awg_section.get("port"),
+        },
+        source=ProfileSource.MANUAL,
+    )
+
+
 def parse_amneziavpn(text: str) -> list[Profile]:
     """Parse an AmneziaVPN export file (vpn://) and return profiles."""
     if not is_amneziavpn_format(text):
@@ -165,7 +199,9 @@ def parse_amneziavpn(text: str) -> list[Profile]:
                 profiles.append(profile)
             except ParseError:
                 raise
-        # Other container types (amneziawg, shadowsocks, etc.) are ignored for now.
+        elif container_type == "amnezia-awg2":
+            profiles.append(_parse_amneziawg(container, host, description))
+        # Other container types are ignored for now.
 
     if not profiles:
         raise ParseError(

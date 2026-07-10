@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from config.profile_store import ProfileStore
-from models.profile import ProtocolType
+from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
 from providers.manual_provider import ManualProvider
 
@@ -95,6 +95,90 @@ class ManualProviderTests(unittest.TestCase):
             self.assertEqual(profile.id, "vless-1")
             self.assertEqual([p.id for p in stored], ["vless-1", "trojan-1"])
             self.assertTrue(all(p.in_rotation_pool for p in stored))
+
+    def test_from_text_imports_watchdog_profile_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "profiles.json"
+            provider = self._provider(store_path)
+            source_profile = Profile(
+                id="wg-json",
+                name="WireGuard JSON",
+                protocol=ProtocolType.WIREGUARD,
+                config={
+                    "server": "wg.example.com",
+                    "server_port": 51820,
+                    "private_key": "private",
+                    "public_key": "public",
+                    "local_address": "10.0.0.2/32",
+                },
+                source=ProfileSource.MANUAL,
+            )
+
+            profile = provider.from_text(json.dumps(source_profile.to_dict()))
+
+            self.assertEqual(profile.id, "wg-json")
+            self.assertEqual(profile.protocol, ProtocolType.WIREGUARD)
+            self.assertEqual(ProfileStore(store_path).get("wg-json"), profile)
+
+    def test_from_text_imports_v2ray_trojan_outbound(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(Path(tmp) / "profiles.json")
+
+            profile = provider.from_text(
+                json.dumps(
+                    {
+                        "outbounds": [
+                            {
+                                "protocol": "trojan",
+                                "settings": {
+                                    "servers": [
+                                        {
+                                            "address": "trojan.example.com",
+                                            "port": 5222,
+                                            "password": "secret",
+                                        }
+                                    ]
+                                },
+                                "streamSettings": {
+                                    "network": "tcp",
+                                    "security": "tls",
+                                    "tlsSettings": {"serverName": "trojan.example.com"},
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+
+            self.assertEqual(profile.protocol, ProtocolType.TROJAN)
+            self.assertEqual(profile.config["server"], "trojan.example.com")
+            self.assertEqual(profile.config["server_port"], 5222)
+
+    def test_from_text_imports_hysteria2_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(Path(tmp) / "profiles.json")
+
+            profile = provider.from_text(
+                """
+                server: hy.example.com:44333
+                auth: password
+                tls:
+                  sni: hy.example.com
+                  insecure: true
+                obfs:
+                  type: salamander
+                  salamander:
+                    password: obfs-secret
+                bandwidth:
+                  up: 100 mbps
+                  down: 100 mbps
+                """
+            )
+
+            self.assertEqual(profile.protocol, ProtocolType.HYSTERIA2)
+            self.assertEqual(profile.config["server"], "hy.example.com")
+            self.assertEqual(profile.config["server_port"], 44333)
+            self.assertEqual(profile.config["obfs_password"], "obfs-secret")
 
     def test_from_text_saves_all_clash_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

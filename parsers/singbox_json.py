@@ -74,11 +74,48 @@ def _build_profile(outbound: dict[str, Any]) -> Profile | None:
     )
 
 
+def _build_v2ray_profile(outbound: dict[str, Any]) -> Profile | None:
+    protocol_name = str(outbound.get("protocol", "")).lower()
+    protocol = _TYPE_TO_PROTOCOL.get(protocol_name)
+    if protocol is None:
+        return None
+
+    settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
+    servers = settings.get("servers") if isinstance(settings, dict) else None
+    server = servers[0] if isinstance(servers, list) and servers and isinstance(servers[0], dict) else {}
+    stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}
+    tls = stream.get("tlsSettings") if isinstance(stream.get("tlsSettings"), dict) else {}
+
+    config: dict[str, Any] = {
+        "raw": outbound,
+        "server": server.get("address") or server.get("server"),
+        "server_port": server.get("port"),
+        "network": stream.get("network"),
+    }
+    if protocol is ProtocolType.TROJAN:
+        config["password"] = server.get("password")
+    if tls:
+        config["tls"] = True
+        if tls.get("serverName"):
+            config["sni"] = tls["serverName"]
+        if tls.get("allowInsecure") is not None:
+            config["allow_insecure"] = tls["allowInsecure"]
+
+    name = str(outbound.get("tag") or server.get("email") or config.get("server") or protocol.value)
+    return Profile(
+        id=name,
+        name=name,
+        protocol=protocol,
+        config=config,
+        source=ProfileSource.MANUAL,
+    )
+
+
 def parse_singbox_json(data: str | dict[str, Any]) -> list[Profile]:
     payload = _load_json(data)
     profiles: list[Profile] = []
     for outbound in _coerce_outbounds(payload):
-        profile = _build_profile(outbound)
+        profile = _build_profile(outbound) or _build_v2ray_profile(outbound)
         if profile is not None:
             profiles.append(profile)
     if not profiles:

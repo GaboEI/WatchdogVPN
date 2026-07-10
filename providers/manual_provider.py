@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from parsers import (
     is_amneziavpn_format,
     parse_amneziavpn,
     parse_clash_yaml,
+    parse_hysteria2_yaml,
     parse_openvpn_config,
     parse_singbox_json,
     parse_uri,
@@ -98,7 +100,7 @@ class ManualProvider(BaseProvider):
         return candidate
 
     def _parse_text(self, text: str) -> list[Profile]:
-        content = (text or "").strip()
+        content = textwrap.dedent(text or "").strip()
         if not content:
             raise ParseError("manual input is empty")
 
@@ -110,7 +112,13 @@ class ManualProvider(BaseProvider):
             return [parse_uri(line) for line in uri_lines]
 
         if content.lstrip().startswith("{"):
+            profile = self._parse_watchdog_profile_json(content)
+            if profile is not None:
+                return [profile]
             return self._require_profiles(parse_singbox_json(content), "sing-box JSON")
+
+        if self._looks_like_hysteria2_yaml(content):
+            return [parse_hysteria2_yaml(content)]
 
         if "[Interface]" in content and "[Peer]" in content:
             return [parse_wg_config(content)]
@@ -130,6 +138,7 @@ class ManualProvider(BaseProvider):
             (parse_wg_config, "WireGuard config"),
             (parse_openvpn_config, "OpenVPN config"),
             (parse_singbox_json, "sing-box JSON"),
+            (parse_hysteria2_yaml, "Hysteria2 YAML"),
             (parse_clash_yaml, "Clash YAML"),
         ):
             try:
@@ -160,6 +169,24 @@ class ManualProvider(BaseProvider):
 
     def _looks_like_clash_yaml(self, content: str) -> bool:
         return any(line.strip().startswith("proxies:") for line in content.splitlines())
+
+    def _looks_like_hysteria2_yaml(self, content: str) -> bool:
+        keys = {line.split(":", 1)[0].strip().lower() for line in content.splitlines() if ":" in line}
+        return {"server", "auth"}.issubset(keys)
+
+    def _parse_watchdog_profile_json(self, content: str) -> Profile | None:
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        if {"id", "name", "protocol", "config", "source"}.issubset(data):
+            try:
+                return Profile.from_dict(data)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ParseError(f"invalid WatchdogVPN profile JSON: {exc}") from exc
+        return None
 
     def _require_profiles(self, profiles: list[Profile], label: str) -> list[Profile]:
         if not profiles:

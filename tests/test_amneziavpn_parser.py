@@ -161,6 +161,35 @@ class ParseAmneziaVpnTests(unittest.TestCase):
         with self.assertRaises(ParseError):
             parse_amneziavpn(_encode_payload(payload))
 
+    def test_parses_amneziawg_container(self) -> None:
+        awg_raw = (
+            "[Interface]\nPrivateKey = private-key\nAddress = 10.0.0.2/32\nJc = 4\n"
+            "[Peer]\nPublicKey = public-key\nEndpoint = 10.0.0.1:30919\nAllowedIPs = 0.0.0.0/0\n"
+        )
+        payload = dict(_MINIMAL_PAYLOAD)
+        payload["containers"] = [
+            {
+                "container": "amnezia-awg2",
+                "awg": {
+                    "port": "30919",
+                    "last_config": json.dumps(
+                        {
+                            "clientId": "awgclientid",
+                            "config": awg_raw,
+                            "port": 30919,
+                        }
+                    ),
+                },
+            }
+        ]
+        payload["defaultContainer"] = "amnezia-awg2"
+
+        profiles = parse_amneziavpn(_encode_payload(payload))
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].protocol, ProtocolType.AMNEZIAWG)
+        self.assertIn("[Interface]", profiles[0].config["raw"])
+
     def test_empty_containers_raises(self) -> None:
         payload = dict(_MINIMAL_PAYLOAD)
         payload["containers"] = []
