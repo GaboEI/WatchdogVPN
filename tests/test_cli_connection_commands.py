@@ -32,6 +32,18 @@ def wait_for_path(path: Path, timeout: float = 5.0) -> None:
 
 
 class CliConnectionCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # _connection_lifecycle_summary() reads real persisted vpn_desired_state
+        # through StateManager/resolve_config_dir(). Without isolation these
+        # tests read the machine's actual installed/user state instead of a
+        # controlled default, so results depend on ambient local state left
+        # over from unrelated real VPN activity on this host.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env_patcher = patch.dict(os.environ, {"WATCHDOGVPN_CONFIG_DIR": tmp.name})
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
     def test_connect_uses_ipc_client(self) -> None:
         response = Response(
             ok=True,
