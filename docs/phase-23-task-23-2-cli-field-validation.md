@@ -270,6 +270,12 @@ normalization gaps:
   `payload.error_detail`, so operator evidence can distinguish tool permission,
   kernel module, resolver helper, config and interface failures without
   printing profile secrets.
+- The next rerun showed the VM only had standard `wg-quick`/`wg`, not
+  AmneziaWG-specific `awg-quick`/`awg`. `wg-quick` attempted an internal
+  `sudo`, which cannot work under the daemon unit's `NoNewPrivileges=true`, and
+  plain WireGuard tooling cannot run real AmneziaWG exports with obfuscation
+  keys anyway. AmneziaWG runtime availability now requires AmneziaWG-specific
+  quick/tooling; standard WireGuard remains a separate compatibility protocol.
 
 Manual provider import now normalizes those serialized profile JSON variants
 before saving them. The generated WireGuard config passes `sing-box check`

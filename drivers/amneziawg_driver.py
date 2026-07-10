@@ -33,25 +33,18 @@ class _BinaryPaths:
         "/usr/local/bin/amneziawg-quick",
         "/usr/bin/amneziawg-quick",
     )
-    wg_quick: tuple[str, ...] = (
-        "/usr/local/bin/wg-quick",
-        "/usr/bin/wg-quick",
-    )
     awg: tuple[str, ...] = (
         "/usr/local/bin/awg",
         "/usr/bin/awg",
-    )
-    wg: tuple[str, ...] = (
-        "/usr/local/bin/wg",
-        "/usr/bin/wg",
     )
 
 
 class AmneziaWGDriver(BaseDriver):
     """Native driver for AmneziaWG profiles.
 
-    Uses amneziawg-quick (preferred) or wg-quick (fallback) to manage
-    the WireGuard interface with AmneziaWG obfuscation extensions.
+    Uses AmneziaWG-specific quick tooling to manage the interface with
+    AmneziaWG obfuscation extensions. Standard WireGuard tooling is not a valid
+    runtime fallback for real AmneziaWG exports.
     """
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
@@ -77,24 +70,21 @@ class AmneziaWGDriver(BaseDriver):
         awg_quick = self._find_binary(self.binaries.awg_quick, "awg-quick")
         if awg_quick:
             return awg_quick
-        return self._find_binary(self.binaries.wg_quick, "wg-quick")
+        return shutil.which("amneziawg-quick")
 
     def find_wg_tool(self) -> str | None:
-        awg = self._find_binary(self.binaries.awg, "awg")
-        if awg:
-            return awg
-        return self._find_binary(self.binaries.wg, "wg")
+        return self._find_binary(self.binaries.awg, "awg")
 
     def get_tool(self) -> str:
         tool = self.find_quick_tool()
         if not tool:
-            raise FileNotFoundError("neither amneziawg-quick nor wg-quick was found")
+            raise FileNotFoundError("neither awg-quick nor amneziawg-quick was found")
         return tool
 
     def check_version(self) -> str:
         wg_tool = self.find_wg_tool()
         if not wg_tool:
-            raise FileNotFoundError("neither awg nor wg was found")
+            raise FileNotFoundError("awg was not found")
         result = subprocess.run(
             [wg_tool, "--version"],
             text=True,
@@ -223,7 +213,7 @@ class AmneziaWGDriver(BaseDriver):
         self.last_error = ""
         tool = self.find_quick_tool()
         if not tool:
-            self._set_last_error("neither amneziawg-quick nor wg-quick was found")
+            self._set_last_error("neither awg-quick nor amneziawg-quick was found")
             return False
         if self._interface_exists() and not self._delete_interface():
             self._set_last_error(f"stale interface could not be deleted: {INTERFACE_NAME}")

@@ -97,8 +97,9 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   missing, repeating up to a few attempts. `doctor.sh` only reports detection
   state (`WARN` if missing) and points back to `install.sh` for the guided
   setup, keeping its own read-only contract. Standard WireGuard tooling
-  (`wg-quick`/`wg`, `wireguard` kernel module) is accepted as a compatible
-  fallback if AmneziaWG-specific packages are not available.
+  (`wg-quick`/`wg`, `wireguard` kernel module) is not a substitute for
+  AmneziaWG-specific profiles; plain WireGuard remains its own compatibility
+  protocol.
 - **Python `cryptography` module**: needed for encrypted backups
   (`watchdog backup --encrypt-backup`, Phase 17). `install.sh` and
   `update.sh` install the distro package (`python3-cryptography` on

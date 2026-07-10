@@ -71,7 +71,9 @@
   - On Ubuntu these were installed from `ppa:amnezia/ppa`.
 - **Issues found and fixed during validation:**
   - Driver detection was corrected to prefer `awg-quick`, then
-    `amneziawg-quick`, then `wg-quick`.
+    `amneziawg-quick`. Phase 23 field validation later removed the old
+    `wg-quick` fallback because plain WireGuard tooling cannot run real
+    AmneziaWG exports with obfuscation keys.
   - Empty exported keys such as `I2 = ` and `I3 = ` are stripped before writing
     the runtime config because `awg setconf` rejects them.
   - Parser detection was expanded for real profile keys including `S3`, `S4`,

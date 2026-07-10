@@ -233,8 +233,13 @@ exercise the "still missing" branches.
   to end and confirmed the "Runtime dependencies" section now reports the
   same four checks as `install.sh` (`[OK] python cryptography module
   available`, `[KEEP] sing-box detected: ...`, `[KEEP] Cloak client detected:
-  ...`, `[OK] AmneziaWG (or compatible WireGuard) tooling detected`), not
-  just the cryptography backfill.
+  ...`, plus the Phase 18 AmneziaWG-compatible tooling line), not just the
+  cryptography backfill. That Phase 18 wording is superseded by the Phase 23
+  field-validation addendum below.
+- Phase 23 field-validation addendum: real AmneziaWG `vpn://` exports require
+  AmneziaWG-specific `awg-quick`/`awg` tooling. Plain WireGuard
+  `wg-quick`/`wg` is no longer treated as a valid AmneziaWG runtime fallback;
+  standard WireGuard remains a separate compatibility protocol.
 - Checksums were computed by downloading the exact pinned-version release
   assets directly from the official GitHub releases over HTTPS and hashing
   them locally, then re-verified byte-for-byte against the values written

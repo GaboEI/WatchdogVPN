@@ -60,12 +60,12 @@ class AmneziaWGDriverTests(unittest.TestCase):
         result = self.driver.find_quick_tool()
         self.assertEqual(result, "/usr/local/bin/awg-quick")
 
-    @patch("drivers.amneziawg_driver.shutil.which", side_effect=lambda n: "/usr/bin/wg-quick" if n == "wg-quick" else None)
+    @patch("drivers.amneziawg_driver.shutil.which", side_effect=lambda n: "/usr/bin/amneziawg-quick" if n == "amneziawg-quick" else None)
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=False)
     @patch("drivers.amneziawg_driver.os.access", return_value=False)
-    def test_find_quick_tool_fallback_wg_quick(self, _access, _exists, _which) -> None:
+    def test_find_quick_tool_fallback_amneziawg_quick(self, _access, _exists, _which) -> None:
         result = self.driver.find_quick_tool()
-        self.assertEqual(result, "/usr/bin/wg-quick")
+        self.assertEqual(result, "/usr/bin/amneziawg-quick")
 
     @patch.dict("drivers.amneziawg_driver.os.environ", {"WATCHDOGVPN_AMNEZIAWG_BIN": "/opt/awg-quick"})
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=True)
@@ -108,7 +108,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
 
     @patch.object(AmneziaWGDriver, "find_wg_tool", return_value=None)
     def test_check_version_raises_when_missing(self, _wg) -> None:
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaisesRegex(FileNotFoundError, "awg was not found"):
             self.driver.check_version()
 
     # --- Config ---
@@ -181,6 +181,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
     @patch.object(AmneziaWGDriver, "find_quick_tool", return_value=None)
     def test_connect_returns_false_when_no_binary(self, _tool) -> None:
         self.assertFalse(self.driver.connect(self.profile))
+        self.assertIn("neither awg-quick nor amneziawg-quick was found", self.driver.last_error)
 
     # --- Disconnect ---
 
