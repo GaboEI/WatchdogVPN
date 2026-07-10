@@ -57,6 +57,12 @@ Product-managed runtime files include:
 - product units under `/etc/systemd/system/`
 - product dispatcher hook under `/etc/NetworkManager/dispatcher.d/`
 - product logrotate policy under `/etc/logrotate.d/myvpn`
+- product kernel tunable defaults under `/etc/sysctl.d/99-watchdogvpn.conf`
+  (`net.ipv4.conf.all.src_valid_mark` and
+  `net.ipv4.conf.default.src_valid_mark`, required for AmneziaWG/WireGuard
+  fwmark default-route policy routing; the daemon itself cannot set kernel
+  tunables under `ProtectKernelTunables=true`, so this is applied once at
+  install/update time and reapplied by `systemd-sysctl.service` on boot)
 - TUI launcher under `~/.local/bin/VPN`
 
 User configuration and state that must be preserved by default:

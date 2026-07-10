@@ -151,11 +151,12 @@ class AmneziaWGDriverTests(unittest.TestCase):
 
     # --- Connect ---
 
+    @patch.object(AmneziaWGDriver, "_ensure_src_valid_mark")
     @patch.object(AmneziaWGDriver, "_interface_exists", side_effect=[False, True])
     @patch.object(AmneziaWGDriver, "find_wg_tool", return_value="/usr/bin/awg")
     @patch.object(AmneziaWGDriver, "find_ip_tool", return_value="/usr/bin/ip")
     @patch("drivers.amneziawg_driver.subprocess.run")
-    def test_connect_success(self, run_mock, _ip, _awg, _iface) -> None:
+    def test_connect_success(self, run_mock, _ip, _awg, _iface, _src_valid_mark) -> None:
         run_mock.return_value.returncode = 0
         run_mock.return_value.stdout = ""
         run_mock.return_value.stderr = ""
@@ -195,6 +196,39 @@ class AmneziaWGDriverTests(unittest.TestCase):
     def test_connect_returns_false_when_no_binary(self, _tool) -> None:
         self.assertFalse(self.driver.connect(self.profile))
         self.assertIn("awg was not found", self.driver.last_error)
+
+    def test_ensure_src_valid_mark_passes_when_already_one(self) -> None:
+        with (
+            patch.object(type(self.driver), "_src_valid_mark_path") as path_mock,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path = Path(tmp) / "src_valid_mark"
+            path.write_text("1\n", encoding="utf-8")
+            path_mock.return_value = path
+            self.driver._ensure_src_valid_mark()
+
+    def test_ensure_src_valid_mark_raises_with_actionable_message_when_zero(self) -> None:
+        with (
+            patch.object(type(self.driver), "_src_valid_mark_path") as path_mock,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path = Path(tmp) / "src_valid_mark"
+            path.write_text("0\n", encoding="utf-8")
+            path_mock.return_value = path
+            with self.assertRaises(RuntimeError) as ctx:
+                self.driver._ensure_src_valid_mark()
+        self.assertIn("src_valid_mark", str(ctx.exception))
+        self.assertIn(f"sysctl -w net.ipv4.conf.{INTERFACE_NAME}.src_valid_mark=1", str(ctx.exception))
+
+    def test_ensure_src_valid_mark_raises_when_unreadable(self) -> None:
+        with (
+            patch.object(type(self.driver), "_src_valid_mark_path") as path_mock,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            path_mock.return_value = Path(tmp) / "does-not-exist" / "src_valid_mark"
+            with self.assertRaises(RuntimeError) as ctx:
+                self.driver._ensure_src_valid_mark()
+        self.assertIn("could not read", str(ctx.exception))
 
     def test_sanitize_error_detail_truncation_keeps_the_tail(self) -> None:
         # A long, fixed-shape prefix (e.g. a subprocess banner) must not

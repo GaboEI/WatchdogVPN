@@ -26,6 +26,13 @@ USERSPACE_LOG_NAME = "amneziawg-go.log"
 # mkdir /var/run/amneziawg: permission denied" in the field) and never
 # exposes an override for it. /var/run is a symlink to /run on Linux.
 UAPI_SOCKET_DIR = Path("/run/amneziawg")
+# conf.all.src_valid_mark alone is not reliable here: kernel docs state
+# src_valid_mark must be set on the source interface too, and conf.default
+# (which conf.all does not override) is only the template a newly created
+# interface inherits - it says nothing about an interface that already
+# exists. Reading the interface's own value is the only unambiguous source
+# of truth for whether marked-packet routing will actually work for it.
+SRC_VALID_MARK_PROC_DIR = Path("/proc/sys/net/ipv4/conf")
 HANDSHAKE_TIMEOUT_SECONDS = 180
 MAX_ERROR_DETAIL_LENGTH = 500
 USERSPACE_LOG_TAIL_LINES = 20
@@ -422,6 +429,36 @@ class AmneziaWGDriver(BaseDriver):
     def _route_family(self, cidr: str) -> str:
         return "-6" if ":" in cidr else "-4"
 
+    def _src_valid_mark_path(self) -> Path:
+        return SRC_VALID_MARK_PROC_DIR / INTERFACE_NAME / "src_valid_mark"
+
+    def _ensure_src_valid_mark(self) -> None:
+        # The daemon runs under systemd's ProtectKernelTunables=true, which
+        # makes /proc/sys read-only for it, so it cannot set this kernel
+        # tunable itself even with CAP_NET_ADMIN. It must already be applied
+        # persistently by install/update time (see
+        # etc/sysctl.d/99-watchdogvpn.conf and
+        # lib/runtime.sh:install_sysctl_defaults()). Reading (not writing)
+        # /proc/sys remains allowed under that sandbox setting. Checking the
+        # interface's own conf.<iface>.src_valid_mark, read after the
+        # interface already exists, is the authoritative value the kernel
+        # actually uses for it - unlike conf.all/conf.default, there is no
+        # ambiguity left to resolve.
+        path = self._src_valid_mark_path()
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError(f"could not read {path}: {exc}") from exc
+        if value != "1":
+            raise RuntimeError(
+                f"{path} is '{value}', expected '1' for default-route AmneziaWG "
+                "policy routing. Rerun ./install.sh or ./update.sh to reapply "
+                "etc/sysctl.d/99-watchdogvpn.conf (sets both "
+                "net.ipv4.conf.all.src_valid_mark and "
+                "net.ipv4.conf.default.src_valid_mark), or set it directly with: "
+                f"sudo sysctl -w net.ipv4.conf.{INTERFACE_NAME}.src_valid_mark=1"
+            )
+
     def _configure_routes(self, allowed_ips: list[str]) -> None:
         ip_tool = self.find_ip_tool()
         awg_tool = self.find_wg_tool()
@@ -435,7 +472,7 @@ class AmneziaWGDriver(BaseDriver):
             self._run([ip_tool, "-4", "route", "add", "0.0.0.0/0", "dev", INTERFACE_NAME, "table", ROUTE_TABLE])
             self._run([ip_tool, "-4", "rule", "add", "not", "fwmark", ROUTE_TABLE, "table", ROUTE_TABLE])
             self._run([ip_tool, "-4", "rule", "add", "table", "main", "suppress_prefixlength", "0"])
-            self._run(["sysctl", "-q", "net.ipv4.conf.all.src_valid_mark=1"])
+            self._ensure_src_valid_mark()
         if default_v6:
             self._run([ip_tool, "-6", "route", "add", "::/0", "dev", INTERFACE_NAME, "table", ROUTE_TABLE])
             self._run([ip_tool, "-6", "rule", "add", "not", "fwmark", ROUTE_TABLE, "table", ROUTE_TABLE])

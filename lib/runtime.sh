@@ -43,6 +43,7 @@ install_runtime_files() {
 
   create_config_if_missing "$ROOT_DIR/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
   install_config_defaults
+  install_sysctl_defaults
   migrate_watchdogvpn_shared_state
   repair_watchdogvpn_shared_state_permissions
   install_python_package_tree
@@ -73,6 +74,20 @@ install_runtime_files() {
   install_user_dir "$ROOT_DIR/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"
   install_root_file "$ROOT_DIR/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
   install_systemd_units
+}
+
+# net.ipv4.conf.all.src_valid_mark must be 1 for AmneziaWG/WireGuard-style
+# fwmark default-route policy routing to pass return traffic. The daemon
+# runs under ProtectKernelTunables=true and cannot set this itself at
+# connect time (see drivers/amneziawg_driver.py), so it is applied once
+# here, at install/update time, as root, outside the daemon's sandbox.
+install_sysctl_defaults() {
+  install_root_file "$ROOT_DIR/etc/sysctl.d/99-watchdogvpn.conf" /etc/sysctl.d/99-watchdogvpn.conf 0644
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] sudo sysctl -p /etc/sysctl.d/99-watchdogvpn.conf\n'
+    return 0
+  fi
+  run_step sudo sysctl -q -p /etc/sysctl.d/99-watchdogvpn.conf
 }
 
 install_python_module_wrapper() {
