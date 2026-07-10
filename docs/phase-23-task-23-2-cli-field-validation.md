@@ -256,6 +256,13 @@ normalization gaps:
   still generated the legacy WireGuard outbound shape (`local_address`), while
   sing-box 1.13 validates WireGuard through top-level `endpoints`. The driver
   now emits modern WireGuard endpoints and keeps the same route target tag.
+- AmneziaWG exposed a native `*-quick` interface-name mismatch. The driver
+  expected to verify and clean up `watchdogvpn_awg`, but wrote the temporary
+  config as `awg.conf`; `awg-quick`/`wg-quick` derive the created interface name
+  from the config filename, so a successful lower-level bring-up could still be
+  reported as a WatchdogVPN connect failure. The runtime config now uses
+  `watchdogvpn_awg.conf`, matching the interface that status, health checks and
+  cleanup already target.
 
 Manual provider import now normalizes those serialized profile JSON variants
 before saving them. The generated WireGuard config passes `sing-box check`

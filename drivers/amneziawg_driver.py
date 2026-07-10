@@ -16,9 +16,9 @@ from models.profile import Profile, ProtocolType
 
 
 RUNTIME_PREFIX = "watchdogvpn-awg-"
-CONFIG_NAME = "awg.conf"
-LOG_NAME = "awg.log"
 INTERFACE_NAME = "watchdogvpn_awg"
+CONFIG_NAME = f"{INTERFACE_NAME}.conf"
+LOG_NAME = "awg.log"
 HANDSHAKE_TIMEOUT_SECONDS = 180
 
 

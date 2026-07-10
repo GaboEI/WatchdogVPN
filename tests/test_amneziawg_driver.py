@@ -117,6 +117,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.driver._write_config(self.profile)
         self.assertIsNotNone(self.driver._config_path)
         self.assertEqual(self.driver._config_path.name, CONFIG_NAME)
+        self.assertEqual(self.driver._config_path.stem, INTERFACE_NAME)
         self.assertTrue(self.driver._config_path.exists())
         content = self.driver._config_path.read_text(encoding="utf-8")
         self.assertIn("[Interface]", content)
