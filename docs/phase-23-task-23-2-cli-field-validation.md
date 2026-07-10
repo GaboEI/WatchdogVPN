@@ -16,7 +16,16 @@ machine.
 
 ## Runner
 
-The operator-run helper is:
+The primary operator-run wrapper is:
+
+```text
+tests/vm/phase23_run_cli_field_section.sh
+```
+
+It validates the private manifest, regenerates the runbook, checks the repo
+state and then delegates to the Python runner for one matrix section.
+
+The lower-level operator-run helper is:
 
 ```text
 tests/vm/phase23_cli_field_validation_runner.py
@@ -70,10 +79,8 @@ python3 tests/vm/phase23_cli_field_validation_plan.py \
 Dry-run the runner without executing commands:
 
 ```bash
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section all \
-  --dry-run
+WATCHDOGVPN_PHASE23_MANIFEST=/tmp/watchdogvpn-phase23-field-manifest.json \
+tests/vm/phase23_run_cli_field_section.sh --dry-run all
 ```
 
 ## Operator Sequence
@@ -86,56 +93,19 @@ Lower any external VPN that could mask WatchdogVPN behavior, then run:
 
 ```bash
 export WATCHDOGVPN_FIELD_VALIDATION=1
+export WATCHDOGVPN_PHASE23_MANIFEST=/tmp/watchdogvpn-phase23-field-manifest.json
+export WATCHDOGVPN_EXTERNAL_VPN_STATE=absent
 
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section preflight \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section imports \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section protocols \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section provider \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section app-policy \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section dns \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section kill-switch \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section rotation \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section manual-off \
-  --external-vpn-state absent
-
-python3 tests/vm/phase23_cli_field_validation_runner.py \
-  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
-  --section cleanup \
-  --external-vpn-state absent
+tests/vm/phase23_run_cli_field_section.sh preflight
+tests/vm/phase23_run_cli_field_section.sh imports
+tests/vm/phase23_run_cli_field_section.sh protocols
+tests/vm/phase23_run_cli_field_section.sh provider
+tests/vm/phase23_run_cli_field_section.sh app-policy
+tests/vm/phase23_run_cli_field_section.sh dns
+tests/vm/phase23_run_cli_field_section.sh kill-switch
+tests/vm/phase23_run_cli_field_section.sh rotation
+tests/vm/phase23_run_cli_field_section.sh manual-off
+tests/vm/phase23_run_cli_field_section.sh cleanup
 ```
 
 ### External VPN Present
@@ -146,7 +116,7 @@ the VM console or snapshot before continuing.
 Run the same sections with:
 
 ```bash
---external-vpn-state present
+export WATCHDOGVPN_EXTERNAL_VPN_STATE=present
 ```
 
 DNS apply/reset while an external VPN is present may be marked unavailable only
@@ -189,6 +159,9 @@ python3 tests/vm/phase23_cli_field_validation_runner.py \
   --manifest tests/vm/phase23_cli_field_validation_manifest.example.json \
   --section all \
   --dry-run
+
+tests/vm/phase23_run_cli_field_section.sh \
+  --dry-run all
 
 python3 -m py_compile \
   tests/vm/phase23_cli_field_validation_plan.py \
