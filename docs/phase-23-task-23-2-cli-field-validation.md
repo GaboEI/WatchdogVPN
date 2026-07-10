@@ -42,6 +42,13 @@ The runner:
 - executes commands with Python subprocess argv lists, never `shell=True`;
 - captures command, redacted stdout/stderr, return code and timestamps as JSON;
 - redacts the provider URL loaded from `provider.url_file`;
+- records the real imported profile IDs under
+  `<evidence_dir>/phase23-profile-id-map.json` and uses them for protocol
+  connection checks instead of assuming fixture filenames become profile IDs;
+- fails profile import evidence when an imported protocol does not match the
+  matrix protocol requested for that fixture;
+- skips egress probes after a failed `connect`, because probes without a
+  connected profile are not valid protocol evidence;
 - snapshots routes, policy rules, resolver hash, nftables, listeners and
   relevant processes around mutating sections;
 - writes a reboot/manual-off runbook instead of auto-rebooting the machine.

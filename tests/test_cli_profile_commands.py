@@ -137,6 +137,29 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertFalse(json.loads(disabled.stdout)["profile"]["enabled"])
             self.assertTrue(json.loads(rotation.stdout)["profile"]["in_rotation_pool"])
 
+    def test_profile_add_json_does_not_prompt_for_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {
+                "WATCHDOGVPN_CONFIG_DIR": tmp,
+                "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
+            }
+            with patch.dict("os.environ", env, clear=False), patch(
+                "cli.main._prompt_rotation_pool",
+                side_effect=AssertionError("json profile add must not prompt"),
+            ), redirect_stdout(StringIO()) as stdout:
+                rc = cli.main.main([
+                    "profile",
+                    "add",
+                    "--uri",
+                    "vless://uuid@example.com:443?encryption=none#json-demo",
+                    "--json",
+                ])
+
+            self.assertEqual(rc, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["profiles"][0]["id"], "json-demo")
+            self.assertFalse(payload["profiles"][0]["in_rotation_pool"])
+
     def test_profile_missing_id_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["profile", "enable", "missing"], tmp, check=False)

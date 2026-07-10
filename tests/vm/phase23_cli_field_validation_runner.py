@@ -53,6 +53,19 @@ def _text_write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _extract_json_document(text: str) -> Any:
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            value, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        return value
+    raise FieldValidationError("command output did not contain a JSON document")
+
+
 class Runner:
     def __init__(
         self,
@@ -72,6 +85,7 @@ class Runner:
         self.command_index = 0
         self.failures: list[str] = []
         self.secrets: list[str] = []
+        self.last_stdout = ""
         self.started_at = _utc_now()
 
     def selected_profiles(self) -> list[dict[str, Any]]:
@@ -125,6 +139,7 @@ class Runner:
             "dry_run": self.dry_run,
         }
         if self.dry_run:
+            self.last_stdout = ""
             record.update({"returncode": None, "stdout": "", "stderr": "", "finished_at": _utc_now()})
             _json_write(self.command_path(section, label), record)
             print(f"PHASE23_DRY_RUN {section} {label}")
@@ -157,6 +172,7 @@ class Runner:
 
         stdout = _redact(completed.stdout, self.secrets)
         stderr = _redact(completed.stderr, self.secrets)
+        self.last_stdout = stdout
         record.update(
             {
                 "returncode": completed.returncode,
@@ -224,20 +240,60 @@ class Runner:
         self.snapshot(f"baseline-{self.external_vpn_state}")
 
     def imports(self) -> None:
+        profile_id_map: dict[str, str] = {}
         for profile in self.selected_profiles():
-            self.run(
+            rc = self.run(
                 "profile-imports",
                 f"import-{profile['protocol']}",
                 ["watchdog", "profile", "add", "--file", profile["fixture_path"], "--json"],
                 timeout=120,
             )
+            if self.dry_run or rc != 0:
+                continue
+            try:
+                payload = _extract_json_document(self.last_stdout)
+                imported = payload.get("profiles", []) if isinstance(payload, dict) else []
+            except FieldValidationError as exc:
+                self.failures.append(f"profile-imports:import-{profile['protocol']}: {exc}")
+                continue
+            if not imported:
+                self.failures.append(f"profile-imports:import-{profile['protocol']}: no imported profile in JSON")
+                continue
+            first = imported[0]
+            actual_protocol = first.get("protocol")
+            actual_id = first.get("id")
+            if actual_protocol != profile["protocol"]:
+                self.failures.append(
+                    f"profile-imports:import-{profile['protocol']}: protocol mismatch "
+                    f"expected={profile['protocol']} actual={actual_protocol}"
+                )
+                continue
+            if not isinstance(actual_id, str) or not actual_id:
+                self.failures.append(f"profile-imports:import-{profile['protocol']}: missing imported profile id")
+                continue
+            profile_id_map[profile["protocol"]] = actual_id
         self.run("profile-imports", "profile-list-after-import", ["watchdog", "profile", "list", "--json"])
+        if profile_id_map and not self.dry_run:
+            _json_write(self.evidence_dir / "phase23-profile-id-map.json", profile_id_map)
+
+    def profile_id_for(self, profile: dict[str, Any]) -> str:
+        profile_id_map_path = self.evidence_dir / "phase23-profile-id-map.json"
+        if profile_id_map_path.is_file():
+            profile_id_map = json.loads(profile_id_map_path.read_text(encoding="utf-8"))
+            mapped = profile_id_map.get(profile["protocol"])
+            if isinstance(mapped, str) and mapped:
+                return mapped
+        return str(profile["expected_id"])
 
     def protocols(self) -> None:
         for profile in self.selected_profiles():
-            profile_id = profile["expected_id"]
+            profile_id = self.profile_id_for(profile)
             section = f"protocols-{self.external_vpn_state}-{profile['protocol']}"
-            self.run(section, "connect", ["watchdog", "connect", profile_id, "--json"], timeout=180)
+            connect_rc = self.run(section, "connect", ["watchdog", "connect", profile_id, "--json"], timeout=180)
+            if connect_rc != 0:
+                self.run(section, "status-after-failed-connect", ["watchdog", "status", "--json"], timeout=60, ok_codes={0, 69, 70})
+                self.snapshot(f"post-failed-connect-{self.external_vpn_state}-{profile['protocol']}")
+                continue
             self.run(section, "status-connected", ["watchdog", "status", "--json"], timeout=60)
             self.egress_probes(section)
             self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})

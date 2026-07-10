@@ -1639,7 +1639,8 @@ def _print_connection_state(state: dict, *, command: str) -> None:
 
 
 def _profile_add(args: argparse.Namespace) -> int:
-    provider = ManualProvider(rotation_prompt=_prompt_rotation_pool)
+    rotation_prompt = (lambda _profile: False) if args.json else _prompt_rotation_pool
+    provider = ManualProvider(rotation_prompt=rotation_prompt)
     if args.clipboard:
         profile = provider.from_clipboard()
         if profile is None:
