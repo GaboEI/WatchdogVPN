@@ -21,9 +21,11 @@ INTERFACE_NAME = "watchdogvpn_awg"
 CONFIG_NAME = f"{INTERFACE_NAME}.conf"
 LOG_NAME = "awg.log"
 USERSPACE_LOG_NAME = "amneziawg-go.log"
-# wireguard-go/amneziawg-go hardcode their userspace configuration socket at
-# /run/wireguard/<iface>.sock and never expose an override for it.
-UAPI_SOCKET_DIR = Path("/run/wireguard")
+# amneziawg-go hardcodes its userspace configuration socket at
+# /var/run/amneziawg/<iface>.sock (confirmed via its own "UAPI listen error:
+# mkdir /var/run/amneziawg: permission denied" in the field) and never
+# exposes an override for it. /var/run is a symlink to /run on Linux.
+UAPI_SOCKET_DIR = Path("/run/amneziawg")
 HANDSHAKE_TIMEOUT_SECONDS = 180
 MAX_ERROR_DETAIL_LENGTH = 500
 USERSPACE_LOG_TAIL_LINES = 20

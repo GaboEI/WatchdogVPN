@@ -32,7 +32,7 @@ assert_contains "$SERVICE" "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SER
 assert_contains "$SERVICE" "DevicePolicy=closed" "daemon unit must deny device access by default"
 assert_contains "$SERVICE" "DeviceAllow=/dev/net/tun rw" "daemon unit must allow TUN device access"
 assert_contains "$SERVICE" "RuntimeDirectory=watchdogvpn" "daemon unit must let systemd manage /run/watchdogvpn"
-assert_contains "$SERVICE" "RuntimeDirectory=watchdogvpn wireguard" "daemon unit must also expose /run/wireguard for wireguard-go/amneziawg-go UAPI sockets under ProtectSystem=strict"
+assert_contains "$SERVICE" "RuntimeDirectory=watchdogvpn amneziawg" "daemon unit must also expose /run/amneziawg for amneziawg-go's UAPI socket under ProtectSystem=strict"
 assert_contains "$SERVICE" "RuntimeDirectoryMode=0750" "daemon runtime directory must be group-traversable for IPC"
 assert_contains "$SERVICE" "StateDirectory=watchdogvpn" "daemon unit must let systemd manage /var/lib/watchdogvpn"
 assert_contains "$SERVICE" "StateDirectoryMode=2770" "daemon state directory must be writable through the watchdogvpn group with setgid inheritance"
