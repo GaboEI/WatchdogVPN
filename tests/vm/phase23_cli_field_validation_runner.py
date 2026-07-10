@@ -491,7 +491,20 @@ class Runner:
         self.run(section, "diagnose", ["watchdog", "dns", "diagnose", "--domain", self.plan["probe_domain"], "--json"])
         self.run(section, "apply-dry-run", ["watchdog", "dns", "apply", "--dry-run", "--json"])
         self.run(section, "connect-for-apply", ["watchdog", "connect", profile_id, "--json"], timeout=180)
-        self.run(section, "apply", ["watchdog", "dns", "apply", "--yes", "--json"], timeout=120)
+        # --systemd-link is mandatory for a first-time apply against
+        # systemd-resolved (dns/state_manager.py:_apply_systemd_resolved
+        # raises "systemd-resolved apply requires a link name" without it)
+        # and was missing from both the Task 23.1 M5.2 plan text and this
+        # harness. "wdvpn-tun0" is the sing-box driver's real TUN interface
+        # name (drivers/singbox_driver.py), matching what
+        # docs/dns-cli.md's own example ("--systemd-link tun0") documents
+        # for this exact command shape.
+        self.run(
+            section,
+            "apply",
+            ["watchdog", "dns", "apply", "--yes", "--systemd-link", "wdvpn-tun0", "--json"],
+            timeout=120,
+        )
         self.run(section, "status-after-apply", ["watchdog", "dns", "status", "--json"])
         self.run(section, "resolver-probe", ["getent", "hosts", self.plan["probe_domain"]], timeout=45)
         self.run(section, "reset", ["watchdog", "dns", "reset", "--yes", "--json"], timeout=120, ok_codes={0, 70})
