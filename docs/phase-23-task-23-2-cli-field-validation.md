@@ -56,6 +56,18 @@ Do not edit the JSON by hand unless you are comfortable doing so. The safer
 operator path is to put the private fixtures in one local directory and let the
 manifest helper write the JSON.
 
+If the profiles are currently only copied strings rather than files, use the
+local collector. It writes private files with mode `0600` and never prints their
+contents:
+
+```bash
+python3 tests/vm/phase23_collect_private_fixtures.py
+```
+
+For single-line profile URLs, choose `p` and paste into the hidden prompt. For
+multi-line WireGuard/OpenVPN/JSON configs, choose `e` and paste into the local
+editor. Do not paste profile contents or provider URLs into chat.
+
 Expected private fixture layout:
 
 ```bash
@@ -208,6 +220,7 @@ tests/vm/phase23_run_cli_field_section.sh \
   --dry-run all
 
 python3 -m py_compile \
+  tests/vm/phase23_collect_private_fixtures.py \
   tests/vm/phase23_prepare_private_manifest.py \
   tests/vm/phase23_cli_field_validation_plan.py \
   tests/vm/phase23_cli_field_validation_runner.py
