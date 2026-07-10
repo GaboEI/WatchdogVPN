@@ -295,26 +295,55 @@ class Runner:
                 self.snapshot(f"post-failed-connect-{self.external_vpn_state}-{profile['protocol']}")
                 continue
             self.run(section, "status-connected", ["watchdog", "status", "--json"], timeout=60)
-            self.egress_probes(section)
+            capabilities = self.connected_capabilities()
+            self.egress_probes(
+                section,
+                expect_normal=capabilities["tun_active"],
+                expect_proxy=capabilities["proxy_active"],
+            )
             self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
             self.run(section, "status-disconnected", ["watchdog", "status", "--json"], timeout=60, ok_codes={0, 69})
             self.snapshot(f"post-{self.external_vpn_state}-{profile['protocol']}")
 
-    def egress_probes(self, section: str) -> None:
+    def connected_capabilities(self) -> dict[str, bool]:
+        if self.dry_run:
+            return {"tun_active": True, "proxy_active": True}
+        try:
+            payload = _extract_json_document(self.last_stdout)
+        except FieldValidationError:
+            return {"tun_active": True, "proxy_active": True}
+        if not isinstance(payload, dict):
+            return {"tun_active": True, "proxy_active": True}
+        lifecycle = payload.get("payload", {}).get("lifecycle", {})
+        if not isinstance(lifecycle, dict):
+            return {"tun_active": True, "proxy_active": True}
+        return {
+            "tun_active": bool(lifecycle.get("tun_active")),
+            "proxy_active": bool(lifecycle.get("proxy_active")),
+        }
+
+    def egress_probes(self, section: str, *, expect_normal: bool = True, expect_proxy: bool = True) -> None:
         url = f"https://{self.plan['probe_domain']}"
-        self.run(section, "egress-normal", ["curl", "--fail", "--show-error", "--max-time", "20", url], timeout=45)
-        self.run(
-            section,
-            "egress-socks",
-            ["curl", "--fail", "--show-error", "--max-time", "20", "--socks5-hostname", "127.0.0.1:2080", url],
-            timeout=45,
-        )
-        self.run(
-            section,
-            "egress-http",
-            ["curl", "--fail", "--show-error", "--max-time", "20", "--proxy", "http://127.0.0.1:2081", url],
-            timeout=45,
-        )
+        if expect_normal:
+            self.run(section, "egress-normal", ["curl", "--fail", "--show-error", "--max-time", "20", url], timeout=45)
+        else:
+            print(f"PHASE23_SKIP {section} egress-normal tun_inactive")
+        if expect_proxy:
+            self.run(
+                section,
+                "egress-socks",
+                ["curl", "--fail", "--show-error", "--max-time", "20", "--socks5-hostname", "127.0.0.1:2080", url],
+                timeout=45,
+            )
+            self.run(
+                section,
+                "egress-http",
+                ["curl", "--fail", "--show-error", "--max-time", "20", "--proxy", "http://127.0.0.1:2081", url],
+                timeout=45,
+            )
+        else:
+            print(f"PHASE23_SKIP {section} egress-socks proxy_inactive")
+            print(f"PHASE23_SKIP {section} egress-http proxy_inactive")
 
     def provider(self) -> None:
         provider = self.plan["provider"]

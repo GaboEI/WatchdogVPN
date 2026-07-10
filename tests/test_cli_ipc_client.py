@@ -243,6 +243,16 @@ class WatchdogIPCClientErrorTests(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertEqual(response.payload["group_name"], "phase14-vm")
 
+    def test_connect_uses_extended_lifecycle_timeout(self) -> None:
+        line = encode_response(True, {"connected": True})
+        with delayed_one_line_unix_server(line, delay=0.2) as socket_path:
+            client = WatchdogIPCClient(socket_path, timeout=0.05)
+
+            response = client.connect("slow-profile")
+
+        self.assertTrue(response.ok)
+        self.assertTrue(response.payload["connected"])
+
     def test_malformed_response_maps_to_unexpected_response_error(self) -> None:
         with one_line_unix_server(b"not-json\n") as socket_path:
             client = WatchdogIPCClient(socket_path, timeout=1.0)

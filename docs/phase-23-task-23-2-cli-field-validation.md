@@ -49,6 +49,9 @@ The runner:
   matrix protocol requested for that fixture;
 - skips egress probes after a failed `connect`, because probes without a
   connected profile are not valid protocol evidence;
+- uses connected status to decide whether normal TUN egress and local
+  SOCKS/HTTP proxy egress are applicable, so protocol drivers without local
+  proxy listeners are not failed for missing proxy probes;
 - snapshots routes, policy rules, resolver hash, nftables, listeners and
   relevant processes around mutating sections;
 - writes a reboot/manual-off runbook instead of auto-rebooting the machine.

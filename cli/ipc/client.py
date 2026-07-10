@@ -29,6 +29,7 @@ from daemon.protocol import (
 
 DEFAULT_SOCKET_PATH = Path("/run/watchdogvpn/control.sock")
 DEFAULT_TIMEOUT_SECONDS = 5.0
+LIFECYCLE_MUTATION_TIMEOUT_SECONDS = 30.0
 NODE_GROUP_AUTO_TEST_TIMEOUT_SECONDS = 120.0
 SOCKET_PATH_ENV = "WATCHDOGVPN_SOCKET_PATH"
 EVENT_SOCKET_PATH_ENV = "WATCHDOGVPN_EVENT_SOCKET_PATH"
@@ -52,16 +53,24 @@ class WatchdogIPCClient:
         self.timeout = timeout
 
     def connect(self, profile_id: str) -> Response:
-        return self.request(COMMAND_CONNECT, {"profile_id": profile_id})
+        return self.request(
+            COMMAND_CONNECT,
+            {"profile_id": profile_id},
+            timeout=LIFECYCLE_MUTATION_TIMEOUT_SECONDS,
+        )
 
     def disconnect(self) -> Response:
-        return self.request(COMMAND_DISCONNECT)
+        return self.request(COMMAND_DISCONNECT, timeout=LIFECYCLE_MUTATION_TIMEOUT_SECONDS)
 
     def status(self) -> Response:
         return self.request(COMMAND_STATUS)
 
     def rotate(self, force: bool = False) -> Response:
-        return self.request(COMMAND_ROTATE, {"force": force})
+        return self.request(
+            COMMAND_ROTATE,
+            {"force": force},
+            timeout=LIFECYCLE_MUTATION_TIMEOUT_SECONDS,
+        )
 
     def node_group_auto_test(self, group_name: str) -> Response:
         return self.request(
