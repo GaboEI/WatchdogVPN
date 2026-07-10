@@ -249,10 +249,16 @@ normalization gaps:
 - WireGuard WatchdogVPN JSON fixtures stored a full WireGuard config in
   `config.raw_config`, while the sing-box driver consumes structured runtime
   keys such as `private_key`, `public_key` and `endpoint`.
+- Standard WireGuard also exposed a sing-box 1.13 compatibility bug: the driver
+  still generated the legacy WireGuard outbound shape (`local_address`), while
+  sing-box 1.13 validates WireGuard through top-level `endpoints`. The driver
+  now emits modern WireGuard endpoints and keeps the same route target tag.
 
 Manual provider import now normalizes those serialized profile JSON variants
-before saving them. Re-run `imports` before re-running `protocols` so the saved
-profiles contain the corrected runtime fields.
+before saving them. The generated WireGuard config passes `sing-box check`
+against the real Phase 23 fixture without starting a connection. Re-run
+`imports` before re-running `protocols` so the saved profiles contain the
+corrected runtime fields.
 
 ## Local Validation For This Runner
 

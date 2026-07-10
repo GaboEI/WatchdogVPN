@@ -229,7 +229,16 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             (ProtocolType.HYSTERIA2, {"host": "h2.example.com", "port": 443, "password": "secret"}),
             (ProtocolType.TUIC, {"host": "tuic.example.com", "port": 443, "uuid": "u2", "password": "secret"}),
             (ProtocolType.SHADOWSOCKS, {"host": "ss.example.com", "port": 8388, "method": "aes-128-gcm", "password": "secret"}),
-            (ProtocolType.WIREGUARD, {"host": "wg.example.com", "port": 51820, "private_key": "priv", "public_key": "pub"}),
+            (
+                ProtocolType.WIREGUARD,
+                {
+                    "host": "wg.example.com",
+                    "port": 51820,
+                    "address": "10.0.0.2/32",
+                    "private_key": "priv",
+                    "public_key": "pub",
+                },
+            ),
             (ProtocolType.SOCKS, {"host": "socks.example.com", "port": 1080, "username": "user", "password": "pass"}),
             (ProtocolType.HTTP, {"host": "http.example.com", "port": 8080, "username": "user", "password": "pass"}),
         ]
@@ -237,7 +246,10 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             with self.subTest(protocol=protocol):
                 profile = self._profile(protocol, **cfg)
                 config = self.driver.generate_singbox_config(profile)
-                self.assertEqual(config["outbounds"][0]["type"], protocol.value if protocol is not ProtocolType.SHADOWSOCKS else "shadowsocks")
+                if protocol is ProtocolType.WIREGUARD:
+                    self.assertEqual(config["endpoints"][0]["type"], "wireguard")
+                else:
+                    self.assertEqual(config["outbounds"][0]["type"], protocol.value if protocol is not ProtocolType.SHADOWSOCKS else "shadowsocks")
                 self.assertEqual(config["inbounds"][1]["type"], "http")
         self.assertEqual(write_mock.call_count, len(cases))
 
@@ -384,14 +396,16 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             """
         )
         config = self.driver.generate_singbox_config(profile)
-        outbound = config["outbounds"][0]
-        self.assertEqual(outbound["type"], "wireguard")
-        self.assertEqual(outbound["server"], "wg.example.com")
-        self.assertEqual(outbound["server_port"], 51820)
-        self.assertEqual(outbound["local_address"], ["10.0.0.2/32", "fd00::2/128"])
-        self.assertEqual(outbound["private_key"], "private-key")
-        self.assertEqual(outbound["peer_public_key"], "public-key")
-        self.assertEqual(outbound["mtu"], 1420)
+        endpoint = config["endpoints"][0]
+        self.assertEqual(endpoint["type"], "wireguard")
+        self.assertEqual(endpoint["address"], ["10.0.0.2/32", "fd00::2/128"])
+        self.assertEqual(endpoint["private_key"], "private-key")
+        self.assertEqual(endpoint["mtu"], 1420)
+        self.assertEqual(endpoint["peers"][0]["address"], "wg.example.com")
+        self.assertEqual(endpoint["peers"][0]["port"], 51820)
+        self.assertEqual(endpoint["peers"][0]["public_key"], "public-key")
+        self.assertEqual(endpoint["peers"][0]["allowed_ips"], ["0.0.0.0/0", "::/0"])
+        self.assertEqual(config["route"]["rules"], [{"action": "route", "outbound": endpoint["tag"]}])
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIND_INTERFACE": "enp4s0"})

@@ -274,12 +274,9 @@ class SingBoxDriver(BaseDriver):
             for hop in plan.hops:
                 if hop.resolved_profile is None or hop.outbound_tag is None:
                     continue
-                outbound = self._protocol_to_outbound(hop.resolved_profile)
-                outbound["tag"] = hop.outbound_tag
-                self._apply_dialer_options(outbound, hop.resolved_profile)
+                outbound = self._profile_to_route_target(hop.resolved_profile, config, tag=hop.outbound_tag)
                 if previous_tag is not None:
                     outbound["detour"] = previous_tag
-                config["outbounds"].append(outbound)
                 previous_tag = hop.outbound_tag
 
     def _normalize_port(self, value: Any, default: int | None = None) -> int | None:
@@ -429,6 +426,51 @@ class SingBoxDriver(BaseDriver):
             outbound["bind_interface"] = bind_interface
         return outbound
 
+    def _wireguard_to_endpoint(self, profile: Profile, *, tag: str | None = None) -> dict[str, Any]:
+        cfg = profile.config
+        endpoint_host, endpoint_port = self._split_endpoint(cfg.get("endpoint"))
+        peer: dict[str, Any] = {
+            "address": cfg.get("host") or cfg.get("server") or endpoint_host,
+            "port": self._normalize_port(cfg.get("port") or cfg.get("server_port")) or endpoint_port,
+            "public_key": cfg.get("peer_public_key") or cfg.get("public_key"),
+            "allowed_ips": self._normalize_list(cfg.get("allowed_ips") or "0.0.0.0/0,::/0"),
+        }
+        reserved = self._normalize_list(cfg.get("reserved"))
+        if reserved:
+            peer["reserved"] = reserved
+
+        endpoint: dict[str, Any] = {
+            "type": "wireguard",
+            "tag": tag or profile.name,
+            "system": False,
+            "address": self._normalize_list(cfg.get("local_address") or cfg.get("address")),
+            "private_key": cfg.get("private_key"),
+            "peers": [peer],
+        }
+        mtu = self._normalize_port(cfg.get("mtu"))
+        if mtu is not None:
+            endpoint["mtu"] = mtu
+        self._apply_dialer_options(endpoint, profile)
+        return endpoint
+
+    def _profile_to_route_target(
+        self,
+        profile: Profile,
+        config: dict[str, Any],
+        *,
+        tag: str | None = None,
+    ) -> dict[str, Any]:
+        if profile.protocol is ProtocolType.WIREGUARD:
+            endpoint = self._wireguard_to_endpoint(profile, tag=tag)
+            config.setdefault("endpoints", []).append(endpoint)
+            return endpoint
+        outbound = self._protocol_to_outbound(profile)
+        if tag is not None:
+            outbound["tag"] = tag
+        self._apply_dialer_options(outbound, profile)
+        config.setdefault("outbounds", []).append(outbound)
+        return outbound
+
     def _protocol_to_outbound(self, profile: Profile) -> dict[str, Any]:
         cfg = profile.config
         if profile.protocol is ProtocolType.VLESS:
@@ -542,22 +584,6 @@ class SingBoxDriver(BaseDriver):
                 "method": cfg.get("method", "chacha20-ietf-poly1305"),
                 "password": cfg.get("password") or profile.id,
             }
-        if profile.protocol is ProtocolType.WIREGUARD:
-            endpoint_host, endpoint_port = self._split_endpoint(cfg.get("endpoint"))
-            outbound = {
-                "type": "wireguard",
-                "tag": profile.name,
-                "server": cfg.get("host") or cfg.get("server") or endpoint_host,
-                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")) or endpoint_port,
-                "local_address": self._normalize_list(cfg.get("local_address") or cfg.get("address")),
-                "private_key": cfg.get("private_key"),
-                "peer_public_key": cfg.get("peer_public_key") or cfg.get("public_key"),
-                "reserved": self._normalize_list(cfg.get("reserved")),
-            }
-            mtu = self._normalize_port(cfg.get("mtu"))
-            if mtu is not None:
-                outbound["mtu"] = mtu
-            return outbound
         if profile.protocol is ProtocolType.SOCKS:
             outbound = {
                 "type": "socks",
@@ -1098,13 +1124,12 @@ class SingBoxDriver(BaseDriver):
         if final_policy not in SIMPLE_RULE_ACTIONS and chain_target(final_policy) is None:
             raise ValueError(f"unsupported final_policy: {final_policy!r}")
 
-        outbound = self._protocol_to_outbound(profile)
-        self._apply_dialer_options(outbound, profile)
         config: dict[str, Any] = {
             "log": {"level": "warning"},
             "inbounds": self._build_inbounds(lan_proxy),
-            "outbounds": [outbound],
+            "outbounds": [],
         }
+        outbound = self._profile_to_route_target(profile, config)
         self._append_chain_outbounds(config, chain_runtime_plans or {})
         if self._mode_requires_tun(mode, app_policy):
             config["inbounds"].append(self._build_tun_inbound())
