@@ -230,7 +230,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             self.driver._create_interface()
 
-        self.assertIn("did not become ready", str(ctx.exception))
+        self.assertIn("uapi socket did not appear at", str(ctx.exception))
 
     def test_wait_for_uapi_socket_true_when_socket_exists(self) -> None:
         with (
@@ -253,10 +253,18 @@ class AmneziaWGDriverTests(unittest.TestCase):
     def test_userspace_log_tail_reads_recent_lines(self) -> None:
         self.driver._write_config(self.profile)
         self.driver._reset_log()
-        self.driver._log("line one")
-        self.driver._log("line two")
+        # amneziawg-go's own stdout/stderr, kept in a dedicated file separate
+        # from the driver's own _log() debug lines.
+        self.driver._userspace_log_path.write_text("line one\nline two\n", encoding="utf-8")
 
         self.assertEqual(self.driver._userspace_log_tail(), "line one\nline two")
+
+    def test_userspace_log_tail_ignores_driver_debug_log(self) -> None:
+        self.driver._write_config(self.profile)
+        self.driver._reset_log()
+        self.driver._log("unrelated driver debug line")
+
+        self.assertEqual(self.driver._userspace_log_tail(), "")
 
     def test_userspace_log_tail_empty_without_runtime_dir(self) -> None:
         self.assertEqual(self.driver._userspace_log_tail(), "")

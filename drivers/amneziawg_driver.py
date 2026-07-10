@@ -20,6 +20,7 @@ RUNTIME_PREFIX = "watchdogvpn-awg-"
 INTERFACE_NAME = "watchdogvpn_awg"
 CONFIG_NAME = f"{INTERFACE_NAME}.conf"
 LOG_NAME = "awg.log"
+USERSPACE_LOG_NAME = "amneziawg-go.log"
 # wireguard-go/amneziawg-go hardcode their userspace configuration socket at
 # /run/wireguard/<iface>.sock and never expose an override for it.
 UAPI_SOCKET_DIR = Path("/run/wireguard")
@@ -84,7 +85,9 @@ class AmneziaWGDriver(BaseDriver):
         self._runtime_dir: Path | None = None
         self._config_path: Path | None = None
         self._log_path: Path | None = None
+        self._userspace_log_path: Path | None = None
         self._userspace_process: subprocess.Popen[str] | None = None
+        self._userspace_failure_reason = ""
         self.last_error = ""
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
@@ -204,6 +207,10 @@ class AmneziaWGDriver(BaseDriver):
             self._runtime_dir = make_runtime_dir(RUNTIME_PREFIX)
             self._config_path = self._runtime_dir / CONFIG_NAME
             self._log_path = self._runtime_dir / LOG_NAME
+            # Kept separate from _log_path: _cleanup_routes()/_run() write many
+            # driver-debug lines before amneziawg-go even starts, which was
+            # crowding amneziawg-go's own output out of a shared tail read.
+            self._userspace_log_path = self._runtime_dir / USERSPACE_LOG_NAME
         return self._config_path, self._log_path  # type: ignore[return-value]
 
     def _write_config(self, profile: Profile) -> _ParsedConfig:
@@ -228,6 +235,7 @@ class AmneziaWGDriver(BaseDriver):
         self._runtime_dir = None
         self._config_path = None
         self._log_path = None
+        self._userspace_log_path = None
 
     def _kernel_module_loaded(self) -> bool:
         return Path("/sys/module/amneziawg").exists()
@@ -316,10 +324,10 @@ class AmneziaWGDriver(BaseDriver):
         return socket_path.exists()
 
     def _userspace_log_tail(self, max_lines: int = USERSPACE_LOG_TAIL_LINES) -> str:
-        if self._log_path is None:
+        if self._userspace_log_path is None:
             return ""
         try:
-            lines = self._log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = self._userspace_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             return ""
         return "\n".join(lines[-max_lines:]).strip()
@@ -328,7 +336,9 @@ class AmneziaWGDriver(BaseDriver):
         userspace_tool = self.find_userspace_tool()
         if not userspace_tool:
             return False
-        _, log_path = self._ensure_runtime_paths()
+        self._ensure_runtime_paths()
+        log_path = self._userspace_log_path
+        assert log_path is not None
         log_file = log_path.open("a", encoding="utf-8")
         try:
             self._userspace_process = subprocess.Popen(
@@ -341,10 +351,12 @@ class AmneziaWGDriver(BaseDriver):
             log_file.close()
         self._log(f"connect: started {userspace_tool} {INTERFACE_NAME}")
         if not self._wait_for_interface():
-            self._log(f"connect: {INTERFACE_NAME} did not appear via ip link show")
+            self._userspace_failure_reason = f"{INTERFACE_NAME} did not appear via ip link show"
+            self._log(f"connect: {self._userspace_failure_reason}")
             return False
         if not self._wait_for_uapi_socket():
-            self._log(f"connect: uapi socket did not appear at {self._uapi_socket_path()}")
+            self._userspace_failure_reason = f"uapi socket did not appear at {self._uapi_socket_path()}"
+            self._log(f"connect: {self._userspace_failure_reason}")
             return False
         return True
 
@@ -364,10 +376,11 @@ class AmneziaWGDriver(BaseDriver):
         if result.returncode == 0:
             return
         userspace_tool = self.find_userspace_tool()
+        self._userspace_failure_reason = ""
         if userspace_tool and self._start_userspace_interface():
             return
         fallback_detail = (
-            f"userspace fallback via {userspace_tool} did not become ready"
+            f"userspace fallback via {userspace_tool}: {self._userspace_failure_reason}"
             if userspace_tool
             else "amneziawg-go was not found for a userspace fallback"
         )
