@@ -222,13 +222,18 @@ class RuntimeWorker:
             connected=connected,
         )
         self._broadcast_state(state_payload)
+        response_payload = {
+            "connected": connected,
+            "profile_id": profile.id,
+            "state": state_payload,
+        }
+        if not connected:
+            error_detail = str(getattr(self.runtime, "last_error", "") or "").strip()
+            if error_detail:
+                response_payload["error_detail"] = error_detail
         return Response(
             ok=connected,
-            payload={
-                "connected": connected,
-                "profile_id": profile.id,
-                "state": state_payload,
-            },
+            payload=response_payload,
             error=None if connected else "connect failed",
         )
 

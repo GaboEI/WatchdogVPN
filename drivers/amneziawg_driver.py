@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -20,6 +21,8 @@ INTERFACE_NAME = "watchdogvpn_awg"
 CONFIG_NAME = f"{INTERFACE_NAME}.conf"
 LOG_NAME = "awg.log"
 HANDSHAKE_TIMEOUT_SECONDS = 180
+MAX_ERROR_DETAIL_LENGTH = 500
+SECRET_LINE_RE = re.compile(r"^\s*(?:PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -58,6 +61,7 @@ class AmneziaWGDriver(BaseDriver):
         self._runtime_dir: Path | None = None
         self._config_path: Path | None = None
         self._log_path: Path | None = None
+        self.last_error = ""
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def _find_binary(self, candidates: tuple[str, ...], which_name: str) -> str | None:
@@ -186,6 +190,21 @@ class AmneziaWGDriver(BaseDriver):
         except OSError:
             pass
 
+    def _sanitize_error_detail(self, text: str) -> str:
+        safe_lines: list[str] = []
+        for line in text.splitlines():
+            if SECRET_LINE_RE.match(line):
+                safe_lines.append("<redacted secret key line>")
+            else:
+                safe_lines.append(line)
+        safe = "\n".join(safe_lines).strip()
+        if len(safe) > MAX_ERROR_DETAIL_LENGTH:
+            return f"{safe[:MAX_ERROR_DETAIL_LENGTH]}..."
+        return safe
+
+    def _set_last_error(self, message: str) -> None:
+        self.last_error = self._sanitize_error_detail(message)
+
     def connect(
         self,
         profile: Profile,
@@ -201,10 +220,13 @@ class AmneziaWGDriver(BaseDriver):
         lan_proxy=None,
         lan_gateway=None,
     ) -> bool:
+        self.last_error = ""
         tool = self.find_quick_tool()
         if not tool:
+            self._set_last_error("neither amneziawg-quick nor wg-quick was found")
             return False
         if self._interface_exists() and not self._delete_interface():
+            self._set_last_error(f"stale interface could not be deleted: {INTERFACE_NAME}")
             return False
         self._write_config(profile)
         self._reset_log()
@@ -222,7 +244,13 @@ class AmneziaWGDriver(BaseDriver):
             self._log(result.stderr.rstrip())
 
         if result.returncode != 0:
-            self._log(f"connect: failed with code {result.returncode}")
+            detail = (
+                f"{Path(tool).name} up failed with code {result.returncode}\n"
+                f"stdout:\n{result.stdout.strip()}\n"
+                f"stderr:\n{result.stderr.strip()}"
+            )
+            self._set_last_error(detail)
+            self._log(f"connect: {self.last_error}")
             self._cleanup_runtime()
             return False
 
@@ -232,6 +260,7 @@ class AmneziaWGDriver(BaseDriver):
             return True
         self._active_profile = None
         self._connected_at = None
+        self._set_last_error(f"interface was not created after quick up: {INTERFACE_NAME}")
         self.disconnect()
         return False
 

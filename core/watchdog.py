@@ -391,6 +391,10 @@ class WatchdogRuntime:
             **self._connect_options(),
         )
 
+    @property
+    def last_error(self) -> str:
+        return str(getattr(self.driver, "last_error", "") or "")
+
     def disconnect(self) -> bool:
         result = self.driver.disconnect()
         self._handle_manual_disconnect_kill_switch()

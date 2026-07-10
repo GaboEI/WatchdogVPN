@@ -169,11 +169,14 @@ class AmneziaWGDriverTests(unittest.TestCase):
     def test_connect_failure_cleans_up(self, run_mock, _tool) -> None:
         run_mock.return_value.returncode = 1
         run_mock.return_value.stdout = ""
-        run_mock.return_value.stderr = "error"
+        run_mock.return_value.stderr = "PrivateKey = should-not-leak\nRTNETLINK answers: Operation not permitted"
 
         self.assertFalse(self.driver.connect(self.profile))
         self.assertIsNone(self.driver._config_path)
         self.assertIsNone(self.driver._active_profile)
+        self.assertIn("awg-quick up failed with code 1", self.driver.last_error)
+        self.assertIn("RTNETLINK answers: Operation not permitted", self.driver.last_error)
+        self.assertNotIn("should-not-leak", self.driver.last_error)
 
     @patch.object(AmneziaWGDriver, "find_quick_tool", return_value=None)
     def test_connect_returns_false_when_no_binary(self, _tool) -> None:

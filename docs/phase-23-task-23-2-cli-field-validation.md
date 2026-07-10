@@ -263,6 +263,13 @@ normalization gaps:
   reported as a WatchdogVPN connect failure. The runtime config now uses
   `watchdogvpn_awg.conf`, matching the interface that status, health checks and
   cleanup already target.
+- The follow-up AmneziaWG rerun still returned `connect rc=70`, but the daemon
+  response only exposed generic `connect failed` and the driver removed its
+  private runtime directory immediately after failure. Native driver failures
+  now retain a redacted `last_error` and IPC connect failures include
+  `payload.error_detail`, so operator evidence can distinguish tool permission,
+  kernel module, resolver helper, config and interface failures without
+  printing profile secrets.
 
 Manual provider import now normalizes those serialized profile JSON variants
 before saving them. The generated WireGuard config passes `sing-box check`

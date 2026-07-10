@@ -37,6 +37,7 @@ class FakeWorkerDriver(BaseDriver):
         self.disconnect_calls = 0
         self.connect_result = True
         self.disconnect_result = True
+        self.last_error = ""
 
     def connect(
         self,
@@ -56,6 +57,7 @@ class FakeWorkerDriver(BaseDriver):
         self.connect_calls.append(profile.id)
         if self.connect_result:
             self.connected_profile_id = profile.id
+            self.last_error = ""
         return self.connect_result
 
     def disconnect(self) -> bool:
@@ -356,6 +358,21 @@ class RuntimeWorkerTests(unittest.TestCase):
 
         self.assertFalse(response.ok)
         self.assertEqual(response.error, "profile not found: missing")
+
+    def test_worker_includes_runtime_error_detail_on_connect_failure(self) -> None:
+        runtime = self.make_runtime()
+        runtime.driver.connect_result = False
+        runtime.driver.last_error = "awg-quick up failed with code 1"
+        worker = RuntimeWorker(runtime)
+        worker.start()
+        try:
+            response = worker.submit(COMMAND_CONNECT, {"profile_id": self.profile.id}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.error, "connect failed")
+        self.assertEqual(response.payload["error_detail"], "awg-quick up failed with code 1")
 
     def test_worker_rejects_unknown_command(self) -> None:
         worker = RuntimeWorker(self.make_runtime())
