@@ -120,6 +120,49 @@ class ManualProviderTests(unittest.TestCase):
             self.assertEqual(profile.protocol, ProtocolType.WIREGUARD)
             self.assertEqual(ProfileStore(store_path).get("wg-json"), profile)
 
+    def test_from_text_normalizes_watchdog_vmess_id_to_uuid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(Path(tmp) / "profiles.json")
+            source_profile = Profile(
+                id="vmess-json",
+                name="VMess JSON",
+                protocol=ProtocolType.VMESS,
+                config={
+                    "host": "vmess.example.com",
+                    "port": 8880,
+                    "id": "vmess-uuid",
+                    "tls": True,
+                },
+                source=ProfileSource.MANUAL,
+            )
+
+            profile = provider.from_text(json.dumps(source_profile.to_dict()))
+
+            self.assertEqual(profile.config["uuid"], "vmess-uuid")
+
+    def test_from_text_normalizes_watchdog_wireguard_raw_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(Path(tmp) / "profiles.json")
+            source_profile = Profile(
+                id="wg-json",
+                name="WireGuard JSON",
+                protocol=ProtocolType.WIREGUARD,
+                config={
+                    "raw_config": (
+                        "[Interface]\nPrivateKey = private-key\nAddress = 10.0.0.2/32\n"
+                        "[Peer]\nPublicKey = public-key\nEndpoint = wg.example.com:51820\n"
+                        "AllowedIPs = 0.0.0.0/0\n"
+                    )
+                },
+                source=ProfileSource.MANUAL,
+            )
+
+            profile = provider.from_text(json.dumps(source_profile.to_dict()))
+
+            self.assertEqual(profile.config["private_key"], "private-key")
+            self.assertEqual(profile.config["public_key"], "public-key")
+            self.assertEqual(profile.config["endpoint"], "wg.example.com:51820")
+
     def test_from_text_imports_v2ray_trojan_outbound(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             provider = self._provider(Path(tmp) / "profiles.json")

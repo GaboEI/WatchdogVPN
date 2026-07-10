@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from config.profile_store import ProfileStore
-from models.profile import Profile, ProfileSource
+from models.profile import Profile, ProfileSource, ProtocolType
 from parsers import (
     ParseError,
     is_amneziavpn_format,
@@ -183,10 +183,21 @@ class ManualProvider(BaseProvider):
             return None
         if {"id", "name", "protocol", "config", "source"}.issubset(data):
             try:
-                return Profile.from_dict(data)
+                profile = Profile.from_dict(data)
             except (KeyError, TypeError, ValueError) as exc:
                 raise ParseError(f"invalid WatchdogVPN profile JSON: {exc}") from exc
+            self._normalize_imported_profile(profile)
+            return profile
         return None
+
+    def _normalize_imported_profile(self, profile: Profile) -> None:
+        if profile.protocol is ProtocolType.VMESS:
+            vmess_id = profile.config.get("id")
+            if vmess_id and not profile.config.get("uuid"):
+                profile.config["uuid"] = vmess_id
+        if profile.protocol is ProtocolType.WIREGUARD and profile.config.get("raw_config"):
+            parsed = parse_wg_config(str(profile.config["raw_config"]))
+            profile.config.update(parsed.config)
 
     def _require_profiles(self, profiles: list[Profile], label: str) -> list[Profile]:
         if not profiles:

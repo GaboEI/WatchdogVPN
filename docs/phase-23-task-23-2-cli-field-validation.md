@@ -229,6 +229,28 @@ Create or update:
 Use the Task 23.1 finding template. Every HIGH or MEDIUM finding must become a
 Phase 23 fix subtask before Phase 23 can close.
 
+## Field Hardening Notes
+
+The first full 12-protocol `imports` section passed after adding support for
+the real Phase 23 private fixture formats, including WatchdogVPN serialized
+profile JSON and AmneziaVPN `vpn://` exports.
+
+The first full `protocols` section then exposed runtime-facing import
+normalization gaps:
+
+- VMess WatchdogVPN JSON fixtures stored the VMess UUID in `config.id`, while
+  the sing-box driver consumes `config.uuid`. The server-side VMess fixture had
+  already been validated independently with real sing-box client traffic, so
+  the field failure was treated as a WatchdogVPN import-normalization bug, not
+  as bad VPS material.
+- WireGuard WatchdogVPN JSON fixtures stored a full WireGuard config in
+  `config.raw_config`, while the sing-box driver consumes structured runtime
+  keys such as `private_key`, `public_key` and `endpoint`.
+
+Manual provider import now normalizes those serialized profile JSON variants
+before saving them. Re-run `imports` before re-running `protocols` so the saved
+profiles contain the corrected runtime fields.
+
 ## Local Validation For This Runner
 
 These checks are local-only and do not execute real field validation:
