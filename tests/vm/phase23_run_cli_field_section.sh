@@ -123,6 +123,7 @@ else
     printf 'ERROR: refusing real validation without WATCHDOGVPN_FIELD_VALIDATION=1\n' >&2
     exit 64
   fi
+  run sudo -v
 fi
 
 run python3 "${args[@]}"

@@ -215,7 +215,7 @@ class Runner:
             ("ip6-route", ["ip", "-6", "route"]),
             ("listeners", ["ss", "-H", "-ltnup"]),
             ("resolv-conf-sha256", ["sha256sum", "/etc/resolv.conf"]),
-            ("nft-ruleset", ["sudo", "nft", "list", "ruleset"]),
+            ("nft-ruleset", ["sudo", "-n", "nft", "list", "ruleset"]),
             ("processes", ["pgrep", "-a", PROCESS_PATTERN]),
         ]
         for command_label, command in commands:

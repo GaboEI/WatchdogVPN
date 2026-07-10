@@ -39,6 +39,9 @@ The runner:
 
 - refuses to run unless `WATCHDOGVPN_FIELD_VALIDATION=1` is set, except in
   `--dry-run`;
+- refreshes sudo through the wrapper before real operator-run sections and uses
+  non-interactive sudo for nftables snapshots, so expired sudo credentials do
+  not turn a firewall snapshot into a hanging command;
 - executes commands with Python subprocess argv lists, never `shell=True`;
 - captures command, redacted stdout/stderr, return code and timestamps as JSON;
 - redacts the provider URL loaded from `provider.url_file`;
