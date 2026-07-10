@@ -256,13 +256,13 @@ normalization gaps:
   still generated the legacy WireGuard outbound shape (`local_address`), while
   sing-box 1.13 validates WireGuard through top-level `endpoints`. The driver
   now emits modern WireGuard endpoints and keeps the same route target tag.
-- AmneziaWG exposed a native `*-quick` interface-name mismatch. The driver
-  expected to verify and clean up `watchdogvpn_awg`, but wrote the temporary
-  config as `awg.conf`; `awg-quick`/`wg-quick` derive the created interface name
-  from the config filename, so a successful lower-level bring-up could still be
-  reported as a WatchdogVPN connect failure. The runtime config now uses
-  `watchdogvpn_awg.conf`, matching the interface that status, health checks and
-  cleanup already target.
+- AmneziaWG first exposed a native `*-quick` interface-name mismatch. The
+  driver expected to verify and clean up `watchdogvpn_awg`, but wrote the
+  temporary config as `awg.conf`; quick scripts derive the created interface
+  name from the config filename, so a successful lower-level bring-up could
+  still be reported as a WatchdogVPN connect failure. The runtime config now
+  uses `watchdogvpn_awg.conf`, matching the interface that status, health
+  checks and cleanup already target.
 - The follow-up AmneziaWG rerun still returned `connect rc=70`, but the daemon
   response only exposed generic `connect failed` and the driver removed its
   private runtime directory immediately after failure. Native driver failures
@@ -270,14 +270,14 @@ normalization gaps:
   `payload.error_detail`, so operator evidence can distinguish tool permission,
   kernel module, resolver helper, config and interface failures without
   printing profile secrets.
-- The next rerun showed the VM only had standard `wg-quick`/`wg`, not
-  AmneziaWG-specific `awg-quick`/`awg`. `wg-quick` attempted an internal
-  `sudo`, which cannot work under the daemon unit's `NoNewPrivileges=true`, and
-  plain WireGuard tooling cannot run real AmneziaWG exports with obfuscation
-  keys anyway. AmneziaWG runtime availability now requires AmneziaWG-specific
-  quick/tooling plus either the `amneziawg` kernel module or the official
-  `amneziawg-go` userspace fallback; standard WireGuard remains a separate
-  compatibility protocol.
+- Later reruns showed that quick scripts are not a valid daemon runtime
+  dependency: they attempt internal `sudo` when the caller is not root, which
+  cannot work under the daemon unit's `NoNewPrivileges=true`. The driver now
+  brings AmneziaWG up natively with `ip` and `awg`, and falls back to the
+  official `amneziawg-go` userspace implementation when the `amneziawg` kernel
+  module is unavailable. Plain WireGuard tooling still cannot run real
+  AmneziaWG exports with obfuscation keys; standard WireGuard remains a
+  separate compatibility protocol.
 
 Manual provider import now normalizes those serialized profile JSON variants
 before saving them. The generated WireGuard config passes `sing-box check`

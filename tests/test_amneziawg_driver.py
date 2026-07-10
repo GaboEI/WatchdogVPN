@@ -8,6 +8,7 @@ from drivers.amneziawg_driver import (
     CONFIG_NAME,
     HANDSHAKE_TIMEOUT_SECONDS,
     INTERFACE_NAME,
+    ROUTE_TABLE,
     AmneziaWGDriver,
 )
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -48,47 +49,48 @@ class AmneziaWGDriverTests(unittest.TestCase):
 
     # --- Binary detection ---
 
-    @patch("drivers.amneziawg_driver.shutil.which", return_value="/usr/bin/awg-quick")
+    @patch("drivers.amneziawg_driver.shutil.which", return_value="/usr/bin/awg")
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=False)
     @patch("drivers.amneziawg_driver.os.access", return_value=False)
-    def test_find_quick_tool_falls_back_to_which(self, _access, _exists, _which) -> None:
-        self.assertEqual(self.driver.find_quick_tool(), "/usr/bin/awg-quick")
+    def test_find_wg_tool_falls_back_to_which(self, _access, _exists, _which) -> None:
+        self.assertEqual(self.driver.find_wg_tool(), "/usr/bin/awg")
 
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=True)
     @patch("drivers.amneziawg_driver.os.access", return_value=True)
-    def test_find_quick_tool_prefers_awg_quick(self, _access, _exists) -> None:
-        result = self.driver.find_quick_tool()
-        self.assertEqual(result, "/usr/local/bin/awg-quick")
+    def test_find_wg_tool_prefers_awg(self, _access, _exists) -> None:
+        result = self.driver.find_wg_tool()
+        self.assertEqual(result, "/usr/local/bin/awg")
 
-    @patch("drivers.amneziawg_driver.shutil.which", side_effect=lambda n: "/usr/bin/amneziawg-quick" if n == "amneziawg-quick" else None)
+    @patch("drivers.amneziawg_driver.shutil.which", side_effect=lambda n: "/usr/bin/amneziawg-go" if n == "amneziawg-go" else None)
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=False)
     @patch("drivers.amneziawg_driver.os.access", return_value=False)
-    def test_find_quick_tool_fallback_amneziawg_quick(self, _access, _exists, _which) -> None:
-        result = self.driver.find_quick_tool()
-        self.assertEqual(result, "/usr/bin/amneziawg-quick")
+    def test_find_userspace_tool_falls_back_to_which(self, _access, _exists, _which) -> None:
+        result = self.driver.find_userspace_tool()
+        self.assertEqual(result, "/usr/bin/amneziawg-go")
 
-    @patch.dict("drivers.amneziawg_driver.os.environ", {"WATCHDOGVPN_AMNEZIAWG_BIN": "/opt/awg-quick"})
+    @patch.dict("drivers.amneziawg_driver.os.environ", {"WATCHDOGVPN_AMNEZIAWG_BIN": "/opt/awg"})
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=True)
     @patch("drivers.amneziawg_driver.os.access", return_value=True)
-    def test_find_quick_tool_env_var_override(self, _access, _exists) -> None:
-        self.assertEqual(self.driver.find_quick_tool(), "/opt/awg-quick")
+    def test_find_wg_tool_env_var_override(self, _access, _exists) -> None:
+        self.assertEqual(self.driver.find_wg_tool(), "/opt/awg")
 
     @patch("drivers.amneziawg_driver.shutil.which", return_value=None)
     @patch("drivers.amneziawg_driver.os.path.exists", return_value=False)
     @patch("drivers.amneziawg_driver.os.access", return_value=False)
-    def test_find_quick_tool_none_when_missing(self, _access, _exists, _which) -> None:
-        self.assertIsNone(self.driver.find_quick_tool())
+    def test_find_wg_tool_none_when_missing(self, _access, _exists, _which) -> None:
+        self.assertIsNone(self.driver.find_wg_tool())
 
     @patch.object(AmneziaWGDriver, "check_version", return_value="amneziawg-tools v1.0.0")
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
-    def test_is_available_true(self, _tool, _version) -> None:
+    @patch.object(AmneziaWGDriver, "find_userspace_tool", return_value="/usr/bin/amneziawg-go")
+    @patch.object(AmneziaWGDriver, "find_ip_tool", return_value="/usr/bin/ip")
+    def test_is_available_true(self, _ip, _go, _version) -> None:
         self.assertTrue(self.driver.is_available())
 
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value=None)
-    def test_is_available_false(self, _tool) -> None:
+    @patch.object(AmneziaWGDriver, "find_ip_tool", return_value=None)
+    def test_is_available_false(self, _ip) -> None:
         self.assertFalse(self.driver.is_available())
 
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value=None)
+    @patch.object(AmneziaWGDriver, "find_wg_tool", return_value=None)
     def test_get_tool_raises_when_missing(self, _tool) -> None:
         with self.assertRaises(FileNotFoundError):
             self.driver.get_tool()
@@ -122,6 +124,8 @@ class AmneziaWGDriverTests(unittest.TestCase):
         content = self.driver._config_path.read_text(encoding="utf-8")
         self.assertIn("[Interface]", content)
         self.assertIn("Jc = 4", content)
+        self.assertNotIn("Address =", content)
+        self.assertNotIn("DNS =", content)
 
     def test_write_config_rejects_non_amneziawg(self) -> None:
         profile = Profile("wg-1", "wg", ProtocolType.WIREGUARD, {"raw": "test"}, ProfileSource.MANUAL)
@@ -146,27 +150,34 @@ class AmneziaWGDriverTests(unittest.TestCase):
     # --- Connect ---
 
     @patch.object(AmneziaWGDriver, "_interface_exists", side_effect=[False, True])
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
+    @patch.object(AmneziaWGDriver, "find_wg_tool", return_value="/usr/bin/awg")
+    @patch.object(AmneziaWGDriver, "find_ip_tool", return_value="/usr/bin/ip")
     @patch("drivers.amneziawg_driver.subprocess.run")
-    def test_connect_success(self, run_mock, _tool, _iface) -> None:
+    def test_connect_success(self, run_mock, _ip, _awg, _iface) -> None:
         run_mock.return_value.returncode = 0
         run_mock.return_value.stdout = ""
         run_mock.return_value.stderr = ""
 
         self.assertTrue(self.driver.connect(self.profile))
         self.assertIsNotNone(self.driver._config_path)
-        run_mock.assert_called_once_with(
-            ["/usr/bin/awg-quick", "up", str(self.driver._config_path)],
-            text=True,
-            capture_output=True,
-            check=False,
+        calls = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(["/usr/bin/ip", "link", "add", INTERFACE_NAME, "type", "amneziawg"], calls)
+        self.assertIn(["/usr/bin/awg", "setconf", INTERFACE_NAME, str(self.driver._config_path)], calls)
+        self.assertIn(["/usr/bin/ip", "-4", "address", "add", "10.8.1.5/32", "dev", INTERFACE_NAME], calls)
+        self.assertIn(["/usr/bin/awg", "set", INTERFACE_NAME, "fwmark", ROUTE_TABLE], calls)
+        self.assertIn(
+            ["/usr/bin/ip", "-4", "rule", "add", "not", "fwmark", ROUTE_TABLE, "table", ROUTE_TABLE],
+            calls,
         )
         self.assertIs(self.driver._active_profile, self.profile)
         self.assertIsNotNone(self.driver._connected_at)
 
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
+    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=False)
+    @patch.object(AmneziaWGDriver, "find_userspace_tool", return_value=None)
+    @patch.object(AmneziaWGDriver, "find_wg_tool", return_value="/usr/bin/awg")
+    @patch.object(AmneziaWGDriver, "find_ip_tool", return_value="/usr/bin/ip")
     @patch("drivers.amneziawg_driver.subprocess.run")
-    def test_connect_failure_cleans_up(self, run_mock, _tool) -> None:
+    def test_connect_failure_cleans_up(self, run_mock, _ip, _awg, _go, _iface) -> None:
         run_mock.return_value.returncode = 1
         run_mock.return_value.stdout = ""
         run_mock.return_value.stderr = "PrivateKey = should-not-leak\nRTNETLINK answers: Operation not permitted"
@@ -174,21 +185,37 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertFalse(self.driver.connect(self.profile))
         self.assertIsNone(self.driver._config_path)
         self.assertIsNone(self.driver._active_profile)
-        self.assertIn("awg-quick up failed with code 1", self.driver.last_error)
+        self.assertIn("amneziawg interface creation failed with code 1", self.driver.last_error)
         self.assertIn("RTNETLINK answers: Operation not permitted", self.driver.last_error)
         self.assertNotIn("should-not-leak", self.driver.last_error)
 
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value=None)
+    @patch.object(AmneziaWGDriver, "find_wg_tool", return_value=None)
     def test_connect_returns_false_when_no_binary(self, _tool) -> None:
         self.assertFalse(self.driver.connect(self.profile))
-        self.assertIn("neither awg-quick nor amneziawg-quick was found", self.driver.last_error)
+        self.assertIn("awg was not found", self.driver.last_error)
+
+    @patch.object(AmneziaWGDriver, "_wait_for_interface", return_value=True)
+    @patch.object(AmneziaWGDriver, "find_userspace_tool", return_value="/usr/bin/amneziawg-go")
+    @patch("drivers.amneziawg_driver.subprocess.Popen")
+    @patch("drivers.amneziawg_driver.subprocess.run")
+    def test_create_interface_uses_userspace_fallback(self, run_mock, popen_mock, _go, _wait) -> None:
+        run_mock.return_value.returncode = 2
+        run_mock.return_value.stdout = ""
+        run_mock.return_value.stderr = "Unknown device type"
+
+        self.driver._write_config(self.profile)
+        self.driver._reset_log()
+        self.driver._create_interface()
+
+        popen_mock.assert_called_once()
+        self.assertEqual(popen_mock.call_args.args[0], ["/usr/bin/amneziawg-go", INTERFACE_NAME])
 
     # --- Disconnect ---
 
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=False)
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
+    @patch.object(AmneziaWGDriver, "find_ip_tool", return_value="/usr/bin/ip")
     @patch("drivers.amneziawg_driver.subprocess.run")
-    def test_disconnect_success(self, run_mock, _tool, _iface) -> None:
+    def test_disconnect_success(self, run_mock, _ip, _iface) -> None:
         self.driver._write_config(self.profile)
         config_path = self.driver._config_path
         self.driver._active_profile = self.profile
@@ -206,9 +233,10 @@ class AmneziaWGDriverTests(unittest.TestCase):
 
     @patch.object(AmneziaWGDriver, "_delete_interface", return_value=False)
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
-    @patch.object(AmneziaWGDriver, "find_quick_tool", return_value="/usr/bin/awg-quick")
+    @patch.object(AmneziaWGDriver, "find_wg_tool", return_value="/usr/bin/awg")
+    @patch.object(AmneziaWGDriver, "find_ip_tool", return_value="/usr/bin/ip")
     @patch("drivers.amneziawg_driver.subprocess.run")
-    def test_connect_refuses_stale_interface_when_delete_fails(self, run_mock, _tool, _iface, delete_mock) -> None:
+    def test_connect_refuses_stale_interface_when_delete_fails(self, run_mock, _ip, _awg, _iface, delete_mock) -> None:
         self.assertFalse(self.driver.connect(self.profile))
         delete_mock.assert_called_once()
         run_mock.assert_not_called()

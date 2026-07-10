@@ -16,9 +16,7 @@ AMNEZIAWG_TOOLS_UPSTREAM="https://github.com/amnezia-vpn/amneziawg-tools"
 AMNEZIAWG_KERNEL_MODULE_UPSTREAM="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module"
 
 amneziawg_userspace_available() {
-  have_cmd awg-quick || have_cmd amneziawg-quick \
-    || [[ -x /usr/local/bin/awg-quick ]] || [[ -x /usr/local/bin/amneziawg-quick ]] \
-    || [[ -x /usr/bin/awg-quick ]] || [[ -x /usr/bin/amneziawg-quick ]]
+  have_cmd awg || [[ -x /usr/local/bin/awg ]] || [[ -x /usr/bin/awg ]]
 }
 
 amneziawg_kernel_module_available() {
@@ -51,8 +49,10 @@ AmneziaWG runtime check:
     Userspace fallback: https://github.com/amnezia-vpn/amneziawg-go
 
   Standard WireGuard tooling (wg-quick/wg, wireguard kernel module) is not a
-  substitute for AmneziaWG-specific profiles. Use standard WireGuard profiles
-  separately when you only have plain WireGuard tooling.
+  substitute for AmneziaWG-specific profiles. WatchdogVPN uses awg directly
+  and can use amneziawg-go when the kernel module is not available. Use
+  standard WireGuard profiles separately when you only have plain WireGuard
+  tooling.
 EOF
 }
 
@@ -94,6 +94,7 @@ amneziawg_setup_commands_arch() {
 sudo pacman -S --needed --noconfirm base-devel git linux-headers
 git clone https://aur.archlinux.org/amneziawg-dkms.git /tmp/amneziawg-dkms && (cd /tmp/amneziawg-dkms && makepkg -si --noconfirm)
 git clone https://aur.archlinux.org/amneziawg-tools.git /tmp/amneziawg-tools && (cd /tmp/amneziawg-tools && makepkg -si --noconfirm)
+git clone https://aur.archlinux.org/amneziawg-go.git /tmp/amneziawg-go && (cd /tmp/amneziawg-go && makepkg -si --noconfirm)
 EOF
 }
 
@@ -157,7 +158,7 @@ guide_amneziawg_setup() {
     fi
 
     warn "AmneziaWG still not detected after attempt $attempt/$max_attempts"
-    amneziawg_userspace_available || printf '  still missing: awg-quick/amneziawg-quick userspace tools\n'
+    amneziawg_userspace_available || printf '  still missing: awg userspace tools\n'
     if ! amneziawg_kernel_module_available && ! amneziawg_userspace_fallback_available; then
       printf '  still missing: amneziawg kernel module or amneziawg-go userspace fallback\n'
     fi

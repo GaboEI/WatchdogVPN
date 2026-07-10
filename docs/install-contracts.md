@@ -85,8 +85,8 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   `install.sh` offers to download and checksum-verify it the same way as
   sing-box, but defaults to no and is skipped without prompting under
   `--dry-run`, since most installs never use this protocol combination.
-- **AmneziaWG tooling (`amneziawg-dkms` or `amneziawg-go`,
-  `amneziawg-tools`/`awg-quick`)**:
+- **AmneziaWG tooling (`amneziawg-tools`/`awg`, plus `amneziawg-dkms` or
+  `amneziawg-go`)**:
   never installed unattended by WatchdogVPN itself - the official install
   path adds a third-party APT repository (Ubuntu/Debian) or builds an AUR
   package (Arch), which WatchdogVPN treats as the user's own trust decision
@@ -98,8 +98,9 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   missing, repeating up to a few attempts. `doctor.sh` only reports detection
   state (`WARN` if missing) and points back to `install.sh` for the guided
   setup, keeping its own read-only contract. A valid runtime has
-  AmneziaWG-specific tools plus either the `amneziawg` kernel module or the
-  `amneziawg-go` userspace fallback supported by `awg-quick`. Standard
+  AmneziaWG-specific `awg` tooling plus either the `amneziawg` kernel module or
+  the `amneziawg-go` userspace fallback used directly by the native driver.
+  Standard
   WireGuard tooling (`wg-quick`/`wg`, `wireguard` kernel module) is not a
   substitute for AmneziaWG-specific profiles; plain WireGuard remains its own
   compatibility protocol.
