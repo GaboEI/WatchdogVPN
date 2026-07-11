@@ -529,6 +529,58 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertFalse(snapshot_path.exists())
             manager_cls.return_value.restore_state.assert_called_once()
 
+    def test_dns_reset_without_snapshot_is_a_clean_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "dns-state.json"
+            resolv_conf = Path(tmp) / "resolv.conf"
+            self.assertFalse(snapshot_path.exists())
+
+            with patch("cli.main.SystemDNSStateManager") as manager_cls:
+                stdout = StringIO()
+                with redirect_stdout(stdout):
+                    result = cli.main.main(
+                        [
+                            "dns",
+                            "reset",
+                            "--yes",
+                            "--json",
+                            "--snapshot-file",
+                            str(snapshot_path),
+                            "--resolv-conf-path",
+                            str(resolv_conf),
+                        ]
+                    )
+
+            self.assertEqual(result, 0)
+            manager_cls.return_value.restore_state.assert_not_called()
+            data = json.loads(stdout.getvalue())
+            self.assertEqual(data["status"], "nothing-to-restore")
+            self.assertFalse(data["rollback_snapshot"]["restored"])
+
+    def test_dns_reset_missing_yes_reports_json_error_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "dns-state.json"
+            resolv_conf = Path(tmp) / "resolv.conf"
+
+            stderr = StringIO()
+            with redirect_stderr(stderr):
+                result = cli.main.main(
+                    [
+                        "dns",
+                        "reset",
+                        "--json",
+                        "--snapshot-file",
+                        str(snapshot_path),
+                        "--resolv-conf-path",
+                        str(resolv_conf),
+                    ]
+                )
+
+            self.assertEqual(result, 65)
+            error_document = json.loads(stderr.getvalue())
+            self.assertEqual(error_document["ok"], False)
+            self.assertIn("--yes", error_document["error"])
+
     def test_dns_test_uses_configured_channels(self) -> None:
         policy = DNSPolicy(
             channels={

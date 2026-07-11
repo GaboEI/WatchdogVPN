@@ -143,34 +143,35 @@ def main(argv: list[str] | None = None) -> int:
     if not hasattr(args, "handler"):
         parser.print_help()
         return 0
+    as_json = bool(getattr(args, "json", False))
     try:
         return int(args.handler(args))
     except (ProviderLimitError, ProviderNotFoundError) as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 65
     except RuleStoreError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 65
     except RuleSetLifecycleError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 65
     except NodeGroupStoreError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 65
     except ParseError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 65
     except FileNotFoundError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 66
     except PersistentStoreError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 70
     except WatchdogIPCError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return exc.exit_code
     except (DNSHijackError, DNSStateError, OSError, ValueError) as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 70
 
 
@@ -3277,7 +3278,23 @@ def _dns_reset(args: argparse.Namespace) -> int:
     if not args.yes:
         raise ParseError("dns reset requires --yes")
     snapshot_path = _dns_snapshot_path(args)
-    snapshot = _load_dns_snapshot(snapshot_path)
+    snapshot = load_snapshot(snapshot_path)
+    if snapshot is None:
+        data = {
+            "status": "nothing-to-restore",
+            "snapshot_path": str(snapshot_path),
+            "rollback_snapshot": {
+                "path": str(snapshot_path),
+                "status": "not-found",
+                "restored": False,
+            },
+        }
+        if args.json:
+            _print_json(data)
+        else:
+            print("No DNS snapshot found; nothing to restore.")
+            print(f"Snapshot: {snapshot_path}")
+        return 0
     manager = SystemDNSStateManager(resolv_conf_path=Path(args.resolv_conf_path))
     manager.restore_state(snapshot)
     try:
@@ -3441,13 +3458,6 @@ def _save_dns_snapshot(path: Path, snapshot: DNSStateSnapshot) -> None:
     save_snapshot(path, snapshot)
 
 
-def _load_dns_snapshot(path: Path) -> DNSStateSnapshot:
-    snapshot = load_snapshot(path)
-    if snapshot is None:
-        raise FileNotFoundError(path)
-    return snapshot
-
-
 def _print_json(data: object) -> None:
     print(json.dumps(data, indent=2, sort_keys=True))
 
@@ -3602,8 +3612,11 @@ def _redact_url(url: str) -> str:
     return f"{scheme}://{host}/<redacted>"
 
 
-def _error(message: str) -> None:
-    print(f"error: {message}", file=sys.stderr)
+def _error(message: str, *, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps({"ok": False, "error": message}, indent=2, sort_keys=True), file=sys.stderr)
+    else:
+        print(f"error: {message}", file=sys.stderr)
 
 
 def _exit() -> NoReturn:
