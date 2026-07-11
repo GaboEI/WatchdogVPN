@@ -91,6 +91,57 @@ class DNSStateManagerTests(unittest.TestCase):
             self.assertIn(["resolvectl", "revert", "tun0"], runner.commands)
             self.assertEqual(resolv_conf.resolve(), stub.resolve())
 
+    def test_systemd_resolved_restore_skips_revert_when_link_is_gone(self) -> None:
+        # Field bug: a profile can connect in proxy-only capture mode (no
+        # TUN device), so "dns apply --systemd-link wdvpn-tun0" saves a
+        # snapshot naming a link that was never actually brought up. If
+        # restore always calls "resolvectl revert <link>" unconditionally,
+        # it fails with "No such device" forever afterward - every later
+        # "dns reset" against that same stale snapshot keeps failing the
+        # same way, since the link never comes back on its own. Restoring
+        # against a link that is gone should be a clean no-op instead: the
+        # systemd-resolved config that link would have carried is already
+        # gone with the interface itself.
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+            runner = FakeRunner(
+                active_services={"systemd-resolved.service"},
+                fail_on=("ip -o link show tun0",),
+            )
+            manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+            snapshot = manager.save_state(systemd_link="tun0")
+
+            manager.restore_state(snapshot)
+
+            self.assertIn(["ip", "-o", "link", "show", "tun0"], runner.commands)
+            self.assertNotIn(["resolvectl", "revert", "tun0"], runner.commands)
+
+    def test_apply_local_dns_failure_rolls_back_cleanly_when_link_is_gone(self) -> None:
+        # Companion bug: when the apply itself fails because the named link
+        # doesn't exist, apply_local_dns's own rollback (restore_state) used
+        # to attempt the identical "resolvectl revert <link>" call, which
+        # failed the same way and masked the original, more useful error
+        # ("failed to apply local DNS entry point: ...") with a bare,
+        # unwrapped "No such device" from the rollback attempt instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+            runner = FakeRunner(
+                active_services={"systemd-resolved.service"},
+                fail_on=("resolvectl dns", "ip -o link show tun0"),
+            )
+            manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+
+            with self.assertRaises(DNSStateError) as ctx:
+                manager.apply_local_dns(
+                    LocalDNSEntryPoint(address="127.0.0.1", systemd_link="tun0")
+                )
+
+            message = str(ctx.exception)
+            self.assertIn("failed to apply local DNS entry point", message)
+            self.assertNotIn(["resolvectl", "revert", "tun0"], runner.commands)
+
     def test_network_manager_apply_and_restore_connection_dns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resolv_conf = Path(tmp) / "resolv.conf"

@@ -284,8 +284,27 @@ class SystemDNSStateManager:
         # with a real "Permission denied" writing /etc/.resolv.conf.*.tmp,
         # since unlike resolvectl that write needs root.
         link = snapshot.systemd_link
-        if link:
-            self.runner(["resolvectl", "revert", link])
+        if not link:
+            return
+        if not self._link_exists(link):
+            # A field run showed apply failing against a link that was never
+            # actually brought up (profile connected in proxy-only capture
+            # mode, no TUN device), which left a saved snapshot naming that
+            # link. Restoring against a link that doesn't exist made
+            # "resolvectl revert" fail with "No such device" every time,
+            # permanently stranding both the failed apply's own rollback and
+            # every later "dns reset" against the same stale snapshot. If the
+            # link is gone, whatever systemd-resolved config it would have
+            # carried is already gone with it - nothing left to revert.
+            return
+        self.runner(["resolvectl", "revert", link])
+
+    def _link_exists(self, link: str) -> bool:
+        try:
+            self.runner(["ip", "-o", "link", "show", link])
+            return True
+        except Exception:
+            return False
 
     def _apply_network_manager(
         self,
