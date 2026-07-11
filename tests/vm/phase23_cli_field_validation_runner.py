@@ -544,12 +544,32 @@ class Runner:
             ok_codes={0, 65, 70},
         )
         self.run(section, "rotate-provider", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
+        # Disabling only the two manifest profiles is not "all failed" if a
+        # provider with other rotation-eligible nodes is still enrolled
+        # (confirmed live: rotate-force found a real provider node and
+        # reported failure_or_degraded=false instead of failing closed).
+        # Disable provider rotation too so this is a genuine no-candidates
+        # scenario, matching M7.3's "every rotation candidate" intent.
+        self.run(
+            section,
+            "provider-rotation-off-for-all-failed",
+            ["watchdog", "provider", "rotation", provider["expected_provider_id"], "--disable", "--json"],
+            ok_codes={0, 65, 70},
+        )
         for profile_id in all_failed_ids:
             self.run(section, f"disable-{profile_id}", ["watchdog", "profile", "disable", profile_id, "--json"], ok_codes={0, 65, 70})
         self.run(section, "rotate-all-failed", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
         self.run(section, "status-all-failed", ["watchdog", "status", "--json"], ok_codes={0, 69})
         for profile_id in all_failed_ids:
             self.run(section, f"reenable-{profile_id}", ["watchdog", "profile", "enable", profile_id, "--json"], ok_codes={0, 65, 70})
+        # Restore provider rotation to its pre-section state (off) rather
+        # than leaving it enabled as a side effect of the earlier M7.2 step.
+        self.run(
+            section,
+            "provider-rotation-restore-off",
+            ["watchdog", "provider", "rotation", provider["expected_provider_id"], "--disable", "--json"],
+            ok_codes={0, 65, 70},
+        )
         self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.snapshot(f"post-rotation-{self.external_vpn_state}")
 
