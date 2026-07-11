@@ -676,7 +676,10 @@ class WatchdogRuntime:
             **self._connect_options(),
         ):
             return False
-        return self._checked_and_recorded(profile, driver) == "ok"
+        if self._checked_and_recorded(profile, driver) == "ok":
+            return True
+        driver.disconnect()
+        return False
 
     def _recover_from_failure(self) -> ConnectionState:
         config = self.app_config.load()

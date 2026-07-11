@@ -1669,6 +1669,42 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(result.status, "reconnecting")
         self.assertEqual(runtime._reconnect_failures, 1)
 
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
+    def test_run_iteration_disconnects_reconnect_runtime_when_deep_check_fails(self, _hc) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        driver.connect_mock.return_value = True
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 3},
+            "kill_switch": {"enabled": False},
+            "rotation": {},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+        )
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "reconnecting")
+        self.assertEqual(driver.disconnect_mock.call_count, 2)
+
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
     def test_run_iteration_rotates_after_threshold_crossed(self, mock_pool, mock_sel_driver) -> None:
