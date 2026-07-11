@@ -45,8 +45,8 @@ class ConfigStorageTests(unittest.TestCase):
 
     def test_state_manager_migrates_legacy_active_modes(self) -> None:
         cases = {
-            "rules": ("rule", "local_proxy", "current"),
-            "global": ("global", "local_proxy", "current"),
+            "rules": ("rule", "local_proxy,tun", "current"),
+            "global": ("global", "local_proxy,tun", "current"),
             "direct": ("global", "local_proxy", "direct"),
             "tun": ("global", "local_proxy,tun", "current"),
             "proxy": ("global", "local_proxy", "current"),

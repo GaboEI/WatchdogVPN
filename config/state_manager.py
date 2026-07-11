@@ -32,7 +32,13 @@ DEFAULT_STATE = {
     "active_profile_id": "",
     "routing_state_version": "1",
     "routing_policy": "rule",
-    "capture_modes": "local_proxy",
+    # A fresh install with default_route_action="current" means "route
+    # everything through the active profile" - capture must actually
+    # include "tun" for that to be true, not just local_proxy (Phase 23
+    # Task 23.3.4; see also Task 23.3.3, which stopped an already-TUN'd
+    # session from silently losing TUN, but did not by itself make a fresh
+    # install ever gain it).
+    "capture_modes": "local_proxy,tun",
     "default_route_action": "current",
     "active_mode": "rules",
     "language_mode": "system",
@@ -75,16 +81,23 @@ ROUTING_STATE_FIELDS = {
     "default_route_action",
 }
 LEGACY_MODE_TO_ROUTING_STATE = {
+    # "rules" and "global" both mean "use the VPN as default connectivity"
+    # (default_route_action="current"), so migrating a pre-Phase-19 install
+    # that never wrote explicit routing_state fields must land on real
+    # system-wide capture, not silently proxy-only (Phase 23 Task 23.3.4).
+    # "direct" and "proxy" keep local_proxy-only: those names are
+    # deliberately, explicitly weaker than "rules"/"global" and must stay
+    # that way.
     "rules": {
         "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
         "routing_policy": "rule",
-        "capture_modes": "local_proxy",
+        "capture_modes": "local_proxy,tun",
         "default_route_action": "current",
     },
     "global": {
         "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
         "routing_policy": "global",
-        "capture_modes": "local_proxy",
+        "capture_modes": "local_proxy,tun",
         "default_route_action": "current",
     },
     "direct": {

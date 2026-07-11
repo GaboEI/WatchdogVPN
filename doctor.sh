@@ -553,6 +553,20 @@ else
   mark_warn "HTTPS connectivity check failed"
 fi
 
+section "Capture Mode"
+capture_diag="$(PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 -m diagnostics.capture_mode_check 2>/dev/null || true)"
+capture_status="$(printf '%s\n' "$capture_diag" | read_key_value STATUS)"
+capture_message="$(printf '%s\n' "$capture_diag" | read_key_value MESSAGE)"
+capture_modes_value="$(printf '%s\n' "$capture_diag" | read_key_value CAPTURE_MODES)"
+if [[ "$capture_status" == "ok" ]]; then
+  mark_ok "capture mode matches configured routing intent"
+elif [[ -n "$capture_status" ]]; then
+  mark_warn "capture mode risk: ${capture_message:-unknown}"
+else
+  mark_warn "capture mode check did not run"
+fi
+info "capture_modes=${capture_modes_value:-unknown}"
+
 section "Protocol Runtime Dependencies"
 if singbox_available; then
   mark_ok "sing-box detected: $(singbox_path)"

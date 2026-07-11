@@ -67,7 +67,7 @@ class CliConfigCommandTests(unittest.TestCase):
                     "active_mode_role": "compatibility-display-only",
                     "routing_state_version": "1",
                     "routing_policy": "global",
-                    "capture_modes": ["local_proxy"],
+                    "capture_modes": ["local_proxy", "tun"],
                     "default_route_action": "current",
                 },
             )

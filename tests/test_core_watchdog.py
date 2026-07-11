@@ -758,7 +758,12 @@ class WatchdogCoreTests(unittest.TestCase):
 
         runtime.connect(self.profile)
 
-        self.assertEqual(driver.last_mode, "global")
+        # "global" legacy mode now migrates to capture_modes="local_proxy,tun"
+        # (Phase 23 Task 23.3.4), so _connect_options() correctly derives
+        # the more specific "tun" mode label rather than "global" - the
+        # point of this test is that rule groups/app policy are not
+        # forwarded outside "rules" mode, not the exact label.
+        self.assertEqual(driver.last_mode, "tun")
         self.assertIsNone(driver.last_groups)
         self.assertIsNone(driver.last_app_policy)
 
@@ -1567,6 +1572,10 @@ class WatchdogIntegrationTests(unittest.TestCase):
         app_config.save(config)
         runtime = self._make_runtime(driver)
         runtime.app_config = app_config
+        # Explicit proxy-only capture (Task 23.3.4 made "rules"/"global"
+        # default to capture_modes including "tun"; this test needs the
+        # no-tun precondition it's actually testing).
+        self.state_manager.set("active_mode", "proxy")
 
         with self.assertRaisesRegex(RuntimeError, "requires capture_modes to include tun"):
             runtime.connect(self.profile)
