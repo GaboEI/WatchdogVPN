@@ -590,7 +590,7 @@ class Runner:
         self.write_reboot_runbook()
 
     def write_reboot_runbook(self) -> None:
-        connected_profile_id = self.plan["reboot"]["connected_profile_id"]
+        connected_profile_id = self.resolved_profile_id(self.plan["reboot"]["connected_profile_id"])
         path = self.evidence_dir / "10-reboot-manual-off" / "reboot-operator-steps.md"
         text = f"""# Phase 23 Reboot Operator Steps
 
