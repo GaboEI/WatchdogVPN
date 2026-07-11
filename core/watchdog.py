@@ -409,7 +409,11 @@ class WatchdogRuntime:
         return self.driver.health_check()
 
     def status(self) -> ConnectionState:
-        return self._with_lan_gateway_status(self.driver.status())
+        return self._with_lan_gateway_status(self._with_kill_switch_status(self.driver.status()))
+
+    def _with_kill_switch_status(self, state: ConnectionState) -> ConnectionState:
+        state.kill_switch_active = state.kill_switch_active or self.kill_switch.is_active()
+        return state
 
     def _with_lan_gateway_status(self, state: ConnectionState) -> ConnectionState:
         config_gateway = False

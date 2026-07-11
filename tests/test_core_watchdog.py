@@ -1576,6 +1576,16 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(state.lan_gateway_status, "disabled")
         self.assertFalse(state.lan_gateway_active)
 
+    def test_status_reports_firewall_kill_switch_activity(self) -> None:
+        driver = FakeDriver()
+        driver.status_mock.return_value = ConnectionState(status="standby")
+        runtime = self._make_runtime(driver)
+        runtime.kill_switch = FakeKillSwitch(active=True)
+
+        state = runtime.status()
+
+        self.assertTrue(state.kill_switch_active)
+
     def test_status_reports_lan_gateway_configured(self) -> None:
         driver = FakeDriver()
         config_path = Path(self.tmpdir.name) / "config.toml"
