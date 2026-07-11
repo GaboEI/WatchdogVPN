@@ -66,6 +66,31 @@ class DNSStateManagerTests(unittest.TestCase):
             self.assertIn(["resolvectl", "revert", "tun0"], runner.commands)
             self.assertEqual(resolv_conf.read_text(encoding="utf-8"), "nameserver 127.0.0.53\n")
 
+    def test_systemd_resolved_restore_does_not_touch_resolv_conf_symlink(self) -> None:
+        # apply_local_dns for systemd-resolved only ever calls resolvectl -
+        # it never touches /etc/resolv.conf. Real /etc/resolv.conf is a
+        # symlink to systemd-resolved's own stub file
+        # (/run/systemd/resolve/stub-resolv.conf), owned by root; a real
+        # field run showed restore attempting to replace that symlink
+        # anyway, failing with "Permission denied" for a normal caller even
+        # though the actual resolvectl revert had already succeeded.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "stub-resolv.conf"
+            stub.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.symlink_to(stub)
+            runner = FakeRunner(active_services={"systemd-resolved.service"})
+            manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+
+            snapshot = manager.apply_local_dns(
+                LocalDNSEntryPoint(address="127.0.0.1", systemd_link="tun0")
+            )
+            with patch("dns.state_manager._replace_symlink") as replace_symlink:
+                manager.restore_state(snapshot)
+            replace_symlink.assert_not_called()
+            self.assertIn(["resolvectl", "revert", "tun0"], runner.commands)
+            self.assertEqual(resolv_conf.resolve(), stub.resolve())
+
     def test_network_manager_apply_and_restore_connection_dns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resolv_conf = Path(tmp) / "resolv.conf"

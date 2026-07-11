@@ -275,10 +275,17 @@ class SystemDNSStateManager:
         self.runner(["resolvectl", "domain", link, "~."])
 
     def _restore_systemd_resolved(self, snapshot: DNSStateSnapshot) -> None:
+        # _apply_systemd_resolved only ever calls resolvectl - it never
+        # touches /etc/resolv.conf, which stays the same
+        # systemd-resolved-managed symlink throughout. resolvectl revert
+        # already fully undoes it and typically works for an unprivileged
+        # caller (polkit-mediated D-Bus call). Also replacing the resolv.conf
+        # symlink here is both redundant and was failing reset in the field
+        # with a real "Permission denied" writing /etc/.resolv.conf.*.tmp,
+        # since unlike resolvectl that write needs root.
         link = snapshot.systemd_link
         if link:
             self.runner(["resolvectl", "revert", link])
-        self._restore_resolv_conf(snapshot)
 
     def _apply_network_manager(
         self,
