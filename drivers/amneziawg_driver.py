@@ -570,6 +570,7 @@ class AmneziaWGDriver(BaseDriver):
         chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
+        capture_modes=None,
     ) -> bool:
         self.last_error = ""
         if not self.find_ip_tool():

@@ -52,6 +52,7 @@ class FakeDriver(BaseDriver):
         self.last_chain_runtime_plans = "unset"
         self.last_lan_proxy = "unset"
         self.last_lan_gateway = "unset"
+        self.last_capture_modes = "unset"
 
     def connect(
         self,
@@ -67,6 +68,7 @@ class FakeDriver(BaseDriver):
         chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
+        capture_modes=None,
     ) -> bool:
         self.last_dns_policy = dns_policy
         self.last_mode = mode
@@ -78,6 +80,7 @@ class FakeDriver(BaseDriver):
         self.last_chain_runtime_plans = chain_runtime_plans
         self.last_lan_proxy = lan_proxy
         self.last_lan_gateway = lan_gateway
+        self.last_capture_modes = capture_modes
         return bool(self.connect_mock(profile))
 
     def disconnect(self) -> bool:
@@ -121,6 +124,7 @@ class EventDriver(FakeDriver):
         chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
+        capture_modes=None,
     ) -> bool:
         self.events.append(f"{self.name}:connect:{profile.id}")
         return super().connect(
@@ -135,6 +139,7 @@ class EventDriver(FakeDriver):
             chain_runtime_plans=chain_runtime_plans,
             lan_proxy=lan_proxy,
             lan_gateway=lan_gateway,
+            capture_modes=capture_modes,
         )
 
     def disconnect(self) -> bool:

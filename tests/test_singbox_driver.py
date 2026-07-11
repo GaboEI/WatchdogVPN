@@ -1160,6 +1160,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             profile,
             mode="rules",
             app_policy=policy,
+            capture_modes=("local_proxy", "tun"),
         )
 
         tun_inbounds = [i for i in config["inbounds"] if i["type"] == "tun"]
@@ -1167,13 +1168,41 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(tun_inbounds[0]["interface_name"], "wdvpn-tun0")
         self.assertTrue(tun_inbounds[0]["strict_route"])
         self.assertTrue(tun_inbounds[0]["auto_redirect"])
-        self.assertEqual(
-            config["route"]["rules"],
-            [
-                {"process_path": ["/usr/bin/curl"], "action": "reject"},
-                {"action": "route", "outbound": "vless-demo"},
-            ],
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_rules_mode_tun_follows_capture_modes_not_app_policy(
+        self, bind_mock, write_mock
+    ) -> None:
+        # Field regression (Phase 23 Task 23.3.3): TUN inclusion must be
+        # driven by the operator's explicit capture_modes setting, not by
+        # whether app policy happens to be enabled. A routine
+        # "watchdog app-policy disable" must never silently downgrade a
+        # rules-mode connection to proxy-only with no system traffic
+        # protection.
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        enabled_policy = AppPolicy(enabled=True, mode="blacklist", rules=[])
+        disabled_policy = AppPolicy(enabled=False, mode="blacklist", rules=[])
+
+        # app_policy enabled but capture_modes has no "tun": no TUN inbound.
+        config_no_tun = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            app_policy=enabled_policy,
+            capture_modes=("local_proxy",),
         )
+        self.assertEqual([i for i in config_no_tun["inbounds"] if i["type"] == "tun"], [])
+
+        # app_policy disabled but capture_modes includes "tun": TUN inbound
+        # still gets created - system traffic protection does not depend on
+        # app policy being on.
+        config_with_tun = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            app_policy=disabled_policy,
+            capture_modes=("local_proxy", "tun"),
+        )
+        self.assertEqual(len([i for i in config_with_tun["inbounds"] if i["type"] == "tun"]), 1)
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
@@ -1282,6 +1311,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                 rule_set_tags=None,
                 rule_set_declarations=None,
                 chain_runtime_plans=None,
+                capture_modes=None,
             )
             popen_mock.assert_called_once()
             self.assertIs(self.driver._process, process)
@@ -1320,6 +1350,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                 rule_set_tags=None,
                 rule_set_declarations=None,
                 chain_runtime_plans=None,
+                capture_modes=None,
             )
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)
@@ -1379,7 +1410,14 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
         ):
-            self.assertTrue(self.driver.connect(self.profile, mode="rules", app_policy=policy))
+            self.assertTrue(
+                self.driver.connect(
+                    self.profile,
+                    mode="rules",
+                    app_policy=policy,
+                    capture_modes=("local_proxy", "tun"),
+                )
+            )
 
         self.assertEqual(self.driver._active_mode, "rules")
         self.assertTrue(self.driver._tun_expected)

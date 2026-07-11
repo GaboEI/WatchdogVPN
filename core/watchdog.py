@@ -485,7 +485,11 @@ class WatchdogRuntime:
         else:
             mode = "global"
 
-        options: dict[str, object] = {"mode": mode, "final_policy": final_policy}
+        options: dict[str, object] = {
+            "mode": mode,
+            "final_policy": final_policy,
+            "capture_modes": capture_modes,
+        }
         runtime_config = self.app_config.load()
         dns_policy = self.dns_policy_store.load()
         chain_actions = {default_action} if chain_target(default_action) is not None else set()

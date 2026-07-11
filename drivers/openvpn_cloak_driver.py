@@ -221,6 +221,7 @@ class OpenVPNCloakDriver(BaseDriver):
         chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
+        capture_modes=None,
     ) -> bool:
         openvpn_bin = self.find_openvpn_binary()
         ck_bin = self.find_ck_client_binary()

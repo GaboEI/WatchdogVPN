@@ -254,8 +254,27 @@ class SingBoxDriver(BaseDriver):
             return level
         return "warning"
 
-    def _mode_requires_tun(self, mode: str, app_policy: AppPolicy | None = None) -> bool:
-        return mode == "tun" or (mode == "rules" and app_policy is not None and app_policy.enabled)
+    def _mode_requires_tun(
+        self,
+        mode: str,
+        capture_modes: tuple[str, ...] | None = None,
+    ) -> bool:
+        # TUN inclusion must follow the operator's explicit capture_modes
+        # setting (watchdog config set capture-modes), not whether app
+        # policy happens to be enabled. app_policy is a per-app *routing*
+        # override within whatever capture is already active; it must never
+        # be the thing deciding whether system-wide traffic is captured at
+        # all. The old "rules mode + app_policy.enabled" shortcut let a
+        # routine "watchdog app-policy disable" silently downgrade a
+        # supposedly-connected session to local-proxy-only with no system
+        # traffic protection and no signal that this happened - reproduced
+        # live in Phase 23 field validation (Task 23.3.3) and flagged
+        # earlier as unfinished Phase 19 work in
+        # docs/phase-19-task-19-1-routing-capture-contract-audit.md's
+        # "one-dimensional shortcut" finding.
+        if capture_modes is not None:
+            return "tun" in capture_modes
+        return mode == "tun"
 
     def _ensure_direct_outbound(
         self,
@@ -1134,6 +1153,7 @@ class SingBoxDriver(BaseDriver):
         rule_set_declarations: list[dict[str, str]] | None = None,
         chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy: LANProxyRuntimeConfig | None = None,
+        capture_modes: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
             raise ValueError(f"unsupported connection mode: {mode!r}")
@@ -1147,7 +1167,7 @@ class SingBoxDriver(BaseDriver):
         }
         outbound = self._profile_to_route_target(profile, config)
         self._append_chain_outbounds(config, chain_runtime_plans or {})
-        if self._mode_requires_tun(mode, app_policy):
+        if self._mode_requires_tun(mode, capture_modes):
             config["inbounds"].append(self._build_tun_inbound())
         if dns_policy is not None:
             dns_config = build_singbox_dns_config(
@@ -1253,11 +1273,12 @@ class SingBoxDriver(BaseDriver):
         chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy: LANProxyRuntimeConfig | None = None,
         lan_gateway: LANGatewayRuntimeConfig | None = None,
+        capture_modes: tuple[str, ...] | None = None,
     ) -> bool:
         binary = self.find_singbox_binary()
         if not binary:
             return False
-        tun_expected = self._mode_requires_tun(mode, app_policy)
+        tun_expected = self._mode_requires_tun(mode, capture_modes)
         self._clear_tun_cleanup_state()
         if tun_expected:
             self._tun_rule_baseline = self._ip_rule_lines()
@@ -1270,6 +1291,7 @@ class SingBoxDriver(BaseDriver):
             "rule_set_tags": rule_set_tags,
             "rule_set_declarations": rule_set_declarations,
             "chain_runtime_plans": chain_runtime_plans,
+            "capture_modes": capture_modes,
         }
         if lan_proxy is not None:
             config_kwargs["lan_proxy"] = lan_proxy

@@ -53,6 +53,7 @@ class FakeWorkerDriver(BaseDriver):
         chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
+        capture_modes=None,
     ) -> bool:
         self.connect_calls.append(profile.id)
         if self.connect_result:

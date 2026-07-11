@@ -134,6 +134,7 @@ class OpenVPNDriver(BaseDriver):
         chain_runtime_plans=None,
         lan_proxy=None,
         lan_gateway=None,
+        capture_modes=None,
     ) -> bool:
         binary = self.find_openvpn_binary()
         if not binary:

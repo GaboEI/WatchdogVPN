@@ -25,14 +25,15 @@ class BaseDriver(ABC):
         chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy=None,
         lan_gateway=None,
+        capture_modes: tuple[str, ...] | None = None,
     ) -> bool:
         """Connect the given profile.
 
         dns_policy, mode, groups, app_policy, final_policy, rule-set runtime
-        data, and LAN proxy/gateway runtime data are only consumed by drivers that
-        embed DNS/routing/listener behavior in their own runtime config
-        (currently sing-box); other drivers accept and ignore them to keep a
-        single BaseDriver contract.
+        data, LAN proxy/gateway runtime data, and capture_modes are only
+        consumed by drivers that embed DNS/routing/listener behavior in
+        their own runtime config (currently sing-box); other drivers accept
+        and ignore them to keep a single BaseDriver contract.
         """
 
     @abstractmethod
