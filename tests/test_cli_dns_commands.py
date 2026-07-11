@@ -113,6 +113,74 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertEqual(data["channels"]["configured"], 1)
             self.assertTrue(data["features"]["rules_enabled"])
 
+    def test_dns_status_reports_fakeip_inactive_without_proxy_channel(self) -> None:
+        # proxy_resolution_channel="fakeip" alone does not activate fakeip:
+        # dns/singbox.py's build_singbox_dns_config only wires it in when a
+        # "proxy" channel is also configured. A direct-only policy with the
+        # setting still set to "fakeip" must not claim it is active.
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = DNSPolicy(
+                channels={
+                    DNSChannelName.DIRECT: DNSChannel(
+                        name=DNSChannelName.DIRECT,
+                        resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                    )
+                },
+                proxy_resolution_channel="fakeip",
+            )
+            policy_path = Path(tmp) / "dns-policy.json"
+            policy_path.write_text(json.dumps(policy.to_dict()), encoding="utf-8")
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 203.0.113.53\n", encoding="utf-8")
+
+            json_result = self.run_watchdog(
+                ["dns", "status", "--json", "--resolv-conf-path", str(resolv_conf)],
+                tmp,
+            )
+            data = json.loads(json_result.stdout)
+            self.assertEqual(data["features"]["proxy_resolution_channel"], "fakeip")
+            self.assertFalse(data["features"]["proxy_resolution_channel_active"])
+
+            human_result = self.run_watchdog(
+                ["dns", "status", "--resolv-conf-path", str(resolv_conf)],
+                tmp,
+            )
+            self.assertIn("FakeIP: off", human_result.stdout)
+            self.assertIn("requires a configured proxy DNS channel", human_result.stdout)
+
+    def test_dns_status_reports_fakeip_active_with_proxy_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = DNSPolicy(
+                channels={
+                    DNSChannelName.DIRECT: DNSChannel(
+                        name=DNSChannelName.DIRECT,
+                        resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                    ),
+                    DNSChannelName.PROXY: DNSChannel(
+                        name=DNSChannelName.PROXY,
+                        resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                    ),
+                },
+                proxy_resolution_channel="fakeip",
+            )
+            policy_path = Path(tmp) / "dns-policy.json"
+            policy_path.write_text(json.dumps(policy.to_dict()), encoding="utf-8")
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 203.0.113.53\n", encoding="utf-8")
+
+            json_result = self.run_watchdog(
+                ["dns", "status", "--json", "--resolv-conf-path", str(resolv_conf)],
+                tmp,
+            )
+            data = json.loads(json_result.stdout)
+            self.assertTrue(data["features"]["proxy_resolution_channel_active"])
+
+            human_result = self.run_watchdog(
+                ["dns", "status", "--resolv-conf-path", str(resolv_conf)],
+                tmp,
+            )
+            self.assertIn("FakeIP: on", human_result.stdout)
+
     def test_dns_diagnose_json_reports_route_and_dns_channel(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             RuleStore(Path(tmp) / "rules").add_group(

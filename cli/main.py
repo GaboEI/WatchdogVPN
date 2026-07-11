@@ -3115,7 +3115,12 @@ def _dns_status(args: argparse.Namespace) -> int:
     print(f"Channels: {data['channels']['configured']}/{data['channels']['total']}")
     print(f"Static IP: {_on_off(policy.static_ip_enabled)} ({len(policy.static_ips)} entries)")
     print(f"Rules: {_on_off(policy.rules_enabled)} ({len(policy.rules)} rules)")
-    print(f"FakeIP: {policy.fakeip_inet4_range}, {policy.fakeip_inet6_range}")
+    fakeip_active = data["features"]["proxy_resolution_channel_active"]
+    print(
+        f"FakeIP: {_on_off(bool(fakeip_active))} "
+        f"({policy.fakeip_inet4_range}, {policy.fakeip_inet6_range})"
+        + ("" if fakeip_active else " - requires a configured proxy DNS channel")
+    )
     print(f"ECS direct: {_on_off(policy.ecs_direct_enabled)}")
     print(f"Snapshot: {data['snapshot']['path']} ({data['snapshot']['status']})")
     return 0
@@ -3346,6 +3351,16 @@ def _dns_status_data(
             "rules_enabled": policy.rules_enabled,
             "ecs_direct_enabled": policy.ecs_direct_enabled,
             "proxy_resolution_channel": policy.proxy_resolution_channel,
+            # proxy_resolution_channel above is just the configured setting.
+            # dns/singbox.py's runtime config generation only actually wires
+            # fakeip in when a "proxy" DNS channel is also configured
+            # (_fakeip_enabled()); without one, fakeip silently never
+            # activates even though the setting reads "fakeip". Surface that
+            # honestly instead of letting status imply it is active.
+            "proxy_resolution_channel_active": (
+                policy.proxy_resolution_channel == "fakeip"
+                and DNSChannelName.PROXY in policy.channels
+            ),
         },
         "snapshot": {
             "path": str(snapshot_path),
