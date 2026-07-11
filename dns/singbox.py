@@ -316,13 +316,15 @@ def _dns_diversion_rules(
     for _, rule in sorted(indexed_rules, key=lambda item: (item[1].priority, item[0])):
         if not rule.enabled:
             continue
-        rules.append(_dns_diversion_rule(rule, channel_servers))
+        rules.append(_dns_diversion_rule(rule, channel_servers, policy=policy))
     return rules
 
 
 def _dns_diversion_rule(
     rule: DNSRule,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
+    *,
+    policy: DNSPolicy,
 ) -> dict[str, Any]:
     singbox_rule = _dns_rule_match_fields(rule.pattern)
     if rule.action == DNSRuleAction.REJECT:
@@ -330,13 +332,23 @@ def _dns_diversion_rule(
         return singbox_rule
     if rule.channel is None:
         raise ValueError("dns diversion rule channel is required")
-    server = _first_tag(channel_servers, rule.channel)
+    server = _dns_rule_channel_server(policy, channel_servers, rule.channel)
     if server is None:
         raise ValueError(
             f"dns diversion rule channel has no server: {rule.channel.value}"
         )
     singbox_rule["server"] = server
     return singbox_rule
+
+
+def _dns_rule_channel_server(
+    policy: DNSPolicy,
+    channel_servers: dict[DNSChannelName, tuple[str, ...]],
+    channel: DNSChannelName,
+) -> str | None:
+    if channel == DNSChannelName.PROXY and _fakeip_enabled(policy, channel_servers):
+        return FAKEIP_SERVER_TAG
+    return _first_tag(channel_servers, channel)
 
 
 def _dns_rule_match_fields(pattern: str) -> dict[str, Any]:

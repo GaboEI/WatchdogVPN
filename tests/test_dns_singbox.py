@@ -347,13 +347,43 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             },
             {
                 "domain_suffix": ["proxy.example.com"],
-                "server": "watchdogvpn-proxy-1",
+                "server": FAKEIP_SERVER_TAG,
             },
         ])
         self.assertNotIn(
             {"domain_keyword": ["disabled"], "server": "watchdogvpn-final-1"},
             result.config["rules"],
         )
+
+    def test_dns_diversion_proxy_rule_uses_proxy_resolver_when_fakeip_disabled(self) -> None:
+        policy = DNSPolicy(
+            proxy_resolution_channel="proxy",
+            rules_enabled=True,
+            rules=[
+                DNSRule(
+                    id="proxy-domain",
+                    pattern="domain:proxy.example.com",
+                    channel=DNSChannelName.PROXY,
+                ),
+            ],
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.config["rules"], [
+            {
+                "domain": ["proxy.example.com"],
+                "server": "watchdogvpn-proxy-1",
+            }
+        ])
 
     def test_dns_diversion_rules_are_after_static_ip_and_before_base_rules(self) -> None:
         policy = DNSPolicy(
@@ -390,7 +420,7 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             },
             {
                 "domain_keyword": ["proxy"],
-                "server": "watchdogvpn-proxy-1",
+                "server": FAKEIP_SERVER_TAG,
             },
         ])
         self.assertEqual(result.direct_domain_resolver, "watchdogvpn-direct-1")

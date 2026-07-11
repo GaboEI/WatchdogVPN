@@ -38,6 +38,16 @@ PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
 DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
 DEFAULT_RULE_TABLES = {"local", "main", "default"}
 SING_BOX_AUTO_REDIRECT_MARKS = {"0x2023", "0x2024"}
+SING_BOX_LOG_LEVELS = {
+    "trace",
+    "debug",
+    "info",
+    "warn",
+    "warning",
+    "error",
+    "fatal",
+    "panic",
+}
 LAN_GATEWAY_NFT_TABLE = "watchdogvpn_lan_gateway"
 LAN_GATEWAY_FORWARD_CHAIN = "forward"
 LAN_GATEWAY_POSTROUTING_CHAIN = "postrouting"
@@ -237,6 +247,12 @@ class SingBoxDriver(BaseDriver):
             "auto_redirect": True,
             "stack": "system",
         }
+
+    def _singbox_log_level(self) -> str:
+        level = os.environ.get("WATCHDOGVPN_SINGBOX_LOG_LEVEL", "warning").strip().lower()
+        if level in SING_BOX_LOG_LEVELS:
+            return level
+        return "warning"
 
     def _mode_requires_tun(self, mode: str, app_policy: AppPolicy | None = None) -> bool:
         return mode == "tun" or (mode == "rules" and app_policy is not None and app_policy.enabled)
@@ -1125,7 +1141,7 @@ class SingBoxDriver(BaseDriver):
             raise ValueError(f"unsupported final_policy: {final_policy!r}")
 
         config: dict[str, Any] = {
-            "log": {"level": "warning"},
+            "log": {"level": self._singbox_log_level()},
             "inbounds": self._build_inbounds(lan_proxy),
             "outbounds": [],
         }

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from app_policy.models import AppPolicy, AppPolicyRule
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
-from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
+from dns.models import DNSChannel, DNSChannelName, DNSPolicy, DNSRule, Resolver
 from drivers.singbox_driver import SingBoxDriver
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.wg_config import parse_wg_config
@@ -120,6 +120,62 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertFalse(
             any(inbound.get("listen") in {"0.0.0.0", "::"} for inbound in config["inbounds"])
         )
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_uses_warning_log_level_by_default(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+
+        config = self.driver.generate_singbox_config(profile)
+
+        self.assertEqual(config["log"], {"level": "warning"})
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_LOG_LEVEL": "debug"})
+    def test_generate_singbox_config_accepts_bounded_debug_log_level(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+
+        config = self.driver.generate_singbox_config(profile)
+
+        self.assertEqual(config["log"], {"level": "debug"})
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_LOG_LEVEL": "verbose"})
+    def test_generate_singbox_config_rejects_unknown_log_level(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+
+        config = self.driver.generate_singbox_config(profile)
+
+        self.assertEqual(config["log"], {"level": "warning"})
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
@@ -876,6 +932,64 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(dns_servers["watchdogvpn-direct-1"]["type"], "local")
         self.assertEqual(dns_servers["watchdogvpn-proxy-1"]["detour"], "vless-demo")
         self.assertEqual(dns_servers["watchdogvpn-final-1"]["server"], "9.9.9.9")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_routes_proxy_dns_diversion_to_fakeip(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+        dns_policy = DNSPolicy(
+            rules_enabled=True,
+            rules=[
+                DNSRule(
+                    id="probe",
+                    pattern="domain:fakeip-probe.watchdogvpn-test",
+                    channel=DNSChannelName.PROXY,
+                )
+            ],
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="local")],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+            },
+        )
+
+        config = self.driver.generate_singbox_config(
+            profile,
+            dns_policy=dns_policy,
+            mode="tun",
+        )
+
+        self.assertEqual(config["dns"]["rules"], [
+            {
+                "domain": ["fakeip-probe.watchdogvpn-test"],
+                "server": "watchdogvpn-fakeip",
+            }
+        ])
+        self.assertEqual(config["route"]["rules"][:3], [
+            {"action": "sniff"},
+            {"protocol": ["dns"], "action": "hijack-dns"},
+            {
+                "inbound": [
+                    "watchdogvpn-dns-udp-in",
+                    "watchdogvpn-dns-tcp-in",
+                ],
+                "action": "hijack-dns",
+            },
+        ])
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
