@@ -137,6 +137,56 @@ VISIBLE_STATS_COUNTER_PREFIXES = (
 )
 
 
+ROOT_HELP = """WatchdogVPN — local network control plane for resilient VPN/proxy routing
+
+Usage: watchdog <command> [options]
+
+Core:
+  connect       Connect through the WatchdogVPN daemon
+  disconnect    Disconnect through the WatchdogVPN daemon
+  status        Show daemon connection status
+  rotate        Rotate connection through the WatchdogVPN daemon
+
+Diagnostics:
+  doctor        Run the repository doctor
+  stats         Inspect local observability metrics
+  version       Print WatchdogVPN version
+
+Profiles and providers:
+  profile       Manage local profiles
+  provider      Manage external providers
+
+Policy:
+  dns           Manage DNS v2 policy and state
+  rules         Inspect configured routing rules
+  ruleset       Inspect and refresh trusted remote or built-in rule sets
+  app-policy    Manage minimal Linux app/process policy
+  node-group    Manage node groups
+  config        Manage WatchdogVPN configuration
+
+Maintenance:
+  backup        Create, inspect and restore backups
+  setup         Configure local WatchdogVPN defaults
+  panic         Run the WatchdogVPN panic button
+  uninstall     Run the safe WatchdogVPN uninstall flow
+
+Examples:
+  watchdog status
+  watchdog doctor
+  watchdog profile list
+  watchdog dns status
+  watchdog connect <profile-id>
+  watchdog disconnect
+
+Use: watchdog <command> --help
+"""
+
+
+class RootHelpArgumentParser(argparse.ArgumentParser):
+    def format_help(self) -> str:
+        return ROOT_HELP
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -176,8 +226,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="watchdog", description="WatchdogVPN command line")
-    subparsers = parser.add_subparsers(dest="command")
+    parser = RootHelpArgumentParser(prog="watchdog", usage="<command> [options]")
+    subparsers = parser.add_subparsers(
+        dest="command",
+        parser_class=argparse.ArgumentParser,
+    )
 
     connect_parser = subparsers.add_parser("connect", help="Connect through the WatchdogVPN daemon")
     connect_parser.add_argument("profile_id", help="Profile ID to connect")

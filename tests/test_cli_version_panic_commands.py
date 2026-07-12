@@ -97,6 +97,42 @@ class CliVersionPanicCommandTests(unittest.TestCase):
         self.assertIn("profile_command", result.stderr)
         self.assertNotIn("WatchdogVPN command line", result.stdout)
 
+    def test_root_help_is_grouped_for_operator_readability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            long_help = self.run_watchdog(["--help"], tmp)
+            short_help = self.run_watchdog(["-h"], tmp)
+
+        expected = (
+            "WatchdogVPN — local network control plane for resilient VPN/proxy routing\n"
+            "\n"
+            "Usage: watchdog <command> [options]\n"
+        )
+        self.assertEqual(long_help.stdout, short_help.stdout)
+        self.assertTrue(long_help.stdout.startswith(expected))
+        self.assertIn("Core:\n  connect", long_help.stdout)
+        self.assertIn("Diagnostics:\n  doctor", long_help.stdout)
+        self.assertIn("Profiles and providers:\n  profile", long_help.stdout)
+        self.assertIn("Policy:\n  dns", long_help.stdout)
+        self.assertIn("Maintenance:\n  backup", long_help.stdout)
+        self.assertIn("Examples:\n  watchdog status", long_help.stdout)
+        self.assertIn("Use: watchdog <command> --help\n", long_help.stdout)
+        self.assertNotIn("positional arguments:", long_help.stdout)
+        self.assertNotIn("{connect,disconnect,status", long_help.stdout)
+
+    def test_subcommand_help_still_uses_argparse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            commands = [
+                ["connect", "--help"],
+                ["dns", "--help"],
+                ["profile", "--help"],
+                ["doctor", "--help"],
+            ]
+            results = [self.run_watchdog(command, tmp) for command in commands]
+
+        for result in results:
+            self.assertIn("usage:", result.stdout)
+            self.assertNotIn("Use: watchdog <command> --help", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
