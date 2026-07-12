@@ -21,6 +21,7 @@ from config.app_config import AppConfig
 from config.backup_manager import (
     BACKUP_SENSITIVE_WARNING,
     BackupManager,
+    INFORMATIONAL_SECTION_NAMES,
     MERGE_SECTION_NAMES,
     RESTORE_REPLACE_CONFIRMATION,
     SUPPORTED_SECTION_NAMES,
@@ -1488,11 +1489,19 @@ def _backup_restore(args: argparse.Namespace) -> int:
         replace_confirmation=args.confirm,
         password=password,
     )
+    informational_sections = [
+        section for section in selected_sections if section in INFORMATIONAL_SECTION_NAMES
+    ]
+    restored_sections = [
+        section for section in selected_sections if section not in INFORMATIONAL_SECTION_NAMES
+    ]
     data = {
         **_backup_manifest_summary(result.path, result.manifest, encrypted=bool(parsed.encrypted)),
         "dry_run": False,
         "restore_mode": args.mode,
         "selected_sections": selected_sections,
+        "restored_sections": restored_sections,
+        "informational_sections": informational_sections,
         "pre_restore_backup": str(result.pre_restore_backup),
         "restore_would_write": True,
     }
@@ -1501,7 +1510,12 @@ def _backup_restore(args: argparse.Namespace) -> int:
     else:
         print(f"Backup restored: {result.path}")
         print(f"Mode: {args.mode}")
-        print(f"Sections: {', '.join(selected_sections)}")
+        print(f"Sections restored: {', '.join(restored_sections) or '-'}")
+        if informational_sections:
+            print(
+                "Sections informational (not restored, no persisted state to write): "
+                f"{', '.join(informational_sections)}"
+            )
         print(f"Pre-restore backup: {result.pre_restore_backup}")
     return 0
 

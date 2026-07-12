@@ -92,6 +92,12 @@ BACKUP_ENTRIES = ("manifest.json",) + tuple(
 )
 SUPPORTED_BACKUP_ENTRIES = ("manifest.json",) + tuple(SECTION_FILE_BY_NAME.values())
 MERGE_SECTION_NAMES = ("routing-rules", "app-policy", "node-groups", "route-chains")
+# These sections are captured in every backup for reference, but restore_backup()
+# never writes them back (see _apply_sections/_merge_sections) - backup-policy is
+# always the current build's hardcoded defaults, not persisted user state, and
+# metadata is describing the backup itself. Restore output must not claim they
+# were restored.
+INFORMATIONAL_SECTION_NAMES = ("backup-policy", "metadata")
 RESTORE_REPLACE_CONFIRMATION = "RESTORE-WATCHDOGVPN-BACKUP"
 AUTO_BACKUP_REASONS = (
     "pre-restore",

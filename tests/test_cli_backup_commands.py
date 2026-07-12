@@ -142,6 +142,79 @@ class CliBackupCommandTests(unittest.TestCase):
         self.assertEqual(result.returncode, 70)
         self.assertIn("RESTORE-WATCHDOGVPN-BACKUP", result.stderr)
 
+    def test_backup_restore_reports_informational_sections_as_not_restored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            target = Path(tmp) / "target"
+            source.mkdir()
+            target.mkdir()
+            self.seed_profile(str(source))
+            backup = Path(tmp) / "mixed.zip"
+            self.run_watchdog(
+                [
+                    "backup",
+                    "create",
+                    "--output",
+                    str(backup),
+                    "--section",
+                    "profiles",
+                    "--section",
+                    "backup-policy",
+                    "--section",
+                    "metadata",
+                ],
+                str(source),
+            )
+
+            result = self.run_watchdog(
+                [
+                    "backup",
+                    "restore",
+                    str(backup),
+                    "--section",
+                    "profiles",
+                    "--section",
+                    "backup-policy",
+                    "--section",
+                    "metadata",
+                    "--confirm",
+                    "RESTORE-WATCHDOGVPN-BACKUP",
+                    "--json",
+                ],
+                str(target),
+            )
+
+            data = json.loads(result.stdout)
+            self.assertEqual(data["restored_sections"], ["profiles"])
+            self.assertEqual(
+                sorted(data["informational_sections"]), ["backup-policy", "metadata"]
+            )
+            self.assertEqual(
+                sorted(data["selected_sections"]),
+                ["backup-policy", "metadata", "profiles"],
+            )
+
+            human = self.run_watchdog(
+                [
+                    "backup",
+                    "restore",
+                    str(backup),
+                    "--section",
+                    "profiles",
+                    "--section",
+                    "backup-policy",
+                    "--section",
+                    "metadata",
+                    "--confirm",
+                    "RESTORE-WATCHDOGVPN-BACKUP",
+                ],
+                str(target),
+            )
+            self.assertIn("Sections restored: profiles", human.stdout)
+            self.assertIn("Sections informational (not restored", human.stdout)
+            self.assertIn("backup-policy", human.stdout)
+            self.assertIn("metadata", human.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
