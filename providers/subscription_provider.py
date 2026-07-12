@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from config.profile_store import ProfileStore
-from config.provider_store import ProviderLimitError, ProviderStore
-from models.profile import Profile, ProfileSource
-from models.provider import Provider
+from config.provider_store import DuplicateProviderError, ProviderLimitError, ProviderStore
+from models.profile import Profile, ProfileSource, profile_fingerprint
+from models.provider import Provider, normalized_provider_url
 from parsers import ParseError, fetch_and_parse
 from providers.base import BaseProvider
 
@@ -34,14 +34,19 @@ class SubscriptionProvider(BaseProvider):
         self.fetcher = fetcher or fetch_and_parse
 
     def add(self, url: str, name: str) -> Provider:
-        provider_id = self._unique_provider_id(self._provider_base_id(name, url))
+        normalized_url = normalized_provider_url(url)
+        duplicate = self._provider_with_url(normalized_url)
+        if duplicate is not None:
+            raise DuplicateProviderError(f"provider already exists: {duplicate.id}")
+
+        provider_id = self._unique_provider_id(self._provider_base_id(name, normalized_url))
         self._enforce_provider_limit(provider_id)
 
-        profiles = self._fetch_profiles(url)
+        profiles = self._fetch_profiles(normalized_url)
         provider = Provider(
             id=provider_id,
             name=name or provider_id,
-            url=url,
+            url=normalized_url,
             last_updated=datetime.now(timezone.utc),
             profiles=[],
             rotation_enabled=False,
@@ -53,18 +58,29 @@ class SubscriptionProvider(BaseProvider):
         self.provider_store.add(provider)
         return provider
 
+    def _provider_with_url(self, url: str) -> Provider | None:
+        normalized = normalized_provider_url(url)
+        for provider in self.provider_store.list():
+            if normalized_provider_url(provider.url) == normalized:
+                return provider
+        return None
+
     def update(self, provider_id: str) -> int:
         provider = self.provider_store.get(provider_id)
         if provider is None:
             raise ProviderNotFoundError(f"provider not found: {provider_id}")
 
-        fetched = self._fetch_profiles(provider.url)
-        normalized = self._normalize_profiles(provider, fetched)
         existing = {
             profile.id: profile
             for profile in self.profile_store.list()
             if profile.provider_id == provider.id
         }
+        fetched = self._fetch_profiles(provider.url)
+        normalized = self._normalize_profiles(
+            provider,
+            fetched,
+            existing_profiles=list(existing.values()),
+        )
         incoming = {profile.id: profile for profile in normalized}
 
         changes = 0
@@ -148,12 +164,31 @@ class SubscriptionProvider(BaseProvider):
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
         return f"provider-{digest}"
 
-    def _normalize_profiles(self, provider: Provider, profiles: list[Profile]) -> list[Profile]:
+    def _normalize_profiles(
+        self,
+        provider: Provider,
+        profiles: list[Profile],
+        *,
+        existing_profiles: list[Profile] | None = None,
+    ) -> list[Profile]:
         normalized: list[Profile] = []
         used_ids: set[str] = set()
+        used_fingerprints: set[str] = set()
+        existing_by_fingerprint = {
+            profile_fingerprint(profile): profile.id
+            for profile in existing_profiles or []
+        }
         for index, profile in enumerate(profiles, start=1):
+            fingerprint = profile_fingerprint(profile)
+            if fingerprint in used_fingerprints:
+                continue
+            used_fingerprints.add(fingerprint)
             base_node_id = self._slug(profile.id or profile.name) or f"node-{index}"
-            node_id = self._unique_node_id(provider.id, base_node_id, used_ids)
+            node_id = existing_by_fingerprint.get(fingerprint)
+            if node_id is None:
+                node_id = self._unique_node_id(provider.id, base_node_id, used_ids)
+            else:
+                used_ids.add(node_id)
             profile.id = node_id
             profile.source = ProfileSource.SUBSCRIPTION
             profile.provider_id = provider.id

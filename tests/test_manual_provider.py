@@ -278,17 +278,32 @@ class ManualProviderTests(unittest.TestCase):
             self.assertIsNotNone(profile)
             self.assertEqual(profile.protocol, ProtocolType.HYSTERIA2)
 
-    def test_duplicate_ids_are_preserved_with_suffix(self) -> None:
+    def test_duplicate_profile_import_is_rejected_without_secret_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store_path = Path(tmp) / "profiles.json"
             provider = self._provider(store_path)
 
             first = provider.from_uri("vless://uuid@example.com:443?encryption=none")
-            second = provider.from_uri("vless://uuid@example.com:443?encryption=none")
+
+            with self.assertRaises(ParseError) as captured:
+                provider.from_uri("vless://uuid@example.com:443?encryption=none")
 
             self.assertEqual(first.id, "example.com")
-            self.assertEqual(second.id, "example.com-2")
-            self.assertEqual([p.id for p in ProfileStore(store_path).list()], ["example.com", "example.com-2"])
+            self.assertEqual(str(captured.exception), "profile already exists: example.com")
+            self.assertNotIn("uuid", str(captured.exception))
+            self.assertEqual([p.id for p in ProfileStore(store_path).list()], ["example.com"])
+
+    def test_same_name_different_endpoint_is_allowed_with_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "profiles.json"
+            provider = self._provider(store_path)
+
+            first = provider.from_uri("vless://uuid-a@first.example.com:443?encryption=none#demo")
+            second = provider.from_uri("vless://uuid-b@second.example.com:443?encryption=none#demo")
+
+            self.assertEqual(first.id, "demo")
+            self.assertEqual(second.id, "demo-2")
+            self.assertEqual([p.id for p in ProfileStore(store_path).list()], ["demo", "demo-2"])
 
     def test_invalid_input_raises_parse_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

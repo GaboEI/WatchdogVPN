@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from config.profile_store import ProfileStore
-from models.profile import Profile, ProfileSource, ProtocolType
+from models.profile import Profile, ProfileSource, ProtocolType, profile_fingerprint
 from parsers import (
     ParseError,
     is_amneziavpn_format,
@@ -82,6 +82,9 @@ class ManualProvider(BaseProvider):
         for profile in profiles:
             profile.source = ProfileSource.MANUAL
             profile.provider_id = None
+            duplicate = self._duplicate_profile(profile)
+            if duplicate is not None:
+                raise ParseError(f"profile already exists: {duplicate.id}")
             profile.id = self._unique_profile_id(profile.id)
             profile.in_rotation_pool = bool(self.rotation_prompt(profile))
             self.profile_store.add(profile)
@@ -89,6 +92,16 @@ class ManualProvider(BaseProvider):
 
         self._last_imported = saved
         return saved[0]
+
+    def _duplicate_profile(self, profile: Profile) -> Profile | None:
+        fingerprint = profile_fingerprint(profile)
+        for existing in self.profile_store.list():
+            if (
+                existing.source == ProfileSource.MANUAL
+                and profile_fingerprint(existing) == fingerprint
+            ):
+                return existing
+        return None
 
     def _unique_profile_id(self, requested_id: str) -> str:
         base = (requested_id or "manual-profile").strip() or "manual-profile"

@@ -10,7 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import cli.main
+from config.profile_store import ProfileStore
+from config.provider_store import ProviderStore
 from models.profile import Profile, ProfileSource, ProtocolType
+from models.provider import Provider
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WATCHDOG = ROOT_DIR / "bin" / "watchdog"
@@ -60,6 +63,80 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertNotIn("config", profiles[0])
             self.assertNotIn("uuid", result.stdout)
 
+    def test_profile_list_human_groups_by_source_and_summarizes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_store = ProfileStore(Path(tmp) / "profiles.json")
+            provider_store = ProviderStore(Path(tmp) / "providers.json")
+            provider_store.add(
+                Provider(
+                    id="provider-one",
+                    name="Provider One",
+                    url="https://provider.example/token",
+                    profiles=["provider-one:very-long-provider-node-id-that-should-truncate"],
+                )
+            )
+            profile_store.add(
+                Profile(
+                    id="manual-profile",
+                    name="Manual Profile",
+                    protocol=ProtocolType.VLESS,
+                    config={"host": "manual.example.com", "port": 443, "uuid": "manual-uuid"},
+                    source=ProfileSource.MANUAL,
+                    health_status="ok",
+                )
+            )
+            profile_store.add(
+                Profile(
+                    id="provider-one:very-long-provider-node-id-that-should-truncate",
+                    name="Provider Node",
+                    protocol=ProtocolType.TROJAN,
+                    config={"host": "provider.example.com", "port": 443, "password": "secret"},
+                    source=ProfileSource.SUBSCRIPTION,
+                    provider_id="provider-one",
+                    in_rotation_pool=True,
+                    health_status="unknown",
+                )
+            )
+
+            result = self.run_watchdog(["profile", "list"], tmp)
+            json_result = self.run_watchdog(["profile", "list", "--json"], tmp)
+
+            self.assertIn("Profiles (all saved profiles)", result.stdout)
+            self.assertIn("Total: 2 | Manual: 1 | Provider-owned: 1 | Enabled: 2 | Rotation: 1", result.stdout)
+            self.assertIn("Health: ok=1 unknown=1 down=0 degraded=0", result.stdout)
+            self.assertIn("Manual profiles", result.stdout)
+            self.assertIn("Provider: Provider One (provider-one)", result.stdout)
+            self.assertIn("Name", result.stdout)
+            self.assertIn("Protocol", result.stdout)
+            self.assertIn("ID", result.stdout)
+            self.assertIn("Manual Profile", result.stdout)
+            self.assertIn("Provider Node", result.stdout)
+            self.assertIn("provider-one:very-long-provider...", result.stdout)
+            self.assertNotIn("very-long-provider-node-id-that-should-truncate", result.stdout)
+            profiles = json.loads(json_result.stdout)
+            self.assertEqual(
+                profiles[1]["id"],
+                "provider-one:very-long-provider-node-id-that-should-truncate",
+            )
+            self.assertNotIn("secret", json_result.stdout)
+
+    def test_profile_list_wide_keeps_full_human_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_store = ProfileStore(Path(tmp) / "profiles.json")
+            profile_store.add(
+                Profile(
+                    id="manual-profile-with-a-very-long-id",
+                    name="Manual",
+                    protocol=ProtocolType.VLESS,
+                    config={"host": "manual.example.com", "port": 443, "uuid": "manual-uuid"},
+                    source=ProfileSource.MANUAL,
+                )
+            )
+
+            result = self.run_watchdog(["profile", "list", "--wide"], tmp)
+
+            self.assertIn("manual-profile-with-a-very-long-id", result.stdout)
+
     def test_profile_add_file_and_list_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile_file = Path(tmp) / "profile.txt"
@@ -94,6 +171,19 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertEqual(result.stdout, "")
             self.assertEqual(result.returncode, 65)
             self.assertIn("unsupported URI scheme: missing", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_profile_add_duplicate_uri_fails_without_secret_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            uri = "vless://secret-uuid@example.com:443?encryption=none#demo"
+            self.run_watchdog(["profile", "add", "--uri", uri], tmp)
+
+            result = self.run_watchdog(["profile", "add", "--uri", uri], tmp, check=False)
+
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("profile already exists: demo", result.stderr)
+            self.assertNotIn("secret-uuid", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
 
     def test_profile_enable_disable_rotation_and_remove(self) -> None:

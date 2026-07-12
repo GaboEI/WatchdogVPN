@@ -32,7 +32,7 @@ from config.lan_sharing import (
 from config.paths import resolve_config_dir
 from config.persistence import PersistentStoreError, dump_json
 from config.profile_store import ProfileStore
-from config.provider_store import ProviderLimitError, ProviderStore
+from config.provider_store import DuplicateProviderError, ProviderLimitError, ProviderStore
 from config.state_manager import (
     ALLOWED_ACTIVE_MODES,
     ALLOWED_DEFAULT_ROUTE_ACTIONS,
@@ -60,7 +60,7 @@ from diagnostics.chain_routes import ChainRouteDiagnostic, diagnose_chain_route_
 from diagnostics.routing import RouteDiagnostic, diagnose_route
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
-from models.profile import Profile, profile_resilience_category
+from models.profile import Profile, ProfileSource, profile_fingerprint, profile_resilience_category
 from models.provider import Provider
 from node_groups.models import NodeGroup, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore, NodeGroupStoreError
@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     as_json = bool(getattr(args, "json", False))
     try:
         return int(args.handler(args))
-    except (ProviderLimitError, ProviderNotFoundError) as exc:
+    except (DuplicateProviderError, ProviderLimitError, ProviderNotFoundError) as exc:
         _error(str(exc), as_json=as_json)
         return 65
     except RuleStoreError as exc:
@@ -378,6 +378,7 @@ def _build_parser() -> argparse.ArgumentParser:
     list_parser = profile_subparsers.add_parser("list", help="List saved profiles")
     list_parser.add_argument("--json", action="store_true", help="Print JSON")
     list_parser.add_argument("--pool", action="store_true", help="Show rotation pool only")
+    list_parser.add_argument("--wide", action="store_true", help="Do not truncate profile IDs in human output")
     list_parser.set_defaults(handler=_profile_list)
 
     remove_parser = profile_subparsers.add_parser("remove", help="Remove a saved profile")
@@ -1740,22 +1741,7 @@ def _profile_list(args: argparse.Namespace) -> int:
     if not profiles:
         print("No profiles found.")
         return 0
-    print("ID\tProtocol\tCategory\tSource\tEnabled\tRotation\tHealth\tName")
-    for item in data:
-        print(
-            "\t".join(
-                [
-                    str(item["id"]),
-                    str(item["protocol"]),
-                    str(item["resilience_category"]),
-                    str(item["source"]),
-                    _on_off(bool(item["enabled"])),
-                    _on_off(bool(item["in_rotation_pool"])),
-                    str(item["health_status"]),
-                    str(item["name"]),
-                ]
-            )
-        )
+    _print_profile_list(profiles, wide=bool(args.wide), pool_only=bool(args.pool))
     return 0
 
 
@@ -3569,6 +3555,140 @@ def _require_node_group(store: NodeGroupStore, name: str) -> NodeGroup:
 
 def _node_group_summary(group: NodeGroup) -> dict:
     return group.to_dict()
+
+
+def _print_profile_list(profiles: list[Profile], *, wide: bool, pool_only: bool) -> None:
+    providers = {provider.id: provider for provider in ProviderStore().list()}
+    summary = _profile_list_summary(profiles)
+    scope = "rotation pool" if pool_only else "all saved profiles"
+    print(f"Profiles ({scope})")
+    print(
+        "Total: {total} | Manual: {manual} | Provider-owned: {provider_owned} | "
+        "Enabled: {enabled} | Rotation: {rotation}".format(**summary)
+    )
+    print(
+        "Health: ok={ok} unknown={unknown} down={down} degraded={degraded}".format(
+            **summary["health"]
+        )
+    )
+    duplicate_groups = _duplicate_profile_candidate_count(profiles)
+    if duplicate_groups:
+        print(
+            f"Warning: duplicate profile candidates detected: {duplicate_groups} group(s); "
+            "no data changed."
+        )
+    print()
+
+    manual_profiles = [
+        profile for profile in profiles if profile.source == ProfileSource.MANUAL
+    ]
+    if manual_profiles:
+        _print_profile_group(
+            "Manual profiles",
+            manual_profiles,
+            wide=wide,
+        )
+
+    provider_profiles: dict[str, list[Profile]] = {}
+    for profile in profiles:
+        if profile.source != ProfileSource.SUBSCRIPTION:
+            continue
+        provider_profiles.setdefault(profile.provider_id or "-", []).append(profile)
+
+    for provider_id in sorted(provider_profiles):
+        provider = providers.get(provider_id)
+        if provider is None:
+            title = f"Provider: {provider_id}"
+        elif provider.name == provider.id:
+            title = f"Provider: {provider.id}"
+        else:
+            title = f"Provider: {provider.name} ({provider.id})"
+        _print_profile_group(title, provider_profiles[provider_id], wide=wide)
+
+
+def _profile_list_summary(profiles: list[Profile]) -> dict[str, object]:
+    health = {"ok": 0, "unknown": 0, "down": 0, "degraded": 0}
+    for profile in profiles:
+        status = profile.health_status if profile.health_status in health else "unknown"
+        health[status] += 1
+    return {
+        "total": len(profiles),
+        "manual": len([profile for profile in profiles if profile.source == ProfileSource.MANUAL]),
+        "provider_owned": len(
+            [profile for profile in profiles if profile.source == ProfileSource.SUBSCRIPTION]
+        ),
+        "enabled": len([profile for profile in profiles if profile.enabled]),
+        "rotation": len([profile for profile in profiles if profile.in_rotation_pool]),
+        "health": health,
+    }
+
+
+def _duplicate_profile_candidate_count(profiles: list[Profile]) -> int:
+    by_fingerprint: dict[str, int] = {}
+    for profile in profiles:
+        fingerprint = profile_fingerprint(profile)
+        by_fingerprint[fingerprint] = by_fingerprint.get(fingerprint, 0) + 1
+    return len([count for count in by_fingerprint.values() if count > 1])
+
+
+def _print_profile_group(title: str, profiles: list[Profile], *, wide: bool) -> None:
+    print(title)
+    rows = [_profile_row(profile, wide=wide) for profile in _sorted_profiles(profiles)]
+    columns = ("Name", "Protocol", "Category", "Health", "Enabled", "Rotation", "ID")
+    widths = [
+        max(len(str(row[index])) for row in [columns, *rows])
+        for index in range(len(columns))
+    ]
+    print(_format_profile_row(columns, widths))
+    print(_format_profile_row(tuple("-" * width for width in widths), widths))
+    for row in rows:
+        print(_format_profile_row(row, widths))
+    print()
+
+
+def _profile_row(profile: Profile, *, wide: bool) -> tuple[str, str, str, str, str, str, str]:
+    return (
+        profile.name,
+        profile.protocol.value,
+        profile_resilience_category(profile).value,
+        _profile_health_label(profile.health_status),
+        _on_off(profile.enabled),
+        _on_off(profile.in_rotation_pool),
+        profile.id if wide else _truncate_profile_id(profile.id),
+    )
+
+
+def _sorted_profiles(profiles: list[Profile]) -> list[Profile]:
+    return sorted(
+        profiles,
+        key=lambda profile: (
+            not profile.enabled,
+            not profile.in_rotation_pool,
+            profile.health_status != "ok",
+            profile.name.lower(),
+            profile.id,
+        ),
+    )
+
+
+def _profile_health_label(status: str) -> str:
+    if status == "ok":
+        return "OK"
+    if status == "down":
+        return "DOWN"
+    if status == "degraded":
+        return "DEGRADED"
+    return "UNKNOWN"
+
+
+def _truncate_profile_id(profile_id: str, limit: int = 32) -> str:
+    if len(profile_id) <= limit:
+        return profile_id
+    return f"{profile_id[: limit - 1]}..."
+
+
+def _format_profile_row(row: tuple[str, ...], widths: list[int]) -> str:
+    return "  ".join(str(value).ljust(width) for value, width in zip(row, widths))
 
 
 def _profile_summary(profile: Profile) -> dict[str, object]:

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from config.profile_store import ProfileStore
-from config.provider_store import ProviderLimitError, ProviderStore
+from config.provider_store import DuplicateProviderError, ProviderLimitError, ProviderStore
 from models.profile import Profile, ProfileSource, ProtocolType
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 
@@ -55,6 +55,17 @@ class SubscriptionProviderTests(unittest.TestCase):
 
             with self.assertRaises(ProviderLimitError):
                 provider.add("https://c.example/sub", "C")
+
+    def test_add_rejects_duplicate_subscription_url_without_leaking_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+            provider.add(" https://provider.example/private-token ", "First")
+
+            with self.assertRaises(DuplicateProviderError) as captured:
+                provider.add("https://provider.example/private-token", "Second")
+
+            self.assertEqual(str(captured.exception), "provider already exists: first")
+            self.assertNotIn("private-token", str(captured.exception))
 
     def test_add_without_name_does_not_leak_subscription_token_to_provider_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -114,6 +125,46 @@ class SubscriptionProviderTests(unittest.TestCase):
             stored_provider = provider.add("https://provider.example/sub", "Provider")
 
             self.assertEqual(provider.update(stored_provider.id), 0)
+
+    def test_update_matches_existing_nodes_by_fingerprint_not_new_id(self) -> None:
+        calls = {"count": 0}
+
+        def fetcher(_url: str) -> list[Profile]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return [_profile("old-node", "Old Name", "node.example.com")]
+            return [_profile("new-node", "New Name", "node.example.com")]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, fetcher)
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            changes = provider.update(stored_provider.id)
+
+            profiles = ProfileStore(Path(tmp) / "profiles.json").list()
+            updated_provider = ProviderStore(Path(tmp) / "providers.json").get(stored_provider.id)
+            self.assertEqual(changes, 1)
+            self.assertEqual([profile.id for profile in profiles], ["provider:old-node"])
+            self.assertEqual(profiles[0].name, "New Name")
+            self.assertIsNotNone(updated_provider)
+            assert updated_provider is not None
+            self.assertEqual(updated_provider.profiles, ["provider:old-node"])
+
+    def test_add_skips_duplicate_nodes_in_same_provider_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(
+                tmp,
+                lambda _url: [
+                    _profile("node-a", "Node A", "node.example.com"),
+                    _profile("node-b", "Node B", "node.example.com"),
+                ],
+            )
+
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            profiles = ProfileStore(Path(tmp) / "profiles.json").list()
+            self.assertEqual(stored_provider.profiles, ["provider:node-a"])
+            self.assertEqual([profile.id for profile in profiles], ["provider:node-a"])
 
     def test_update_missing_provider_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

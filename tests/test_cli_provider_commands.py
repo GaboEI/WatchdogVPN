@@ -214,6 +214,21 @@ class CliProviderCommandTests(unittest.TestCase):
         data = json.loads(stdout.getvalue())
         self.assertEqual(data["provider"]["url"], "https://netz.tg/<redacted>")
 
+    def test_provider_add_duplicate_url_fails_without_token_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ProviderStore(Path(tmp) / "providers.json").add(_provider())
+
+            result = self.run_watchdog(
+                ["provider", "add", " https://netz.tg/private-token ", "--name", "another-name"],
+                tmp,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("provider already exists: netz.tg", result.stderr)
+            self.assertNotIn("private-token", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_provider_missing_id_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["provider", "stats", "missing"], tmp, check=False)
