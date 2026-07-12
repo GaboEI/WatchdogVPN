@@ -85,7 +85,7 @@ from rules.ruleset_lifecycle import (
 )
 from rules.ruleset_trust import RuleSetFailureBehavior, RuleSetKind, RuleSetTrustPolicy
 from rules.ruleset_trust_store import RuleSetTrustStore, RuleSetTrustStoreError
-from route_chains.models import chain_target
+from route_chains.models import ChainHop, ChainHopType, RouteChain, chain_target
 from route_chains.runtime import ChainRuntimeResolver
 from route_chains.store import RouteChainStore
 
@@ -976,6 +976,69 @@ def _build_parser() -> argparse.ArgumentParser:
     app_policy_disable_rule_parser.add_argument("rule_id")
     app_policy_disable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
     app_policy_disable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=False)
+
+    chain_parser = subparsers.add_parser("chain", help="Manage proxy route chains")
+    chain_subparsers = chain_parser.add_subparsers(dest="chain_command")
+    chain_subparsers.required = True
+
+    chain_list_parser = chain_subparsers.add_parser("list", help="List route chains")
+    chain_list_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_list_parser.set_defaults(handler=_chain_list)
+
+    chain_show_parser = chain_subparsers.add_parser("show", help="Show a route chain")
+    chain_show_parser.add_argument("id")
+    chain_show_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_show_parser.set_defaults(handler=_chain_show)
+
+    chain_create_parser = chain_subparsers.add_parser("create", help="Create a route chain")
+    chain_create_parser.add_argument("id")
+    chain_create_parser.add_argument(
+        "--hop",
+        action="append",
+        required=True,
+        metavar="TYPE:TARGET",
+        help="Chain hop, e.g. profile:my-node or group:my-group; repeat for multiple hops",
+    )
+    chain_create_parser.add_argument("--description", help="Free-form chain description")
+    chain_create_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_create_parser.set_defaults(handler=_chain_create)
+
+    chain_add_hop_parser = chain_subparsers.add_parser("add-hop", help="Append a hop to a route chain")
+    chain_add_hop_parser.add_argument("id")
+    chain_add_hop_parser.add_argument("--type", required=True, choices=[item.value for item in ChainHopType])
+    chain_add_hop_parser.add_argument("--target", required=True, help="Profile ID or node-group name")
+    chain_add_hop_parser.add_argument(
+        "--selection-policy",
+        choices=["group_policy"],
+        help="Only valid for --type group",
+    )
+    chain_add_hop_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_add_hop_parser.set_defaults(handler=_chain_add_hop)
+
+    chain_remove_hop_parser = chain_subparsers.add_parser(
+        "remove-hop", help="Remove a hop from a route chain by position"
+    )
+    chain_remove_hop_parser.add_argument("id")
+    chain_remove_hop_parser.add_argument(
+        "--index", type=int, required=True, help="1-based hop position, see `chain show`"
+    )
+    chain_remove_hop_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_remove_hop_parser.set_defaults(handler=_chain_remove_hop)
+
+    chain_enable_parser = chain_subparsers.add_parser("enable", help="Enable a route chain")
+    chain_enable_parser.add_argument("id")
+    chain_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_enable_parser.set_defaults(handler=_chain_set_enabled, enabled=True)
+
+    chain_disable_parser = chain_subparsers.add_parser("disable", help="Disable a route chain")
+    chain_disable_parser.add_argument("id")
+    chain_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_disable_parser.set_defaults(handler=_chain_set_enabled, enabled=False)
+
+    chain_remove_parser = chain_subparsers.add_parser("remove", help="Remove a route chain")
+    chain_remove_parser.add_argument("id")
+    chain_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_remove_parser.set_defaults(handler=_chain_remove)
 
     return parser
 
@@ -3210,6 +3273,205 @@ def _ruleset_remove(args: argparse.Namespace) -> int:
         print(f"Rule-set trust policy removed: {args.id}")
         if backup_path:
             print(f"Backup: {backup_path}")
+    return 0
+
+
+def _require_chain(store: RouteChainStore, chain_id: str) -> RouteChain:
+    chain = store.get(chain_id)
+    if chain is None:
+        raise ParseError(
+            f"route chain not found: {chain_id}; run `watchdog chain list` to inspect route chains"
+        )
+    return chain
+
+
+def _parse_chain_hop_spec(spec: str) -> ChainHop:
+    hop_type, sep, target = spec.partition(":")
+    if not sep:
+        raise ParseError(f"invalid --hop value, expected TYPE:TARGET: {spec}")
+    normalized_type = hop_type.strip()
+    selection_policy = "group_policy" if normalized_type == ChainHopType.GROUP.value else None
+    return ChainHop(
+        type=normalized_type,
+        target=target.strip(),
+        selection_policy=selection_policy,
+    )
+
+
+def _chain_summary(chain: RouteChain) -> dict:
+    return chain.to_dict()
+
+
+def _updated_chain(
+    chain: RouteChain,
+    *,
+    hops: list[ChainHop] | None = None,
+    enabled: bool | None = None,
+) -> RouteChain:
+    data = chain.to_dict()
+    if hops is not None:
+        data["hops"] = [hop.to_dict() for hop in hops]
+    if enabled is not None:
+        data["enabled"] = enabled
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return RouteChain.from_dict(data)
+
+
+def _chain_list(args: argparse.Namespace) -> int:
+    chains = RouteChainStore().list()
+    data = [_chain_summary(chain) for chain in chains]
+    if args.json:
+        _print_json(data)
+        return 0
+    if not chains:
+        print("No route chains found.")
+        return 0
+    print("ID\tEnabled\tHops\tDescription")
+    for chain in chains:
+        print(
+            "\t".join(
+                [
+                    chain.id,
+                    _on_off(chain.enabled),
+                    str(len(chain.hops)),
+                    chain.description or "-",
+                ]
+            )
+        )
+    return 0
+
+
+def _chain_show(args: argparse.Namespace) -> int:
+    chain = _require_chain(RouteChainStore(), args.id)
+    data = _chain_summary(chain)
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Chain: {chain.id}")
+    print(f"Enabled: {_on_off(chain.enabled)}")
+    print(f"Description: {chain.description or '-'}")
+    print("Hops:")
+    for index, hop in enumerate(chain.hops, start=1):
+        extra = f" selection_policy={hop.selection_policy}" if hop.selection_policy else ""
+        print(f"  {index}. {hop.type.value}:{hop.target}{extra}")
+    return 0
+
+
+def _chain_create(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    if store.get(args.id) is not None:
+        raise ParseError(
+            f"route chain already exists: {args.id}; run `watchdog chain show {args.id}` to inspect it"
+        )
+    hops = [_parse_chain_hop_spec(spec) for spec in args.hop]
+    created_at = datetime.now(timezone.utc).isoformat()
+    chain = RouteChain(
+        id=args.id,
+        hops=hops,
+        description=args.description,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    backup_path = _create_section_backup("route-chains")
+    store.add(chain)
+    data = {
+        "chain": _chain_summary(chain),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Created route chain: {chain.id} (disabled; run `watchdog chain enable {chain.id}` when ready)")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _chain_add_hop(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    chain = _require_chain(store, args.id)
+    new_hop = ChainHop(type=args.type, target=args.target, selection_policy=args.selection_policy)
+    updated = _updated_chain(chain, hops=[*chain.hops, new_hop])
+    backup_path = _create_section_backup("route-chains")
+    store.add(updated)
+    data = {
+        "chain": _chain_summary(updated),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added hop to route chain: {chain.id} {args.type}:{args.target}")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _chain_remove_hop(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    chain = _require_chain(store, args.id)
+    if args.index < 1 or args.index > len(chain.hops):
+        raise ParseError(
+            f"chain hop index out of range: {args.index}; run `watchdog chain show {chain.id}` to inspect hops"
+        )
+    if len(chain.hops) == 1:
+        raise ParseError(
+            f"cannot remove the last hop from route chain: {chain.id}; "
+            f"run `watchdog chain remove {chain.id}` to remove the whole chain instead"
+        )
+    remaining = [hop for position, hop in enumerate(chain.hops, start=1) if position != args.index]
+    updated = _updated_chain(chain, hops=remaining)
+    backup_path = _create_section_backup("route-chains")
+    store.add(updated)
+    data = {
+        "chain": _chain_summary(updated),
+        "removed_index": args.index,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed hop {args.index} from route chain: {chain.id}")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _chain_set_enabled(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    chain = _require_chain(store, args.id)
+    updated = _updated_chain(chain, enabled=bool(args.enabled))
+    backup_path = _create_section_backup("route-chains")
+    store.add(updated)
+    data = {
+        "chain": _chain_summary(updated),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if updated.enabled else "disabled"
+        print(f"Route chain {state}: {chain.id}")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _chain_remove(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    _require_chain(store, args.id)
+    backup_path = _create_section_backup("route-chains")
+    store.remove(args.id)
+    data = {
+        "removed": args.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed route chain: {args.id}")
+        print(f"Backup: {backup_path}")
     return 0
 
 

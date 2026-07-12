@@ -271,6 +271,64 @@ class RouteChainStoreTests(unittest.TestCase):
             with self.assertRaises(PersistentValidationError):
                 RouteChainStore(path).load()
 
+    def test_add_then_get(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RouteChainStore(Path(tmp) / "chains.json")
+            chain = RouteChain(id="work-safe", hops=[ChainHop(type="profile", target="p1")])
+
+            store.add(chain)
+
+            self.assertEqual(store.get("work-safe").to_dict(), chain.to_dict())
+
+    def test_add_is_upsert_by_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RouteChainStore(Path(tmp) / "chains.json")
+            store.add(RouteChain(id="work-safe", hops=[ChainHop(type="profile", target="p1")]))
+            store.add(
+                RouteChain(
+                    id="work-safe",
+                    enabled=True,
+                    hops=[ChainHop(type="profile", target="p2")],
+                )
+            )
+
+            chains = store.list()
+            self.assertEqual(len(chains), 1)
+            self.assertTrue(chains[0].enabled)
+            self.assertEqual(chains[0].hops[0].target, "p2")
+
+    def test_get_missing_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RouteChainStore(Path(tmp) / "chains.json")
+
+            self.assertIsNone(store.get("missing"))
+
+    def test_remove_deletes_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RouteChainStore(Path(tmp) / "chains.json")
+            store.add(RouteChain(id="work-safe", hops=[ChainHop(type="profile", target="p1")]))
+
+            store.remove("work-safe")
+
+            self.assertIsNone(store.get("work-safe"))
+
+    def test_remove_missing_is_a_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RouteChainStore(Path(tmp) / "chains.json")
+
+            store.remove("missing")  # must not raise
+
+    def test_mutation_does_not_disturb_other_chains(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RouteChainStore(Path(tmp) / "chains.json")
+            store.add(RouteChain(id="a", hops=[ChainHop(type="profile", target="p1")]))
+            store.add(RouteChain(id="b", hops=[ChainHop(type="profile", target="p2")]))
+
+            store.remove("a")
+
+            self.assertIsNone(store.get("a"))
+            self.assertIsNotNone(store.get("b"))
+
 
 class ChainRuntimeResolverTests(unittest.TestCase):
     def test_resolves_valid_profile_hop_chain(self) -> None:
