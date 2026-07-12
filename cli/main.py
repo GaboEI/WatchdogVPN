@@ -97,6 +97,10 @@ CONFIG_SET_KEYS = frozenset(
         "rotation.test_url",
         "rotation.test_timeout_seconds",
         "rotation.latency_max_stale_seconds",
+        "kill_switch.block_ipv6",
+        "kill_switch.allow_lan",
+        "kill_switch.tunnel_interface",
+        "kill_switch.on_manual_disconnect",
         "lan_sharing.enabled",
         "lan_sharing.mode",
         "lan_sharing.bind_address",
@@ -121,6 +125,8 @@ CONFIG_INT_SET_KEYS = frozenset(
 )
 CONFIG_BOOL_SET_KEYS = frozenset(
     {
+        "kill_switch.block_ipv6",
+        "kill_switch.allow_lan",
         "lan_sharing.enabled",
         "lan_sharing.authentication_required",
         "lan_sharing.firewall_managed",
