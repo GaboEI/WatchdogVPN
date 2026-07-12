@@ -1028,6 +1028,30 @@ class CliRulesCommandTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("expected_sha256", result.stderr)
 
+    def test_ruleset_add_remote_rejects_non_https_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "ruleset",
+                    "add",
+                    "ads",
+                    "--kind",
+                    "remote",
+                    "--source",
+                    "http://rules.example/ads.srs",
+                    "--sha256",
+                    "a" * 64,
+                ],
+                tmp,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("must use https", result.stderr)
+
+            status = self.run_watchdog(["ruleset", "status", "--json"], tmp)
+            self.assertNotIn("ads", json.loads(status.stdout)["policies"])
+
     def test_ruleset_remove_missing_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["ruleset", "remove", "missing"], tmp, check=False)

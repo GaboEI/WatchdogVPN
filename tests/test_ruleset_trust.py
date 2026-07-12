@@ -29,6 +29,21 @@ class RuleSetTrustPolicyTests(unittest.TestCase):
                 source="https://rules.example/ads.srs",
             )
 
+    def test_remote_policy_rejects_non_https_source(self) -> None:
+        for source in ("http://rules.example/ads.srs", "file:///etc/passwd", "ftp://rules.example/ads.srs"):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                RuleSetTrustPolicy(
+                    id="ads",
+                    kind="remote",
+                    source=source,
+                    expected_sha256=SHA256_A,
+                )
+
+    def test_built_in_policy_does_not_require_https_source(self) -> None:
+        policy = RuleSetTrustPolicy(id="ads", kind="built-in", source="/opt/watchdogvpn/rulesets/ads.srs")
+
+        self.assertEqual(policy.source, "/opt/watchdogvpn/rulesets/ads.srs")
+
     def test_critical_remote_defaults_to_fail_closed(self) -> None:
         policy = RuleSetTrustPolicy(
             id="sensitive",

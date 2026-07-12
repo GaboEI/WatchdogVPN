@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 from config.persistence import reject_unknown_keys, strict_bool, strict_int
 
@@ -108,6 +109,12 @@ class RuleSetTrustPolicy:
             self.failure_behavior = RuleSetFailureBehavior(self.failure_behavior)
         if self.kind == RuleSetKind.REMOTE and self.expected_sha256 is None:
             raise ValueError("remote rule-set trust policy requires expected_sha256")
+        # rules/ruleset_lifecycle.py's default_fetch_rule_set() already
+        # refuses non-https sources at refresh time - reject it here too so a
+        # remote policy can never be persisted in a state that is guaranteed
+        # to fail every future refresh.
+        if self.kind == RuleSetKind.REMOTE and urlparse(self.source).scheme != "https":
+            raise ValueError("remote rule-set source must use https")
 
     def to_dict(self) -> dict[str, Any]:
         return {
