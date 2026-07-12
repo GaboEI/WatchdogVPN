@@ -22,7 +22,7 @@ from daemon.protocol import (
     UnknownCommandError,
 )
 from metrics.recorder import MetricsRecorder
-from models.connection_state import ConnectionState
+from models.connection_state import FAILURE_STATUSES, ConnectionState
 from models.profile import Profile
 
 
@@ -39,6 +39,9 @@ class RuntimeLike(Protocol):
         ...
 
     def status(self) -> ConnectionState:
+        ...
+
+    def automatic_actions_enabled(self) -> bool:
         ...
 
     def rotate_now(self, force: bool = False) -> ConnectionState:
@@ -210,10 +213,17 @@ class RuntimeWorker:
             return Response(ok=False, error=str(exc))
 
     def _handle_connect(self, payload: dict[str, Any]) -> Response:
-        profile_id = _require_string(payload.get("profile_id"), "profile_id")
+        try:
+            profile_id = _require_string(payload.get("profile_id"), "profile_id")
+        except ValueError as exc:
+            return Response(ok=False, payload={"error_kind": "invalid_input"}, error=str(exc))
         profile = self.runtime.profile_store.get(profile_id)
         if profile is None:
-            return Response(ok=False, error=f"profile not found: {profile_id}")
+            return Response(
+                ok=False,
+                payload={"error_kind": "profile_not_found"},
+                error=f"profile not found: {profile_id}",
+            )
         connected = self.runtime.connect(profile)
         state = self.runtime.status()
         state_payload = _state_payload(state)
@@ -228,6 +238,7 @@ class RuntimeWorker:
             "state": state_payload,
         }
         if not connected:
+            response_payload["error_kind"] = "connect_failed"
             error_detail = str(getattr(self.runtime, "last_error", "") or "").strip()
             if error_detail:
                 response_payload["error_detail"] = error_detail
@@ -259,12 +270,23 @@ class RuntimeWorker:
         force = payload.get("force", False)
         if not isinstance(force, bool):
             return Response(ok=False, error="force must be a boolean")
+        performed = self.runtime.automatic_actions_enabled()
         state = self.runtime.rotate_now(force=force)
         state_payload = _state_payload(state)
+        # A no-op because the VPN is intentionally off (performed=False) is
+        # not a failure - the command correctly determined there was
+        # nothing to rotate. ok only goes False when a rotation was
+        # actually attempted and did not land in a healthy status
+        # (WDCLI-002): that's the one case that must not look like success.
+        ok = (not performed) or state.status not in FAILURE_STATUSES
         self.metrics_recorder.record_manual_rotation(state)
         self.event_bus.broadcast(Event(EVENT_ROTATION, state_payload))
         self._broadcast_state(state_payload)
-        return Response(ok=True, payload={"state": state_payload})
+        return Response(
+            ok=ok,
+            payload={"state": state_payload, "performed": performed},
+            error=None if ok else _rotate_outcome_reason(state.status),
+        )
 
     def _handle_node_group_auto_test(self, payload: dict[str, Any]) -> Response:
         group_name = _require_string(payload.get("group_name"), "group_name")
@@ -281,6 +303,10 @@ class RuntimeWorker:
 
 def _state_payload(state: ConnectionState) -> dict[str, Any]:
     return state.to_dict()
+
+
+def _rotate_outcome_reason(status: str) -> str:
+    return f"rotation did not recover a healthy connection: status={status}"
 
 
 def _require_string(value: Any, field_name: str) -> str:

@@ -201,7 +201,11 @@ class CliConnectionCommandTests(unittest.TestCase):
         self.assertIn("hint: run: watchdog profile list", stderr.getvalue())
 
     def test_daemon_error_json_includes_recovery_hints(self) -> None:
-        response = Response(ok=False, error="profile not found: missing")
+        response = Response(
+            ok=False,
+            payload={"error_kind": "profile_not_found"},
+            error="profile not found: missing",
+        )
         with patch("cli.main.WatchdogIPCClient") as client_cls:
             client_cls.return_value.connect.return_value = response
             with redirect_stdout(StringIO()) as stdout:
@@ -209,8 +213,104 @@ class CliConnectionCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 70)
         data = json.loads(stdout.getvalue())
-        self.assertFalse(data["payload"]["lifecycle"]["profile_available"])
+        self.assertIs(data["payload"]["lifecycle"]["profile_available"], False)
         self.assertIn("watchdog profile list", data["payload"]["recovery_hints"][0])
+
+    def test_connect_invalid_input_reports_indeterminate_profile_availability(self) -> None:
+        # Regression guard for WDCLI-005: an empty/malformed profile_id has
+        # no profile identity to assess - must not default to True the way
+        # the old substring-matching heuristic silently did.
+        response = Response(
+            ok=False,
+            payload={"error_kind": "invalid_input"},
+            error="profile_id must be a non-empty string",
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.connect.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["connect", "", "--json"])
+
+        self.assertEqual(result, 70)
+        data = json.loads(stdout.getvalue())
+        self.assertIsNone(data["payload"]["lifecycle"]["profile_available"])
+
+    def test_connect_driver_failure_reports_profile_available_true(self) -> None:
+        response = Response(
+            ok=False,
+            payload={"error_kind": "connect_failed", "state": {"status": "standby"}},
+            error="connect failed",
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.connect.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["connect", "p1", "--json"])
+
+        self.assertEqual(result, 70)
+        data = json.loads(stdout.getvalue())
+        self.assertIs(data["payload"]["lifecycle"]["profile_available"], True)
+
+    def test_rotate_all_failed_reports_ok_false_and_exit_70(self) -> None:
+        # Regression guard for WDCLI-002: rotate must not report success
+        # when the resulting status is a terminal failure.
+        response = Response(
+            ok=False,
+            payload={
+                "state": {"status": "all_failed", "mode": "standby"},
+                "performed": True,
+            },
+            error="rotation did not recover a healthy connection: status=all_failed",
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.rotate.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["rotate", "--force", "--json"])
+
+        self.assertEqual(result, 70)
+        data = json.loads(stdout.getvalue())
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["payload"]["lifecycle"]["failure_or_degraded"])
+
+    def test_rotate_gate_off_reports_performed_false_with_exit_0(self) -> None:
+        # Regression guard for WDCLI-004: a no-op rotate (VPN intentionally
+        # off) must stay exit 0 / ok:true, distinguished via "performed".
+        response = Response(
+            ok=True,
+            payload={
+                "state": {"status": "standby", "mode": "standby"},
+                "performed": False,
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.rotate.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["rotate", "--force"])
+
+        self.assertEqual(result, 0)
+        self.assertIn("Rotation skipped", stdout.getvalue())
+
+    def test_status_json_surfaces_persisted_last_failure(self) -> None:
+        response = Response(
+            ok=True,
+            payload={
+                "state": {
+                    "status": "standby",
+                    "mode": "standby",
+                    "last_failure_reason": "all_failed",
+                    "last_failure_at": "2026-07-12T10:00:00+00:00",
+                }
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.status.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["status", "--json"])
+
+        self.assertEqual(result, 0)
+        data = json.loads(stdout.getvalue())
+        lifecycle = data["payload"]["lifecycle"]
+        self.assertTrue(lifecycle["failure_or_degraded"])
+        self.assertEqual(lifecycle["last_failure_reason"], "all_failed")
+        self.assertEqual(lifecycle["last_failure_at"], "2026-07-12T10:00:00+00:00")
 
     def test_ipc_error_uses_exception_exit_code(self) -> None:
         with patch("cli.main.WatchdogIPCClient") as client_cls:
@@ -234,6 +334,53 @@ class CliConnectionCommandTests(unittest.TestCase):
         self.assertFalse(data["payload"]["lifecycle"]["daemon_reachable"])
         self.assertEqual(data["payload"]["lifecycle"]["actual_runtime_state"], "unknown")
         self.assertIn("sudo systemctl start watchdogvpn", data["payload"]["recovery_hints"][0])
+
+    def test_status_human_shows_last_failure_line(self) -> None:
+        response = Response(
+            ok=True,
+            payload={
+                "state": {
+                    "status": "standby",
+                    "mode": "standby",
+                    "last_failure_reason": "all_failed",
+                    "last_failure_at": "2026-07-12T10:00:00+00:00",
+                }
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.status.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["status"])
+
+        self.assertEqual(result, 0)
+        self.assertIn("Last failure: all_failed at 2026-07-12T10:00:00+00:00", stdout.getvalue())
+
+    def test_argparse_error_with_json_flag_emits_json_envelope_on_stdout(self) -> None:
+        # Regression guard for WDCLI-009: argparse-level errors (missing
+        # required arg here) used to always print plain text to stderr and
+        # ignore --json entirely.
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as ctx:
+                cli.main.main(["connect", "--json"])
+
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(stderr.getvalue(), "")
+        data = json.loads(stdout.getvalue())
+        self.assertFalse(data["ok"])
+        self.assertIn("profile_id", data["error"])
+
+    def test_argparse_error_without_json_flag_stays_plain_text_on_stderr(self) -> None:
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as ctx:
+                cli.main.main(["connect"])
+
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("profile_id", stderr.getvalue())
 
     def test_status_human_marks_failure_or_degraded_state(self) -> None:
         response = Response(
@@ -271,6 +418,12 @@ class CliConnectionCommandEndToEndTests(unittest.TestCase):
             env["WATCHDOGVPN_CONFIG_DIR"] = str(config_dir)
             env["WATCHDOGVPN_SOCKET_PATH"] = str(request_socket)
             env["WATCHDOGVPN_EVENT_SOCKET_PATH"] = str(event_socket)
+            # Isolate driver runtime dirs from the real /run/user/<uid> -
+            # otherwise a stray directory left by an unrelated earlier
+            # process on the host can make this subprocess's
+            # SingBoxDriver.status() report runtime_mismatch instead of
+            # standby.
+            env["WATCHDOGVPN_RUNTIME_DIR"] = str(root / "runtime")
             env["PYTHONPATH"] = str(ROOT_DIR)
             daemon = subprocess.Popen(
                 [

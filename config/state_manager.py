@@ -43,6 +43,13 @@ DEFAULT_STATE = {
     "active_mode": "rules",
     "language_mode": "system",
     "selected_language": "en",
+    # Terminal-rotation failure memory (WDCLI-003): survives past the
+    # single RPC call that produced it, so `watchdog status` doesn't
+    # silently revert to a bare "standby" moments after an all_failed
+    # rotation. Empty string means "no failure recorded". Cleared on the
+    # next confirmed reconnect/rotation, not on any timer.
+    "last_failure_reason": "",
+    "last_failure_at": "",
 }
 
 ALLOWED_VPN_DESIRED_STATES = {"on", "off"}
@@ -73,6 +80,8 @@ STATE_STRING_FIELDS = {
     "active_mode",
     "language_mode",
     "selected_language",
+    "last_failure_reason",
+    "last_failure_at",
 }
 ROUTING_STATE_FIELDS = {
     "routing_state_version",

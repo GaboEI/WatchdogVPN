@@ -91,6 +91,8 @@ class FakeRuntime:
         self.run_iteration_queue: list[ConnectionState] = []
         self.scheduled_rotate_calls = 0
         self.scheduled_rotate_result: ConnectionState | None = None
+        self.automatic_actions_enabled_result = True
+        self.rotate_now_result: ConnectionState | None = None
 
     def connect(self, profile: Profile) -> bool:
         self.connected_profile_id = profile.id
@@ -108,8 +110,13 @@ class FakeRuntime:
             status="connected" if self.connected_profile_id else "standby",
         )
 
+    def automatic_actions_enabled(self) -> bool:
+        return self.automatic_actions_enabled_result
+
     def rotate_now(self, force: bool = False) -> ConnectionState:
         self.rotate_calls.append(force)
+        if self.rotate_now_result is not None:
+            return self.rotate_now_result
         self.connected_profile_id = "rotated"
         return ConnectionState(active_profile_id="rotated", mode="rules", status="recovered")
 
@@ -295,8 +302,86 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertEqual(runtime.rotate_calls, [True])
         self.assertEqual(response.payload["state"]["active_profile_id"], "rotated")
+        self.assertTrue(response.payload["performed"])
         self.assertEqual(rotation_event.event, EVENT_ROTATION)
         self.assertEqual(state_event.event, EVENT_STATE_CHANGED)
+
+    def test_worker_rotate_all_failed_reports_ok_false(self) -> None:
+        # Regression guard for WDCLI-002: rotate must not claim success
+        # (ok:true) when the resulting status is a terminal failure.
+        bus = EventBus()
+        runtime = FakeRuntime(self.profile_store)
+        runtime.rotate_now_result = ConnectionState(mode="standby", status="all_failed")
+        worker = RuntimeWorker(runtime, bus)
+        worker.start()
+        try:
+            response = worker.submit(COMMAND_ROTATE, {"force": True}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertTrue(response.payload["performed"])
+        self.assertEqual(response.payload["state"]["status"], "all_failed")
+        self.assertIsNotNone(response.error)
+
+    def test_worker_rotate_gate_off_is_a_successful_noop(self) -> None:
+        # Regression guard for WDCLI-004: a rotate that never attempted
+        # anything because the VPN is intentionally off is not a failure -
+        # it must stay ok:true, distinguished only via payload["performed"].
+        bus = EventBus()
+        runtime = FakeRuntime(self.profile_store)
+        runtime.automatic_actions_enabled_result = False
+        runtime.rotate_now_result = ConnectionState(mode="standby", status="standby")
+        worker = RuntimeWorker(runtime, bus)
+        worker.start()
+        try:
+            response = worker.submit(COMMAND_ROTATE, {"force": True}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertTrue(response.ok)
+        self.assertFalse(response.payload["performed"])
+        self.assertIsNone(response.error)
+
+    def test_worker_connect_empty_profile_id_reports_invalid_input_kind(self) -> None:
+        worker = RuntimeWorker(self.make_runtime())
+        worker.start()
+        try:
+            response = worker.submit(COMMAND_CONNECT, {"profile_id": ""}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.payload.get("error_kind"), "invalid_input")
+
+    def test_worker_connect_missing_profile_reports_profile_not_found_kind(self) -> None:
+        worker = RuntimeWorker(self.make_runtime())
+        worker.start()
+        try:
+            response = worker.submit(COMMAND_CONNECT, {"profile_id": "missing"}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.payload.get("error_kind"), "profile_not_found")
+
+    def test_worker_connect_driver_failure_reports_connect_failed_kind(self) -> None:
+        driver = FakeWorkerDriver()
+        driver.connect_result = False
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=StateManager(Path(self.tmpdir.name) / "state.toml"),
+            profile_store=self.profile_store,
+        )
+        worker = RuntimeWorker(runtime)
+        worker.start()
+        try:
+            response = worker.submit(COMMAND_CONNECT, {"profile_id": self.profile.id}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.payload.get("error_kind"), "connect_failed")
 
     def test_worker_node_group_auto_test_returns_payload_without_state_event(self) -> None:
         bus = EventBus()

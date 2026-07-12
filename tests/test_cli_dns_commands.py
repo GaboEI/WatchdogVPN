@@ -604,8 +604,10 @@ class CliDNSCommandTests(unittest.TestCase):
             snapshot_path = Path(tmp) / "dns-state.json"
             resolv_conf = Path(tmp) / "resolv.conf"
 
-            stderr = StringIO()
-            with redirect_stderr(stderr):
+            # WDCLI-009: --json errors are now a single envelope on stdout,
+            # not stderr - one channel regardless of which code path raised.
+            stdout = StringIO()
+            with redirect_stdout(stdout):
                 result = cli.main.main(
                     [
                         "dns",
@@ -619,7 +621,7 @@ class CliDNSCommandTests(unittest.TestCase):
                 )
 
             self.assertEqual(result, 65)
-            error_document = json.loads(stderr.getvalue())
+            error_document = json.loads(stdout.getvalue())
             self.assertEqual(error_document["ok"], False)
             self.assertIn("--yes", error_document["error"])
 
@@ -966,7 +968,7 @@ class CliDNSCommandTests(unittest.TestCase):
             )
 
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("dns ttl must be a positive duration", result.stderr)
+            self.assertIn("dns ttl must be a positive duration", result.stdout)
             self.assertEqual(DNSPolicyStore(Path(tmp) / "dns-policy.json").load().ttl, "12h")
 
     def test_dns_mutation_backs_up_explicit_custom_policy_file(self) -> None:

@@ -43,6 +43,19 @@ class ConfigStorageTests(unittest.TestCase):
             self.assertEqual(restored["selected_language"], "es")
             self.assertEqual(manager.get("vpn_desired_state"), "on")
 
+    def test_state_manager_last_failure_fields_default_empty_and_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            manager = StateManager(path)
+            self.assertEqual(manager.get("last_failure_reason"), "")
+            self.assertEqual(manager.get("last_failure_at"), "")
+
+            manager.set("last_failure_reason", "all_failed")
+            manager.set("last_failure_at", "2026-07-12T10:00:00+00:00")
+
+            self.assertEqual(manager.get("last_failure_reason"), "all_failed")
+            self.assertEqual(manager.get("last_failure_at"), "2026-07-12T10:00:00+00:00")
+
     def test_state_manager_migrates_legacy_active_modes(self) -> None:
         cases = {
             "rules": ("rule", "local_proxy,tun", "current"),

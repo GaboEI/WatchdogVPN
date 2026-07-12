@@ -109,6 +109,18 @@ case "$CMD" in
     echo "🌍 public ip: ${IP_ADDR}"
     echo
     custom_service_status "$(backend_service_name)"
+
+    # WDCLI-008: the printed status must agree with the real exit code, or
+    # a shell health-check trusting only "$?" sees a false UP. Mirrors
+    # vpn_truth_check's status_code() mapping; duplicated here (not
+    # sourced) since the two are separate executables and this is a small,
+    # stable 4-line mapping.
+    case "$STATUS" in
+      UP) exit 0 ;;
+      DEGRADED) exit 1 ;;
+      DOWN) exit 2 ;;
+      *) exit 3 ;;
+    esac
     ;;
 
   list)
@@ -125,7 +137,8 @@ case "$CMD" in
     sudo systemctl start "$service"
     echo "🔐 Custom VPS iniciado"
     echo
-    "$0" status
+    # Informational summary only, see the note on the disconnect branch.
+    "$0" status || true
     ;;
 
   disconnect)
@@ -135,7 +148,12 @@ case "$CMD" in
     "$NOTIFY_BIN" "VPN desconectada" "La conexion VPN fue detenida manualmente." normal >/dev/null 2>&1 || true
     echo "🔓 VPN desconectada"
     echo
-    "$0" status
+    # "$0" status is used here purely to print an informational summary,
+    # not as a success assertion - a DOWN status right after disconnecting
+    # is the expected, correct outcome. Its own exit code (WDCLI-008: now
+    # meaningful, matches the printed status) must not abort this command
+    # under set -e.
+    "$0" status || true
     echo
     network_after_disconnect_summary
     ;;
@@ -146,7 +164,7 @@ case "$CMD" in
     sudo systemctl restart "$(backend_service_name)"
     echo "🔄 VPN reiniciada"
     echo
-    "$0" status
+    "$0" status || true
     ;;
 
   *)

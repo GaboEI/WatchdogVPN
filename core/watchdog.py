@@ -391,11 +391,14 @@ class WatchdogRuntime:
     def connect(self, profile: Profile) -> bool:
         self.state_manager.set("vpn_desired_state", "on")
         self.state_manager.set("active_profile_id", profile.id)
-        return self._driver_for_profile(profile).connect(
+        connected = self._driver_for_profile(profile).connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
             **self._connect_options(),
         )
+        if connected:
+            self._clear_last_failure()
+        return connected
 
     @property
     def last_error(self) -> str:
@@ -415,7 +418,32 @@ class WatchdogRuntime:
         return self.driver.health_check()
 
     def status(self) -> ConnectionState:
-        return self._with_lan_gateway_status(self._with_kill_switch_status(self.driver.status()))
+        return self._with_last_failure(
+            self._with_lan_gateway_status(self._with_kill_switch_status(self.driver.status()))
+        )
+
+    def _with_last_failure(self, state: ConnectionState) -> ConnectionState:
+        # Explicitly owns both fields - always sets them from the persisted
+        # record (clearing to the dataclass defaults when there is none),
+        # rather than trusting the passed-in state to already be clean.
+        reason = str(self.state_manager.get("last_failure_reason", "") or "")
+        state.last_failure_reason = reason
+        at_raw = str(self.state_manager.get("last_failure_at", "") or "") if reason else ""
+        state.last_failure_at = None
+        if at_raw:
+            try:
+                state.last_failure_at = datetime.fromisoformat(at_raw)
+            except ValueError:
+                pass
+        return state
+
+    def _record_last_failure(self, reason: str) -> None:
+        self.state_manager.set("last_failure_reason", reason)
+        self.state_manager.set("last_failure_at", datetime.now(timezone.utc).isoformat())
+
+    def _clear_last_failure(self) -> None:
+        self.state_manager.set("last_failure_reason", "")
+        self.state_manager.set("last_failure_at", "")
 
     def _with_kill_switch_status(self, state: ConnectionState) -> ConnectionState:
         state.kill_switch_active = state.kill_switch_active or self.kill_switch.is_active()
@@ -753,6 +781,7 @@ class WatchdogRuntime:
             self._reconnect_failures = 0
             self.recovery.record_success()
             self.state_manager.set("active_profile_id", result.profile.id)
+            self._clear_last_failure()
             LOGGER.info(
                 "watchdog_rotation_recovered profile_id=%s rolled_back=%s",
                 result.profile.id,
@@ -771,6 +800,7 @@ class WatchdogRuntime:
             "on" if action.kill_switch_active else "off",
             self.recovery.consecutive_failures,
         )
+        self._record_last_failure(status)
         return ConnectionState(status=status, mode=self.driver.status().mode)
 
     def _rotation_enabled(self, config: dict) -> bool:
@@ -789,6 +819,7 @@ class WatchdogRuntime:
             "on" if action.kill_switch_active else "off",
             self.recovery.consecutive_failures,
         )
+        self._record_last_failure(status)
         return ConnectionState(status=status, mode=self.driver.status().mode)
 
     def _compatible_pool(self, config: dict) -> list[Profile]:

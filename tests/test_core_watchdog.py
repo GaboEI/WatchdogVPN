@@ -1955,6 +1955,65 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "all_failed")
 
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
+    def test_status_surfaces_last_failure_after_all_failed_until_reconnect(
+        self, _hc, mock_pool, mock_sel_driver
+    ) -> None:
+        # Regression guard for WDCLI-003: an all_failed rotation must not
+        # vanish from watchdog status() a moment later - it has to persist
+        # until a confirmed reconnect, not just live in a log line.
+        alt_profile = Profile(
+            id="alt-down", name="Alt down", protocol=ProtocolType.VLESS,
+            config={}, source=ProfileSource.MANUAL, in_rotation_pool=True, enabled=True,
+        )
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": True},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+        )
+
+        result = runtime.run_iteration()
+        self.assertEqual(result.status, "all_failed")
+
+        # driver.status() itself would say "standby" - status() must still
+        # surface the persisted failure on top of that. A fresh
+        # ConnectionState per call (not a shared return_value) - status()
+        # mutates the instance it's given, so reusing one across calls
+        # would leak the first call's mutation into the second.
+        driver.status_mock.side_effect = lambda: ConnectionState(status="standby", mode="standby")
+        status_after = runtime.status()
+        self.assertEqual(status_after.last_failure_reason, "all_failed")
+        self.assertIsNotNone(status_after.last_failure_at)
+
+        self.assertTrue(runtime.connect(self.profile))
+        status_after_reconnect = runtime.status()
+        self.assertEqual(status_after_reconnect.last_failure_reason, "")
+        self.assertIsNone(status_after_reconnect.last_failure_at)
+
     def test_run_iteration_applies_recovery_backoff_config(self) -> None:
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"

@@ -59,6 +59,9 @@ class FakeRuntime:
             status="connected" if self.connected_profile_id else "standby",
         )
 
+    def automatic_actions_enabled(self) -> bool:
+        return True
+
     def rotate_now(self, force: bool = False) -> ConnectionState:
         self.rotate_calls.append(force)
         self.connected_profile_id = "rotated"

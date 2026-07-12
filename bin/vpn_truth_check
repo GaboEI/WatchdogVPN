@@ -163,12 +163,18 @@ main() {
       emit_shell
       ;;
     quiet)
-      exit "$(status_code "$STATUS")"
+      : # no output, exit code below is the whole point
       ;;
     json)
       emit_json
       ;;
   esac
+
+  # WDCLI-008: every mode's real process exit code must agree with the
+  # STATUS it just printed/embedded (previously only --quiet did this;
+  # --shell/--json fell through to whatever the last print command
+  # returned, always 0, even when STATUS=DOWN).
+  exit "$(status_code "$STATUS")"
 }
 
 STATUS="DOWN"

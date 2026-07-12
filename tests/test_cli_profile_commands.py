@@ -279,9 +279,9 @@ class CliProfileCommandTests(unittest.TestCase):
 
             result = self.run_watchdog(["profile", "list", "--json"], tmp, check=False)
 
-            self.assertEqual(result.stdout, "")
             self.assertEqual(result.returncode, 70)
-            self.assertIn("profile contains unsupported fields: failure_count", result.stderr)
+            self.assertIn("profile contains unsupported fields: failure_count", result.stdout)
+            self.assertNotIn("Traceback", result.stdout)
             self.assertNotIn("Traceback", result.stderr)
 
     def test_profile_add_clipboard_uses_manual_provider(self) -> None:

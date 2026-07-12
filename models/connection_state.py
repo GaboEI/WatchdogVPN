@@ -24,6 +24,21 @@ ALLOWED_STATUSES = {
     "runtime_mismatch",
 }
 
+# Terminal/exhausted outcomes - a caller (CLI exit code, status surfacing)
+# should treat these as "not a healthy result", distinct from in-progress
+# states like "reconnecting" that represent recovery still actively
+# happening. Single source of truth shared by cli/main.py and
+# daemon/runtime_worker.py so the two layers can't silently drift apart.
+FAILURE_STATUSES = frozenset(
+    {
+        "all_failed",
+        "kill_switch_active",
+        "normal_network_temp",
+        "rotation_unavailable",
+        "waiting_retry",
+    }
+)
+
 
 def _dt_to_iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
@@ -49,6 +64,8 @@ class ConnectionState:
     lan_gateway_dns_mode: str = ""
     lan_gateway_status: str = "disabled"
     status: str = "standby"
+    last_failure_reason: str = ""
+    last_failure_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.status not in ALLOWED_STATUSES:
@@ -57,6 +74,7 @@ class ConnectionState:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["connected_at"] = _dt_to_iso(self.connected_at)
+        data["last_failure_at"] = _dt_to_iso(self.last_failure_at)
         return data
 
     @classmethod
@@ -74,4 +92,6 @@ class ConnectionState:
             lan_gateway_dns_mode=str(data.get("lan_gateway_dns_mode", "")),
             lan_gateway_status=str(data.get("lan_gateway_status", "disabled")),
             status=str(data.get("status", "standby")),
+            last_failure_reason=str(data.get("last_failure_reason", "")),
+            last_failure_at=_dt_from_iso(data.get("last_failure_at")),
         )

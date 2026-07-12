@@ -42,6 +42,12 @@ class DaemonMainSubprocessTests(unittest.TestCase):
             env.pop("NOTIFY_SOCKET", None)
             env["WATCHDOGVPN_CONFIG_DIR"] = str(config_dir)
             env["WATCHDOGVPN_EVENT_SOCKET_PATH"] = str(event_socket)
+            # Isolate driver runtime dirs (children.json, owner.pid) from
+            # the real /run/user/<uid> - otherwise a stray directory left
+            # by an unrelated earlier process on the host can make this
+            # subprocess's SingBoxDriver.status() report runtime_mismatch
+            # instead of standby.
+            env["WATCHDOGVPN_RUNTIME_DIR"] = str(root / "runtime")
             process = subprocess.Popen(
                 [
                     sys.executable,

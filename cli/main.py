@@ -72,6 +72,7 @@ from diagnostics.chain_routes import ChainRouteDiagnostic, diagnose_chain_route_
 from diagnostics.routing import RouteDiagnostic, diagnose_route
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
+from models.connection_state import FAILURE_STATUSES
 from models.profile import Profile, ProfileSource, profile_fingerprint, profile_resilience_category
 from models.provider import Provider
 from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
@@ -249,7 +250,26 @@ def _root_help(*, no_color: bool = False) -> str:
     return "\n".join(lines) + "\n"
 
 
-class RootHelpArgumentParser(argparse.ArgumentParser):
+class _JSONAwareArgumentParser(argparse.ArgumentParser):
+    """Emits a JSON error envelope on parse failure when --json was requested.
+
+    argparse's own .error() runs before parsing finishes, so args.json
+    isn't available yet - main() sets this class attribute from the raw
+    argv right before parse_args() (WDCLI-009: previously argparse-level
+    errors - missing args, bad choices - always printed plain text to
+    stderr, ignoring --json entirely).
+    """
+
+    _json_requested = False
+
+    def error(self, message: str) -> None:
+        if _JSONAwareArgumentParser._json_requested:
+            _print_json({"version": 1, "type": "response", "ok": False, "payload": {}, "error": message})
+            self.exit(2)
+        super().error(message)
+
+
+class RootHelpArgumentParser(_JSONAwareArgumentParser):
     def format_help(self) -> str:
         return _root_help()
 
@@ -261,9 +281,11 @@ def main(argv: list[str] | None = None) -> int:
     if "--no-color" in parsed_argv:
         restore_no_color = os.environ.get("NO_COLOR")
         os.environ["NO_COLOR"] = "1"
+    _JSONAwareArgumentParser._json_requested = "--json" in parsed_argv
     try:
         args = parser.parse_args(parsed_argv)
     finally:
+        _JSONAwareArgumentParser._json_requested = False
         if restore_no_color is None and "--no-color" in parsed_argv:
             os.environ.pop("NO_COLOR", None)
         elif restore_no_color is not None:
@@ -311,7 +333,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-color", action="store_true", help=argparse.SUPPRESS)
     subparsers = parser.add_subparsers(
         dest="command",
-        parser_class=argparse.ArgumentParser,
+        # Deliberately _JSONAwareArgumentParser, not RootHelpArgumentParser:
+        # the latter's format_help() override is root-only and would break
+        # every subcommand's own --help text if it propagated down here.
+        parser_class=_JSONAwareArgumentParser,
     )
 
     connect_parser = subparsers.add_parser("connect", help="Connect through the WatchdogVPN daemon")
@@ -1943,7 +1968,10 @@ def _connection_response_output(
         for hint in _connection_recovery_hints(response.error or "daemon command failed"):
             print(f"hint: {hint}", file=sys.stderr)
         return 70
-    print(success_label)
+    if "performed" in response.payload and not response.payload["performed"]:
+        print("Rotation skipped: automatic actions are disabled (VPN is off).")
+    else:
+        print(success_label)
     if "profile_id" in response.payload:
         print(f"Profile: {response.payload['profile_id']}")
     if "state" in response.payload:
@@ -1965,11 +1993,13 @@ def _connection_response_document(response: Response, *, command: str) -> dict[s
     data = response.to_dict()
     payload = dict(data.get("payload") or {})
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+    error_kind = payload.get("error_kind")
     payload["lifecycle"] = _connection_lifecycle_summary(
         command=command,
         daemon_reachable=True,
         state=state if isinstance(state, dict) else {},
         error=response.error,
+        error_kind=error_kind if isinstance(error_kind, str) else None,
     )
     if response.error:
         payload["recovery_hints"] = _connection_recovery_hints(response.error)
@@ -1988,6 +2018,7 @@ def _connection_error_document(command: str, error: str, *, exit_code: int) -> d
                 daemon_reachable=False,
                 state={},
                 error=error,
+                error_kind=None,
             ),
             "recovery_hints": _connection_recovery_hints(error),
             "exit_code": exit_code,
@@ -2002,6 +2033,7 @@ def _connection_lifecycle_summary(
     daemon_reachable: bool,
     state: dict[str, object],
     error: str | None,
+    error_kind: str | None = None,
 ) -> dict[str, object]:
     desired_state = _connection_desired_state()
     runtime_status = str(state.get("status") or "unknown")
@@ -2016,18 +2048,30 @@ def _connection_lifecycle_summary(
         and not runtime_active
         and lan_gateway_status in {"disabled", "configured", ""}
     )
-    failure_statuses = {
-        "all_failed",
-        "kill_switch_active",
-        "normal_network_temp",
-        "rotation_unavailable",
-        "waiting_retry",
-    }
+    last_failure_reason = str(state.get("last_failure_reason") or "")
     failure_or_degraded = (
         bool(error)
-        or runtime_status in failure_statuses
+        or runtime_status in FAILURE_STATUSES
         or lan_gateway_status == "degraded"
+        or bool(last_failure_reason)
     )
+    # profile_available is derived from a structured error_kind (set by
+    # daemon/runtime_worker.py::_handle_connect), not by guessing at the
+    # free-text error message (WDCLI-005: that used to substring-match
+    # "profile not found", which silently defaulted to True for any other
+    # failure wording, including "profile_id must be a non-empty string").
+    # None means genuinely indeterminate: "invalid_input" has no profile
+    # identity to assess at all, and an unstructured/transport-level error
+    # (e.g. WatchdogIPCError, daemon never reached) carries no error_kind -
+    # neither case should guess True or False.
+    if error is None:
+        profile_available: bool | None = True
+    elif error_kind == "profile_not_found":
+        profile_available = False
+    elif error_kind == "connect_failed":
+        profile_available = True
+    else:
+        profile_available = None
     profile_id = state.get("active_profile_id") or ""
     return {
         "command": command,
@@ -2040,10 +2084,16 @@ def _connection_lifecycle_summary(
         "tun_active": tun_active,
         "kill_switch_active": bool(state.get("kill_switch_active", False)),
         "lan_gateway_status": lan_gateway_status,
-        "profile_available": not (error and "profile not found" in error),
-        "runtime_available": daemon_reachable and not (error and "unavailable" in error.lower()),
+        "profile_available": profile_available,
+        # Nothing in the codebase currently distinguishes "daemon reachable
+        # but runtime subsystem down" from "daemon reachable" - the old
+        # substring match on "unavailable" was guessing at a distinction
+        # that doesn't exist anywhere else.
+        "runtime_available": daemon_reachable,
         "disconnected_cleanly": disconnected_cleanly,
         "failure_or_degraded": failure_or_degraded,
+        "last_failure_reason": last_failure_reason,
+        "last_failure_at": str(state.get("last_failure_at") or ""),
         "cleanup_expectations": _connection_cleanup_expectations(command, state),
     }
 
@@ -2130,6 +2180,10 @@ def _print_connection_state(state: dict, *, command: str, no_color: bool = False
     print(f"Kill switch: {_danger_on_off(bool(state.get('kill_switch_active', False)), no_color=no_color)}")
     print(f"Disconnected cleanly: {_on_off(bool(lifecycle['disconnected_cleanly']), no_color=no_color)}")
     print(f"Failure/degraded: {_danger_on_off(bool(lifecycle['failure_or_degraded']), no_color=no_color)}")
+    last_failure_reason = str(lifecycle.get("last_failure_reason") or "")
+    if last_failure_reason:
+        last_failure_at = str(lifecycle.get("last_failure_at") or "-")
+        print(f"Last failure: {_semantic(last_failure_reason, no_color=no_color)} at {last_failure_at}")
     if command == "disconnect":
         print("Cleanup expectations:")
         cleanup = lifecycle["cleanup_expectations"]
@@ -5092,7 +5146,12 @@ def _redact_url(url: str) -> str:
 
 def _error(message: str, *, as_json: bool = False) -> None:
     if as_json:
-        print(json.dumps({"ok": False, "error": message}, indent=2, sort_keys=True), file=sys.stderr)
+        # One JSON envelope, one channel, whether the command succeeds or
+        # fails (WDCLI-009): stdout, matching the shape connection commands
+        # already use (daemon/protocol.py::Response.to_dict()), so a
+        # consumer never has to guess which stream or schema an error will
+        # arrive on. Human-readable diagnostics stay on stderr, unchanged.
+        _print_json({"version": 1, "type": "response", "ok": False, "payload": {}, "error": message})
     else:
         print(f"error: {message}", file=sys.stderr)
 
