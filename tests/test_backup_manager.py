@@ -82,6 +82,42 @@ class BackupManagerTests(unittest.TestCase):
                     "work-safe",
                 )
 
+    def test_create_backup_is_private_regardless_of_umask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            backup_path = root / "backup.zip"
+            old_umask = os.umask(0o022)
+            try:
+                BackupManager(config_dir=root, backup_dir=root / "backups").create_backup(
+                    backup_path,
+                    reason="test",
+                )
+            finally:
+                os.umask(old_umask)
+
+            mode = stat.S_IMODE(backup_path.stat().st_mode)
+            self.assertEqual(mode, 0o600)
+
+    def test_create_backup_does_not_follow_symlinked_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            sentinel = root / "sentinel"
+            sentinel.write_bytes(b"do not overwrite")
+            output_path = root / "output.zip"
+            output_path.symlink_to(sentinel)
+
+            BackupManager(config_dir=root, backup_dir=root / "backups").create_backup(
+                output_path,
+                reason="test",
+            )
+
+            self.assertEqual(sentinel.read_bytes(), b"do not overwrite")
+            self.assertFalse(output_path.is_symlink())
+            with ZipFile(output_path) as archive:
+                self.assertIn("manifest.json", archive.namelist())
+
     def test_inspect_backup_rejects_path_traversal_duplicate_and_schema_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

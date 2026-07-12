@@ -165,6 +165,13 @@ class BackupManager:
         )
         manifest = self._manifest(created_at, reason, section_payloads)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Backups can contain private keys, passwords and subscription
+        # tokens (BACKUP_SENSITIVE_WARNING) - build the archive in memory
+        # and write it with atomic_write_bytes() (mkstemp + os.replace)
+        # instead of ZipFile(output_path, "w", ...) directly, which opens
+        # output_path with the plain `open()` builtin: mode 0644 under a
+        # typical umask, and it follows an existing symlink at that path,
+        # silently overwriting whatever the symlink points at.
         if encrypt:
             plaintext = _plaintext_archive_bytes(manifest, section_payloads, selected_sections)
             encrypted_payload, encryption_metadata = _encrypt_backup_payload(
@@ -172,17 +179,12 @@ class BackupManager:
                 password,
             )
             encrypted_manifest = self._encrypted_manifest(manifest, encryption_metadata)
-            with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as archive:
-                archive.writestr("manifest.json", _json_text(encrypted_manifest))
-                archive.writestr(ENCRYPTED_PAYLOAD_ENTRY, encrypted_payload)
+            atomic_write_bytes(output_path, _encrypted_archive_bytes(encrypted_manifest, encrypted_payload))
             return BackupResult(path=output_path, manifest=encrypted_manifest)
-        with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as archive:
-            _write_plaintext_archive(
-                archive,
-                manifest,
-                section_payloads,
-                selected_sections,
-            )
+        atomic_write_bytes(
+            output_path,
+            _plaintext_archive_bytes(manifest, section_payloads, selected_sections),
+        )
         return BackupResult(path=output_path, manifest=manifest)
 
     def create_auto_backup(
@@ -934,6 +936,14 @@ def _plaintext_archive_bytes(
     buffer = io.BytesIO()
     with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
         _write_plaintext_archive(archive, manifest, section_payloads, selected_sections)
+    return buffer.getvalue()
+
+
+def _encrypted_archive_bytes(encrypted_manifest: dict[str, Any], encrypted_payload: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", _json_text(encrypted_manifest))
+        archive.writestr(ENCRYPTED_PAYLOAD_ENTRY, encrypted_payload)
     return buffer.getvalue()
 
 
