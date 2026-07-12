@@ -13,7 +13,7 @@ from rules.ruleset_trust import (
     RuleSetTrustPolicy,
     RuleSetTrustRegistry,
 )
-from rules.ruleset_trust_store import RuleSetTrustStore
+from rules.ruleset_trust_store import RuleSetTrustStore, RuleSetTrustStoreError
 
 
 SHA256_A = "a" * 64
@@ -141,6 +141,65 @@ class RuleSetStatusTests(unittest.TestCase):
 
         self.assertEqual(loaded.policy_for("ads").failure_behavior.value, "fail-closed")
         self.assertEqual(loaded.status_for("ads").state, RuleSetLoadState.FAILED)
+
+
+class RuleSetTrustStoreMutationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.store = RuleSetTrustStore(Path(self.tmpdir.name) / "ruleset-trust.json")
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_add_persists_policy(self) -> None:
+        policy = RuleSetTrustPolicy(
+            id="ads", kind="remote", source="https://rules.example/ads.srs", expected_sha256=SHA256_A
+        )
+
+        self.store.add(policy)
+
+        loaded = self.store.load()
+        self.assertEqual(loaded.policy_for("ads").source, "https://rules.example/ads.srs")
+
+    def test_add_first_write_has_no_backup(self) -> None:
+        policy = RuleSetTrustPolicy(id="ads", kind="built-in", source="ads")
+
+        backup_path = self.store.add(policy)
+
+        self.assertIsNone(backup_path)
+
+    def test_add_overwrite_creates_backup(self) -> None:
+        self.store.add(RuleSetTrustPolicy(id="ads", kind="built-in", source="ads"))
+
+        backup_path = self.store.add(
+            RuleSetTrustPolicy(id="ads", kind="built-in", source="ads", critical=False)
+        )
+
+        self.assertIsNotNone(backup_path)
+        assert backup_path is not None
+        self.assertTrue(backup_path.exists())
+
+    def test_remove_deletes_policy_and_creates_backup(self) -> None:
+        self.store.add(RuleSetTrustPolicy(id="ads", kind="built-in", source="ads"))
+
+        backup_path = self.store.remove("ads")
+
+        self.assertIsNone(self.store.load().policy_for("ads"))
+        self.assertIsNotNone(backup_path)
+        assert backup_path is not None
+        self.assertTrue(backup_path.exists())
+
+    def test_remove_missing_raises(self) -> None:
+        with self.assertRaises(RuleSetTrustStoreError):
+            self.store.remove("missing")
+
+    def test_add_does_not_disturb_other_policies(self) -> None:
+        self.store.add(RuleSetTrustPolicy(id="ads", kind="built-in", source="ads"))
+        self.store.add(RuleSetTrustPolicy(id="malware", kind="built-in", source="malware"))
+
+        loaded = self.store.load()
+        self.assertIsNotNone(loaded.policy_for("ads"))
+        self.assertIsNotNone(loaded.policy_for("malware"))
 
 
 if __name__ == "__main__":

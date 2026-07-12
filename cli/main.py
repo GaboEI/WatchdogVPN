@@ -83,7 +83,8 @@ from rules.ruleset_lifecycle import (
     RuleSetLifecycleManager,
     referenced_rule_set_ids,
 )
-from rules.ruleset_trust_store import RuleSetTrustStore
+from rules.ruleset_trust import RuleSetFailureBehavior, RuleSetKind, RuleSetTrustPolicy
+from rules.ruleset_trust_store import RuleSetTrustStore, RuleSetTrustStoreError
 from route_chains.models import chain_target
 from route_chains.runtime import ChainRuntimeResolver
 from route_chains.store import RouteChainStore
@@ -246,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
         _error(str(exc), as_json=as_json)
         return 65
     except RuleSetLifecycleError as exc:
+        _error(str(exc), as_json=as_json)
+        return 65
+    except RuleSetTrustStoreError as exc:
         _error(str(exc), as_json=as_json)
         return 65
     except NodeGroupStoreError as exc:
@@ -855,6 +859,46 @@ def _build_parser() -> argparse.ArgumentParser:
     ruleset_refresh_parser.add_argument("--no-evict", action="store_true", help="Do not remove unowned cache files")
     ruleset_refresh_parser.add_argument("--json", action="store_true", help="Print JSON")
     ruleset_refresh_parser.set_defaults(handler=_ruleset_refresh)
+
+    ruleset_add_parser = ruleset_subparsers.add_parser(
+        "add", help="Define a rule-set trust policy"
+    )
+    ruleset_add_parser.add_argument("id")
+    ruleset_add_parser.add_argument(
+        "--kind", required=True, choices=[item.value for item in RuleSetKind]
+    )
+    ruleset_add_parser.add_argument("--source", required=True, help="Rule-set URL or built-in identifier")
+    ruleset_add_parser.add_argument(
+        "--sha256", help="Expected SHA-256 hex digest; required for --kind remote"
+    )
+    ruleset_add_parser.add_argument(
+        "--critical", dest="critical", action="store_true", default=None,
+        help="Treat load failure as fail-closed (default)",
+    )
+    ruleset_add_parser.add_argument(
+        "--no-critical", dest="critical", action="store_false",
+        help="Treat load failure as warn-and-skip",
+    )
+    ruleset_add_parser.add_argument(
+        "--update-interval-seconds", type=int, help="Refresh interval; default 86400"
+    )
+    ruleset_add_parser.add_argument(
+        "--max-stale-seconds", type=int, help="Maximum cache staleness; default 604800"
+    )
+    ruleset_add_parser.add_argument(
+        "--failure-behavior",
+        choices=[item.value for item in RuleSetFailureBehavior],
+        help="Override the failure-behavior derived from --critical",
+    )
+    ruleset_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    ruleset_add_parser.set_defaults(handler=_ruleset_add)
+
+    ruleset_remove_parser = ruleset_subparsers.add_parser(
+        "remove", help="Remove a rule-set trust policy"
+    )
+    ruleset_remove_parser.add_argument("id")
+    ruleset_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    ruleset_remove_parser.set_defaults(handler=_ruleset_remove)
 
     app_policy_parser = subparsers.add_parser(
         "app-policy",
@@ -3113,6 +3157,59 @@ def _ruleset_refresh(args: argparse.Namespace) -> int:
                 ]
             )
         )
+    return 0
+
+
+def _ruleset_add(args: argparse.Namespace) -> int:
+    store = RuleSetTrustStore()
+    kwargs: dict[str, object] = {
+        "id": args.id,
+        "kind": args.kind,
+        "source": args.source,
+    }
+    if args.sha256 is not None:
+        kwargs["expected_sha256"] = args.sha256
+    if args.critical is not None:
+        kwargs["critical"] = args.critical
+    if args.update_interval_seconds is not None:
+        kwargs["update_interval_seconds"] = args.update_interval_seconds
+    if args.max_stale_seconds is not None:
+        kwargs["max_stale_seconds"] = args.max_stale_seconds
+    if args.failure_behavior is not None:
+        kwargs["failure_behavior"] = args.failure_behavior
+    try:
+        policy = RuleSetTrustPolicy(**kwargs)
+    except ValueError as exc:
+        raise ParseError(str(exc)) from exc
+    backup_path = store.add(policy)
+    data = {
+        "policy": policy.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Rule-set trust policy added: {policy.id}")
+        print(f"Kind: {policy.kind.value}")
+        print(f"Failure behavior: {policy.failure_behavior.value}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _ruleset_remove(args: argparse.Namespace) -> int:
+    store = RuleSetTrustStore()
+    backup_path = store.remove(args.id)
+    data = {
+        "removed": args.id,
+        "backup_path": str(backup_path) if backup_path else None,
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Rule-set trust policy removed: {args.id}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
     return 0
 
 

@@ -975,6 +975,66 @@ class CliRulesCommandTests(unittest.TestCase):
             self.assertEqual(item["state"], "loaded")
             self.assertTrue(Path(item["cache_path"]).exists())
 
+    def test_ruleset_add_and_remove_persist_trust_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                [
+                    "ruleset",
+                    "add",
+                    "ads",
+                    "--kind",
+                    "remote",
+                    "--source",
+                    "https://rules.example/ads.srs",
+                    "--sha256",
+                    "a" * 64,
+                    "--json",
+                ],
+                tmp,
+            )
+            added_data = json.loads(added.stdout)
+
+            status = self.run_watchdog(["ruleset", "status", "--json"], tmp)
+            status_data = json.loads(status.stdout)
+
+            removed = self.run_watchdog(["ruleset", "remove", "ads", "--json"], tmp)
+            removed_data = json.loads(removed.stdout)
+
+            status_after = self.run_watchdog(["ruleset", "status", "--json"], tmp)
+            status_after_data = json.loads(status_after.stdout)
+
+        self.assertEqual(added_data["policy"]["kind"], "remote")
+        self.assertIsNone(added_data["backup_path"])
+        self.assertEqual(status_data["policies"]["ads"]["source"], "https://rules.example/ads.srs")
+        self.assertEqual(removed_data["removed"], "ads")
+        self.assertNotIn("ads", status_after_data["policies"])
+
+    def test_ruleset_add_remote_requires_sha256(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "ruleset",
+                    "add",
+                    "ads",
+                    "--kind",
+                    "remote",
+                    "--source",
+                    "https://rules.example/ads.srs",
+                ],
+                tmp,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("expected_sha256", result.stderr)
+
+    def test_ruleset_remove_missing_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["ruleset", "remove", "missing"], tmp, check=False)
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("rule-set trust policy not found: missing", result.stderr)
+
     def test_unknown_text_asks_for_input_without_overstating_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.add_group(
