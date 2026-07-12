@@ -306,6 +306,20 @@ class CliAppPolicyCommandTests(unittest.TestCase):
             self.assertEqual(added["match"], {"process_path_regex": [r"^/usr/bin/(curl|wget)$"]})
             self.assertEqual(data["policy"]["rules"][0]["match_confidence"], "medium")
 
+    def test_add_rejects_invalid_process_path_regex_without_mutating_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["app-policy", "add", "--process-path-regex", "[", "--action", "block"],
+                tmp,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 70)
+            self.assertIn("invalid regex", result.stderr)
+
+            status = self.run_watchdog(["app-policy", "status", "--json"], tmp)
+            self.assertEqual(json.loads(status.stdout)["rule_count"], 0)
+
     def test_add_user_rule(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(
