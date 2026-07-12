@@ -21,8 +21,15 @@ from dns.singbox import (
     build_singbox_dns_config,
 )
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
-from drivers.base import BaseDriver
-from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
+from drivers.base import BaseDriver, ReentrantConnectGuard
+from drivers.runtime_paths import (
+    any_recorded_child_alive,
+    cleanup_stale_runtime_dirs,
+    kill_all_recorded_children,
+    make_runtime_dir,
+    record_child_process,
+    write_private_file,
+)
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 from route_chains.models import chain_target
@@ -143,12 +150,15 @@ class _BinaryPaths:
     )
 
 
-class SingBoxDriver(BaseDriver):
+class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
     """sing-box integration entry point.
 
     Handles binary/version checks, per-run config generation, process lifecycle,
     and proxy readiness validation for sing-box backed profiles.
     """
+
+    def _has_existing_connection(self) -> bool:
+        return self._process is not None
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
         self.binaries = binaries or _BinaryPaths()
@@ -1275,6 +1285,7 @@ class SingBoxDriver(BaseDriver):
         lan_gateway: LANGatewayRuntimeConfig | None = None,
         capture_modes: tuple[str, ...] | None = None,
     ) -> bool:
+        self._ensure_disconnected_before_connect()
         binary = self.find_singbox_binary()
         if not binary:
             return False
@@ -1305,6 +1316,7 @@ class SingBoxDriver(BaseDriver):
             stderr=subprocess.STDOUT,
         )
         log_file.close()
+        record_child_process(self._runtime_dir, "process", self._process.pid, Path(binary).name)
         self._active_profile = profile
         self._active_mode = mode
         self._tun_expected = tun_expected
@@ -1353,6 +1365,10 @@ class SingBoxDriver(BaseDriver):
             process_stopped = process is None or process.poll() is not None
             if cleanup_tun_residue and process_stopped:
                 self._cleanup_tun_residue()
+            # Best-effort sweep of every child this driver type has ever
+            # recorded, not just the one this instance held a reference to -
+            # catches anything orphaned by a past bug or crash too.
+            kill_all_recorded_children(RUNTIME_PREFIX)
             self._cleanup_runtime()
         return stopped
 
@@ -1384,6 +1400,14 @@ class SingBoxDriver(BaseDriver):
     def status(self) -> ConnectionState:
         process = self._process
         if process is None:
+            # No in-memory reference does not mean nothing is running: a
+            # past reconnect bug, a crash between spawn and this call, or a
+            # daemon restart could all leave a real process/interface
+            # behind. Report the mismatch honestly instead of confidently
+            # lying "standby" - status() never takes action on it, that is
+            # disconnect()'s job.
+            if self._tun_interface_active() or any_recorded_child_alive(RUNTIME_PREFIX):
+                return ConnectionState(status="runtime_mismatch")
             return ConnectionState(status="standby")
         if process.poll() is None:
             profile_id = self._active_profile.id if self._active_profile else ""

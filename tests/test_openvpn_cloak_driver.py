@@ -179,8 +179,10 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     def test_connect_success(self, popen_mock, _ready, _ck, _ovpn, _sleep) -> None:
         ck_process = Mock()
         ck_process.poll.return_value = None
+        ck_process.pid = 1111
         ovpn_process = Mock()
         ovpn_process.poll.return_value = None
+        ovpn_process.pid = 2222
         popen_mock.side_effect = [ck_process, ovpn_process]
 
         self.assertTrue(self.driver.connect(self.profile))
@@ -194,6 +196,38 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.assertIn(str(self.driver._cloak_config_path), ck_call_args)
         ovpn_call_args = popen_mock.call_args_list[1].args[0]
         self.assertEqual(ovpn_call_args[0], "/usr/sbin/openvpn")
+
+    @patch("drivers.openvpn_cloak_driver.time.sleep")
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_wait_for_ready", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_disconnects_stale_processes_before_starting_new_ones(
+        self, popen_mock, _ready, _ck, _ovpn, _sleep
+    ) -> None:
+        # Regression guard for WDCLI-001.
+        stale_ck = Mock()
+        stale_ck.poll.return_value = None
+        stale_ovpn = Mock()
+        stale_ovpn.poll.return_value = None
+        self.driver._ck_process = stale_ck
+        self.driver._openvpn_process = stale_ovpn
+        self.driver._active_profile = self.profile
+
+        new_ck = Mock()
+        new_ck.poll.return_value = None
+        new_ck.pid = 3333
+        new_ovpn = Mock()
+        new_ovpn.poll.return_value = None
+        new_ovpn.pid = 4444
+        popen_mock.side_effect = [new_ck, new_ovpn]
+
+        self.assertTrue(self.driver.connect(self.profile))
+
+        stale_ck.terminate.assert_called_once()
+        stale_ovpn.terminate.assert_called_once()
+        self.assertIs(self.driver._ck_process, new_ck)
+        self.assertIs(self.driver._openvpn_process, new_ovpn)
 
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value=None)
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
@@ -212,6 +246,7 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     def test_connect_aborts_when_ck_crashes(self, popen_mock, _ck, _ovpn, _sleep) -> None:
         ck_process = Mock()
         ck_process.poll.return_value = 1
+        ck_process.pid = 1111
         popen_mock.return_value = ck_process
 
         self.assertFalse(self.driver.connect(self.profile))
@@ -324,16 +359,37 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
 
     # --- Status ---
 
-    def test_status_standby_without_processes(self) -> None:
+    @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=False)
+    @patch("drivers.openvpn_cloak_driver.any_recorded_child_alive", return_value=False)
+    def test_status_standby_without_processes(self, alive_mock, tun_mock) -> None:
         self.assertEqual(self.driver.status().status, "standby")
 
-    def test_status_standby_when_ck_died(self) -> None:
+    @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.any_recorded_child_alive", return_value=False)
+    def test_status_reports_runtime_mismatch_when_interface_orphaned(self, alive_mock, tun_mock) -> None:
+        self.assertEqual(self.driver.status().status, "runtime_mismatch")
+
+    @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=False)
+    @patch("drivers.openvpn_cloak_driver.any_recorded_child_alive", return_value=True)
+    def test_status_reports_runtime_mismatch_when_recorded_child_alive(self, alive_mock, tun_mock) -> None:
+        self.assertEqual(self.driver.status().status, "runtime_mismatch")
+
+    @patch.object(OpenVPNCloakDriver, "_cleanup_configs")
+    def test_status_standby_when_ck_died(self, cleanup_mock) -> None:
         ck = Mock()
         ck.poll.return_value = 1
         self.driver._ck_process = ck
         self.driver._openvpn_process = Mock()
         self.driver._openvpn_process.poll.return_value = None
-        self.assertEqual(self.driver.status().status, "standby")
+        self.driver._active_profile = self.profile
+
+        state = self.driver.status()
+
+        self.assertEqual(state.status, "standby")
+        self.assertIsNone(self.driver._ck_process)
+        self.assertIsNone(self.driver._openvpn_process)
+        self.assertIsNone(self.driver._active_profile)
+        cleanup_mock.assert_called_once()
 
     @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=True)
     def test_status_connected_when_both_alive(self, _tun) -> None:

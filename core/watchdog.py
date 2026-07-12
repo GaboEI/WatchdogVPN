@@ -282,7 +282,13 @@ class WatchdogRuntime:
         test_results: list[dict[str, object]] = []
         ok_profile_ids: set[str] = set()
         for profile in candidates:
-            driver = self._driver_for_profile(profile)
+            # disconnect_current=False: the standby assertion above covers
+            # the first iteration, and every path through this loop body
+            # (the "not connected" branch and the try/finally below) already
+            # disconnects unconditionally - and raises if that fails -
+            # before the next iteration's _driver_for_profile call, so a
+            # second disconnect here would only repeat that same teardown.
+            driver = self._driver_for_profile(profile, disconnect_current=False)
             connected = driver.connect(
                 profile,
                 dns_policy=self.dns_policy_store.load(),
@@ -676,7 +682,11 @@ class WatchdogRuntime:
 
     def _try_reconnect(self, profile: Profile) -> bool:
         LOGGER.info("watchdog_reconnect_attempt profile_id=%s", profile.id)
-        driver = self._driver_for_profile(profile)
+        # disconnect_current=False: this method unconditionally disconnects
+        # on the next line regardless of driver type, so letting
+        # _driver_for_profile also disconnect would just repeat the same
+        # teardown on the same driver instance for no benefit.
+        driver = self._driver_for_profile(profile, disconnect_current=False)
         driver.disconnect()
         if not driver.connect(
             profile,
@@ -868,6 +878,8 @@ class WatchdogRuntime:
     def _driver_for_profile(self, profile: Profile, disconnect_current: bool = True) -> BaseDriver:
         selected_driver = self.driver_selector(profile)
         if type(selected_driver) is type(self.driver):
+            if disconnect_current:
+                self.driver.disconnect()
             return self.driver
         if disconnect_current:
             self.driver.disconnect()

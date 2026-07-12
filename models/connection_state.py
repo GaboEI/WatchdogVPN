@@ -15,6 +15,13 @@ ALLOWED_STATUSES = {
     "rotation_unavailable",
     "recovered",
     "standby",
+    # A driver detected OS-level evidence of a live connection (TUN
+    # interface, or a durably-recorded child process) with no in-memory
+    # reference to it - e.g. left behind by a bug, a crash, or a daemon
+    # restart. Deliberately distinct from "standby": status() only detects
+    # and reports this, it never takes action - run `watchdog disconnect`
+    # to reap it.
+    "runtime_mismatch",
 }
 
 

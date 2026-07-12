@@ -51,3 +51,23 @@ class BaseDriver(ABC):
     @abstractmethod
     def is_available(self) -> bool:
         """Return whether the driver dependencies are present."""
+
+
+class ReentrantConnectGuard:
+    """Opt-in mixin for drivers whose connect() spawns a process/interface
+    into an instance field that a second connect() call would otherwise
+    silently overwrite, orphaning whatever was there before (the process
+    keeps running with no in-memory reference left to stop it).
+
+    Not part of the BaseDriver ABC contract - several tests construct fake
+    BaseDriver subclasses that don't own real OS resources, and forcing
+    them to implement a reentrancy guard would be meaningless. Only the
+    real drivers (SingBox/OpenVPN/OpenVPNCloak/AmneziaWG) mix this in.
+    """
+
+    def _has_existing_connection(self) -> bool:
+        raise NotImplementedError
+
+    def _ensure_disconnected_before_connect(self) -> None:
+        if self._has_existing_connection():
+            self.disconnect()

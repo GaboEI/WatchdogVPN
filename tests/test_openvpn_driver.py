@@ -93,6 +93,7 @@ class OpenVPNDriverTests(unittest.TestCase):
     def test_connect_starts_process(self, popen_mock, generate_mock, ready_mock, binary_mock) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
 
         self.assertTrue(self.driver.connect(self.profile))
         generate_mock.assert_called_once_with(self.profile)
@@ -102,6 +103,29 @@ class OpenVPNDriverTests(unittest.TestCase):
         self.assertIs(self.driver._process, process)
         self.assertIs(self.driver._active_profile, self.profile)
         self.assertIsNotNone(self.driver._connected_at)
+
+    @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNDriver, "_wait_for_ready", return_value=True)
+    @patch.object(OpenVPNDriver, "generate_openvpn_config")
+    @patch("drivers.openvpn_driver.subprocess.Popen")
+    def test_connect_disconnects_stale_process_before_starting_new_one(
+        self, popen_mock, generate_mock, ready_mock, binary_mock
+    ) -> None:
+        # Regression guard for WDCLI-001.
+        stale_process = unittest.mock.Mock()
+        stale_process.poll.return_value = None
+        self.driver._process = stale_process
+        self.driver._active_profile = self.profile
+
+        new_process = unittest.mock.Mock()
+        new_process.poll.return_value = None
+        new_process.pid = 9999
+        popen_mock.return_value = new_process
+
+        self.assertTrue(self.driver.connect(self.profile))
+
+        stale_process.terminate.assert_called_once()
+        self.assertIs(self.driver._process, new_process)
 
     @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value=None)
     @patch("drivers.openvpn_driver.subprocess.Popen")
@@ -153,8 +177,20 @@ class OpenVPNDriverTests(unittest.TestCase):
         process.kill.assert_called_once()
         cleanup_mock.assert_called_once()
 
-    def test_status_returns_standby_without_process(self) -> None:
+    @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=False)
+    @patch("drivers.openvpn_driver.any_recorded_child_alive", return_value=False)
+    def test_status_returns_standby_without_process(self, alive_mock, tun_mock) -> None:
         self.assertEqual(self.driver.status().status, "standby")
+
+    @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=True)
+    @patch("drivers.openvpn_driver.any_recorded_child_alive", return_value=False)
+    def test_status_reports_runtime_mismatch_when_interface_orphaned(self, alive_mock, tun_mock) -> None:
+        self.assertEqual(self.driver.status().status, "runtime_mismatch")
+
+    @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=False)
+    @patch("drivers.openvpn_driver.any_recorded_child_alive", return_value=True)
+    def test_status_reports_runtime_mismatch_when_recorded_child_alive(self, alive_mock, tun_mock) -> None:
+        self.assertEqual(self.driver.status().status, "runtime_mismatch")
 
     @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=True)
     def test_status_returns_connected_when_process_alive(self, tun_mock) -> None:
@@ -168,6 +204,22 @@ class OpenVPNDriverTests(unittest.TestCase):
         self.assertEqual(state.mode, "openvpn")
         self.assertTrue(state.tun_active)
         self.assertFalse(state.proxy_active)
+
+    @patch.object(OpenVPNDriver, "_cleanup_runtime")
+    def test_status_reconciles_state_when_process_died_unexpectedly(self, cleanup_mock) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = 1
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+        self.driver._connected_at = unittest.mock.sentinel.connected_at
+
+        state = self.driver.status()
+
+        self.assertEqual(state.status, "standby")
+        self.assertIsNone(self.driver._process)
+        self.assertIsNone(self.driver._active_profile)
+        self.assertIsNone(self.driver._connected_at)
+        cleanup_mock.assert_called_once()
 
     def test_health_check_down_without_process(self) -> None:
         self.assertEqual(self.driver.health_check(), "down")

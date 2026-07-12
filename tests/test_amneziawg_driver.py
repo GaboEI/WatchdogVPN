@@ -197,6 +197,31 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertFalse(self.driver.connect(self.profile))
         self.assertIn("awg was not found", self.driver.last_error)
 
+    @patch.object(AmneziaWGDriver, "_ensure_src_valid_mark")
+    @patch.object(AmneziaWGDriver, "_interface_exists", side_effect=[False, False, False, False, True])
+    @patch.object(AmneziaWGDriver, "find_wg_tool", return_value="/usr/bin/awg")
+    @patch.object(AmneziaWGDriver, "find_ip_tool", return_value="/usr/bin/ip")
+    @patch("drivers.amneziawg_driver.subprocess.run")
+    def test_connect_disconnects_stale_userspace_process_before_starting_new_one(
+        self, run_mock, _ip, _awg, _iface, _src_valid_mark
+    ) -> None:
+        # Regression guard for WDCLI-001, covering the userspace-fallback
+        # path (kernel module unavailable) - AmneziaWGDriver already
+        # self-heals its kernel interface via _interface_exists(), but its
+        # userspace fallback process had the same unguarded overwrite as
+        # the other drivers.
+        run_mock.return_value.returncode = 0
+        run_mock.return_value.stdout = ""
+        run_mock.return_value.stderr = ""
+        stale_userspace_process = Mock()
+        stale_userspace_process.poll.return_value = None
+        self.driver._userspace_process = stale_userspace_process
+        self.driver._active_profile = self.profile
+
+        self.assertTrue(self.driver.connect(self.profile))
+
+        stale_userspace_process.terminate.assert_called_once()
+
     def test_ensure_src_valid_mark_passes_when_already_one(self) -> None:
         with (
             patch.object(type(self.driver), "_src_valid_mark_path") as path_mock,
@@ -259,6 +284,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
         run_mock.return_value.returncode = 2
         run_mock.return_value.stdout = ""
         run_mock.return_value.stderr = "Unknown device type"
+        popen_mock.return_value.pid = 5555
 
         self.driver._write_config(self.profile)
         self.driver._reset_log()
@@ -278,6 +304,7 @@ class AmneziaWGDriverTests(unittest.TestCase):
         run_mock.return_value.returncode = 2
         run_mock.return_value.stdout = ""
         run_mock.return_value.stderr = "Unknown device type"
+        popen_mock.return_value.pid = 5555
 
         self.driver._write_config(self.profile)
         self.driver._reset_log()
@@ -393,9 +420,29 @@ class AmneziaWGDriverTests(unittest.TestCase):
     # --- Status ---
 
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=False)
-    def test_status_standby_without_interface(self, _iface) -> None:
+    @patch("drivers.amneziawg_driver.any_recorded_child_alive", return_value=False)
+    def test_status_standby_without_interface(self, _alive, _iface) -> None:
         state = self.driver.status()
         self.assertEqual(state.status, "standby")
+
+    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
+    @patch("drivers.amneziawg_driver.any_recorded_child_alive", return_value=False)
+    def test_status_reports_runtime_mismatch_when_active_profile_none_but_interface_up(
+        self, _alive, _iface
+    ) -> None:
+        # Regression guard for the short-circuit bug: `self._active_profile
+        # is None or not self._interface_exists()` used to skip the
+        # interface check entirely whenever there was no active profile
+        # (always true after disconnect()), so an orphaned interface never
+        # got detected.
+        state = self.driver.status()
+        self.assertEqual(state.status, "runtime_mismatch")
+
+    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=False)
+    @patch("drivers.amneziawg_driver.any_recorded_child_alive", return_value=True)
+    def test_status_reports_runtime_mismatch_when_recorded_child_alive(self, _alive, _iface) -> None:
+        state = self.driver.status()
+        self.assertEqual(state.status, "runtime_mismatch")
 
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
     def test_status_connected_with_interface(self, _iface) -> None:

@@ -9,8 +9,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dns.models import DNSPolicy
-from drivers.base import BaseDriver
-from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
+from drivers.base import BaseDriver, ReentrantConnectGuard
+from drivers.runtime_paths import (
+    any_recorded_child_alive,
+    cleanup_stale_runtime_dirs,
+    kill_all_recorded_children,
+    make_runtime_dir,
+    record_child_process,
+    write_private_file,
+)
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
@@ -31,12 +38,15 @@ class _BinaryPaths:
     )
 
 
-class OpenVPNDriver(BaseDriver):
+class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
     """Compatibility driver for plain OpenVPN profiles.
 
     Plain OpenVPN is intentionally not treated as a resilient anti-DPI protocol.
     OpenVPN+Cloak/OverCloud belongs to the later wrapped-driver phase.
     """
+
+    def _has_existing_connection(self) -> bool:
+        return self._process is not None
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
         self.binaries = binaries or _BinaryPaths()
@@ -136,6 +146,7 @@ class OpenVPNDriver(BaseDriver):
         lan_gateway=None,
         capture_modes=None,
     ) -> bool:
+        self._ensure_disconnected_before_connect()
         binary = self.find_openvpn_binary()
         if not binary:
             return False
@@ -149,6 +160,7 @@ class OpenVPNDriver(BaseDriver):
             stderr=subprocess.STDOUT,
         )
         log_file.close()
+        record_child_process(self._runtime_dir, "process", self._process.pid, Path(binary).name)
         self._active_profile = profile
         if self._wait_for_ready(profile):
             self._connected_at = datetime.now(timezone.utc)
@@ -188,6 +200,10 @@ class OpenVPNDriver(BaseDriver):
                         stopped = False
                         return False
         finally:
+            # Best-effort sweep of every child this driver type has ever
+            # recorded, not just the one this instance held a reference to -
+            # catches anything orphaned by a past bug or crash too.
+            kill_all_recorded_children(RUNTIME_PREFIX)
             self._cleanup_runtime()
         return stopped
 
@@ -202,6 +218,14 @@ class OpenVPNDriver(BaseDriver):
     def status(self) -> ConnectionState:
         process = self._process
         if process is None:
+            # No in-memory reference does not mean nothing is running: a
+            # past reconnect bug, a crash between spawn and this call, or a
+            # daemon restart could all leave a real interface/process
+            # behind. Report the mismatch honestly instead of confidently
+            # lying "standby" - status() never takes action on it, that is
+            # disconnect()'s job.
+            if self._vpn_interface_active(self._active_profile) or any_recorded_child_alive(RUNTIME_PREFIX):
+                return ConnectionState(status="runtime_mismatch")
             return ConnectionState(status="standby")
         if process.poll() is None:
             profile_id = self._active_profile.id if self._active_profile else ""
@@ -213,4 +237,8 @@ class OpenVPNDriver(BaseDriver):
                 proxy_active=False,
                 status="connected",
             )
+        self._process = None
+        self._active_profile = None
+        self._connected_at = None
+        self._cleanup_runtime()
         return ConnectionState(status="standby")

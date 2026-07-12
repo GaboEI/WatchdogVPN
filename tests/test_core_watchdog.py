@@ -919,6 +919,7 @@ class WatchdogCoreTests(unittest.TestCase):
     ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4321
         self.set_desired_state("off")
         self.state_manager.set("active_mode", "rules")
         profile = Profile(
@@ -1083,7 +1084,7 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertTrue(runtime.connect(profile))
 
-        current_driver.disconnect_mock.assert_not_called()
+        current_driver.disconnect_mock.assert_called_once()
         current_driver.connect_mock.assert_called_once_with(profile)
         replacement_same_type.connect_mock.assert_not_called()
         self.assertIs(runtime.driver, current_driver)

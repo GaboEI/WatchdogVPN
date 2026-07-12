@@ -48,6 +48,7 @@ ERROR_WORDS = {
     "failed",
     "kill_switch_active",
     "runtime mismatch",
+    "runtime_mismatch",
     "unreachable",
     "unsafe",
 }

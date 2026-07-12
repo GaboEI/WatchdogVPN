@@ -11,8 +11,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dns.models import DNSPolicy
-from drivers.base import BaseDriver
-from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
+from drivers.base import BaseDriver, ReentrantConnectGuard
+from drivers.runtime_paths import (
+    any_recorded_child_alive,
+    cleanup_stale_runtime_dirs,
+    kill_all_recorded_children,
+    make_runtime_dir,
+    record_child_process,
+    write_private_file,
+)
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
@@ -42,13 +49,16 @@ class _BinaryPaths:
     )
 
 
-class OpenVPNCloakDriver(BaseDriver):
+class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
     """Driver for OpenVPN profiles wrapped in Cloak transport.
 
     Manages two simultaneous processes: ck-client (local tunnel) and openvpn
     (connected through that tunnel). Sequence: ck-client first, wait for
     startup, then openvpn. Cleanup: openvpn first, then ck-client.
     """
+
+    def _has_existing_connection(self) -> bool:
+        return self._ck_process is not None or self._openvpn_process is not None
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
         self.binaries = binaries or _BinaryPaths()
@@ -223,6 +233,7 @@ class OpenVPNCloakDriver(BaseDriver):
         lan_gateway=None,
         capture_modes=None,
     ) -> bool:
+        self._ensure_disconnected_before_connect()
         openvpn_bin = self.find_openvpn_binary()
         ck_bin = self.find_ck_client_binary()
         if not openvpn_bin or not ck_bin:
@@ -243,6 +254,7 @@ class OpenVPNCloakDriver(BaseDriver):
             stderr=subprocess.STDOUT,
         )
         ck_log.close()
+        record_child_process(self._runtime_dir, "ck_process", self._ck_process.pid, Path(ck_bin).name)
 
         time.sleep(_CLOAK_STARTUP_WAIT)
 
@@ -261,6 +273,9 @@ class OpenVPNCloakDriver(BaseDriver):
             stderr=subprocess.STDOUT,
         )
         ovpn_log.close()
+        record_child_process(
+            self._runtime_dir, "openvpn_process", self._openvpn_process.pid, Path(openvpn_bin).name
+        )
 
         self._active_profile = profile
         if self._wait_for_ready():
@@ -291,6 +306,7 @@ class OpenVPNCloakDriver(BaseDriver):
         self._ck_process = None
         self._active_profile = None
         self._connected_at = None
+        kill_all_recorded_children(RUNTIME_PREFIX)
         self._cleanup_configs()
 
     def disconnect(self) -> bool:
@@ -304,6 +320,10 @@ class OpenVPNCloakDriver(BaseDriver):
             self._ck_process = None
             self._active_profile = None
             self._connected_at = None
+            # Best-effort sweep of every child this driver type has ever
+            # recorded, not just the two this instance held a reference to -
+            # catches anything orphaned by a past bug or crash too.
+            kill_all_recorded_children(RUNTIME_PREFIX)
             self._cleanup_configs()
         return openvpn_stopped and ck_stopped
 
@@ -322,8 +342,21 @@ class OpenVPNCloakDriver(BaseDriver):
         ck = self._ck_process
         ovpn = self._openvpn_process
         if ck is None or ovpn is None:
+            # No in-memory reference does not mean nothing is running: a
+            # past reconnect bug, a crash between spawn and this call, or a
+            # daemon restart could all leave a real interface/process
+            # behind. Report the mismatch honestly instead of confidently
+            # lying "standby" - status() never takes action on it, that is
+            # disconnect()'s job.
+            if self._vpn_interface_active() or any_recorded_child_alive(RUNTIME_PREFIX):
+                return ConnectionState(status="runtime_mismatch")
             return ConnectionState(status="standby")
         if ck.poll() is not None or ovpn.poll() is not None:
+            self._ck_process = None
+            self._openvpn_process = None
+            self._active_profile = None
+            self._connected_at = None
+            self._cleanup_configs()
             return ConnectionState(status="standby")
         profile_id = self._active_profile.id if self._active_profile else ""
         return ConnectionState(

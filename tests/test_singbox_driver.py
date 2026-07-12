@@ -1298,6 +1298,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     def test_connect_starts_process(self, popen_mock, generate_mock, binary_mock) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
 
         with patch.object(SingBoxDriver, "health_check", return_value="ok"):
             self.assertTrue(self.driver.connect(self.profile))
@@ -1324,11 +1325,37 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_disconnects_stale_process_before_starting_new_one(
+        self, popen_mock, generate_mock, binary_mock
+    ) -> None:
+        # Regression guard for WDCLI-001: reconnecting the same profile (or
+        # any profile using the same driver type) must not silently
+        # overwrite a still-running process, orphaning it.
+        stale_process = unittest.mock.Mock()
+        stale_process.poll.return_value = None
+        self.driver._process = stale_process
+        self.driver._active_profile = self.profile
+
+        new_process = unittest.mock.Mock()
+        new_process.poll.return_value = None
+        new_process.pid = 9999
+        popen_mock.return_value = new_process
+
+        with patch.object(SingBoxDriver, "health_check", return_value="ok"):
+            self.assertTrue(self.driver.connect(self.profile))
+
+        stale_process.terminate.assert_called_once()
+        self.assertIs(self.driver._process, new_process)
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
     def test_connect_forwards_dns_policy_to_generated_config(
         self, popen_mock, generate_mock, binary_mock
     ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
         policy = DNSPolicy(
             channels={
                 DNSChannelName.DIRECT: DNSChannel(
@@ -1367,6 +1394,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     def test_connect_accepts_tun_readiness_without_proxy_http(self, popen_mock, generate_mock, binary_mock) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
 
         with (
             patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
@@ -1390,6 +1418,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
         policy = AppPolicy(
             enabled=True,
             mode="blacklist",
@@ -1432,6 +1461,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
 
         def mark_child_dead() -> bool:
             process.poll.return_value = 1
@@ -1831,9 +1861,27 @@ table inet sing-box {
         process.kill.assert_called_once()
         cleanup_mock.assert_called_once()
 
-    def test_status_returns_standby_without_process(self) -> None:
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=False)
+    @patch("drivers.singbox_driver.any_recorded_child_alive", return_value=False)
+    def test_status_returns_standby_without_process(self, alive_mock, tun_mock) -> None:
         state = self.driver.status()
         self.assertEqual(state.status, "standby")
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
+    @patch("drivers.singbox_driver.any_recorded_child_alive", return_value=False)
+    def test_status_reports_runtime_mismatch_when_tun_interface_orphaned(
+        self, alive_mock, tun_mock
+    ) -> None:
+        state = self.driver.status()
+        self.assertEqual(state.status, "runtime_mismatch")
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=False)
+    @patch("drivers.singbox_driver.any_recorded_child_alive", return_value=True)
+    def test_status_reports_runtime_mismatch_when_recorded_child_alive(
+        self, alive_mock, tun_mock
+    ) -> None:
+        state = self.driver.status()
+        self.assertEqual(state.status, "runtime_mismatch")
 
     def test_status_returns_connected_when_process_alive(self) -> None:
         process = unittest.mock.Mock()

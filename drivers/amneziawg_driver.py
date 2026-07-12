@@ -10,8 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dns.models import DNSPolicy
-from drivers.base import BaseDriver
-from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
+from drivers.base import BaseDriver, ReentrantConnectGuard
+from drivers.runtime_paths import (
+    any_recorded_child_alive,
+    cleanup_stale_runtime_dirs,
+    kill_all_recorded_children,
+    make_runtime_dir,
+    record_child_process,
+    write_private_file,
+)
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
@@ -79,7 +86,7 @@ class _ParsedConfig:
     table: str
 
 
-class AmneziaWGDriver(BaseDriver):
+class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
     """Native driver for AmneziaWG profiles.
 
     Uses awg directly so the daemon never depends on sudo-driven quick scripts.
@@ -87,6 +94,9 @@ class AmneziaWGDriver(BaseDriver):
     userspace implementation. Standard WireGuard tooling is not a valid runtime
     fallback for real AmneziaWG exports.
     """
+
+    def _has_existing_connection(self) -> bool:
+        return self._active_profile is not None or self._userspace_process is not None
 
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
         self.binaries = binaries or _BinaryPaths()
@@ -366,6 +376,9 @@ class AmneziaWGDriver(BaseDriver):
             )
         finally:
             log_file.close()
+        record_child_process(
+            self._runtime_dir, "userspace_process", self._userspace_process.pid, Path(userspace_tool).name
+        )
         self._log(f"connect: started {userspace_tool} {INTERFACE_NAME}")
         if not self._wait_for_interface():
             self._userspace_failure_reason = f"{INTERFACE_NAME} did not appear via ip link show"
@@ -572,6 +585,7 @@ class AmneziaWGDriver(BaseDriver):
         lan_gateway=None,
         capture_modes=None,
     ) -> bool:
+        self._ensure_disconnected_before_connect()
         self.last_error = ""
         if not self.find_ip_tool():
             self._set_last_error("ip command was not found")
@@ -621,6 +635,11 @@ class AmneziaWGDriver(BaseDriver):
         finally:
             self._active_profile = None
             self._connected_at = None
+            # Best-effort sweep of every child this driver type has ever
+            # recorded, not just the userspace process this instance held a
+            # reference to - catches anything orphaned by a past bug or
+            # crash too.
+            kill_all_recorded_children(RUNTIME_PREFIX)
             self._cleanup_runtime()
         return stopped and not self._interface_exists()
 
@@ -672,13 +691,27 @@ class AmneziaWGDriver(BaseDriver):
         return "degraded"
 
     def status(self) -> ConnectionState:
-        if self._active_profile is None or not self._interface_exists():
-            return ConnectionState(status="standby")
-        return ConnectionState(
-            active_profile_id=self._active_profile.id,
-            connected_at=self._connected_at,
-            mode="amneziawg",
-            tun_active=True,
-            proxy_active=False,
-            status="connected",
-        )
+        # Evaluate interface existence unconditionally - the original
+        # `self._active_profile is None or not self._interface_exists()`
+        # short-circuited on `or`, so the interface was never actually
+        # checked once _active_profile was None (always true after
+        # disconnect()), silently reporting "standby" even with a live,
+        # orphaned interface still up.
+        interface_exists = self._interface_exists()
+        if self._active_profile is not None and interface_exists:
+            return ConnectionState(
+                active_profile_id=self._active_profile.id,
+                connected_at=self._connected_at,
+                mode="amneziawg",
+                tun_active=True,
+                proxy_active=False,
+                status="connected",
+            )
+        # No active profile does not mean nothing is running: a past
+        # reconnect bug, a crash between spawn and this call, or a daemon
+        # restart could all leave a real interface/process behind. Report
+        # the mismatch honestly instead of confidently lying "standby" -
+        # status() never takes action on it, that is disconnect()'s job.
+        if interface_exists or any_recorded_child_alive(RUNTIME_PREFIX):
+            return ConnectionState(status="runtime_mismatch")
+        return ConnectionState(status="standby")
