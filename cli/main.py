@@ -64,7 +64,7 @@ from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
 from models.profile import Profile, ProfileSource, profile_fingerprint, profile_resilience_category
 from models.provider import Provider
-from node_groups.models import NodeGroup, NodeGroupSelectionMode
+from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore, NodeGroupStoreError
 from parsers import ParseError
 from parsers import parse_uri
@@ -547,6 +547,58 @@ def _build_parser() -> argparse.ArgumentParser:
     node_group_select_parser.add_argument("selection", help="Profile ID or 'auto'")
     node_group_select_parser.add_argument("--json", action="store_true", help="Print JSON")
     node_group_select_parser.set_defaults(handler=_node_group_select)
+
+    node_group_add_provider_parser = node_group_subparsers.add_parser(
+        "add-provider", help="Add a provider to a node group"
+    )
+    node_group_add_provider_parser.add_argument("group")
+    node_group_add_provider_parser.add_argument("provider")
+    node_group_add_provider_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_add_provider_parser.set_defaults(handler=_node_group_add_provider)
+
+    node_group_remove_provider_parser = node_group_subparsers.add_parser(
+        "remove-provider", help="Remove a provider from a node group"
+    )
+    node_group_remove_provider_parser.add_argument("group")
+    node_group_remove_provider_parser.add_argument("provider")
+    node_group_remove_provider_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_remove_provider_parser.set_defaults(handler=_node_group_remove_provider)
+
+    node_group_exclude_parser = node_group_subparsers.add_parser(
+        "exclude", help="Exclude a profile from a node group's candidates"
+    )
+    node_group_exclude_parser.add_argument("group")
+    node_group_exclude_parser.add_argument("profile")
+    node_group_exclude_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_exclude_parser.set_defaults(handler=_node_group_exclude)
+
+    node_group_unexclude_parser = node_group_subparsers.add_parser(
+        "unexclude", help="Remove a profile from a node group's exclusion list"
+    )
+    node_group_unexclude_parser.add_argument("group")
+    node_group_unexclude_parser.add_argument("profile")
+    node_group_unexclude_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_unexclude_parser.set_defaults(handler=_node_group_unexclude)
+
+    node_group_resilience_parser = node_group_subparsers.add_parser(
+        "resilience", help="Set a node group's resilience policy"
+    )
+    node_group_resilience_parser.add_argument("group")
+    node_group_resilience_parser.add_argument(
+        "policy", choices=[item.value for item in NodeGroupResiliencePolicy]
+    )
+    node_group_resilience_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_resilience_parser.set_defaults(handler=_node_group_set_resilience)
+
+    node_group_enable_parser = node_group_subparsers.add_parser("enable", help="Enable a node group")
+    node_group_enable_parser.add_argument("group")
+    node_group_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_enable_parser.set_defaults(handler=_node_group_set_enabled, enabled=True)
+
+    node_group_disable_parser = node_group_subparsers.add_parser("disable", help="Disable a node group")
+    node_group_disable_parser.add_argument("group")
+    node_group_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_disable_parser.set_defaults(handler=_node_group_set_enabled, enabled=False)
 
     dns_parser = subparsers.add_parser("dns", help="Manage DNS v2 policy and state")
     dns_subparsers = dns_parser.add_subparsers(dest="dns_command")
@@ -2150,6 +2202,123 @@ def _node_group_select(args: argparse.Namespace) -> int:
         _print_json(data)
         return 0
     print(f"Node group selection pinned: {group.name} profile={profile.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_add_provider(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    provider = _require_provider(ProviderStore(), args.provider)
+    backup_path = _create_section_backup("node-groups")
+    group = store.add_member_provider(args.group, provider.id)
+    data = {
+        "group": _node_group_summary(group),
+        "added_provider_id": provider.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Added provider to node group: {group.name} provider={provider.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_remove_provider(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    provider = _require_provider(ProviderStore(), args.provider)
+    backup_path = _create_section_backup("node-groups")
+    group = store.remove_member_provider(args.group, provider.id)
+    data = {
+        "group": _node_group_summary(group),
+        "removed_provider_id": provider.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Removed provider from node group: {group.name} provider={provider.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_exclude(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    profile = _require_profile(ProfileStore(), args.profile)
+    backup_path = _create_section_backup("node-groups")
+    group = store.add_exclude_profile(args.group, profile.id)
+    data = {
+        "group": _node_group_summary(group),
+        "excluded_profile_id": profile.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Excluded profile from node group: {group.name} profile={profile.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_unexclude(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    profile = _require_profile(ProfileStore(), args.profile)
+    backup_path = _create_section_backup("node-groups")
+    group = store.remove_exclude_profile(args.group, profile.id)
+    data = {
+        "group": _node_group_summary(group),
+        "unexcluded_profile_id": profile.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Removed profile from node group exclusion list: {group.name} profile={profile.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_set_resilience(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    policy = NodeGroupResiliencePolicy(args.policy)
+    backup_path = _create_section_backup("node-groups")
+    group = store.set_resilience_policy(args.group, policy)
+    data = {
+        "group": _node_group_summary(group),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Node group resilience policy set: {group.name} policy={policy.value}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_set_enabled(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    backup_path = _create_section_backup("node-groups")
+    group = store.set_enabled(args.group, bool(args.enabled))
+    data = {
+        "group": _node_group_summary(group),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Node group {'enabled' if group.enabled else 'disabled'}: {group.name}")
     print(f"Backup: {backup_path}")
     return 0
 

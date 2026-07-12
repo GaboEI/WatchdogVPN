@@ -10,7 +10,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import cli.main
+from config.provider_store import ProviderStore
 from daemon.protocol import Response
+from models.provider import Provider
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -28,6 +30,7 @@ class CliNodeGroupCommandTests(unittest.TestCase):
             "WATCHDOGVPN_CONFIG_DIR": tmp,
             "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
             "WATCHDOGVPN_NODE_GROUPS_FILE": str(Path(tmp) / "node_groups.json"),
+            "WATCHDOGVPN_PROVIDERS_FILE": str(Path(tmp) / "providers.json"),
             "PYTHONPATH": str(ROOT_DIR),
         }
         result = subprocess.run(
@@ -147,6 +150,104 @@ class CliNodeGroupCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 70)
         self.assertIn("requires standby", stderr.getvalue())
+
+    def test_add_remove_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ProviderStore(Path(tmp) / "providers.json").add(
+                Provider(id="netz.tg", name="netz", url="https://netz.tg/token")
+            )
+            self.run_watchdog(["node-group", "create", "paris"], tmp)
+
+            added = self.run_watchdog(
+                ["node-group", "add-provider", "paris", "netz.tg", "--json"], tmp
+            )
+            data = json.loads(
+                self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
+            )
+            self.assertEqual(data[0]["member_provider_ids"], ["netz.tg"])
+            self.assertEqual(json.loads(added.stdout)["added_provider_id"], "netz.tg")
+
+            self.run_watchdog(["node-group", "remove-provider", "paris", "netz.tg"], tmp)
+            data = json.loads(
+                self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
+            )
+            self.assertEqual(data[0]["member_provider_ids"], [])
+
+    def test_add_provider_rejects_missing_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["node-group", "create", "paris"], tmp)
+
+            result = self.run_watchdog(
+                ["node-group", "add-provider", "paris", "missing"], tmp, check=False
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("provider not found: missing", result.stderr)
+
+    def test_exclude_unexclude_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(
+                ["profile", "add", "--uri", "vless://uuid@example.com:443?encryption=none#demo"],
+                tmp,
+            )
+            self.run_watchdog(["node-group", "create", "paris"], tmp)
+
+            excluded = self.run_watchdog(
+                ["node-group", "exclude", "paris", "demo", "--json"], tmp
+            )
+            data = json.loads(
+                self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
+            )
+            self.assertEqual(data[0]["exclude_profile_ids"], ["demo"])
+            self.assertEqual(json.loads(excluded.stdout)["excluded_profile_id"], "demo")
+
+            self.run_watchdog(["node-group", "unexclude", "paris", "demo"], tmp)
+            data = json.loads(
+                self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
+            )
+            self.assertEqual(data[0]["exclude_profile_ids"], [])
+
+    def test_set_resilience_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["node-group", "create", "paris"], tmp)
+
+            result = self.run_watchdog(
+                ["node-group", "resilience", "paris", "resilient_only", "--json"], tmp
+            )
+            data = json.loads(
+                self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
+            )
+
+            self.assertEqual(data[0]["resilience_policy"], "resilient_only")
+            self.assertEqual(
+                json.loads(result.stdout)["group"]["resilience_policy"], "resilient_only"
+            )
+
+    def test_set_resilience_policy_rejects_unknown_choice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["node-group", "create", "paris"], tmp)
+
+            result = self.run_watchdog(
+                ["node-group", "resilience", "paris", "bogus"], tmp, check=False
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_enable_disable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["node-group", "create", "paris"], tmp)
+
+            self.run_watchdog(["node-group", "disable", "paris"], tmp)
+            data = json.loads(
+                self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
+            )
+            self.assertFalse(data[0]["enabled"])
+
+            self.run_watchdog(["node-group", "enable", "paris"], tmp)
+            data = json.loads(
+                self.run_watchdog(["node-group", "list", "--json"], tmp).stdout
+            )
+            self.assertTrue(data[0]["enabled"])
 
 
 if __name__ == "__main__":
