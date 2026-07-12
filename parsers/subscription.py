@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from models.profile import Profile
@@ -28,6 +29,13 @@ class SubscriptionFetchResult:
 
 
 def _fetch(url: str) -> tuple[str, dict[str, str]]:
+    # Only https is accepted: plain http leaks the subscription token (often
+    # embedded in the URL path) in cleartext, and urlopen would otherwise
+    # also happily honor file://, ftp:// and other local/non-network
+    # schemes - "add a provider" must never become "read an arbitrary local
+    # file" or "fetch an internal-network URL an operator didn't intend".
+    if urlparse(url).scheme != "https":
+        raise ParseError(f"invalid subscription URL scheme (https required): {url}")
     user_agent = os.environ.get("WATCHDOGVPN_SUBSCRIPTION_USER_AGENT", DEFAULT_SUBSCRIPTION_USER_AGENT)
     try:
         request = Request(

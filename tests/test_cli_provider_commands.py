@@ -246,8 +246,20 @@ class CliProviderCommandTests(unittest.TestCase):
             )
 
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("invalid subscription URL: TU_URL_REAL_DEL_PROVIDER", result.stderr)
+            self.assertIn("invalid subscription URL", result.stderr)
+            self.assertIn("TU_URL_REAL_DEL_PROVIDER", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
+
+    def test_provider_add_rejects_non_https_scheme(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for url in ("http://provider.example/sub", "file:///etc/passwd", "ftp://provider.example/sub"):
+                with self.subTest(url=url):
+                    result = self.run_watchdog(
+                        ["provider", "add", url, "--name", "insecure"], tmp, check=False
+                    )
+
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("https required", result.stderr)
 
     def test_provider_edit_requires_name_or_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
