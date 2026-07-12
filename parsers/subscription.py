@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -16,9 +18,16 @@ DEFAULT_SUBSCRIPTION_USER_AGENT = (
     "WatchdogVPN/2.0 "
     "(compatible; sing-box; Clash; mihomo; v2ray-subscription)"
 )
+SUBSCRIPTION_USERINFO_HEADER = "subscription-userinfo"
 
 
-def _fetch_text(url: str) -> str:
+@dataclass(frozen=True, slots=True)
+class SubscriptionFetchResult:
+    profiles: list[Profile]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _fetch(url: str) -> tuple[str, dict[str, str]]:
     user_agent = os.environ.get("WATCHDOGVPN_SUBSCRIPTION_USER_AGENT", DEFAULT_SUBSCRIPTION_USER_AGENT)
     try:
         request = Request(
@@ -30,13 +39,19 @@ def _fetch_text(url: str) -> str:
         )
         with urlopen(request) as response:  # nosec - subscription URLs are user-provided inputs
             raw = response.read()
+            headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
     except ValueError as exc:
         raise ParseError(f"invalid subscription URL: {url}") from exc
     except URLError as exc:
         raise ParseError(f"failed to fetch subscription: {exc}") from exc
     if not raw:
         raise ParseError("empty subscription response")
-    return raw.decode("utf-8", errors="replace").strip()
+    return raw.decode("utf-8", errors="replace").strip(), headers
+
+
+def _fetch_text(url: str) -> str:
+    text, _headers = _fetch(url)
+    return text
 
 
 def _looks_like_json(text: str) -> bool:
@@ -83,8 +98,7 @@ def _decode_base64_lines(text: str) -> list[str]:
     return [line.strip() for line in decoded.splitlines() if line.strip()]
 
 
-def fetch_and_parse(url: str) -> list[Profile]:
-    text = _fetch_text(url)
+def _parse_profiles(text: str) -> list[Profile]:
     if _looks_like_html(text):
         raise ParseError("subscription response looks like HTML, not a VPN subscription")
     if _looks_like_json(text):
@@ -120,3 +134,64 @@ def fetch_and_parse(url: str) -> list[Profile]:
         except ParseError:
             pass
     raise ParseError("unsupported subscription format")
+
+
+def fetch_and_parse(url: str) -> list[Profile]:
+    text = _fetch_text(url)
+    return _parse_profiles(text)
+
+
+def fetch_subscription(url: str) -> SubscriptionFetchResult:
+    text, headers = _fetch(url)
+    profiles = _parse_profiles(text)
+    metadata = _parse_subscription_userinfo(headers.get(SUBSCRIPTION_USERINFO_HEADER))
+    return SubscriptionFetchResult(profiles=profiles, metadata=metadata)
+
+
+def _format_bytes(count: float) -> str:
+    value = float(count)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"  # pragma: no cover - unreachable, loop always returns
+
+
+def _parse_subscription_userinfo(header_value: str | None) -> dict[str, Any]:
+    """Parse the de-facto `subscription-userinfo` response header
+    (`upload=N; download=N; total=N; expire=unix_ts`, used by most VPN
+    subscription panels: sing-box, Clash, mihomo, v2rayN) into the
+    metadata keys cli/main.py's _traffic_label()/_provider_summary()
+    already expect. Missing or unparseable input honestly yields {} -
+    Traffic/Expires render as "-" rather than fabricating data."""
+    if not header_value:
+        return {}
+    fields: dict[str, int] = {}
+    for part in header_value.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        key, _, raw_value = part.partition("=")
+        key = key.strip().lower()
+        if key not in {"upload", "download", "total", "expire"}:
+            continue
+        try:
+            fields[key] = int(raw_value.strip())
+        except ValueError:
+            continue
+    if not fields:
+        return {}
+    metadata: dict[str, Any] = {}
+    if "upload" in fields or "download" in fields:
+        used = fields.get("upload", 0) + fields.get("download", 0)
+        metadata["traffic_used"] = _format_bytes(used)
+    if "total" in fields:
+        metadata["traffic_limit"] = _format_bytes(fields["total"])
+    if "expire" in fields:
+        try:
+            metadata["expires_at"] = (
+                datetime.fromtimestamp(fields["expire"], tz=timezone.utc).date().isoformat()
+            )
+        except (OverflowError, OSError, ValueError):
+            pass
+    return metadata

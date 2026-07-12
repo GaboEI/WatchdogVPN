@@ -225,6 +225,75 @@ class SubscriptionProviderTests(unittest.TestCase):
             assert restored is not None
             self.assertEqual(restored.metadata["traffic_used"], "51.6 GB")
 
+    def test_add_with_only_profile_fetcher_injected_reports_no_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(stored_provider.metadata, {})
+
+    def test_add_populates_metadata_from_injected_metadata_fetcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+                fetcher=lambda _url: [_profile("node", "Node", "node.example.com")],
+                metadata_fetcher=lambda _url: {
+                    "traffic_used": "12.0 GB",
+                    "traffic_limit": "100.0 GB",
+                    "expires_at": "2026-12-01",
+                },
+            )
+
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(stored_provider.metadata["traffic_used"], "12.0 GB")
+            self.assertEqual(stored_provider.metadata["expires_at"], "2026-12-01")
+
+    def test_update_populates_metadata_from_injected_metadata_fetcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+                fetcher=lambda _url: [_profile("node", "Node", "node.example.com")],
+                metadata_fetcher=lambda _url: {"traffic_used": "1.0 GB"},
+            )
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+            self.assertEqual(stored_provider.metadata, {"traffic_used": "1.0 GB"})
+
+            provider.metadata_fetcher = lambda _url: {"traffic_used": "2.0 GB"}
+            provider.update(stored_provider.id)
+
+            updated = ProviderStore(Path(tmp) / "providers.json").get(stored_provider.id)
+            assert updated is not None
+            self.assertEqual(updated.metadata, {"traffic_used": "2.0 GB"})
+
+    def test_default_fetcher_uses_fetch_subscription_for_single_network_call(self) -> None:
+        # Regression guard: the default (non-overridden) fetch path must go
+        # through parsers.fetch_subscription exactly once per add()/update(),
+        # not one call for profiles and a second for metadata headers.
+        from unittest.mock import patch
+
+        from parsers.subscription import SubscriptionFetchResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            result = SubscriptionFetchResult(
+                profiles=[_profile("node", "Node", "node.example.com")],
+                metadata={"traffic_used": "5.0 GB"},
+            )
+            with patch(
+                "providers.subscription_provider.fetch_subscription", return_value=result
+            ) as fetch_mock:
+                stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            fetch_mock.assert_called_once_with("https://provider.example/sub")
+            self.assertEqual(stored_provider.metadata, {"traffic_used": "5.0 GB"})
+
 
 if __name__ == "__main__":
     unittest.main()

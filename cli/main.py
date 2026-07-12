@@ -487,7 +487,9 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_remove_parser.set_defaults(handler=_provider_remove)
 
-    provider_edit_parser = provider_subparsers.add_parser("edit", help="Edit provider metadata")
+    provider_edit_parser = provider_subparsers.add_parser(
+        "edit", help="Edit provider name or subscription URL"
+    )
     provider_edit_parser.add_argument("provider_id")
     provider_edit_parser.add_argument("--name", help="New free-form provider label")
     provider_edit_parser.add_argument("--url", help="New subscription URL")

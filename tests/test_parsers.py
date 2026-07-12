@@ -10,12 +10,14 @@ from parsers import (
     ParseError,
     detect_scheme,
     fetch_and_parse,
+    fetch_subscription,
     parse_clash_yaml,
     parse_openvpn_config,
     parse_singbox_json,
     parse_uri,
     parse_wg_config,
 )
+from parsers.subscription import _parse_subscription_userinfo
 from models.profile import ProtocolType
 
 
@@ -432,6 +434,84 @@ class SubscriptionParserTests(unittest.TestCase):
         urlopen_mock.return_value.__enter__.return_value.read.return_value = b"@@@"
         with self.assertRaises(ParseError):
             fetch_and_parse("https://example.com/sub")
+
+
+class SubscriptionUserinfoTests(unittest.TestCase):
+    def test_parse_subscription_userinfo_computes_used_and_limit(self) -> None:
+        metadata = _parse_subscription_userinfo(
+            "upload=805306368; download=268435456; total=10737418240; expire=1893456000"
+        )
+
+        self.assertEqual(metadata["traffic_used"], "1.0 GB")
+        self.assertEqual(metadata["traffic_limit"], "10.0 GB")
+        self.assertEqual(metadata["expires_at"], "2030-01-01")
+
+    def test_parse_subscription_userinfo_handles_missing_header(self) -> None:
+        self.assertEqual(_parse_subscription_userinfo(None), {})
+        self.assertEqual(_parse_subscription_userinfo(""), {})
+
+    def test_parse_subscription_userinfo_ignores_malformed_pairs(self) -> None:
+        metadata = _parse_subscription_userinfo("upload=notanumber; total=5000000000")
+
+        self.assertNotIn("traffic_used", metadata)
+        self.assertEqual(metadata["traffic_limit"], "4.7 GB")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_subscription_reads_userinfo_header(self, urlopen_mock) -> None:
+        response = urlopen_mock.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                ]
+            }
+        ).encode("utf-8")
+        response.headers.items.return_value = [
+            ("Subscription-Userinfo", "upload=100; download=100; total=1000; expire=1893456000"),
+            ("Content-Type", "application/json"),
+        ]
+
+        result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(len(result.profiles), 1)
+        self.assertEqual(result.metadata["traffic_used"], "200.0 B")
+        self.assertEqual(result.metadata["traffic_limit"], "1000.0 B")
+        self.assertEqual(result.metadata["expires_at"], "2030-01-01")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_subscription_without_header_reports_no_metadata(self, urlopen_mock) -> None:
+        urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                ]
+            }
+        ).encode("utf-8")
+
+        result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.metadata, {})
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_and_parse_is_unaffected_by_headers(self, urlopen_mock) -> None:
+        # fetch_and_parse's return shape/behavior must stay list[Profile],
+        # unchanged by the header-capturing refactor.
+        response = urlopen_mock.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "outbounds": [
+                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                ]
+            }
+        ).encode("utf-8")
+        response.headers.items.return_value = [
+            ("Subscription-Userinfo", "upload=100; download=100; total=1000"),
+        ]
+
+        profiles = fetch_and_parse("https://example.com/sub")
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].protocol, ProtocolType.VLESS)
 
 
 if __name__ == "__main__":

@@ -4,16 +4,18 @@ import hashlib
 import re
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import urlparse
 
 from config.profile_store import ProfileStore
 from config.provider_store import DuplicateProviderError, ProviderLimitError, ProviderStore
 from models.profile import Profile, ProfileSource, profile_fingerprint
 from models.provider import Provider, normalized_provider_url
-from parsers import ParseError, fetch_and_parse
+from parsers import ParseError, fetch_and_parse, fetch_subscription
 from providers.base import BaseProvider
 
 SubscriptionFetcher = Callable[[str], list[Profile]]
+SubscriptionMetadataFetcher = Callable[[str], dict[str, Any]]
 
 
 class ProviderNotFoundError(ValueError):
@@ -28,10 +30,31 @@ class SubscriptionProvider(BaseProvider):
         provider_store: ProviderStore | None = None,
         profile_store: ProfileStore | None = None,
         fetcher: SubscriptionFetcher | None = None,
+        metadata_fetcher: SubscriptionMetadataFetcher | None = None,
     ) -> None:
         self.provider_store = provider_store or ProviderStore()
         self.profile_store = profile_store or ProfileStore()
+        # fetcher's Callable[[str], list[Profile]] contract is unchanged and
+        # still injectable on its own (existing tests rely on this) - when a
+        # caller overrides only `fetcher`, we honestly report no metadata
+        # instead of fabricating traffic/expiry data from an unrelated
+        # request, rather than silently making a second real HTTP call.
+        self._fetcher_overridden = fetcher is not None
         self.fetcher = fetcher or fetch_and_parse
+        self.metadata_fetcher = metadata_fetcher
+
+    def _fetch(self, url: str) -> tuple[list[Profile], dict[str, Any]]:
+        if not self._fetcher_overridden:
+            result = fetch_subscription(url)
+            if not result.profiles:
+                raise ParseError("subscription contains no supported profiles")
+            metadata = (
+                self.metadata_fetcher(url) if self.metadata_fetcher is not None else result.metadata
+            )
+            return result.profiles, metadata
+        profiles = self._fetch_profiles(url)
+        metadata = self.metadata_fetcher(url) if self.metadata_fetcher is not None else {}
+        return profiles, metadata
 
     def add(self, url: str, name: str) -> Provider:
         normalized_url = normalized_provider_url(url)
@@ -42,7 +65,7 @@ class SubscriptionProvider(BaseProvider):
         provider_id = self._unique_provider_id(self._provider_base_id(name, normalized_url))
         self._enforce_provider_limit(provider_id)
 
-        profiles = self._fetch_profiles(normalized_url)
+        profiles, metadata = self._fetch(normalized_url)
         provider = Provider(
             id=provider_id,
             name=name or provider_id,
@@ -50,6 +73,7 @@ class SubscriptionProvider(BaseProvider):
             last_updated=datetime.now(timezone.utc),
             profiles=[],
             rotation_enabled=False,
+            metadata=metadata,
         )
         normalized = self._normalize_profiles(provider, profiles)
         for profile in normalized:
@@ -75,7 +99,7 @@ class SubscriptionProvider(BaseProvider):
             for profile in self.profile_store.list()
             if profile.provider_id == provider.id
         }
-        fetched = self._fetch_profiles(provider.url)
+        fetched, metadata = self._fetch(provider.url)
         normalized = self._normalize_profiles(
             provider,
             fetched,
@@ -101,6 +125,7 @@ class SubscriptionProvider(BaseProvider):
 
         provider.last_updated = datetime.now(timezone.utc)
         provider.profiles = [profile.id for profile in normalized]
+        provider.metadata = metadata
         self.provider_store.update(provider)
         return changes
 
