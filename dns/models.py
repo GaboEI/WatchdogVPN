@@ -17,6 +17,7 @@ DEFAULT_FAKEIP_INET6_RANGE = "fc00::/18"
 ALLOWED_PROXY_RESOLUTION_CHANNELS = {"fakeip", "proxy", "direct", "final"}
 ALLOWED_DNS_CHANNEL_STRATEGIES = {"auto"}
 DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+DNS_TTL_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:ns|us|ms|s|m|h))+$")
 DNS_RULE_PATTERN_TYPES = {
     "domain",
     "suffix",
@@ -269,6 +270,7 @@ class DNSPolicy:
             raise ValueError("dns test domain must not be empty")
         if not self.ttl:
             raise ValueError("dns ttl must not be empty")
+        _validate_dns_ttl(self.ttl)
         if self.proxy_resolution_channel not in ALLOWED_PROXY_RESOLUTION_CHANNELS:
             raise ValueError("unsupported proxy resolution channel")
         if self.ecs_direct_enabled and self.ecs_direct_subnet is None:
@@ -375,6 +377,14 @@ def _validate_domain_name(domain: str) -> None:
         raise ValueError("domain name must be fully qualified")
     if any(not label or not DOMAIN_LABEL_RE.match(label) for label in labels):
         raise ValueError("invalid domain name")
+
+
+def _validate_dns_ttl(value: str) -> None:
+    if not DNS_TTL_RE.fullmatch(value):
+        raise ValueError("dns ttl must be a positive duration such as 30m or 12h")
+    amounts = re.findall(r"(\d+(?:\.\d+)?)(?:ns|us|ms|s|m|h)", value)
+    if not any(float(amount) > 0 for amount in amounts):
+        raise ValueError("dns ttl must be greater than zero")
 
 
 def _validate_dns_rule_pattern(pattern: str) -> None:

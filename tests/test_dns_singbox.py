@@ -19,6 +19,7 @@ from dns.singbox import (
     build_dns_hijack_inbounds,
     build_dns_hijack_route,
     build_singbox_dns_config,
+    fakeip_policy_ready,
 )
 
 
@@ -131,6 +132,33 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             "inet6_range": "fc00::/18",
         })
         self.assertEqual(result.proxy_domain_resolver, FAKEIP_SERVER_TAG)
+
+    def test_fakeip_policy_ready_requires_an_enabled_proxy_resolver(self) -> None:
+        empty = DNSPolicy(
+            channels={
+                DNSChannelName.PROXY: DNSChannel(name=DNSChannelName.PROXY)
+            }
+        )
+        disabled = DNSPolicy(
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="udp://1.1.1.1", enabled=False)],
+                )
+            }
+        )
+        ready = DNSPolicy(
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="udp://1.1.1.1")],
+                )
+            }
+        )
+
+        self.assertFalse(fakeip_policy_ready(empty))
+        self.assertFalse(fakeip_policy_ready(disabled))
+        self.assertTrue(fakeip_policy_ready(ready))
 
     def test_skips_fakeip_when_proxy_resolution_uses_proxy_dns(self) -> None:
         policy = DNSPolicy(

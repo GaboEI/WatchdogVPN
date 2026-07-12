@@ -32,7 +32,7 @@ from config.lan_sharing import (
     load_or_create_lan_sharing_credentials,
 )
 from config.paths import resolve_config_dir
-from config.persistence import PersistentStoreError, dump_json
+from config.persistence import PersistentStoreError, atomic_write_bytes, dump_json
 from config.profile_store import ProfileStore
 from config.provider_store import DuplicateProviderError, ProviderLimitError, ProviderStore
 from config.state_manager import (
@@ -45,8 +45,18 @@ from config.state_manager import (
     parse_capture_modes,
 )
 from dns.hijack import DNSHijackController, DNSHijackError
-from dns.models import DNSChannelName, DNSMode, DNSPolicy
+from dns.models import (
+    DNSChannel,
+    DNSChannelName,
+    DNSMode,
+    DNSPolicy,
+    DNSRule,
+    DNSRuleAction,
+    Resolver,
+    StaticIPEntry,
+)
 from dns.resolver_inventory import detect_resolver_manager
+from dns.singbox import fakeip_policy_ready
 from dns.state_manager import (
     DNSStateError,
     DNSStateSnapshot,
@@ -131,6 +141,30 @@ CONFIG_BOOL_SET_KEYS = frozenset(
         "lan_sharing.enabled",
         "lan_sharing.authentication_required",
         "lan_sharing.firewall_managed",
+    }
+)
+DNS_POLICY_SET_KEYS = frozenset(
+    {
+        "dns.proxy_resolution_channel",
+        "dns.fakeip_inet4_range",
+        "dns.fakeip_inet6_range",
+        "dns.ecs_direct_enabled",
+        "dns.ecs_direct_subnet",
+        "dns.resolve_inbound_domains",
+        "dns.static_ip_enabled",
+        "dns.rules_enabled",
+        "dns.ttl",
+        "dns.test_domain",
+        "dns.tun_hijack",
+    }
+)
+DNS_POLICY_BOOL_SET_KEYS = frozenset(
+    {
+        "dns.ecs_direct_enabled",
+        "dns.resolve_inbound_domains",
+        "dns.static_ip_enabled",
+        "dns.rules_enabled",
+        "dns.tun_hijack",
     }
 )
 VISIBLE_STATS_COUNTER_PREFIXES = (
@@ -666,6 +700,144 @@ def _build_parser() -> argparse.ArgumentParser:
     dns_reset_parser.add_argument("--json", action="store_true", help="Print JSON")
     dns_reset_parser.add_argument("--yes", action="store_true", help="Confirm DNS restore")
     dns_reset_parser.set_defaults(handler=_dns_reset)
+
+    dns_channel_parser = dns_subparsers.add_parser("channel", help="Manage DNS channels")
+    dns_channel_subparsers = dns_channel_parser.add_subparsers(dest="dns_channel_command")
+    dns_channel_subparsers.required = True
+
+    dns_channel_add_parser = dns_channel_subparsers.add_parser(
+        "add", help="Add an empty DNS channel"
+    )
+    dns_channel_add_parser.add_argument("name", choices=[item.value for item in DNSChannelName])
+    _add_dns_common_paths(dns_channel_add_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_channel_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_channel_add_parser.set_defaults(handler=_dns_channel_add)
+
+    dns_channel_remove_parser = dns_channel_subparsers.add_parser(
+        "remove", help="Remove a DNS channel and its resolvers"
+    )
+    dns_channel_remove_parser.add_argument("name", choices=[item.value for item in DNSChannelName])
+    _add_dns_common_paths(dns_channel_remove_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_channel_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_channel_remove_parser.set_defaults(handler=_dns_channel_remove)
+
+    dns_resolver_parser = dns_subparsers.add_parser("resolver", help="Manage DNS resolvers")
+    dns_resolver_subparsers = dns_resolver_parser.add_subparsers(dest="dns_resolver_command")
+    dns_resolver_subparsers.required = True
+
+    dns_resolver_add_parser = dns_resolver_subparsers.add_parser(
+        "add", help="Add a resolver to a DNS channel"
+    )
+    dns_resolver_add_parser.add_argument("channel", choices=[item.value for item in DNSChannelName])
+    dns_resolver_add_parser.add_argument("uri", help="Resolver URI, for example udp://1.1.1.1")
+    dns_resolver_add_parser.add_argument("--label", help="Free-form resolver label")
+    dns_resolver_add_parser.add_argument(
+        "--strategy",
+        choices=["auto"],
+        default="auto",
+        help="Channel resolver strategy",
+    )
+    dns_resolver_add_parser.add_argument(
+        "--disabled", action="store_true", help="Add the resolver disabled"
+    )
+    _add_dns_common_paths(dns_resolver_add_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_resolver_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_resolver_add_parser.set_defaults(handler=_dns_resolver_add)
+
+    dns_resolver_remove_parser = dns_resolver_subparsers.add_parser(
+        "remove", help="Remove a resolver from a DNS channel"
+    )
+    dns_resolver_remove_parser.add_argument("channel", choices=[item.value for item in DNSChannelName])
+    dns_resolver_remove_parser.add_argument("uri")
+    _add_dns_common_paths(dns_resolver_remove_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_resolver_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_resolver_remove_parser.set_defaults(handler=_dns_resolver_remove)
+
+    dns_resolver_enable_parser = dns_resolver_subparsers.add_parser(
+        "enable", help="Enable a resolver in a DNS channel"
+    )
+    dns_resolver_enable_parser.add_argument("channel", choices=[item.value for item in DNSChannelName])
+    dns_resolver_enable_parser.add_argument("uri")
+    _add_dns_common_paths(dns_resolver_enable_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_resolver_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_resolver_enable_parser.set_defaults(handler=_dns_resolver_set_enabled, enabled=True)
+
+    dns_resolver_disable_parser = dns_resolver_subparsers.add_parser(
+        "disable", help="Disable a resolver in a DNS channel"
+    )
+    dns_resolver_disable_parser.add_argument("channel", choices=[item.value for item in DNSChannelName])
+    dns_resolver_disable_parser.add_argument("uri")
+    _add_dns_common_paths(dns_resolver_disable_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_resolver_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_resolver_disable_parser.set_defaults(handler=_dns_resolver_set_enabled, enabled=False)
+
+    dns_rule_parser = dns_subparsers.add_parser("rule", help="Manage DNS diversion rules")
+    dns_rule_subparsers = dns_rule_parser.add_subparsers(dest="dns_rule_command")
+    dns_rule_subparsers.required = True
+
+    dns_rule_add_parser = dns_rule_subparsers.add_parser("add", help="Add a DNS diversion rule")
+    dns_rule_add_parser.add_argument("id")
+    dns_rule_add_parser.add_argument(
+        "--pattern", required=True, help="For example domain:example.com or suffix:example.com"
+    )
+    dns_rule_add_parser.add_argument(
+        "--action", required=True, choices=[item.value for item in DNSRuleAction]
+    )
+    dns_rule_add_parser.add_argument(
+        "--channel", choices=[item.value for item in DNSChannelName], help="Required for --action use_channel"
+    )
+    dns_rule_add_parser.add_argument("--priority", type=int, default=100)
+    dns_rule_add_parser.add_argument(
+        "--disabled", action="store_true", help="Add the rule disabled"
+    )
+    _add_dns_common_paths(dns_rule_add_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_rule_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_rule_add_parser.set_defaults(handler=_dns_rule_add)
+
+    dns_rule_remove_parser = dns_rule_subparsers.add_parser("remove", help="Remove a DNS diversion rule")
+    dns_rule_remove_parser.add_argument("id")
+    _add_dns_common_paths(dns_rule_remove_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_rule_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_rule_remove_parser.set_defaults(handler=_dns_rule_remove)
+
+    dns_rule_enable_parser = dns_rule_subparsers.add_parser("enable", help="Enable a DNS diversion rule")
+    dns_rule_enable_parser.add_argument("id")
+    _add_dns_common_paths(dns_rule_enable_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_rule_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_rule_enable_parser.set_defaults(handler=_dns_rule_set_enabled, enabled=True)
+
+    dns_rule_disable_parser = dns_rule_subparsers.add_parser("disable", help="Disable a DNS diversion rule")
+    dns_rule_disable_parser.add_argument("id")
+    _add_dns_common_paths(dns_rule_disable_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_rule_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_rule_disable_parser.set_defaults(handler=_dns_rule_set_enabled, enabled=False)
+
+    dns_static_ip_parser = dns_subparsers.add_parser("static-ip", help="Manage static IP mappings")
+    dns_static_ip_subparsers = dns_static_ip_parser.add_subparsers(dest="dns_static_ip_command")
+    dns_static_ip_subparsers.required = True
+
+    dns_static_ip_add_parser = dns_static_ip_subparsers.add_parser(
+        "add", help="Add a static IP mapping"
+    )
+    dns_static_ip_add_parser.add_argument("domain")
+    dns_static_ip_add_parser.add_argument("ip")
+    dns_static_ip_add_parser.add_argument(
+        "--disabled", action="store_true", help="Add the mapping disabled"
+    )
+    _add_dns_common_paths(dns_static_ip_add_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_static_ip_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_static_ip_add_parser.set_defaults(handler=_dns_static_ip_add)
+
+    dns_static_ip_remove_parser = dns_static_ip_subparsers.add_parser(
+        "remove", help="Remove static IP mapping(s) for a domain"
+    )
+    dns_static_ip_remove_parser.add_argument("domain")
+    dns_static_ip_remove_parser.add_argument(
+        "--ip", help="Only remove this specific IP; defaults to removing all IPs for the domain"
+    )
+    _add_dns_common_paths(dns_static_ip_remove_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_static_ip_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_static_ip_remove_parser.set_defaults(handler=_dns_static_ip_remove)
 
     config_parser = subparsers.add_parser("config", help="Manage WatchdogVPN configuration")
     config_subparsers = config_parser.add_subparsers(dest="config_command")
@@ -2493,6 +2665,8 @@ def _config_set(args: argparse.Namespace) -> int:
         return _config_set_mode_value(args.value, args.json)
     if args.key in {"routing-policy", "capture-modes", "default-route-action"}:
         return _config_set_routing_value(args.key, args.value, args.json)
+    if args.key.startswith("dns."):
+        return _config_set_dns_value(args.key, args.value, args.json)
     if args.key not in CONFIG_SET_KEYS:
         supported = ", ".join(
             [
@@ -2500,6 +2674,7 @@ def _config_set(args: argparse.Namespace) -> int:
                 "routing-policy",
                 "capture-modes",
                 "default-route-action",
+                *sorted(DNS_POLICY_SET_KEYS),
                 *sorted(CONFIG_SET_KEYS),
             ]
         )
@@ -2601,6 +2776,43 @@ def _config_set_routing_value(key: str, value: str, json_output: bool) -> int:
     else:
         print("Routing state updated.")
         _print_routing_state_summary(data)
+    return 0
+
+
+def _config_set_dns_value(key: str, value: str, json_output: bool) -> int:
+    if key not in DNS_POLICY_SET_KEYS:
+        supported = ", ".join(sorted(DNS_POLICY_SET_KEYS))
+        raise ParseError(f"unsupported dns config key: {key} (supported: {supported})")
+    field_name = key.split(".", 1)[1]
+    store = DNSPolicyStore()
+    policy = store.load()
+    parsed: object
+    if key in DNS_POLICY_BOOL_SET_KEYS:
+        lowered = value.lower()
+        if lowered == "true":
+            parsed = True
+        elif lowered == "false":
+            parsed = False
+        else:
+            raise ParseError(f"{key} must be true or false")
+    elif key == "dns.ecs_direct_subnet" and value.lower() in {"none", "null", ""}:
+        parsed = None
+    else:
+        parsed = value
+    setattr(policy, field_name, parsed)
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    mutation_data = _save_dns_policy_mutation(store, policy)
+    data = {
+        "key": key,
+        "value": getattr(policy, field_name),
+        "backup_path": mutation_data["backup_path"],
+        "rollback_point": mutation_data["rollback_point"],
+    }
+    if json_output:
+        _print_json(data)
+    else:
+        print(f"Config set: {key}={data['value']}")
+        print(f"Backup: {data['backup_path']}")
     return 0
 
 
@@ -3905,10 +4117,13 @@ def _dns_status(args: argparse.Namespace) -> int:
     print(f"Static IP: {_on_off(policy.static_ip_enabled, no_color=no_color)} ({len(policy.static_ips)} entries)")
     print(f"Rules: {_on_off(policy.rules_enabled, no_color=no_color)} ({len(policy.rules)} rules)")
     fakeip_active = data["features"]["proxy_resolution_channel_active"]
+    fakeip_suffix = ""
+    if not fakeip_active:
+        fakeip_suffix = f" - {_fakeip_inactive_reason(policy)}"
     print(
         f"FakeIP: {_on_off(bool(fakeip_active), no_color=no_color)} "
         f"({policy.fakeip_inet4_range}, {policy.fakeip_inet6_range})"
-        + ("" if fakeip_active else " - requires a configured proxy DNS channel")
+        + fakeip_suffix
     )
     print(f"ECS direct: {_on_off(policy.ecs_direct_enabled, no_color=no_color)}")
     print(f"Snapshot: {data['snapshot']['path']} ({_semantic(data['snapshot']['status'], no_color=no_color)})")
@@ -4108,6 +4323,301 @@ def _dns_reset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _dns_policy_store(args: argparse.Namespace) -> DNSPolicyStore:
+    path = Path(args.policy_file) if getattr(args, "policy_file", None) else None
+    return DNSPolicyStore(path)
+
+
+def _dns_policy_mutation_data(
+    policy: DNSPolicy,
+    backup_path: Path,
+    rollback_point: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "policy": policy.to_dict(),
+        "backup_path": str(backup_path),
+        "rollback_point": rollback_point,
+    }
+
+
+def _create_dns_policy_backup(
+    store: DNSPolicyStore,
+) -> tuple[Path, dict[str, object]]:
+    if store.path.name == "dns-policy.json":
+        backup_path = BackupManager(config_dir=store.path.parent).create_backup(
+            reason="pre-policy-mutation",
+            sections=["dns-policy"],
+        ).path
+        return backup_path, _section_backup_rollback("dns-policy", backup_path)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backup_path = (
+        store.path.parent
+        / "backups"
+        / f"{store.path.stem}-pre-policy-mutation-{stamp}{store.path.suffix or '.json'}"
+    )
+    payload = store.path.read_bytes() if store.path.exists() else b"{}\n"
+    atomic_write_bytes(backup_path, payload)
+    return backup_path, {
+        "kind": "file-backup",
+        "path": str(backup_path),
+        "target": str(store.path),
+    }
+
+
+def _save_dns_policy_mutation(
+    store: DNSPolicyStore,
+    policy: DNSPolicy,
+) -> dict[str, object]:
+    backup_path, rollback_point = _create_dns_policy_backup(store)
+    store.save(policy)
+    return _dns_policy_mutation_data(policy, backup_path, rollback_point)
+
+
+def _dns_channel_add(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.name)
+    if name in policy.channels:
+        raise ParseError(
+            f"dns channel already exists: {name.value}; run `watchdog dns status --json` to inspect channels"
+        )
+    policy.channels[name] = DNSChannel(name=name)
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added DNS channel: {name.value}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_channel_remove(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.name)
+    if name not in policy.channels:
+        raise ParseError(
+            f"dns channel not found: {name.value}; run `watchdog dns status --json` to inspect channels"
+        )
+    referencing_rules = [rule.id for rule in policy.rules if rule.channel == name]
+    if referencing_rules:
+        raise ParseError(
+            f"dns channel {name.value} is referenced by rule(s): "
+            f"{', '.join(sorted(referencing_rules))}; remove those rules first"
+        )
+    del policy.channels[name]
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed DNS channel: {name.value}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_resolver_add(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.channel)
+    channel = policy.channels.setdefault(
+        name,
+        DNSChannel(name=name, strategy=args.strategy),
+    )
+    if any(resolver.uri == args.uri for resolver in channel.resolvers):
+        raise ParseError(f"resolver already exists in channel {name.value}: {args.uri}")
+    channel.resolvers.append(
+        Resolver(uri=args.uri, label=args.label, enabled=not args.disabled)
+    )
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added resolver to channel {name.value}: {args.uri}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_resolver_remove(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.channel)
+    channel = policy.channels.get(name)
+    if channel is None or not any(resolver.uri == args.uri for resolver in channel.resolvers):
+        raise ParseError(f"resolver not found in channel {name.value}: {args.uri}")
+    channel.resolvers = [resolver for resolver in channel.resolvers if resolver.uri != args.uri]
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed resolver from channel {name.value}: {args.uri}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_resolver_set_enabled(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.channel)
+    channel = policy.channels.get(name)
+    if channel is None or not any(resolver.uri == args.uri for resolver in channel.resolvers):
+        raise ParseError(f"resolver not found in channel {name.value}: {args.uri}")
+    channel.resolvers = [
+        Resolver(uri=resolver.uri, label=resolver.label, enabled=bool(args.enabled), metadata=resolver.metadata)
+        if resolver.uri == args.uri
+        else resolver
+        for resolver in channel.resolvers
+    ]
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if args.enabled else "disabled"
+        print(f"Resolver {state} in channel {name.value}: {args.uri}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_rule_add(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    if any(rule.id == args.id for rule in policy.rules):
+        raise ParseError(
+            f"dns rule already exists: {args.id}; run `watchdog dns status --json` to inspect rules"
+        )
+    rule = DNSRule(
+        id=args.id,
+        pattern=args.pattern,
+        action=DNSRuleAction(args.action),
+        channel=DNSChannelName(args.channel) if args.channel else None,
+        enabled=not args.disabled,
+        priority=args.priority,
+    )
+    if rule.action == DNSRuleAction.REJECT and args.channel is not None:
+        raise ParseError("--channel is incompatible with --action reject")
+    if rule.channel is not None and rule.channel not in policy.channels:
+        raise ParseError(
+            f"dns channel not found: {rule.channel.value}; "
+            "create it before adding a rule that uses it"
+        )
+    policy.rules.append(rule)
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added DNS rule: {rule.id}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_rule_remove(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    original_count = len(policy.rules)
+    policy.rules = [rule for rule in policy.rules if rule.id != args.id]
+    if len(policy.rules) == original_count:
+        raise ParseError(
+            f"dns rule not found: {args.id}; run `watchdog dns status --json` to inspect rules"
+        )
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed DNS rule: {args.id}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_rule_set_enabled(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    if not any(rule.id == args.id for rule in policy.rules):
+        raise ParseError(
+            f"dns rule not found: {args.id}; run `watchdog dns status --json` to inspect rules"
+        )
+    policy.rules = [
+        DNSRule(
+            id=rule.id,
+            pattern=rule.pattern,
+            action=rule.action,
+            channel=rule.channel,
+            enabled=bool(args.enabled),
+            priority=rule.priority,
+        )
+        if rule.id == args.id
+        else rule
+        for rule in policy.rules
+    ]
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if args.enabled else "disabled"
+        print(f"DNS rule {state}: {args.id}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_static_ip_add(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    new_entry = StaticIPEntry(
+        domain=args.domain,
+        ip=args.ip,
+        enabled=not args.disabled,
+    )
+    if any(
+        entry.domain == new_entry.domain and entry.ip == new_entry.ip
+        for entry in policy.static_ips
+    ):
+        raise ParseError(
+            f"static IP mapping already exists: {new_entry.domain} -> {new_entry.ip}"
+        )
+    policy.static_ips.append(new_entry)
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added static IP mapping: {args.domain} -> {args.ip}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_static_ip_remove(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    domain = args.domain.strip().lower().rstrip(".")
+    target_ip = args.ip.strip() if args.ip else None
+    original_count = len(policy.static_ips)
+    if target_ip:
+        policy.static_ips = [
+            entry
+            for entry in policy.static_ips
+            if not (entry.domain == domain and entry.ip == target_ip)
+        ]
+    else:
+        policy.static_ips = [entry for entry in policy.static_ips if entry.domain != domain]
+    if len(policy.static_ips) == original_count:
+        raise ParseError(f"static IP mapping not found for domain: {args.domain}")
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed static IP mapping(s) for domain: {args.domain}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
 def _add_dns_common_paths(
     parser: argparse.ArgumentParser,
     include_resolv_conf: bool = True,
@@ -4156,22 +4666,24 @@ def _dns_status_data(
             "rules_enabled": policy.rules_enabled,
             "ecs_direct_enabled": policy.ecs_direct_enabled,
             "proxy_resolution_channel": policy.proxy_resolution_channel,
-            # proxy_resolution_channel above is just the configured setting.
-            # dns/singbox.py's runtime config generation only actually wires
-            # fakeip in when a "proxy" DNS channel is also configured
-            # (_fakeip_enabled()); without one, fakeip silently never
-            # activates even though the setting reads "fakeip". Surface that
-            # honestly instead of letting status imply it is active.
-            "proxy_resolution_channel_active": (
-                policy.proxy_resolution_channel == "fakeip"
-                and DNSChannelName.PROXY in policy.channels
-            ),
+            "proxy_resolution_channel_active": fakeip_policy_ready(policy),
         },
         "snapshot": {
             "path": str(snapshot_path),
             "status": "present" if snapshot_path.exists() else "missing",
         },
     }
+
+
+def _fakeip_inactive_reason(policy: DNSPolicy) -> str:
+    if policy.mode == DNSMode.OFF:
+        return "DNS mode is off"
+    if policy.proxy_resolution_channel != "fakeip":
+        return f"proxy resolution uses {policy.proxy_resolution_channel}"
+    proxy_channel = policy.channels.get(DNSChannelName.PROXY)
+    if proxy_channel is None:
+        return "requires a configured proxy DNS channel"
+    return "requires an enabled resolver in the proxy DNS channel"
 
 
 def _dns_channel_results(data: dict[str, object]) -> dict[str, dict]:

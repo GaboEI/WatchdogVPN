@@ -229,10 +229,16 @@ def _fakeip_enabled(
     policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
 ) -> bool:
+    return fakeip_policy_ready(policy) and DNSChannelName.PROXY in channel_servers
+
+
+def fakeip_policy_ready(policy: DNSPolicy) -> bool:
+    proxy_channel = policy.channels.get(DNSChannelName.PROXY)
     return (
         policy.mode != DNSMode.OFF
         and policy.proxy_resolution_channel == "fakeip"
-        and DNSChannelName.PROXY in channel_servers
+        and proxy_channel is not None
+        and any(resolver.enabled for resolver in proxy_channel.resolvers)
     )
 
 
