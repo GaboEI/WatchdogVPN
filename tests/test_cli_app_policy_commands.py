@@ -286,6 +286,87 @@ class CliAppPolicyCommandTests(unittest.TestCase):
         self.assertIn("invalid JSON", data["error"])
         self.assertEqual(data["policy"]["default_action"], "block")
 
+    def test_add_process_path_regex_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "app-policy",
+                    "add",
+                    "--process-path-regex",
+                    r"^/usr/bin/(curl|wget)$",
+                    "--action",
+                    "block",
+                    "--json",
+                ],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            added = data["added"]
+            self.assertEqual(added["match"], {"process_path_regex": [r"^/usr/bin/(curl|wget)$"]})
+            self.assertEqual(data["policy"]["rules"][0]["match_confidence"], "medium")
+
+    def test_add_user_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["app-policy", "add", "--user", "vpnuser", "--action", "block", "--json"],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            added = data["added"]
+            self.assertEqual(added["match"], {"user": ["vpnuser"]})
+            self.assertEqual(data["policy"]["rules"][0]["match_confidence"], "medium")
+
+    def test_add_user_id_rule_accepts_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["app-policy", "add", "--user-id", "0", "--action", "block", "--json"],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            added = data["added"]
+            self.assertEqual(added["match"], {"user_id": [0]})
+            self.assertEqual(data["policy"]["rules"][0]["match_confidence"], "high")
+
+    def test_enable_disable_rule_toggles_single_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                [
+                    "app-policy",
+                    "add",
+                    "--process-name",
+                    "curl",
+                    "--action",
+                    "block",
+                    "--id",
+                    "curl-block",
+                ],
+                tmp,
+            )
+
+            disabled = self.run_watchdog(
+                ["app-policy", "disable-rule", "curl-block", "--json"], tmp
+            )
+            disabled_data = json.loads(disabled.stdout)
+            self.assertFalse(disabled_data["policy"]["rules"][0]["enabled"])
+            self.assertTrue(Path(disabled_data["backup_path"]).exists())
+
+            enabled = self.run_watchdog(
+                ["app-policy", "enable-rule", "curl-block", "--json"], tmp
+            )
+            enabled_data = json.loads(enabled.stdout)
+            self.assertTrue(enabled_data["policy"]["rules"][0]["enabled"])
+
+    def test_disable_rule_missing_id_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["app-policy", "disable-rule", "missing"], tmp, check=False
+            )
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("app policy rule not found: missing", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

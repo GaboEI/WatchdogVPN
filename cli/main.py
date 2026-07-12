@@ -898,6 +898,11 @@ def _build_parser() -> argparse.ArgumentParser:
     app_policy_add_match = app_policy_add_parser.add_mutually_exclusive_group(required=True)
     app_policy_add_match.add_argument("--process-name", help="Process executable name")
     app_policy_add_match.add_argument("--process-path", help="Exact process executable path")
+    app_policy_add_match.add_argument(
+        "--process-path-regex", help="Regex matching a process executable path"
+    )
+    app_policy_add_match.add_argument("--user", help="Unix username")
+    app_policy_add_match.add_argument("--user-id", type=int, help="Unix numeric user ID")
     app_policy_add_parser.add_argument(
         "--action",
         required=True,
@@ -911,6 +916,20 @@ def _build_parser() -> argparse.ArgumentParser:
     app_policy_remove_parser.add_argument("rule_id")
     app_policy_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
     app_policy_remove_parser.set_defaults(handler=_app_policy_remove)
+
+    app_policy_enable_rule_parser = app_policy_subparsers.add_parser(
+        "enable-rule", help="Enable a single app policy rule"
+    )
+    app_policy_enable_rule_parser.add_argument("rule_id")
+    app_policy_enable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_enable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=True)
+
+    app_policy_disable_rule_parser = app_policy_subparsers.add_parser(
+        "disable-rule", help="Disable a single app policy rule"
+    )
+    app_policy_disable_rule_parser.add_argument("rule_id")
+    app_policy_disable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_disable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=False)
 
     return parser
 
@@ -3293,11 +3312,17 @@ def _app_policy_set_default_action(args: argparse.Namespace) -> int:
 def _app_policy_add(args: argparse.Namespace) -> int:
     store = AppPolicyStore()
     policy = store.load()
-    match: dict[str, list[str]] = {}
+    match: dict[str, list[str] | list[int]] = {}
     if args.process_name:
         match["process_name"] = [args.process_name]
     if args.process_path:
         match["process_path"] = [args.process_path]
+    if args.process_path_regex:
+        match["process_path_regex"] = [args.process_path_regex]
+    if args.user:
+        match["user"] = [args.user]
+    if args.user_id is not None:
+        match["user_id"] = [args.user_id]
     rule_id = args.id or _next_app_policy_rule_id(policy, match, args.action)
     if any(rule.id == rule_id for rule in policy.rules):
         raise ParseError(
@@ -3350,6 +3375,38 @@ def _app_policy_remove(args: argparse.Namespace) -> int:
         _print_json(data)
     else:
         print(f"Removed app policy rule: {args.rule_id}")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _app_policy_set_rule_enabled(args: argparse.Namespace) -> int:
+    store = AppPolicyStore()
+    policy = store.load()
+    if not any(rule.id == args.rule_id for rule in policy.rules):
+        raise ParseError(
+            f"app policy rule not found: {args.rule_id}; run `watchdog app-policy status` to inspect rules"
+        )
+    policy.rules = [
+        AppPolicyRule(id=rule.id, action=rule.action, match=rule.match, enabled=bool(args.enabled))
+        if rule.id == args.rule_id
+        else rule
+        for rule in policy.rules
+    ]
+    policy = AppPolicy.from_dict(policy.to_dict())
+    backup_path = _create_section_backup("app-policy")
+    store.save(policy)
+    data = {
+        "rule_id": args.rule_id,
+        "enabled": bool(args.enabled),
+        "policy": _app_policy_status_data(policy),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("app-policy", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if args.enabled else "disabled"
+        print(f"App policy rule {state}: {args.rule_id}")
         print(f"Backup: {backup_path}")
     return 0
 
