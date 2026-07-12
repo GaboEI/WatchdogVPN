@@ -92,6 +92,23 @@ external DNS service. `vpn_dns_rescue` remains as a fallback helper to recover
 name resolution when local DNS services are removed or broken during
 uninstall/recovery work.
 
+## Kill Switch Scope
+
+The kill switch is a system-wide fail-closed firewall guard for WatchdogVPN's
+own protected route. When it is genuinely active after a WatchdogVPN connection
+failure, outbound traffic that is not allowed through the active WatchdogVPN TUN
+path is blocked.
+
+This includes other VPN or proxy clients that were already connected before the
+WatchdogVPN failure. Phase 23 field validation proved this behavior with a real
+external VPN active: after a controlled WatchdogVPN runtime failure triggered
+the kill switch, that external VPN's egress was also blocked. This is expected
+by design, not a separate external-client allowlist failure. Users who run
+another VPN client alongside WatchdogVPN should treat an active WatchdogVPN kill
+switch as taking precedence over the host's normal outbound networking until
+WatchdogVPN recovers, disconnects cleanly or the panic button removes the
+firewall rules.
+
 ## WatchdogVPN Panic Button
 
 `watchdog_panic` (installed to `/usr/local/bin/`) is a deliberately separate
