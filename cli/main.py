@@ -772,6 +772,30 @@ def _build_parser() -> argparse.ArgumentParser:
     rules_remove_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
     rules_remove_rule_parser.set_defaults(handler=_rules_remove_rule)
 
+    rules_set_priority_parser = rules_subparsers.add_parser(
+        "set-priority", help="Set a rule group's priority"
+    )
+    rules_set_priority_parser.add_argument("group")
+    rules_set_priority_parser.add_argument("priority", type=int)
+    rules_set_priority_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_set_priority_parser.set_defaults(handler=_rules_set_priority)
+
+    rules_enable_rule_parser = rules_subparsers.add_parser(
+        "enable-rule", help="Enable a single rule within a group"
+    )
+    rules_enable_rule_parser.add_argument("group")
+    rules_enable_rule_parser.add_argument("rule_id")
+    rules_enable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_enable_rule_parser.set_defaults(handler=_rules_set_rule_enabled, enabled=True)
+
+    rules_disable_rule_parser = rules_subparsers.add_parser(
+        "disable-rule", help="Disable a single rule within a group"
+    )
+    rules_disable_rule_parser.add_argument("group")
+    rules_disable_rule_parser.add_argument("rule_id")
+    rules_disable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_disable_rule_parser.set_defaults(handler=_rules_set_rule_enabled, enabled=False)
+
     rules_import_parser = rules_subparsers.add_parser("import", help="Import a rule group JSON file")
     rules_import_parser.add_argument("file")
     rules_import_parser.add_argument("--name", help="Override imported group name")
@@ -2865,6 +2889,59 @@ def _rules_remove_rule(args: argparse.Namespace) -> int:
         _print_json(data)
     else:
         print(f"Removed rule: {group.name}/{args.rule_id}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _rules_set_priority(args: argparse.Namespace) -> int:
+    store = RuleStore()
+    existing = store.get_group(args.group)
+    if existing is None:
+        raise RuleStoreError(
+            f"rule group not found: {args.group}; run `watchdog rules list` to inspect rule groups"
+        )
+    backup_path = store.replace_group(existing, backup_existing=True)
+    group = store.set_priority(args.group, args.priority)
+    data = {
+        "group": group.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Rule group priority set: {group.name} priority={group.priority}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _rules_set_rule_enabled(args: argparse.Namespace) -> int:
+    store = RuleStore()
+    existing = store.get_group(args.group)
+    if existing is None:
+        raise RuleStoreError(
+            f"rule group not found: {args.group}; run `watchdog rules list` to inspect rule groups"
+        )
+    if not any(rule.id == args.rule_id for rule in existing.rules):
+        raise RuleStoreError(
+            f"rule not found: {args.rule_id}; run `watchdog rules export {args.group} --json` to inspect rules"
+        )
+    backup_path = store.replace_group(existing, backup_existing=True)
+    group = store.set_rule_enabled(args.group, args.rule_id, bool(args.enabled))
+    data = {
+        "group": group.to_dict(),
+        "rule_id": args.rule_id,
+        "enabled": bool(args.enabled),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if args.enabled else "disabled"
+        print(f"Rule {state}: {group.name}/{args.rule_id}")
         if backup_path:
             print(f"Backup: {backup_path}")
     return 0

@@ -116,6 +116,31 @@ class RuleStore:
             dump_json(target, validated.to_dict())
             return validated
 
+    def set_priority(self, group_name: str, priority: int) -> RuleGroup:
+        target = self._group_path(group_name)
+        with file_lock(target):
+            group = self._load_required_group_unlocked(target, group_name)
+            group.priority = priority
+            validated = RuleGroup.from_dict(group.to_dict())
+            dump_json(target, validated.to_dict())
+            return validated
+
+    def set_rule_enabled(self, group_name: str, rule_id: str, enabled: bool) -> RuleGroup:
+        target = self._group_path(group_name)
+        with file_lock(target):
+            group = self._load_required_group_unlocked(target, group_name)
+            if not any(rule.id == rule_id for rule in group.rules):
+                raise RuleStoreError(f"rule not found: {rule_id}")
+            group.rules = [
+                Rule(id=rule.id, action=rule.action, conditions=rule.conditions, enabled=enabled)
+                if rule.id == rule_id
+                else rule
+                for rule in group.rules
+            ]
+            validated = RuleGroup.from_dict(group.to_dict())
+            dump_json(target, validated.to_dict())
+            return validated
+
     def ensure_default_groups(self) -> None:
         for name in DEFAULT_RULE_GROUPS:
             if self.get_group(name) is None:

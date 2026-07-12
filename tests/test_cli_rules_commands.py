@@ -131,6 +131,66 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertEqual(removed_data["group"]["rules"], [])
         self.assertTrue(removed_backup_exists)
 
+    def test_set_priority_persists_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(tmp, RuleGroup(name="custom", priority=100))
+
+            result = self.run_watchdog(
+                ["rules", "set-priority", "custom", "25", "--json"], tmp
+            )
+            data = json.loads(result.stdout)
+
+            self.assertEqual(data["group"]["priority"], 25)
+            self.assertTrue(Path(data["backup_path"]).exists())
+
+    def test_set_priority_missing_group_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["rules", "set-priority", "missing", "25"], tmp, check=False
+            )
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("watchdog rules list", result.stderr)
+
+    def test_enable_disable_rule_toggles_single_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(id="r1", action="direct", conditions={"domain": ["a.com"]}),
+                        Rule(id="r2", action="block", conditions={"domain": ["b.com"]}),
+                    ],
+                ),
+            )
+
+            disabled = self.run_watchdog(
+                ["rules", "disable-rule", "custom", "r1", "--json"], tmp
+            )
+            disabled_data = json.loads(disabled.stdout)
+            rules_by_id = {rule["id"]: rule for rule in disabled_data["group"]["rules"]}
+
+            self.assertFalse(rules_by_id["r1"]["enabled"])
+            self.assertTrue(rules_by_id["r2"]["enabled"])
+            self.assertTrue(Path(disabled_data["backup_path"]).exists())
+
+            enabled = self.run_watchdog(
+                ["rules", "enable-rule", "custom", "r1", "--json"], tmp
+            )
+            enabled_data = json.loads(enabled.stdout)
+            rules_by_id = {rule["id"]: rule for rule in enabled_data["group"]["rules"]}
+            self.assertTrue(rules_by_id["r1"]["enabled"])
+
+    def test_enable_rule_missing_rule_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(tmp, RuleGroup(name="custom"))
+
+            result = self.run_watchdog(
+                ["rules", "enable-rule", "custom", "missing"], tmp, check=False
+            )
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("rule not found: missing", result.stderr)
+
     def test_add_rule_rejects_invalid_condition_without_mutating_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.add_group(tmp, RuleGroup(name="custom"))
