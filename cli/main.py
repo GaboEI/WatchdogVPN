@@ -14,6 +14,7 @@ from typing import NoReturn
 
 from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPolicyRule
 from app_policy.store import AppPolicyStore
+from cli import color
 from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
 from config.app_config import AppConfig
@@ -182,14 +183,49 @@ Use: watchdog <command> --help
 """
 
 
+def _root_help(*, no_color: bool = False) -> str:
+    if not color.color_enabled(no_color=no_color):
+        return ROOT_HELP
+    lines: list[str] = []
+    for line in ROOT_HELP.splitlines():
+        stripped = line.strip()
+        if stripped in {
+            "Core:",
+            "Diagnostics:",
+            "Profiles and providers:",
+            "Policy:",
+            "Maintenance:",
+            "Examples:",
+        }:
+            lines.append(color.style(line, "bold", no_color=no_color))
+        elif stripped.startswith("watchdog "):
+            lines.append(line.replace(stripped, color.command(stripped, no_color=no_color)))
+        elif stripped == "Use: watchdog <command> --help":
+            lines.append(line.replace("watchdog <command> --help", color.command("watchdog <command> --help", no_color=no_color)))
+        else:
+            lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
 class RootHelpArgumentParser(argparse.ArgumentParser):
     def format_help(self) -> str:
-        return ROOT_HELP
+        return _root_help()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    parsed_argv = sys.argv[1:] if argv is None else list(argv)
+    restore_no_color = None
+    if "--no-color" in parsed_argv:
+        restore_no_color = os.environ.get("NO_COLOR")
+        os.environ["NO_COLOR"] = "1"
+    try:
+        args = parser.parse_args(parsed_argv)
+    finally:
+        if restore_no_color is None and "--no-color" in parsed_argv:
+            os.environ.pop("NO_COLOR", None)
+        elif restore_no_color is not None:
+            os.environ["NO_COLOR"] = restore_no_color
     if not hasattr(args, "handler"):
         parser.print_help()
         return 0
@@ -227,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = RootHelpArgumentParser(prog="watchdog", usage="<command> [options]")
+    parser.add_argument("--no-color", action="store_true", help=argparse.SUPPRESS)
     subparsers = parser.add_subparsers(
         dest="command",
         parser_class=argparse.ArgumentParser,
@@ -243,6 +280,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="Show daemon connection status")
     status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    status_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     status_parser.set_defaults(handler=_connection_status)
 
     rotate_parser = subparsers.add_parser("rotate", help="Rotate connection through the WatchdogVPN daemon")
@@ -262,6 +300,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser("doctor", help="Run the repository doctor")
     doctor_parser.add_argument("--json", action="store_true", help="Print JSON")
+    doctor_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     doctor_parser.add_argument("--doctor-script", help=argparse.SUPPRESS)
     doctor_parser.set_defaults(handler=_doctor)
 
@@ -379,6 +418,7 @@ def _build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--json", action="store_true", help="Print JSON")
     list_parser.add_argument("--pool", action="store_true", help="Show rotation pool only")
     list_parser.add_argument("--wide", action="store_true", help="Do not truncate profile IDs in human output")
+    list_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     list_parser.set_defaults(handler=_profile_list)
 
     remove_parser = profile_subparsers.add_parser("remove", help="Remove a saved profile")
@@ -420,6 +460,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     provider_list_parser = provider_subparsers.add_parser("list", help="List external providers")
     provider_list_parser.add_argument("--json", action="store_true", help="Print JSON")
+    provider_list_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     provider_list_parser.set_defaults(handler=_provider_list)
 
     provider_stats_parser = provider_subparsers.add_parser("stats", help="Show provider statistics")
@@ -507,6 +548,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dns_status_parser = dns_subparsers.add_parser("status", help="Show DNS v2 status")
     _add_dns_common_paths(dns_status_parser)
     dns_status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_status_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     dns_status_parser.set_defaults(handler=_dns_status)
 
     dns_test_parser = dns_subparsers.add_parser("test", help="Test DNS v2 resolvers")
@@ -829,7 +871,11 @@ def _connection_status(args: argparse.Namespace) -> int:
         for hint in _connection_recovery_hints(response.error or "daemon command failed"):
             print(f"hint: {hint}", file=sys.stderr)
         return 70
-    _print_connection_state(response.payload.get("state", {}), command="status")
+    _print_connection_state(
+        response.payload.get("state", {}),
+        command="status",
+        no_color=bool(getattr(args, "no_color", False)),
+    )
     return 0
 
 
@@ -913,7 +959,10 @@ def _doctor(args: argparse.Namespace) -> int:
             }
         )
         return int(completed.returncode)
-    completed = subprocess.run(command, check=False)
+    env = os.environ.copy()
+    if bool(getattr(args, "no_color", False)):
+        env["NO_COLOR"] = "1"
+    completed = subprocess.run(command, check=False, env=env)
     return int(completed.returncode)
 
 
@@ -1660,31 +1709,31 @@ def _connection_recovery_hints(error: str) -> list[str]:
     return []
 
 
-def _print_connection_state(state: dict, *, command: str) -> None:
+def _print_connection_state(state: dict, *, command: str, no_color: bool = False) -> None:
     lifecycle = _connection_lifecycle_summary(
         command=command,
         daemon_reachable=True,
         state=state,
         error=None,
     )
-    print(f"Daemon: {'reachable' if lifecycle['daemon_reachable'] else 'unreachable'}")
-    print(f"Desired state: {lifecycle['desired_state']}")
-    print(f"Status: {state.get('status', 'unknown')}")
-    print(f"Actual runtime state: {lifecycle['actual_runtime_state']}")
+    print(f"Daemon: {_semantic('reachable' if lifecycle['daemon_reachable'] else 'unreachable', no_color=no_color)}")
+    print(f"Desired state: {_semantic(lifecycle['desired_state'], no_color=no_color)}")
+    print(f"Status: {_semantic(state.get('status', 'unknown'), no_color=no_color)}")
+    print(f"Actual runtime state: {_semantic(lifecycle['actual_runtime_state'], no_color=no_color)}")
     print(f"Mode: {state.get('mode', '-')}")
     active_profile_id = state.get("active_profile_id") or "-"
     print(f"Active profile: {active_profile_id}")
-    print(f"TUN: {_on_off(bool(state.get('tun_active', False)))}")
-    print(f"Proxy: {_on_off(bool(state.get('proxy_active', False)))}")
+    print(f"TUN: {_on_off(bool(state.get('tun_active', False)), no_color=no_color)}")
+    print(f"Proxy: {_on_off(bool(state.get('proxy_active', False)), no_color=no_color)}")
     lan_gateway_status = str(state.get("lan_gateway_status", "disabled"))
-    print(f"LAN gateway: {lan_gateway_status}")
+    print(f"LAN gateway: {_semantic(lan_gateway_status, no_color=no_color)}")
     if lan_gateway_status != "disabled" or state.get("lan_gateway_active"):
         print(f"LAN gateway interface: {state.get('lan_gateway_interface') or '-'}")
         print(f"LAN gateway clients: {state.get('lan_gateway_client_cidr') or '-'}")
         print(f"LAN gateway DNS: {state.get('lan_gateway_dns_mode') or '-'}")
-    print(f"Kill switch: {_on_off(bool(state.get('kill_switch_active', False)))}")
-    print(f"Disconnected cleanly: {_on_off(bool(lifecycle['disconnected_cleanly']))}")
-    print(f"Failure/degraded: {_on_off(bool(lifecycle['failure_or_degraded']))}")
+    print(f"Kill switch: {_danger_on_off(bool(state.get('kill_switch_active', False)), no_color=no_color)}")
+    print(f"Disconnected cleanly: {_on_off(bool(lifecycle['disconnected_cleanly']), no_color=no_color)}")
+    print(f"Failure/degraded: {_danger_on_off(bool(lifecycle['failure_or_degraded']), no_color=no_color)}")
     if command == "disconnect":
         print("Cleanup expectations:")
         cleanup = lifecycle["cleanup_expectations"]
@@ -1741,7 +1790,12 @@ def _profile_list(args: argparse.Namespace) -> int:
     if not profiles:
         print("No profiles found.")
         return 0
-    _print_profile_list(profiles, wide=bool(args.wide), pool_only=bool(args.pool))
+    _print_profile_list(
+        profiles,
+        wide=bool(args.wide),
+        pool_only=bool(args.pool),
+        no_color=bool(getattr(args, "no_color", False)),
+    )
     return 0
 
 
@@ -1816,19 +1870,29 @@ def _provider_list(args: argparse.Namespace) -> int:
     if not summaries:
         print("No providers found.")
         return 0
-    print("ID\tName\tEnabled\tNodes\tLast update\tTraffic\tExpires")
-    for summary in summaries:
+    rows = [
+        (
+            summary["id"],
+            summary["name"],
+            _on_off_plain(bool(summary["rotation_enabled"])),
+            str(summary["node_count"]),
+            str(summary["last_updated"] or "-"),
+            str(summary["traffic"] or "-"),
+            str(summary["expires_at"] or "-"),
+        )
+        for summary in summaries
+    ]
+    columns = ("ID", "Name", "Enabled", "Nodes", "Last update", "Traffic", "Expires")
+    widths = [max(len(str(row[index])) for row in [columns, *rows]) for index in range(len(columns))]
+    print(_format_profile_row(columns, widths))
+    print(_format_profile_row(tuple("-" * width for width in widths), widths))
+    for row in rows:
         print(
-            "\t".join(
-                [
-                    summary["id"],
-                    summary["name"],
-                    _on_off(bool(summary["rotation_enabled"])),
-                    str(summary["node_count"]),
-                    str(summary["last_updated"] or "-"),
-                    str(summary["traffic"] or "-"),
-                    str(summary["expires_at"] or "-"),
-                ]
+            _format_profile_row(
+                row,
+                widths,
+                semantic_columns={2},
+                no_color=bool(getattr(args, "no_color", False)),
             )
         )
     return 0
@@ -3148,21 +3212,22 @@ def _dns_status(args: argparse.Namespace) -> int:
     if args.json:
         _print_json(data)
         return 0
-    print(f"DNS mode: {policy.mode.value}")
-    print(f"TUN hijack: {_on_off(policy.tun_hijack)}")
+    no_color = bool(getattr(args, "no_color", False))
+    print(f"DNS mode: {_semantic(policy.mode.value, no_color=no_color)}")
+    print(f"TUN hijack: {_on_off(policy.tun_hijack, no_color=no_color)}")
     print(f"Resolver manager: {data['resolver_manager']['manager']}")
     print(f"Nameservers: {', '.join(data['resolver_manager']['nameservers']) or '-'}")
     print(f"Channels: {data['channels']['configured']}/{data['channels']['total']}")
-    print(f"Static IP: {_on_off(policy.static_ip_enabled)} ({len(policy.static_ips)} entries)")
-    print(f"Rules: {_on_off(policy.rules_enabled)} ({len(policy.rules)} rules)")
+    print(f"Static IP: {_on_off(policy.static_ip_enabled, no_color=no_color)} ({len(policy.static_ips)} entries)")
+    print(f"Rules: {_on_off(policy.rules_enabled, no_color=no_color)} ({len(policy.rules)} rules)")
     fakeip_active = data["features"]["proxy_resolution_channel_active"]
     print(
-        f"FakeIP: {_on_off(bool(fakeip_active))} "
+        f"FakeIP: {_on_off(bool(fakeip_active), no_color=no_color)} "
         f"({policy.fakeip_inet4_range}, {policy.fakeip_inet6_range})"
         + ("" if fakeip_active else " - requires a configured proxy DNS channel")
     )
-    print(f"ECS direct: {_on_off(policy.ecs_direct_enabled)}")
-    print(f"Snapshot: {data['snapshot']['path']} ({data['snapshot']['status']})")
+    print(f"ECS direct: {_on_off(policy.ecs_direct_enabled, no_color=no_color)}")
+    print(f"Snapshot: {data['snapshot']['path']} ({_semantic(data['snapshot']['status'], no_color=no_color)})")
     return 0
 
 
@@ -3557,11 +3622,11 @@ def _node_group_summary(group: NodeGroup) -> dict:
     return group.to_dict()
 
 
-def _print_profile_list(profiles: list[Profile], *, wide: bool, pool_only: bool) -> None:
+def _print_profile_list(profiles: list[Profile], *, wide: bool, pool_only: bool, no_color: bool = False) -> None:
     providers = {provider.id: provider for provider in ProviderStore().list()}
     summary = _profile_list_summary(profiles)
     scope = "rotation pool" if pool_only else "all saved profiles"
-    print(f"Profiles ({scope})")
+    print(color.style(f"Profiles ({scope})", "bold", no_color=no_color))
     print(
         "Total: {total} | Manual: {manual} | Provider-owned: {provider_owned} | "
         "Enabled: {enabled} | Rotation: {rotation}".format(**summary)
@@ -3574,7 +3639,7 @@ def _print_profile_list(profiles: list[Profile], *, wide: bool, pool_only: bool)
     duplicate_groups = _duplicate_profile_candidate_count(profiles)
     if duplicate_groups:
         print(
-            f"Warning: duplicate profile candidates detected: {duplicate_groups} group(s); "
+            f"{color.warning_label(no_color=no_color)}: duplicate profile candidates detected: {duplicate_groups} group(s); "
             "no data changed."
         )
     print()
@@ -3587,6 +3652,7 @@ def _print_profile_list(profiles: list[Profile], *, wide: bool, pool_only: bool)
             "Manual profiles",
             manual_profiles,
             wide=wide,
+            no_color=no_color,
         )
 
     provider_profiles: dict[str, list[Profile]] = {}
@@ -3603,7 +3669,7 @@ def _print_profile_list(profiles: list[Profile], *, wide: bool, pool_only: bool)
             title = f"Provider: {provider.id}"
         else:
             title = f"Provider: {provider.name} ({provider.id})"
-        _print_profile_group(title, provider_profiles[provider_id], wide=wide)
+        _print_profile_group(title, provider_profiles[provider_id], wide=wide, no_color=no_color)
 
 
 def _profile_list_summary(profiles: list[Profile]) -> dict[str, object]:
@@ -3631,8 +3697,8 @@ def _duplicate_profile_candidate_count(profiles: list[Profile]) -> int:
     return len([count for count in by_fingerprint.values() if count > 1])
 
 
-def _print_profile_group(title: str, profiles: list[Profile], *, wide: bool) -> None:
-    print(title)
+def _print_profile_group(title: str, profiles: list[Profile], *, wide: bool, no_color: bool = False) -> None:
+    print(color.style(title, "bold", no_color=no_color))
     rows = [_profile_row(profile, wide=wide) for profile in _sorted_profiles(profiles)]
     columns = ("Name", "Protocol", "Category", "Health", "Enabled", "Rotation", "ID")
     widths = [
@@ -3642,7 +3708,7 @@ def _print_profile_group(title: str, profiles: list[Profile], *, wide: bool) -> 
     print(_format_profile_row(columns, widths))
     print(_format_profile_row(tuple("-" * width for width in widths), widths))
     for row in rows:
-        print(_format_profile_row(row, widths))
+        print(_format_profile_row(row, widths, semantic_columns={3, 4, 5}, no_color=no_color))
     print()
 
 
@@ -3652,8 +3718,8 @@ def _profile_row(profile: Profile, *, wide: bool) -> tuple[str, str, str, str, s
         profile.protocol.value,
         profile_resilience_category(profile).value,
         _profile_health_label(profile.health_status),
-        _on_off(profile.enabled),
-        _on_off(profile.in_rotation_pool),
+        _on_off_plain(profile.enabled),
+        _on_off_plain(profile.in_rotation_pool),
         profile.id if wide else _truncate_profile_id(profile.id),
     )
 
@@ -3687,8 +3753,22 @@ def _truncate_profile_id(profile_id: str, limit: int = 32) -> str:
     return f"{profile_id[: limit - 1]}..."
 
 
-def _format_profile_row(row: tuple[str, ...], widths: list[int]) -> str:
-    return "  ".join(str(value).ljust(width) for value, width in zip(row, widths))
+def _format_profile_row(
+    row: tuple[str, ...],
+    widths: list[int],
+    *,
+    semantic_columns: set[int] | None = None,
+    no_color: bool = False,
+) -> str:
+    semantic_columns = semantic_columns or set()
+    parts = []
+    for index, (value, width) in enumerate(zip(row, widths)):
+        text = str(value)
+        if index in semantic_columns:
+            parts.append(_semantic(text, no_color=no_color) + (" " * max(width - len(text), 0)))
+        else:
+            parts.append(text.ljust(width))
+    return "  ".join(parts)
 
 
 def _profile_summary(profile: Profile) -> dict[str, object]:
@@ -3773,8 +3853,23 @@ def _prompt_rotation_pool(profile: Profile) -> bool:
     return answer in {"y", "yes"}
 
 
-def _on_off(value: bool) -> str:
+def _on_off_plain(value: bool) -> str:
     return "on" if value else "off"
+
+
+def _on_off(value: bool, *, no_color: bool = False) -> str:
+    return _semantic(_on_off_plain(value), no_color=no_color)
+
+
+def _danger_on_off(value: bool, *, no_color: bool = False) -> str:
+    text = _on_off_plain(value)
+    if not value:
+        return text
+    return color.style(text, "red", no_color=no_color)
+
+
+def _semantic(value: object, *, no_color: bool = False) -> str:
+    return color.semantic(value, no_color=no_color)
 
 
 def _redact_url(url: str) -> str:

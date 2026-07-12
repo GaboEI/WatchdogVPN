@@ -3,20 +3,36 @@ set -euo pipefail
 
 PROJECT_NAME="WatchdogVPN"
 
+supports_color() {
+  [[ -t 1 && -z "${NO_COLOR:-}" ]]
+}
+
+paint_label() {
+  local code="$1" text="$2"
+  if supports_color; then
+    printf '\033[%sm%s\033[0m' "$code" "$text"
+  else
+    printf '%s' "$text"
+  fi
+}
+
 info() {
   printf '[INFO] %s\n' "$*"
 }
 
 ok() {
-  printf '[OK] %s\n' "$*"
+  paint_label 32 '[OK]'
+  printf ' %s\n' "$*"
 }
 
 warn() {
-  printf '[WARN] %s\n' "$*"
+  paint_label 33 '[WARN]'
+  printf ' %s\n' "$*"
 }
 
 fail() {
-  printf '[FAIL] %s\n' "$*"
+  paint_label 31 '[FAIL]'
+  printf ' %s\n' "$*"
 }
 
 print_installer_failure_recovery() {
