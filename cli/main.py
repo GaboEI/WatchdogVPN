@@ -3514,6 +3514,16 @@ def _chain_summary(chain: RouteChain) -> dict:
     return chain.to_dict()
 
 
+def _validate_chain_hop_targets(hops: list[ChainHop]) -> None:
+    profile_store = ProfileStore()
+    node_group_store = NodeGroupStore()
+    for hop in hops:
+        if hop.type == ChainHopType.PROFILE:
+            _require_profile(profile_store, hop.target)
+        elif hop.type == ChainHopType.GROUP:
+            _require_node_group(node_group_store, hop.target)
+
+
 def _updated_chain(
     chain: RouteChain,
     *,
@@ -3576,6 +3586,7 @@ def _chain_create(args: argparse.Namespace) -> int:
             f"route chain already exists: {args.id}; run `watchdog chain show {args.id}` to inspect it"
         )
     hops = [_parse_chain_hop_spec(spec) for spec in args.hop]
+    _validate_chain_hop_targets(hops)
     created_at = datetime.now(timezone.utc).isoformat()
     chain = RouteChain(
         id=args.id,
@@ -3603,6 +3614,7 @@ def _chain_add_hop(args: argparse.Namespace) -> int:
     store = RouteChainStore()
     chain = _require_chain(store, args.id)
     new_hop = ChainHop(type=args.type, target=args.target, selection_policy=args.selection_policy)
+    _validate_chain_hop_targets([new_hop])
     updated = _updated_chain(chain, hops=[*chain.hops, new_hop])
     backup_path = _create_section_backup("route-chains")
     store.add(updated)
@@ -3652,6 +3664,8 @@ def _chain_remove_hop(args: argparse.Namespace) -> int:
 def _chain_set_enabled(args: argparse.Namespace) -> int:
     store = RouteChainStore()
     chain = _require_chain(store, args.id)
+    if args.enabled:
+        _validate_chain_hop_targets(chain.hops)
     updated = _updated_chain(chain, enabled=bool(args.enabled))
     backup_path = _create_section_backup("route-chains")
     store.add(updated)
