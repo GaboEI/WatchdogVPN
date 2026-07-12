@@ -2,7 +2,7 @@
 
 Date: 2026-07-10
 Branch: `phase-23-cli-field-validation`
-Status: operator-run prepared, evidence pending
+Status: closed after Task 23.2.1 M4 addendum, 2026-07-12
 
 ## Scope
 
@@ -234,6 +234,51 @@ Create or update:
 
 Use the Task 23.1 finding template. Every HIGH or MEDIUM finding must become a
 Phase 23 fix subtask before Phase 23 can close.
+
+## Task 23.2.1 Addendum - M4 App Policy Direct, Current And Block
+
+Task 23.2 remained open after the original field-validation run because M4 was
+in the approved Task 23.1 matrix but had never been executed. The missing
+coverage was run manually by the operator on 2026-07-12 with an operator-run
+script stored outside the repository at:
+
+```text
+~/phase23-m8-scripts/phase23_m4_app_policy_validation.sh
+```
+
+Evidence directory:
+
+```text
+/home/gabodev/phase23-m4-evidence/20260712T104451Z
+```
+
+The script backed up and restored `app-policy.json` and `state.toml`, configured
+a clean app-policy matrix through the CLI, connected a real enabled VLESS
+profile with `routing_policy=rule`, `capture_modes=local_proxy,tun` and
+`default_route_action=current`, then ran three copied `curl` probe binaries with
+distinct `process_path` matches:
+
+- M4.1 direct: direct egress before WatchdogVPN and direct-probe egress after
+  connect both returned `178.66.159.107`.
+- M4.2 current/VPN: the current-probe egress after connect returned
+  `138.124.58.47`, matching the active WatchdogVPN path rather than direct
+  fallback.
+- M4.3 block: HTTP and HTTPS probes against an IP literal failed at the
+  TCP/HTTP layer (`curl` return codes `56` and `35`, HTTP status `000`), so the
+  block was not a DNS-only false positive.
+- M4.4 cleanup: `cleanup_verification.txt` recorded
+  `cleanup_exit_input_rc=0`, `app_policy_restored_rc=0` and
+  `state_restored_rc=0`; post-cleanup daemon status was standby with no active
+  proxy, TUN or kill-switch firewall.
+
+The normal runtime/probe command outputs did not emit raw process-path history.
+Administrative inspection commands that explicitly take or display policy
+inputs (`app-policy add --json`, `app-policy status`, `rules explain --json`)
+echoed the configured probe paths as expected and were retained as evidence,
+not treated as runtime leakage.
+
+Task 23.2.1 is closed with real evidence. With M4 now executed, Task 23.2's
+field-validation matrix is closed.
 
 ## Field Hardening Notes
 
