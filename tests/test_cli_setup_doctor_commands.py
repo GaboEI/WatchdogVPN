@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
+import cli.main
 from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from config.dns_policy_store import DNSPolicyStore
@@ -166,6 +171,34 @@ class CliSetupDoctorCommandTests(unittest.TestCase):
         self.assertEqual(data["doctor_stdout"], "doctor ok\n")
         self.assertTrue(data["read_only"])
         self.assertFalse(data["mutates_runtime"])
+
+    def test_doctor_resolves_installed_runtime_without_cwd_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            runtime_root = tmp / "runtime"
+            (runtime_root / "cli").mkdir(parents=True)
+            script = runtime_root / "doctor.sh"
+            script.write_text("#!/usr/bin/env bash\nprintf 'installed doctor ok\\n'\n", encoding="utf-8")
+            script.chmod(0o755)
+            unrelated_cwd = tmp / "home"
+            unrelated_cwd.mkdir()
+
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "WATCHDOGVPN_CONFIG_DIR": str(tmp / "config"),
+            }
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch.object(cli.main, "__file__", str(runtime_root / "cli" / "main.py")),
+                patch("pathlib.Path.cwd", return_value=unrelated_cwd),
+                redirect_stdout(StringIO()) as stdout,
+            ):
+                result = cli.main.main(["doctor", "--json"])
+
+        self.assertEqual(result, 0)
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["command"], [str(script)])
+        self.assertEqual(data["doctor_stdout"], "installed doctor ok\n")
 
 
 if __name__ == "__main__":

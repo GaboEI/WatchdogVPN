@@ -1378,23 +1378,46 @@ def _doctor(args: argparse.Namespace) -> int:
 
 
 def _doctor_script_path(value: str | None) -> Path:
-    if value:
-        candidates = [Path(value).expanduser()]
-    elif os.environ.get("WATCHDOGVPN_DOCTOR_SCRIPT"):
-        candidates = [Path(os.environ["WATCHDOGVPN_DOCTOR_SCRIPT"]).expanduser()]
+    script = _support_script_path(
+        "doctor.sh",
+        value,
+        "WATCHDOGVPN_DOCTOR_SCRIPT",
+        "doctor.sh not found; install WatchdogVPN again, run from the checkout, or set WATCHDOGVPN_REPO_DIR",
+    )
+    if not os.access(script, os.X_OK):
+        raise PermissionError(f"doctor script is not executable: {script}")
+    return script
+
+
+def _support_script_path(
+    script_name: str,
+    explicit_value: str | None,
+    env_var: str,
+    missing_message: str,
+) -> Path:
+    if explicit_value:
+        candidates = [Path(explicit_value).expanduser()]
+    elif os.environ.get(env_var):
+        candidates = [Path(os.environ[env_var]).expanduser()]
     else:
         candidates = []
         if os.environ.get("WATCHDOGVPN_REPO_DIR"):
-            candidates.append(Path(os.environ["WATCHDOGVPN_REPO_DIR"]).expanduser() / "doctor.sh")
-        candidates.append(Path.cwd() / "doctor.sh")
-        candidates.append(Path(__file__).resolve().parents[1] / "doctor.sh")
-    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+            candidates.append(Path(os.environ["WATCHDOGVPN_REPO_DIR"]).expanduser() / script_name)
+        candidates.append(Path(__file__).resolve().parents[1] / script_name)
+        if os.environ.get("WATCHDOGVPN_INSTALLED_LIB"):
+            candidates.append(Path(os.environ["WATCHDOGVPN_INSTALLED_LIB"]).expanduser() / script_name)
+        candidates.append(Path("/usr/local/lib/watchdogvpn") / script_name)
+        candidates.append(Path.cwd() / script_name)
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(candidate)
+    script = next((candidate for candidate in deduped if candidate.exists()), deduped[0])
     if not script.exists():
-        raise FileNotFoundError(
-            "doctor.sh not found; run from the WatchdogVPN checkout or set WATCHDOGVPN_REPO_DIR"
-        )
-    if not os.access(script, os.X_OK):
-        raise PermissionError(f"doctor script is not executable: {script}")
+        raise FileNotFoundError(missing_message)
     return script
 
 
@@ -1730,21 +1753,12 @@ def _uninstall_script_command(args: argparse.Namespace, mode: str) -> list[str]:
 
 
 def _uninstall_script_path(value: str | None) -> Path:
-    if value:
-        candidates = [Path(value).expanduser()]
-    elif os.environ.get("WATCHDOGVPN_UNINSTALL_SCRIPT"):
-        candidates = [Path(os.environ["WATCHDOGVPN_UNINSTALL_SCRIPT"]).expanduser()]
-    else:
-        candidates = []
-        if os.environ.get("WATCHDOGVPN_REPO_DIR"):
-            candidates.append(Path(os.environ["WATCHDOGVPN_REPO_DIR"]).expanduser() / "uninstall.sh")
-        candidates.append(Path.cwd() / "uninstall.sh")
-        candidates.append(Path(__file__).resolve().parents[1] / "uninstall.sh")
-    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
-    if not script.exists():
-        raise FileNotFoundError(
-            f"uninstall.sh not found; run from the WatchdogVPN checkout or set WATCHDOGVPN_REPO_DIR"
-        )
+    script = _support_script_path(
+        "uninstall.sh",
+        value,
+        "WATCHDOGVPN_UNINSTALL_SCRIPT",
+        "uninstall.sh not found; install WatchdogVPN again, run from the checkout, or set WATCHDOGVPN_REPO_DIR",
+    )
     if not os.access(script, os.X_OK):
         raise PermissionError(f"uninstall script is not executable: {script}")
     return script

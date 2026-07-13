@@ -21,6 +21,18 @@ PYTHON_RUNTIME_PACKAGES=(
   rotation
   rules
 )
+PYTHON_RUNTIME_SUPPORT_FILES=(
+  doctor.sh
+  uninstall.sh
+)
+PYTHON_RUNTIME_SUPPORT_DIRS=(
+  lib
+  bin
+  sbin
+  systemd
+  etc
+  examples
+)
 
 # Historical WatchdogVPN-owned files removed from the shipped set before this
 # release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept separate
@@ -106,7 +118,7 @@ install_python_module_wrapper() {
 }
 
 install_python_package_tree() {
-  local dest="${1:-$PYTHON_PACKAGE_DIR}" package
+  local dest="${1:-$PYTHON_PACKAGE_DIR}" package item
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] install Python runtime packages to %s\n' "$dest"
     record_installed_version
@@ -118,9 +130,19 @@ install_python_package_tree() {
   for package in "${PYTHON_RUNTIME_PACKAGES[@]}"; do
     run_step sudo cp -a "$ROOT_DIR/$package" "$dest/"
   done
+  for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}"; do
+    run_step sudo cp -a "$ROOT_DIR/$item" "$dest/"
+  done
+  for item in "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"; do
+    run_step sudo cp -a "$ROOT_DIR/$item" "$dest/"
+  done
   run_step sudo chown -R root:root "$dest"
   run_step sudo find "$dest" -type d -exec chmod 0755 {} +
   run_step sudo find "$dest" -type f -exec chmod 0644 {} +
+  for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}"; do
+    run_step sudo chmod 0755 "$dest/$item"
+  done
+  run_step sudo find "$dest/bin" "$dest/sbin" -type f -exec chmod 0755 {} +
   record_installed_version
 }
 

@@ -373,16 +373,19 @@ JSON output includes `operations`, `sections`, `backup_path`,
 
 ### `watchdog doctor`
 
-Runs the repository `doctor.sh` through argv-list subprocess execution.
+Runs the installed or checkout `doctor.sh` through argv-list subprocess
+execution.
 
 ```sh
 watchdog doctor
 watchdog doctor --json
 ```
 
-The Python wrapper does not reimplement doctor logic. JSON mode captures
-doctor stdout/stderr and exit code in one JSON document. The command is
-read-only and does not use `sudo`.
+The Python wrapper does not reimplement doctor logic. It resolves explicit
+`--doctor-script` / `WATCHDOGVPN_DOCTOR_SCRIPT` first, then
+`WATCHDOGVPN_REPO_DIR`, then the installed runtime support tree. JSON mode
+captures doctor stdout/stderr and exit code in one JSON document. The command
+is read-only and does not use `sudo`.
 
 ## Uninstall Flow
 
@@ -391,8 +394,10 @@ read-only and does not use `sudo`.
 Runs the safe uninstall flow by wrapping `uninstall.sh` with explicit user-data
 choices.
 
-Run it from the WatchdogVPN checkout, or set `WATCHDOGVPN_REPO_DIR` to the
-checkout path if launching from another directory.
+Installed systems resolve `uninstall.sh` from the installed runtime support
+tree, independent of the current working directory. Source checkouts can still
+set `WATCHDOGVPN_REPO_DIR` or use the hidden test/lab `--uninstall-script`
+override.
 
 ```sh
 watchdog uninstall --keep-data --yes
@@ -502,15 +507,14 @@ configuration, such as `custom_vps.service_name`, is missing.
 
 ### `watchdogvpn doctor`
 
-Runs the repository doctor when the command can find it from the current
-checkout.
+Runs the installed or checkout doctor script when available.
 
 ```sh
 watchdogvpn doctor
 ```
 
-For installed systems, `./doctor.sh` from the repository root remains the most
-complete validation path.
+Installed systems do not need to run this from the repository root; the
+installed runtime support tree is used when present.
 
 ### `watchdogvpn tui`
 
