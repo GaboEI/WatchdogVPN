@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -20,12 +22,113 @@ DEFAULT_SUBSCRIPTION_USER_AGENT = (
     "(compatible; sing-box; Clash; mihomo; v2ray-subscription)"
 )
 SUBSCRIPTION_USERINFO_HEADER = "subscription-userinfo"
+DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS = 5.0
+DEFAULT_SUBSCRIPTION_READ_TIMEOUT_SECONDS = 10.0
+DEFAULT_SUBSCRIPTION_TOTAL_TIMEOUT_SECONDS = 20.0
+DEFAULT_SUBSCRIPTION_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+SUBSCRIPTION_READ_CHUNK_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True, slots=True)
 class SubscriptionFetchResult:
     profiles: list[Profile]
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if value <= 0:
+        return default
+    return value
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if value <= 0:
+        return default
+    return value
+
+
+def _subscription_fetch_limits() -> tuple[float, float, float, int]:
+    connect_timeout = _env_float(
+        "WATCHDOGVPN_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS",
+        DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
+    )
+    read_timeout = _env_float(
+        "WATCHDOGVPN_SUBSCRIPTION_READ_TIMEOUT_SECONDS",
+        DEFAULT_SUBSCRIPTION_READ_TIMEOUT_SECONDS,
+    )
+    total_timeout = _env_float(
+        "WATCHDOGVPN_SUBSCRIPTION_TOTAL_TIMEOUT_SECONDS",
+        DEFAULT_SUBSCRIPTION_TOTAL_TIMEOUT_SECONDS,
+    )
+    max_response_bytes = _env_int(
+        "WATCHDOGVPN_SUBSCRIPTION_MAX_RESPONSE_BYTES",
+        DEFAULT_SUBSCRIPTION_MAX_RESPONSE_BYTES,
+    )
+    return connect_timeout, read_timeout, total_timeout, max_response_bytes
+
+
+def _set_response_read_timeout(response: Any, timeout: float) -> None:
+    sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+    if sock is None:
+        return
+    settimeout = getattr(sock, "settimeout", None)
+    if settimeout is None:
+        return
+    try:
+        settimeout(timeout)
+    except OSError:
+        return
+
+
+def _read_bounded_response(
+    response: Any,
+    *,
+    started: float,
+    total_timeout: float,
+    max_bytes: int,
+) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        if time.monotonic() - started > total_timeout:
+            raise ParseError(f"subscription fetch timed out after {total_timeout:g} seconds")
+        remaining = max_bytes - total
+        try:
+            chunk = response.read(min(SUBSCRIPTION_READ_CHUNK_BYTES, remaining + 1))
+        except (socket.timeout, TimeoutError) as exc:
+            raise ParseError("subscription fetch timed out while reading response") from exc
+        if time.monotonic() - started > total_timeout:
+            raise ParseError(f"subscription fetch timed out after {total_timeout:g} seconds")
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ParseError(
+                f"subscription response exceeds maximum size ({max_bytes} bytes)"
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _url_error_is_timeout(exc: URLError) -> bool:
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, (socket.timeout, TimeoutError)):
+        return True
+    return "timed out" in str(exc).lower()
 
 
 def _fetch(url: str) -> tuple[str, dict[str, str]]:
@@ -37,6 +140,8 @@ def _fetch(url: str) -> tuple[str, dict[str, str]]:
     if urlparse(url).scheme != "https":
         raise ParseError(f"invalid subscription URL scheme (https required): {url}")
     user_agent = os.environ.get("WATCHDOGVPN_SUBSCRIPTION_USER_AGENT", DEFAULT_SUBSCRIPTION_USER_AGENT)
+    connect_timeout, read_timeout, total_timeout, max_response_bytes = _subscription_fetch_limits()
+    started = time.monotonic()
     try:
         request = Request(
             url,
@@ -45,12 +150,26 @@ def _fetch(url: str) -> tuple[str, dict[str, str]]:
                 "Accept": "text/plain, application/json, application/yaml, text/yaml, */*",
             },
         )
-        with urlopen(request) as response:  # nosec - subscription URLs are user-provided inputs
-            raw = response.read()
+        with urlopen(request, timeout=connect_timeout) as response:  # nosec - subscription URLs are user-provided inputs
+            if time.monotonic() - started > total_timeout:
+                raise ParseError(f"subscription fetch timed out after {total_timeout:g} seconds")
+            _set_response_read_timeout(response, read_timeout)
+            raw = _read_bounded_response(
+                response,
+                started=started,
+                total_timeout=total_timeout,
+                max_bytes=max_response_bytes,
+            )
             headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
+    except ParseError:
+        raise
     except ValueError as exc:
         raise ParseError(f"invalid subscription URL: {url}") from exc
+    except (socket.timeout, TimeoutError) as exc:
+        raise ParseError("subscription fetch timed out") from exc
     except URLError as exc:
+        if _url_error_is_timeout(exc):
+            raise ParseError("subscription fetch timed out") from exc
         raise ParseError(f"failed to fetch subscription: {exc}") from exc
     if not raw:
         raise ParseError("empty subscription response")

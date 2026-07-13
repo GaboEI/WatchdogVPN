@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
 import unittest
 from unittest.mock import patch
+from urllib.error import URLError
 from urllib.request import Request
 
 from parsers import (
@@ -17,8 +19,18 @@ from parsers import (
     parse_uri,
     parse_wg_config,
 )
-from parsers.subscription import _parse_subscription_userinfo
+from parsers.subscription import (
+    DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
+    _parse_subscription_userinfo,
+)
 from models.profile import ProtocolType
+
+
+def _mock_subscription_response(urlopen_mock, payload: bytes, headers: list[tuple[str, str]] | None = None):
+    response = urlopen_mock.return_value.__enter__.return_value
+    response.read.side_effect = [payload, b""]
+    response.headers.items.return_value = headers or []
+    return response
 
 
 class UriParserTests(unittest.TestCase):
@@ -335,13 +347,16 @@ class SubscriptionParserTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_uses_subscription_user_agent(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
-            {
-                "outbounds": [
-                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
-                ]
-            }
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                    ]
+                }
+            ).encode("utf-8"),
+        )
 
         with patch.dict(
             "os.environ",
@@ -353,6 +368,50 @@ class SubscriptionParserTests(unittest.TestCase):
         request = urlopen_mock.call_args.args[0]
         self.assertIsInstance(request, Request)
         self.assertEqual(request.get_header("User-agent"), "watchdog-test-agent")
+        self.assertEqual(
+            urlopen_mock.call_args.kwargs["timeout"],
+            DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
+        )
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_rejects_oversized_response(self, urlopen_mock) -> None:
+        _mock_subscription_response(urlopen_mock, b"12345")
+
+        with patch.dict(
+            "os.environ",
+            {"WATCHDOGVPN_SUBSCRIPTION_MAX_RESPONSE_BYTES": "4"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ParseError, "exceeds maximum size"):
+                fetch_and_parse("https://example.com/sub")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_rejects_slow_response_after_total_timeout(self, urlopen_mock) -> None:
+        response = urlopen_mock.return_value.__enter__.return_value
+        response.read.return_value = b"x"
+
+        with patch.dict(
+            "os.environ",
+            {"WATCHDOGVPN_SUBSCRIPTION_TOTAL_TIMEOUT_SECONDS": "1"},
+            clear=False,
+        ):
+            with patch("parsers.subscription.time.monotonic", side_effect=[0.0, 0.0, 0.0, 2.0]):
+                with self.assertRaisesRegex(ParseError, "timed out after 1 seconds"):
+                    fetch_and_parse("https://example.com/sub")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_maps_socket_timeout_to_parse_error(self, urlopen_mock) -> None:
+        urlopen_mock.return_value.__enter__.return_value.read.side_effect = socket.timeout("timed out")
+
+        with self.assertRaisesRegex(ParseError, "timed out"):
+            fetch_and_parse("https://example.com/sub")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_maps_urlopen_timeout_to_parse_error(self, urlopen_mock) -> None:
+        urlopen_mock.side_effect = URLError(socket.timeout("timed out"))
+
+        with self.assertRaisesRegex(ParseError, "timed out"):
+            fetch_and_parse("https://example.com/sub")
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_base64_lines(self, urlopen_mock) -> None:
@@ -363,7 +422,7 @@ class SubscriptionParserTests(unittest.TestCase):
             ]
         ).encode("utf-8")
         encoded = base64.b64encode(payload).decode("utf-8")
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = encoded.encode("utf-8")
+        _mock_subscription_response(urlopen_mock, encoded.encode("utf-8"))
 
         profiles = fetch_and_parse("https://example.com/sub")
 
@@ -373,13 +432,16 @@ class SubscriptionParserTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_json(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
-            {
-                "outbounds": [
-                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
-                ]
-            }
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                    ]
+                }
+            ).encode("utf-8"),
+        )
 
         profiles = fetch_and_parse("https://example.com/sub")
 
@@ -389,16 +451,19 @@ class SubscriptionParserTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_yaml(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = (
-            """
-            proxies:
-              - name: clash1
-                type: trojan
-                server: clash.example.com
-                port: 443
-                password: secret
-            """
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            (
+                """
+                proxies:
+                  - name: clash1
+                    type: trojan
+                    server: clash.example.com
+                    port: 443
+                    password: secret
+                """
+            ).encode("utf-8"),
+        )
 
         profiles = fetch_and_parse("https://example.com/sub")
 
@@ -408,9 +473,10 @@ class SubscriptionParserTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_rejects_html_response(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = (
-            "<!doctype html><html><body>login required</body></html>"
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            b"<!doctype html><html><body>login required</body></html>",
+        )
 
         with self.assertRaisesRegex(ParseError, "looks like HTML"):
             fetch_and_parse("https://example.com/sub")
@@ -418,7 +484,7 @@ class SubscriptionParserTests(unittest.TestCase):
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_base64_without_supported_profiles(self, urlopen_mock) -> None:
         encoded = base64.b64encode(b"ftp://example.com\nnot-a-profile").decode("utf-8")
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = encoded.encode("utf-8")
+        _mock_subscription_response(urlopen_mock, encoded.encode("utf-8"))
 
         with self.assertRaisesRegex(ParseError, "no supported profiles"):
             fetch_and_parse("https://example.com/sub")
@@ -432,11 +498,11 @@ class SubscriptionParserTests(unittest.TestCase):
             fetch_and_parse("https://example.com/sub")
 
         urlopen_mock.side_effect = None
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = b""
+        _mock_subscription_response(urlopen_mock, b"")
         with self.assertRaises(ParseError):
             fetch_and_parse("https://example.com/sub")
 
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = b"@@@"
+        _mock_subscription_response(urlopen_mock, b"@@@")
         with self.assertRaises(ParseError):
             fetch_and_parse("https://example.com/sub")
 
@@ -463,18 +529,20 @@ class SubscriptionUserinfoTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_subscription_reads_userinfo_header(self, urlopen_mock) -> None:
-        response = urlopen_mock.return_value.__enter__.return_value
-        response.read.return_value = json.dumps(
-            {
-                "outbounds": [
-                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
-                ]
-            }
-        ).encode("utf-8")
-        response.headers.items.return_value = [
-            ("Subscription-Userinfo", "upload=100; download=100; total=1000; expire=1893456000"),
-            ("Content-Type", "application/json"),
-        ]
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                    ]
+                }
+            ).encode("utf-8"),
+            [
+                ("Subscription-Userinfo", "upload=100; download=100; total=1000; expire=1893456000"),
+                ("Content-Type", "application/json"),
+            ],
+        )
 
         result = fetch_subscription("https://example.com/sub")
 
@@ -485,13 +553,16 @@ class SubscriptionUserinfoTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_subscription_without_header_reports_no_metadata(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
-            {
-                "outbounds": [
-                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
-                ]
-            }
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                    ]
+                }
+            ).encode("utf-8"),
+        )
 
         result = fetch_subscription("https://example.com/sub")
 
@@ -501,17 +572,17 @@ class SubscriptionUserinfoTests(unittest.TestCase):
     def test_fetch_and_parse_is_unaffected_by_headers(self, urlopen_mock) -> None:
         # fetch_and_parse's return shape/behavior must stay list[Profile],
         # unchanged by the header-capturing refactor.
-        response = urlopen_mock.return_value.__enter__.return_value
-        response.read.return_value = json.dumps(
-            {
-                "outbounds": [
-                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
-                ]
-            }
-        ).encode("utf-8")
-        response.headers.items.return_value = [
-            ("Subscription-Userinfo", "upload=100; download=100; total=1000"),
-        ]
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                    ]
+                }
+            ).encode("utf-8"),
+            [("Subscription-Userinfo", "upload=100; download=100; total=1000")],
+        )
 
         profiles = fetch_and_parse("https://example.com/sub")
 

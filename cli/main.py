@@ -323,6 +323,9 @@ def main(argv: list[str] | None = None) -> int:
     except WatchdogIPCError as exc:
         _error(str(exc), as_json=as_json)
         return exc.exit_code
+    except KeyboardInterrupt:
+        _error("operation cancelled", as_json=as_json)
+        return 130
     except (DNSHijackError, DNSStateError, OSError, ValueError) as exc:
         _error(str(exc), as_json=as_json)
         return 70

@@ -4,7 +4,7 @@ import json
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -213,6 +213,36 @@ class CliProviderCommandTests(unittest.TestCase):
         self.assertNotIn("private-token", stdout.getvalue())
         data = json.loads(stdout.getvalue())
         self.assertEqual(data["provider"]["url"], "https://netz.tg/<redacted>")
+
+    def test_provider_add_keyboard_interrupt_is_clean_human_error(self) -> None:
+        with patch("cli.main.SubscriptionProvider") as provider_cls:
+            manager = provider_cls.return_value
+            manager.add.side_effect = KeyboardInterrupt
+
+            with redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr:
+                result = cli.main.main(["provider", "add", "https://netz.tg/private-token", "--name", "netz"])
+
+        self.assertEqual(result, 130)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("operation cancelled", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_provider_add_keyboard_interrupt_is_clean_json_error(self) -> None:
+        with patch("cli.main.SubscriptionProvider") as provider_cls:
+            manager = provider_cls.return_value
+            manager.add.side_effect = KeyboardInterrupt
+
+            with redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr:
+                result = cli.main.main(
+                    ["provider", "add", "https://netz.tg/private-token", "--name", "netz", "--json"]
+                )
+
+        self.assertEqual(result, 130)
+        self.assertEqual(stderr.getvalue(), "")
+        data = json.loads(stdout.getvalue())
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["error"], "operation cancelled")
+        self.assertNotIn("Traceback", stdout.getvalue())
 
     def test_provider_add_duplicate_url_fails_without_token_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
