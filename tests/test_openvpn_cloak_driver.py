@@ -17,13 +17,13 @@ _CLOAK_CONFIG_DICT = {
     "Transport": "direct",
     "ProxyMethod": "openvpn",
     "EncryptionMethod": "chacha20-poly1305",
-    "UID": "fakeUID==",
-    "PublicKey": "fakePubKey==",
+    "UID": "TEST-ONLY-NOT-A-UID",
+    "PublicKey": "TEST-ONLY-NOT-A-PUBLIC-KEY",
     "BrowserSig": "chrome",
     "NumConn": 4,
-    "RemoteHost": "138.124.58.47",
+    "RemoteHost": "192.0.2.10",
     "RemotePort": "8443",
-    "ServerName": "tile.openstreetmap.org",
+    "ServerName": "cdn.example.invalid",
     "LocalHost": "127.0.0.1",
     "LocalPort": "1984",
     "StreamTimeout": 300,
@@ -40,7 +40,7 @@ persist-key
 persist-tun
 <ca>
 -----BEGIN CERTIFICATE-----
-fakecert
+TEST-ONLY-NOT-A-CERTIFICATE
 -----END CERTIFICATE-----
 </ca>
 verb 3
@@ -128,7 +128,7 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.driver.check_version()
 
-    # --- Configuraciones ---
+    # --- Configuration files ---
 
     def test_write_configs_creates_both_files(self) -> None:
         self.driver._write_configs(self.profile)
@@ -141,7 +141,7 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         ovpn_content = self.driver._ovpn_config_path.read_text(encoding="utf-8")
         self.assertIn("remote 127.0.0.1 1984", ovpn_content)
         cloak_data = json.loads(self.driver._cloak_config_path.read_text(encoding="utf-8"))
-        self.assertEqual(cloak_data["RemoteHost"], "138.124.58.47")
+        self.assertEqual(cloak_data["RemoteHost"], "192.0.2.10")
 
     def test_write_configs_accepts_cloak_as_json_string(self) -> None:
         profile = _make_profile(config_overrides={"cloak_config": json.dumps(_CLOAK_CONFIG_DICT)})
