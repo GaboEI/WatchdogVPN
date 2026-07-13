@@ -289,7 +289,7 @@ The uninstall contract is:
 
 ## Local Diagnostic Reports
 
-`watchdogvpn report` generates a local text report for support and debugging. It
+`watchdog maintenance report` generates a local text report for support and debugging. It
 does not upload anything automatically. The report applies basic sanitization for
 common sensitive values such as IPv4/IPv6 addresses, email addresses,
 device-code URLs and the user's home directory path, but users should still

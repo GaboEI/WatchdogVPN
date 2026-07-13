@@ -13,7 +13,7 @@ does not provision servers and does not store secrets.
 That means:
 
 - the installer prepares `backend.mode = "custom-vps"`;
-- `watchdogvpn backend status` reports the selected mode and active backend;
+- `watchdog maintenance backend status` reports the selected mode and active backend;
 - the TUI has a Backend view for status and configuration review;
 - `vpnctl connect`, `vpnctl disconnect`, `vpnctl restart` and `vpnctl status`
   can control the configured service;
@@ -70,10 +70,10 @@ VPN tunnel.
 Use:
 
 ```sh
-watchdogvpn backend status
-watchdogvpn config get backend.mode
-watchdogvpn config get backend.active
-watchdogvpn config get custom_vps.enabled
+watchdog maintenance backend status
+watchdog maintenance config get backend.mode
+watchdog maintenance config get backend.active
+watchdog maintenance config get custom_vps.enabled
 vpnctl status
 ```
 

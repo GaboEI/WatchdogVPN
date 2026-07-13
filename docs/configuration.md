@@ -201,11 +201,11 @@ Reset must be explicit.
 Planned command forms:
 
 ```sh
-watchdogvpn config reset
-watchdogvpn config reset timers
-watchdogvpn config reset dns
-watchdogvpn config reset tui
-watchdogvpn config reset reporting
+watchdog maintenance config reset
+watchdog maintenance config reset timers
+watchdog maintenance config reset dns
+watchdog maintenance config reset tui
+watchdog maintenance config reset reporting
 ```
 
 Rules:
@@ -223,14 +223,14 @@ For the complete command reference, see [WatchdogVPN CLI](cli.md).
 Planned command forms:
 
 ```sh
-watchdogvpn config get
-watchdogvpn config get language.current
-watchdogvpn config set language.current es
-watchdogvpn config set tui.theme high_contrast
-watchdogvpn config set tui.color false
-watchdogvpn config reset language --yes
-watchdogvpn config reset tui --yes
-watchdogvpn config reset reporting --yes
+watchdog maintenance config get
+watchdog maintenance config get language.current
+watchdog maintenance config set language.current es
+watchdog maintenance config set tui.theme high_contrast
+watchdog maintenance config set tui.color false
+watchdog maintenance config reset language --yes
+watchdog maintenance config reset tui --yes
+watchdog maintenance config reset reporting --yes
 ```
 
 Behavior:
@@ -262,7 +262,7 @@ Timer and DNS keys are intentionally read-only until their changes are wired to
 systemd and DNS apply flows.
 
 The TUI Settings view can update the safe user-interface keys through the same
-`watchdogvpn config set` contract:
+`watchdog maintenance config set` contract:
 
 ```text
 language.current

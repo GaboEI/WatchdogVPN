@@ -350,7 +350,7 @@ final_report() {
   print_field "TUI command" "VPN"
   print_field "Diagnostics" "./doctor.sh"
   print_field "Runtime status" "vpnctl status"
-  print_field "Backend status" "watchdogvpn backend status"
+  print_field "Backend status" "watchdog maintenance backend status"
 
   print_section "Next steps"
   printf '1. Open the TUI with: VPN\n'

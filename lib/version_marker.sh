@@ -4,7 +4,7 @@ set -euo pipefail
 # Records which source commit was actually installed, so doctor.sh (and
 # later Task 18.7 work) can detect drift between the installed runtime and
 # the current source checkout instead of only trusting the hand-edited
-# VERSION string in bin/watchdogvpn, which does not change when the
+# VERSION string in the bin/watchdogvpn compatibility alias, which does not change when the
 # installed copy falls behind. Written by install.sh and update.sh every
 # time install_python_package_tree() runs; read by doctor.sh.
 WATCHDOGVPN_VERSION_MARKER="${WATCHDOGVPN_VERSION_MARKER:-${WATCHDOGVPN_ETC_CONFIG_DIR:-/etc/watchdogvpn}/installed-version}"

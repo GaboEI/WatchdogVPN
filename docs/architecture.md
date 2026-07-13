@@ -15,8 +15,11 @@ only in installation and dependency detection.
 - `tui/VPN`: compatibility entrypoint and main terminal UI loop
 - `tui/watchdogvpn/`: extracted action command builders, command runners, state
   collectors, render helpers, constants, parsers, formatters and validators
-- `bin/watchdogvpn`: product CLI for status, TUI launch and local diagnostic
-  reports
+- `bin/watchdog`: canonical Python CLI wrapper for runtime, policy, recovery and
+  maintenance commands
+- `bin/watchdogvpn`: deprecated compatibility alias that routes into
+  `bin/watchdog`; its internal Bash path implements the canonical maintenance
+  namespace only
 - `bin/vpn_backend`: backend contract helper for the custom-vps legacy bash
   compatibility path
 - `bin/vpnctl`: user command surface

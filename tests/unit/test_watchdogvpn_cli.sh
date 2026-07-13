@@ -193,6 +193,58 @@ EOF
 
 init_runtime_update_repo "$UPDATE_REPO" "$UPDATE_REMOTE"
 
+alias_stdout="$TMP_DIR/alias-help.stdout"
+alias_stderr="$TMP_DIR/alias-help.stderr"
+"$SCRIPT" --help >"$alias_stdout" 2>"$alias_stderr"
+"$ROOT_DIR/bin/watchdog" --help >"$TMP_DIR/canonical-help.stdout"
+diff -u "$TMP_DIR/canonical-help.stdout" "$alias_stdout"
+grep -Fq 'watchdogvpn is deprecated; use watchdog' "$alias_stderr"
+
+alias_log="$TMP_DIR/alias-argv.log"
+make_cmd "$TMP_DIR/canonical-watchdog" \
+  'printf "%s\n" "$*" >"$WATCHDOGVPN_TEST_ALIAS_LOG"' \
+  'printf "canonical stdout\n"'
+
+alias_result="$(
+  WATCHDOGVPN_CANONICAL_CLI="$TMP_DIR/canonical-watchdog" \
+  WATCHDOGVPN_TEST_ALIAS_LOG="$alias_log" \
+  "$SCRIPT" status --json 2>"$TMP_DIR/alias-status.stderr"
+)"
+[[ "$alias_result" == "canonical stdout" ]]
+[[ "$(cat "$alias_log")" == "status --json" ]]
+grep -Fq 'watchdogvpn is deprecated; use watchdog' "$TMP_DIR/alias-status.stderr"
+
+WATCHDOGVPN_CANONICAL_CLI="$TMP_DIR/canonical-watchdog" \
+WATCHDOGVPN_TEST_ALIAS_LOG="$alias_log" \
+WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING=1 \
+  "$SCRIPT" backend status >/dev/null
+[[ "$(cat "$alias_log")" == "maintenance backend status" ]]
+
+WATCHDOGVPN_CANONICAL_CLI="$TMP_DIR/canonical-watchdog" \
+WATCHDOGVPN_TEST_ALIAS_LOG="$alias_log" \
+WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING=1 \
+  "$SCRIPT" help logs >/dev/null
+[[ "$(cat "$alias_log")" == "maintenance logs --help" ]]
+
+WATCHDOGVPN_CANONICAL_CLI="$TMP_DIR/canonical-watchdog" \
+WATCHDOGVPN_TEST_ALIAS_LOG="$alias_log" \
+WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING=1 \
+  "$SCRIPT" --version >/dev/null
+[[ "$(cat "$alias_log")" == "version" ]]
+
+WATCHDOGVPN_CANONICAL_CLI="$TMP_DIR/canonical-watchdog" \
+WATCHDOGVPN_TEST_ALIAS_LOG="$alias_log" \
+WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING=1 \
+  "$SCRIPT" profile list --json >/dev/null
+[[ "$(cat "$alias_log")" == "profile list --json" ]]
+
+if WATCHDOGVPN_CANONICAL_CLI="$TMP_DIR/missing-watchdog" "$SCRIPT" status >/dev/null 2>&1; then
+  printf 'FAIL: invalid canonical CLI override should fail closed\n' >&2
+  exit 1
+fi
+
+export WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING=1
+
 output="$(
   WATCHDOGVPN_REPORT_DIR="$TMP_DIR" \
   WATCHDOGVPN_TRUTH_BIN="$TMP_DIR/truth" \
@@ -235,24 +287,25 @@ if grep -Eq 'secret-profile|private-group|private-lan|route_action\.group:privat
 fi
 
 help_output="$("$SCRIPT" help)"
-contains "$help_output" 'Read-only commands:'
-contains "$help_output" 'backend       Show active backend capability summary.'
-contains "$help_output" 'logs          Read recent WatchdogVPN logs without sudo.'
-contains "$help_output" 'update-check  Show local repository update status without network access.'
-contains "$help_output" 'update-plan   Print safe manual update steps for the current checkout.'
-contains "$help_output" 'Configuration commands:'
-contains "$help_output" 'Interactive commands:'
-contains "$help_output" 'config set    Update a validated safe configuration key.'
-contains "$help_output" 'daemon-backed connect, disconnect, status and rotate live in the Python'
+canonical_help_output="$("$ROOT_DIR/bin/watchdog" --help)"
+[[ "$help_output" == "$canonical_help_output" ]]
+contains "$help_output" 'WatchdogVPN — local network control plane'
+contains "$help_output" 'status        Show daemon connection status'
+contains "$help_output" 'maintenance   Run local support, update and legacy-preference commands'
 dash_help_output="$("$SCRIPT" --help)"
 [[ "$dash_help_output" == "$help_output" ]]
-contains "$("$SCRIPT" help logs)" 'watchdogvpn logs [events|dispatcher] [lines]'
-contains "$("$SCRIPT" help update-check)" 'watchdogvpn update-check'
-contains "$("$SCRIPT" help update-plan)" 'watchdogvpn update-plan'
-contains "$("$SCRIPT" help runtime-update)" 'watchdogvpn runtime-update --preflight'
+contains "$("$SCRIPT" help logs)" 'watchdog maintenance logs [events|dispatcher] [lines]'
+contains "$("$SCRIPT" help update-check)" 'watchdog maintenance update-check'
+contains "$("$SCRIPT" help update-plan)" 'watchdog maintenance update-plan'
+contains "$("$SCRIPT" help runtime-update)" 'watchdog maintenance runtime-update --preflight'
 contains "$("$SCRIPT" help runtime-update)" 'requires explicit confirmation: yes'
 contains "$("$SCRIPT" help config)" 'Writable safe keys:'
-contains "$("$SCRIPT" help backend)" 'watchdogvpn backend status'
+contains "$("$SCRIPT" help backend)" 'watchdog maintenance backend status'
+report_count_before="$(find "$TMP_DIR" -maxdepth 1 -name 'watchdogvpn-report-*.txt' | wc -l)"
+contains "$(WATCHDOGVPN_REPORT_DIR="$TMP_DIR" "$SCRIPT" help report)" 'watchdog maintenance report'
+report_count_after="$(find "$TMP_DIR" -maxdepth 1 -name 'watchdogvpn-report-*.txt' | wc -l)"
+[[ "$report_count_after" == "$report_count_before" ]]
+contains "$(WATCHDOGVPN_TUI_BIN="$TMP_DIR/missing-tui" "$SCRIPT" help tui)" 'watchdog maintenance tui'
 contains "$("$SCRIPT" config help)" 'Reset targets:'
 if "$SCRIPT" help missing-topic >/dev/null 2>&1; then
   printf 'FAIL: unknown help topic should fail\n' >&2
@@ -302,8 +355,8 @@ printf '%s\n' "$plan_output" | grep -Fq 'Recommended source routine:'
 printf '%s\n' "$plan_output" | grep -Fq 'Source checkout appears current against local upstream metadata.'
 printf '%s\n' "$plan_output" | grep -Fq './update.sh --skip-doctor'
 runtime_help="$("$SCRIPT" runtime-update --help)"
-printf '%s\n' "$runtime_help" | grep -Fq 'watchdogvpn runtime-update'
-printf '%s\n' "$runtime_help" | grep -Fq 'watchdogvpn runtime-update --preflight'
+printf '%s\n' "$runtime_help" | grep -Fq 'watchdog maintenance runtime-update'
+printf '%s\n' "$runtime_help" | grep -Fq 'watchdog maintenance runtime-update --preflight'
 printf '%s\n' "$runtime_help" | grep -Fq 'requires explicit confirmation: yes'
 runtime_preflight="$(WATCHDOGVPN_REPO_DIR="$UPDATE_REPO" "$SCRIPT" runtime-update --preflight)"
 printf '%s\n' "$runtime_preflight" | grep -Fq 'WatchdogVPN runtime update'

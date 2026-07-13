@@ -184,6 +184,16 @@ VISIBLE_STATS_COUNTER_PREFIXES = (
 SIGNAL_EXIT_CODE_BASE = 128
 INTERRUPTED_EXIT_CODE = SIGNAL_EXIT_CODE_BASE + signal.SIGINT
 BROKEN_PIPE_EXIT_CODE = SIGNAL_EXIT_CODE_BASE + signal.SIGPIPE
+MAINTENANCE_COMMAND_HELP = {
+    "backend": "Show the legacy custom-VPS backend capability summary",
+    "config": "Manage legacy language, TUI and reporting preferences",
+    "logs": "Read and sanitize local WatchdogVPN logs",
+    "report": "Generate a private local diagnostic report",
+    "runtime-update": "Run the confirmed source-checkout runtime update flow",
+    "tui": "Open the current WatchdogVPN terminal UI",
+    "update-check": "Inspect local checkout update state without network access",
+    "update-plan": "Print a safe manual update plan",
+}
 
 
 ROOT_HELP = """WatchdogVPN — local network control plane for resilient VPN/proxy routing
@@ -218,6 +228,7 @@ Maintenance:
   setup         Configure local WatchdogVPN defaults
   panic         Run the WatchdogVPN panic button
   uninstall     Run the safe WatchdogVPN uninstall flow
+  maintenance   Run local support, update and legacy-preference commands
 
 Examples:
   watchdog status
@@ -496,6 +507,26 @@ def _build_parser() -> argparse.ArgumentParser:
     uninstall_parser.add_argument("--uninstall-script", help=argparse.SUPPRESS)
     uninstall_parser.add_argument("--json", action="store_true", help="Print JSON")
     uninstall_parser.set_defaults(handler=_uninstall)
+
+    maintenance_parser = subparsers.add_parser(
+        "maintenance",
+        help="Run local support, update and legacy-preference commands",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Commands:\n"
+            + "\n".join(
+                f"  {command:<16} {help_text}"
+                for command, help_text in MAINTENANCE_COMMAND_HELP.items()
+            )
+        ),
+    )
+    maintenance_parser.add_argument(
+        "maintenance_command",
+        choices=tuple(MAINTENANCE_COMMAND_HELP),
+        help="Maintenance command",
+    )
+    maintenance_parser.add_argument("maintenance_args", nargs=argparse.REMAINDER)
+    maintenance_parser.set_defaults(handler=_maintenance)
 
     backup_parser = subparsers.add_parser("backup", help="Create, inspect and restore backups")
     backup_subparsers = backup_parser.add_subparsers(dest="backup_command")
@@ -1374,6 +1405,37 @@ def _watchdogvpn_version(source: str | None = None) -> str:
     if not match:
         raise ParseError(f"WatchdogVPN version marker not found in {path}")
     return match.group(1)
+
+
+def _maintenance(args: argparse.Namespace) -> int:
+    script = _maintenance_script_path()
+    command = [str(script), args.maintenance_command, *args.maintenance_args]
+    env = os.environ.copy()
+    env["WATCHDOGVPN_MAINTENANCE_INTERNAL"] = "1"
+    completed = subprocess.run(command, check=False, env=env)
+    return _normalize_exit_code(int(completed.returncode))
+
+
+def _maintenance_script_path() -> Path:
+    if os.environ.get("WATCHDOGVPN_MAINTENANCE_CLI"):
+        candidates = [Path(os.environ["WATCHDOGVPN_MAINTENANCE_CLI"]).expanduser()]
+    else:
+        runtime_root = Path(__file__).resolve().parents[1]
+        candidates = [
+            runtime_root / "bin" / "watchdogvpn",
+            Path("/usr/local/lib/watchdogvpn/bin/watchdogvpn"),
+            Path("/usr/local/bin/watchdogvpn"),
+            Path.cwd() / "bin" / "watchdogvpn",
+        ]
+    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+    if not script.exists():
+        raise FileNotFoundError(
+            "WatchdogVPN maintenance backend not found; reinstall WatchdogVPN or set "
+            "WATCHDOGVPN_MAINTENANCE_CLI"
+        )
+    if not os.access(script, os.X_OK):
+        raise PermissionError(f"maintenance backend is not executable: {script}")
+    return script
 
 
 def _panic(args: argparse.Namespace) -> int:

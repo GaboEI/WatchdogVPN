@@ -1,36 +1,64 @@
 # WatchdogVPN CLI
 
-`watchdogvpn` is the product command for diagnostics, configuration and common
-runtime entry points.
+`watchdog` is the single canonical product CLI. It owns the root help, version,
+daemon-backed runtime state, profiles, providers, policy, backup/recovery and
+local maintenance namespaces.
 
-The legacy `VPN` command remains the direct TUI launcher. New automation and
-documentation should prefer `watchdogvpn`.
+`watchdogvpn` is a deprecated compatibility alias. It forwards every invocation
+to `watchdog`, writes one migration warning to stderr and never owns an
+independent status, version or help contract. Alias stdout is left unchanged so
+JSON consumers can migrate without parsing a second payload. The alias remains
+available throughout the v2 major release line; its earliest possible removal
+is v3.0 with advance release-note notice. Set
+`WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING=1` only as a temporary automation aid
+while replacing the command name.
+
+The routing and removal policy is recorded in
+[Phase 23 CLI Entrypoint Consolidation](phase-23-task-23-3-6-cli-entrypoint-consolidation.md).
+
+The existing Bash-only support functions are preserved under
+`watchdog maintenance`. The `VPN` command remains a direct TUI launcher until
+the planned TUI replacement.
 
 ## Command Summary
 
-Read-only commands:
+Canonical root and runtime commands:
 
 ```sh
-watchdogvpn status
-watchdogvpn backend status
-watchdogvpn doctor
-watchdogvpn report
-watchdogvpn logs [events|dispatcher] [lines]
-watchdogvpn update-check
-watchdogvpn update-plan
-watchdogvpn runtime-update --preflight
-watchdogvpn config get [section.key]
+watchdog --help
+watchdog version [--json]
+watchdog status [--json]
+watchdog doctor [--json]
 watchdog config routing-contract [--json]
-watchdogvpn version
-watchdogvpn help
-watchdogvpn --help
 ```
 
-Configuration commands:
+Local maintenance and compatibility commands:
 
 ```sh
-watchdogvpn config set section.key value
-watchdogvpn config reset [language|tui|reporting|all] --yes
+watchdog maintenance backend status
+watchdog maintenance report
+watchdog maintenance logs [events|dispatcher] [lines]
+watchdog maintenance update-check
+watchdog maintenance update-plan
+watchdog maintenance runtime-update --preflight
+watchdog maintenance config get [section.key]
+watchdog maintenance config set section.key value
+watchdog maintenance config reset [language|tui|reporting|all] --yes
+watchdog maintenance tui
+```
+
+Deprecated forms route to the same parser and implementation:
+
+```sh
+watchdogvpn status                  # watchdog status
+watchdogvpn backend status         # watchdog maintenance backend status
+watchdogvpn report                 # watchdog maintenance report
+watchdogvpn profile list --json    # watchdog profile list --json
+```
+
+Python configuration commands:
+
+```sh
 watchdog config set routing-policy <rule|global>
 watchdog config set capture-modes <local_proxy|local_proxy,tun|local_proxy,system_proxy|local_proxy,tun,system_proxy>
 watchdog config set default-route-action <current|direct|block>
@@ -47,13 +75,13 @@ watchdog config lan-sharing-credentials [--show-secret] [--json]
 Preflight-only state-changing commands:
 
 ```sh
-watchdogvpn runtime-update --preflight
+watchdog maintenance runtime-update --preflight
 ```
 
 State-changing runtime commands:
 
 ```sh
-watchdogvpn runtime-update
+watchdog maintenance runtime-update
 ```
 
 `runtime-update` validates whether a runtime update is safe, prints the exact
@@ -64,10 +92,10 @@ source checkout or installed runtime. Its full safety contract is documented in
 Interactive commands:
 
 ```sh
-watchdogvpn tui
+watchdog maintenance tui
 ```
 
-Python runtime commands:
+Additional canonical commands:
 
 ```sh
 watchdog connect <profile_id> [--json]
@@ -304,8 +332,8 @@ removes without writing secret-bearing backup documents.
 
 ### `watchdog version`
 
-Prints the Python CLI version using the same release marker as
-`watchdogvpn version`.
+Prints the canonical CLI version. The deprecated `watchdogvpn version` alias
+delegates here and therefore cannot report a different version.
 
 ```sh
 watchdog version
@@ -493,45 +521,46 @@ returns `pre_restore_backup` in JSON.
 
 ## Runtime Commands
 
-### `watchdogvpn status`
+### `watchdog status`
 
-Shows VPN runtime status through `vpnctl`.
+Shows daemon-backed WatchdogVPN runtime status through the canonical IPC
+contract.
 
 ```sh
-watchdogvpn status
+watchdog status
 ```
 
 Use this for a quick operational view after install, update, reboot or recovery.
 
-### `watchdogvpn backend status`
+### `watchdog maintenance backend status`
 
 Shows the active backend contract without changing runtime state.
 
 ```sh
-watchdogvpn backend status
+watchdog maintenance backend status
 ```
 
 The legacy bash backend contract is custom-vps-only. It controls a local
 systemd service configured by the user and fails closed if required
 configuration, such as `custom_vps.service_name`, is missing.
 
-### `watchdogvpn doctor`
+### `watchdog doctor`
 
 Runs the installed or checkout doctor script when available.
 
 ```sh
-watchdogvpn doctor
+watchdog doctor
 ```
 
 Installed systems do not need to run this from the repository root; the
 installed runtime support tree is used when present.
 
-### `watchdogvpn tui`
+### `watchdog maintenance tui`
 
 Opens the WatchdogVPN terminal UI.
 
 ```sh
-watchdogvpn tui
+watchdog maintenance tui
 ```
 
 This is equivalent to launching:
@@ -885,12 +914,14 @@ Remote downloads require HTTPS and a matching `expected_sha256` pin. Built-in
 rule sets load from explicit local source paths. Runtime uses verified local
 cache files in sing-box rather than sing-box remote rule-set downloads.
 
-### `watchdogvpn version`
+### Canonical version and compatibility alias
 
-Prints the installed CLI version.
+`watchdog version` prints the installed CLI version. `watchdogvpn version` and
+`watchdogvpn --version` are compatibility forms that delegate to the same
+canonical command and add only the deprecation warning on stderr.
 
 ```sh
-watchdogvpn version
+watchdog version
 ```
 
 Expected output for the current release:
@@ -899,33 +930,34 @@ Expected output for the current release:
 WatchdogVPN v0.3.1
 ```
 
-### `watchdogvpn help`
+### Canonical root help
 
-Prints grouped command help.
+`watchdog --help` is the only root help. Compatibility help delegates to it and
+therefore has identical stdout.
 
 ```sh
-watchdogvpn help
-watchdogvpn --help
-watchdogvpn help logs
-watchdogvpn help update-check
-watchdogvpn help update-plan
-watchdogvpn help runtime-update
-watchdogvpn help config
-watchdogvpn help backend
+watchdog --help
+watchdog maintenance --help
+watchdog maintenance logs --help
+watchdog maintenance update-check --help
+watchdog maintenance update-plan --help
+watchdog maintenance runtime-update --help
+watchdog maintenance config --help
+watchdog maintenance backend --help
 ```
 
-The help output separates read-only commands, configuration-write commands and
-interactive commands. The Python `watchdog` CLI owns daemon-backed connect,
-disconnect, status and rotate commands for the v2 runtime.
+The root help owns all daemon-backed lifecycle, configuration and policy
+commands and links the maintenance namespace. The deprecated alias does not
+maintain a second command inventory.
 
 ## Diagnostic Reports
 
-### `watchdogvpn report`
+### `watchdog maintenance report`
 
 Generates a local diagnostic report.
 
 ```sh
-watchdogvpn report
+watchdog maintenance report
 ```
 
 Rules:
@@ -947,14 +979,14 @@ guidance.
 
 ## Local Logs
 
-### `watchdogvpn logs`
+### `watchdog maintenance logs`
 
 Reads recent local WatchdogVPN logs without using `sudo`.
 
 ```sh
-watchdogvpn logs
-watchdogvpn logs events 80
-watchdogvpn logs dispatcher 80
+watchdog maintenance logs
+watchdog maintenance logs events 80
+watchdog maintenance logs dispatcher 80
 ```
 
 Supported targets:
@@ -975,12 +1007,12 @@ Rules:
 
 ## Update State
 
-### `watchdogvpn update-check`
+### `watchdog maintenance update-check`
 
 Shows local source checkout status without contacting the network.
 
 ```sh
-watchdogvpn update-check
+watchdog maintenance update-check
 ```
 
 Reported fields include:
@@ -1005,15 +1037,16 @@ Rules:
 - Does not use `sudo`.
 - Uses only local Git metadata already present in the checkout.
 
-### `watchdogvpn update-plan`
+### `watchdog maintenance update-plan`
 
 Prints a safe manual update plan for the current checkout state.
 
 ```sh
-watchdogvpn update-plan
+watchdog maintenance update-plan
 ```
 
-The command uses the same local Git metadata as `watchdogvpn update-check`.
+The command uses the same local Git metadata as
+`watchdog maintenance update-check`.
 It prints commands and guidance only.
 
 Rules:
@@ -1036,15 +1069,14 @@ hash -r
 ./doctor.sh
 ```
 
-### `watchdogvpn runtime-update`
+### `watchdog maintenance runtime-update`
 
 Runs the confirmed runtime update flow.
 
 ```sh
-watchdogvpn runtime-update
-watchdogvpn runtime-update --preflight
-watchdogvpn runtime-update --help
-watchdogvpn help runtime-update
+watchdog maintenance runtime-update
+watchdog maintenance runtime-update --preflight
+watchdog maintenance runtime-update --help
 ```
 
 Current `v0.3.1` behavior:
@@ -1083,7 +1115,7 @@ hash -r
 ./doctor.sh
 ```
 
-Use `watchdogvpn runtime-update --preflight` to run only the safety checks. In
+Use `watchdog maintenance runtime-update --preflight` to run only the safety checks. In
 preflight mode, the command does not fetch, pull, run `update.sh`, run
 `doctor.sh` or use `sudo`.
 
@@ -1103,29 +1135,29 @@ The default schema is installed from:
 
 See [Configuration](configuration.md) for the full contract.
 
-### `watchdogvpn config get`
+### `watchdog maintenance config get`
 
 Prints the sanitized configuration.
 
 ```sh
-watchdogvpn config get
+watchdog maintenance config get
 ```
 
 Print one key:
 
 ```sh
-watchdogvpn config get language.current
+watchdog maintenance config get language.current
 ```
 
-### `watchdogvpn config set`
+### `watchdog maintenance config set`
 
 Updates a supported safe key after validation.
 
 ```sh
-watchdogvpn config set language.current es
-watchdogvpn config set tui.theme high_contrast
-watchdogvpn config set tui.color false
-watchdogvpn config set reporting.sanitize_ipv4 true
+watchdog maintenance config set language.current es
+watchdog maintenance config set tui.theme high_contrast
+watchdog maintenance config set tui.color false
+watchdog maintenance config set reporting.sanitize_ipv4 true
 ```
 
 Each successful write creates a backup before modifying the active config.
@@ -1161,15 +1193,15 @@ reporting.sanitize_home: true, false
 Timer and DNS keys are intentionally read-only until they are wired to runtime
 application logic.
 
-### `watchdogvpn config reset`
+### `watchdog maintenance config reset`
 
 Resets safe sections to default values from `config.toml.example`.
 
 ```sh
-watchdogvpn config reset language --yes
-watchdogvpn config reset tui --yes
-watchdogvpn config reset reporting --yes
-watchdogvpn config reset all --yes
+watchdog maintenance config reset language --yes
+watchdog maintenance config reset tui --yes
+watchdog maintenance config reset reporting --yes
+watchdog maintenance config reset all --yes
 ```
 
 Rules:
@@ -1205,7 +1237,8 @@ Signal and pipeline handling is centralized for every Python CLI command:
 - Do not share diagnostic reports before reviewing them.
 - Do not edit `/etc/watchdogvpn/config.toml` while another update or config
   command is running.
-- Prefer `watchdogvpn config set` over manual edits for supported keys.
+- Prefer `watchdog maintenance config set` over manual edits for the legacy
+  language/TUI/reporting preference keys it supports.
 - Use `./update.sh --skip-doctor` from a clean, current checkout when updating
   installed runtime files.
 - If you need to put WatchdogVPN completely to sleep (daemon, kill switch,

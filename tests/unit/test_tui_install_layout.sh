@@ -26,7 +26,7 @@ for name in ("truth_data", "country_code", "current_location", "bypass_count", "
     assert name in module.handle_menu.__globals__, f"missing handle_menu global: {name}"
 
 cmd = module.settings_set_command("language.current", "es")
-assert "/usr/local/bin/watchdogvpn config set language.current es" in cmd
+assert "/usr/local/bin/watchdog maintenance config set language.current es" in cmd
 assert "clave settings no permitida" in module.settings_set_command("timers.watchdog_interval", "1min")
 reset_cmd = module.settings_reset_command()
 assert "config reset language --yes" in reset_cmd
@@ -55,7 +55,7 @@ assert "Contextual guide. No commands are executed." in runtime_text
 assert module.update_center_repo_root().endswith("WatchdogVPN")
 backend_text = module.build_backend_text()
 assert "Custom VPS usa metadatos no secretos" in backend_text
-assert "watchdogvpn backend status" in backend_text
+assert "watchdog maintenance backend status" in backend_text
 
 original_cyan = module.FG["cyan"]
 module.settings_snapshot = lambda: [("Tema", "no_color"), ("Color", "false")]

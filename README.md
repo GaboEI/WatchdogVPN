@@ -161,8 +161,13 @@ VPN
 Run the product CLI:
 
 ```sh
-watchdogvpn --help
+watchdog --help
 ```
+
+`watchdog` is the canonical CLI. The installed `watchdogvpn` command is a
+deprecated compatibility alias that forwards to the same parser and writes a
+migration warning to stderr. Local report, log, update and current-TUI helpers
+are available under `watchdog maintenance --help`.
 
 `doctor.sh` is read-only. It checks whether the machine has the expected
 dependencies, runtime state and time/NTP health. It reports clock skew as a

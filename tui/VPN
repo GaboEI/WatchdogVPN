@@ -31,7 +31,7 @@ from watchdogvpn.constants import (
     MENU,
     MENU_ITEMS,
     SUDO_KEEPALIVE_SECONDS,
-    WATCHDOGVPN_CLI,
+    WATCHDOG_CLI,
 )
 from watchdogvpn.commands import (
     run,
@@ -259,7 +259,7 @@ def menu_overview(label: str):
         "Settings": [
             ("Rol", "Preferencias persistentes"),
             ("Uso", "Ver y cambiar idioma, tema, color y unicode"),
-            ("Riesgo", "Bajo: usa watchdogvpn config set con backup"),
+            ("Riesgo", "Bajo: usa watchdog maintenance config con backup"),
         ],
         "Update Center": [
             ("Rol", "Preparar actualizaciones"),
@@ -425,12 +425,12 @@ def build_settings_text() -> str:
         [
             "",
             "Comandos CLI relacionados:",
-            "  watchdogvpn config get",
-            "  watchdogvpn config get language.current",
-            "  watchdogvpn config set language.current es",
-            "  watchdogvpn config set tui.theme high_contrast",
-            "  watchdogvpn config reset language --yes",
-            "  watchdogvpn config reset tui --yes",
+            "  watchdog maintenance config get",
+            "  watchdog maintenance config get language.current",
+            "  watchdog maintenance config set language.current es",
+            "  watchdog maintenance config set tui.theme high_contrast",
+            "  watchdog maintenance config reset language --yes",
+            "  watchdog maintenance config reset tui --yes",
             "",
             "Tambien puedes editar idioma, tema, color y unicode desde el menu Settings.",
             "Pulsa q para volver.",
@@ -454,10 +454,10 @@ def build_backend_text() -> str:
         [
             "",
             "Comandos CLI relacionados:",
-            "  watchdogvpn backend status",
-            "  watchdogvpn config get backend.mode",
-            "  watchdogvpn config get backend.active",
-            "  watchdogvpn config get custom_vps.enabled",
+            "  watchdog maintenance backend status",
+            "  watchdog maintenance config get backend.mode",
+            "  watchdog maintenance config get backend.active",
+            "  watchdog maintenance config get custom_vps.enabled",
             "",
             "Instalacion:",
             "  ./install.sh",
@@ -508,16 +508,16 @@ def settings_set_command(key: str, value: str) -> str:
     if key not in allowed:
         return "echo 'ERROR: clave settings no permitida.'"
     return (
-        f"sudo -n {shlex.quote(WATCHDOGVPN_CLI)} config set "
+        f"sudo -n {shlex.quote(WATCHDOG_CLI)} maintenance config set "
         f"{shlex.quote(key)} {shlex.quote(value)}"
     )
 
 
 def settings_reset_command() -> str:
-    cli = shlex.quote(WATCHDOGVPN_CLI)
+    cli = shlex.quote(WATCHDOG_CLI)
     return (
-        f"sudo -n {cli} config reset language --yes && "
-        f"sudo -n {cli} config reset tui --yes"
+        f"sudo -n {cli} maintenance config reset language --yes && "
+        f"sudo -n {cli} maintenance config reset tui --yes"
     )
 
 
@@ -537,7 +537,7 @@ def update_center_repo_root():
         if path in seen:
             continue
         seen.add(path)
-        if os.path.isdir(os.path.join(path, ".git")) and os.path.isfile(os.path.join(path, "bin", "watchdogvpn")):
+        if os.path.isdir(os.path.join(path, ".git")) and os.path.isfile(os.path.join(path, "bin", "watchdog")):
             return path
     return ""
 
@@ -550,8 +550,8 @@ def update_center_snapshot():
             return ""
         return run(f"cd {shlex.quote(repo_root)} && {cmd} 2>/dev/null || true", timeout).strip()
 
-    installed_version = run(f"{shlex.quote(WATCHDOGVPN_CLI)} version 2>/dev/null || true", 4).strip()
-    local_version = local("./bin/watchdogvpn version") if repo_root else ""
+    installed_version = run(f"{shlex.quote(WATCHDOG_CLI)} version 2>/dev/null || true", 4).strip()
+    local_version = local("./bin/watchdog version") if repo_root else ""
     upstream = local("git rev-parse --abbrev-ref --symbolic-full-name @{u}")
     remote_commit = local("git rev-parse --short @{u}") if upstream else ""
     counts = local("git rev-list --left-right --count HEAD...@{u}") if upstream else ""
@@ -734,7 +734,7 @@ def update_center_runtime_plan(snapshot=None):
             "  ./update.sh --skip-doctor",
             "  hash -r",
             "  ./doctor.sh",
-            "  watchdogvpn version",
+            "  watchdog version",
             "  VPN",
         ]
     return [
@@ -1759,22 +1759,22 @@ def section_meta(section: str, label: str):
             ],
             "Cambiar idioma": [
                 ("Actual", snapshot.get("Idioma", "-")),
-                ("Accion", "watchdogvpn config set language.current"),
+                ("Accion", "watchdog maintenance config set language.current"),
                 ("Impacto", "Preferencia persistente"),
             ],
             "Cambiar tema": [
                 ("Actual", snapshot.get("Tema", "-")),
-                ("Accion", "watchdogvpn config set tui.theme"),
+                ("Accion", "watchdog maintenance config set tui.theme"),
                 ("Impacto", "Preferencia persistente"),
             ],
             "Cambiar color": [
                 ("Actual", snapshot.get("Color", "-")),
-                ("Accion", "watchdogvpn config set tui.color"),
+                ("Accion", "watchdog maintenance config set tui.color"),
                 ("Impacto", "Preferencia persistente"),
             ],
             "Cambiar unicode": [
                 ("Actual", snapshot.get("Unicode", "-")),
-                ("Accion", "watchdogvpn config set tui.unicode"),
+                ("Accion", "watchdog maintenance config set tui.unicode"),
                 ("Impacto", "Preferencia persistente"),
             ],
             "Reset Settings": [
@@ -1794,7 +1794,7 @@ def section_meta(section: str, label: str):
                 ("Riesgo", "Solo lectura"),
             ],
             "Estado runtime": [
-                ("Comando", "watchdogvpn backend status"),
+                ("Comando", "watchdog maintenance backend status"),
                 ("Uso", "Diagnostico del contrato backend"),
                 ("Riesgo", "Solo lectura"),
             ],
@@ -1878,7 +1878,7 @@ def section_intro(section: str) -> str:
         "Backend": "Muestra backend activo, modo instalado y preparacion no secreta de Custom VPS.",
         "DNS": "Control DNS v2: estado, pruebas, dry-run, apply confirmado y reset desde snapshot.",
         "Ver logs": "Lectura de logs recientes en orden inverso: lo ultimo aparece primero.",
-        "Settings": "Preferencias persistentes. Los cambios usan watchdogvpn config set y crean backup.",
+        "Settings": "Preferencias persistentes. Los cambios usan watchdog maintenance config y crean backup.",
         "Update Center": "Estado de version y actualizacion. Esta vista no instala ni reinicia servicios.",
     }
     return data.get(section, "Selecciona una accion. El panel derecho resume impacto y contexto.")
@@ -1979,7 +1979,7 @@ def section_panel(section: str, items):
             "Backend": [
                 "Custom VPS controla un servicio systemd local configurado por el usuario.",
                 "Usa ./install.sh para configurar el backend de forma guiada.",
-                "watchdogvpn backend status es el diagnostico CLI equivalente.",
+                "watchdog maintenance backend status es el diagnostico CLI equivalente.",
             ],
             "DNS": [
                 "La pantalla lee la politica DNS v2 local y el snapshot de rollback.",
@@ -1994,7 +1994,7 @@ def section_panel(section: str, items):
             ],
             "Settings": [
                 "Esta vista edita solo preferencias seguras: idioma, tema, color y unicode.",
-                "Cada cambio usa watchdogvpn config set, valida el valor y crea backup.",
+                "Cada cambio usa watchdog maintenance config, valida el valor y crea backup.",
                 "Los cambios de idioma/tema todavia son preferencias persistidas; la traduccion completa llega en una fase posterior.",
                 "Reset Settings restaura idioma y TUI; no toca DNS, timers ni reporting.",
             ],
@@ -2086,7 +2086,7 @@ def handle_menu(label: str):
             ],
             "Backend": [
                 ("Ver backend", "__BACKEND_VIEW__"),
-                ("Estado runtime", f"{shlex.quote(WATCHDOGVPN_CLI)} backend status"),
+                ("Estado runtime", f"{shlex.quote(WATCHDOG_CLI)} maintenance backend status"),
                 ("Config Custom VPS", "__BACKEND_VIEW__"),
             ],
             "DNS": [

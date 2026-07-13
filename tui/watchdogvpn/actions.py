@@ -13,7 +13,7 @@ from watchdogvpn.constants import (
     NO_VPN,
     TRUTH_BIN,
     VPNCTL,
-    WATCHDOGVPN_CLI,
+    WATCHDOG_CLI,
 )
 from watchdogvpn.validators import valid_domain, valid_timer_interval
 
@@ -27,7 +27,7 @@ def disconnect_vpn_command() -> str:
 
 
 def rotate_now_command() -> str:
-    return f"{shlex.quote(WATCHDOGVPN_CLI)} rotate --force; {TRUTH_BIN}"
+    return f"{shlex.quote(WATCHDOG_CLI)} rotate --force; {TRUTH_BIN}"
 
 
 def real_status_command() -> str:
