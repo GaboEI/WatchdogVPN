@@ -131,14 +131,20 @@ def _url_error_is_timeout(exc: URLError) -> bool:
     return "timed out" in str(exc).lower()
 
 
+def validate_subscription_url(url: str) -> str:
+    normalized = str(url or "").strip()
+    if urlparse(normalized).scheme != "https":
+        raise ParseError(f"invalid subscription URL scheme (https required): {normalized}")
+    return normalized
+
+
 def _fetch(url: str) -> tuple[str, dict[str, str]]:
     # Only https is accepted: plain http leaks the subscription token (often
     # embedded in the URL path) in cleartext, and urlopen would otherwise
     # also happily honor file://, ftp:// and other local/non-network
     # schemes - "add a provider" must never become "read an arbitrary local
     # file" or "fetch an internal-network URL an operator didn't intend".
-    if urlparse(url).scheme != "https":
-        raise ParseError(f"invalid subscription URL scheme (https required): {url}")
+    url = validate_subscription_url(url)
     user_agent = os.environ.get("WATCHDOGVPN_SUBSCRIPTION_USER_AGENT", DEFAULT_SUBSCRIPTION_USER_AGENT)
     connect_timeout, read_timeout, total_timeout, max_response_bytes = _subscription_fetch_limits()
     started = time.monotonic()

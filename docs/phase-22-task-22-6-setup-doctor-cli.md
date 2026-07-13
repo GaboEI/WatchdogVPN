@@ -51,8 +51,9 @@ watchdog setup [--dry-run] [--yes] [--json]
 Dry-run validates and prints the setup plan without writing local state. Real
 setup writes require both `--yes` and `--acknowledge-backup-warning`.
 
-Provider URLs are stored as local provider definitions without fetching nodes.
-Provider refresh remains owned by `watchdog provider update`.
+Provider URLs must use HTTPS and are stored as local provider definitions
+without fetching nodes. Provider refresh remains owned by
+`watchdog provider update`.
 
 ## Setup JSON Contract
 
@@ -66,6 +67,7 @@ Setup JSON includes:
 - `runtime_action_executed=false`;
 - `dry_run`;
 - `applied`;
+- `outcome` (`applied`, `dry_run` or `no_changes`);
 - `backup_path`;
 - `backup_warning_acknowledged`.
 
@@ -96,6 +98,13 @@ code in one JSON document:
 The wrapper does not call `sudo` and does not mutate runtime state.
 
 ## Backup And Mutation Behavior
+
+Phase 23 hardening made the setup plan a semantic diff against effective local
+state. Exact repeats return `has_changes=false` and `outcome=no_changes`
+without requiring confirmation, creating a backup or rewriting stores. Partial
+repeats include and back up only sections with effective changes. Matching
+manual profiles use the existing secret-safe profile fingerprint; matching
+provider definitions preserve refreshed profiles, metadata and rotation state.
 
 Real setup writes create a pre-setup backup over the affected sections before
 local state is written. Setup may write:

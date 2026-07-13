@@ -355,20 +355,30 @@ Supported setup fields:
 - `--autostart enable|disable`: stores app autostart intent;
 - `--autoconnect enable|disable`: stores VPN autoconnect intent;
 - `--profile-uri URI`: imports one local profile URI without printing raw config;
-- `--provider-url URL`: stores one provider definition without fetching nodes;
+- `--provider-url URL`: stores one HTTPS provider definition without fetching nodes;
 - `--kill-switch enable|disable`: sets local kill-switch policy;
 - `--dns-mode auto|off|custom|advanced`: sets DNS policy mode;
 - `--app-policy enable|disable`: sets app-policy enabled state;
 - `--app-policy-mode blacklist|whitelist`: sets app-policy mode;
 - `--app-policy-default-action current|direct|block`: sets app-policy default.
 
-`setup --dry-run` validates the plan and does not write local state. Real setup
-writes require both `--yes` and `--acknowledge-backup-warning`. A pre-setup
-backup is created before writes. Setup does not connect, disconnect, rotate,
-apply DNS, change routes, edit firewall rules, mutate system proxy settings,
-start services or refresh providers.
+`setup --dry-run` validates the plan and does not write local state. Setup first
+compares every requested value and imported definition with effective local
+state. An exact repeat returns `has_changes=false`, `outcome=no_changes`, an
+empty `operations`/`sections` diff and `backup_path=null`; it does not require
+write confirmation, create a backup or rewrite any store. Partial repeats back
+up and write only sections with effective changes. Existing matching profiles
+are recognized by their secret-safe semantic fingerprint, while matching
+provider definitions preserve refreshed profiles, metadata and rotation state.
 
-JSON output includes `operations`, `sections`, `backup_path`,
+Real setup writes require both `--yes` and
+`--acknowledge-backup-warning`. A pre-setup backup is created before effective
+writes. Setup does not connect, disconnect, rotate, apply DNS, change routes,
+edit firewall rules, mutate system proxy settings, start services or refresh
+providers.
+
+JSON output includes `has_changes`, `outcome` (`applied`, `dry_run` or
+`no_changes`), `operations`, `sections`, `backup_path`,
 `network_fetch_performed=false` and `runtime_action_executed=false`.
 
 ### `watchdog doctor`

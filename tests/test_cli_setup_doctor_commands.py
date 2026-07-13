@@ -78,7 +78,9 @@ class CliSetupDoctorCommandTests(unittest.TestCase):
 
             data = json.loads(result.stdout)
             self.assertTrue(data["dry_run"])
+            self.assertTrue(data["has_changes"])
             self.assertFalse(data["applied"])
+            self.assertEqual(data["outcome"], "dry_run")
             self.assertFalse(data["network_fetch_performed"])
             self.assertFalse(data["runtime_action_executed"])
             self.assertFalse((Path(tmp) / "profiles.json").exists())
@@ -119,7 +121,9 @@ class CliSetupDoctorCommandTests(unittest.TestCase):
             )
 
             data = json.loads(result.stdout)
+            self.assertTrue(data["has_changes"])
             self.assertTrue(data["applied"])
+            self.assertEqual(data["outcome"], "applied")
             self.assertTrue(Path(data["backup_path"]).exists())
             state = StateManager(Path(tmp) / "state.toml").load()
             self.assertEqual(state["selected_language"], "es")
@@ -136,6 +140,146 @@ class CliSetupDoctorCommandTests(unittest.TestCase):
             self.assertEqual(len(providers), 1)
             self.assertEqual(providers[0].name, "demo-provider")
             self.assertEqual(providers[0].profiles, [])
+
+    def test_setup_exact_repeat_is_noop_without_backup_or_store_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            requested = [
+                "--json",
+                "--language",
+                "es",
+                "--autostart",
+                "enable",
+                "--autoconnect",
+                "enable",
+                "--kill-switch",
+                "enable",
+                "--dns-mode",
+                "off",
+                "--app-policy",
+                "enable",
+                "--app-policy-mode",
+                "whitelist",
+                "--app-policy-default-action",
+                "block",
+                "--profile-uri",
+                "trojan://secret@example.com:443#demo",
+                "--provider-url",
+                "https://example.com/sub",
+                "--provider-name",
+                "demo-provider",
+            ]
+            first = self.run_watchdog(
+                ["setup", "--yes", "--acknowledge-backup-warning", *requested],
+                tmp,
+            )
+            first_data = json.loads(first.stdout)
+            self.assertEqual(first_data["outcome"], "applied")
+
+            provider_store = ProviderStore(Path(tmp) / "providers.json")
+            provider = provider_store.list()[0]
+            provider.rotation_enabled = True
+            provider.metadata = {"quota_bytes": 1024}
+            provider_store.update(provider)
+
+            store_paths = [
+                Path(tmp) / "state.toml",
+                Path(tmp) / "config.toml",
+                Path(tmp) / "dns-policy.json",
+                Path(tmp) / "app-policy.json",
+                Path(tmp) / "profiles.json",
+                Path(tmp) / "providers.json",
+            ]
+            before = {
+                path: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in store_paths
+            }
+            backups_before = sorted((Path(tmp) / "backups").glob("watchdogvpn-pre-setup-*.zip"))
+
+            repeated = self.run_watchdog(["setup", *requested], tmp)
+
+            repeated_data = json.loads(repeated.stdout)
+            self.assertFalse(repeated_data["has_changes"])
+            self.assertFalse(repeated_data["applied"])
+            self.assertEqual(repeated_data["outcome"], "no_changes")
+            self.assertIsNone(repeated_data["backup_path"])
+            self.assertEqual(repeated_data["operations"], [])
+            self.assertEqual(repeated_data["sections"], [])
+            self.assertEqual(
+                sorted((Path(tmp) / "backups").glob("watchdogvpn-pre-setup-*.zip")),
+                backups_before,
+            )
+            for path, (content, mtime_ns) in before.items():
+                self.assertEqual(path.read_bytes(), content)
+                self.assertEqual(path.stat().st_mtime_ns, mtime_ns)
+            preserved_provider = provider_store.list()[0]
+            self.assertTrue(preserved_provider.rotation_enabled)
+            self.assertEqual(preserved_provider.metadata, {"quota_bytes": 1024})
+
+    def test_setup_partial_repeat_reports_only_effective_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(
+                [
+                    "setup",
+                    "--yes",
+                    "--acknowledge-backup-warning",
+                    "--json",
+                    "--language",
+                    "es",
+                    "--autostart",
+                    "enable",
+                ],
+                tmp,
+            )
+
+            result = self.run_watchdog(
+                [
+                    "setup",
+                    "--yes",
+                    "--acknowledge-backup-warning",
+                    "--json",
+                    "--language",
+                    "es",
+                    "--autostart",
+                    "disable",
+                ],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            self.assertEqual(data["outcome"], "applied")
+            self.assertEqual(data["sections"], ["selection-state"])
+            self.assertEqual(
+                data["operations"],
+                [
+                    {
+                        "target": "selection-state",
+                        "key": "app_autostart_enabled",
+                        "value": False,
+                    }
+                ],
+            )
+            state = StateManager(Path(tmp) / "state.toml").load()
+            self.assertEqual(state["selected_language"], "es")
+            self.assertFalse(state["app_autostart_enabled"])
+
+    def test_setup_rejects_non_https_provider_before_backup_or_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "setup",
+                    "--yes",
+                    "--acknowledge-backup-warning",
+                    "--provider-url",
+                    "file:///etc/passwd",
+                ],
+                tmp,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("https required", result.stderr)
+            self.assertFalse((Path(tmp) / "providers.json").exists())
+            self.assertFalse((Path(tmp) / "backups").exists())
 
     def test_setup_requires_yes_and_backup_ack_for_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -74,11 +74,11 @@ from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
 from models.connection_state import FAILURE_STATUSES
 from models.profile import Profile, ProfileSource, profile_fingerprint, profile_resilience_category
-from models.provider import Provider
+from models.provider import Provider, normalized_provider_url
 from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore, NodeGroupStoreError
 from parsers import ParseError
-from parsers import parse_uri
+from parsers import parse_uri, validate_subscription_url
 from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 from rotation import pool_builder
@@ -1432,10 +1432,17 @@ def _setup(args: argparse.Namespace) -> int:
     if not args.dry_run and plan["has_changes"]:
         backup_path = _create_setup_backup(plan)
         _apply_setup(args, plan)
+    if not plan["has_changes"]:
+        outcome = "no_changes"
+    elif args.dry_run:
+        outcome = "dry_run"
+    else:
+        outcome = "applied"
     data = {
         **plan,
         "dry_run": bool(args.dry_run),
         "applied": bool(not args.dry_run and plan["has_changes"]),
+        "outcome": outcome,
         "backup_path": str(backup_path) if backup_path else None,
         "backup_warning_acknowledged": bool(args.acknowledge_backup_warning),
     }
@@ -1448,72 +1455,139 @@ def _setup(args: argparse.Namespace) -> int:
 
 def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
     operations: list[dict[str, object]] = []
-    if args.language:
-        operations.append({"target": "selection-state", "key": "selected_language", "value": args.language})
-        operations.append({"target": "selection-state", "key": "language_mode", "value": "manual"})
-    if args.autostart:
-        operations.append(
-            {
-                "target": "selection-state",
-                "key": "app_autostart_enabled",
-                "value": args.autostart == "enable",
-            }
-        )
-    if args.autoconnect:
-        operations.append(
-            {
-                "target": "selection-state",
-                "key": "vpn_autoconnect_enabled",
-                "value": args.autoconnect == "enable",
-            }
-        )
+    if args.language or args.autostart or args.autoconnect:
+        state = StateManager().load()
+        if args.language:
+            _append_setup_value_change(
+                operations,
+                target="selection-state",
+                key="selected_language",
+                current=state["selected_language"],
+                requested=args.language,
+            )
+            _append_setup_value_change(
+                operations,
+                target="selection-state",
+                key="language_mode",
+                current=state["language_mode"],
+                requested="manual",
+            )
+        if args.autostart:
+            _append_setup_value_change(
+                operations,
+                target="selection-state",
+                key="app_autostart_enabled",
+                current=state["app_autostart_enabled"],
+                requested=args.autostart == "enable",
+            )
+        if args.autoconnect:
+            _append_setup_value_change(
+                operations,
+                target="selection-state",
+                key="vpn_autoconnect_enabled",
+                current=state["vpn_autoconnect_enabled"],
+                requested=args.autoconnect == "enable",
+            )
     if args.profile_uri:
         profile = parse_uri(args.profile_uri)
-        operations.append(
-            {
-                "target": "profiles",
-                "action": "import-profile-uri",
-                "profile": _profile_summary(profile),
-            }
+        fingerprint = profile_fingerprint(profile)
+        duplicate = next(
+            (
+                existing
+                for existing in ProfileStore().list()
+                if existing.source == ProfileSource.MANUAL
+                and profile_fingerprint(existing) == fingerprint
+            ),
+            None,
         )
+        if duplicate is None:
+            operations.append(
+                {
+                    "target": "profiles",
+                    "action": "import-profile-uri",
+                    "profile": _profile_summary(profile),
+                }
+            )
     if args.provider_url:
         provider = _setup_provider_document(args.provider_url, args.provider_name)
-        operations.append(
-            {
-                "target": "providers",
-                "action": "store-provider-url",
-                "provider": _provider_summary(provider),
-                "network_fetch_performed": False,
-            }
+        existing_providers = ProviderStore().list()
+        existing_by_id = next(
+            (existing for existing in existing_providers if existing.id == provider.id),
+            None,
         )
+        if existing_by_id is not None and not _setup_provider_definition_matches(
+            existing_by_id,
+            provider,
+        ):
+            raise ParseError(
+                f"provider id already exists with a different definition: {provider.id}; "
+                "use `watchdog provider remove` before replacing it"
+            )
+        existing_by_url = next(
+            (
+                existing
+                for existing in existing_providers
+                if normalized_provider_url(existing.url) == provider.url
+            ),
+            None,
+        )
+        if existing_by_url is not None and existing_by_url.id != provider.id:
+            raise ParseError(f"provider already exists: {existing_by_url.id}")
+        if existing_by_id is None:
+            if len(existing_providers) >= 2:
+                raise ParseError("maximum 2 external providers allowed")
+            operations.append(
+                {
+                    "target": "providers",
+                    "action": "store-provider-url",
+                    "provider": _provider_summary(provider),
+                    "network_fetch_performed": False,
+                }
+            )
     if args.kill_switch:
-        operations.append(
-            {
-                "target": "settings",
-                "key": "kill_switch.enabled",
-                "value": args.kill_switch == "enable",
-            }
+        app_config = AppConfig().load()
+        _append_setup_value_change(
+            operations,
+            target="settings",
+            key="kill_switch.enabled",
+            current=app_config["kill_switch"]["enabled"],
+            requested=args.kill_switch == "enable",
         )
     if args.dns_mode:
-        operations.append({"target": "dns-policy", "key": "mode", "value": args.dns_mode})
-    if args.app_policy:
-        operations.append(
-            {
-                "target": "app-policy",
-                "key": "enabled",
-                "value": args.app_policy == "enable",
-            }
+        dns_policy = DNSPolicyStore().load()
+        _append_setup_value_change(
+            operations,
+            target="dns-policy",
+            key="mode",
+            current=dns_policy.mode.value,
+            requested=args.dns_mode,
         )
-    if args.app_policy_mode:
-        operations.append({"target": "app-policy", "key": "mode", "value": args.app_policy_mode})
-    if args.app_policy_default_action:
-        operations.append(
-            {
-                "target": "app-policy",
-                "key": "default_action",
-                "value": args.app_policy_default_action,
-            }
-        )
+    if args.app_policy or args.app_policy_mode or args.app_policy_default_action:
+        app_policy = AppPolicyStore().load()
+        if args.app_policy:
+            _append_setup_value_change(
+                operations,
+                target="app-policy",
+                key="enabled",
+                current=app_policy.enabled,
+                requested=args.app_policy == "enable",
+            )
+        if args.app_policy_mode:
+            _append_setup_value_change(
+                operations,
+                target="app-policy",
+                key="mode",
+                current=app_policy.mode.value,
+                requested=args.app_policy_mode,
+            )
+        if args.app_policy_default_action:
+            _append_setup_value_change(
+                operations,
+                target="app-policy",
+                key="default_action",
+                current=app_policy.default_action.value,
+                requested=args.app_policy_default_action,
+            )
     sections = sorted({str(item["target"]) for item in operations})
     return {
         "has_changes": bool(operations),
@@ -1525,51 +1599,56 @@ def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _append_setup_value_change(
+    operations: list[dict[str, object]],
+    *,
+    target: str,
+    key: str,
+    current: object,
+    requested: object,
+) -> None:
+    if current == requested:
+        return
+    operations.append({"target": target, "key": key, "value": requested})
+
+
 def _apply_setup(args: argparse.Namespace, plan: dict[str, object]) -> None:
     sections = set(plan.get("sections", []))
-    state_manager = StateManager()
-    state = state_manager.load()
-    app_config_store = AppConfig()
-    app_config = app_config_store.load()
-    dns_store = DNSPolicyStore()
-    dns_policy = dns_store.load()
-    app_policy_store = AppPolicyStore()
-    app_policy = app_policy_store.load()
-
-    if args.language:
-        state["selected_language"] = args.language
-        state["language_mode"] = "manual"
-    if args.autostart:
-        state["app_autostart_enabled"] = args.autostart == "enable"
-    if args.autoconnect:
-        state["vpn_autoconnect_enabled"] = args.autoconnect == "enable"
-    if args.kill_switch:
-        app_config["kill_switch"]["enabled"] = args.kill_switch == "enable"
-    if args.dns_mode:
-        dns_policy.mode = DNSMode(args.dns_mode)
-        dns_policy = DNSPolicy.from_dict(dns_policy.to_dict())
-    if args.app_policy:
-        app_policy.enabled = args.app_policy == "enable"
-    if args.app_policy_mode:
-        app_policy.mode = AppPolicyMode(args.app_policy_mode)
-    if args.app_policy_default_action:
-        app_policy.default_action = AppPolicyAction(args.app_policy_default_action)
-    app_policy = AppPolicy.from_dict(app_policy.to_dict())
-
-    if args.profile_uri:
-        profile = ManualProvider(rotation_prompt=lambda _profile: False).from_uri(args.profile_uri)
-        ProfileStore().add(profile)
-    if args.provider_url:
-        ProviderStore().add(_setup_provider_document(args.provider_url, args.provider_name))
-
     if "selection-state" in sections:
+        state_manager = StateManager()
+        state = state_manager.load()
+        if args.language:
+            state["selected_language"] = args.language
+            state["language_mode"] = "manual"
+        if args.autostart:
+            state["app_autostart_enabled"] = args.autostart == "enable"
+        if args.autoconnect:
+            state["vpn_autoconnect_enabled"] = args.autoconnect == "enable"
         state_manager.save(state)
     if "settings" in sections:
+        app_config_store = AppConfig()
+        app_config = app_config_store.load()
+        app_config["kill_switch"]["enabled"] = args.kill_switch == "enable"
         app_config_store.save(app_config)
     if "dns-policy" in sections:
-        dns_store.save(dns_policy)
+        dns_store = DNSPolicyStore()
+        dns_policy = dns_store.load()
+        dns_policy.mode = DNSMode(args.dns_mode)
+        dns_store.save(DNSPolicy.from_dict(dns_policy.to_dict()))
     if "app-policy" in sections:
-        app_policy_store.save(app_policy)
+        app_policy_store = AppPolicyStore()
+        app_policy = app_policy_store.load()
+        if args.app_policy:
+            app_policy.enabled = args.app_policy == "enable"
+        if args.app_policy_mode:
+            app_policy.mode = AppPolicyMode(args.app_policy_mode)
+        if args.app_policy_default_action:
+            app_policy.default_action = AppPolicyAction(args.app_policy_default_action)
+        app_policy_store.save(AppPolicy.from_dict(app_policy.to_dict()))
+    if "profiles" in sections:
+        ManualProvider(rotation_prompt=lambda _profile: False).from_uri(args.profile_uri)
+    if "providers" in sections:
+        ProviderStore().add(_setup_provider_document(args.provider_url, args.provider_name))
 
 
 def _create_setup_backup(plan: dict[str, object]) -> Path:
@@ -1581,15 +1660,24 @@ def _create_setup_backup(plan: dict[str, object]) -> Path:
 
 
 def _setup_provider_document(url: str, name: str | None) -> Provider:
-    label = name or _setup_provider_id(url)
+    normalized_url = validate_subscription_url(url)
+    label = name or _setup_provider_id(normalized_url)
     return Provider(
         id=_setup_provider_id(label),
         name=label,
-        url=url,
+        url=normalized_url,
         last_updated=None,
         profiles=[],
         rotation_enabled=False,
         metadata={"setup_staged_without_fetch": True},
+    )
+
+
+def _setup_provider_definition_matches(existing: Provider, requested: Provider) -> bool:
+    return (
+        existing.id == requested.id
+        and existing.name == requested.name
+        and normalized_provider_url(existing.url) == normalized_provider_url(requested.url)
     )
 
 
@@ -1603,13 +1691,14 @@ def _print_setup_plan(data: dict[str, object]) -> None:
     print("WatchdogVPN setup plan")
     print(f"Dry run: {_on_off(bool(data['dry_run']))}")
     print(f"Applied: {_on_off(bool(data['applied']))}")
+    print(f"Outcome: {data['outcome']}")
     print(f"Runtime action executed: {_on_off(bool(data['runtime_action_executed']))}")
     print(f"Network fetch performed: {_on_off(bool(data['network_fetch_performed']))}")
     print(f"Backup: {data.get('backup_path') or '-'}")
     operations = data.get("operations", [])
     if not operations:
         print("Operations: none")
-        print("Use --dry-run with setup flags to preview local setup changes.")
+        print("Requested setup configuration is already effective or no changes were requested.")
         return
     print("Operations:")
     if isinstance(operations, list):
