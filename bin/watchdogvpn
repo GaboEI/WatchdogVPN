@@ -217,6 +217,11 @@ sanitize_stream() {
     -e "s#${HOME}#<home>#g" \
     -e 's#(https?://)[^/@[:space:]]+@#\1<redacted>@#g' \
     -e 's#https?://[^[:space:]]*device_code[^[:space:]]*#<redacted-device-code-url>#g' \
+    -e 's#([?&](access_)?token=)[^&[:space:]]+#\1<redacted>#Ig' \
+    -e 's#([?&](refresh_token|api_key|password|passwd|secret|private_key|client_secret)=)[^&[:space:]]+#\1<redacted>#Ig' \
+    -e 's#\b(authorization:[[:space:]]*)(bearer|basic)[[:space:]]+[^[:space:]]+#\1\2 <redacted>#Ig' \
+    -e 's#\b(cookie|set-cookie):[[:space:]]*[^[:space:]]+#\1: <redacted>#Ig' \
+    -e 's#\b(token|access_token|refresh_token|api_key|password|passwd|secret|private_key|client_secret|authorization|cookie|set-cookie)=([^[:space:];,&]+)#\1=<redacted>#Ig' \
     -e 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/<redacted-email>/g' \
     -e 's/(^|[^[:alnum:]:])(::([0-9A-Fa-f]{1,4})?)([^[:alnum:]:]|$)/\1<redacted-ipv6>\4/g' \
     -e 's/(^|[^[:alnum:]:])(([0-9A-Fa-f]{1,4}:){1,7}:([0-9A-Fa-f]{1,4})?)([^[:alnum:]:]|$)/\1<redacted-ipv6>\5/g' \
@@ -225,7 +230,7 @@ sanitize_stream() {
 }
 
 sanitize_remote_url() {
-  sed -E -e 's#(https?://)[^/@[:space:]]+@#\1<redacted>@#g'
+  sanitize_stream
 }
 
 git_repo_command() {
@@ -703,7 +708,8 @@ git_commit() {
 generate_report() {
   local stamp report commit
   stamp="$(date +%Y%m%d-%H%M%S)"
-  report="$REPORT_DIR/watchdogvpn-report-$stamp.txt"
+  report="$(mktemp "$REPORT_DIR/watchdogvpn-report-$stamp.XXXXXX.txt")"
+  chmod 600 "$report"
   commit="$(git_commit)"
 
   {

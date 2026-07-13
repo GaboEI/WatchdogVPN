@@ -159,7 +159,9 @@ EOF
 
 printf '%s\n' \
   '2026-05-16T00:00:00Z | vpn_notify | info | sample | user@example.com 198.51.100.11 2001:db8::11 /home/tester' \
-  '2026-05-16T00:01:00Z | watchdogvpn | warn | sample | 203.0.113.22' \
+  '2026-05-16T00:01:00Z | watchdogvpn | warn | sample | token=supersecret-token password=hunter2 api_key=api-key-secret private_key=private-key-secret' \
+  '2026-05-16T00:02:00Z | watchdogvpn | warn | sample | Authorization: Bearer bearer-secret Cookie: sessionid=cookie-secret; Set-Cookie: refresh=set-cookie-secret;' \
+  '2026-05-16T00:03:00Z | watchdogvpn | warn | sample | https://provider.example/sub?token=query-secret&password=query-password 203.0.113.22' \
   >"$LOG_DIR/vpn-events.log"
 
 cat >"$TMP_DIR/metrics.json" <<'EOF'
@@ -204,6 +206,7 @@ output="$(
 
 report="$(printf '%s\n' "$output" | sed -n 's/^Report written: //p')"
 [[ -f "$report" ]]
+[[ "$(stat -c '%a' "$report")" == "600" ]]
 
 grep -Fq "WatchdogVPN diagnostic report" "$report"
 grep -Fq "== VPN truth ==" "$report"
@@ -216,7 +219,13 @@ grep -Fq "counter.node_group.auto_test.unavailable=1" "$report"
 grep -Fq "<redacted-email>" "$report"
 grep -Fq "<redacted-ip>" "$report"
 grep -Fq "<redacted-ipv6>" "$report"
-if grep -Eq '198\.51\.100|203\.0\.113|2001:db8|user@example\.com' "$report"; then
+grep -Fq "token=<redacted>" "$report"
+grep -Fq "password=<redacted>" "$report"
+grep -Fq "Authorization: Bearer <redacted>" "$report"
+grep -Fq "Cookie: <redacted>" "$report"
+grep -Fq "Set-Cookie: <redacted>" "$report"
+grep -Fq "token=<redacted>&password=<redacted>" "$report"
+if grep -Eq '198\.51\.100|203\.0\.113|2001:db8|user@example\.com|supersecret-token|hunter2|api-key-secret|private-key-secret|bearer-secret|cookie-secret|set-cookie-secret|query-secret|query-password' "$report"; then
   printf 'FAIL: report contains unsanitized sensitive sample data\n' >&2
   exit 1
 fi
@@ -249,12 +258,18 @@ if "$SCRIPT" help missing-topic >/dev/null 2>&1; then
   printf 'FAIL: unknown help topic should fail\n' >&2
   exit 1
 fi
-logs_output="$(WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 2)"
+logs_output="$(WATCHDOGVPN_LOG_DIR="$LOG_DIR" "$SCRIPT" logs events 4)"
 printf '%s\n' "$logs_output" | grep -Fq 'WatchdogVPN logs: events'
 printf '%s\n' "$logs_output" | grep -Fq '<redacted-email>'
 printf '%s\n' "$logs_output" | grep -Fq '<redacted-ip>'
 printf '%s\n' "$logs_output" | grep -Fq '<redacted-ipv6>'
-if printf '%s\n' "$logs_output" | grep -Eq '198\.51\.100|203\.0\.113|2001:db8|user@example\.com'; then
+printf '%s\n' "$logs_output" | grep -Fq "token=<redacted>"
+printf '%s\n' "$logs_output" | grep -Fq "password=<redacted>"
+printf '%s\n' "$logs_output" | grep -Fq "Authorization: Bearer <redacted>"
+printf '%s\n' "$logs_output" | grep -Fq "Cookie: <redacted>"
+printf '%s\n' "$logs_output" | grep -Fq "Set-Cookie: <redacted>"
+printf '%s\n' "$logs_output" | grep -Fq "token=<redacted>&password=<redacted>"
+if printf '%s\n' "$logs_output" | grep -Eq '198\.51\.100|203\.0\.113|2001:db8|user@example\.com|supersecret-token|hunter2|api-key-secret|private-key-secret|bearer-secret|cookie-secret|set-cookie-secret|query-secret|query-password'; then
   printf 'FAIL: logs output contains unsanitized sensitive sample data\n' >&2
   exit 1
 fi
