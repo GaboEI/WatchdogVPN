@@ -16,6 +16,7 @@ from typing import NoReturn
 from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPolicyRule
 from app_policy.store import AppPolicyStore
 from cli import color
+from cli.command_inventory import DocumentedPassthroughAction
 from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
 from config.app_config import AppConfig
@@ -522,10 +523,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     maintenance_parser.add_argument(
         "maintenance_command",
-        choices=tuple(MAINTENANCE_COMMAND_HELP),
+        action=DocumentedPassthroughAction,
+        route_summaries=MAINTENANCE_COMMAND_HELP,
         help="Maintenance command",
     )
-    maintenance_parser.add_argument("maintenance_args", nargs=argparse.REMAINDER)
+    maintenance_parser.add_argument(
+        "maintenance_args",
+        nargs=argparse.REMAINDER,
+        metavar="arguments",
+        help="Arguments forwarded to the selected maintenance command",
+    )
     maintenance_parser.set_defaults(handler=_maintenance)
 
     backup_parser = subparsers.add_parser("backup", help="Create, inspect and restore backups")

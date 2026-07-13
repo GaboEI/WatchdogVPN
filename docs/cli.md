@@ -20,7 +20,40 @@ The existing Bash-only support functions are preserved under
 `watchdog maintenance`. The `VPN` command remains a direct TUI launcher until
 the planned TUI replacement.
 
-## Command Summary
+## Generated Inventory And Parity Gate
+
+The complete public route and argument inventory is generated directly from
+the canonical argparse tree:
+
+- [human-readable command inventory](generated/cli-command-inventory.md);
+- [machine-readable JSON inventory](generated/cli-command-inventory.json).
+
+The generated inventory includes the canonical root, every nested argparse
+route and each documented maintenance passthrough choice. Suppressed internal
+test/recovery path overrides are intentionally excluded from public docs.
+
+Regenerate snapshots after an intentional parser change:
+
+```sh
+python3 scripts/generate_cli_inventory.py
+```
+
+Verify parity without modifying files:
+
+```sh
+python3 scripts/generate_cli_inventory.py --check
+```
+
+The parity check is part of the test gate. A route, summary, usage or public
+argument change fails until both generated snapshots are reviewed and updated.
+This prevents the hand-maintained examples below from becoming the only command
+inventory.
+
+## Curated Command Summary
+
+The examples below highlight common workflows and reviewed safety contracts.
+They are not a second exhaustive inventory; use the generated references above
+for every current route and public parser argument.
 
 Canonical root and runtime commands:
 
@@ -587,6 +620,38 @@ watchdog dns apply --yes [--json]
 watchdog dns reset --yes [--json]
 ```
 
+DNS policy CRUD is available without touching the active system resolver:
+
+```sh
+watchdog dns channel add <channel> [--json]
+watchdog dns channel remove <channel> [--json]
+watchdog dns resolver add <channel> <uri> [--label LABEL] [--disabled] [--json]
+watchdog dns resolver remove <channel> <uri> [--json]
+watchdog dns resolver enable <channel> <uri> [--json]
+watchdog dns resolver disable <channel> <uri> [--json]
+watchdog dns rule add <id> --pattern TYPE:VALUE --action use_channel --channel <channel> [--priority N] [--disabled] [--json]
+watchdog dns rule add <id> --pattern TYPE:VALUE --action reject [--priority N] [--disabled] [--json]
+watchdog dns rule remove <id> [--json]
+watchdog dns rule enable <id> [--json]
+watchdog dns rule disable <id> [--json]
+watchdog dns static-ip add <domain> <ip> [--disabled] [--json]
+watchdog dns static-ip remove <domain> [--ip IP] [--json]
+```
+
+These commands mutate only the stored DNS policy. They validate and
+round-trip the complete policy before writing, create a restorable backup,
+and return `backup_path` plus `rollback_point` in JSON. These
+commands do not activate the policy; activation remains the separately
+confirmed `watchdog dns apply --yes` operation.
+
+Resolver URIs are validated when added, channels accept at most four
+resolvers, and duplicate resolver URIs are rejected. Removing a channel is
+refused while a DNS rule references it. A `use_channel` rule requires an
+existing channel, while a `reject` rule refuses `--channel`. Static mappings
+require a valid domain and IP address. The per-entry `--disabled` flags are
+independent from the top-level `dns.rules_enabled` and
+`dns.static_ip_enabled` policy switches.
+
 `dns status`, `dns test` and `dns diagnose` are read-only. `dns apply --dry-run`
 returns the apply plan without creating a DNS snapshot or mutating resolver
 state. Real apply requires `--yes`, refuses non-standard system resolver ports,
@@ -677,6 +742,9 @@ watchdog rules enable <group> [--json]
 watchdog rules disable <group> [--json]
 watchdog rules add-rule <group> <rule_id> --action ACTION --condition KEY=VALUE [--json]
 watchdog rules remove-rule <group> <rule_id> [--json]
+watchdog rules set-priority <group> <priority> [--json]
+watchdog rules enable-rule <group> <rule_id> [--json]
+watchdog rules disable-rule <group> <rule_id> [--json]
 watchdog rules import <file> [--replace] [--dry-run] [--json]
 watchdog rules export <group> (--output PATH|--json)
 ```
@@ -689,9 +757,10 @@ rules backup. Dry-run imports do not write policy or backups and return
 `rollback_point.kind = "preview-only"`.
 
 Every real `rules` mutation validates the target group/rule before writing.
-Group enable/disable, add-rule, remove-rule and replace import create a backup
-before the active group changes. New imports create a section backup and report
-that rollback is deleting the imported group.
+Group enable/disable, per-rule enable/disable, priority changes, add-rule,
+remove-rule and replace import create a backup before the active group changes.
+New imports create a section backup and report that rollback is deleting the
+imported group.
 
 ### `watchdog app-policy`
 
@@ -705,6 +774,11 @@ watchdog app-policy mode <blacklist|whitelist> [--json]
 watchdog app-policy default-action <current|direct|block> [--json]
 watchdog app-policy add --process-name NAME --action ACTION [--id ID] [--json]
 watchdog app-policy add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog app-policy add --process-path-regex REGEX --action ACTION [--id ID] [--json]
+watchdog app-policy add --user NAME --action ACTION [--id ID] [--json]
+watchdog app-policy add --user-id UID --action ACTION [--id ID] [--json]
+watchdog app-policy enable-rule <id> [--json]
+watchdog app-policy disable-rule <id> [--json]
 watchdog app-policy remove <id> [--json]
 ```
 
@@ -716,7 +790,12 @@ Mutation JSON adds `backup_path` and a `rollback_point` with
 Every app-policy mutation validates the resulting policy before writing and
 creates a restorable app-policy backup first. Missing or duplicate rule IDs
 include recovery wording pointing operators back to
-`watchdog app-policy status`.
+`watchdog app-policy status`. Exactly one matcher is accepted per `add` call.
+Path regular expressions are compiled and rejected if invalid; user IDs must
+be non-negative integers. Process paths and numeric user IDs have high match
+confidence, path regular expressions and user names have medium confidence,
+and process names have low confidence. Inspect `match_confidence` before
+depending on a broad matcher for a censorship-sensitive routing decision.
 
 ### `watchdog node-group`
 
@@ -727,6 +806,13 @@ watchdog node-group list [--json]
 watchdog node-group create <name> [--json]
 watchdog node-group add-profile <group> <profile> [--json]
 watchdog node-group select <group> <profile|auto> [--json]
+watchdog node-group add-provider <group> <provider> [--json]
+watchdog node-group remove-provider <group> <provider> [--json]
+watchdog node-group exclude <group> <profile> [--json]
+watchdog node-group unexclude <group> <profile> [--json]
+watchdog node-group resilience <group> <resilient_only|preferred|compatibility_allowed> [--json]
+watchdog node-group enable <group> [--json]
+watchdog node-group disable <group> [--json]
 watchdog node-group auto-test <group> [--json]
 ```
 
@@ -737,11 +823,43 @@ returns `added_profile_id`; manual `select` returns `selected_profile_id`.
 
 Every node-group mutation validates the target group and profile references
 before writing and creates a restorable node-groups backup first. Missing
-profiles point operators to `watchdog profile list`; duplicate or missing
-groups point operators to `watchdog node-group list`.
+profiles point operators to `watchdog profile list`; provider membership
+validates against `watchdog provider list`; duplicate or missing groups point
+operators to `watchdog node-group list`. Explicit exclusions take precedence
+over profiles discovered through provider membership.
+
+`resilient_only` fails closed when no resilient candidate is healthy and
+never silently falls back to a compatibility profile. `preferred` allows a
+compatibility fallback after resilient candidates; `compatibility_allowed`
+opts out of resilience-category preference. Manual selection is a hard pin:
+if the selected profile becomes unavailable, it does not silently change to
+automatic selection.
 
 `watchdog node-group auto-test` is a daemon IPC command. It asks the daemon to
 evaluate the configured group and does not mutate local policy by itself.
+
+### `watchdog chain`
+
+Manages ordered, persistent multi-hop route chains.
+
+```sh
+watchdog chain list [--json]
+watchdog chain show <id> [--json]
+watchdog chain create <id> --hop profile:<profile> --hop group:<group> [--description TEXT] [--json]
+watchdog chain add-hop <id> --type <profile|group> --target <id> [--selection-policy group_policy] [--json]
+watchdog chain remove-hop <id> --index <one-based-index> [--json]
+watchdog chain enable <id> [--json]
+watchdog chain disable <id> [--json]
+watchdog chain remove <id> [--json]
+```
+
+Chain creation and hop insertion validate every referenced profile or node
+group before writing. New chains start disabled. Enabling revalidates every
+hop, so a stale or missing reference cannot become active. Removing the last
+hop is refused; remove the chain explicitly instead. Every mutation creates a
+restorable `route-chains` section backup and returns its rollback metadata in
+JSON. These commands change only the local route-chain store and do not
+connect, disconnect or alter live network state.
 
 ### `watchdog rules explain`
 
@@ -913,6 +1031,25 @@ watchdog ruleset refresh --referenced-only --json
 Remote downloads require HTTPS and a matching `expected_sha256` pin. Built-in
 rule sets load from explicit local source paths. Runtime uses verified local
 cache files in sing-box rather than sing-box remote rule-set downloads.
+
+### `watchdog ruleset add` / `watchdog ruleset remove`
+
+Mutates the local rule-set trust registry without downloading or activating a
+rule set.
+
+```sh
+watchdog ruleset add <id> --kind remote --source https://example.invalid/rules.srs --sha256 <64-hex-digest> [--critical|--no-critical] [--failure-behavior fail-closed|warn-and-skip] [--json]
+watchdog ruleset add <id> --kind built-in --source <local-path> [--json]
+watchdog ruleset remove <id> [--json]
+```
+
+Remote policies are rejected unless the source uses HTTPS and an exact SHA-256
+pin is supplied. Update and maximum-stale intervals must be positive, and the
+maximum-stale interval cannot be shorter than the update interval. Policies
+are critical by default: their default failure behavior is `fail-closed`;
+non-critical policies default to `warn-and-skip`. An existing trust registry
+is backed up before add or remove. Use `watchdog ruleset refresh` separately to
+fetch and verify a remote policy after reviewing the stored trust contract.
 
 ### Canonical version and compatibility alias
 
