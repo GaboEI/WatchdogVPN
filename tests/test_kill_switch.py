@@ -835,6 +835,22 @@ class KillSwitchStatusTests(unittest.TestCase):
 
         self.assertEqual(recorder.commands, [["nft", "list", "table", "inet", WATCHDOGVPN_TABLE]])
 
+    def test_nftables_inspection_accepts_kernel_zero_padded_marks(self) -> None:
+        kill_switch = KillSwitch(which=fake_which("nft"))
+        output = complete_nft_ruleset(kill_switch)
+        output = output.replace("0x2023", "0x00002023").replace("0x2024", "0x00002024")
+        recorder = CommandRecorder(
+            {
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=0, stdout=output
+                )
+            }
+        )
+        kill_switch.runner = recorder
+
+        status = kill_switch.status()
+
+        self.assertTrue(status["active"])
     def test_empty_nftables_table_is_partial_not_active(self) -> None:
         recorder = CommandRecorder(
             {

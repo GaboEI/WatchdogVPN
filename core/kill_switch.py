@@ -405,6 +405,11 @@ class KillSwitch:
         values: list[str] = []
         for line in chain.splitlines():
             normalized = " ".join(line.replace('"', "").split())
+            normalized = re.sub(
+                r"\b0x0*([0-9a-fA-F]+)\b",
+                lambda match: f"0x{int(match.group(1), 16):x}",
+                normalized,
+            )
             if f"comment {WATCHDOGVPN_COMMENT}" in normalized:
                 values.append(normalized)
         return tuple(values)
