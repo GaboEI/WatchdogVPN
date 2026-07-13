@@ -48,13 +48,21 @@ class ModelTests(unittest.TestCase):
             mode="global",
             tun_active=True,
             proxy_active=False,
-            kill_switch_active=False,
+            kill_switch_active=True,
+            kill_switch_status="partial",
+            kill_switch_method="nftables",
+            kill_switch_consistent=False,
+            runtime_mismatch_severity="critical",
+            runtime_artifacts=(
+                "owned_listener:tcp/2080",
+                "kill_switch:nftables/partial",
+            ),
             lan_gateway_active=True,
             lan_gateway_interface="enp0s8",
             lan_gateway_client_cidr="192.168.50.0/24",
             lan_gateway_dns_mode="manual",
             lan_gateway_status="applied",
-            status="connected",
+            status="runtime_mismatch",
         )
         restored = ConnectionState.from_dict(state.to_dict())
         self.assertEqual(restored, state)
@@ -68,6 +76,7 @@ class ModelTests(unittest.TestCase):
         self.assertIn("standby", ALLOWED_STATUSES)
         self.assertIn("kill_switch_active", ALLOWED_STATUSES)
         self.assertIn("rotation_unavailable", ALLOWED_STATUSES)
+        self.assertIn("runtime_mismatch", ALLOWED_STATUSES)
 
 
 if __name__ == "__main__":

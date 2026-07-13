@@ -24,6 +24,7 @@ from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager, parse_capture_modes
 from core.kill_switch import KillSwitch
+from core.runtime_observation import observe_effective_runtime
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import BaseDriver
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
@@ -259,6 +260,8 @@ class WatchdogRuntime:
         active exit node or trigger kill-switch/all-failed recovery policy.
         """
         state = self.status()
+        if state.kill_switch_active or state.kill_switch_status != "inactive":
+            raise RuntimeError("node-group auto-test requires the kill switch to be inactive")
         if (
             state.active_profile_id
             or state.tun_active
@@ -266,8 +269,6 @@ class WatchdogRuntime:
             or state.status != "standby"
         ):
             raise RuntimeError("node-group auto-test requires standby/disconnected state")
-        if self.kill_switch.is_active() or state.kill_switch_active:
-            raise RuntimeError("node-group auto-test requires the kill switch to be inactive")
 
         group = self.node_group_store.get(group_name)
         if group is None:
@@ -418,9 +419,27 @@ class WatchdogRuntime:
         return self.driver.health_check()
 
     def status(self) -> ConnectionState:
+        state = self._with_effective_runtime_status(self.driver.status())
         return self._with_last_failure(
-            self._with_lan_gateway_status(self._with_kill_switch_status(self.driver.status()))
+            self._with_lan_gateway_status(self._with_kill_switch_status(state))
         )
+
+    def _with_effective_runtime_status(self, state: ConnectionState) -> ConnectionState:
+        observation = observe_effective_runtime()
+        artifacts = list(state.runtime_artifacts)
+        artifacts.extend(observation.artifacts)
+        if observation.processes and not observation.listener_observable:
+            artifacts.append("observation:owned-listeners-unavailable")
+        state.runtime_artifacts = tuple(sorted(set(artifacts)))
+        state.tun_active = state.tun_active or bool(observation.interfaces)
+        state.proxy_active = state.proxy_active or bool(
+            {2080, 2081}.intersection(observation.listener_ports)
+        )
+        if state.status == "standby" and state.runtime_artifacts:
+            state.status = "runtime_mismatch"
+        if state.status == "runtime_mismatch":
+            state.runtime_mismatch_severity = "critical"
+        return state
 
     def _with_last_failure(self, state: ConnectionState) -> ConnectionState:
         # Explicitly owns both fields - always sets them from the persisted
@@ -446,7 +465,45 @@ class WatchdogRuntime:
         self.state_manager.set("last_failure_at", "")
 
     def _with_kill_switch_status(self, state: ConnectionState) -> ConnectionState:
-        state.kill_switch_active = state.kill_switch_active or self.kill_switch.is_active()
+        try:
+            config = self.app_config.load()
+            self._configure_kill_switch(config, self._active_profile())
+        except (PersistentStoreError, PersistentValidationError, ValueError):
+            LOGGER.error("kill_switch_status_config_invalid", exc_info=True)
+
+        raw_status = self.kill_switch.status()
+        active = bool(
+            raw_status["active"]
+            if "active" in raw_status
+            else self.kill_switch.is_active()
+        )
+        artifacts_present = bool(raw_status.get("artifacts_present", active))
+        consistent = bool(raw_status.get("consistent", True))
+        method = str(raw_status.get("method") or "")
+        reasons_raw = raw_status.get("mismatch_reasons", ())
+        reasons = (
+            tuple(str(reason) for reason in reasons_raw)
+            if isinstance(reasons_raw, (list, tuple))
+            else ()
+        )
+
+        state.kill_switch_active = state.kill_switch_active or active
+        state.kill_switch_method = method
+        state.kill_switch_consistent = consistent
+        if artifacts_present and consistent and active:
+            state.kill_switch_status = "applied"
+            if state.status == "standby":
+                state.status = "kill_switch_active"
+        elif artifacts_present:
+            state.kill_switch_status = "partial"
+            artifacts = list(state.runtime_artifacts)
+            artifacts.append(f"kill_switch:{method or 'unknown'}/partial")
+            artifacts.extend(f"kill_switch_mismatch:{reason}" for reason in reasons)
+            state.runtime_artifacts = tuple(sorted(set(artifacts)))
+            state.status = "runtime_mismatch"
+            state.runtime_mismatch_severity = "critical"
+        else:
+            state.kill_switch_status = "inactive"
         return state
 
     def _with_lan_gateway_status(self, state: ConnectionState) -> ConnectionState:
@@ -1039,6 +1096,11 @@ class WatchdogRuntime:
             kill_switch_active=(
                 state.kill_switch_active if kill_switch_active is None else kill_switch_active
             ),
+            kill_switch_status=state.kill_switch_status,
+            kill_switch_method=state.kill_switch_method,
+            kill_switch_consistent=state.kill_switch_consistent,
+            runtime_mismatch_severity=state.runtime_mismatch_severity,
+            runtime_artifacts=state.runtime_artifacts,
             lan_gateway_active=state.lan_gateway_active,
             lan_gateway_interface=state.lan_gateway_interface,
             lan_gateway_client_cidr=state.lan_gateway_client_cidr,

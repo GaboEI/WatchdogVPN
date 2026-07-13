@@ -9,6 +9,7 @@ from app_policy.models import AppPolicy, AppPolicyRule
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
 from dns.models import DNSChannel, DNSChannelName, DNSPolicy, DNSRule, Resolver
 from drivers.singbox_driver import SingBoxDriver
+from drivers.runtime_paths import OwnedProcess, TCPListenerObservation
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.wg_config import parse_wg_config
 from route_chains.runtime import (
@@ -1292,6 +1293,44 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             source=ProfileSource.MANUAL,
         )
 
+    def _status(
+        self,
+        *,
+        ports: tuple[int, ...] | None = None,
+        owned_processes: tuple[OwnedProcess, ...] = (),
+        nft_observation: tuple[bool, bool] | None = None,
+        residue: tuple[tuple[str, ...], tuple[str, ...]] = ((), ()),
+    ):
+        process = self.driver._process
+        alive = process is not None and process.poll() is None
+        effective_ports = (2080, 2081) if ports is None and alive else ports or ()
+        effective_nft = (
+            (self.driver._tun_expected, self.driver._tun_expected)
+            if nft_observation is None
+            else nft_observation
+        )
+        with (
+            patch.object(
+                self.driver,
+                "_owned_proxy_runtime_observation",
+                return_value=(
+                    owned_processes,
+                    TCPListenerObservation(True, effective_ports),
+                ),
+            ),
+            patch.object(
+                self.driver,
+                "_singbox_auto_redirect_observation",
+                return_value=effective_nft,
+            ),
+            patch.object(
+                self.driver,
+                "_discover_singbox_tun_residue",
+                return_value=residue,
+            ),
+        ):
+            return self.driver.status()
+
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
@@ -1862,26 +1901,32 @@ table inet sing-box {
         cleanup_mock.assert_called_once()
 
     @patch.object(SingBoxDriver, "_tun_interface_active", return_value=False)
-    @patch("drivers.singbox_driver.any_recorded_child_alive", return_value=False)
-    def test_status_returns_standby_without_process(self, alive_mock, tun_mock) -> None:
-        state = self.driver.status()
+    def test_status_returns_standby_without_process(self, tun_mock) -> None:
+        state = self._status()
         self.assertEqual(state.status, "standby")
 
     @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
-    @patch("drivers.singbox_driver.any_recorded_child_alive", return_value=False)
-    def test_status_reports_runtime_mismatch_when_tun_interface_orphaned(
-        self, alive_mock, tun_mock
-    ) -> None:
-        state = self.driver.status()
+    def test_status_reports_runtime_mismatch_when_tun_interface_orphaned(self, tun_mock) -> None:
+        state = self._status()
         self.assertEqual(state.status, "runtime_mismatch")
+        self.assertEqual(state.runtime_mismatch_severity, "critical")
+        self.assertIn("interface:wdvpn-tun0", state.runtime_artifacts)
 
     @patch.object(SingBoxDriver, "_tun_interface_active", return_value=False)
-    @patch("drivers.singbox_driver.any_recorded_child_alive", return_value=True)
-    def test_status_reports_runtime_mismatch_when_recorded_child_alive(
-        self, alive_mock, tun_mock
-    ) -> None:
-        state = self.driver.status()
+    def test_status_reports_runtime_mismatch_when_recorded_child_alive(self, tun_mock) -> None:
+        state = self._status(
+            owned_processes=(OwnedProcess(pid=4242, executable="sing-box"),)
+        )
         self.assertEqual(state.status, "runtime_mismatch")
+        self.assertIn("owned_process:sing-box", state.runtime_artifacts)
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=False)
+    def test_status_reports_listener_only_orphan_as_critical_mismatch(self, tun_mock) -> None:
+        state = self._status(ports=(2080,))
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertTrue(state.proxy_active)
+        self.assertIn("owned_listener:tcp/2080", state.runtime_artifacts)
 
     def test_status_returns_connected_when_process_alive(self) -> None:
         process = unittest.mock.Mock()
@@ -1890,12 +1935,40 @@ table inet sing-box {
         self.driver._active_profile = self.profile
         self.driver._connected_at = unittest.mock.sentinel.connected_at
 
-        state = self.driver.status()
+        state = self._status()
         self.assertEqual(state.status, "connected")
         self.assertEqual(state.active_profile_id, "vless-1")
         self.assertIs(state.connected_at, unittest.mock.sentinel.connected_at)
         self.assertTrue(state.proxy_active)
         self.assertFalse(state.tun_active)
+
+    def test_status_reports_missing_proxy_listener_as_critical_mismatch(self) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        state = self._status(ports=(2080,))
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertFalse(state.proxy_active)
+        self.assertIn("missing_proxy_listener:tcp/2081", state.runtime_artifacts)
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
+    def test_status_reports_unexpected_tun_routing_in_proxy_mode(self, tun_mock) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        state = self._status(
+            nft_observation=(True, True),
+            residue=(("9000",), ("2022",)),
+        )
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertIn("unexpected_tun_interface:wdvpn-tun0", state.runtime_artifacts)
+        self.assertIn("unexpected_routing:nft/sing-box", state.runtime_artifacts)
 
     def test_status_reports_active_lan_gateway(self) -> None:
         process = unittest.mock.Mock()
@@ -1908,7 +1981,7 @@ table inet sing-box {
             dns_mode="manual",
         )
 
-        state = self.driver.status()
+        state = self._status()
 
         self.assertTrue(state.lan_gateway_active)
         self.assertEqual(state.lan_gateway_interface, "enp0s8")
@@ -1929,7 +2002,7 @@ table inet sing-box {
             dns_mode="manual",
         )
 
-        state = self.driver.status()
+        state = self._status()
 
         self.assertTrue(state.lan_gateway_active)
         self.assertEqual(state.lan_gateway_status, "applied")
@@ -1943,7 +2016,7 @@ table inet sing-box {
         self.driver._active_mode = "tun"
         self.driver._tun_expected = True
 
-        state = self.driver.status()
+        state = self._status()
 
         self.assertEqual(state.status, "connected")
         self.assertTrue(state.tun_active)
@@ -1958,7 +2031,7 @@ table inet sing-box {
         self.driver._active_mode = "rules"
         self.driver._tun_expected = True
 
-        state = self.driver.status()
+        state = self._status()
 
         self.assertEqual(state.status, "connected")
         self.assertTrue(state.tun_active)
@@ -1969,12 +2042,12 @@ table inet sing-box {
         process.poll.return_value = 1
         self.driver._process = process
 
-        state = self.driver.status()
+        state = self._status()
         self.assertEqual(state.status, "standby")
 
     @patch.object(SingBoxDriver, "_cleanup_tun_residue")
     @patch.object(SingBoxDriver, "_cleanup_runtime")
-    def test_status_cleans_tun_residue_when_child_crashed(
+    def test_status_reports_residue_without_cleanup_when_child_crashed(
         self, cleanup_mock, tun_cleanup_mock
     ) -> None:
         process = unittest.mock.Mock()
@@ -1985,16 +2058,16 @@ table inet sing-box {
         self.driver._active_mode = "tun"
         self.driver._tun_expected = True
 
-        state = self.driver.status()
+        state = self._status()
 
-        self.assertEqual(state.status, "standby")
-        tun_cleanup_mock.assert_called_once()
-        cleanup_mock.assert_called_once()
-        self.assertIsNone(self.driver._process)
-        self.assertIsNone(self.driver._active_profile)
-        self.assertIsNone(self.driver._connected_at)
-        self.assertEqual(self.driver._active_mode, "global")
-        self.assertFalse(self.driver._tun_expected)
+        self.assertEqual(state.status, "runtime_mismatch")
+        tun_cleanup_mock.assert_not_called()
+        cleanup_mock.assert_not_called()
+        self.assertIs(self.driver._process, process)
+        self.assertIs(self.driver._active_profile, self.profile)
+        self.assertIs(self.driver._connected_at, unittest.mock.sentinel.connected_at)
+        self.assertEqual(self.driver._active_mode, "tun")
+        self.assertTrue(self.driver._tun_expected)
 
 
 class SingBoxDriverHealthTests(unittest.TestCase):

@@ -6,11 +6,29 @@ import shutil
 import signal
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 
 OWNER_PID_NAME = "owner.pid"
 CHILD_PIDS_NAME = "children.json"
+
+
+@dataclass(frozen=True, slots=True)
+class OwnedProcess:
+    """A hint-verified process attributable to a WatchdogVPN runtime."""
+
+    pid: int
+    executable: str
+
+
+@dataclass(frozen=True, slots=True)
+class TCPListenerObservation:
+    """Owned TCP listener ports and whether /proc evidence was readable."""
+
+    observable: bool
+    ports: tuple[int, ...]
 
 
 def runtime_base_dir() -> Path:
@@ -225,4 +243,154 @@ def any_recorded_child_alive(prefix: str) -> bool:
                 continue
             if _pid_is_alive(pid) and _process_matches_hint(pid, str(entry.get("exe_hint", ""))):
                 return True
+    return False
+
+
+def owned_processes(
+    prefix: str,
+    *,
+    executable_names: Iterable[str] = (),
+) -> tuple[OwnedProcess, ...]:
+    """Return live processes attributable to a runtime prefix.
+
+    Durable child records are the primary source. A process can still be
+    recovered when that record was lost if its verified executable is inside
+    the daemon's systemd cgroup or its argv references a private runtime path
+    under the requested prefix. Merely sharing a binary name is never enough.
+    """
+
+    found: dict[int, OwnedProcess] = {}
+    base = runtime_base_dir()
+    for path in base.glob(f"{prefix}*"):
+        if not path.is_dir():
+            continue
+        for entry in _read_children(path).values():
+            try:
+                pid = int(entry.get("pid"))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            hint = os.path.basename(str(entry.get("exe_hint", "")))
+            if _pid_is_alive(pid) and _process_matches_hint(pid, hint):
+                found[pid] = OwnedProcess(pid=pid, executable=hint)
+
+    expected_names = {os.path.basename(name) for name in executable_names if name}
+    if expected_names:
+        try:
+            proc_entries = tuple(Path("/proc").iterdir())
+        except OSError:
+            proc_entries = ()
+        for entry in proc_entries:
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            executable = _process_executable_name(pid)
+            if executable not in expected_names:
+                continue
+            if not _process_in_watchdogvpn_service_cgroup(
+                pid
+            ) and not _process_references_runtime_path(
+                pid,
+                base=base,
+                prefix=prefix,
+            ):
+                continue
+            found[pid] = OwnedProcess(pid=pid, executable=executable)
+    return tuple(found[pid] for pid in sorted(found))
+
+
+def observe_tcp_listener_ports(processes: Iterable[OwnedProcess]) -> TCPListenerObservation:
+    """Resolve LISTEN sockets owned by the supplied processes through /proc."""
+
+    process_list = tuple(processes)
+    if not process_list:
+        return TCPListenerObservation(observable=True, ports=())
+
+    socket_inodes: set[str] = set()
+    observed_fd_pids: set[int] = set()
+    for process in process_list:
+        fd_dir = Path(f"/proc/{process.pid}/fd")
+        try:
+            descriptors = tuple(fd_dir.iterdir())
+            observed_fd_pids.add(process.pid)
+        except OSError:
+            continue
+        for descriptor in descriptors:
+            try:
+                target = os.readlink(descriptor)
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target.endswith("]"):
+                socket_inodes.add(target[8:-1])
+
+    expected_tables = [Path("/proc/net/tcp")]
+    if Path("/proc/net/tcp6").exists():
+        expected_tables.append(Path("/proc/net/tcp6"))
+    observed_tables = 0
+    ports: set[int] = set()
+    for table_path in expected_tables:
+        try:
+            lines = table_path.read_text(encoding="utf-8").splitlines()[1:]
+            observed_tables += 1
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 10 or parts[3] != "0A" or parts[9] not in socket_inodes:
+                continue
+            try:
+                ports.add(int(parts[1].rsplit(":", 1)[1], 16))
+            except (IndexError, ValueError):
+                continue
+    return TCPListenerObservation(
+        observable=(
+            len(observed_fd_pids) == len(process_list)
+            and observed_tables == len(expected_tables)
+        ),
+        ports=tuple(sorted(ports)),
+    )
+
+
+def _process_executable_name(pid: int) -> str:
+    try:
+        return os.path.basename(os.readlink(f"/proc/{pid}/exe"))
+    except OSError:
+        pass
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    argv0 = raw.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+    return os.path.basename(argv0)
+
+
+def _process_references_runtime_path(pid: int, *, base: Path, prefix: str) -> bool:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+    for raw_argument in raw.split(b"\x00"):
+        if not raw_argument:
+            continue
+        argument = raw_argument.decode("utf-8", errors="replace")
+        path = Path(argument)
+        if not path.is_absolute():
+            continue
+        try:
+            relative = path.relative_to(base)
+        except ValueError:
+            continue
+        if relative.parts and relative.parts[0].startswith(prefix):
+            return True
+    return False
+
+
+def _process_in_watchdogvpn_service_cgroup(pid: int) -> bool:
+    try:
+        lines = Path(f"/proc/{pid}/cgroup").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        fields = line.split(":", 2)
+        if len(fields) == 3 and "watchdogvpn.service" in Path(fields[2]).parts:
+            return True
     return False

@@ -12,6 +12,7 @@ from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPoli
 from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
+from core.runtime_observation import EffectiveRuntimeObservation
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
@@ -1596,10 +1597,70 @@ class WatchdogIntegrationTests(unittest.TestCase):
         driver.status_mock.return_value = ConnectionState(status="standby")
         runtime = self._make_runtime(driver)
         runtime.kill_switch = FakeKillSwitch(active=True)
+        runtime.kill_switch.status_mock.return_value = {
+            "active": True,
+            "artifacts_present": True,
+            "consistent": True,
+            "method": "nftables",
+            "mismatch_reasons": [],
+        }
 
-        state = runtime.status()
+        with patch(
+            "core.watchdog.observe_effective_runtime",
+            return_value=EffectiveRuntimeObservation(),
+        ):
+            state = runtime.status()
 
         self.assertTrue(state.kill_switch_active)
+        self.assertEqual(state.kill_switch_status, "applied")
+        self.assertEqual(state.kill_switch_method, "nftables")
+        self.assertEqual(state.status, "kill_switch_active")
+
+    def test_status_reports_partial_kill_switch_as_critical_mismatch(self) -> None:
+        driver = FakeDriver()
+        driver.status_mock.return_value = ConnectionState(status="standby")
+        runtime = self._make_runtime(driver)
+        runtime.kill_switch = FakeKillSwitch(active=False)
+        runtime.kill_switch.status_mock.return_value = {
+            "active": False,
+            "artifacts_present": True,
+            "consistent": False,
+            "method": "nftables",
+            "mismatch_reasons": ["missing_terminal_drop"],
+        }
+
+        with patch(
+            "core.watchdog.observe_effective_runtime",
+            return_value=EffectiveRuntimeObservation(),
+        ):
+            state = runtime.status()
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertEqual(state.runtime_mismatch_severity, "critical")
+        self.assertEqual(state.kill_switch_status, "partial")
+        self.assertFalse(state.kill_switch_consistent)
+        self.assertIn(
+            "kill_switch_mismatch:missing_terminal_drop", state.runtime_artifacts
+        )
+
+    def test_status_reports_owned_proxy_listener_when_driver_claims_standby(self) -> None:
+        driver = FakeDriver()
+        driver.status_mock.return_value = ConnectionState(status="standby")
+        runtime = self._make_runtime(driver)
+        observation = EffectiveRuntimeObservation(
+            processes=("sing-box",),
+            listener_ports=(2080,),
+        )
+
+        with patch(
+            "core.watchdog.observe_effective_runtime", return_value=observation
+        ):
+            state = runtime.status()
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertEqual(state.runtime_mismatch_severity, "critical")
+        self.assertTrue(state.proxy_active)
+        self.assertIn("owned_listener:tcp/2080", state.runtime_artifacts)
 
     def test_status_reports_lan_gateway_configured(self) -> None:
         driver = FakeDriver()

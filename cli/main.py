@@ -2526,8 +2526,23 @@ def _connection_lifecycle_summary(
     runtime_status = str(state.get("status") or "unknown")
     proxy_active = bool(state.get("proxy_active", False))
     tun_active = bool(state.get("tun_active", False))
+    kill_switch_active = bool(state.get("kill_switch_active", False))
+    kill_switch_status = str(state.get("kill_switch_status") or "inactive")
+    runtime_artifacts_raw = state.get("runtime_artifacts", ())
+    runtime_artifacts = (
+        [str(value) for value in runtime_artifacts_raw]
+        if isinstance(runtime_artifacts_raw, (list, tuple))
+        else []
+    )
     lan_gateway_status = str(state.get("lan_gateway_status") or "disabled")
-    runtime_active = proxy_active or tun_active or bool(state.get("lan_gateway_active", False))
+    runtime_active = (
+        proxy_active
+        or tun_active
+        or kill_switch_active
+        or kill_switch_status == "partial"
+        or bool(runtime_artifacts)
+        or bool(state.get("lan_gateway_active", False))
+    )
     disconnected_cleanly = (
         daemon_reachable
         and desired_state == "off"
@@ -2569,7 +2584,12 @@ def _connection_lifecycle_summary(
         "runtime_active": runtime_active,
         "proxy_active": proxy_active,
         "tun_active": tun_active,
-        "kill_switch_active": bool(state.get("kill_switch_active", False)),
+        "kill_switch_active": kill_switch_active,
+        "kill_switch_status": kill_switch_status,
+        "kill_switch_method": str(state.get("kill_switch_method") or ""),
+        "kill_switch_consistent": bool(state.get("kill_switch_consistent", True)),
+        "runtime_mismatch_severity": str(state.get("runtime_mismatch_severity") or ""),
+        "runtime_artifacts": runtime_artifacts,
         "lan_gateway_status": lan_gateway_status,
         "profile_available": profile_available,
         # Nothing in the codebase currently distinguishes "daemon reachable
@@ -2610,6 +2630,12 @@ def _connection_cleanup_expectations(command: str, state: dict[str, object]) -> 
             "proxy_active": bool(state.get("proxy_active", False)),
             "tun_active": bool(state.get("tun_active", False)),
             "lan_gateway_status": str(state.get("lan_gateway_status") or "disabled"),
+            "kill_switch_status": str(state.get("kill_switch_status") or "inactive"),
+            "runtime_artifacts": (
+                [str(value) for value in state.get("runtime_artifacts", ())]
+                if isinstance(state.get("runtime_artifacts", ()), (list, tuple))
+                else []
+            ),
         },
     }
 
@@ -2665,6 +2691,18 @@ def _print_connection_state(state: dict, *, command: str, no_color: bool = False
         print(f"LAN gateway clients: {state.get('lan_gateway_client_cidr') or '-'}")
         print(f"LAN gateway DNS: {state.get('lan_gateway_dns_mode') or '-'}")
     print(f"Kill switch: {_danger_on_off(bool(state.get('kill_switch_active', False)), no_color=no_color)}")
+    print(f"Kill switch state: {_semantic(state.get('kill_switch_status', 'inactive'), no_color=no_color)}")
+    if state.get("kill_switch_method"):
+        print(f"Kill switch backend: {state['kill_switch_method']}")
+    if state.get("status") == "runtime_mismatch":
+        severity = str(state.get("runtime_mismatch_severity") or "critical")
+        print(f"Runtime mismatch severity: {_semantic(severity, no_color=no_color)}")
+        artifacts = state.get("runtime_artifacts", ())
+        if isinstance(artifacts, (list, tuple)):
+            print("Effective runtime evidence:")
+            for artifact in artifacts:
+                print(f"  - {artifact}")
+        print("Recovery: inspect daemon logs, then run `watchdog disconnect` to reconcile owned state.")
     print(f"Disconnected cleanly: {_on_off(bool(lifecycle['disconnected_cleanly']), no_color=no_color)}")
     print(f"Failure/degraded: {_danger_on_off(bool(lifecycle['failure_or_degraded']), no_color=no_color)}")
     last_failure_reason = str(lifecycle.get("last_failure_reason") or "")

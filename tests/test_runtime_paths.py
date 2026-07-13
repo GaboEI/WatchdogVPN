@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -120,6 +122,75 @@ class ChildProcessTrackingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}):
                 self.assertFalse(runtime_paths.any_recorded_child_alive("watchdogvpn-test-"))
+
+    def test_owned_processes_returns_hint_verified_recorded_child(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}):
+                runtime_dir = Path(tmp) / "watchdogvpn-test-owned"
+                runtime_dir.mkdir()
+                proc = self._spawn_sleeper()
+                try:
+                    hint = Path(sys.executable).name
+                    runtime_paths.record_child_process(runtime_dir, "process", proc.pid, hint)
+
+                    observed = runtime_paths.owned_processes(
+                        "watchdogvpn-test-", executable_names=(hint,)
+                    )
+
+                    self.assertIn(proc.pid, {process.pid for process in observed})
+                finally:
+                    self._stop(proc)
+
+    def test_owned_processes_does_not_claim_unrelated_matching_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}):
+                hint = Path(sys.executable).name
+
+                observed = runtime_paths.owned_processes(
+                    "watchdogvpn-test-", executable_names=(hint,)
+                )
+
+                self.assertNotIn(os.getpid(), {process.pid for process in observed})
+
+    def test_owned_processes_recovers_process_from_private_runtime_argv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}):
+                runtime_dir = Path(tmp) / "watchdogvpn-test-recover"
+                runtime_dir.mkdir()
+                config_path = runtime_dir / "config.json"
+                config_path.write_text("{}", encoding="utf-8")
+                proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import time; time.sleep(30)",
+                        str(config_path),
+                    ]
+                )
+                try:
+                    hint = Path(os.path.realpath(sys.executable)).name
+
+                    observed = runtime_paths.owned_processes(
+                        "watchdogvpn-test-", executable_names=(hint,)
+                    )
+
+                    self.assertIn(proc.pid, {process.pid for process in observed})
+                finally:
+                    self._stop(proc)
+
+    def test_observe_tcp_listener_ports_maps_socket_to_owned_pid(self) -> None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(listener.close)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+
+        observation = runtime_paths.observe_tcp_listener_ports(
+            (runtime_paths.OwnedProcess(pid=os.getpid(), executable="python"),)
+        )
+
+        self.assertTrue(observation.observable)
+        self.assertIn(port, observation.ports)
 
     def test_cleanup_stale_runtime_dirs_kills_recorded_child_only_when_owner_is_dead(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

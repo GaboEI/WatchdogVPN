@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import unittest
 
 from core.kill_switch import (
@@ -47,6 +48,64 @@ def nft_rule(*tokens: str) -> list[str]:
         "comment",
         WATCHDOGVPN_NFT_COMMENT,
     ]
+
+
+def complete_nft_ruleset(kill_switch: KillSwitch) -> str:
+    recorder = CommandRecorder()
+    generator = KillSwitch(
+        tunnel_interface=kill_switch.tunnel_interface,
+        block_ipv6=kill_switch.block_ipv6,
+        allow_lan=kill_switch.allow_lan,
+        allowed_endpoints=kill_switch.allowed_endpoints,
+        lan_cidrs=kill_switch.lan_cidrs,
+        runner=recorder,
+        which=fake_which("nft"),
+    )
+    if not generator.enable():
+        raise AssertionError("fixture generation failed")
+    rules: list[str] = []
+    for command in recorder.commands:
+        if command[:3] != ["nft", "add", "rule"]:
+            continue
+        body = command[6:]
+        counter_index = body.index("counter")
+        match = " ".join(body[:counter_index])
+        verdict = body[counter_index + 1]
+        prefix = f"{match} " if match else ""
+        rules.append(
+            f'        {prefix}counter packets 0 bytes 0 {verdict} comment "{WATCHDOGVPN_COMMENT}"'
+        )
+    return "\n".join(
+        (
+            f"table inet {WATCHDOGVPN_TABLE} {{",
+            "    chain output {",
+            "        type filter hook output priority filter; policy drop;",
+            *rules,
+            "    }",
+            "}",
+        )
+    )
+
+
+def complete_iptables_ruleset(kill_switch: KillSwitch, binary: str = "iptables") -> str:
+    recorder = CommandRecorder()
+    available = ("iptables", "ip6tables") if kill_switch.block_ipv6 else ("iptables",)
+    generator = KillSwitch(
+        tunnel_interface=kill_switch.tunnel_interface,
+        block_ipv6=kill_switch.block_ipv6,
+        allow_lan=kill_switch.allow_lan,
+        allowed_endpoints=kill_switch.allowed_endpoints,
+        lan_cidrs=kill_switch.lan_cidrs,
+        runner=recorder,
+        which=fake_which(*available),
+    )
+    if not generator.enable():
+        raise AssertionError("fixture generation failed")
+    return "\n".join(
+        shlex.join(command[1:])
+        for command in recorder.commands
+        if command[:3] == [binary, "-A", WATCHDOGVPN_IPTABLES_CHAIN]
+    )
 
 
 class KillSwitchDetectionTests(unittest.TestCase):
@@ -316,9 +375,19 @@ class IptablesKillSwitchTests(unittest.TestCase):
         self.assertIn(["ip6tables", "-N", WATCHDOGVPN_IPTABLES_CHAIN], recorder.commands)
         self.assertIn(["ip6tables", "-I", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN], recorder.commands)
 
-    def test_iptables_blocks_dns_before_lan_allow_rules(self) -> None:
+    def test_iptables_refuses_to_enable_when_ipv6_cannot_be_blocked(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(runner=recorder, which=fake_which("iptables"))
+
+        self.assertFalse(kill_switch.enable())
+
+        self.assertNotIn(["iptables", "-N", WATCHDOGVPN_IPTABLES_CHAIN], recorder.commands)
+
+    def test_iptables_blocks_dns_before_lan_allow_rules(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(
+            block_ipv6=False, runner=recorder, which=fake_which("iptables")
+        )
 
         kill_switch.enable()
 
@@ -354,7 +423,9 @@ class IptablesKillSwitchTests(unittest.TestCase):
 
     def test_iptables_blocks_dns_before_established_connections(self) -> None:
         recorder = CommandRecorder()
-        kill_switch = KillSwitch(runner=recorder, which=fake_which("iptables"))
+        kill_switch = KillSwitch(
+            block_ipv6=False, runner=recorder, which=fake_which("iptables")
+        )
 
         kill_switch.enable()
 
@@ -678,30 +749,110 @@ class IptablesKillSwitchTests(unittest.TestCase):
 
 
 class KillSwitchStatusTests(unittest.TestCase):
-    def test_is_active_uses_nftables_table_lookup(self) -> None:
-        recorder = CommandRecorder()
-        kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
+    def test_is_active_requires_complete_nftables_ruleset(self) -> None:
+        kill_switch = KillSwitch(which=fake_which("nft"))
+        output = complete_nft_ruleset(kill_switch)
+        recorder = CommandRecorder(
+            {
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=0, stdout=output
+                )
+            }
+        )
+        kill_switch.runner = recorder
 
         self.assertTrue(kill_switch.is_active())
 
         self.assertEqual(recorder.commands, [["nft", "list", "table", "inet", WATCHDOGVPN_TABLE]])
 
-    def test_is_active_uses_iptables_chain_lookup(self) -> None:
-        recorder = CommandRecorder()
-        kill_switch = KillSwitch(runner=recorder, which=fake_which("iptables"))
+    def test_empty_nftables_table_is_partial_not_active(self) -> None:
+        recorder = CommandRecorder(
+            {
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=0, stdout=f"table inet {WATCHDOGVPN_TABLE} {{}}"
+                )
+            }
+        )
+        kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
+
+        status = kill_switch.status()
+
+        self.assertFalse(status["active"])
+        self.assertTrue(status["artifacts_present"])
+        self.assertFalse(status["consistent"])
+        self.assertIn("missing_output_hook", status["mismatch_reasons"])
+
+    def test_is_active_requires_complete_iptables_ruleset(self) -> None:
+        kill_switch = KillSwitch(block_ipv6=False, which=fake_which("iptables"))
+        output = complete_iptables_ruleset(kill_switch)
+        recorder = CommandRecorder(
+            {
+                ("iptables", "-S", WATCHDOGVPN_IPTABLES_CHAIN): CommandResult(
+                    returncode=0, stdout=output
+                )
+            }
+        )
+        kill_switch.runner = recorder
 
         self.assertTrue(kill_switch.is_active())
 
-        self.assertEqual(recorder.commands, [["iptables", "-S", WATCHDOGVPN_IPTABLES_CHAIN]])
+        self.assertEqual(
+            recorder.commands,
+            [
+                ["iptables", "-S", WATCHDOGVPN_IPTABLES_CHAIN],
+                ["iptables", "-C", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN],
+            ],
+        )
+
+    def test_partial_iptables_chain_reports_missing_rules(self) -> None:
+        output = shlex.join(
+            [
+                "-A",
+                WATCHDOGVPN_IPTABLES_CHAIN,
+                "-m",
+                "comment",
+                "--comment",
+                WATCHDOGVPN_COMMENT,
+                "-j",
+                "REJECT",
+            ]
+        )
+        recorder = CommandRecorder(
+            {
+                ("iptables", "-S", WATCHDOGVPN_IPTABLES_CHAIN): CommandResult(
+                    returncode=0, stdout=output
+                )
+            }
+        )
+        kill_switch = KillSwitch(
+            block_ipv6=False, runner=recorder, which=fake_which("iptables")
+        )
+
+        status = kill_switch.status()
+
+        self.assertTrue(status["active"])
+        self.assertFalse(status["consistent"])
+        self.assertTrue(
+            any(
+                str(reason).startswith("missing_managed_rule:iptables/")
+                for reason in status["mismatch_reasons"]
+            )
+        )
 
     def test_status_reports_configuration_and_activity(self) -> None:
-        recorder = CommandRecorder()
         kill_switch = KillSwitch(
             tunnel_interface="awg0",
             block_ipv6=False,
             allow_lan=False,
-            runner=recorder,
             which=fake_which("nft"),
+        )
+        output = complete_nft_ruleset(kill_switch)
+        kill_switch.runner = CommandRecorder(
+            {
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=0, stdout=output
+                )
+            }
         )
 
         status = kill_switch.status()
@@ -710,15 +861,40 @@ class KillSwitchStatusTests(unittest.TestCase):
             status,
             {
                 "available": True,
+                "artifacts_present": True,
                 "active": True,
                 "method": "nftables",
                 "rules_applied": True,
+                "consistent": True,
+                "mismatch_reasons": [],
                 "tunnel_interface": "awg0",
                 "block_ipv6": False,
                 "allow_lan": False,
                 "allowed_endpoints": [],
             },
         )
+
+    def test_multiple_backends_are_reported_as_inconsistent(self) -> None:
+        kill_switch = KillSwitch(block_ipv6=False, which=fake_which("nft", "iptables"))
+        nft_output = complete_nft_ruleset(kill_switch)
+        iptables_output = complete_iptables_ruleset(kill_switch)
+        kill_switch.runner = CommandRecorder(
+            {
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=0, stdout=nft_output
+                ),
+                ("iptables", "-S", WATCHDOGVPN_IPTABLES_CHAIN): CommandResult(
+                    returncode=0, stdout=iptables_output
+                ),
+            }
+        )
+
+        status = kill_switch.status()
+
+        self.assertTrue(status["active"])
+        self.assertFalse(status["consistent"])
+        self.assertEqual(status["method"], "nftables+iptables")
+        self.assertIn("multiple_firewall_backends_present", status["mismatch_reasons"])
 
 
 if __name__ == "__main__":

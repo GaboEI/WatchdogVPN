@@ -232,6 +232,25 @@ watchdog status --json
 The command distinguishes daemon reachability, desired state, actual runtime
 state, active runtime state, clean disconnect state and failure/degraded state.
 
+Status is reconciled against read-only operating-system evidence rather than
+trusting driver memory alone. The daemon attributes processes by durable
+runtime records, private runtime paths, or the exact `watchdogvpn.service`
+cgroup; maps those processes to their TCP listeners through `/proc`; and
+checks exact WatchdogVPN interfaces, routing artifacts, and managed firewall
+state. An unrelated process with the same executable name is not sufficient
+ownership evidence.
+
+`runtime_mismatch` is a critical status. It means owned effective state and
+the expected lifecycle disagree, including missing `127.0.0.1:2080` or
+`:2081` sing-box listeners, orphaned listeners/interfaces/routes, unexpected
+TUN routing in proxy-only mode, or a partial/inconsistent kill-switch ruleset.
+Human output lists the effective evidence. JSON exposes
+`runtime_mismatch_severity`, `runtime_artifacts`, `kill_switch_status`,
+`kill_switch_method`, and `kill_switch_consistent`. A complete kill switch
+without a live tunnel is reported as `kill_switch_active`, never `standby`.
+`watchdog status` remains read-only; explicit disconnect owns reconciliation
+and cleanup.
+
 ### `watchdog rotate`
 
 Requests a daemon-managed manual rotation.
@@ -261,6 +280,10 @@ Lifecycle JSON remains a daemon response envelope with an added
       "daemon_reachable": true,
       "desired_state": "off",
       "actual_runtime_state": "standby",
+      "runtime_active": false,
+      "runtime_artifacts": [],
+      "kill_switch_status": "inactive",
+      "kill_switch_consistent": true,
       "disconnected_cleanly": true,
       "failure_or_degraded": false
     }

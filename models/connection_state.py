@@ -15,12 +15,11 @@ ALLOWED_STATUSES = {
     "rotation_unavailable",
     "recovered",
     "standby",
-    # A driver detected OS-level evidence of a live connection (TUN
-    # interface, or a durably-recorded child process) with no in-memory
-    # reference to it - e.g. left behind by a bug, a crash, or a daemon
-    # restart. Deliberately distinct from "standby": status() only detects
-    # and reports this, it never takes action - run `watchdog disconnect`
-    # to reap it.
+    # Read-only reconciliation found owned OS state that disagrees with the
+    # driver's in-memory state: a process, proxy listener, interface, route,
+    # nftables state, or a partial kill-switch ruleset. Deliberately distinct
+    # from "standby": status() reports evidence but never mutates it; explicit
+    # disconnect owns cleanup.
     "runtime_mismatch",
 }
 
@@ -36,6 +35,7 @@ FAILURE_STATUSES = frozenset(
         "normal_network_temp",
         "rotation_unavailable",
         "waiting_retry",
+        "runtime_mismatch",
     }
 )
 
@@ -50,6 +50,12 @@ def _dt_from_iso(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(str(item) for item in value)
+
+
 @dataclass(slots=True)
 class ConnectionState:
     active_profile_id: str = ""
@@ -58,6 +64,11 @@ class ConnectionState:
     tun_active: bool = False
     proxy_active: bool = False
     kill_switch_active: bool = False
+    kill_switch_status: str = "inactive"
+    kill_switch_method: str = ""
+    kill_switch_consistent: bool = True
+    runtime_mismatch_severity: str = ""
+    runtime_artifacts: tuple[str, ...] = ()
     lan_gateway_active: bool = False
     lan_gateway_interface: str = ""
     lan_gateway_client_cidr: str = ""
@@ -75,6 +86,7 @@ class ConnectionState:
         data = asdict(self)
         data["connected_at"] = _dt_to_iso(self.connected_at)
         data["last_failure_at"] = _dt_to_iso(self.last_failure_at)
+        data["runtime_artifacts"] = list(self.runtime_artifacts)
         return data
 
     @classmethod
@@ -86,6 +98,11 @@ class ConnectionState:
             tun_active=bool(data.get("tun_active", False)),
             proxy_active=bool(data.get("proxy_active", False)),
             kill_switch_active=bool(data.get("kill_switch_active", False)),
+            kill_switch_status=str(data.get("kill_switch_status", "inactive")),
+            kill_switch_method=str(data.get("kill_switch_method", "")),
+            kill_switch_consistent=bool(data.get("kill_switch_consistent", True)),
+            runtime_mismatch_severity=str(data.get("runtime_mismatch_severity", "")),
+            runtime_artifacts=_string_tuple(data.get("runtime_artifacts", ())),
             lan_gateway_active=bool(data.get("lan_gateway_active", False)),
             lan_gateway_interface=str(data.get("lan_gateway_interface", "")),
             lan_gateway_client_cidr=str(data.get("lan_gateway_client_cidr", "")),

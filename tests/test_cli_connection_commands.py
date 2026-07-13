@@ -155,6 +155,68 @@ class CliConnectionCommandTests(unittest.TestCase):
         self.assertTrue(lifecycle["runtime_active"])
         self.assertFalse(lifecycle["disconnected_cleanly"])
 
+    def test_status_json_surfaces_critical_effective_runtime_mismatch(self) -> None:
+        response = Response(
+            ok=True,
+            payload={
+                "state": {
+                    "status": "runtime_mismatch",
+                    "mode": "sing-box",
+                    "proxy_active": True,
+                    "kill_switch_active": False,
+                    "kill_switch_status": "partial",
+                    "kill_switch_method": "nftables",
+                    "kill_switch_consistent": False,
+                    "runtime_mismatch_severity": "critical",
+                    "runtime_artifacts": [
+                        "owned_listener:tcp/2080",
+                        "kill_switch:nftables/partial",
+                    ],
+                }
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.status.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["status", "--json"])
+
+        self.assertEqual(result, 0)
+        lifecycle = json.loads(stdout.getvalue())["payload"]["lifecycle"]
+        self.assertTrue(lifecycle["runtime_active"])
+        self.assertTrue(lifecycle["failure_or_degraded"])
+        self.assertFalse(lifecycle["disconnected_cleanly"])
+        self.assertEqual(lifecycle["kill_switch_status"], "partial")
+        self.assertFalse(lifecycle["kill_switch_consistent"])
+        self.assertEqual(lifecycle["runtime_mismatch_severity"], "critical")
+        self.assertEqual(
+            lifecycle["runtime_artifacts"],
+            ["owned_listener:tcp/2080", "kill_switch:nftables/partial"],
+        )
+
+    def test_status_human_prints_runtime_mismatch_evidence_and_recovery(self) -> None:
+        response = Response(
+            ok=True,
+            payload={
+                "state": {
+                    "status": "runtime_mismatch",
+                    "mode": "sing-box",
+                    "runtime_mismatch_severity": "critical",
+                    "runtime_artifacts": ["missing_proxy_listener:tcp/2081"],
+                    "kill_switch_status": "inactive",
+                }
+            },
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.status.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["status", "--no-color"])
+
+        self.assertEqual(result, 0)
+        output = stdout.getvalue()
+        self.assertIn("Runtime mismatch severity: critical", output)
+        self.assertIn("missing_proxy_listener:tcp/2081", output)
+        self.assertIn("watchdog disconnect", output)
+
     def test_rotate_passes_force_flag(self) -> None:
         response = Response(ok=True, payload={"state": {"status": "recovered", "mode": "rules"}})
         with patch("cli.main.WatchdogIPCClient") as client_cls:

@@ -23,10 +23,13 @@ from dns.singbox import (
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
 from drivers.base import BaseDriver, ReentrantConnectGuard
 from drivers.runtime_paths import (
-    any_recorded_child_alive,
+    OwnedProcess,
+    TCPListenerObservation,
     cleanup_stale_runtime_dirs,
     kill_all_recorded_children,
     make_runtime_dir,
+    observe_tcp_listener_ports,
+    owned_processes,
     record_child_process,
     write_private_file,
 )
@@ -45,6 +48,7 @@ PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
 DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
 DEFAULT_RULE_TABLES = {"local", "main", "default"}
 SING_BOX_AUTO_REDIRECT_MARKS = {"0x2023", "0x2024"}
+EXPECTED_PROXY_PORTS = frozenset({2080, 2081})
 SING_BOX_LOG_LEVELS = {
     "trace",
     "debug",
@@ -1065,17 +1069,20 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         return False
 
     def _singbox_auto_redirect_ready(self) -> bool:
+        return self._singbox_auto_redirect_observation()[1]
+
+    def _singbox_auto_redirect_observation(self) -> tuple[bool, bool]:
         if not shutil.which("nft"):
-            return False
+            return False, False
         result = self._run_capture_command(["nft", "list", "table", "inet", "sing-box"])
         if result.returncode != 0:
-            return False
+            return False, False
         output = result.stdout
         if "table inet sing-box" not in output:
-            return False
+            return True, False
         chain_count = len(re.findall(r"\bchain\s+\S+", output))
         has_base_hook = "hook output" in output or "hook prerouting" in output
-        return chain_count >= 2 and has_base_hook
+        return True, chain_count >= 2 and has_base_hook
 
     def _wait_for_tun_auto_redirect_ready(self, timeout: float = 3.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -1399,6 +1406,21 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
 
     def status(self) -> ConnectionState:
         process = self._process
+        owned_runtime_processes, listener_observation = (
+            self._owned_proxy_runtime_observation()
+        )
+        listener_ports = set(listener_observation.ports)
+        tun_active = self._tun_interface_active()
+        nft_present, nft_ready = self._singbox_auto_redirect_observation()
+        rule_prefs, route_tables = self._discover_singbox_tun_residue()
+        artifacts = self._runtime_artifact_labels(
+            listener_ports=listener_ports,
+            tun_active=tun_active,
+            nft_present=nft_present,
+            rule_prefs=rule_prefs,
+            route_tables=route_tables,
+            owned_runtime_processes=owned_runtime_processes,
+        )
         if process is None:
             # No in-memory reference does not mean nothing is running: a
             # past reconnect bug, a crash between spawn and this call, or a
@@ -1406,18 +1428,42 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             # behind. Report the mismatch honestly instead of confidently
             # lying "standby" - status() never takes action on it, that is
             # disconnect()'s job.
-            if self._tun_interface_active() or any_recorded_child_alive(RUNTIME_PREFIX):
-                return ConnectionState(status="runtime_mismatch")
+            if artifacts:
+                return ConnectionState(
+                    mode="sing-box",
+                    tun_active=tun_active,
+                    proxy_active=bool(listener_ports),
+                    status="runtime_mismatch",
+                    runtime_mismatch_severity="critical",
+                    runtime_artifacts=artifacts,
+                )
             return ConnectionState(status="standby")
         if process.poll() is None:
             profile_id = self._active_profile.id if self._active_profile else ""
-            tun_active = self._tun_expected and self._tun_interface_active()
+            missing: list[str] = []
+            if not listener_observation.observable:
+                missing.append("proxy_listener_observation_unavailable")
+            for port in sorted(EXPECTED_PROXY_PORTS - listener_ports):
+                missing.append(f"missing_proxy_listener:tcp/{port}")
+            if self._tun_expected and not tun_active:
+                missing.append("missing_tun_interface:wdvpn-tun0")
+            if self._tun_expected and not nft_ready:
+                missing.append("missing_or_partial_routing:nft/sing-box")
+            if not self._tun_expected and tun_active:
+                missing.append("unexpected_tun_interface:wdvpn-tun0")
+            if not self._tun_expected and nft_present:
+                missing.append("unexpected_routing:nft/sing-box")
+            if not self._tun_expected and rule_prefs:
+                missing.append("unexpected_routing:ip-rule/sing-box")
+            if not self._tun_expected and route_tables:
+                missing.append("unexpected_routing:route-table/sing-box")
+            runtime_artifacts = tuple(sorted(set((*artifacts, *missing))))
             return ConnectionState(
                 active_profile_id=profile_id,
                 connected_at=self._connected_at,
                 mode="sing-box",
-                tun_active=tun_active,
-                proxy_active=True,
+                tun_active=self._tun_expected and tun_active,
+                proxy_active=EXPECTED_PROXY_PORTS.issubset(listener_ports),
                 lan_gateway_active=self._lan_gateway_active is not None,
                 lan_gateway_interface=(
                     self._lan_gateway_active.lan_interface if self._lan_gateway_active else ""
@@ -1433,15 +1479,61 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                     if self._lan_gateway_active is not None and tun_active
                     else "degraded" if self._lan_gateway_active is not None else "disabled"
                 ),
-                status="connected",
+                status="runtime_mismatch" if missing else "connected",
+                runtime_mismatch_severity="critical" if missing else "",
+                runtime_artifacts=runtime_artifacts,
             )
-        if self._tun_expected:
-            self._capture_tun_cleanup_state()
-            self._cleanup_tun_residue()
-        self._process = None
-        self._active_profile = None
-        self._connected_at = None
-        self._active_mode = "global"
-        self._tun_expected = False
-        self._cleanup_runtime()
+        # A status read must never mutate networking or erase the durable
+        # evidence required by disconnect(). If the dead child left anything
+        # behind, report it; explicit lifecycle cleanup owns reconciliation.
+        if artifacts:
+            return ConnectionState(
+                mode="sing-box",
+                tun_active=tun_active,
+                proxy_active=bool(listener_ports),
+                status="runtime_mismatch",
+                runtime_mismatch_severity="critical",
+                runtime_artifacts=artifacts,
+            )
         return ConnectionState(status="standby")
+
+    def _owned_proxy_runtime_observation(
+        self,
+    ) -> tuple[tuple[OwnedProcess, ...], TCPListenerObservation]:
+        processes = list(
+            owned_processes(
+                RUNTIME_PREFIX,
+                executable_names=("sing-box",),
+            )
+        )
+        process = self._process
+        pid = getattr(process, "pid", None) if process is not None else None
+        if isinstance(pid, int) and all(candidate.pid != pid for candidate in processes):
+            processes.append(OwnedProcess(pid=pid, executable="sing-box"))
+        process_tuple = tuple(processes)
+        return process_tuple, observe_tcp_listener_ports(process_tuple)
+
+    def _runtime_artifact_labels(
+        self,
+        *,
+        listener_ports: set[int],
+        tun_active: bool,
+        nft_present: bool,
+        rule_prefs: tuple[str, ...],
+        route_tables: tuple[str, ...],
+        owned_runtime_processes: tuple[OwnedProcess, ...],
+    ) -> tuple[str, ...]:
+        artifacts = [
+            f"owned_listener:tcp/{port}" for port in sorted(listener_ports)
+        ]
+        if owned_runtime_processes:
+            artifacts.append("owned_process:sing-box")
+        if tun_active:
+            artifacts.append("interface:wdvpn-tun0")
+        if nft_present:
+            artifacts.append("routing:nft/sing-box")
+        if rule_prefs:
+            artifacts.append("routing:ip-rule/sing-box")
+        if route_tables:
+            artifacts.append("routing:route-table/sing-box")
+        return tuple(sorted(set(artifacts)))
