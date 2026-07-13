@@ -3,46 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from models.profile import Profile, ProfileSource, ProtocolType
+from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_config
 from parsers.uri import ParseError
 
-
-def _strip_inline_comment(line: str) -> str:
-    in_quote = False
-    quote_char = ""
-    for index, char in enumerate(line):
-        if char in {"'", '"'}:
-            if not in_quote:
-                in_quote = True
-                quote_char = char
-            elif quote_char == char:
-                in_quote = False
-        if not in_quote and char in {"#", ";"}:
-            return line[:index].strip()
-    return line.strip()
-
-
-def _parse_directives(text: str) -> dict[str, list[list[str]]]:
-    directives: dict[str, list[list[str]]] = {}
-    in_inline_block = False
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("<") and not line.startswith("</"):
-            in_inline_block = True
-            continue
-        if line.startswith("</"):
-            in_inline_block = False
-            continue
-        if in_inline_block:
-            continue
-        line = _strip_inline_comment(line)
-        if not line:
-            continue
-        parts = line.split()
-        key = parts[0].lower()
-        directives.setdefault(key, []).append(parts[1:])
-    return directives
 
 
 def _first_arg(directives: dict[str, list[list[str]]], key: str, index: int = 0) -> str | None:
@@ -65,7 +28,11 @@ def parse_openvpn_config(text: str) -> Profile:
     if not raw_config:
         raise ParseError("OpenVPN config is empty")
 
-    directives = _parse_directives(raw_config)
+    try:
+        directives = validate_openvpn_config(raw_config)
+    except OpenVPNConfigValidationError as exc:
+        raise ParseError(str(exc)) from exc
+
     remote = directives.get("remote", [])
     if not remote:
         raise ParseError("OpenVPN config requires a remote directive")

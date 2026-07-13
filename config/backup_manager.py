@@ -30,6 +30,7 @@ from dns.models import DNSPolicy
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
 from models.profile import Profile
+from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_profile
 from models.provider import Provider
 from node_groups.models import NodeGroup
 from node_groups.store import NodeGroupStore
@@ -631,7 +632,13 @@ class BackupManager:
             return data
         if entry == "profiles.json":
             for item in _require_list(data.get("items"), "profiles.items"):
-                Profile.from_dict(_require_object(item, "profile"))
+                profile = Profile.from_dict(_require_object(item, "profile"))
+                try:
+                    validate_openvpn_profile(profile)
+                except OpenVPNConfigValidationError as exc:
+                    raise BackupValidationError(
+                        f"profiles.json contains unsafe OpenVPN profile: {exc}"
+                    ) from exc
             return data
         if entry == "providers.json":
             for item in _require_list(data.get("items"), "providers.items"):

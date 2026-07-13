@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dns.models import DNSPolicy
 from drivers.base import BaseDriver, ReentrantConnectGuard
+from drivers.openvpn_process import build_openvpn_command
 from drivers.runtime_paths import (
     any_recorded_child_alive,
     cleanup_stale_runtime_dirs,
@@ -22,6 +23,7 @@ from drivers.runtime_paths import (
 )
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from parsers.openvpn_safety import validate_openvpn_profile
 
 
 RUNTIME_PREFIX = "watchdogvpn-openvpn-cloak-"
@@ -148,6 +150,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         if not raw_config:
             raise ValueError("OPENVPN_CLOAK profile requires raw_config")
 
+        validate_openvpn_profile(profile)
         cloak_config = profile.config.get("cloak_config")
         if not cloak_config:
             raise ValueError("OPENVPN_CLOAK profile requires cloak_config")
@@ -267,7 +270,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         except OSError:
             ovpn_log = open(os.devnull, "w")
         self._openvpn_process = subprocess.Popen(
-            [openvpn_bin, "--config", str(ovpn_config_path)],
+            build_openvpn_command(openvpn_bin, ovpn_config_path),
             text=True,
             stdout=ovpn_log,
             stderr=subprocess.STDOUT,

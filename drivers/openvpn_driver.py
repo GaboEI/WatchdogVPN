@@ -10,6 +10,7 @@ from pathlib import Path
 
 from dns.models import DNSPolicy
 from drivers.base import BaseDriver, ReentrantConnectGuard
+from drivers.openvpn_process import build_openvpn_command
 from drivers.runtime_paths import (
     any_recorded_child_alive,
     cleanup_stale_runtime_dirs,
@@ -20,6 +21,7 @@ from drivers.runtime_paths import (
 )
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from parsers.openvpn_safety import validate_openvpn_profile
 
 
 RUNTIME_PREFIX = "watchdogvpn-openvpn-"
@@ -99,6 +101,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         raw_config = str(profile.config.get("raw_config") or "").strip()
         if not raw_config:
             raise ValueError("OpenVPN profile requires raw_config")
+        validate_openvpn_profile(profile)
         config_path, _ = self._ensure_runtime_paths()
         write_private_file(config_path, f"{raw_config}\n")
         return raw_config
@@ -154,7 +157,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         config_path, log_path = self._ensure_runtime_paths()
         log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
-            [binary, "--config", str(config_path)],
+            build_openvpn_command(binary, config_path),
             text=True,
             stdout=log_file,
             stderr=subprocess.STDOUT,

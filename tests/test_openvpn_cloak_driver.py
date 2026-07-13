@@ -195,7 +195,10 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.assertEqual(ck_call_args[0], "/usr/bin/ck-client")
         self.assertIn(str(self.driver._cloak_config_path), ck_call_args)
         ovpn_call_args = popen_mock.call_args_list[1].args[0]
-        self.assertEqual(ovpn_call_args[0], "/usr/sbin/openvpn")
+        self.assertEqual(ovpn_call_args[1:4], ["--nnp", "--inh-caps=-all,+net_admin,+net_raw", "--ambient-caps=-all,+net_admin,+net_raw"])
+        self.assertEqual(ovpn_call_args[4], "--")
+        self.assertEqual(ovpn_call_args[5], "/usr/sbin/openvpn")
+        self.assertEqual(ovpn_call_args[-2:], ["--config", str(self.driver._ovpn_config_path)])
 
     @patch("drivers.openvpn_cloak_driver.time.sleep")
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")

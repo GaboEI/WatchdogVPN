@@ -25,6 +25,7 @@ from typing import Any
 
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
+from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_config
 
 _VPN_PREFIX = "vpn://"
 _DNS_PLACEHOLDER = re.compile(r"\$PRIMARY_DNS|\$SECONDARY_DNS")
@@ -113,6 +114,10 @@ def _parse_openvpn_cloak(
         raise ParseError("amneziavpn: empty openvpn config")
 
     raw_config = _substitute_dns(raw_config, dns1 or "1.1.1.1", dns2 or "1.0.0.1")
+    try:
+        validate_openvpn_config(raw_config)
+    except OpenVPNConfigValidationError as exc:
+        raise ParseError(f"amneziavpn: {exc}") from exc
 
     try:
         cloak_conf: dict[str, Any] = json.loads(cloak_section.get("last_config") or "{}")

@@ -6,6 +6,7 @@ from pathlib import Path
 from config.paths import resolve_config_dir
 from config.persistence import dump_json, file_lock, load_json, require_list
 from models.profile import Profile
+from parsers.openvpn_safety import validate_openvpn_profile
 
 
 def _profiles_path() -> Path:
@@ -27,6 +28,7 @@ class ProfileStore:
         dump_json(self.path, items)
 
     def add(self, profile: Profile) -> None:
+        validate_openvpn_profile(profile)
         with file_lock(self.path):
             items = self._load_raw()
             items = [item for item in items if item.get("id") != profile.id]

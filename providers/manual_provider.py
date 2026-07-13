@@ -22,6 +22,7 @@ from parsers import (
     parse_wg_config,
 )
 from providers.base import BaseProvider
+from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_profile
 
 RotationPrompt = Callable[[Profile], bool]
 
@@ -211,6 +212,11 @@ class ManualProvider(BaseProvider):
         if profile.protocol is ProtocolType.WIREGUARD and profile.config.get("raw_config"):
             parsed = parse_wg_config(str(profile.config["raw_config"]))
             profile.config.update(parsed.config)
+        if profile.protocol in {ProtocolType.OPENVPN, ProtocolType.OPENVPN_CLOAK}:
+            try:
+                validate_openvpn_profile(profile)
+            except OpenVPNConfigValidationError as exc:
+                raise ParseError(str(exc)) from exc
 
     def _require_profiles(self, profiles: list[Profile], label: str) -> list[Profile]:
         if not profiles:

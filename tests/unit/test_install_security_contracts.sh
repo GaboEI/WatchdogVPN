@@ -166,7 +166,7 @@ assert_runtime_order "$ROOT_DIR/uninstall.sh" "remove_systemd_units" "remove_leg
 # only covered uninstall.sh).
 assert_contains "$ROOT_DIR/lib/runtime.sh" $'  remove_legacy_systemd_units\n  remove_legacy_runtime_files' "install_runtime_files must call legacy systemd cleanup then legacy file cleanup on every install/update"
 
-assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn' "OpenVPN normal compatibility requires installer dependency detection"
+assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn setpriv' "OpenVPN hardening requires installer dependency detection"
 assert_contains "$ROOT_DIR/distros/ubuntu.sh" "openvpn" "Ubuntu package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/debian.sh" "openvpn" "Debian package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/arch.sh" "openvpn" "Arch package set must include OpenVPN"

@@ -19,6 +19,7 @@ from config.backup_manager import (
     BACKUP_ENCRYPTION_FORMAT,
     BACKUP_ENCRYPTION_SUPPORTED,
     BACKUP_SCHEMA_VERSION,
+    BACKUP_SECTION_SCHEMA_VERSION,
     BACKUP_SENSITIVE_WARNING,
     AUTO_BACKUP_REASONS,
     BackupManager,
@@ -889,6 +890,25 @@ class BackupManagerTests(unittest.TestCase):
 
             with self.assertRaisesRegex(BackupValidationError, "max_backups"):
                 BackupManager(config_dir=root).inspect_backup(broken)
+
+    def test_profiles_section_rejects_unsafe_openvpn_before_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = Profile(
+                id="unsafe-openvpn",
+                name="unsafe-openvpn",
+                protocol=ProtocolType.OPENVPN,
+                config={
+                    "raw_config": "client\nremote vpn.example.com 1194\nplugin /tmp/evil.so\n",
+                },
+                source=ProfileSource.MANUAL,
+            )
+            payload = {
+                "schema_version": BACKUP_SECTION_SCHEMA_VERSION,
+                "items": [profile.to_dict()],
+            }
+            with self.assertRaisesRegex(BackupValidationError, "unsafe OpenVPN"):
+                BackupManager(config_dir=root)._validate_section("profiles.json", payload)
 
     def seed_config(self, root: Path) -> None:
         AppConfig(root / "config.toml").save(AppConfig(root / "config.toml").load())

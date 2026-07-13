@@ -99,7 +99,10 @@ class OpenVPNDriverTests(unittest.TestCase):
         generate_mock.assert_called_once_with(self.profile)
         ready_mock.assert_called_once_with(self.profile)
         popen_mock.assert_called_once()
-        self.assertEqual(popen_mock.call_args.args[0], ["/usr/sbin/openvpn", "--config", str(self.driver._config_path)])
+        command = popen_mock.call_args.args[0]
+        self.assertEqual(command[1:4], ["--nnp", "--inh-caps=-all,+net_admin,+net_raw", "--ambient-caps=-all,+net_admin,+net_raw"])
+        self.assertEqual(command[-3:], ["/usr/sbin/openvpn", "--config", str(self.driver._config_path)])
+        self.assertEqual(command[4], "--")
         self.assertIs(self.driver._process, process)
         self.assertIs(self.driver._active_profile, self.profile)
         self.assertIsNotNone(self.driver._connected_at)
