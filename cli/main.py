@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -19,6 +20,15 @@ from cli import color
 from cli.command_inventory import DocumentedPassthroughAction
 from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
+from cli.terminal import (
+    pad_to_width,
+    strip_ansi,
+    terminal_safe_text,
+    terminal_width,
+    truncate_to_width,
+    visible_width,
+    wrap_to_width,
+)
 from config.app_config import AppConfig
 from config.backup_manager import (
     BACKUP_SENSITIVE_WARNING,
@@ -75,7 +85,13 @@ from diagnostics.routing import RouteDiagnostic, diagnose_route
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
 from models.connection_state import FAILURE_STATUSES
-from models.profile import Profile, ProfileSource, profile_fingerprint, profile_resilience_category
+from models.profile import (
+    Profile,
+    ProfileSource,
+    ProtocolType,
+    profile_fingerprint,
+    profile_resilience_category,
+)
 from models.provider import Provider, normalized_provider_url
 from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore, NodeGroupStoreError
@@ -196,74 +212,114 @@ MAINTENANCE_COMMAND_HELP = {
     "update-plan": "Print a safe manual update plan",
 }
 
+ROOT_HELP_TITLE = "WatchdogVPN — local network control plane for resilient VPN/proxy routing"
+ROOT_HELP_SECTIONS = (
+    (
+        "Core",
+        (
+            ("connect", "Connect through the WatchdogVPN daemon"),
+            ("disconnect", "Disconnect through the WatchdogVPN daemon"),
+            ("status", "Show daemon connection status"),
+            ("rotate", "Rotate connection through the WatchdogVPN daemon"),
+        ),
+    ),
+    (
+        "Diagnostics",
+        (
+            ("doctor", "Run the repository doctor"),
+            ("stats", "Inspect local observability metrics"),
+            ("version", "Print WatchdogVPN version"),
+        ),
+    ),
+    (
+        "Profiles and providers",
+        (
+            ("profile", "Manage local profiles"),
+            ("provider", "Manage external providers"),
+        ),
+    ),
+    (
+        "Policy",
+        (
+            ("dns", "Manage DNS v2 policy and state"),
+            ("rules", "Inspect configured routing rules"),
+            ("ruleset", "Inspect and refresh trusted remote or built-in rule sets"),
+            ("app-policy", "Manage minimal Linux app/process policy"),
+            ("node-group", "Manage node groups"),
+            ("config", "Manage WatchdogVPN configuration"),
+        ),
+    ),
+    (
+        "Maintenance",
+        (
+            ("backup", "Create, inspect and restore backups"),
+            ("setup", "Configure local WatchdogVPN defaults"),
+            ("panic", "Run the WatchdogVPN panic button"),
+            ("uninstall", "Run the safe WatchdogVPN uninstall flow"),
+            ("maintenance", "Run local support, update and legacy-preference commands"),
+        ),
+    ),
+)
+ROOT_HELP_EXAMPLES = (
+    "watchdog status",
+    "watchdog doctor",
+    "watchdog profile list",
+    "watchdog dns status",
+    "watchdog connect <profile-id>",
+    "watchdog disconnect",
+)
 
-ROOT_HELP = """WatchdogVPN — local network control plane for resilient VPN/proxy routing
 
-Usage: watchdog <command> [options]
+def _root_help(*, no_color: bool = False, width: int | None = None) -> str:
+    columns = terminal_width() if width is None else max(int(width), 1)
+    lines = wrap_to_width(ROOT_HELP_TITLE, columns)
+    lines.extend(["", *wrap_to_width("Usage: watchdog <command> [options]", columns), ""])
 
-Core:
-  connect       Connect through the WatchdogVPN daemon
-  disconnect    Disconnect through the WatchdogVPN daemon
-  status        Show daemon connection status
-  rotate        Rotate connection through the WatchdogVPN daemon
+    command_width = max(
+        len(command)
+        for _, commands in ROOT_HELP_SECTIONS
+        for command, _ in commands
+    ) + 2
+    for section, commands in ROOT_HELP_SECTIONS:
+        lines.append(color.style(f"{section}:", "bold", no_color=no_color))
+        for command, description in commands:
+            prefix = f"  {command:<{command_width}}"
+            wrapped = wrap_to_width(
+                description,
+                columns,
+                initial_indent=prefix,
+                subsequent_indent=" " * len(prefix),
+            )
+            wrapped[0] = (
+                wrapped[0][:2]
+                + color.command(command, no_color=no_color)
+                + wrapped[0][2 + len(command) :]
+            )
+            lines.extend(wrapped)
+        lines.append("")
 
-Diagnostics:
-  doctor        Run the repository doctor
-  stats         Inspect local observability metrics
-  version       Print WatchdogVPN version
+    lines.append(color.style("Examples:", "bold", no_color=no_color))
+    for example in ROOT_HELP_EXAMPLES:
+        wrapped = wrap_to_width(
+            example,
+            columns,
+            initial_indent="  ",
+            subsequent_indent="    ",
+        )
+        for line in wrapped:
+            plain = line.lstrip()
+            indent = line[: len(line) - len(plain)]
+            lines.append(indent + color.command(plain, no_color=no_color))
+    lines.append("")
 
-Profiles and providers:
-  profile       Manage local profiles
-  provider      Manage external providers
-
-Policy:
-  dns           Manage DNS v2 policy and state
-  rules         Inspect configured routing rules
-  ruleset       Inspect and refresh trusted remote or built-in rule sets
-  app-policy    Manage minimal Linux app/process policy
-  node-group    Manage node groups
-  config        Manage WatchdogVPN configuration
-
-Maintenance:
-  backup        Create, inspect and restore backups
-  setup         Configure local WatchdogVPN defaults
-  panic         Run the WatchdogVPN panic button
-  uninstall     Run the safe WatchdogVPN uninstall flow
-  maintenance   Run local support, update and legacy-preference commands
-
-Examples:
-  watchdog status
-  watchdog doctor
-  watchdog profile list
-  watchdog dns status
-  watchdog connect <profile-id>
-  watchdog disconnect
-
-Use: watchdog <command> --help
-"""
-
-
-def _root_help(*, no_color: bool = False) -> str:
-    if not color.color_enabled(no_color=no_color):
-        return ROOT_HELP
-    lines: list[str] = []
-    for line in ROOT_HELP.splitlines():
-        stripped = line.strip()
-        if stripped in {
-            "Core:",
-            "Diagnostics:",
-            "Profiles and providers:",
-            "Policy:",
-            "Maintenance:",
-            "Examples:",
-        }:
-            lines.append(color.style(line, "bold", no_color=no_color))
-        elif stripped.startswith("watchdog "):
-            lines.append(line.replace(stripped, color.command(stripped, no_color=no_color)))
-        elif stripped == "Use: watchdog <command> --help":
-            lines.append(line.replace("watchdog <command> --help", color.command("watchdog <command> --help", no_color=no_color)))
-        else:
-            lines.append(line)
+    use_command = "watchdog <command> --help"
+    for line in wrap_to_width(f"Use: {use_command}", columns, subsequent_indent="  "):
+        if use_command in line:
+            line = line.replace(
+                use_command,
+                color.command(use_command, no_color=no_color),
+            )
+        lines.append(line)
     return "\n".join(lines) + "\n"
 
 
@@ -279,11 +335,174 @@ class _JSONAwareArgumentParser(argparse.ArgumentParser):
 
     _json_requested = False
 
+    def format_help(self) -> str:
+        return _constrain_argparse_output(super().format_help())
+
+    def format_usage(self) -> str:
+        return _constrain_argparse_output(super().format_usage())
+
     def error(self, message: str) -> None:
+        command_error = _command_parse_error(self, message)
+        if command_error is not None:
+            invalid_command, suggestion = command_error
+            error_text = _command_error_text(self, invalid_command, suggestion)
+            if _JSONAwareArgumentParser._json_requested:
+                _print_json(
+                    {
+                        "version": 1,
+                        "type": "response",
+                        "ok": False,
+                        "payload": {},
+                        "error": error_text,
+                    }
+                )
+                self.exit(2)
+            width = terminal_width()
+            rendered = wrap_to_width(
+                f"Usage: {self.prog} <command> [options]",
+                width,
+            )
+            for line in error_text.splitlines():
+                rendered.extend(wrap_to_width(line, width))
+            self.exit(2, "\n".join(rendered) + "\n")
         if _JSONAwareArgumentParser._json_requested:
             _print_json({"version": 1, "type": "response", "ok": False, "payload": {}, "error": message})
             self.exit(2)
         super().error(message)
+
+
+def _constrain_argparse_output(rendered: str) -> str:
+    """Keep generated argparse help readable at the active terminal width."""
+
+    width = terminal_width()
+    lines = rendered.splitlines()
+    if all(visible_width(line) <= width for line in lines):
+        return rendered
+
+    constrained: list[str] = []
+    for raw_line in lines:
+        line = strip_ansi(raw_line)
+        if visible_width(line) <= width:
+            constrained.append(line)
+            continue
+        content = line.lstrip()
+        original_indent = len(line) - len(content)
+        indent_width = min(original_indent, 4)
+        initial_indent = " " * indent_width
+        subsequent_indent = initial_indent
+        if original_indent == 0 and content.startswith("usage:"):
+            subsequent_indent = "  "
+        constrained.extend(
+            wrap_to_width(
+                content,
+                width,
+                initial_indent=initial_indent,
+                subsequent_indent=subsequent_indent,
+            )
+        )
+    suffix = "\n" if rendered.endswith("\n") else ""
+    return "\n".join(constrained) + suffix
+
+
+_INVALID_CHOICE_RE = re.compile(
+    r"^argument (?P<destination>[^:]+): invalid choice: "
+    r"(?P<value>.+?) \(choose from .+\)$"
+)
+
+
+def _command_parse_error(
+    parser: argparse.ArgumentParser,
+    message: str,
+) -> tuple[str, str | None] | None:
+    match = _INVALID_CHOICE_RE.match(message)
+    if match is None:
+        return None
+    action = next(
+        (
+            candidate
+            for candidate in parser._actions
+            if isinstance(candidate, argparse._SubParsersAction)
+            and candidate.dest == match.group("destination")
+        ),
+        None,
+    )
+    if action is None:
+        return None
+    try:
+        raw_value = ast.literal_eval(match.group("value"))
+    except (SyntaxError, ValueError):
+        return None
+    if not isinstance(raw_value, str):
+        return None
+    invalid_command = terminal_safe_text(raw_value)
+    suggestion = _closest_command(invalid_command, tuple(action.choices))
+    return invalid_command, suggestion
+
+
+def _command_error_text(
+    parser: argparse.ArgumentParser,
+    invalid_command: str,
+    suggestion: str | None,
+) -> str:
+    lines = [f"{parser.prog}: error: invalid command {invalid_command!r}"]
+    if suggestion is not None:
+        lines.append(f"Did you mean '{parser.prog} {suggestion}'?")
+    lines.append(f"Run '{parser.prog} --help' to list available commands.")
+    return "\n".join(lines)
+
+
+def _closest_command(value: str, choices: tuple[str, ...]) -> str | None:
+    normalized = value.casefold()
+    if not normalized or len(normalized) > 128:
+        return None
+    maximum_distance = 1 if len(normalized) <= 4 else 2
+    ranked: list[tuple[tuple[int, int, int], str]] = []
+    for choice in choices:
+        candidate = choice.casefold()
+        distance = _damerau_levenshtein_distance(normalized, candidate)
+        if distance > maximum_distance:
+            continue
+        rank = (
+            distance,
+            0 if candidate.startswith(normalized) else 1,
+            abs(len(candidate) - len(normalized)),
+        )
+        ranked.append((rank, choice))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+        return None
+    return ranked[0][1]
+
+
+def _damerau_levenshtein_distance(left: str, right: str) -> int:
+    rows = len(left) + 1
+    columns = len(right) + 1
+    distances = [[0] * columns for _ in range(rows)]
+    for row in range(rows):
+        distances[row][0] = row
+    for column in range(columns):
+        distances[0][column] = column
+    for row in range(1, rows):
+        for column in range(1, columns):
+            substitution_cost = 0 if left[row - 1] == right[column - 1] else 1
+            distances[row][column] = min(
+                distances[row - 1][column] + 1,
+                distances[row][column - 1] + 1,
+                distances[row - 1][column - 1] + substitution_cost,
+            )
+            if (
+                row > 1
+                and column > 1
+                and left[row - 1] == right[column - 2]
+                and left[row - 2] == right[column - 1]
+            ):
+                distances[row][column] = min(
+                    distances[row][column],
+                    distances[row - 2][column - 2] + 1,
+                )
+    return distances[-1][-1]
 
 
 class RootHelpArgumentParser(_JSONAwareArgumentParser):
@@ -393,7 +612,10 @@ def _redirect_stream_to_devnull(stream: object) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = RootHelpArgumentParser(prog="watchdog", usage="<command> [options]")
+    parser = RootHelpArgumentParser(
+        prog="watchdog",
+        usage="%(prog)s <command> [options]",
+    )
     parser.add_argument("--no-color", action="store_true", help=argparse.SUPPRESS)
     subparsers = parser.add_subparsers(
         dest="command",
@@ -577,7 +799,46 @@ def _build_parser() -> argparse.ArgumentParser:
     list_parser = profile_subparsers.add_parser("list", help="List saved profiles")
     list_parser.add_argument("--json", action="store_true", help="Print JSON")
     list_parser.add_argument("--pool", action="store_true", help="Show rotation pool only")
-    list_parser.add_argument("--wide", action="store_true", help="Do not truncate profile IDs in human output")
+    list_parser.add_argument(
+        "--source",
+        choices=("manual", "provider"),
+        metavar="SOURCE",
+        help="Filter by source: manual, provider",
+    )
+    list_parser.add_argument(
+        "--protocol",
+        choices=tuple(protocol.value for protocol in ProtocolType),
+        metavar="PROTOCOL",
+        help="Filter by protocol: "
+        + ", ".join(protocol.value for protocol in ProtocolType),
+    )
+    list_parser.add_argument(
+        "--health",
+        choices=("ok", "unknown", "down", "degraded"),
+        metavar="HEALTH",
+        help="Filter by health: ok, unknown, down, degraded",
+    )
+    list_parser.add_argument(
+        "--provider",
+        dest="provider_id",
+        help="Filter by provider ID",
+    )
+    profile_state_filter = list_parser.add_mutually_exclusive_group()
+    profile_state_filter.add_argument(
+        "--enabled-only",
+        action="store_true",
+        help="Show enabled profiles only",
+    )
+    profile_state_filter.add_argument(
+        "--disabled-only",
+        action="store_true",
+        help="Show disabled profiles only",
+    )
+    list_parser.add_argument(
+        "--wide",
+        action="store_true",
+        help="Print the untruncated human table; lines may exceed terminal width",
+    )
     list_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     list_parser.set_defaults(handler=_profile_list)
 
@@ -2456,23 +2717,76 @@ def _profile_add(args: argparse.Namespace) -> int:
 def _profile_list(args: argparse.Namespace) -> int:
     store = ProfileStore()
     if args.pool:
-        profiles = pool_builder.build_pool(store, ProviderStore(), AppConfig().load())
+        available_profiles = pool_builder.build_pool(
+            store,
+            ProviderStore(),
+            AppConfig().load(),
+        )
     else:
-        profiles = store.list()
+        available_profiles = store.list()
+    profiles, active_filters = _filter_profiles(available_profiles, args)
     data = [_profile_summary(profile) for profile in profiles]
     if args.json:
         _print_json(data)
         return 0
     if not profiles:
-        print("No profiles found.")
+        if available_profiles and active_filters:
+            print("No profiles match the selected filters.")
+        else:
+            print("No profiles found.")
         return 0
     _print_profile_list(
         profiles,
         wide=bool(args.wide),
         pool_only=bool(args.pool),
         no_color=bool(getattr(args, "no_color", False)),
+        available_count=len(available_profiles),
+        active_filters=active_filters,
     )
     return 0
+
+
+def _filter_profiles(
+    profiles: list[Profile],
+    args: argparse.Namespace,
+) -> tuple[list[Profile], list[str]]:
+    source = getattr(args, "source", None)
+    provider_id = getattr(args, "provider_id", None)
+    if source == "manual" and provider_id:
+        raise ParseError("--provider cannot be combined with --source manual")
+
+    filtered = list(profiles)
+    active_filters: list[str] = []
+    if source is not None:
+        expected_source = (
+            ProfileSource.MANUAL
+            if source == "manual"
+            else ProfileSource.SUBSCRIPTION
+        )
+        filtered = [profile for profile in filtered if profile.source == expected_source]
+        active_filters.append(f"source={source}")
+    protocol = getattr(args, "protocol", None)
+    if protocol is not None:
+        filtered = [
+            profile for profile in filtered if profile.protocol.value == protocol
+        ]
+        active_filters.append(f"protocol={protocol}")
+    health = getattr(args, "health", None)
+    if health is not None:
+        filtered = [profile for profile in filtered if profile.health_status == health]
+        active_filters.append(f"health={health}")
+    if provider_id:
+        filtered = [
+            profile for profile in filtered if profile.provider_id == provider_id
+        ]
+        active_filters.append(f"provider={provider_id}")
+    if bool(getattr(args, "enabled_only", False)):
+        filtered = [profile for profile in filtered if profile.enabled]
+        active_filters.append("state=enabled")
+    elif bool(getattr(args, "disabled_only", False)):
+        filtered = [profile for profile in filtered if not profile.enabled]
+        active_filters.append("state=disabled")
+    return filtered, active_filters
 
 
 def _profile_remove(args: argparse.Namespace) -> int:
@@ -5112,36 +5426,71 @@ def _node_group_summary(group: NodeGroup) -> dict:
     return group.to_dict()
 
 
-def _print_profile_list(profiles: list[Profile], *, wide: bool, pool_only: bool, no_color: bool = False) -> None:
+def _print_profile_list(
+    profiles: list[Profile],
+    *,
+    wide: bool,
+    pool_only: bool,
+    no_color: bool = False,
+    available_count: int | None = None,
+    active_filters: list[str] | None = None,
+) -> None:
+    columns = terminal_width()
     providers = {provider.id: provider for provider in ProviderStore().list()}
     summary = _profile_list_summary(profiles)
     scope = "rotation pool" if pool_only else "all saved profiles"
-    print(color.style(f"Profiles ({scope})", "bold", no_color=no_color))
     print(
-        "Total: {total} | Manual: {manual} | Provider-owned: {provider_owned} | "
-        "Enabled: {enabled} | Rotation: {rotation}".format(**summary)
+        color.style(
+            truncate_to_width(f"Profiles ({scope})", columns),
+            "bold",
+            no_color=no_color,
+        )
     )
-    print(
+    _print_wrapped(
+        "Total: {total} | Manual: {manual} | Provider-owned: {provider_owned} | "
+        "Enabled: {enabled} | Rotation: {rotation}".format(**summary),
+        columns,
+    )
+    _print_wrapped(
         "Health: ok={ok} unknown={unknown} down={down} degraded={degraded}".format(
             **summary["health"]
-        )
+        ),
+        columns,
     )
+    active_filters = active_filters or []
+    if active_filters:
+        _print_wrapped(
+            "Filters: "
+            + ", ".join(active_filters)
+            + f" | Showing {len(profiles)} of {available_count or len(profiles)}",
+            columns,
+        )
     duplicate_groups = _duplicate_profile_candidate_count(profiles)
     if duplicate_groups:
-        print(
-            f"{color.warning_label(no_color=no_color)}: duplicate profile candidates detected: {duplicate_groups} group(s); "
-            "no data changed."
+        warning = (
+            "Warning: duplicate profile candidates detected: "
+            f"{duplicate_groups} group(s); no data changed."
         )
+        for line in wrap_to_width(warning, columns):
+            if line.startswith("Warning"):
+                line = line.replace(
+                    "Warning",
+                    color.warning_label(no_color=no_color),
+                    1,
+                )
+            print(line)
     print()
 
+    values_truncated = False
     manual_profiles = [
         profile for profile in profiles if profile.source == ProfileSource.MANUAL
     ]
     if manual_profiles:
-        _print_profile_group(
+        values_truncated |= _print_profile_group(
             "Manual profiles",
             manual_profiles,
             wide=wide,
+            terminal_columns=columns,
             no_color=no_color,
         )
 
@@ -5159,7 +5508,25 @@ def _print_profile_list(profiles: list[Profile], *, wide: bool, pool_only: bool,
             title = f"Provider: {provider.id}"
         else:
             title = f"Provider: {provider.name} ({provider.id})"
-        _print_profile_group(title, provider_profiles[provider_id], wide=wide, no_color=no_color)
+        values_truncated |= _print_profile_group(
+            title,
+            provider_profiles[provider_id],
+            wide=wide,
+            terminal_columns=columns,
+            no_color=no_color,
+        )
+
+    if values_truncated and not wide:
+        _print_wrapped(
+            "Some values were truncated to fit the terminal. "
+            "Use --wide or --json for complete values.",
+            columns,
+        )
+
+
+def _print_wrapped(value: object, width: int) -> None:
+    for line in wrap_to_width(value, width):
+        print(line)
 
 
 def _profile_list_summary(profiles: list[Profile]) -> dict[str, object]:
@@ -5187,22 +5554,81 @@ def _duplicate_profile_candidate_count(profiles: list[Profile]) -> int:
     return len([count for count in by_fingerprint.values() if count > 1])
 
 
-def _print_profile_group(title: str, profiles: list[Profile], *, wide: bool, no_color: bool = False) -> None:
-    print(color.style(title, "bold", no_color=no_color))
-    rows = [_profile_row(profile, wide=wide) for profile in _sorted_profiles(profiles)]
-    columns = ("Name", "Protocol", "Category", "Health", "Enabled", "Rotation", "ID")
-    widths = [
-        max(len(str(row[index])) for row in [columns, *rows])
-        for index in range(len(columns))
-    ]
-    print(_format_profile_row(columns, widths))
+def _print_profile_group(
+    title: str,
+    profiles: list[Profile],
+    *,
+    wide: bool,
+    terminal_columns: int,
+    no_color: bool = False,
+) -> bool:
+    safe_title = terminal_safe_text(title)
+    rendered_title = (
+        safe_title
+        if wide
+        else truncate_to_width(safe_title, terminal_columns)
+    )
+    print(color.style(rendered_title, "bold", no_color=no_color))
+    sorted_profiles = _sorted_profiles(profiles)
+    title_truncated = visible_width(safe_title) > visible_width(rendered_title)
+
+    if not wide and terminal_columns < 72:
+        values_truncated = title_truncated
+        for profile in sorted_profiles:
+            truncated = _print_stacked_profile(
+                profile,
+                terminal_columns,
+                no_color=no_color,
+            )
+            values_truncated |= truncated
+        print()
+        return values_truncated
+
+    if wide or terminal_columns >= 100:
+        headers = (
+            "Name",
+            "Protocol",
+            "Category",
+            "Health",
+            "Enabled",
+            "Rotation",
+            "ID",
+        )
+        rows = [_profile_row(profile) for profile in sorted_profiles]
+        semantic_columns = {3, 4, 5}
+    else:
+        headers = ("Name", "Protocol", "Category", "Health", "State", "ID")
+        rows = [_compact_profile_row(profile) for profile in sorted_profiles]
+        semantic_columns = {3}
+
+    if wide:
+        widths = [
+            max(visible_width(row[index]) for row in [headers, *rows])
+            for index in range(len(headers))
+        ]
+    else:
+        widths = _responsive_profile_widths(
+            headers,
+            rows,
+            terminal_columns,
+        )
+    rendered_rows, values_truncated = _constrain_profile_rows(rows, widths)
+    print(_format_profile_row(headers, widths))
     print(_format_profile_row(tuple("-" * width for width in widths), widths))
-    for row in rows:
-        print(_format_profile_row(row, widths, semantic_columns={3, 4, 5}, no_color=no_color))
+    for row in rendered_rows:
+        print(
+            _format_profile_row(
+                row,
+                widths,
+                semantic_columns=semantic_columns,
+                no_color=no_color,
+            )
+        )
     print()
+    return title_truncated or values_truncated
 
 
-def _profile_row(profile: Profile, *, wide: bool) -> tuple[str, str, str, str, str, str, str]:
+def _profile_row(profile: Profile) -> tuple[str, str, str, str, str, str, str]:
     return (
         profile.name,
         profile.protocol.value,
@@ -5210,7 +5636,124 @@ def _profile_row(profile: Profile, *, wide: bool) -> tuple[str, str, str, str, s
         _profile_health_label(profile.health_status),
         _on_off_plain(profile.enabled),
         _on_off_plain(profile.in_rotation_pool),
-        profile.id if wide else _truncate_profile_id(profile.id),
+        profile.id,
+    )
+
+
+def _compact_profile_row(profile: Profile) -> tuple[str, str, str, str, str, str]:
+    if profile.enabled and profile.in_rotation_pool:
+        state = "on+rot"
+    elif profile.enabled:
+        state = "on"
+    elif profile.in_rotation_pool:
+        state = "off+rot"
+    else:
+        state = "off"
+    return (
+        profile.name,
+        profile.protocol.value,
+        profile_resilience_category(profile).value,
+        _profile_health_label(profile.health_status),
+        state,
+        profile.id,
+    )
+
+
+def _responsive_profile_widths(
+    headers: tuple[str, ...],
+    rows: list[tuple[str, ...]],
+    terminal_columns: int,
+) -> list[int]:
+    separator_width = 2 * (len(headers) - 1)
+    flexible_indices = {0, len(headers) - 1}
+    widths = []
+    desired = []
+    for index, header in enumerate(headers):
+        column_desired = max(
+            visible_width(row[index])
+            for row in [headers, *rows]
+        )
+        desired.append(column_desired)
+        widths.append(visible_width(header) if index in flexible_indices else column_desired)
+
+    remaining = max(terminal_columns - separator_width - sum(widths), 0)
+    while remaining:
+        allocated = False
+        for index in sorted(flexible_indices):
+            if remaining == 0:
+                break
+            if widths[index] >= desired[index]:
+                continue
+            widths[index] += 1
+            remaining -= 1
+            allocated = True
+        if not allocated:
+            break
+    return widths
+
+
+def _constrain_profile_rows(
+    rows: list[tuple[str, ...]],
+    widths: list[int],
+) -> tuple[list[tuple[str, ...]], bool]:
+    rendered_rows: list[tuple[str, ...]] = []
+    truncated = False
+    for row in rows:
+        rendered: list[str] = []
+        for value, width in zip(row, widths):
+            safe = terminal_safe_text(value)
+            constrained = truncate_to_width(safe, width)
+            truncated |= visible_width(safe) > visible_width(constrained)
+            rendered.append(constrained)
+        rendered_rows.append(tuple(rendered))
+    return rendered_rows, truncated
+
+
+def _print_stacked_profile(
+    profile: Profile,
+    width: int,
+    *,
+    no_color: bool,
+) -> bool:
+    name = terminal_safe_text(profile.name)
+    profile_id = terminal_safe_text(profile.id)
+    rendered_name = truncate_to_width(name, width)
+    print(rendered_name)
+
+    health = _profile_health_label(profile.health_status)
+    details = (
+        f"{profile.protocol.value}/"
+        f"{profile_resilience_category(profile).value} {health}"
+    )
+    for line in wrap_to_width(details, width):
+        if health in line:
+            line = line.replace(
+                health,
+                _semantic(health, no_color=no_color),
+                1,
+            )
+        print(line)
+
+    state = (
+        f"enabled={_on_off_plain(profile.enabled)} "
+        f"rotation={_on_off_plain(profile.in_rotation_pool)}"
+    )
+    identifier_prefix = f"{state} ID="
+    if visible_width(identifier_prefix) < width:
+        identifier_width = width - visible_width(identifier_prefix)
+        rendered_id = truncate_to_width(profile_id, identifier_width)
+        print(identifier_prefix + rendered_id)
+    else:
+        _print_wrapped(state, width)
+        identifier_prefix = "ID="
+        rendered_id = truncate_to_width(
+            profile_id,
+            width - visible_width(identifier_prefix),
+        )
+        print(identifier_prefix + rendered_id)
+    return (
+        visible_width(name) > visible_width(rendered_name)
+        or visible_width(profile_id) > visible_width(rendered_id)
     )
 
 
@@ -5237,12 +5780,6 @@ def _profile_health_label(status: str) -> str:
     return "UNKNOWN"
 
 
-def _truncate_profile_id(profile_id: str, limit: int = 32) -> str:
-    if len(profile_id) <= limit:
-        return profile_id
-    return f"{profile_id[: limit - 1]}..."
-
-
 def _format_profile_row(
     row: tuple[str, ...],
     widths: list[int],
@@ -5253,11 +5790,14 @@ def _format_profile_row(
     semantic_columns = semantic_columns or set()
     parts = []
     for index, (value, width) in enumerate(zip(row, widths)):
-        text = str(value)
+        text = terminal_safe_text(value)
         if index in semantic_columns:
-            parts.append(_semantic(text, no_color=no_color) + (" " * max(width - len(text), 0)))
+            parts.append(
+                _semantic(text, no_color=no_color)
+                + (" " * max(width - visible_width(text), 0))
+            )
         else:
-            parts.append(text.ljust(width))
+            parts.append(pad_to_width(text, width))
     return "  ".join(parts)
 
 

@@ -287,7 +287,11 @@ watchdog profile add --clipboard [--json]
 watchdog profile add --uri URI [--json]
 watchdog profile add --file PATH [--json]
 watchdog profile add --text [--json]
-watchdog profile list [--json] [--pool]
+watchdog profile list [--json] [--pool] [--wide]
+watchdog profile list [--source manual|provider] [--protocol PROTOCOL]
+                      [--health ok|unknown|down|degraded]
+                      [--provider PROVIDER_ID]
+                      [--enabled-only|--disabled-only]
 watchdog profile remove <id> [--json]
 watchdog profile enable <id> [--json]
 watchdog profile disable <id> [--json]
@@ -308,6 +312,19 @@ compatibility
 
 It must not be read as a guarantee of censorship resistance, availability or
 successful connection through any specific network.
+
+Normal human list output follows the detected terminal width. At narrow widths
+it uses a stacked profile view; medium widths use a compact table; wider
+terminals retain separate enabled and rotation columns. Names, IDs, provider
+labels, summaries and warnings are constrained so normal output has no visible
+overflow at 40, 80 or 120 columns. Untrusted control characters in stored
+display values are neutralized before terminal output.
+
+Use the filters above to reduce large provider inventories. Filters compose and
+also apply to `--json`, whose profile values remain complete. `--wide` is the
+explicit opt-in to an untruncated human table and may exceed the terminal
+width. Use `--json` when automation needs complete structured values without a
+human table.
 
 Profile JSON uses redacted summary objects. It includes stable fields such as
 `id`, `name`, `protocol`, `resilience_category`, `source`, `provider_id`,
@@ -1085,7 +1102,10 @@ watchdog maintenance backend --help
 
 The root help owns all daemon-backed lifecycle, configuration and policy
 commands and links the maintenance namespace. The deprecated alias does not
-maintain a second command inventory.
+maintain a second command inventory. Root help and generated argparse route
+help wrap dynamically to the detected terminal width. Root and profile-list
+help are regression-tested at 40, 80 and 120 columns; every argparse-owned help
+route is additionally checked at 40 columns.
 
 ## Diagnostic Reports
 
@@ -1353,6 +1373,14 @@ Rules:
 The CLI uses non-zero exit codes for invalid commands, invalid config keys,
 invalid values and unavailable files. Scripts should check command exit status
 instead of parsing user-facing text.
+
+Common root and nested command typos provide one bounded suggestion, for
+example `statu` -> `watchdog status`, `profile lst` ->
+`watchdog profile list`, and `dns statsu` -> `watchdog dns status`. Suggestions
+are informational only: the invalid command is never executed and the process
+still exits with argparse code `2`. Distant or ambiguous input receives no
+guess and points to the relevant `--help`. JSON parse errors keep the standard
+stdout envelope and include the same suggestion in `error`.
 
 Signal and pipeline handling is centralized for every Python CLI command:
 

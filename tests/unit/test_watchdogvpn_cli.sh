@@ -290,8 +290,8 @@ help_output="$("$SCRIPT" help)"
 canonical_help_output="$("$ROOT_DIR/bin/watchdog" --help)"
 [[ "$help_output" == "$canonical_help_output" ]]
 contains "$help_output" 'WatchdogVPN — local network control plane'
-contains "$help_output" 'status        Show daemon connection status'
-contains "$help_output" 'maintenance   Run local support, update and legacy-preference commands'
+grep -Eq '^  status +Show daemon connection status$' <<<"$help_output"
+grep -Eq '^  maintenance +Run local support, update and legacy-preference commands$' <<<"$help_output"
 dash_help_output="$("$SCRIPT" --help)"
 [[ "$dash_help_output" == "$help_output" ]]
 contains "$("$SCRIPT" help logs)" 'watchdog maintenance logs [events|dispatcher] [lines]'

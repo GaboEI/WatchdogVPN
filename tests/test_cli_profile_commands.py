@@ -111,7 +111,8 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertIn("ID", result.stdout)
             self.assertIn("Manual Profile", result.stdout)
             self.assertIn("Provider Node", result.stdout)
-            self.assertIn("provider-one:very-long-provider...", result.stdout)
+            self.assertIn("provider-one:very-long", result.stdout)
+            self.assertIn("...", result.stdout)
             self.assertNotIn("very-long-provider-node-id-that-should-truncate", result.stdout)
             profiles = json.loads(json_result.stdout)
             self.assertEqual(

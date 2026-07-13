@@ -677,14 +677,20 @@ usage: watchdog profile add [-h] (--clipboard | --uri URI | --file FILE | --text
 Usage:
 
 ```text
-usage: watchdog profile list [-h] [--json] [--pool] [--wide] [--no-color]
+usage: watchdog profile list [-h] [--json] [--pool] [--source SOURCE] [--protocol PROTOCOL] [--health HEALTH] [--provider PROVIDER_ID] [--enabled-only | --disabled-only] [--wide] [--no-color]
 ```
 
 | Argument | Kind | Required | Cardinality | Choices | Description |
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 | `--pool` | option | no | flag | — | Show rotation pool only |
-| `--wide` | option | no | flag | — | Do not truncate profile IDs in human output |
+| `--source` | option | no | one | manual, provider | Filter by source: manual, provider |
+| `--protocol` | option | no | one | vless, vmess, trojan, hysteria2, tuic, shadowsocks, wireguard, amneziawg, socks, http, openvpn, openvpn_cloak | Filter by protocol: vless, vmess, trojan, hysteria2, tuic, shadowsocks, wireguard, amneziawg, socks, http, openvpn, openvpn_cloak |
+| `--health` | option | no | one | ok, unknown, down, degraded | Filter by health: ok, unknown, down, degraded |
+| `--provider` | option | no | one | — | Filter by provider ID |
+| `--enabled-only` | option | no | flag | — | Show enabled profiles only |
+| `--disabled-only` | option | no | flag | — | Show disabled profiles only |
+| `--wide` | option | no | flag | — | Print the untruncated human table; lines may exceed terminal width |
 | `--no-color` | option | no | flag | — | Disable ANSI color in human output |
 
 ### 29. `watchdog profile remove`

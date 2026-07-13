@@ -1166,7 +1166,7 @@
       "kind": "command",
       "source": "argparse",
       "summary": "List saved profiles",
-      "usage": "usage: watchdog profile list [-h] [--json] [--pool] [--wide] [--no-color]",
+      "usage": "usage: watchdog profile list [-h] [--json] [--pool] [--source SOURCE] [--protocol PROTOCOL] [--health HEALTH] [--provider PROVIDER_ID] [--enabled-only | --disabled-only] [--wide] [--no-color]",
       "help_command": "watchdog profile list --help",
       "children": [],
       "arguments": [
@@ -1187,12 +1187,81 @@
           "description": "Show rotation pool only"
         },
         {
+          "name": "--source",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "manual",
+            "provider"
+          ],
+          "description": "Filter by source: manual, provider"
+        },
+        {
+          "name": "--protocol",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "vless",
+            "vmess",
+            "trojan",
+            "hysteria2",
+            "tuic",
+            "shadowsocks",
+            "wireguard",
+            "amneziawg",
+            "socks",
+            "http",
+            "openvpn",
+            "openvpn_cloak"
+          ],
+          "description": "Filter by protocol: vless, vmess, trojan, hysteria2, tuic, shadowsocks, wireguard, amneziawg, socks, http, openvpn, openvpn_cloak"
+        },
+        {
+          "name": "--health",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "ok",
+            "unknown",
+            "down",
+            "degraded"
+          ],
+          "description": "Filter by health: ok, unknown, down, degraded"
+        },
+        {
+          "name": "--provider",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Filter by provider ID"
+        },
+        {
+          "name": "--enabled-only",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Show enabled profiles only"
+        },
+        {
+          "name": "--disabled-only",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Show disabled profiles only"
+        },
+        {
           "name": "--wide",
           "kind": "option",
           "required": false,
           "cardinality": "flag",
           "choices": [],
-          "description": "Do not truncate profile IDs in human output"
+          "description": "Print the untruncated human table; lines may exceed terminal width"
         },
         {
           "name": "--no-color",

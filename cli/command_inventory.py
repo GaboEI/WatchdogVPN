@@ -274,7 +274,10 @@ def _command_name(cli_name: str, path: tuple[str, ...]) -> str:
 
 
 def _normalized_usage(parser: argparse.ArgumentParser) -> str:
-    return " ".join(parser.format_usage().strip().split())
+    # Inventory records the parser's canonical syntax, independent of the
+    # active terminal width and its human-facing responsive reflow.
+    rendered = argparse.ArgumentParser.format_usage(parser)
+    return " ".join(rendered.strip().split())
 
 
 def _public_arguments(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
