@@ -32,6 +32,13 @@ PYTHON_RUNTIME_SUPPORT_DIRS=(
   systemd
   etc
   examples
+  distros
+  tui
+)
+PYTHON_RUNTIME_SUPPORT_EXECUTABLES=(
+  doctor.sh
+  uninstall.sh
+  tui/VPN
 )
 
 # Historical WatchdogVPN-owned files removed from the shipped set before this
@@ -139,7 +146,7 @@ install_python_package_tree() {
   run_step sudo chown -R root:root "$dest"
   run_step sudo find "$dest" -type d -exec chmod 0755 {} +
   run_step sudo find "$dest" -type f -exec chmod 0644 {} +
-  for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}"; do
+  for item in "${PYTHON_RUNTIME_SUPPORT_EXECUTABLES[@]}"; do
     run_step sudo chmod 0755 "$dest/$item"
   done
   run_step sudo find "$dest/bin" "$dest/sbin" -type f -exec chmod 0755 {} +
