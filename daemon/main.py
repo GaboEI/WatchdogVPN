@@ -38,6 +38,13 @@ def main(argv: list[str] | None = None) -> int:
     request_socket_path = _resolve_socket_path(args.socket_path)
     event_socket_path = _resolve_event_socket_path(request_socket_path)
     runtime = build_watchdog()
+    startup_state = runtime.startup(require_restart_protection=not args.standalone)
+    if startup_state.status == "kill_switch_failed":
+        systemd_helper.notify(
+            "STATUS=restart protection unavailable; daemon is not ready"
+        )
+        return 1
+
     reconcile_stale_tun_state = getattr(runtime.driver, "reconcile_stale_tun_state", None)
     if not args.standalone and callable(reconcile_stale_tun_state):
         reconcile_stale_tun_state()

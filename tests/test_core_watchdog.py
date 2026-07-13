@@ -403,8 +403,98 @@ class WatchdogCoreTests(unittest.TestCase):
         driver.connect_mock.assert_called_once_with(self.profile)
         driver.status_mock.assert_called_once_with()
 
+
+    def test_restart_startup_installs_barrier_before_connecting(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        events: list[str] = []
+        driver = FakeDriver()
+        driver.connect_mock.side_effect = lambda _profile: events.append("connect") or True
+        kill_switch = FakeKillSwitch()
+        kill_switch.apply_atomic_mock.side_effect = (
+            lambda: events.append("barrier") or kill_switch._enable()
+        )
+        app_config = Mock(spec=AppConfig)
+        app_config.load.return_value = {"kill_switch": {"enabled": False}}
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            kill_switch=kill_switch,
+        )
+
+        state = runtime.startup(require_restart_protection=True)
+
+        self.assertEqual(state.status, "connected")
+        self.assertEqual(events, ["barrier", "connect"])
+        kill_switch.disable_mock.assert_called_once_with()
+        self.assertFalse(runtime._restart_kill_switch_forced)
+
+    def test_restart_startup_refuses_driver_spawn_when_barrier_fails(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        app_config = Mock(spec=AppConfig)
+        app_config.load.return_value = {"kill_switch": {"enabled": False}}
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            kill_switch=FakeKillSwitch(enable_result=False),
+        )
+
+        state = runtime.startup(require_restart_protection=True)
+
+        self.assertEqual(state.status, "kill_switch_failed")
+        runtime.kill_switch.apply_atomic_mock.assert_called_once_with()
+        driver.connect_mock.assert_not_called()
+
+
+    def test_restart_startup_keeps_barrier_during_failed_autoconnect(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        driver.connect_mock.return_value = False
+        kill_switch = FakeKillSwitch()
+        app_config = Mock(spec=AppConfig)
+        app_config.load.return_value = {"kill_switch": {"enabled": False}}
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            kill_switch=kill_switch,
+        )
+
+        runtime.startup(require_restart_protection=True)
+
+        kill_switch.apply_atomic_mock.assert_called_once_with()
+        kill_switch.disable_mock.assert_not_called()
+        self.assertTrue(runtime._restart_kill_switch_forced)
+
     def test_startup_stands_by_when_active_profile_missing(self) -> None:
         self.state_manager.save(
+
             {
                 "vpn_desired_state": "on",
                 "vpn_autoconnect_enabled": True,

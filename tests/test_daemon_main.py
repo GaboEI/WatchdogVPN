@@ -9,7 +9,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from cli.ipc.client import WatchdogIPCClient
 from daemon.main import (
@@ -17,6 +17,7 @@ from daemon.main import (
     CAP_NET_BIND_SERVICE,
     CAPABILITY_WARNING,
     _has_required_capabilities,
+    main,
     _parse_cap_eff,
 )
 from daemon import systemd_helper
@@ -82,6 +83,26 @@ class DaemonMainSubprocessTests(unittest.TestCase):
             self.assertEqual(stdout, "")
             self.assertFalse(request_socket.exists())
             self.assertFalse(event_socket.exists())
+
+
+class DaemonStartupProtectionTests(unittest.TestCase):
+    @patch("daemon.main.IPCServer")
+    @patch("daemon.main.systemd_helper.notify")
+    @patch("daemon.main.build_watchdog")
+    def test_failed_restart_barrier_never_starts_ipc_or_announces_ready(
+        self, build_watchdog_mock, notify_mock, ipc_server_mock
+    ) -> None:
+        runtime = Mock()
+        runtime.startup.return_value = Mock(status="kill_switch_failed")
+        build_watchdog_mock.return_value = runtime
+
+        self.assertEqual(main([]), 1)
+
+        runtime.startup.assert_called_once_with(require_restart_protection=True)
+        ipc_server_mock.assert_not_called()
+        notify_mock.assert_called_once_with(
+            "STATUS=restart protection unavailable; daemon is not ready"
+        )
 
 
 class DaemonCapabilityTests(unittest.TestCase):
