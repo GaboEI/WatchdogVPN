@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -305,6 +306,20 @@ class CliTerminalOutputTests(unittest.TestCase):
         payload = json.loads(json_result.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("watchdog profile list", payload["error"])
+
+    def test_typo_suggestion_strips_leaked_root_usage_metavariables(self) -> None:
+        parser = argparse.ArgumentParser(
+            prog="watchdog <command> [options] profile"
+        )
+
+        rendered = cli.main._command_error_text(parser, "lst", "list")
+
+        self.assertEqual(
+            rendered,
+            "watchdog profile: error: invalid command 'lst'\n"
+            "Did you mean 'watchdog profile list'?\n"
+            "Run 'watchdog profile --help' to list available commands.",
+        )
 
     def test_typo_suggestion_never_executes_the_suggested_handler(self) -> None:
         with (

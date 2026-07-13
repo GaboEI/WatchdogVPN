@@ -172,6 +172,26 @@ class CliCommandInventoryTests(unittest.TestCase):
             render_inventory_markdown(self.inventory),
         )
 
+    def test_inventory_normalizes_leaked_root_usage_metavariables(self) -> None:
+        parser = _build_parser()
+        root_subparsers = next(
+            action
+            for action in parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        profile_parser = root_subparsers.choices["profile"]
+        profile_parser.prog = "watchdog <command> [options] profile"
+
+        inventory = build_command_inventory(parser)
+        profile_route = next(
+            route
+            for route in inventory["routes"]
+            if route["command"] == "watchdog profile"
+        )
+
+        self.assertTrue(profile_route["usage"].startswith("usage: watchdog profile"))
+        self.assertNotIn("<command> [options]", profile_route["usage"])
+
     def test_inventory_excludes_suppressed_internal_overrides(self) -> None:
         rendered = render_inventory_json(self.inventory)
         for internal_argument in (

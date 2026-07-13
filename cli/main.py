@@ -268,6 +268,8 @@ ROOT_HELP_EXAMPLES = (
     "watchdog connect <profile-id>",
     "watchdog disconnect",
 )
+ROOT_USAGE_TEMPLATE = "%(prog)s <command> [options]"
+ROOT_USAGE_PLACEHOLDERS = frozenset({"<command>", "[options]"})
 
 
 def _root_help(*, no_color: bool = False, width: int | None = None) -> str:
@@ -358,8 +360,9 @@ class _JSONAwareArgumentParser(argparse.ArgumentParser):
                 )
                 self.exit(2)
             width = terminal_width()
+            command_prog = _canonical_parser_prog(self)
             rendered = wrap_to_width(
-                f"Usage: {self.prog} <command> [options]",
+                f"Usage: {command_prog} <command> [options]",
                 width,
             )
             for line in error_text.splitlines():
@@ -444,11 +447,28 @@ def _command_error_text(
     invalid_command: str,
     suggestion: str | None,
 ) -> str:
-    lines = [f"{parser.prog}: error: invalid command {invalid_command!r}"]
+    command_prog = _canonical_parser_prog(parser)
+    lines = [f"{command_prog}: error: invalid command {invalid_command!r}"]
     if suggestion is not None:
-        lines.append(f"Did you mean '{parser.prog} {suggestion}'?")
-    lines.append(f"Run '{parser.prog} --help' to list available commands.")
+        lines.append(f"Did you mean '{command_prog} {suggestion}'?")
+    lines.append(f"Run '{command_prog} --help' to list available commands.")
     return "\n".join(lines)
+
+
+def _canonical_parser_prog(parser: argparse.ArgumentParser) -> str:
+    """Return a command path without leaked root-usage metavariables.
+
+    Some argparse versions derive child ``prog`` values from an explicitly
+    configured parent usage template. Keep error recovery and documentation
+    stable even if a parser tree was built by such a runtime.
+    """
+
+    tokens = [
+        token
+        for token in parser.prog.split()
+        if token not in ROOT_USAGE_PLACEHOLDERS
+    ]
+    return " ".join(tokens)
 
 
 def _closest_command(value: str, choices: tuple[str, ...]) -> str | None:
@@ -612,10 +632,11 @@ def _redirect_stream_to_devnull(stream: object) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = RootHelpArgumentParser(
-        prog="watchdog",
-        usage="%(prog)s <command> [options]",
-    )
+    # Do not set the explicit root usage until every subparser exists. Some
+    # argparse versions use parent usage text to derive child ``prog`` values,
+    # which can leak literal "<command> [options]" into nested help and typo
+    # recovery output.
+    parser = RootHelpArgumentParser(prog="watchdog")
     parser.add_argument("--no-color", action="store_true", help=argparse.SUPPRESS)
     subparsers = parser.add_subparsers(
         dest="command",
@@ -1588,6 +1609,7 @@ def _build_parser() -> argparse.ArgumentParser:
     chain_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
     chain_remove_parser.set_defaults(handler=_chain_remove)
 
+    parser.usage = ROOT_USAGE_TEMPLATE
     return parser
 
 

@@ -13,6 +13,8 @@ from typing import Iterable
 
 OWNER_PID_NAME = "owner.pid"
 CHILD_PIDS_NAME = "children.json"
+PROCESS_IDENTITY_RETRY_TIMEOUT = 0.25
+PROCESS_IDENTITY_RETRY_INTERVAL = 0.01
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +52,12 @@ def runtime_base_dir() -> Path:
 
 
 def _pid_is_alive(pid: int) -> bool:
+    # kill(pid, 0) reports zombies as existing until their parent reaps them.
+    # A zombie owns no sockets, routes or tunnel state and cannot be signaled
+    # into a different state, so cleanup must treat it as exited rather than
+    # burn both TERM/KILL timeout windows waiting for an impossible change.
+    if _process_state(pid) == "Z":
+        return False
     try:
         os.kill(pid, 0)
         return True
@@ -59,6 +67,33 @@ def _pid_is_alive(pid: int) -> bool:
         return False
     except OSError:
         return False
+
+
+def _process_state(pid: int) -> str | None:
+    stat_fields = _process_stat_fields(pid)
+    return stat_fields[0] if stat_fields else None
+
+
+def _process_start_time_ticks(pid: int) -> int | None:
+    stat_fields = _process_stat_fields(pid)
+    if stat_fields is None or len(stat_fields) <= 19:
+        return None
+    try:
+        return int(stat_fields[19])
+    except ValueError:
+        return None
+
+
+def _process_stat_fields(pid: int) -> list[str] | None:
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    closing_parenthesis = raw.rfind(")")
+    if closing_parenthesis < 0:
+        return None
+    remaining = raw[closing_parenthesis + 1 :].split()
+    return remaining or None
 
 
 def _runtime_dir_has_live_owner(path: Path) -> bool:
@@ -116,7 +151,11 @@ def record_child_process(runtime_dir: Path, label: str, pid: int, exe_hint: str)
     child, e.g. OpenVPNCloakDriver's cloak client + openvpn process).
     """
     children = _read_children(runtime_dir)
-    children[label] = {"pid": pid, "exe_hint": exe_hint}
+    children[label] = {
+        "pid": pid,
+        "exe_hint": exe_hint,
+        "start_time_ticks": _process_start_time_ticks(pid),
+    }
     write_private_file(runtime_dir / CHILD_PIDS_NAME, json.dumps(children))
 
 
@@ -158,6 +197,60 @@ def _process_matches_hint(pid: int, exe_hint: str) -> bool:
     except OSError:
         return False
     return resolved == hint
+
+
+def _recorded_process_matches(
+    pid: int,
+    entry: dict[str, object],
+    *,
+    retry_timeout: float = 0.0,
+) -> bool:
+    """Verify durable PID identity before treating a process as product-owned.
+
+    Linux exposes a process start-time tick in /proc/<pid>/stat that remains
+    stable across exec and changes when a PID is reused. New records store that
+    token so an executable-name collision cannot make a reused PID look owned.
+    Legacy records without the token retain the existing executable check.
+
+    Immediately after Popen(), /proc/<pid>/cmdline can transiently be empty even
+    though the child is live and its stat identity is already stable. Mutating
+    cleanup paths may retry that observation briefly; every retry still requires
+    both the recorded start time (when present) and executable hint to match.
+    """
+    expected_start_time: int | None = None
+    raw_start_time = entry.get("start_time_ticks")
+    if raw_start_time is not None:
+        try:
+            expected_start_time = int(raw_start_time)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+
+    deadline = time.monotonic() + max(0.0, retry_timeout)
+    while True:
+        if expected_start_time is not None:
+            observed_start_time = _process_start_time_ticks(pid)
+            if observed_start_time is None:
+                if not _pid_is_alive(pid) or time.monotonic() >= deadline:
+                    return False
+                time.sleep(
+                    min(
+                        PROCESS_IDENTITY_RETRY_INTERVAL,
+                        max(0.0, deadline - time.monotonic()),
+                    )
+                )
+                continue
+            if observed_start_time != expected_start_time:
+                return False
+        if _process_matches_hint(pid, str(entry.get("exe_hint", ""))):
+            return True
+        if not _pid_is_alive(pid) or time.monotonic() >= deadline:
+            return False
+        time.sleep(
+            min(
+                PROCESS_IDENTITY_RETRY_INTERVAL,
+                max(0.0, deadline - time.monotonic()),
+            )
+        )
 
 
 def _terminate_then_kill(pid: int, *, timeout: float = 5.0) -> bool:
@@ -203,7 +296,11 @@ def kill_recorded_children(runtime_dir: Path, *, timeout: float = 5.0) -> None:
             continue
         if not _pid_is_alive(pid):
             continue
-        if not _process_matches_hint(pid, str(entry.get("exe_hint", ""))):
+        if not _recorded_process_matches(
+            pid,
+            entry,
+            retry_timeout=PROCESS_IDENTITY_RETRY_TIMEOUT,
+        ):
             continue
         try:
             _terminate_then_kill(pid, timeout=timeout)
@@ -241,7 +338,7 @@ def any_recorded_child_alive(prefix: str) -> bool:
                 pid = int(entry.get("pid"))  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 continue
-            if _pid_is_alive(pid) and _process_matches_hint(pid, str(entry.get("exe_hint", ""))):
+            if _pid_is_alive(pid) and _recorded_process_matches(pid, entry):
                 return True
     return False
 
@@ -270,7 +367,7 @@ def owned_processes(
             except (TypeError, ValueError):
                 continue
             hint = os.path.basename(str(entry.get("exe_hint", "")))
-            if _pid_is_alive(pid) and _process_matches_hint(pid, hint):
+            if _pid_is_alive(pid) and _recorded_process_matches(pid, entry):
                 found[pid] = OwnedProcess(pid=pid, executable=hint)
 
     expected_names = {os.path.basename(name) for name in executable_names if name}

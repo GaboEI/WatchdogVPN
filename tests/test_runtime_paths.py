@@ -74,6 +74,57 @@ class ChildProcessTrackingTests(unittest.TestCase):
             finally:
                 self._stop(proc)
 
+    def test_pid_is_alive_treats_unreaped_zombie_as_exited(self) -> None:
+        proc = self._spawn_sleeper()
+        try:
+            proc.terminate()
+            self.assertTrue(
+                _wait_until(lambda: runtime_paths._process_state(proc.pid) == "Z"),
+                "terminated child did not enter zombie state before being reaped",
+            )
+
+            self.assertFalse(runtime_paths._pid_is_alive(proc.pid))
+        finally:
+            self._stop(proc)
+
+    def test_recorded_process_match_retries_transient_empty_cmdline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_dir = Path(tmp)
+            runtime_paths.record_child_process(
+                runtime_dir, "process", os.getpid(), Path(sys.executable).name
+            )
+
+            with (
+                patch.object(
+                    runtime_paths,
+                    "_process_matches_hint",
+                    side_effect=(False, True),
+                ),
+                patch.object(runtime_paths, "_terminate_then_kill") as terminate,
+            ):
+                runtime_paths.kill_recorded_children(runtime_dir)
+
+            terminate.assert_called_once_with(os.getpid(), timeout=5.0)
+
+    def test_recorded_process_match_refuses_reused_pid_start_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_dir = Path(tmp)
+            runtime_paths.write_private_file(
+                runtime_dir / runtime_paths.CHILD_PIDS_NAME,
+                '{"process":{"pid":1234,"exe_hint":"python3","start_time_ticks":100}}',
+            )
+
+            with (
+                patch.object(runtime_paths, "_pid_is_alive", return_value=True),
+                patch.object(runtime_paths, "_process_start_time_ticks", return_value=101),
+                patch.object(runtime_paths, "_process_matches_hint") as matches_hint,
+                patch.object(runtime_paths, "_terminate_then_kill") as terminate,
+            ):
+                runtime_paths.kill_recorded_children(runtime_dir)
+
+            matches_hint.assert_not_called()
+            terminate.assert_not_called()
+
     def test_kill_recorded_children_refuses_pid_reuse_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime_dir = Path(tmp)

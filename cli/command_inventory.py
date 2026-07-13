@@ -87,10 +87,10 @@ def build_command_inventory(
             usage = f"usage: {cli_name} <command> [options]"
         elif children:
             kind = "group"
-            usage = _normalized_usage(current)
+            usage = _normalized_usage(current, command=command)
         else:
             kind = "command"
-            usage = _normalized_usage(current)
+            usage = _normalized_usage(current, command=command)
 
         routes.append(
             {
@@ -273,10 +273,19 @@ def _command_name(cli_name: str, path: tuple[str, ...]) -> str:
     return " ".join((cli_name, *path))
 
 
-def _normalized_usage(parser: argparse.ArgumentParser) -> str:
+def _normalized_usage(
+    parser: argparse.ArgumentParser,
+    *,
+    command: str,
+) -> str:
     # Inventory records the parser's canonical syntax, independent of the
     # active terminal width and its human-facing responsive reflow.
     rendered = argparse.ArgumentParser.format_usage(parser)
+    rendered = rendered.replace(
+        f"usage: {parser.prog}",
+        f"usage: {command}",
+        1,
+    )
     return " ".join(rendered.strip().split())
 
 
