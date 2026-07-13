@@ -228,12 +228,15 @@ if ! prompt_continue; then
   exit 0
 fi
 
+capture_watchdogvpn_service_state
 print_section "Replace product files"
 install_runtime_files
 print_section "Systemd verification"
 verify_systemd_units
 print_section "Enable services"
 enable_systemd_units
+print_section "Refresh daemon process"
+restart_watchdogvpn_service_after_runtime_update
 print_section "Daemon smoke test"
 smoke_test_watchdogvpn_daemon
 ensure_user_local_bin_path

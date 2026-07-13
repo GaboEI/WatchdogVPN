@@ -93,6 +93,67 @@ enable_vpn_domain_bypass_timer_if_safe() {
 # installer again. See docs/security.md "WatchdogVPN Panic Button".
 WATCHDOGVPN_HIBERNATE_MARKER="${WATCHDOGVPN_HIBERNATE_MARKER:-/etc/watchdogvpn/.hibernating}"
 
+# update.sh replaces imported Python modules while the daemon may still have
+# their previous generation resident in memory. The installed-version marker
+# only describes files on disk, so it cannot prove the active process loaded
+# them. Capture the pre-update service generation before replacement, then
+# require an actual PID change after the hibernate-aware enable phase.
+WATCHDOGVPN_DAEMON_WAS_ACTIVE=0
+WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE=""
+WATCHDOGVPN_DAEMON_PID_AFTER_UPDATE=""
+
+capture_watchdogvpn_service_state() {
+  WATCHDOGVPN_DAEMON_WAS_ACTIVE=0
+  WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE=""
+  WATCHDOGVPN_DAEMON_PID_AFTER_UPDATE=""
+  if systemctl is-active --quiet watchdogvpn.service 2>/dev/null; then
+    WATCHDOGVPN_DAEMON_WAS_ACTIVE=1
+    WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE="$(
+      systemctl show watchdogvpn.service --property MainPID --value 2>/dev/null || true
+    )"
+    printf '[INFO] active daemon generation before update: pid=%s\n' \
+      "${WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE:-unknown}"
+  else
+    printf '[INFO] watchdogvpn.service was inactive before update\n'
+  fi
+}
+
+restart_watchdogvpn_service_after_runtime_update() {
+  local current_pid
+  if [[ -e "$WATCHDOGVPN_HIBERNATE_MARKER" ]]; then
+    printf '[SKIP] watchdogvpn.service restart; WatchdogVPN is asleep (run: watchdog_panic wake)\n'
+    return 0
+  fi
+  if [[ "$WATCHDOGVPN_DAEMON_WAS_ACTIVE" != "1" ]]; then
+    printf '[INFO] no pre-update daemon generation to restart\n'
+    return 0
+  fi
+  if [[ -z "$WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE" \
+    || "$WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE" == "0" ]]; then
+    fail "could not identify the active pre-update watchdogvpn.service process"
+    return 1
+  fi
+
+  run_step sudo systemctl restart watchdogvpn.service
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    info "daemon process-generation change will be verified during a real update"
+    return 0
+  fi
+  current_pid="$(
+    systemctl show watchdogvpn.service --property MainPID --value 2>/dev/null || true
+  )"
+  if [[ -z "$current_pid" || "$current_pid" == "0" ]]; then
+    fail "watchdogvpn.service has no running MainPID after update restart"
+    return 1
+  fi
+  if [[ "$current_pid" == "$WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE" ]]; then
+    fail "watchdogvpn.service did not enter a new process generation after update"
+    return 1
+  fi
+  WATCHDOGVPN_DAEMON_PID_AFTER_UPDATE="$current_pid"
+  ok "daemon runtime refreshed: pid=$WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE -> $current_pid"
+}
+
 enable_watchdogvpn_service_unless_hibernating() {
   local unit="watchdogvpn.service"
   if [[ -e "$WATCHDOGVPN_HIBERNATE_MARKER" ]]; then

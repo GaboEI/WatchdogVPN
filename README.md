@@ -182,7 +182,9 @@ git pull
 ```
 
 The updater validates the checkout, backs up managed files and preserves user
-configuration, logs, shared runtime state and DNS configuration.
+configuration, logs, shared runtime state and DNS configuration. If the daemon
+was already active, the updater restarts it after replacing the runtime and
+verifies that a new process generation is serving the post-update IPC smoke test.
 
 ## Uninstalling
 
