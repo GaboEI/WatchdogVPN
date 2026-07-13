@@ -12,6 +12,8 @@ from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPoli
 from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
 from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
+
+from core.kill_switch import KillSwitch
 from core.runtime_observation import EffectiveRuntimeObservation
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
@@ -217,6 +219,9 @@ class WatchdogCoreTests(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.state_manager = StateManager(Path(self.tmpdir.name) / "state.toml")
         self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
+        self.kill_switch_apply_patch = patch.object(KillSwitch, "apply_atomic", return_value=True)
+        self.kill_switch_apply_patch.start()
+        self.addCleanup(self.kill_switch_apply_patch.stop)
 
     def tearDown(self) -> None:
         self.tmpdir.cleanup()
@@ -434,8 +439,8 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(state.status, "connected")
         self.assertEqual(events, ["barrier", "connect"])
-        kill_switch.disable_mock.assert_called_once_with()
-        self.assertFalse(runtime._restart_kill_switch_forced)
+        kill_switch.disable_mock.assert_not_called()
+        self.assertTrue(runtime._desired_on_kill_switch_forced)
 
     def test_restart_startup_refuses_driver_spawn_when_barrier_fails(self) -> None:
         self.state_manager.save(
@@ -490,7 +495,7 @@ class WatchdogCoreTests(unittest.TestCase):
 
         kill_switch.apply_atomic_mock.assert_called_once_with()
         kill_switch.disable_mock.assert_not_called()
-        self.assertTrue(runtime._restart_kill_switch_forced)
+        self.assertTrue(runtime._desired_on_kill_switch_forced)
 
     def test_startup_stands_by_when_active_profile_missing(self) -> None:
         self.state_manager.save(
@@ -556,10 +561,12 @@ class WatchdogCoreTests(unittest.TestCase):
             kill_switch=kill_switch,
         )
 
+        runtime._desired_on_kill_switch_forced = True
         runtime.disconnect()
 
         kill_switch.disable_mock.assert_called_once_with()
 
+        self.assertFalse(runtime._desired_on_kill_switch_forced)
     def test_disconnect_keeps_active_kill_switch_when_configured(self) -> None:
         self.set_desired_state("on")
         driver = FakeDriver()
@@ -673,11 +680,26 @@ class WatchdogCoreTests(unittest.TestCase):
 
     def test_connect_calls_driver_connect_with_profile(self) -> None:
         self.set_desired_state("off")
+        events: list[str] = []
         driver = FakeDriver()
-        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+        driver.connect_mock.side_effect = lambda _profile: events.append("connect") or True
+        kill_switch = FakeKillSwitch()
+        kill_switch.apply_atomic_mock.side_effect = (
+            lambda: events.append("barrier") or kill_switch._enable()
+        )
+        app_config = Mock(spec=AppConfig)
+        app_config.load.return_value = {"kill_switch": {"enabled": False}}
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            app_config=app_config,
+            kill_switch=kill_switch,
+        )
 
         self.assertTrue(runtime.connect(self.profile))
         driver.connect_mock.assert_called_once_with(self.profile)
+        self.assertEqual(events, ["barrier", "connect"])
+        self.assertTrue(runtime._desired_on_kill_switch_forced)
 
     def test_connect_fails_closed_before_driver_spawn_when_atomic_kill_switch_fails(self) -> None:
         self.set_desired_state("off")
@@ -1283,6 +1305,9 @@ class WatchdogIntegrationTests(unittest.TestCase):
             enabled=True,
         )
 
+        self.kill_switch_apply_patch = patch.object(KillSwitch, "apply_atomic", return_value=True)
+        self.kill_switch_apply_patch.start()
+        self.addCleanup(self.kill_switch_apply_patch.stop)
     def tearDown(self) -> None:
         self.tmpdir.cleanup()
 

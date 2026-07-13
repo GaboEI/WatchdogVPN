@@ -6,10 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from unittest.mock import patch
 from config.profile_store import ProfileStore
 from config.state_manager import StateManager
 from core.watchdog import WatchdogRuntime
 from daemon.event_bus import EventBus
+from core.kill_switch import KillSwitch
 from daemon.protocol import (
     COMMAND_CONNECT,
     COMMAND_DISCONNECT,
@@ -189,6 +191,9 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
         self.profile = make_profile()
         self.profile_store.add(self.profile)
+        self.kill_switch_apply_patch = patch.object(KillSwitch, "apply_atomic", return_value=True)
+        self.kill_switch_apply_patch.start()
+        self.addCleanup(self.kill_switch_apply_patch.stop)
 
     def tearDown(self) -> None:
         self.tmpdir.cleanup()
