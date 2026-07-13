@@ -11,6 +11,7 @@ ALLOWED_STATUSES = {
     "all_failed",
     "normal_network_temp",
     "kill_switch_active",
+    "kill_switch_failed",
     "waiting_retry",
     "rotation_unavailable",
     "recovered",
@@ -32,6 +33,7 @@ FAILURE_STATUSES = frozenset(
     {
         "all_failed",
         "kill_switch_active",
+        "kill_switch_failed",
         "normal_network_temp",
         "rotation_unavailable",
         "waiting_retry",

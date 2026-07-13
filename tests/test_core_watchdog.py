@@ -161,6 +161,7 @@ class FakeKillSwitch:
         self.active = active
         self.enable_result = enable_result
         self.enable_mock = Mock(side_effect=self._enable)
+        self.apply_atomic_mock = Mock(side_effect=self._enable)
         self.disable_mock = Mock(return_value=True)
         self.is_active_mock = Mock(side_effect=lambda: self.active)
         self.status_mock = Mock(return_value={})
@@ -176,6 +177,9 @@ class FakeKillSwitch:
 
     def enable(self) -> bool:
         return bool(self.enable_mock())
+
+    def apply_atomic(self) -> bool:
+        return bool(self.apply_atomic_mock())
 
     def disable(self) -> bool:
         return bool(self.disable_mock())
@@ -584,6 +588,27 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertTrue(runtime.connect(self.profile))
         driver.connect_mock.assert_called_once_with(self.profile)
+
+    def test_connect_fails_closed_before_driver_spawn_when_atomic_kill_switch_fails(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {"kill_switch": {"enabled": True}}
+
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            app_config=app_config,
+            kill_switch=FakeKillSwitch(enable_result=False),
+        )
+
+        self.assertFalse(runtime.connect(self.profile))
+        runtime.kill_switch.apply_atomic_mock.assert_called_once_with()
+        driver.connect_mock.assert_not_called()
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(self.state_manager.get("active_profile_id", ""), "")
 
     def test_connect_forwards_the_stored_dns_policy_to_the_driver(self) -> None:
         self.set_desired_state("off")
@@ -2145,7 +2170,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         result = runtime.run_iteration()
 
         self.assertEqual(result.status, "kill_switch_active")
-        kill_switch.enable_mock.assert_called_once_with()
+        self.assertEqual(kill_switch.apply_atomic_mock.call_count, 2)
         self.assertEqual(kill_switch.allowed_endpoints, ("203.0.113.10",))
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
@@ -2253,8 +2278,8 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         result = runtime.run_iteration()
 
-        self.assertEqual(result.status, "rotation_unavailable")
-        kill_switch.enable_mock.assert_called_once_with()
+        self.assertEqual(result.status, "kill_switch_failed")
+        kill_switch.apply_atomic_mock.assert_called_once_with()
 
     def test_rotate_now_standby_when_gate_off(self) -> None:
         self.state_manager.set("vpn_desired_state", "off")
@@ -2381,7 +2406,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         # failed, so this is a genuine connectivity finding and must escalate
         # exactly like a reactive/manual rotation would.
         self.assertEqual(result.status, "kill_switch_active")
-        kill_switch.enable_mock.assert_called_once_with()
+        kill_switch.apply_atomic_mock.assert_called_once_with()
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")
@@ -2570,8 +2595,9 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(kill_switch.tunnel_interface, "wg0")
         self.assertFalse(kill_switch.block_ipv6)
         self.assertFalse(kill_switch.allow_lan)
-        kill_switch.enable_mock.assert_called_once_with()
+        kill_switch.apply_atomic_mock.assert_called_once_with()
 
+        kill_switch.enable_mock.assert_not_called()
     def test_end_to_end_failed_node_excluded_then_reeligible_after_cooldown(self) -> None:
         """Closes AUD-P14-001 with evidence, not just a lone field write:
         a real health check finding a node down is persisted, a real

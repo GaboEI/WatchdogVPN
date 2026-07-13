@@ -126,6 +126,9 @@ class WatchdogRuntime:
     def run_iteration(self) -> ConnectionState:
         if not self.automatic_actions_enabled():
             return self.standby_state()
+        if not self._maintain_kill_switch_for_active_runtime():
+            self._record_last_failure("kill_switch_failed")
+            return ConnectionState(status="kill_switch_failed", mode=self.driver.status().mode)
         status = self.driver.health_check()
         active_profile = self._active_profile()
         if active_profile is not None:
@@ -381,6 +384,8 @@ class WatchdogRuntime:
         if profile is None:
             LOGGER.warning("standby mode - active profile not found: %s", active_profile_id)
             return self.standby_state()
+        if not self._protect_connection_attempt(profile):
+            return ConnectionState(status="kill_switch_failed", mode="standby")
 
         self._driver_for_profile(profile).connect(
             profile,
@@ -390,6 +395,8 @@ class WatchdogRuntime:
         return self.driver.status()
 
     def connect(self, profile: Profile) -> bool:
+        if not self._protect_connection_attempt(profile):
+            return False
         self.state_manager.set("vpn_desired_state", "on")
         self.state_manager.set("active_profile_id", profile.id)
         connected = self._driver_for_profile(profile).connect(
@@ -773,6 +780,8 @@ class WatchdogRuntime:
         # teardown on the same driver instance for no benefit.
         driver = self._driver_for_profile(profile, disconnect_current=False)
         driver.disconnect()
+        if not self._protect_connection_attempt(profile):
+            return False
         if not driver.connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
@@ -990,7 +999,7 @@ class WatchdogRuntime:
             return True
         if not configured:
             return False
-        if self.kill_switch.enable():
+        if self.kill_switch.apply_atomic():
             LOGGER.warning("watchdog_all_failed_kill_switch action=enabled")
             return True
         LOGGER.error("watchdog_all_failed_kill_switch action=enable_failed")
@@ -1001,13 +1010,58 @@ class WatchdogRuntime:
         return self._as_recovered(self.driver.status(), kill_switch_active=kill_switch_active)
 
     def _restore_kill_switch_after_recovery(self, config: dict) -> bool:
-        self._configure_kill_switch(config, self._active_profile())
-        if not self.kill_switch.is_active():
-            return False
-        if self.kill_switch.enable():
+        configured = strict_bool(
+            config.get("kill_switch", {}).get("enabled", False),
+            "kill_switch.enabled",
+        )
+        if not configured:
+            return self.kill_switch.is_active()
+
+        # enable() removes the active table and then recreates it command by
+        # command. Recovery must retain that policy or replace it atomically.
+        if self._maintain_kill_switch_for_active_runtime():
             LOGGER.info("watchdog_kill_switch_restored_after_recovery")
             return True
         LOGGER.error("watchdog_kill_switch_restore_failed_after_recovery")
+        return False
+
+    def _protect_connection_attempt(self, profile: Profile) -> bool:
+        """Install the candidate policy before a driver can open a socket."""
+
+        config = self.app_config.load()
+        configured = strict_bool(
+            config.get("kill_switch", {}).get("enabled", False),
+            "kill_switch.enabled",
+        )
+        if not configured:
+            return True
+        self._configure_kill_switch(config, profile)
+        if self.kill_switch.apply_atomic():
+            return True
+        LOGGER.error("watchdog_connection_blocked reason=kill_switch_apply_failed profile_id=%s", profile.id)
+        return False
+
+    def _maintain_kill_switch_for_active_runtime(self) -> bool:
+        config = self.app_config.load()
+        configured = strict_bool(
+            config.get("kill_switch", {}).get("enabled", False),
+            "kill_switch.enabled",
+        )
+        if not configured:
+            return True
+        self._configure_kill_switch(config, self._active_profile())
+        status = self.kill_switch.status()
+        active = (
+            bool(status["active"])
+            if "active" in status
+            else self.kill_switch.is_active()
+        )
+        if active and bool(status.get("consistent", True)):
+            return True
+        if self.kill_switch.apply_atomic():
+            LOGGER.warning("watchdog_kill_switch_reapplied")
+            return True
+        LOGGER.error("watchdog_kill_switch_unavailable_for_active_runtime")
         return False
 
     def _configure_kill_switch(self, config: dict, profile: Profile | None = None) -> None:
@@ -1129,6 +1183,8 @@ class _RuntimeDriverRouter(BaseDriver):
     ) -> bool:
         driver = self.runtime._driver_for_profile(profile, disconnect_current=False)
         options = self.runtime._connect_options()
+        if not self.runtime._protect_connection_attempt(profile):
+            return False
         options.setdefault("final_policy", final_policy)
         return driver.connect(
             profile,

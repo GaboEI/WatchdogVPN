@@ -336,6 +336,76 @@ class NftablesKillSwitchTests(unittest.TestCase):
         self.assertEqual(recorder.commands.count(["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE]), 2)
 
 
+class AtomicNftablesKillSwitchTests(unittest.TestCase):
+    def test_apply_atomic_replaces_the_table_in_one_nft_batch(self) -> None:
+        recorder = CommandRecorder()
+        batches: list[str] = []
+
+        def run_batch(script: str) -> CommandResult:
+            batches.append(script)
+            return CommandResult(returncode=0)
+
+        kill_switch = KillSwitch(
+            tunnel_interface="wg0",
+            allowed_endpoints=("203.0.113.10",),
+            runner=recorder,
+            nft_batch_runner=run_batch,
+            which=fake_which("nft"),
+        )
+        kill_switch.status = lambda: {"active": True, "consistent": True}  # type: ignore[method-assign]
+
+        self.assertTrue(kill_switch.apply_atomic())
+
+        self.assertEqual(recorder.commands, [["nft", "list", "table", "inet", WATCHDOGVPN_TABLE]])
+        self.assertEqual(len(batches), 1)
+        script = batches[0]
+        self.assertIn("add table inet watchdogvpn", script)
+        self.assertIn("oifname wg0 counter accept", script)
+        self.assertIn("ip daddr 203.0.113.10 counter accept", script)
+        self.assertIn('comment "WatchdogVPN kill switch"', script)
+
+    def test_apply_atomic_deletes_an_existing_policy_inside_the_same_batch(self) -> None:
+        fixture = KillSwitch(tunnel_interface="wg0", which=fake_which("nft"))
+        existing_rules = complete_nft_ruleset(fixture)
+        list_table = ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE)
+        recorder = CommandRecorder({list_table: CommandResult(returncode=0, stdout=existing_rules)})
+        batches: list[str] = []
+
+        def run_batch(script: str) -> CommandResult:
+            batches.append(script)
+            return CommandResult(returncode=0)
+
+        kill_switch = KillSwitch(
+            tunnel_interface="wg0",
+            runner=recorder,
+            nft_batch_runner=run_batch,
+            which=fake_which("nft"),
+        )
+        kill_switch.status = lambda: {"active": True, "consistent": True}  # type: ignore[method-assign]
+
+        self.assertTrue(kill_switch.apply_atomic())
+
+        self.assertEqual(len(batches), 1)
+        self.assertTrue(batches[0].startswith("delete table inet watchdogvpn\n"))
+        self.assertEqual(recorder.commands, [["nft", "list", "table", "inet", WATCHDOGVPN_TABLE]])
+    def test_apply_atomic_refuses_connection_policy_when_the_batch_fails(self) -> None:
+        recorder = CommandRecorder()
+        batches: list[str] = []
+
+        def run_batch(script: str) -> CommandResult:
+            batches.append(script)
+            return CommandResult(returncode=1, stderr="nft rejected transaction")
+
+        kill_switch = KillSwitch(
+            runner=recorder,
+            nft_batch_runner=run_batch,
+            which=fake_which("nft"),
+        )
+
+        self.assertFalse(kill_switch.apply_atomic())
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(recorder.commands, [["nft", "list", "table", "inet", WATCHDOGVPN_TABLE]])
+
 class IptablesKillSwitchTests(unittest.TestCase):
     def test_enable_creates_iptables_chain_and_jump(self) -> None:
         recorder = CommandRecorder()

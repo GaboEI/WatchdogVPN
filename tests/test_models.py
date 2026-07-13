@@ -76,6 +76,7 @@ class ModelTests(unittest.TestCase):
         self.assertIn("standby", ALLOWED_STATUSES)
         self.assertIn("kill_switch_active", ALLOWED_STATUSES)
         self.assertIn("rotation_unavailable", ALLOWED_STATUSES)
+        self.assertIn("kill_switch_failed", ALLOWED_STATUSES)
         self.assertIn("runtime_mismatch", ALLOWED_STATUSES)
 
 

@@ -67,6 +67,7 @@ class KillSwitchStatus:
 
 
 RunCommand = Callable[[list[str]], CommandResult]
+RunNftBatch = Callable[[str], CommandResult]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +88,21 @@ def _default_run(command: list[str]) -> CommandResult:
     )
 
 
+def _default_run_nft_batch(script: str) -> CommandResult:
+    result = subprocess.run(
+        ["nft", "-f", "-"],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return CommandResult(
+        returncode=result.returncode,
+        stdout=result.stdout or "",
+        stderr=result.stderr or "",
+    )
+
+
 @dataclass
 class KillSwitch:
     """Firewall kill switch with nftables preferred and iptables fallback."""
@@ -97,6 +113,7 @@ class KillSwitch:
     allowed_endpoints: tuple[str, ...] = ()
     lan_cidrs: tuple[str, ...] = DEFAULT_LAN_CIDRS
     runner: RunCommand = _default_run
+    nft_batch_runner: RunNftBatch = _default_run_nft_batch
     which: Callable[[str], str | None] = shutil.which
     method: str | None = field(default=None)
 
@@ -124,6 +141,35 @@ class KillSwitch:
             self._disable_iptables()
             return False
         return self._enable_iptables()
+
+    def apply_atomic(self) -> bool:
+        """Replace the nftables policy without a transient permit window.
+
+        The imperative iptables fallback remains available for legacy manual
+        use, but it is not an acceptable connection-security boundary because
+        it cannot replace an active policy atomically.
+        """
+
+        method = self.method or self.detect_method()
+        if method != "nftables":
+            LOGGER.error("kill_switch_atomic_apply_failed reason=nftables_required")
+            return False
+        self.method = method
+        existing = self._inspect_nftables().artifacts_present
+        commands: list[list[str]] = []
+        if existing:
+            commands.append(["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE])
+        commands.extend(self._nft_enable_commands())
+        result = self.nft_batch_runner(self._nft_batch_script(commands))
+        if result.returncode != 0:
+            LOGGER.error("kill_switch_atomic_apply_failed stderr=%s", result.stderr.strip())
+            return False
+        status = self.status()
+        if bool(status.get("active")) and bool(status.get("consistent", True)):
+            LOGGER.warning("kill_switch_atomic_apply_succeeded")
+            return True
+        LOGGER.error("kill_switch_atomic_apply_failed reason=post_apply_verification")
+        return False
 
     def disable(self) -> bool:
         if self.which("nft"):
@@ -492,6 +538,20 @@ class KillSwitch:
 
     def _enable_nftables(self) -> bool:
         self._disable_nftables()
+        commands = self._nft_enable_commands()
+        for command in commands:
+            if not self._run_required(command):
+                self._disable_nftables()
+                return False
+        LOGGER.warning(
+            "kill_switch_enabled method=nftables tunnel_interface=%s block_ipv6=%s allow_lan=%s",
+            self.tunnel_interface,
+            self.block_ipv6,
+            self.allow_lan,
+        )
+        return True
+
+    def _nft_enable_commands(self) -> list[list[str]]:
         commands = [
             ["nft", "add", "table", "inet", WATCHDOGVPN_TABLE],
             [
@@ -526,18 +586,23 @@ class KillSwitch:
         if not self.block_ipv6:
             commands.append(self._nft_rule("ip6", "daddr", "::/0", "accept"))
         commands.extend(self._nft_terminal_drop_rules())
+        return commands
 
-        for command in commands:
-            if not self._run_required(command):
-                self._disable_nftables()
-                return False
-        LOGGER.warning(
-            "kill_switch_enabled method=nftables tunnel_interface=%s block_ipv6=%s allow_lan=%s",
-            self.tunnel_interface,
-            self.block_ipv6,
-            self.allow_lan,
-        )
-        return True
+    @staticmethod
+    def _nft_batch_script(commands: list[list[str]]) -> str:
+        return "\n".join(KillSwitch._nft_batch_line(command) for command in commands) + "\n"
+
+    @staticmethod
+    def _nft_batch_line(command: list[str]) -> str:
+        rendered: list[str] = []
+        for token in command[1:]:
+            if token in {"{", "}"} or token.endswith(";") or token == WATCHDOGVPN_NFT_COMMENT:
+                rendered.append(token)
+            elif re.fullmatch(r"[A-Za-z0-9_./:@,+-]+", token):
+                rendered.append(token)
+            else:
+                rendered.append('"' + token.replace("\\", "\\\\").replace('"', '\\"') + '"')
+        return " ".join(rendered)
 
     def _disable_nftables(self) -> bool:
         self._run_optional(["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE])
