@@ -1185,6 +1185,21 @@ The CLI uses non-zero exit codes for invalid commands, invalid config keys,
 invalid values and unavailable files. Scripts should check command exit status
 instead of parsing user-facing text.
 
+Signal and pipeline handling is centralized for every Python CLI command:
+
+- Ctrl+C exits with `130` (`128 + SIGINT`). Human mode writes one brief
+  `error: operation cancelled` diagnostic to stderr. JSON mode writes one error
+  envelope to stdout. Neither mode emits a traceback.
+- A broken output pipe exits with `141` (`128 + SIGPIPE`) without a diagnostic
+  or traceback because the downstream consumer has already closed the stream.
+  With `set -o pipefail`, an intentionally truncated pipeline such as
+  `watchdog doctor | head -n 5` can therefore return `141`; without `pipefail`,
+  the pipeline normally reports the downstream command's status.
+- Support subprocesses terminated by a signal use the same shell-compatible
+  `128 + signal` convention. JSON wrapper fields such as
+  `doctor_exit_code` and `uninstall_exit_code` contain that normalized code,
+  never Python's negative `subprocess` representation.
+
 ## Safety Notes
 
 - Do not share diagnostic reports before reviewing them.

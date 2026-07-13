@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -180,6 +181,10 @@ VISIBLE_STATS_COUNTER_PREFIXES = (
     "rule_group.",
 )
 
+SIGNAL_EXIT_CODE_BASE = 128
+INTERRUPTED_EXIT_CODE = SIGNAL_EXIT_CODE_BASE + signal.SIGINT
+BROKEN_PIPE_EXIT_CODE = SIGNAL_EXIT_CODE_BASE + signal.SIGPIPE
+
 
 ROOT_HELP = """WatchdogVPN — local network control plane for resilient VPN/proxy routing
 
@@ -275,8 +280,21 @@ class RootHelpArgumentParser(_JSONAwareArgumentParser):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
     parsed_argv = sys.argv[1:] if argv is None else list(argv)
+    try:
+        return _run_cli(parsed_argv)
+    except KeyboardInterrupt:
+        try:
+            _error("operation cancelled", as_json="--json" in parsed_argv)
+        except BrokenPipeError:
+            return _broken_pipe_exit()
+        return INTERRUPTED_EXIT_CODE
+    except BrokenPipeError:
+        return _broken_pipe_exit()
+
+
+def _run_cli(parsed_argv: list[str]) -> int:
+    parser = _build_parser()
     restore_no_color = None
     if "--no-color" in parsed_argv:
         restore_no_color = os.environ.get("NO_COLOR")
@@ -295,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     as_json = bool(getattr(args, "json", False))
     try:
-        return int(args.handler(args))
+        return _normalize_exit_code(int(args.handler(args)))
     except (DuplicateProviderError, ProviderLimitError, ProviderNotFoundError) as exc:
         _error(str(exc), as_json=as_json)
         return 65
@@ -323,12 +341,43 @@ def main(argv: list[str] | None = None) -> int:
     except WatchdogIPCError as exc:
         _error(str(exc), as_json=as_json)
         return exc.exit_code
-    except KeyboardInterrupt:
-        _error("operation cancelled", as_json=as_json)
-        return 130
+    except BrokenPipeError:
+        raise
     except (DNSHijackError, DNSStateError, OSError, ValueError) as exc:
         _error(str(exc), as_json=as_json)
         return 70
+
+
+def _normalize_exit_code(returncode: int) -> int:
+    if returncode < 0:
+        return SIGNAL_EXIT_CODE_BASE + abs(returncode)
+    return returncode
+
+
+def _broken_pipe_exit() -> int:
+    # A caught BrokenPipeError can otherwise be reported again while Python
+    # flushes its buffered streams during interpreter shutdown. Redirect both
+    # output descriptors because the process is exiting and the broken stream
+    # is not reliably identifiable from the exception alone.
+    _redirect_stream_to_devnull(sys.stdout)
+    _redirect_stream_to_devnull(sys.stderr)
+    return BROKEN_PIPE_EXIT_CODE
+
+
+def _redirect_stream_to_devnull(stream: object) -> None:
+    try:
+        stream_fd = stream.fileno()  # type: ignore[attr-defined]
+    except (AttributeError, OSError, ValueError):
+        return
+
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    except OSError:
+        return
+    try:
+        os.dup2(devnull_fd, stream_fd)
+    finally:
+        os.close(devnull_fd)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1330,7 +1379,7 @@ def _watchdogvpn_version(source: str | None = None) -> str:
 def _panic(args: argparse.Namespace) -> int:
     script = _panic_script_path(args.panic_script)
     completed = subprocess.run([str(script), args.mode], check=False)
-    return int(completed.returncode)
+    return _normalize_exit_code(int(completed.returncode))
 
 
 def _panic_script_path(value: str | None) -> Path:
@@ -1359,22 +1408,23 @@ def _doctor(args: argparse.Namespace) -> int:
     command = [str(script)]
     if args.json:
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        exit_code = _normalize_exit_code(int(completed.returncode))
         _print_json(
             {
                 "command": command,
-                "doctor_exit_code": int(completed.returncode),
+                "doctor_exit_code": exit_code,
                 "doctor_stdout": completed.stdout,
                 "doctor_stderr": completed.stderr,
                 "read_only": True,
                 "mutates_runtime": False,
             }
         )
-        return int(completed.returncode)
+        return exit_code
     env = os.environ.copy()
     if bool(getattr(args, "no_color", False)):
         env["NO_COLOR"] = "1"
     completed = subprocess.run(command, check=False, env=env)
-    return int(completed.returncode)
+    return _normalize_exit_code(int(completed.returncode))
 
 
 def _doctor_script_path(value: str | None) -> Path:
@@ -1752,14 +1802,15 @@ def _uninstall(args: argparse.Namespace) -> int:
         return 0
     if args.json:
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
-        data["uninstall_exit_code"] = int(completed.returncode)
+        exit_code = _normalize_exit_code(int(completed.returncode))
+        data["uninstall_exit_code"] = exit_code
         data["uninstall_stdout"] = completed.stdout
         data["uninstall_stderr"] = completed.stderr
         _print_json(data)
-        return int(completed.returncode)
+        return exit_code
     _print_uninstall_plan(data)
     completed = subprocess.run(command, check=False)
-    return int(completed.returncode)
+    return _normalize_exit_code(int(completed.returncode))
 
 
 def _uninstall_mode(args: argparse.Namespace) -> str:
