@@ -1518,6 +1518,19 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(connected_profile.id, self.profile.id)
 
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
+    def test_run_iteration_reconnects_when_tun_egress_probe_is_degraded(self, _hc) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "degraded"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+        runtime = self._make_runtime(driver)
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(driver.connect_mock.call_args.args[0].id, self.profile.id)
+
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
     def test_successful_reconnect_persists_health_status_to_the_real_store(self, _hc) -> None:
         # AUD-P14-001 / Task 14.5: the persisted copy must reflect the real
         # health_checker.check() result the reconnect path just produced,

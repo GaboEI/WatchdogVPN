@@ -1385,6 +1385,26 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             self._cleanup_runtime()
         return stopped
 
+    def _owned_proxy_egress_ready(self) -> bool:
+        """Require the active sing-box process to own both proxy listeners.
+
+        A TUN interface, nftables table, or TCP port can survive a crashed
+        runtime or belong to another process. The health probe below is
+        attributable to the selected profile only when its SOCKS listener is
+        observable and owned by this driver runtime.
+        """
+        processes, observation = self._owned_proxy_runtime_observation()
+        if not processes or not observation.observable:
+            self._append_log("health_check: owned proxy listener evidence is unavailable\n")
+            return False
+        listener_ports = set(observation.ports)
+        missing = EXPECTED_PROXY_PORTS - listener_ports
+        if missing:
+            rendered = ",".join(str(port) for port in sorted(missing))
+            self._append_log(f"health_check: owned proxy listeners missing ports={rendered}\n")
+            return False
+        return True
+
     def health_check(self) -> str:
         process = self._process
         if process is None or process.poll() is not None:
@@ -1399,10 +1419,15 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             if not self._wait_for_tun_interface():
                 self._append_log("health_check: TUN interface is not active\n")
                 return "degraded"
-            if self._wait_for_tun_auto_redirect_ready():
-                return "ok"
-            self._append_log("health_check: TUN auto_redirect nftables state is not ready\n")
-            return "degraded"
+            if not self._wait_for_tun_auto_redirect_ready():
+                self._append_log("health_check: TUN auto_redirect nftables state is not ready\n")
+                return "degraded"
+            if not self._owned_proxy_egress_ready():
+                return "degraded"
+            if not self._http_via_proxy("https://example.com"):
+                self._append_log("health_check: TUN profile-path egress probe failed\n")
+                return "degraded"
+            return "ok"
 
         proxy_ok = self._http_via_proxy("https://example.com")
         public_ip = self._public_ip_via_proxy() if proxy_ok else None

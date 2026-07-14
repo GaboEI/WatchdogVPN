@@ -1430,7 +1430,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
-    def test_connect_accepts_tun_readiness_without_proxy_http(self, popen_mock, generate_mock, binary_mock) -> None:
+    def test_connect_requires_owned_profile_egress(self, popen_mock, generate_mock, binary_mock) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
         process.pid = 4242
@@ -1439,6 +1439,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
+            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
             patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
             patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
@@ -1446,13 +1447,13 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             self.assertTrue(self.driver.connect(self.profile, mode="tun"))
 
         self.assertEqual(self.driver._active_mode, "tun")
-        http_mock.assert_not_called()
+        http_mock.assert_called_once_with("https://example.com")
         ip_mock.assert_not_called()
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
-    def test_connect_with_app_policy_requires_tun_readiness(
+    def test_connect_with_app_policy_requires_tun_profile_egress(
         self, popen_mock, generate_mock, binary_mock
     ) -> None:
         process = popen_mock.return_value
@@ -1474,6 +1475,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
+            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
             patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
             patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
@@ -1489,7 +1491,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
         self.assertEqual(self.driver._active_mode, "rules")
         self.assertTrue(self.driver._tun_expected)
-        http_mock.assert_not_called()
+        http_mock.assert_called_once_with("https://example.com")
         ip_mock.assert_not_called()
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
@@ -2084,20 +2086,79 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.assertEqual(self.driver.health_check(), "ok")
 
     @patch.object(SingBoxDriver, "_public_ip_via_proxy")
-    @patch.object(SingBoxDriver, "_http_via_proxy")
+    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_ok_for_tun_mode_without_proxy_http(
-        self, port_mock, tun_mock, nft_mock, http_mock, ip_mock
+    def test_health_check_ok_for_tun_mode_requires_owned_profile_egress(
+        self, port_mock, tun_mock, nft_mock, ownership_mock, http_mock, ip_mock
     ) -> None:
         self.driver._active_mode = "tun"
         self.driver._tun_expected = True
 
         self.assertEqual(self.driver.health_check(), "ok")
 
-        http_mock.assert_not_called()
+        ownership_mock.assert_called_once_with()
+        http_mock.assert_called_once_with("https://example.com")
         ip_mock.assert_not_called()
+
+    @patch.object(SingBoxDriver, "_http_via_proxy")
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=False)
+    @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_degraded_for_tun_when_listener_is_not_owned(
+        self, port_mock, tun_mock, nft_mock, ownership_mock, http_mock
+    ) -> None:
+        self.driver._tun_expected = True
+
+        self.assertEqual(self.driver.health_check(), "degraded")
+
+        ownership_mock.assert_called_once_with()
+        http_mock.assert_not_called()
+
+    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_degraded_for_tun_when_profile_egress_is_blackholed(
+        self, port_mock, tun_mock, nft_mock, ownership_mock, http_mock
+    ) -> None:
+        self.driver._tun_expected = True
+
+        self.assertEqual(self.driver.health_check(), "degraded")
+
+        ownership_mock.assert_called_once_with()
+        http_mock.assert_called_once_with("https://example.com")
+
+    @patch.object(
+        SingBoxDriver,
+        "_owned_proxy_runtime_observation",
+        return_value=((OwnedProcess(pid=42, executable="sing-box"),), TCPListenerObservation(True, (2080, 2081))),
+    )
+    def test_owned_proxy_egress_requires_observable_owned_listeners(self, observation_mock) -> None:
+        self.assertTrue(self.driver._owned_proxy_egress_ready())
+        observation_mock.assert_called_once_with()
+
+    @patch.object(
+        SingBoxDriver,
+        "_owned_proxy_runtime_observation",
+        return_value=((OwnedProcess(pid=42, executable="sing-box"),), TCPListenerObservation(False, (2080, 2081))),
+    )
+    def test_owned_proxy_egress_rejects_unobservable_listener_evidence(self, observation_mock) -> None:
+        self.assertFalse(self.driver._owned_proxy_egress_ready())
+        observation_mock.assert_called_once_with()
+
+    @patch.object(
+        SingBoxDriver,
+        "_owned_proxy_runtime_observation",
+        return_value=((OwnedProcess(pid=42, executable="sing-box"),), TCPListenerObservation(True, (2080,))),
+    )
+    def test_owned_proxy_egress_rejects_missing_owned_http_listener(self, observation_mock) -> None:
+        self.assertFalse(self.driver._owned_proxy_egress_ready())
+        observation_mock.assert_called_once_with()
 
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=False)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
