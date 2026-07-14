@@ -287,6 +287,13 @@ def _normalized_usage(
     *,
     command: str,
 ) -> str:
+    structured_usage = _structured_required_optional_positional_mutex_usage(
+        parser,
+        command=command,
+    )
+    if structured_usage is not None:
+        return structured_usage
+
     # Inventory records the parser's canonical syntax, independent of the
     # active terminal width and its human-facing responsive reflow.
     rendered = argparse.ArgumentParser.format_usage(parser)
@@ -296,7 +303,7 @@ def _normalized_usage(
         1,
     )
     rendered = " ".join(rendered.strip().split())
-    return _canonicalize_required_optional_positional_groups(parser, rendered)
+    return rendered
 
 
 def _public_arguments(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
@@ -363,62 +370,86 @@ def _action_is_required(action: argparse.Action) -> bool:
     return bool(action.required)
 
 
-def _canonicalize_required_optional_positional_groups(
+def _structured_required_optional_positional_mutex_usage(
     parser: argparse.ArgumentParser,
-    usage: str,
-) -> str:
-    """Make the one version-sensitive mutex rendering structural and stable.
+    *,
+    command: str,
+) -> str | None:
+    """Build the exceptional required mutex usage without ``argparse`` text.
 
-    ``argparse`` has changed how it formats a required mutually-exclusive
-    group containing an optional positional argument. The group semantics are
-    stable, but punctuation around the positional is not. Replace that span
-    with the group metadata-derived representation used by the inventory.
+    A required mutually-exclusive group which includes an optional positional
+    has stable semantics but no stable ``format_usage()`` representation across
+    Python releases.  Its inventory usage is therefore constructed from the
+    public parser structure (members and requiredness), never by repairing the
+    renderer's string after the fact.
     """
-    for group in parser._mutually_exclusive_groups:
-        if not group.required:
-            continue
-        if not any(
+    groups = [
+        group
+        for group in parser._mutually_exclusive_groups
+        if group.required
+        and any(
             not action.option_strings and action.nargs == "?"
             for action in group._group_actions
-        ):
-            continue
-        members = sorted(
-            group._group_actions,
-            key=lambda action: (not bool(action.option_strings), action.dest),
         )
-        member_names = [_usage_member_name(action) for action in members]
-        span = _find_mutex_usage_span(usage, member_names)
-        if span is None:
+    ]
+    if len(groups) != 1:
+        return None
+
+    group = groups[0]
+    group_actions = set(group._group_actions)
+    tokens: list[str] = []
+    for action in parser._actions:
+        if action in group_actions or action.help == argparse.SUPPRESS:
             continue
-        start, end = span
-        usage = f"{usage[:start]}({' | '.join(member_names)}){usage[end:]}"
-    return usage
+        token = _usage_action_token(action)
+        if token is None:
+            continue
+        tokens.append(token if _action_is_required(action) else f"[{token}]")
+
+    members = sorted(
+        group._group_actions,
+        key=lambda action: (not bool(action.option_strings), action.dest),
+    )
+    tokens.append(f"({' | '.join(_usage_member_name(action) for action in members)})")
+    return f"usage: {command} {' '.join(tokens)}"
+
+
+def _usage_action_token(action: argparse.Action) -> str | None:
+    """Render the public syntax of one action from its declared structure."""
+    if isinstance(action, (argparse._SubParsersAction, DocumentedPassthroughAction)):
+        return None
+    if isinstance(action, argparse._HelpAction):
+        return "-h"
+
+    name = _usage_member_name(action)
+    if action.nargs == 0:
+        return name
+
+    value = _usage_value_name(action)
+    if action.nargs is None:
+        return f"{name} {value}" if action.option_strings else value
+    if action.nargs == "?":
+        return f"{name} [{value}]" if action.option_strings else f"[{value}]"
+    if action.nargs == "+":
+        return f"{name} {value} [{value} ...]" if action.option_strings else f"{value} [{value} ...]"
+    if action.nargs in {"*", argparse.REMAINDER}:
+        return f"{name} [{value} ...]" if action.option_strings else f"[{value} ...]"
+    if isinstance(action.nargs, int):
+        values = " ".join(value for _ in range(action.nargs))
+        return f"{name} {values}" if action.option_strings else values
+    return None
+
+
+def _usage_value_name(action: argparse.Action) -> str:
+    if action.choices is not None:
+        return "{" + ",".join(str(choice) for choice in action.choices) + "}"
+    return _metavar(action) or action.dest.upper()
 
 
 def _usage_member_name(action: argparse.Action) -> str:
     if action.option_strings:
         return max(action.option_strings, key=len)
     return _metavar(action) or action.dest
-
-
-def _find_mutex_usage_span(usage: str, members: list[str]) -> tuple[int, int] | None:
-    """Find the smallest bracketed usage span containing all group members."""
-    opening_to_closing = {"(": ")", "[": "]"}
-    stack: list[tuple[str, int]] = []
-    spans: list[tuple[int, int]] = []
-    for index, character in enumerate(usage):
-        if character in opening_to_closing:
-            stack.append((character, index))
-        elif stack and character == opening_to_closing[stack[-1][0]]:
-            _, start = stack.pop()
-            spans.append((start, index + 1))
-    candidates = [
-        span
-        for span in spans
-        if "|" in usage[span[0] : span[1]]
-        and all(member in usage[span[0] : span[1]] for member in members)
-    ]
-    return min(candidates, key=lambda span: span[1] - span[0]) if candidates else None
 
 
 def _metavar(action: argparse.Action) -> str | None:

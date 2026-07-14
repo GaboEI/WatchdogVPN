@@ -8,9 +8,10 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from cli.command_inventory import (
-    _canonicalize_required_optional_positional_groups,
+    _normalized_usage,
     _public_arguments,
     build_command_inventory,
     render_inventory_json,
@@ -82,7 +83,9 @@ class CliCommandInventoryTests(unittest.TestCase):
             [{"required": True, "members": ["provider_id", "--all"]}],
         )
 
-    def test_inventory_normalizes_optional_positional_mutex_usage(self) -> None:
+    def test_inventory_derives_optional_positional_mutex_usage_without_argparse_renderer(
+        self,
+    ) -> None:
         parser = _build_parser()
         provider_parser = next(
             action.choices["provider"]
@@ -94,13 +97,17 @@ class CliCommandInventoryTests(unittest.TestCase):
             for action in provider_parser._actions
             if isinstance(action, argparse._SubParsersAction)
         )
-        self.assertEqual(
-            _canonicalize_required_optional_positional_groups(
+        with patch.object(
+            argparse.ArgumentParser,
+            "format_usage",
+            side_effect=AssertionError("provider update must not use argparse usage text"),
+        ):
+            usage = _normalized_usage(
                 update_parser,
-                "usage: watchdog provider update [-h] [--json] [--all | [provider_id]]",
-            ),
-            "usage: watchdog provider update [-h] [--json] (--all | provider_id)",
-        )
+                command="watchdog provider update",
+            )
+
+        self.assertEqual(usage, "usage: watchdog provider update [-h] [--json] (--all | provider_id)")
 
     def test_inventory_derives_empty_positional_requiredness_from_nargs(self) -> None:
         parser = argparse.ArgumentParser()
