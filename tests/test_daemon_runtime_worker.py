@@ -23,7 +23,7 @@ from daemon.protocol import (
     EVENT_STATE_CHANGED,
 )
 from daemon.runtime_worker import RuntimeWorker, WorkerRequest
-from drivers.base import BaseDriver
+from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver
 from dns.models import DNSPolicy
 from metrics.models import MetricsDocument
 from metrics.recorder import MetricsRecorder
@@ -33,6 +33,7 @@ from models.profile import Profile, ProfileSource, ProtocolType
 
 
 class FakeWorkerDriver(BaseDriver):
+    policy_capabilities = DRIVER_POLICY_CAPABILITIES
     def __init__(self) -> None:
         self.connected_profile_id = ""
         self.connect_calls: list[str] = []
@@ -81,6 +82,10 @@ class FakeWorkerDriver(BaseDriver):
 
     def is_available(self) -> bool:
         return True
+
+
+class PolicyRejectingWorkerDriver(FakeWorkerDriver):
+    policy_capabilities = frozenset()
 
 
 class FakeRuntime:
@@ -381,6 +386,31 @@ class RuntimeWorkerTests(unittest.TestCase):
 
         self.assertFalse(response.ok)
         self.assertEqual(response.payload.get("error_kind"), "profile_not_found")
+
+    def test_worker_connect_reports_unsupported_policy_without_driver_mutation(self) -> None:
+        driver = PolicyRejectingWorkerDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=StateManager(Path(self.tmpdir.name) / "state.toml"),
+            profile_store=self.profile_store,
+        )
+        worker = RuntimeWorker(runtime)
+        worker.start()
+        try:
+            response = worker.submit(
+                COMMAND_CONNECT, {"profile_id": self.profile.id}, timeout=2.0
+            )
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.payload.get("error_kind"), "unsupported_policy")
+        self.assertEqual(
+            response.payload.get("unsupported_capabilities"),
+            ["capture", "dns", "routing"],
+        )
+        self.assertEqual(runtime.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(driver.connect_calls, [])
 
     def test_worker_connect_driver_failure_reports_connect_failed_kind(self) -> None:
         driver = FakeWorkerDriver()

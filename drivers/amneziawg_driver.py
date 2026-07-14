@@ -95,6 +95,8 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
     fallback for real AmneziaWG exports.
     """
 
+    policy_capabilities = frozenset()
+
     def _has_existing_connection(self) -> bool:
         return self._active_profile is not None or self._userspace_process is not None
 

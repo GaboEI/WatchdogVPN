@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from daemon.event_bus import EventBus
+from drivers.base import UnsupportedDriverPolicyError
 from daemon.protocol import (
     COMMAND_CONNECT,
     COMMAND_DISCONNECT,
@@ -225,7 +226,25 @@ class RuntimeWorker:
                 payload={"error_kind": "profile_not_found"},
                 error=f"profile not found: {profile_id}",
             )
-        connected = self.runtime.connect(profile)
+        try:
+            connected = self.runtime.connect(profile)
+        except UnsupportedDriverPolicyError as exc:
+            state_payload = _state_payload(self.runtime.status())
+            self.metrics_recorder.record_connection_result(
+                profile_id=profile.id,
+                connected=False,
+            )
+            return Response(
+                ok=False,
+                payload={
+                    "error_kind": "unsupported_policy",
+                    "profile_id": profile.id,
+                    "state": state_payload,
+                    "unsupported_capabilities": list(exc.unsupported_capabilities),
+                    "driver": exc.driver_name,
+                },
+                error=str(exc),
+            )
         state = self.runtime.status()
         state_payload = _state_payload(state)
         self.metrics_recorder.record_connection_result(

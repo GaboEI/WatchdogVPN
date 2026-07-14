@@ -59,6 +59,8 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
     startup, then openvpn. Cleanup: openvpn first, then ck-client.
     """
 
+    policy_capabilities = frozenset()
+
     def _has_existing_connection(self) -> bool:
         return self._ck_process is not None or self._openvpn_process is not None
 

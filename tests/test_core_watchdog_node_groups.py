@@ -13,7 +13,7 @@ from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager
 from core.watchdog import WatchdogRuntime
-from drivers.base import BaseDriver
+from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
@@ -26,6 +26,7 @@ from rules.rule_store import RuleStore
 
 
 class FakeDriver(BaseDriver):
+    policy_capabilities = DRIVER_POLICY_CAPABILITIES
     def __init__(self, health: str = "ok") -> None:
         self.health = health
         self.connected_profile_id = ""

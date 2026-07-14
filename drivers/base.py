@@ -9,7 +9,40 @@ from models.profile import Profile
 from route_chains.runtime import ChainRuntimePlan
 
 
+DRIVER_POLICY_CAPABILITIES = frozenset({
+    "dns",
+    "routing",
+    "app_policy",
+    "chains",
+    "lan_proxy",
+    "lan_gateway",
+    "capture",
+})
+
+
+class UnsupportedDriverPolicyError(RuntimeError):
+    """Raised before runtime mutation when a driver cannot enforce policy."""
+
+    def __init__(self, driver_name: str, unsupported_capabilities: frozenset[str]) -> None:
+        self.driver_name = driver_name
+        self.unsupported_capabilities = tuple(sorted(unsupported_capabilities))
+        supported = ", ".join(self.unsupported_capabilities)
+        super().__init__(
+            f"driver {driver_name} cannot enforce requested WatchdogVPN policy: {supported}"
+        )
+
+
+
 class BaseDriver(ABC):
+    # Every driver must explicitly declare the WatchdogVPN policy it can
+    # enforce at runtime. An empty set is deliberate fail-closed behavior.
+    policy_capabilities: frozenset[str] = frozenset()
+
+    def unsupported_policy_capabilities(
+        self, requested_capabilities: frozenset[str]
+    ) -> frozenset[str]:
+        return requested_capabilities - self.policy_capabilities
+
     @abstractmethod
     def connect(
         self,
@@ -29,11 +62,10 @@ class BaseDriver(ABC):
     ) -> bool:
         """Connect the given profile.
 
-        dns_policy, mode, groups, app_policy, final_policy, rule-set runtime
-        data, LAN proxy/gateway runtime data, and capture_modes are only
-        consumed by drivers that embed DNS/routing/listener behavior in
-        their own runtime config (currently sing-box); other drivers accept
-        and ignore them to keep a single BaseDriver contract.
+        The shared parameters preserve one driver interface. Runtime policy
+        preflight rejects a connection before this method is reached unless
+        the selected driver declares every requested capability; drivers must
+        therefore never silently ignore a requested WatchdogVPN policy.
         """
 
     @abstractmethod

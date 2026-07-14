@@ -47,6 +47,8 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
     OpenVPN+Cloak/OverCloud belongs to the later wrapped-driver phase.
     """
 
+    policy_capabilities = frozenset()
+
     def _has_existing_connection(self) -> bool:
         return self._process is not None
 

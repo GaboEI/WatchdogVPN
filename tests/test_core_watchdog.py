@@ -22,7 +22,11 @@ from config.state_manager import StateManager
 from dns.models import DNSChannel, DNSChannelName, DNSMode, DNSPolicy, Resolver
 from dns.state_manager import SystemDNSStateManager
 from drivers.amneziawg_driver import AmneziaWGDriver
-from drivers.base import BaseDriver
+from drivers.base import (
+    DRIVER_POLICY_CAPABILITIES,
+    BaseDriver,
+    UnsupportedDriverPolicyError,
+)
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
@@ -39,6 +43,7 @@ from rules.ruleset_trust_store import RuleSetTrustStore
 
 
 class FakeDriver(BaseDriver):
+    policy_capabilities = DRIVER_POLICY_CAPABILITIES
     def __init__(self) -> None:
         self.connect_mock = Mock(return_value=True)
         self.disconnect_mock = Mock(return_value=True)
@@ -105,6 +110,10 @@ class FakeSingBoxDriver(FakeDriver):
 
 class FakeAWGDriver(FakeDriver):
     pass
+
+
+class PolicyRejectingDriver(FakeDriver):
+    policy_capabilities = frozenset()
 
 
 class EventDriver(FakeDriver):
@@ -1235,6 +1244,93 @@ class WatchdogCoreTests(unittest.TestCase):
         next_driver.connect_mock.assert_called_once_with(awg_profile)
         self.assertIs(runtime.driver, next_driver)
         self.assertEqual(self.state_manager.get("active_profile_id"), awg_profile.id)
+
+    def test_connect_rejects_unsupported_policy_before_runtime_mutation(self) -> None:
+        current_driver = FakeDriver()
+        rejected_driver = PolicyRejectingDriver()
+        profile = Profile(
+            id="awg-policy",
+            name="AWG policy",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        kill_switch = FakeKillSwitch()
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            kill_switch=kill_switch,
+            driver_selector=lambda _profile=None: rejected_driver,
+        )
+
+        with self.assertRaises(UnsupportedDriverPolicyError) as raised:
+            runtime.connect(profile)
+
+        self.assertEqual(
+            raised.exception.unsupported_capabilities,
+            ("capture", "dns", "routing"),
+        )
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(self.state_manager.get("active_profile_id"), "")
+        current_driver.disconnect_mock.assert_not_called()
+        rejected_driver.connect_mock.assert_not_called()
+        kill_switch.apply_atomic_mock.assert_not_called()
+        self.assertIs(runtime.driver, current_driver)
+
+    def test_startup_reports_unsupported_policy_without_connecting_native_driver(self) -> None:
+        profile = Profile(
+            id="awg-startup-policy",
+            name="AWG startup policy",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        self.profile_store.add(profile)
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": profile.id,
+            }
+        )
+        current_driver = FakeDriver()
+        rejected_driver = PolicyRejectingDriver()
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            driver_selector=lambda _profile=None: rejected_driver,
+        )
+
+        state = runtime.startup()
+
+        self.assertEqual(state.status, "unsupported_policy")
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+        current_driver.disconnect_mock.assert_not_called()
+        rejected_driver.connect_mock.assert_not_called()
+
+    def test_rotation_rejects_unsupported_policy_before_disconnect(self) -> None:
+        profile = Profile(
+            id="cloak-policy",
+            name="Cloak policy",
+            protocol=ProtocolType.OPENVPN_CLOAK,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        current_driver = FakeDriver()
+        rejected_driver = PolicyRejectingDriver()
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            driver_selector=lambda _profile=None: rejected_driver,
+        )
+
+        with patch.object(runtime, "_compatible_pool", return_value=[profile]):
+            state = runtime._attempt_rotation({"rotation": {"enabled": True}}, force=True)
+
+        self.assertEqual(state.status, "unsupported_policy")
+        current_driver.disconnect_mock.assert_not_called()
+        rejected_driver.connect_mock.assert_not_called()
 
     def test_connect_reuses_current_driver_for_same_driver_type(self) -> None:
         self.set_desired_state("off")

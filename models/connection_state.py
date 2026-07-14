@@ -22,6 +22,7 @@ ALLOWED_STATUSES = {
     # from "standby": status() reports evidence but never mutates it; explicit
     # disconnect owns cleanup.
     "runtime_mismatch",
+    "unsupported_policy",
 }
 
 # Terminal/exhausted outcomes - a caller (CLI exit code, status surfacing)
@@ -38,6 +39,7 @@ FAILURE_STATUSES = frozenset(
         "rotation_unavailable",
         "waiting_retry",
         "runtime_mismatch",
+        "unsupported_policy",
     }
 )
 

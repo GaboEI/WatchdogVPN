@@ -21,7 +21,11 @@ from dns.singbox import (
     build_singbox_dns_config,
 )
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
-from drivers.base import BaseDriver, ReentrantConnectGuard
+from drivers.base import (
+    DRIVER_POLICY_CAPABILITIES,
+    BaseDriver,
+    ReentrantConnectGuard,
+)
 from drivers.runtime_paths import (
     OwnedProcess,
     TCPListenerObservation,
@@ -160,6 +164,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
     Handles binary/version checks, per-run config generation, process lifecycle,
     and proxy readiness validation for sing-box backed profiles.
     """
+
+    policy_capabilities = DRIVER_POLICY_CAPABILITIES
 
     def _has_existing_connection(self) -> bool:
         return self._process is not None

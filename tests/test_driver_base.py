@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from drivers.base import BaseDriver
+from drivers.amneziawg_driver import AmneziaWGDriver
+from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver
+from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
+from drivers.openvpn_driver import OpenVPNDriver
+from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 
@@ -52,6 +56,11 @@ class BaseDriverContractTests(unittest.TestCase):
         state = ConnectionState()
         self.assertEqual(profile.name, "demo")
         self.assertEqual(state.status, "standby")
+
+    def test_real_driver_policy_capability_contracts_are_explicit(self) -> None:
+        self.assertEqual(SingBoxDriver.policy_capabilities, DRIVER_POLICY_CAPABILITIES)
+        for driver_type in (OpenVPNDriver, OpenVPNCloakDriver, AmneziaWGDriver):
+            self.assertEqual(driver_type.policy_capabilities, frozenset())
 
 
 if __name__ == "__main__":
