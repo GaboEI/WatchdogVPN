@@ -9,6 +9,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from drivers.base import (
     DRIVER_POLICY_CAPABILITIES,
     BaseDriver,
     ReentrantConnectGuard,
+    ManagementPathSafetyError,
 )
 from drivers.runtime_paths import (
     OwnedProcess,
@@ -173,6 +175,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
         self.binaries = binaries or _BinaryPaths()
         self._process: subprocess.Popen[str] | None = None
+        self.last_error = ""
         self._active_profile: Profile | None = None
         self._connected_at: datetime | None = None
         self._active_mode: str = "global"
@@ -1163,6 +1166,67 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._append_log(f"{message}\n")
         return None
 
+    def _active_ssh_management_peers(self) -> tuple[str, ...] | None:
+        """Return established remote SSH peers, or None when unobservable."""
+        if not shutil.which("ss"):
+            return None
+        result = subprocess.run(
+            ["ss", "-H", "-tn", "state", "established", "sport", "=", ":22"],
+            text=True, capture_output=True, check=False,
+        )
+        if result.returncode != 0:
+            return None
+        peers: set[str] = set()
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if not fields:
+                continue
+            endpoint = fields[-1]
+            if endpoint.startswith("[") and "]" in endpoint:
+                host = endpoint[1:].split("]", 1)[0]
+            elif ":" in endpoint:
+                host = endpoint.rsplit(":", 1)[0]
+            else:
+                continue
+            try:
+                peers.add(str(ip_address(host)))
+            except ValueError:
+                continue
+        return tuple(sorted(peers))
+
+    def preflight_management_path(
+        self,
+        profile: Profile,
+        *,
+        mode: str,
+        capture_modes: tuple[str, ...] | None,
+    ) -> tuple[str, ...]:
+        """Prove that every current SSH control peer bypasses TUN capture.
+
+        The proof is intentionally ephemeral: only established peers at
+        activation time become direct routes, and nothing is persisted in a
+        profile. A remote operator must never lose their sole control path
+        because an auto-redirect TUN changed the routing policy underneath
+        an existing SSH transport.
+        """
+        tun_expected = self._mode_requires_tun(mode, capture_modes)
+        if not tun_expected:
+            return ()
+        peers = self._active_ssh_management_peers()
+        if peers is None:
+            self.last_error = (
+                "TUN refused: active SSH control paths cannot be inspected; "
+                "use a local console or restore ss/iproute2"
+            )
+            raise ManagementPathSafetyError(self.last_error)
+        if peers and not self._outbound_bind_interface(profile):
+            self.last_error = (
+                "TUN refused: active SSH control path cannot be bound to a "
+                "physical interface; remove bind_interface=off or use a local console"
+            )
+            raise ManagementPathSafetyError(self.last_error)
+        return peers
+
     def generate_singbox_config(
         self,
         profile: Profile,
@@ -1177,6 +1241,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy: LANProxyRuntimeConfig | None = None,
         capture_modes: tuple[str, ...] | None = None,
+        management_peers: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
             raise ValueError(f"unsupported connection mode: {mode!r}")
@@ -1262,7 +1327,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         else:
             effective_groups = []
             effective_final_policy = "direct" if mode == "direct" else final_policy
-        if mode in {"rules", "direct"}:
+        if mode in {"rules", "direct"} or management_peers:
             self._ensure_direct_outbound(
                 config, bind_interface=self._outbound_bind_interface(profile)
             )
@@ -1274,11 +1339,26 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             rule_set_tags=rule_set_tags if mode == "rules" else None,
             chain_runtime_plans=chain_runtime_plans,
         )
+        management_rules = [
+            {
+                "ip_cidr": [f"{peer}/128" if ":" in peer else f"{peer}/32"],
+                "action": "route",
+                "outbound": "direct",
+            }
+            for peer in management_peers
+        ]
         route_config: dict[str, Any] = {"rules": mode_route_rules}
         if mode == "rules" and rule_set_declarations:
             route_config["rule_set"] = list(rule_set_declarations)
         _merge_route_config(config, route_config)
-
+        if management_rules:
+            # Must precede every ordinary route (including DNS diversion),
+            # not merely the mode catch-all: the SSH session is the control
+            # plane that can recover a failed activation.
+            config["route"]["rules"] = [
+                *management_rules,
+                *config["route"]["rules"],
+            ]
         self._write_config(config)
         return config
 
@@ -1297,12 +1377,23 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         lan_proxy: LANProxyRuntimeConfig | None = None,
         lan_gateway: LANGatewayRuntimeConfig | None = None,
         capture_modes: tuple[str, ...] | None = None,
+        management_peers: tuple[str, ...] | None = None,
     ) -> bool:
+        self.last_error = ""
+        tun_expected = self._mode_requires_tun(mode, capture_modes)
+        if management_peers is None:
+            try:
+                management_peers = self.preflight_management_path(
+                    profile,
+                    mode=mode,
+                    capture_modes=capture_modes,
+                )
+            except ManagementPathSafetyError:
+                return False
         self._ensure_disconnected_before_connect()
         binary = self.find_singbox_binary()
         if not binary:
             return False
-        tun_expected = self._mode_requires_tun(mode, capture_modes)
         self._clear_tun_cleanup_state()
         if tun_expected:
             self._tun_rule_baseline = self._ip_rule_lines()
@@ -1317,6 +1408,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             "chain_runtime_plans": chain_runtime_plans,
             "capture_modes": capture_modes,
         }
+        if management_peers:
+            config_kwargs["management_peers"] = management_peers
         if lan_proxy is not None:
             config_kwargs["lan_proxy"] = lan_proxy
         self.generate_singbox_config(profile, **config_kwargs)

@@ -23,7 +23,7 @@ from daemon.protocol import (
     EVENT_STATE_CHANGED,
 )
 from daemon.runtime_worker import RuntimeWorker, WorkerRequest
-from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver
+from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver, ManagementPathSafetyError
 from dns.models import DNSPolicy
 from metrics.models import MetricsDocument
 from metrics.recorder import MetricsRecorder
@@ -411,6 +411,23 @@ class RuntimeWorkerTests(unittest.TestCase):
         )
         self.assertEqual(runtime.state_manager.get("vpn_desired_state"), "off")
         self.assertEqual(driver.connect_calls, [])
+
+    def test_worker_reports_management_path_refusal_with_structured_error(self) -> None:
+        runtime = self.make_runtime()
+        refusal = "TUN refused: active SSH control paths cannot be inspected"
+        worker = RuntimeWorker(runtime)
+        worker.start()
+        try:
+            with patch.object(runtime, "connect", side_effect=ManagementPathSafetyError(refusal)):
+                response = worker.submit(COMMAND_CONNECT, {"profile_id": self.profile.id}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.error, refusal)
+        self.assertEqual(response.payload.get("error_kind"), "management_path_unprotected")
+        self.assertEqual(response.payload.get("error_detail"), refusal)
+        self.assertEqual(response.payload["state"]["status"], "standby")
 
     def test_worker_connect_driver_failure_reports_connect_failed_kind(self) -> None:
         driver = FakeWorkerDriver()

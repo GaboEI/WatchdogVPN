@@ -26,7 +26,7 @@ from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager, parse_captu
 from core.kill_switch import KillSwitch
 from core.runtime_observation import observe_effective_runtime
 from drivers.amneziawg_driver import AmneziaWGDriver
-from drivers.base import BaseDriver, UnsupportedDriverPolicyError
+from drivers.base import BaseDriver, ManagementPathSafetyError, UnsupportedDriverPolicyError
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
@@ -405,6 +405,10 @@ class WatchdogRuntime:
             LOGGER.error("watchdog_startup_policy_unsupported error=%s", exc)
             self._record_last_failure("unsupported_policy")
             return ConnectionState(status="unsupported_policy", mode="standby")
+        except ManagementPathSafetyError as exc:
+            LOGGER.error("watchdog_startup_management_path_unsafe error=%s", exc)
+            self._record_last_failure("management_path_unprotected")
+            return ConnectionState(status="standby", mode="standby")
         if not require_restart_protection and not self._protect_connection_attempt(profile):
             return ConnectionState(status="kill_switch_failed", mode="standby")
 
@@ -651,7 +655,20 @@ class WatchdogRuntime:
         unsupported = self._requested_policy_capabilities() - policy_capabilities
         if unsupported:
             raise UnsupportedDriverPolicyError(driver_name, unsupported)
-        return self._candidate_driver_for_profile(profile), self._connect_options()
+        driver = self._candidate_driver_for_profile(profile)
+        options = self._connect_options()
+        management_preflight = getattr(driver, "preflight_management_path", None)
+        if callable(management_preflight):
+            peers = management_preflight(
+                profile,
+                mode=str(options["mode"]),
+                capture_modes=options["capture_modes"],
+            )
+            # An empty result is still a successful fail-closed preflight.
+            # It must happen before desired state, kill switch, process,
+            # route, or DNS mutation.
+            options["management_peers"] = peers
+        return driver, options
 
     def _active_profile(self) -> Profile | None:
         active_profile_id = str(self.state_manager.get("active_profile_id", ""))
@@ -898,6 +915,10 @@ class WatchdogRuntime:
         except UnsupportedDriverPolicyError as exc:
             LOGGER.error("watchdog_reconnect_policy_unsupported error=%s", exc)
             self._record_last_failure("unsupported_policy")
+            return False
+        except ManagementPathSafetyError as exc:
+            LOGGER.error("watchdog_reconnect_management_path_unsafe error=%s", exc)
+            self._record_last_failure("management_path_unprotected")
             return False
         driver = self._activate_driver(selected_driver, disconnect_current=False)
         driver.disconnect()

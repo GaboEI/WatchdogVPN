@@ -519,6 +519,23 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertTrue(any(i["tag"] == "watchdogvpn-socks-in" for i in config["inbounds"]))
 
     @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="enp0s8")
+    def test_tun_config_routes_active_ssh_peers_direct_before_all_other_rules(self, bind_mock, write_mock) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(
+            profile, mode="tun", management_peers=("198.51.100.9", "2001:db8::9")
+        )
+        self.assertEqual(
+            config["route"]["rules"][:2],
+            [
+                {"ip_cidr": ["198.51.100.9/32"], "action": "route", "outbound": "direct"},
+                {"ip_cidr": ["2001:db8::9/128"], "action": "route", "outbound": "direct"},
+            ],
+        )
+        direct = next(outbound for outbound in config["outbounds"] if outbound["tag"] == "direct")
+        self.assertEqual(direct["bind_interface"], "enp0s8")
+
+    @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_proxy_mode_routes_global_no_extra_inbound(
         self, bind_mock, write_mock
@@ -1331,6 +1348,19 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         ):
             return self.driver.status()
 
+    def test_direct_tun_connect_refuses_before_binary_or_process_mutation(self) -> None:
+        with (
+            patch.object(SingBoxDriver, "_active_ssh_management_peers", return_value=("198.51.100.9",)),
+            patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None),
+            patch.object(SingBoxDriver, "find_singbox_binary") as binary_mock,
+            patch.object(SingBoxDriver, "generate_singbox_config") as generate_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+
+        binary_mock.assert_not_called()
+        generate_mock.assert_not_called()
+        self.assertIn("TUN refused", self.driver.last_error)
+
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
@@ -1444,7 +1474,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
         ):
-            self.assertTrue(self.driver.connect(self.profile, mode="tun"))
+            self.assertTrue(self.driver.connect(self.profile, mode="tun", management_peers=()))
 
         self.assertEqual(self.driver._active_mode, "tun")
         http_mock.assert_called_once_with("https://example.com")
@@ -1474,7 +1504,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(self.driver, "_capture_tun_cleanup_state") as capture_mock,
             patch.object(self.driver, "_cleanup_tun_residue") as cleanup_mock,
         ):
-            self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+            self.assertFalse(self.driver.connect(self.profile, mode="tun", management_peers=()))
 
         self.assertIsNone(self.driver._active_profile)
         self.assertIsNone(self.driver._connected_at)
@@ -1518,6 +1548,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                     mode="rules",
                     app_policy=policy,
                     capture_modes=("local_proxy", "tun"),
+                    management_peers=(),
                 )
             )
 
@@ -1548,7 +1579,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(self.driver, "_capture_tun_cleanup_state") as capture_mock,
             patch.object(self.driver, "_cleanup_tun_residue") as cleanup_mock,
         ):
-            self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+            self.assertFalse(self.driver.connect(self.profile, mode="tun", management_peers=()))
 
         self.assertIsNone(self.driver._active_profile)
         self.assertIsNone(self.driver._connected_at)

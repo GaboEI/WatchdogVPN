@@ -24,6 +24,7 @@ from dns.state_manager import SystemDNSStateManager
 from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import (
     DRIVER_POLICY_CAPABILITIES,
+    ManagementPathSafetyError,
     BaseDriver,
     UnsupportedDriverPolicyError,
 )
@@ -1134,7 +1135,8 @@ class WatchdogCoreTests(unittest.TestCase):
             dns_policy_store=dns_policy_store,
         )
 
-        self.assertTrue(runtime.connect(profile))
+        with patch.object(SingBoxDriver, "preflight_management_path", return_value=()):
+            self.assertTrue(runtime.connect(profile))
 
         config = write_mock.call_args.args[0]
         self.assertEqual(
@@ -1144,6 +1146,25 @@ class WatchdogCoreTests(unittest.TestCase):
                 {"action": "route", "outbound": "Runtime VLESS"},
             ],
         )
+
+    def test_connect_refuses_unprotected_management_path_before_any_mutation(self) -> None:
+        self.set_desired_state("off")
+        driver = SingBoxDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        with (
+            patch.object(
+                SingBoxDriver,
+                "preflight_management_path",
+                side_effect=ManagementPathSafetyError("TUN refused: test control path"),
+            ),
+            patch.object(runtime, "_protect_connection_attempt") as protect_mock,
+            self.assertRaises(ManagementPathSafetyError),
+        ):
+            runtime.connect(self.profile)
+
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        protect_mock.assert_not_called()
 
     def test_connect_persists_desired_state_on(self) -> None:
         self.set_desired_state("off")

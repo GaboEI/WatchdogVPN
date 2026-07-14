@@ -2592,7 +2592,7 @@ def _connection_lifecycle_summary(
         profile_available: bool | None = True
     elif error_kind == "profile_not_found":
         profile_available = False
-    elif error_kind in {"connect_failed", "unsupported_policy"}:
+    elif error_kind in {"connect_failed", "unsupported_policy", "management_path_unprotected"}:
         profile_available = True
     else:
         profile_available = None
@@ -2677,6 +2677,11 @@ def _connection_recovery_hints(error: str) -> list[str]:
         return ["check daemon logs with: sudo journalctl -u watchdogvpn"]
     if "profile not found" in lowered:
         return ["run: watchdog profile list"]
+    if "tun refused:" in lowered:
+        return [
+            "TUN was refused before network activation because the SSH control path cannot be proven safe",
+            "use a local console or restore ss/iproute2, then run: watchdog status",
+        ]
     if "connect failed" in lowered:
         return [
             "run: watchdog status",

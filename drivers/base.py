@@ -33,6 +33,10 @@ class UnsupportedDriverPolicyError(RuntimeError):
 
 
 
+class ManagementPathSafetyError(RuntimeError):
+    """Raised before connection mutation when a live control path is unsafe."""
+
+
 class BaseDriver(ABC):
     # Every driver must explicitly declare the WatchdogVPN policy it can
     # enforce at runtime. An empty set is deliberate fail-closed behavior.
