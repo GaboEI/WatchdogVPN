@@ -193,6 +193,20 @@ class CliConfigCommandTests(unittest.TestCase):
                 {"key": "rotation.health_targets", "value": ["https://one.example/", "https://two.example/", "https://three.example/"]},
             )
 
+    def test_set_rotation_health_success_quorum_persists_integer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "rotation.health_success_quorum", "2", "--json"],
+                tmp,
+            )
+
+            self.assertEqual(
+                json.loads(result.stdout),
+                {"key": "rotation.health_success_quorum", "value": 2},
+            )
+            config_path = Path(tmp) / "config.toml"
+            self.assertIn("health_success_quorum = 2", config_path.read_text(encoding="utf-8"))
+
     def test_set_lan_sharing_bind_address_scaffold(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(

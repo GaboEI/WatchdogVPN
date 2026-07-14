@@ -148,6 +148,7 @@ CONFIG_INT_SET_KEYS = frozenset(
     {
         "watchdog.check_interval_seconds",
         "rotation.scheduled_interval_hours",
+        "rotation.health_success_quorum",
         "rotation.test_timeout_seconds",
         "rotation.latency_max_stale_seconds",
         "lan_sharing.socks_port",
