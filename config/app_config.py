@@ -31,6 +31,7 @@ from rotation.health_targets import (
     validate_success_quorum,
     validate_targets,
 )
+from rotation.recovery import MAX_BACKOFF_INTERVAL_SECONDS, MIN_BACKOFF_INTERVAL_SECONDS
 
 
 DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
@@ -231,6 +232,23 @@ def _validate_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
         raise PersistentValidationError(
             f"watchdog.check_interval_seconds must be at least "
             f"{MIN_WATCHDOG_CHECK_INTERVAL_SECONDS}"
+        )
+    reconnect_backoff = validated["watchdog"]["reconnect_backoff_seconds"]
+    max_backoff = validated["rotation"]["max_backoff_interval_seconds"]
+    if not MIN_BACKOFF_INTERVAL_SECONDS <= reconnect_backoff <= MAX_BACKOFF_INTERVAL_SECONDS:
+        raise PersistentValidationError(
+            "watchdog.reconnect_backoff_seconds must be between "
+            f"{int(MIN_BACKOFF_INTERVAL_SECONDS)} and {int(MAX_BACKOFF_INTERVAL_SECONDS)}"
+        )
+    if not MIN_BACKOFF_INTERVAL_SECONDS <= max_backoff <= MAX_BACKOFF_INTERVAL_SECONDS:
+        raise PersistentValidationError(
+            "rotation.max_backoff_interval_seconds must be between "
+            f"{int(MIN_BACKOFF_INTERVAL_SECONDS)} and {int(MAX_BACKOFF_INTERVAL_SECONDS)}"
+        )
+    if max_backoff < reconnect_backoff:
+        raise PersistentValidationError(
+            "rotation.max_backoff_interval_seconds must be at least "
+            "watchdog.reconnect_backoff_seconds"
         )
     try:
         validated["rotation"]["health_success_quorum"] = validate_success_quorum(

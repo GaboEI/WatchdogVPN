@@ -294,6 +294,28 @@ class ConfigStorageTests(unittest.TestCase):
             loaded = AppConfig(path).load()
             self.assertEqual(loaded["watchdog"]["check_interval_seconds"], 5)
 
+
+    def test_app_config_rejects_invalid_recovery_backoff_bounds(self) -> None:
+        cases = (
+            ("[watchdog]\nreconnect_backoff_seconds = 0\n", "reconnect_backoff_seconds"),
+            ("[rotation]\nmax_backoff_interval_seconds = 0\n", "max_backoff_interval_seconds"),
+            (
+                "[watchdog]\nreconnect_backoff_seconds = 10\n"
+                "[rotation]\nmax_backoff_interval_seconds = 5\n",
+                "at least watchdog.reconnect_backoff_seconds",
+            ),
+            ("[rotation]\nmax_backoff_interval_seconds = 86401\n", "max_backoff_interval_seconds"),
+        )
+
+        for payload, message in cases:
+            with self.subTest(payload=payload):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "config.toml"
+                    path.write_text(payload, encoding="utf-8")
+
+                    with self.assertRaisesRegex(PersistentValidationError, message):
+                        AppConfig(path).load()
+
     def test_app_config_default_rotation_health_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             loaded = AppConfig(Path(tmp) / "config.toml").load()
