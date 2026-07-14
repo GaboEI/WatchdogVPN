@@ -370,7 +370,11 @@ def any_recorded_child_alive(prefix: str) -> bool:
                 pid = int(entry.get("pid"))  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 continue
-            if _pid_is_alive(pid) and _recorded_process_matches(pid, entry):
+            if _pid_is_alive(pid) and _recorded_process_matches(
+                pid,
+                entry,
+                retry_timeout=PROCESS_IDENTITY_RETRY_TIMEOUT,
+            ):
                 return True
     return False
 
@@ -399,7 +403,11 @@ def owned_processes(
             except (TypeError, ValueError):
                 continue
             hint = os.path.basename(str(entry.get("exe_hint", "")))
-            if _pid_is_alive(pid) and _recorded_process_matches(pid, entry):
+            if _pid_is_alive(pid) and _recorded_process_matches(
+                pid,
+                entry,
+                retry_timeout=PROCESS_IDENTITY_RETRY_TIMEOUT,
+            ):
                 found[pid] = OwnedProcess(pid=pid, executable=hint)
 
     expected_names = {os.path.basename(name) for name in executable_names if name}

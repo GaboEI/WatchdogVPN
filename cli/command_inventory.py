@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 
-INVENTORY_SCHEMA_VERSION = 1
+INVENTORY_SCHEMA_VERSION = 2
 ROOT_ROUTE_SUMMARY = "Canonical WatchdogVPN command root"
 
 
@@ -103,6 +103,7 @@ def build_command_inventory(
                 "help_command": f"{command} --help",
                 "children": children,
                 "arguments": _public_arguments(current),
+                "mutually_exclusive_groups": _public_mutually_exclusive_groups(current),
             }
         )
 
@@ -141,6 +142,7 @@ def build_command_inventory(
                                 "description": "Arguments forwarded to the maintenance backend",
                             }
                         ],
+                        "mutually_exclusive_groups": [],
                     }
                 )
 
@@ -231,6 +233,13 @@ def render_inventory_markdown(inventory: Mapping[str, Any]) -> str:
         if route["children"]:
             children = ", ".join(f"`{child}`" for child in route["children"])
             lines.append(f"- Direct child routes: {children}")
+        mutually_exclusive_groups = route["mutually_exclusive_groups"]
+        if mutually_exclusive_groups:
+            lines.append("- Mutually exclusive argument groups:")
+            for group in mutually_exclusive_groups:
+                requirement = "required" if group["required"] else "optional"
+                members = ", ".join(f"`{member}`" for member in group["members"])
+                lines.append(f"  - {requirement}: {members}")
         lines.extend(
             [
                 "",
@@ -286,7 +295,8 @@ def _normalized_usage(
         f"usage: {command}",
         1,
     )
-    return " ".join(rendered.strip().split())
+    rendered = " ".join(rendered.strip().split())
+    return _canonicalize_required_optional_positional_groups(parser, rendered)
 
 
 def _public_arguments(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
@@ -299,24 +309,116 @@ def _public_arguments(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
             continue
         if action.help == argparse.SUPPRESS:
             continue
-        if action.option_strings:
-            name = ", ".join(action.option_strings)
-            kind = "option"
-        else:
-            name = _metavar(action) or action.dest
-            kind = "positional"
+        name, kind = _public_action_name_and_kind(action)
         choices = [] if action.choices is None else [str(choice) for choice in action.choices]
         arguments.append(
             {
                 "name": name,
                 "kind": kind,
-                "required": bool(action.required),
+                "required": _action_is_required(action),
                 "cardinality": _cardinality(action.nargs),
                 "choices": choices,
                 "description": "" if action.help is None else str(action.help),
             }
         )
     return arguments
+
+
+def _public_mutually_exclusive_groups(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
+    """Return public mutex semantics without argparse usage-rendering details."""
+    groups: list[dict[str, Any]] = []
+    for group in parser._mutually_exclusive_groups:
+        members = [
+            _public_action_name_and_kind(action)[0]
+            for action in group._group_actions
+            if _is_public_action(action)
+        ]
+        if members:
+            groups.append({"required": bool(group.required), "members": members})
+    return groups
+
+
+def _is_public_action(action: argparse.Action) -> bool:
+    return not isinstance(
+        action,
+        (argparse._HelpAction, argparse._SubParsersAction, DocumentedPassthroughAction),
+    ) and action.help != argparse.SUPPRESS
+
+
+def _public_action_name_and_kind(action: argparse.Action) -> tuple[str, str]:
+    if action.option_strings:
+        return ", ".join(action.option_strings), "option"
+    return _metavar(action) or action.dest, "positional"
+
+
+def _action_is_required(action: argparse.Action) -> bool:
+    """Return stable public requiredness rather than argparse's private state.
+
+    ``nargs='*'`` and ``argparse.REMAINDER`` are empty by definition. Some
+    Python releases expose inconsistent ``Action.required`` internals for
+    them, so the inventory derives their public contract directly.
+    """
+    if action.nargs in {"*", argparse.REMAINDER}:
+        return False
+    return bool(action.required)
+
+
+def _canonicalize_required_optional_positional_groups(
+    parser: argparse.ArgumentParser,
+    usage: str,
+) -> str:
+    """Make the one version-sensitive mutex rendering structural and stable.
+
+    ``argparse`` has changed how it formats a required mutually-exclusive
+    group containing an optional positional argument. The group semantics are
+    stable, but punctuation around the positional is not. Replace that span
+    with the group metadata-derived representation used by the inventory.
+    """
+    for group in parser._mutually_exclusive_groups:
+        if not group.required:
+            continue
+        if not any(
+            not action.option_strings and action.nargs == "?"
+            for action in group._group_actions
+        ):
+            continue
+        members = sorted(
+            group._group_actions,
+            key=lambda action: (not bool(action.option_strings), action.dest),
+        )
+        member_names = [_usage_member_name(action) for action in members]
+        span = _find_mutex_usage_span(usage, member_names)
+        if span is None:
+            continue
+        start, end = span
+        usage = f"{usage[:start]}({' | '.join(member_names)}){usage[end:]}"
+    return usage
+
+
+def _usage_member_name(action: argparse.Action) -> str:
+    if action.option_strings:
+        return max(action.option_strings, key=len)
+    return _metavar(action) or action.dest
+
+
+def _find_mutex_usage_span(usage: str, members: list[str]) -> tuple[int, int] | None:
+    """Find the smallest bracketed usage span containing all group members."""
+    opening_to_closing = {"(": ")", "[": "]"}
+    stack: list[tuple[str, int]] = []
+    spans: list[tuple[int, int]] = []
+    for index, character in enumerate(usage):
+        if character in opening_to_closing:
+            stack.append((character, index))
+        elif stack and character == opening_to_closing[stack[-1][0]]:
+            _, start = stack.pop()
+            spans.append((start, index + 1))
+    candidates = [
+        span
+        for span in spans
+        if "|" in usage[span[0] : span[1]]
+        and all(member in usage[span[0] : span[1]] for member in members)
+    ]
+    return min(candidates, key=lambda span: span[1] - span[0]) if candidates else None
 
 
 def _metavar(action: argparse.Action) -> str | None:

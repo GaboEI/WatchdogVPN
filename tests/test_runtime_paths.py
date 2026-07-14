@@ -167,6 +167,24 @@ class ChildProcessTrackingTests(unittest.TestCase):
                 finally:
                     self._stop(proc)
 
+    def test_any_recorded_child_alive_retries_transient_exec_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}):
+                runtime_dir = Path(tmp) / "watchdogvpn-test-orphan"
+                runtime_dir.mkdir()
+                runtime_paths.record_child_process(
+                    runtime_dir, "process", os.getpid(), Path(sys.executable).name
+                )
+
+                with patch.object(
+                    runtime_paths,
+                    "_process_matches_hint",
+                    side_effect=(False, True),
+                ) as matches_hint:
+                    self.assertTrue(runtime_paths.any_recorded_child_alive("watchdogvpn-test-"))
+
+                self.assertEqual(matches_hint.call_count, 2)
+
     def test_any_recorded_child_alive_false_when_hint_does_not_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}):
@@ -202,6 +220,25 @@ class ChildProcessTrackingTests(unittest.TestCase):
                     self.assertIn(proc.pid, {process.pid for process in observed})
                 finally:
                     self._stop(proc)
+
+    def test_owned_processes_retries_transient_exec_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}):
+                runtime_dir = Path(tmp) / "watchdogvpn-test-owned"
+                runtime_dir.mkdir()
+                runtime_paths.record_child_process(
+                    runtime_dir, "process", os.getpid(), Path(sys.executable).name
+                )
+
+                with patch.object(
+                    runtime_paths,
+                    "_process_matches_hint",
+                    side_effect=(False, True),
+                ) as matches_hint:
+                    observed = runtime_paths.owned_processes("watchdogvpn-test-")
+
+                self.assertIn(os.getpid(), {process.pid for process in observed})
+                self.assertEqual(matches_hint.call_count, 2)
 
     def test_owned_processes_does_not_claim_unrelated_matching_executable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

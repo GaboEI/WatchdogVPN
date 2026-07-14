@@ -10,6 +10,8 @@ from io import StringIO
 from pathlib import Path
 
 from cli.command_inventory import (
+    _canonicalize_required_optional_positional_groups,
+    _public_arguments,
     build_command_inventory,
     render_inventory_json,
     render_inventory_markdown,
@@ -67,6 +69,49 @@ class CliCommandInventoryTests(unittest.TestCase):
         self.assertEqual(
             maintenance_routes,
             {f"watchdog maintenance {name}" for name in MAINTENANCE_COMMAND_HELP},
+        )
+
+    def test_inventory_uses_structural_required_mutex_contract(self) -> None:
+        route = next(
+            route
+            for route in self.routes
+            if route["command"] == "watchdog provider update"
+        )
+        self.assertEqual(
+            route["mutually_exclusive_groups"],
+            [{"required": True, "members": ["provider_id", "--all"]}],
+        )
+
+    def test_inventory_normalizes_optional_positional_mutex_usage(self) -> None:
+        parser = _build_parser()
+        provider_parser = next(
+            action.choices["provider"]
+            for action in parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        update_parser = next(
+            action.choices["update"]
+            for action in provider_parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        self.assertEqual(
+            _canonicalize_required_optional_positional_groups(
+                update_parser,
+                "usage: watchdog provider update [-h] [--json] [--all | [provider_id]]",
+            ),
+            "usage: watchdog provider update [-h] [--json] (--all | provider_id)",
+        )
+
+    def test_inventory_derives_empty_positional_requiredness_from_nargs(self) -> None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("zero_or_more", nargs="*")
+        parser.add_argument("remainder", nargs=argparse.REMAINDER)
+
+        arguments = _public_arguments(parser)
+
+        self.assertEqual(
+            [(argument["name"], argument["required"]) for argument in arguments],
+            [("zero_or_more", False), ("remainder", False)],
         )
 
     def test_wdcli_020_previously_missing_contracts_are_documented(self) -> None:

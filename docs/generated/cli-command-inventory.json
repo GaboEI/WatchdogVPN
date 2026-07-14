@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cli": "watchdog",
   "route_count": 124,
   "command_route_count": 123,
@@ -40,7 +40,8 @@
         "app-policy",
         "chain"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -70,7 +71,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -92,7 +94,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -122,7 +125,8 @@
           "choices": [],
           "description": "Disable ANSI color in human output"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -152,7 +156,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -168,7 +173,8 @@
         "outcome",
         "cancel"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -199,7 +205,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -230,7 +237,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -252,7 +260,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -278,7 +287,8 @@
           ],
           "description": "Panic mode"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -308,7 +318,8 @@
           "choices": [],
           "description": "Disable ANSI color in human output"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -466,7 +477,8 @@
           "choices": [],
           "description": "Acknowledge that local setup changes should be backed up"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -568,6 +580,16 @@
           "choices": [],
           "description": "Print JSON"
         }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": false,
+          "members": [
+            "--keep-data",
+            "--backup-first",
+            "--delete-all-data"
+          ]
+        }
       ]
     },
     {
@@ -599,7 +621,8 @@
           "choices": [],
           "description": "Arguments forwarded to the selected maintenance command"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -622,7 +645,8 @@
           "choices": [],
           "description": "Arguments forwarded to the maintenance backend"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -645,7 +669,8 @@
           "choices": [],
           "description": "Arguments forwarded to the maintenance backend"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -668,7 +693,8 @@
           "choices": [],
           "description": "Arguments forwarded to the maintenance backend"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -691,7 +717,8 @@
           "choices": [],
           "description": "Arguments forwarded to the maintenance backend"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -714,7 +741,8 @@
           "choices": [],
           "description": "Arguments forwarded to the maintenance backend"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -737,7 +765,8 @@
           "choices": [],
           "description": "Arguments forwarded to the maintenance backend"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -760,7 +789,8 @@
           "choices": [],
           "description": "Arguments forwarded to the maintenance backend"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -783,7 +813,8 @@
           "choices": [],
           "description": "Arguments forwarded to the maintenance backend"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -802,7 +833,8 @@
         "restore",
         "import"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -872,7 +904,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -942,7 +975,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -981,7 +1015,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1070,7 +1105,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1159,7 +1195,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1179,7 +1216,8 @@
         "disable",
         "rotation"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1233,6 +1271,17 @@
           "cardinality": "flag",
           "choices": [],
           "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--clipboard",
+            "--uri",
+            "--file",
+            "--text"
+          ]
         }
       ]
     },
@@ -1350,6 +1399,15 @@
           "choices": [],
           "description": "Disable ANSI color in human output"
         }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": false,
+          "members": [
+            "--enabled-only",
+            "--disabled-only"
+          ]
+        }
       ]
     },
     {
@@ -1381,7 +1439,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1412,7 +1471,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1443,7 +1503,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1506,6 +1567,17 @@
           "choices": [],
           "description": "Print JSON"
         }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--enable",
+            "--disable",
+            "--on",
+            "--off"
+          ]
+        }
       ]
     },
     {
@@ -1528,7 +1600,8 @@
         "rotation",
         "node"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1567,7 +1640,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1598,7 +1672,8 @@
           "choices": [],
           "description": "Disable ANSI color in human output"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1629,7 +1704,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1668,6 +1744,15 @@
           "choices": [],
           "description": "Print JSON"
         }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "provider_id",
+            "--all"
+          ]
+        }
       ]
     },
     {
@@ -1699,7 +1784,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1746,7 +1832,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1792,6 +1879,15 @@
           "cardinality": "flag",
           "choices": [],
           "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--enable",
+            "--disable"
+          ]
         }
       ]
     },
@@ -1856,6 +1952,15 @@
           "choices": [],
           "description": "Print JSON"
         }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--enable",
+            "--disable"
+          ]
+        }
       ]
     },
     {
@@ -1882,7 +1987,8 @@
         "enable",
         "disable"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1905,7 +2011,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1936,7 +2043,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -1975,7 +2083,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2006,7 +2115,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2045,7 +2155,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2084,7 +2195,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2123,7 +2235,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2162,7 +2275,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2201,7 +2315,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2244,7 +2359,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2275,7 +2391,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2306,7 +2423,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2329,7 +2447,8 @@
         "rule",
         "static-ip"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2384,7 +2503,8 @@
           "choices": [],
           "description": "Disable ANSI color in human output"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2439,7 +2559,8 @@
           "choices": [],
           "description": "Resolver probe timeout in seconds"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2534,7 +2655,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2637,7 +2759,8 @@
           "choices": [],
           "description": "Local DNS entrypoint TCP check timeout in seconds"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2692,7 +2815,8 @@
           "choices": [],
           "description": "Confirm DNS restore"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2709,7 +2833,8 @@
         "add",
         "remove"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2756,7 +2881,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2803,7 +2929,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2822,7 +2949,8 @@
         "enable",
         "disable"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2903,7 +3031,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -2958,7 +3087,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3013,7 +3143,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3068,7 +3199,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3087,7 +3219,8 @@
         "enable",
         "disable"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3177,7 +3310,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3217,7 +3351,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3257,7 +3392,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3297,7 +3433,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3314,7 +3451,8 @@
         "add",
         "remove"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3370,7 +3508,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3418,7 +3557,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3435,7 +3575,8 @@
         "routing-contract",
         "lan-sharing-credentials"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3474,7 +3615,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3497,7 +3639,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3528,7 +3671,8 @@
           "choices": [],
           "description": "Print the LAN sharing password explicitly"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3546,7 +3690,8 @@
         "purge",
         "privacy-mode"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3569,7 +3714,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3592,7 +3738,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3623,7 +3770,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3658,7 +3806,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3683,7 +3832,8 @@
         "import",
         "export"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3706,7 +3856,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3793,7 +3944,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3824,7 +3976,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3855,7 +4008,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3910,7 +4064,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3949,7 +4104,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -3988,7 +4144,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4027,7 +4184,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4066,7 +4224,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4137,7 +4296,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4176,7 +4336,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4194,7 +4355,8 @@
         "add",
         "remove"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4217,7 +4379,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4272,7 +4435,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4373,7 +4537,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4404,7 +4569,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4427,7 +4593,8 @@
         "enable-rule",
         "disable-rule"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4450,7 +4617,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4473,7 +4641,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4496,7 +4665,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4530,7 +4700,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4565,7 +4736,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4644,6 +4816,18 @@
           "choices": [],
           "description": "Print JSON"
         }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--process-name",
+            "--process-path",
+            "--process-path-regex",
+            "--user",
+            "--user-id"
+          ]
+        }
       ]
     },
     {
@@ -4675,7 +4859,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4706,7 +4891,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4737,7 +4923,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4759,7 +4946,8 @@
         "disable",
         "remove"
       ],
-      "arguments": []
+      "arguments": [],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4782,7 +4970,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4813,7 +5002,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4860,7 +5050,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4920,7 +5111,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4959,7 +5151,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -4990,7 +5183,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -5021,7 +5215,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [
@@ -5052,7 +5247,8 @@
           "choices": [],
           "description": "Print JSON"
         }
-      ]
+      ],
+      "mutually_exclusive_groups": []
     }
   ]
 }

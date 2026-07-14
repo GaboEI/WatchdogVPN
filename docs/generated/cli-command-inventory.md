@@ -20,7 +20,7 @@ overrides whose argparse help is suppressed remain intentionally absent.
 
 ## Snapshot
 
-- Schema version: `1`
+- Schema version: `2`
 - Routes including the canonical root: `124`
 - Command routes excluding the root: `123`
 - Argparse-backed routes: `116`
@@ -387,6 +387,8 @@ usage: watchdog setup [-h] [--dry-run] [--yes] [--json] [--language LANGUAGE] [-
 - Source: `argparse`
 - Summary: Run the safe WatchdogVPN uninstall flow
 - Help: `watchdog uninstall --help`
+- Mutually exclusive argument groups:
+  - optional: `--keep-data`, `--backup-first`, `--delete-all-data`
 
 Usage:
 
@@ -707,6 +709,8 @@ Public route-specific arguments: none.
 - Source: `argparse`
 - Summary: Add a manual profile
 - Help: `watchdog profile add --help`
+- Mutually exclusive argument groups:
+  - required: `--clipboard`, `--uri`, `--file`, `--text`
 
 Usage:
 
@@ -728,6 +732,8 @@ usage: watchdog profile add [-h] (--clipboard | --uri URI | --file FILE | --text
 - Source: `argparse`
 - Summary: List saved profiles
 - Help: `watchdog profile list --help`
+- Mutually exclusive argument groups:
+  - optional: `--enabled-only`, `--disabled-only`
 
 Usage:
 
@@ -808,6 +814,8 @@ usage: watchdog profile disable [-h] [--json] profile_id
 - Source: `argparse`
 - Summary: Change profile rotation-pool membership
 - Help: `watchdog profile rotation --help`
+- Mutually exclusive argument groups:
+  - required: `--enable`, `--disable`, `--on`, `--off`
 
 Usage:
 
@@ -901,6 +909,8 @@ usage: watchdog provider stats [-h] [--json] provider_id
 - Source: `argparse`
 - Summary: Update provider nodes
 - Help: `watchdog provider update --help`
+- Mutually exclusive argument groups:
+  - required: `provider_id`, `--all`
 
 Usage:
 
@@ -958,6 +968,8 @@ usage: watchdog provider edit [-h] [--name NAME] [--url URL] [--json] provider_i
 - Source: `argparse`
 - Summary: Enable or disable provider rotation
 - Help: `watchdog provider rotation --help`
+- Mutually exclusive argument groups:
+  - required: `--enable`, `--disable`
 
 Usage:
 
@@ -978,6 +990,8 @@ usage: watchdog provider rotation [-h] (--enable | --disable) [--json] provider_
 - Source: `argparse`
 - Summary: Change provider node settings
 - Help: `watchdog provider node --help`
+- Mutually exclusive argument groups:
+  - required: `--enable`, `--disable`
 
 Usage:
 
@@ -2267,6 +2281,8 @@ usage: watchdog app-policy default-action [-h] [--json] {current,direct,block}
 - Source: `argparse`
 - Summary: Add an app policy rule
 - Help: `watchdog app-policy add --help`
+- Mutually exclusive argument groups:
+  - required: `--process-name`, `--process-path`, `--process-path-regex`, `--user`, `--user-id`
 
 Usage:
 

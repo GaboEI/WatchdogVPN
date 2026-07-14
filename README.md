@@ -76,6 +76,14 @@ These are planned phases, not current user-facing promises:
 Detailed sequencing lives in the local master plan used by the maintainer. The
 public roadmap summary is in [ROADMAP.md](ROADMAP.md).
 
+## Development Reproducibility
+
+The canonical interpreter for regenerating committed CLI inventory snapshots is
+Python 3.14.6, recorded in [`.python-version`](.python-version). The inventory
+derives public cardinality and mutually exclusive-group semantics itself, so
+supported Python releases do not depend on `argparse`'s private formatting or
+requiredness internals.
+
 Phase 17 keeps automatic remote backup sync deferred. The supported portable
 workflow is explicit ZIP export/import, preferably encrypted before moving the
 archive off the local machine.
