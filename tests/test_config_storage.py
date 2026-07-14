@@ -294,11 +294,19 @@ class ConfigStorageTests(unittest.TestCase):
             loaded = AppConfig(path).load()
             self.assertEqual(loaded["watchdog"]["check_interval_seconds"], 5)
 
-    def test_app_config_default_rotation_test_settings(self) -> None:
+    def test_app_config_default_rotation_health_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             loaded = AppConfig(Path(tmp) / "config.toml").load()
 
-            self.assertEqual(loaded["rotation"]["test_url"], "https://example.com")
+            self.assertEqual(
+                loaded["rotation"]["health_targets"],
+                [
+                    "https://www.cloudflare.com/cdn-cgi/trace",
+                    "https://www.ietf.org/",
+                    "https://www.wikipedia.org/",
+                ],
+            )
+            self.assertEqual(loaded["rotation"]["health_success_quorum"], 2)
             self.assertEqual(loaded["rotation"]["test_timeout_seconds"], 5)
             self.assertEqual(loaded["rotation"]["latency_max_stale_seconds"], 300)
 
@@ -322,22 +330,34 @@ class ConfigStorageTests(unittest.TestCase):
                 },
             )
 
-    def test_app_config_rejects_test_url_without_scheme(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.toml"
-            path.write_text('[rotation]\ntest_url = "example.com"\n', encoding="utf-8")
-
-            with self.assertRaises(PersistentValidationError):
-                AppConfig(path).load()
-
-    def test_app_config_accepts_custom_test_url(self) -> None:
+    def test_app_config_migrates_legacy_test_url_to_multi_target_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
             path.write_text('[rotation]\ntest_url = "https://custom.example/probe"\n', encoding="utf-8")
 
             loaded = AppConfig(path).load()
 
-            self.assertEqual(loaded["rotation"]["test_url"], "https://custom.example/probe")
+            self.assertEqual(loaded["rotation"]["health_targets"][0], "https://custom.example/probe")
+            self.assertEqual(loaded["rotation"]["health_success_quorum"], 2)
+
+    def test_app_config_rejects_non_https_or_single_target_health_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[rotation]\nhealth_targets = ["http://unsafe.example/"]\n', encoding="utf-8")
+
+            with self.assertRaises(PersistentValidationError):
+                AppConfig(path).load()
+
+    def test_app_config_rejects_health_quorum_outside_target_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                '[rotation]\nhealth_targets = ["https://one.example/", "https://two.example/"]\nhealth_success_quorum = 3\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PersistentValidationError):
+                AppConfig(path).load()
 
     def test_app_config_rejects_test_timeout_below_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -135,10 +135,13 @@ class WatchdogRuntime:
         if not self._maintain_kill_switch_for_active_runtime():
             self._record_last_failure("kill_switch_failed")
             return ConnectionState(status="kill_switch_failed", mode=self.driver.status().mode)
-        status = self.driver.health_check()
         active_profile = self._active_profile()
-        if active_profile is not None:
-            self._record_health_result(active_profile, status)
+        if active_profile is not None and isinstance(self.driver, SingBoxDriver):
+            status = self._checked_and_recorded(active_profile, self.driver)
+        else:
+            status = self.driver.health_check()
+            if active_profile is not None:
+                self._record_health_result(active_profile, status)
         if status == "ok":
             self.recovery.record_success()
             return self.driver.status()
@@ -199,12 +202,15 @@ class WatchdogRuntime:
 
     def _configured_verify(self, config: dict) -> health_checker.VerifyFn:
         rotation_config = config.get("rotation", {})
-        test_url = str(rotation_config.get("test_url", health_checker.EXTERNAL_CHECK_URL))
+        targets = tuple(rotation_config.get("health_targets", health_checker.DEFAULT_HEALTH_TARGETS))
+        success_quorum = int(
+            rotation_config.get("health_success_quorum", health_checker.DEFAULT_SUCCESS_QUORUM)
+        )
         timeout = float(
             rotation_config.get("test_timeout_seconds", health_checker.DEFAULT_TIMEOUT_SECONDS)
         )
-        return lambda via_proxy: health_checker.reachable_and_public_ip(
-            via_proxy, timeout=timeout, test_url=test_url
+        return lambda via_proxy: health_checker.verify_health_targets(
+            via_proxy, timeout=timeout, targets=targets, success_quorum=success_quorum
         )
 
     def _checked_and_recorded(self, profile: Profile, driver: BaseDriver) -> str:
@@ -216,10 +222,9 @@ class WatchdogRuntime:
         three paths get persistence for free, with zero changes to
         rotation/rotation_engine.py, which stays store-agnostic by design.
 
-        Uses the configured rotation.test_url/test_timeout_seconds (Task
-        14.7) for every candidate, in every call site - one shared
-        reference point is what makes latency comparable across profiles,
-        not a per-profile setting.
+        Uses the configured multi-target rotation health policy and timeout
+        for every candidate and every call site. A shared quorum policy keeps
+        latency and failure interpretation comparable across profiles.
         """
         config = self.app_config.load()
         verify = self._configured_verify(config)
@@ -418,7 +423,10 @@ class WatchdogRuntime:
             **options,
         )
         if connected:
-            self._clear_last_failure()
+            if not isinstance(self.driver, SingBoxDriver) or self._checked_and_recorded(profile, self.driver) == "ok":
+                self._clear_last_failure()
+            else:
+                self.driver.disconnect()
         return self.driver.status()
 
     def connect(self, profile: Profile) -> bool:
@@ -433,7 +441,11 @@ class WatchdogRuntime:
             **options,
         )
         if connected:
-            self._clear_last_failure()
+            if not isinstance(self.driver, SingBoxDriver) or self._checked_and_recorded(profile, self.driver) == "ok":
+                self._clear_last_failure()
+            else:
+                self.driver.disconnect()
+                return False
         return connected
 
     @property

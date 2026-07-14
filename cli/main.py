@@ -124,7 +124,8 @@ CONFIG_SET_KEYS = frozenset(
     {
         "watchdog.check_interval_seconds",
         "rotation.scheduled_interval_hours",
-        "rotation.test_url",
+        "rotation.health_targets",
+        "rotation.health_success_quorum",
         "rotation.test_timeout_seconds",
         "rotation.latency_max_stale_seconds",
         "kill_switch.block_ipv6",
@@ -1241,7 +1242,7 @@ def _build_parser() -> argparse.ArgumentParser:
     config_subparsers.required = True
 
     config_set_parser = config_subparsers.add_parser("set", help="Set a configuration value")
-    config_set_parser.add_argument("key", help="Configuration key, for example mode or rotation.test_url")
+    config_set_parser.add_argument("key", help="Configuration key, for example mode or rotation.health_targets")
     config_set_parser.add_argument("value", help="Configuration value")
     config_set_parser.add_argument("--json", action="store_true", help="Print JSON")
     config_set_parser.set_defaults(handler=_config_set)
@@ -3581,9 +3582,11 @@ def _print_routing_state_summary(data: dict[str, object]) -> None:
     print("Compatibility active_mode: display only")
 
 
-def _parse_config_value(key: str, value: str) -> bool | int | str:
+def _parse_config_value(key: str, value: str) -> bool | int | str | list[str]:
     if key == "rotation.scheduled_interval_hours" and value == "off":
         return 0
+    if key == "rotation.health_targets":
+        return [item.strip() for item in value.split(",")]
     if key in CONFIG_BOOL_SET_KEYS:
         lowered = value.lower()
         if lowered == "true":

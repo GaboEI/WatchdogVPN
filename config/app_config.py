@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+from copy import deepcopy
 import os
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,12 @@ from config.persistence import (
     file_lock,
     strict_bool,
     strict_int,
+)
+from rotation.health_targets import (
+    DEFAULT_HEALTH_TARGETS,
+    DEFAULT_SUCCESS_QUORUM,
+    validate_success_quorum,
+    validate_targets,
 )
 
 
@@ -47,7 +54,8 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "health_status_cooldown_seconds": 300,
         "max_backoff_interval_seconds": 300,
         "scheduled_interval_hours": 0,
-        "test_url": "https://example.com",
+        "health_targets": list(DEFAULT_HEALTH_TARGETS),
+        "health_success_quorum": DEFAULT_SUCCESS_QUORUM,
         "test_timeout_seconds": 5,
         "latency_max_stale_seconds": 300,
     },
@@ -82,6 +90,7 @@ CONFIG_INT_FIELDS = {
     ("rotation", "max_backoff_interval_seconds"),
     ("rotation", "scheduled_interval_hours"),
     ("rotation", "test_timeout_seconds"),
+    ("rotation", "health_success_quorum"),
     ("rotation", "latency_max_stale_seconds"),
     ("lan_sharing", "socks_port"),
     ("lan_sharing", "http_port"),
@@ -90,13 +99,14 @@ CONFIG_STRING_FIELDS = {
     ("kill_switch", "tunnel_interface"),
     ("kill_switch", "on_manual_disconnect"),
     ("dns", "mode"),
-    ("rotation", "test_url"),
     ("lan_sharing", "mode"),
     ("lan_sharing", "bind_address"),
     ("lan_sharing", "gateway_interface"),
     ("lan_sharing", "gateway_client_cidr"),
     ("lan_sharing", "gateway_dns_mode"),
 }
+
+CONFIG_STRING_LIST_FIELDS = {("rotation", "health_targets")}
 
 MIN_WATCHDOG_CHECK_INTERVAL_SECONDS = 5
 
@@ -118,7 +128,7 @@ class AppConfig:
 
     def _load_unlocked(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
+            return deepcopy(DEFAULT_CONFIG)
         try:
             with self.path.open("rb") as handle:
                 data = tomllib.load(handle)
@@ -128,7 +138,15 @@ class AppConfig:
             raise PersistentStoreError(f"cannot read {self.path}: {exc}") from exc
         if not isinstance(data, dict):
             raise PersistentValidationError(f"{self.path} must contain TOML tables")
-        merged = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
+        rotation = data.get("rotation")
+        if isinstance(rotation, dict) and "test_url" in rotation:
+            legacy_test_url = rotation.pop("test_url")
+            if "health_targets" not in rotation:
+                rotation["health_targets"] = [
+                    legacy_test_url,
+                    *[target for target in DEFAULT_CONFIG["rotation"]["health_targets"] if target != legacy_test_url],
+                ]
+        merged = deepcopy(DEFAULT_CONFIG)
         for section, values in data.items():
             if isinstance(values, dict):
                 merged.setdefault(section, {}).update(values)
@@ -141,7 +159,7 @@ class AppConfig:
             self._save_unlocked(config)
 
     def _save_unlocked(self, config: dict[str, Any]) -> None:
-        payload = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
+        payload = deepcopy(DEFAULT_CONFIG)
         for section, values in config.items():
             if isinstance(values, dict):
                 payload.setdefault(section, {}).update(values)
@@ -157,6 +175,8 @@ class AppConfig:
                         rendered = "true" if value else "false"
                     elif isinstance(value, (int, float)):
                         rendered = str(value)
+                    elif isinstance(value, list):
+                        rendered = "[" + ", ".join('"' + item + '"' for item in value) + "]"
                     else:
                         rendered = f'"{value}"'
                     lines.append(f"{key} = {rendered}")
@@ -193,6 +213,11 @@ def _validate_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
                 if not isinstance(value, str):
                     raise PersistentValidationError(f"{section}.{key} must be a string")
                 validated[section][key] = value
+            elif field in CONFIG_STRING_LIST_FIELDS:
+                try:
+                    validated[section][key] = list(validate_targets(value, f"{section}.{key}"))
+                except ValueError as exc:
+                    raise PersistentValidationError(str(exc)) from exc
             else:
                 validated[section][key] = value
 
@@ -207,9 +232,13 @@ def _validate_config(config: dict[str, Any], path: Path) -> dict[str, Any]:
             f"watchdog.check_interval_seconds must be at least "
             f"{MIN_WATCHDOG_CHECK_INTERVAL_SECONDS}"
         )
-    test_url = validated["rotation"]["test_url"]
-    if not test_url.startswith(("http://", "https://")):
-        raise PersistentValidationError("rotation.test_url must start with http:// or https://")
+    try:
+        validated["rotation"]["health_success_quorum"] = validate_success_quorum(
+            validated["rotation"]["health_success_quorum"],
+            validated["rotation"]["health_targets"],
+        )
+    except ValueError as exc:
+        raise PersistentValidationError(str(exc)) from exc
     if validated["rotation"]["test_timeout_seconds"] < 1:
         raise PersistentValidationError("rotation.test_timeout_seconds must be at least 1")
     _validate_lan_sharing(validated["lan_sharing"])

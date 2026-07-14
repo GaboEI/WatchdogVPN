@@ -294,10 +294,136 @@ class WatchdogCoreTests(unittest.TestCase):
     def test_runtime_delegates_to_driver_interface(self, status_mock, health_mock, disconnect_mock, connect_mock) -> None:
         self.set_desired_state("on")
         runtime = WatchdogRuntime(driver=SingBoxDriver(), state_manager=self.state_manager)
-        self.assertTrue(runtime.connect(self.profile))
+        with patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok")):
+            self.assertTrue(runtime.connect(self.profile))
         self.assertEqual(runtime.health_check(), "ok")
         self.assertTrue(runtime.disconnect())
 
+
+    def test_connect_rejects_singbox_when_policy_quorum_is_not_met(self) -> None:
+        self.set_desired_state("on")
+        driver = SingBoxDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+        runtime.profile_store.add(self.profile)
+
+        with (
+            patch.object(driver, "connect", return_value=True),
+            patch.object(driver, "disconnect", return_value=True) as disconnect_mock,
+            patch.object(driver, "health_check", return_value="ok"),
+            patch.object(
+                driver,
+                "status",
+                return_value=ConnectionState(
+                    status="connected",
+                    mode="sing-box",
+                    proxy_active=True,
+                    tun_active=True,
+                ),
+            ),
+            patch(
+                "core.watchdog.health_checker.check_with_latency",
+                return_value=HealthCheckResult(
+                    status="degraded",
+                    classification="all_targets_unreachable",
+                ),
+            ),
+        ):
+            self.assertFalse(runtime.connect(self.profile))
+
+        self.assertEqual(disconnect_mock.call_count, 2)
+
+
+    def test_configured_verify_forwards_multi_target_policy(self) -> None:
+        runtime = WatchdogRuntime(driver=FakeDriver(), state_manager=self.state_manager)
+        config = {
+            "rotation": {
+                "health_targets": ["https://one.example/", "https://two.example/", "https://three.example/"],
+                "health_success_quorum": 2,
+                "test_timeout_seconds": 9,
+            }
+        }
+
+        with patch(
+            "core.watchdog.health_checker.verify_health_targets",
+            return_value=Mock(),
+        ) as verify_mock:
+            runtime._configured_verify(config)(True)
+
+        verify_mock.assert_called_once_with(
+            True,
+            timeout=9.0,
+            targets=("https://one.example/", "https://two.example/", "https://three.example/"),
+            success_quorum=2,
+        )
+
+    def test_singbox_daemon_iteration_uses_deep_policy_before_recovery(self) -> None:
+        self.set_desired_state("on")
+        driver = SingBoxDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+        runtime.profile_store.add(self.profile)
+        self.state_manager.set("active_profile_id", self.profile.id)
+        expected = ConnectionState(status="reconnecting", mode="sing-box")
+
+        with (
+            patch.object(runtime, "_maintain_kill_switch_for_active_runtime", return_value=True),
+            patch.object(driver, "health_check", return_value="ok"),
+            patch.object(
+                driver,
+                "status",
+                return_value=ConnectionState(
+                    status="connected",
+                    mode="sing-box",
+                    proxy_active=True,
+                    tun_active=True,
+                ),
+            ),
+            patch(
+                "core.watchdog.health_checker.check_with_latency",
+                return_value=HealthCheckResult(
+                    status="degraded",
+                    classification="all_targets_unreachable",
+                ),
+            ) as check_mock,
+            patch.object(runtime, "_recover_from_failure", return_value=expected) as recover_mock,
+        ):
+            self.assertEqual(runtime.run_iteration(), expected)
+
+        check_mock.assert_called_once()
+        recover_mock.assert_called_once_with()
+
+    def test_startup_rejects_singbox_when_multi_target_policy_is_degraded(self) -> None:
+        self.state_manager.set("vpn_desired_state", "on")
+        self.state_manager.set("vpn_autoconnect_enabled", True)
+        self.state_manager.set("active_profile_id", self.profile.id)
+        driver = SingBoxDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+        runtime.profile_store.add(self.profile)
+
+        with (
+            patch.object(driver, "connect", return_value=True),
+            patch.object(driver, "disconnect", return_value=True) as disconnect_mock,
+            patch.object(driver, "health_check", return_value="ok"),
+            patch.object(
+                driver,
+                "status",
+                return_value=ConnectionState(
+                    status="connected",
+                    mode="sing-box",
+                    proxy_active=True,
+                    tun_active=True,
+                ),
+            ),
+            patch(
+                "core.watchdog.health_checker.check_with_latency",
+                return_value=HealthCheckResult(
+                    status="degraded",
+                    classification="all_targets_unreachable",
+                ),
+            ),
+        ):
+            runtime.startup()
+
+        self.assertEqual(disconnect_mock.call_count, 2)
     def test_run_iteration_stands_by_when_user_disabled_vpn(self) -> None:
         self.set_desired_state("off")
         driver = FakeDriver()
@@ -1135,7 +1261,10 @@ class WatchdogCoreTests(unittest.TestCase):
             dns_policy_store=dns_policy_store,
         )
 
-        with patch.object(SingBoxDriver, "preflight_management_path", return_value=()):
+        with (
+            patch.object(SingBoxDriver, "preflight_management_path", return_value=()),
+            patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok")),
+        ):
             self.assertTrue(runtime.connect(profile))
 
         config = write_mock.call_args.args[0]

@@ -50,7 +50,6 @@ from rules.singbox import build_singbox_route_rules
 RUNTIME_PREFIX = "watchdogvpn-singbox-"
 CONFIG_NAME = "singbox.json"
 LOG_NAME = "singbox.log"
-PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
 DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
 DEFAULT_RULE_TABLES = {"local", "main", "default"}
 SING_BOX_AUTO_REDIRECT_MARKS = {"0x2023", "0x2024"}
@@ -1105,66 +1104,10 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             time.sleep(0.1)
         return False
 
-    def _http_via_proxy(self, target_url: str, timeout: int = 5) -> bool:
-        if not shutil.which("curl"):
-            self._append_log("health_check: curl not found\n")
-            return False
-        result = subprocess.run(
-            [
-                "curl",
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--max-time",
-                str(timeout),
-                "--socks5-hostname",
-                "127.0.0.1:2080",
-                target_url,
-            ],
-            text=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            error = (result.stderr or "").strip()
-            message = f"health_check: curl exited {result.returncode}"
-            if error:
-                message += f": {error}"
-            self._append_log(f"{message}\n")
-        return result.returncode == 0
-
-    def _public_ip_via_proxy(self, timeout: int = 5) -> str | None:
-        if not shutil.which("curl"):
-            self._append_log("health_check: curl not found for public IP check\n")
-            return None
-        result = subprocess.run(
-            [
-                "curl",
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--max-time",
-                str(timeout),
-                "--socks5-hostname",
-                "127.0.0.1:2080",
-                PUBLIC_IP_ENDPOINT,
-            ],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        output = (result.stdout or "").strip()
-        error = (result.stderr or "").strip()
-        if result.returncode == 0 and output:
-            self._append_log(f"health_check: public_ip_via_proxy={output}\n")
-            return output
-        message = f"health_check: public IP check exited {result.returncode}"
-        if error:
-            message += f": {error}"
-        self._append_log(f"{message}\n")
-        return None
+    # Egress health is deliberately owned by rotation.health_checker. It is
+    # invoked by WatchdogRuntime after connect, during every daemon iteration,
+    # and for each rotation candidate, so this driver cannot create a second
+    # single-target authority.
 
     def _active_ssh_management_peers(self) -> tuple[str, ...] | None:
         """Return established remote SSH peers, or None when unobservable."""
@@ -1517,16 +1460,9 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 return "degraded"
             if not self._owned_proxy_egress_ready():
                 return "degraded"
-            if not self._http_via_proxy("https://example.com"):
-                self._append_log("health_check: TUN profile-path egress probe failed\n")
-                return "degraded"
             return "ok"
 
-        proxy_ok = self._http_via_proxy("https://example.com")
-        public_ip = self._public_ip_via_proxy() if proxy_ok else None
-        if proxy_ok and public_ip:
-            return "ok"
-        return "degraded"
+        return "ok"
 
     def status(self) -> ConnectionState:
         process = self._process

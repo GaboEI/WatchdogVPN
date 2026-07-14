@@ -1647,7 +1647,7 @@ usage: watchdog config set [-h] [--json] key value
 
 | Argument | Kind | Required | Cardinality | Choices | Description |
 |---|---|---|---|---|---|
-| `key` | positional | yes | one | — | Configuration key, for example mode or rotation.test_url |
+| `key` | positional | yes | one | — | Configuration key, for example mode or rotation.health_targets |
 | `value` | positional | yes | one | — | Configuration value |
 | `--json` | option | no | flag | — | Print JSON |
 

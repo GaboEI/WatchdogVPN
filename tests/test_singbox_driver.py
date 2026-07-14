@@ -1460,7 +1460,9 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
-    def test_connect_requires_owned_profile_egress(self, popen_mock, generate_mock, binary_mock) -> None:
+    def test_connect_tun_defers_egress_authority_to_runtime(
+        self, popen_mock, generate_mock, binary_mock
+    ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
         process.pid = 4242
@@ -1470,92 +1472,12 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
             patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
-            patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
-            patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
         ):
             self.assertTrue(self.driver.connect(self.profile, mode="tun", management_peers=()))
 
         self.assertEqual(self.driver._active_mode, "tun")
-        http_mock.assert_called_once_with("https://example.com")
-        ip_mock.assert_not_called()
-
-    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
-    @patch.object(SingBoxDriver, "generate_singbox_config")
-    @patch("drivers.singbox_driver.subprocess.Popen")
-    def test_connect_cleans_up_when_tun_profile_egress_is_blackholed(
-        self, popen_mock, generate_mock, binary_mock
-    ) -> None:
-        process = popen_mock.return_value
-        process.poll.return_value = None
-        process.pid = 4242
-
-        def blackhole_profile_egress(_target: str) -> bool:
-            process.poll.return_value = 1
-            return False
-
-        with (
-            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
-            patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
-            patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
-            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
-            patch.object(SingBoxDriver, "_http_via_proxy", side_effect=blackhole_profile_egress),
-            patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
-            patch.object(self.driver, "_capture_tun_cleanup_state") as capture_mock,
-            patch.object(self.driver, "_cleanup_tun_residue") as cleanup_mock,
-        ):
-            self.assertFalse(self.driver.connect(self.profile, mode="tun", management_peers=()))
-
-        self.assertIsNone(self.driver._active_profile)
-        self.assertIsNone(self.driver._connected_at)
-        self.assertFalse(self.driver._tun_expected)
-        self.assertGreaterEqual(capture_mock.call_count, 1)
-        cleanup_mock.assert_called_once()
-
-    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
-    @patch.object(SingBoxDriver, "generate_singbox_config")
-    @patch("drivers.singbox_driver.subprocess.Popen")
-    def test_connect_with_app_policy_requires_tun_profile_egress(
-        self, popen_mock, generate_mock, binary_mock
-    ) -> None:
-        process = popen_mock.return_value
-        process.poll.return_value = None
-        process.pid = 4242
-        policy = AppPolicy(
-            enabled=True,
-            mode="blacklist",
-            rules=[
-                AppPolicyRule(
-                    id="curl",
-                    action="block",
-                    match={"process_path": ["/usr/bin/curl"]},
-                )
-            ],
-        )
-
-        with (
-            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
-            patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
-            patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
-            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
-            patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
-            patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
-            patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
-        ):
-            self.assertTrue(
-                self.driver.connect(
-                    self.profile,
-                    mode="rules",
-                    app_policy=policy,
-                    capture_modes=("local_proxy", "tun"),
-                    management_peers=(),
-                )
-            )
-
-        self.assertEqual(self.driver._active_mode, "rules")
         self.assertTrue(self.driver._tun_expected)
-        http_mock.assert_called_once_with("https://example.com")
-        ip_mock.assert_not_called()
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
@@ -2142,59 +2064,32 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.process.poll.return_value = None
         self.driver._process = self.process
 
-    @patch.object(SingBoxDriver, "_public_ip_via_proxy", return_value="203.0.113.10")
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_ok(self, port_mock, http_mock, ip_mock) -> None:
+    def test_health_check_ok_requires_local_proxy_listener(self, port_mock) -> None:
         self.assertEqual(self.driver.health_check(), "ok")
+        port_mock.assert_called_once_with()
 
-    @patch.object(SingBoxDriver, "_public_ip_via_proxy")
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
     @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_ok_for_tun_mode_requires_owned_profile_egress(
-        self, port_mock, tun_mock, nft_mock, ownership_mock, http_mock, ip_mock
+    def test_health_check_ok_for_tun_mode_requires_owned_runtime(
+        self, port_mock, tun_mock, nft_mock, ownership_mock
     ) -> None:
-        self.driver._active_mode = "tun"
         self.driver._tun_expected = True
-
         self.assertEqual(self.driver.health_check(), "ok")
-
         ownership_mock.assert_called_once_with()
-        http_mock.assert_called_once_with("https://example.com")
-        ip_mock.assert_not_called()
 
-    @patch.object(SingBoxDriver, "_http_via_proxy")
     @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=False)
     @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
     def test_health_check_degraded_for_tun_when_listener_is_not_owned(
-        self, port_mock, tun_mock, nft_mock, ownership_mock, http_mock
+        self, port_mock, tun_mock, nft_mock, ownership_mock
     ) -> None:
         self.driver._tun_expected = True
-
         self.assertEqual(self.driver.health_check(), "degraded")
-
         ownership_mock.assert_called_once_with()
-        http_mock.assert_not_called()
-
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
-    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True)
-    @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
-    @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
-    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_degraded_for_tun_when_profile_egress_is_blackholed(
-        self, port_mock, tun_mock, nft_mock, ownership_mock, http_mock
-    ) -> None:
-        self.driver._tun_expected = True
-
-        self.assertEqual(self.driver.health_check(), "degraded")
-
-        ownership_mock.assert_called_once_with()
-        http_mock.assert_called_once_with("https://example.com")
 
     @patch.object(
         SingBoxDriver,
@@ -2214,21 +2109,10 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.assertFalse(self.driver._owned_proxy_egress_ready())
         observation_mock.assert_called_once_with()
 
-    @patch.object(
-        SingBoxDriver,
-        "_owned_proxy_runtime_observation",
-        return_value=((OwnedProcess(pid=42, executable="sing-box"),), TCPListenerObservation(True, (2080,))),
-    )
-    def test_owned_proxy_egress_rejects_missing_owned_http_listener(self, observation_mock) -> None:
-        self.assertFalse(self.driver._owned_proxy_egress_ready())
-        observation_mock.assert_called_once_with()
-
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=False)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
     def test_health_check_degraded_when_tun_interface_missing(self, port_mock, tun_mock) -> None:
-        self.driver._active_mode = "tun"
         self.driver._tun_expected = True
-
         self.assertEqual(self.driver.health_check(), "degraded")
 
     @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=False)
@@ -2237,25 +2121,11 @@ class SingBoxDriverHealthTests(unittest.TestCase):
     def test_health_check_degraded_when_tun_auto_redirect_not_ready(
         self, port_mock, tun_mock, nft_mock
     ) -> None:
-        self.driver._active_mode = "tun"
         self.driver._tun_expected = True
-
         self.assertEqual(self.driver.health_check(), "degraded")
 
-    @patch.object(SingBoxDriver, "_public_ip_via_proxy", return_value=None)
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
-    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_degraded_when_public_ip_check_fails(self, port_mock, http_mock, ip_mock) -> None:
-        self.assertEqual(self.driver.health_check(), "degraded")
-
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
-    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_degraded_when_proxy_http_fails(self, port_mock, http_mock) -> None:
-        self.assertEqual(self.driver.health_check(), "degraded")
-
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=False)
-    def test_health_check_degraded_when_ports_closed(self, port_mock, http_mock) -> None:
+    def test_health_check_degraded_when_ports_closed(self, port_mock) -> None:
         self.assertEqual(self.driver.health_check(), "degraded")
 
     def test_health_check_down_when_process_missing(self) -> None:
@@ -2266,26 +2136,6 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.process.poll.return_value = 1
         self.assertEqual(self.driver.health_check(), "down")
 
-    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/curl")
-    @patch("drivers.singbox_driver.subprocess.run")
-    def test_http_via_proxy_uses_curl_socks(self, run_mock, which_mock) -> None:
-        run_mock.return_value.returncode = 0
-        self.assertTrue(self.driver._http_via_proxy("https://example.com"))
-        args = run_mock.call_args.args[0]
-        self.assertIn("--socks5-hostname", args)
-        self.assertIn("127.0.0.1:2080", args)
-
-    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/curl")
-    @patch("drivers.singbox_driver.subprocess.run")
-    def test_public_ip_via_proxy_logs_observed_ip(self, run_mock, which_mock) -> None:
-        run_mock.return_value.returncode = 0
-        run_mock.return_value.stdout = "203.0.113.10\n"
-        run_mock.return_value.stderr = ""
-        self.assertEqual(self.driver._public_ip_via_proxy(), "203.0.113.10")
-        args = run_mock.call_args.args[0]
-        self.assertIn("--socks5-hostname", args)
-        self.assertIn("127.0.0.1:2080", args)
-        self.assertIn("https://api.ipify.org", args)
 
 
 if __name__ == "__main__":

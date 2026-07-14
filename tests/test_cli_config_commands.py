@@ -180,17 +180,17 @@ class CliConfigCommandTests(unittest.TestCase):
             config_path = Path(tmp) / "config.toml"
             self.assertIn("scheduled_interval_hours = 0", config_path.read_text(encoding="utf-8"))
 
-    def test_set_rotation_test_url_json_output(self) -> None:
+    def test_set_rotation_health_targets_json_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(
-                ["config", "set", "rotation.test_url", "https://example.net/probe", "--json"],
+                ["config", "set", "rotation.health_targets", "https://one.example/,https://two.example/,https://three.example/", "--json"],
                 tmp,
             )
 
             data = json.loads(result.stdout)
             self.assertEqual(
                 data,
-                {"key": "rotation.test_url", "value": "https://example.net/probe"},
+                {"key": "rotation.health_targets", "value": ["https://one.example/", "https://two.example/", "https://three.example/"]},
             )
 
     def test_set_lan_sharing_bind_address_scaffold(self) -> None:

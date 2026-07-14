@@ -3377,7 +3377,7 @@
           "required": true,
           "cardinality": "one",
           "choices": [],
-          "description": "Configuration key, for example mode or rotation.test_url"
+          "description": "Configuration key, for example mode or rotation.health_targets"
         },
         {
           "name": "value",
