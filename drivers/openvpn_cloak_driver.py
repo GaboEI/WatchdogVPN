@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import os.path
+import re
 import shutil
 import subprocess
 import time
@@ -33,9 +35,14 @@ CLOAK_CONFIG_NAME = "cloak.json"
 OC_OVPN_LOG_NAME = "openvpn.log"
 OC_OVPN_STATUS_NAME = "openvpn.status"
 CLOAK_LOG_NAME = "cloak.log"
+ROUTE_SNAPSHOT_NAME = "routes.before"
 
 _CLOAK_STARTUP_WAIT = 1.5
 CONNECT_READY_TIMEOUT_SECONDS = 15.0
+
+_PRESERVED_REMOTE_RE = re.compile(
+    r"Preserving recently used remote address: \[(?:AF_INET|AF_INET6)\](\S+)"
+)
 
 
 @dataclass(slots=True)
@@ -78,6 +85,8 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._ovpn_log_path: Path | None = None
         self._cloak_log_path: Path | None = None
         self._ovpn_status_path: Path | None = None
+        self._route_snapshot_path: Path | None = None
+        self._route_snapshot_captured = False
         self._expected_interface = ""
         self._expected_device_type = ""
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
@@ -142,6 +151,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             self._ovpn_log_path = self._runtime_dir / OC_OVPN_LOG_NAME
             self._ovpn_status_path = self._runtime_dir / OC_OVPN_STATUS_NAME
             self._cloak_log_path = self._runtime_dir / CLOAK_LOG_NAME
+            self._route_snapshot_path = self._runtime_dir / ROUTE_SNAPSHOT_NAME
         return (
             self._ovpn_config_path,
             self._cloak_config_path,
@@ -185,6 +195,8 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._ovpn_log_path = None
         self._cloak_log_path = None
         self._ovpn_status_path = None
+        self._route_snapshot_path = None
+        self._route_snapshot_captured = False
         self._expected_interface = ""
         self._expected_device_type = ""
 
@@ -205,6 +217,120 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
                 path.write_text("", encoding="utf-8")
             except OSError:
                 pass
+
+    def _current_route_lines(self) -> set[str] | None:
+        """Return normalized kernel routes, or None when they cannot be read."""
+        result = subprocess.run(
+            ["ip", "-o", "route", "show"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+    def _capture_route_snapshot(self) -> bool:
+        """Durably record the pre-connect route state before OpenVPN starts.
+
+        OpenVPN creates a host route for its current remote endpoint so its
+        control channel survives a default-route change. If OpenVPN is killed,
+        it cannot remove that route itself. The snapshot lets teardown remove
+        only a route that this connection demonstrably added, never a route
+        that was already present or belongs to another component.
+        """
+        if self._route_snapshot_path is None or not shutil.which("ip"):
+            return False
+        routes = self._current_route_lines()
+        if routes is None:
+            return False
+        try:
+            write_private_file(self._route_snapshot_path, "\n".join(sorted(routes)) + "\n")
+        except OSError:
+            return False
+        self._route_snapshot_captured = True
+        return True
+
+    def _preserved_remote_endpoints(self) -> set[str] | None:
+        if self._ovpn_log_path is None:
+            return None
+        try:
+            log = self._ovpn_log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+        endpoints: set[str] = set()
+        for token in _PRESERVED_REMOTE_RE.findall(log):
+            candidate = token.rstrip(",")
+            while candidate:
+                try:
+                    endpoints.add(str(ipaddress.ip_address(candidate)))
+                    break
+                except ValueError:
+                    candidate, separator, _port = candidate.rpartition(":")
+                    if not separator:
+                        break
+        return endpoints
+
+    @staticmethod
+    def _route_destination(route: str) -> str | None:
+        destination = route.split(maxsplit=1)[0].split("/", 1)[0]
+        try:
+            return str(ipaddress.ip_address(destination))
+        except ValueError:
+            return None
+
+    def _cleanup_openvpn_endpoint_routes(self) -> bool:
+        """Remove only this generation's orphaned OpenVPN endpoint routes.
+
+        The endpoint comes from OpenVPN's own log and every deletion is limited
+        to a route absent from the pre-connect snapshot. Ambiguity is retained
+        as runtime evidence instead of deleting a possibly unrelated route.
+        """
+        if not self._route_snapshot_captured:
+            return True
+        if self._route_snapshot_path is None or not shutil.which("ip"):
+            return False
+        try:
+            baseline = {
+                line.strip()
+                for line in self._route_snapshot_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+                if line.strip()
+            }
+        except OSError:
+            return False
+        endpoints = self._preserved_remote_endpoints()
+        if endpoints is None:
+            return False
+        if not endpoints:
+            return True
+        current = self._current_route_lines()
+        if current is None:
+            return False
+        orphaned = {
+            route
+            for route in current - baseline
+            if self._route_destination(route) in endpoints
+        }
+        for route in orphaned:
+            result = subprocess.run(
+                ["ip", "route", "del", *route.split()],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                return False
+        remaining = self._current_route_lines()
+        if remaining is None:
+            return False
+        return not {
+            route
+            for route in remaining - baseline
+            if self._route_destination(route) in endpoints
+        }
 
     def _stop_process(self, process: subprocess.Popen[str] | None) -> bool:
         if process is None or process.poll() is not None:
@@ -303,6 +429,9 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._reset_logs()
         ovpn_config_path, cloak_config_path, ovpn_log_path, cloak_log_path = self._ensure_runtime_paths()
         readiness_options = self._configure_readiness(profile)
+        if not self._capture_route_snapshot():
+            self._cleanup_configs()
+            return False
 
         try:
             ck_log = cloak_log_path.open("w", encoding="utf-8")
@@ -386,6 +515,8 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         if self._runtime_dir is not None and not recorded_children_terminated(self._runtime_dir):
             return False
         if openvpn_was_started and not self._cleanup_expected_interface():
+            return False
+        if openvpn_was_started and not self._cleanup_openvpn_endpoint_routes():
             return False
 
         self._openvpn_process = None

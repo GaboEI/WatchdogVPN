@@ -175,8 +175,9 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
     @patch.object(OpenVPNCloakDriver, "_wait_for_ready", return_value=True)
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
     @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
-    def test_connect_success(self, popen_mock, _ready, _ck, _ovpn, _sleep) -> None:
+    def test_connect_success(self, popen_mock, _snapshot, _ready, _ck, _ovpn, _sleep) -> None:
         ck_process = Mock()
         ck_process.poll.return_value = None
         ck_process.pid = 1111
@@ -218,9 +219,10 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
     @patch.object(OpenVPNCloakDriver, "_wait_for_ready", return_value=True)
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
     @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
     def test_connect_disconnects_stale_processes_before_starting_new_ones(
-        self, popen_mock, _ready, _ck, _ovpn, _sleep
+        self, popen_mock, _snapshot, _ready, _ck, _ovpn, _sleep
     ) -> None:
         # Regression guard for WDCLI-001.
         stale_ck = Mock()
@@ -259,8 +261,9 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     @patch("drivers.openvpn_cloak_driver.time.sleep")
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
     @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
-    def test_connect_aborts_when_ck_crashes(self, popen_mock, _ck, _ovpn, _sleep) -> None:
+    def test_connect_aborts_when_ck_crashes(self, popen_mock, _snapshot, _ck, _ovpn, _sleep) -> None:
         ck_process = Mock()
         ck_process.poll.return_value = 1
         ck_process.pid = 1111
@@ -269,6 +272,18 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.assertFalse(self.driver.connect(self.profile))
         self.assertEqual(popen_mock.call_count, 1)
         self.assertIsNone(self.driver._active_profile)
+
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=False)
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_aborts_before_spawning_when_route_snapshot_is_unavailable(
+        self, popen_mock, _snapshot, _ck, _ovpn
+    ) -> None:
+        self.assertFalse(self.driver.connect(self.profile))
+
+        popen_mock.assert_not_called()
+        self.assertIsNone(self.driver._runtime_dir)
 
     # --- Disconnect ---
 
@@ -547,6 +562,98 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.assertTrue(children_path.exists())
         ovpn.terminate.assert_called_once()
         ovpn.kill.assert_called_once()
+
+    @patch("drivers.openvpn_cloak_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_cloak_driver.subprocess.run")
+    def test_capture_route_snapshot_records_private_preconnect_routes(
+        self, run_mock, _which
+    ) -> None:
+        self.driver._ensure_runtime_paths()
+        run_mock.return_value = Mock(
+            returncode=0,
+            stdout="default via 192.0.2.1 dev eth0\n192.0.2.10 via 192.0.2.1 dev eth0\n",
+        )
+
+        self.assertTrue(self.driver._capture_route_snapshot())
+
+        self.assertEqual(
+            self.driver._route_snapshot_path.read_text(encoding="utf-8"),
+            "192.0.2.10 via 192.0.2.1 dev eth0\ndefault via 192.0.2.1 dev eth0\n",
+        )
+        self.assertEqual(self.driver._route_snapshot_path.stat().st_mode & 0o777, 0o600)
+
+    @patch("drivers.openvpn_cloak_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_cloak_driver.subprocess.run")
+    def test_cleanup_removes_only_new_preserved_openvpn_endpoint_route(
+        self, run_mock, _which
+    ) -> None:
+        self.driver._ensure_runtime_paths()
+        self.driver._route_snapshot_captured = True
+        self.driver._route_snapshot_path.write_text(
+            "default via 192.0.2.1 dev eth0\n", encoding="utf-8"
+        )
+        self.driver._ovpn_log_path.write_text(
+            "Preserving recently used remote address: [AF_INET]198.51.100.7:443\n",
+            encoding="utf-8",
+        )
+        baseline = "default via 192.0.2.1 dev eth0\n"
+        unrelated = "203.0.113.9 via 192.0.2.1 dev eth0 metric 200\n"
+        orphan = "198.51.100.7 via 192.0.2.1 dev eth0 metric 200\n"
+        run_mock.side_effect = [
+            Mock(returncode=0, stdout=baseline + unrelated + orphan),
+            Mock(returncode=0, stdout=""),
+            Mock(returncode=0, stdout=baseline + unrelated),
+        ]
+
+        self.assertTrue(self.driver._cleanup_openvpn_endpoint_routes())
+
+        self.assertEqual(
+            run_mock.call_args_list[1].args[0],
+            ["ip", "route", "del", "198.51.100.7", "via", "192.0.2.1", "dev", "eth0", "metric", "200"],
+        )
+
+    @patch("drivers.openvpn_cloak_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_cloak_driver.subprocess.run")
+    def test_cleanup_keeps_preexisting_route_to_same_openvpn_endpoint(
+        self, run_mock, _which
+    ) -> None:
+        self.driver._ensure_runtime_paths()
+        self.driver._route_snapshot_captured = True
+        route = "198.51.100.7 via 192.0.2.1 dev eth0 metric 200\n"
+        self.driver._route_snapshot_path.write_text(route, encoding="utf-8")
+        self.driver._ovpn_log_path.write_text(
+            "Preserving recently used remote address: [AF_INET]198.51.100.7:443\n",
+            encoding="utf-8",
+        )
+        run_mock.side_effect = [
+            Mock(returncode=0, stdout=route),
+            Mock(returncode=0, stdout=route),
+        ]
+
+        self.assertTrue(self.driver._cleanup_openvpn_endpoint_routes())
+
+        self.assertEqual(run_mock.call_count, 2)
+        self.assertEqual(run_mock.call_args_list[0].args[0], ["ip", "-o", "route", "show"])
+        self.assertEqual(run_mock.call_args_list[1].args[0], ["ip", "-o", "route", "show"])
+
+    @patch("drivers.openvpn_cloak_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_cloak_driver.subprocess.run")
+    def test_cleanup_retains_runtime_when_orphaned_endpoint_route_cannot_be_removed(
+        self, run_mock, _which
+    ) -> None:
+        self.driver._ensure_runtime_paths()
+        self.driver._route_snapshot_captured = True
+        self.driver._route_snapshot_path.write_text("", encoding="utf-8")
+        self.driver._ovpn_log_path.write_text(
+            "Preserving recently used remote address: [AF_INET]198.51.100.7:443\n",
+            encoding="utf-8",
+        )
+        run_mock.side_effect = [
+            Mock(returncode=0, stdout="198.51.100.7 via 192.0.2.1 dev eth0 metric 200\n"),
+            Mock(returncode=2, stdout="", stderr="operation not permitted"),
+        ]
+
+        self.assertFalse(self.driver._cleanup_openvpn_endpoint_routes())
 
     @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=False)
     @patch("drivers.openvpn_cloak_driver.subprocess.run")
