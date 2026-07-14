@@ -285,6 +285,159 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         popen_mock.assert_not_called()
         self.assertIsNone(self.driver._runtime_dir)
 
+    def _live_process(self, pid: int) -> Mock:
+        process = Mock()
+        process.poll.return_value = None
+        process.pid = pid
+        return process
+
+    def _assert_startup_rolled_back(self) -> None:
+        self.assertIsNone(self.driver._ck_process)
+        self.assertIsNone(self.driver._openvpn_process)
+        self.assertIsNone(self.driver._active_profile)
+        self.assertIsNone(self.driver._runtime_dir)
+
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_rolls_back_partial_config_creation_failure(
+        self, popen_mock, _ck, _ovpn
+    ) -> None:
+        def create_runtime_then_fail(_profile) -> None:
+            self.driver._ensure_runtime_paths()
+            raise OSError("simulated config write failure")
+
+        with patch.object(
+            self.driver, "_write_configs", side_effect=create_runtime_then_fail
+        ):
+            self.assertFalse(self.driver.connect(self.profile))
+
+        popen_mock.assert_not_called()
+        self._assert_startup_rolled_back()
+
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_reset_logs", return_value=False)
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_rolls_back_when_private_log_reset_fails(
+        self, popen_mock, _reset, _ck, _ovpn
+    ) -> None:
+        self.assertFalse(self.driver.connect(self.profile))
+
+        popen_mock.assert_not_called()
+        self._assert_startup_rolled_back()
+
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_reset_logs", return_value=True)
+    @patch.object(OpenVPNCloakDriver, "_configure_readiness", side_effect=RuntimeError("bad readiness"))
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_rolls_back_when_readiness_configuration_fails(
+        self, popen_mock, _readiness, _reset, _ck, _ovpn
+    ) -> None:
+        self.assertFalse(self.driver.connect(self.profile))
+
+        popen_mock.assert_not_called()
+        self._assert_startup_rolled_back()
+
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.Path.open", side_effect=OSError("log open failure"))
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_rolls_back_when_cloak_log_open_fails(
+        self, popen_mock, _open, _snapshot, _ck, _ovpn
+    ) -> None:
+        self.assertFalse(self.driver.connect(self.profile))
+
+        popen_mock.assert_not_called()
+        self._assert_startup_rolled_back()
+
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen", side_effect=OSError("ck spawn failure"))
+    def test_connect_rolls_back_when_cloak_spawn_fails(
+        self, popen_mock, _snapshot, _ck, _ovpn
+    ) -> None:
+        self.assertFalse(self.driver.connect(self.profile))
+
+        popen_mock.assert_called_once()
+        self._assert_startup_rolled_back()
+
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.record_child_process", side_effect=OSError("record failure"))
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_rolls_back_unrecorded_cloak_child(
+        self, popen_mock, _record, _snapshot, _ck, _ovpn
+    ) -> None:
+        cloak = self._live_process(1111)
+        popen_mock.return_value = cloak
+
+        self.assertFalse(self.driver.connect(self.profile))
+
+        cloak.terminate.assert_called_once()
+        self._assert_startup_rolled_back()
+
+    @patch("drivers.openvpn_cloak_driver.time.sleep")
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_rolls_back_cloak_when_openvpn_spawn_fails(
+        self, popen_mock, _snapshot, _ck, _ovpn, _sleep
+    ) -> None:
+        cloak = self._live_process(1111)
+        popen_mock.side_effect = [cloak, OSError("openvpn spawn failure")]
+
+        self.assertFalse(self.driver.connect(self.profile))
+
+        cloak.terminate.assert_called_once()
+        self._assert_startup_rolled_back()
+
+    @patch("drivers.openvpn_cloak_driver.time.sleep")
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.record_child_process")
+    @patch.object(OpenVPNCloakDriver, "_cleanup_expected_interface", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_rolls_back_unrecorded_openvpn_child(
+        self, popen_mock, _interface, record_mock, _snapshot, _ck, _ovpn, _sleep
+    ) -> None:
+        cloak = self._live_process(1111)
+        openvpn = self._live_process(2222)
+        popen_mock.side_effect = [cloak, openvpn]
+        record_mock.side_effect = [None, OSError("openvpn record failure")]
+
+        self.assertFalse(self.driver.connect(self.profile))
+
+        cloak.terminate.assert_called_once()
+        openvpn.terminate.assert_called_once()
+        self._assert_startup_rolled_back()
+
+    @patch("drivers.openvpn_cloak_driver.time.sleep")
+    @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
+    @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
+    @patch.object(OpenVPNCloakDriver, "_wait_for_ready", return_value=False)
+    @patch.object(OpenVPNCloakDriver, "_cleanup_expected_interface", return_value=True)
+    @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
+    def test_connect_rolls_back_both_children_when_readiness_fails(
+        self, popen_mock, _interface, _ready, _snapshot, _ck, _ovpn, _sleep
+    ) -> None:
+        cloak = self._live_process(1111)
+        openvpn = self._live_process(2222)
+        popen_mock.side_effect = [cloak, openvpn]
+
+        self.assertFalse(self.driver.connect(self.profile))
+
+        cloak.terminate.assert_called_once()
+        openvpn.terminate.assert_called_once()
+        self._assert_startup_rolled_back()
+
     # --- Disconnect ---
 
     @patch.object(OpenVPNCloakDriver, "_cleanup_configs")

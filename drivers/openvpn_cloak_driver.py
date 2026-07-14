@@ -203,23 +203,22 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._expected_interface = ""
         self._expected_device_type = ""
 
-    def _reset_logs(self) -> None:
+    def _reset_logs(self) -> bool:
+        """Create empty private logs or fail before either child can start."""
         _, _, ovpn_log_path, cloak_log_path = self._ensure_runtime_paths()
         status_path = self._ovpn_status_path
         if status_path is not None:
             try:
                 status_path.unlink(missing_ok=True)
             except OSError:
-                pass
+                return False
         for path in (cloak_log_path, ovpn_log_path):
             try:
                 path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            try:
                 path.write_text("", encoding="utf-8")
             except OSError:
-                pass
+                return False
+        return True
 
     def _current_route_lines(self) -> set[str] | None:
         """Return normalized kernel routes, or None when they cannot be read."""
@@ -442,6 +441,17 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             return False
         return "OpenVPN" in status and "Initialization Sequence Completed" in log
 
+    def _startup_failure(self) -> bool:
+        """Rollback a failed startup without hiding uncertain cleanup evidence."""
+        try:
+            self._teardown_children()
+        except Exception:
+            # A teardown exception must not turn a failed connect into a
+            # caller-visible crash. R-10 state is intentionally retained when
+            # cleanup cannot complete or be verified.
+            pass
+        return False
+
     def connect(
         self,
         profile: Profile,
@@ -464,55 +474,67 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         if not openvpn_bin or not ck_bin:
             return False
 
-        self._write_configs(profile)
-        self._reset_logs()
-        ovpn_config_path, cloak_config_path, ovpn_log_path, cloak_log_path = self._ensure_runtime_paths()
-        readiness_options = self._configure_readiness(profile)
-        if not self._capture_route_snapshot():
-            self._cleanup_configs()
-            return False
-
         try:
-            ck_log = cloak_log_path.open("w", encoding="utf-8")
-        except OSError:
-            ck_log = open(os.devnull, "w")
-        self._ck_process = subprocess.Popen(
-            [ck_bin, "-c", str(cloak_config_path)],
-            text=True,
-            stdout=ck_log,
-            stderr=subprocess.STDOUT,
-        )
-        ck_log.close()
-        record_child_process(self._runtime_dir, "ck_process", self._ck_process.pid, Path(ck_bin).name)
+            self._write_configs(profile)
+            if not self._reset_logs():
+                return self._startup_failure()
+            (
+                ovpn_config_path,
+                cloak_config_path,
+                ovpn_log_path,
+                cloak_log_path,
+            ) = self._ensure_runtime_paths()
+            readiness_options = self._configure_readiness(profile)
+            if not self._capture_route_snapshot():
+                return self._startup_failure()
 
-        time.sleep(_CLOAK_STARTUP_WAIT)
+            with cloak_log_path.open("w", encoding="utf-8") as ck_log:
+                self._ck_process = subprocess.Popen(
+                    [ck_bin, "-c", str(cloak_config_path)],
+                    text=True,
+                    stdout=ck_log,
+                    stderr=subprocess.STDOUT,
+                )
+            record_child_process(
+                self._runtime_dir,
+                "ck_process",
+                self._ck_process.pid,
+                Path(ck_bin).name,
+            )
 
-        if self._ck_process.poll() is not None:
-            self._cleanup_all()
-            return False
+            time.sleep(_CLOAK_STARTUP_WAIT)
+            if self._ck_process.poll() is not None:
+                return self._startup_failure()
 
-        try:
-            ovpn_log = ovpn_log_path.open("w", encoding="utf-8")
-        except OSError:
-            ovpn_log = open(os.devnull, "w")
-        self._openvpn_process = subprocess.Popen(
-            build_openvpn_command(openvpn_bin, ovpn_config_path, runtime_options=readiness_options),
-            text=True,
-            stdout=ovpn_log,
-            stderr=subprocess.STDOUT,
-        )
-        ovpn_log.close()
-        record_child_process(
-            self._runtime_dir, "openvpn_process", self._openvpn_process.pid, Path(openvpn_bin).name
-        )
+            with ovpn_log_path.open("w", encoding="utf-8") as ovpn_log:
+                self._openvpn_process = subprocess.Popen(
+                    build_openvpn_command(
+                        openvpn_bin,
+                        ovpn_config_path,
+                        runtime_options=readiness_options,
+                    ),
+                    text=True,
+                    stdout=ovpn_log,
+                    stderr=subprocess.STDOUT,
+                )
+            record_child_process(
+                self._runtime_dir,
+                "openvpn_process",
+                self._openvpn_process.pid,
+                Path(openvpn_bin).name,
+            )
 
-        self._active_profile = profile
-        if self._wait_for_ready():
-            self._connected_at = datetime.now(timezone.utc)
-            return True
+            self._active_profile = profile
+            if self._wait_for_ready():
+                self._connected_at = datetime.now(timezone.utc)
+                return True
+        except Exception:
+            # Every post-binary startup stage is transactional. The teardown
+            # itself stays fail-closed: if it cannot prove cleanup, R-10 keeps
+            # ownership and durable evidence for a later explicit recovery.
+            return self._startup_failure()
 
-        self._cleanup_all()
-        return False
+        return self._startup_failure()
 
     def _wait_for_ready(self) -> bool:
         deadline = time.monotonic() + CONNECT_READY_TIMEOUT_SECONDS

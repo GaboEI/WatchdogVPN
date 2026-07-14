@@ -126,8 +126,12 @@ def make_runtime_dir(prefix: str) -> Path:
     base = runtime_base_dir()
     base.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
-    path.chmod(0o700)
-    write_private_file(path / OWNER_PID_NAME, str(os.getpid()))
+    try:
+        path.chmod(0o700)
+        write_private_file(path / OWNER_PID_NAME, str(os.getpid()))
+    except OSError:
+        shutil.rmtree(path, ignore_errors=True)
+        raise
     return path
 
 

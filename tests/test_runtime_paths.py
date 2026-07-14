@@ -34,6 +34,17 @@ class RuntimePathsTests(unittest.TestCase):
                 self.assertEqual(config_path.read_text(encoding="utf-8"), "secret")
                 self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
 
+    def test_make_runtime_dir_removes_partial_directory_when_owner_record_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}),
+                patch.object(runtime_paths, "write_private_file", side_effect=OSError("disk full")),
+            ):
+                with self.assertRaises(OSError):
+                    runtime_paths.make_runtime_dir("watchdogvpn-test-")
+
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
     def test_cleanup_stale_runtime_dirs_preserves_live_owner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(runtime_paths.os.environ, {"WATCHDOGVPN_RUNTIME_DIR": tmp}):
