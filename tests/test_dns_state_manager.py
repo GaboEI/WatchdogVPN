@@ -7,12 +7,14 @@ from subprocess import CompletedProcess
 from pathlib import Path
 from unittest.mock import patch
 
+from config.persistence import PersistentStoreError
 from dns.resolver_inventory import ResolverManager
 from dns.state_manager import (
     DNSStateError,
     LocalDNSEntryPoint,
     SystemDNSStateManager,
     _run_command,
+    _replace_symlink,
     default_snapshot_path,
     load_snapshot,
 )
@@ -48,6 +50,23 @@ class FakeRunner:
 
 
 class DNSStateManagerTests(unittest.TestCase):
+    def test_symlink_replace_reports_directory_durability_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target"
+            target.write_text("nameserver 127.0.0.1\n", encoding="utf-8")
+            path = root / "resolv.conf"
+            path.symlink_to(root / "old-target")
+
+            with patch(
+                "dns.state_manager.fsync_parent_directory",
+                side_effect=PersistentStoreError("durability is not confirmed"),
+            ):
+                with self.assertRaisesRegex(DNSStateError, "durability"):
+                    _replace_symlink(path, target)
+
+            self.assertEqual(path.resolve(), target.resolve())
+
     def test_save_state_detects_systemd_resolved_and_apply_restore_link(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resolv_conf = Path(tmp) / "resolv.conf"

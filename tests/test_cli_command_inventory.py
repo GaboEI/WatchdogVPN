@@ -29,12 +29,12 @@ class CliCommandInventoryTests(unittest.TestCase):
         self.routes = self.inventory["routes"]
 
     def test_inventory_covers_every_current_route(self) -> None:
-        self.assertEqual(self.inventory["route_count"], 121)
-        self.assertEqual(self.inventory["command_route_count"], 120)
-        self.assertEqual(self.inventory["parser_route_count"], 113)
+        self.assertEqual(self.inventory["route_count"], 124)
+        self.assertEqual(self.inventory["command_route_count"], 123)
+        self.assertEqual(self.inventory["parser_route_count"], 116)
         self.assertEqual(self.inventory["passthrough_route_count"], 8)
-        self.assertEqual(self.inventory["group_route_count"], 17)
-        self.assertEqual(self.inventory["leaf_route_count"], 104)
+        self.assertEqual(self.inventory["group_route_count"], 18)
+        self.assertEqual(self.inventory["leaf_route_count"], 106)
         commands = [route["command"] for route in self.routes]
         self.assertEqual(len(commands), len(set(commands)))
 

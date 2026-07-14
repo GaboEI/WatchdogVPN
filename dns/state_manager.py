@@ -11,6 +11,7 @@ from config.persistence import (
     PersistentStoreError,
     dump_json,
     file_lock,
+    fsync_parent_directory,
     load_json,
     require_mapping,
 )
@@ -404,3 +405,7 @@ def _replace_symlink(path: Path, target: Path) -> None:
         pass
     os.symlink(target, tmp_path)
     os.replace(tmp_path, path)
+    try:
+        fsync_parent_directory(path)
+    except PersistentStoreError as exc:
+        raise DNSStateError(str(exc)) from exc

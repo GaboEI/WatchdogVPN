@@ -36,26 +36,14 @@ def file_lock(path: Path) -> Iterator[None]:
 
 
 def atomic_write_text(path: Path, text: str) -> None:
-    _ensure_parent_dir(path)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        _ensure_shared_file_mode(tmp_path)
-        os.replace(tmp_path, path)
-        _ensure_shared_file_mode(path)
-    except Exception:
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
-        raise
+    _atomic_write(path, text.encode("utf-8"))
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
+    _atomic_write(path, data)
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
     _ensure_parent_dir(path)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     tmp_path = Path(tmp_name)
@@ -67,12 +55,43 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
         _ensure_shared_file_mode(tmp_path)
         os.replace(tmp_path, path)
         _ensure_shared_file_mode(path)
+        fsync_parent_directory(path)
     except Exception:
         try:
             tmp_path.unlink()
         except FileNotFoundError:
             pass
         raise
+
+
+def fsync_parent_directory(path: Path) -> None:
+    """Make a successful atomic replacement durable across a host crash.
+
+    fsyncing the temporary file makes its contents durable, but the directory
+    entry created by ``os.replace`` is not durable until its parent directory
+    is fsynced too.  A failure after replace cannot be rolled back safely: the
+    new inode may already be visible. Raise an explicit error so callers never
+    certify that security-relevant state was durably published.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        directory_fd = os.open(path.parent, flags)
+    except OSError as exc:
+        raise PersistentStoreError(
+            f"cannot open parent directory for durable atomic write {path}: {exc}"
+        ) from exc
+    try:
+        os.fsync(directory_fd)
+    except OSError as exc:
+        raise PersistentStoreError(
+            f"atomic replacement of {path} was published but parent-directory fsync failed; "
+            f"durability is not confirmed: {exc}"
+        ) from exc
+    finally:
+        try:
+            os.close(directory_fd)
+        except OSError:
+            pass
 
 
 def _ensure_parent_dir(path: Path) -> None:

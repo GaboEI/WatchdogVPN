@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from config.persistence import PersistentStoreError, file_lock
+from config.persistence import PersistentStoreError, file_lock, fsync_parent_directory
 
 
 LAN_SHARING_CREDENTIALS_NAME = "lan-sharing-credentials.json"
@@ -86,6 +86,7 @@ def _write_private_json(path: Path, payload: dict[str, str]) -> None:
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
         _chmod_private(path)
+        fsync_parent_directory(path)
     except Exception:
         try:
             tmp_path.unlink()
