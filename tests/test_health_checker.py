@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+from dataclasses import asdict
 import unittest
 from unittest.mock import Mock, patch
 
@@ -270,6 +273,58 @@ class TargetProbeTests(unittest.TestCase):
         self.assertFalse(result.reachable)
         self.assertEqual(result.classification, "third_party_outage")
 
+
+
+class AutomaticHealthPrivacyTests(unittest.TestCase):
+    CANARY_PUBLIC_IP = "203.0.113.77"
+    TARGETS = (
+        "https://one.example/",
+        "https://two.example/",
+        "https://three.example/",
+    )
+
+    def _curl_result_with_canary(self, returncode: int) -> Mock:
+        result = curl_result(returncode)
+        result.stdout = f"ip={self.CANARY_PUBLIC_IP}"
+        result.stderr = f"diagnostic={self.CANARY_PUBLIC_IP}"
+        return result
+
+    @patch("rotation.health_targets.subprocess.run")
+    @patch("rotation.health_targets.shutil.which", return_value="/usr/bin/curl")
+    def test_automatic_health_discards_raw_curl_payloads_from_results_and_logs(
+        self, _which, run_mock
+    ) -> None:
+        run_mock.side_effect = [
+            self._curl_result_with_canary(0),
+            self._curl_result_with_canary(0),
+            self._curl_result_with_canary(28),
+            self._curl_result_with_canary(28),
+            self._curl_result_with_canary(28),
+            self._curl_result_with_canary(28),
+        ]
+
+        healthy = probe_targets(via_proxy=True, targets=self.TARGETS, timeout=5, success_quorum=2)
+        failed = probe_targets(via_proxy=True, targets=self.TARGETS, timeout=5, success_quorum=2)
+        driver = StubDriver(
+            "ok",
+            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
+        )
+        with self.assertLogs("rotation.health_checker", level="INFO") as captured:
+            health_checker.check_with_latency(make_profile(), driver, verify=lambda _via_proxy: healthy)
+            health_checker.check_with_latency(make_profile(), driver, verify=lambda _via_proxy: failed)
+
+        retained = json.dumps({"healthy": asdict(healthy), "failed": asdict(failed)}, sort_keys=True)
+        self.assertNotIn(self.CANARY_PUBLIC_IP, retained)
+        self.assertNotIn(self.CANARY_PUBLIC_IP, "\n".join(captured.output))
+        self.assertTrue(
+            all(call.kwargs["stderr"] is subprocess.DEVNULL for call in run_mock.call_args_list)
+        )
+        self.assertTrue(
+            all(
+                call.args[0][call.args[0].index("--output") + 1] == "/dev/null"
+                for call in run_mock.call_args_list
+            )
+        )
 
 
 class TargetPolicyValidationTests(unittest.TestCase):
