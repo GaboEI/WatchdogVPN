@@ -173,6 +173,18 @@ class RaisingScheduledRotationRuntime(FakeRuntime):
         raise RuntimeError("boom")
 
 
+class BlockingStatusRuntime(FakeRuntime):
+    def __init__(self, profile_store: ProfileStore) -> None:
+        super().__init__(profile_store)
+        self.status_entered = threading.Event()
+        self.release_status = threading.Event()
+
+    def status(self) -> ConnectionState:
+        self.status_entered.set()
+        self.release_status.wait(timeout=2.0)
+        return super().status()
+
+
 def make_profile(profile_id: str = "p1") -> Profile:
     return Profile(
         id=profile_id,
@@ -500,6 +512,22 @@ class RuntimeWorkerTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             worker.submit_request(WorkerRequest(command=COMMAND_STATUS))
+
+    def test_stop_reports_false_while_runtime_call_is_still_in_flight(self) -> None:
+        runtime = BlockingStatusRuntime(self.profile_store)
+        worker = RuntimeWorker(runtime)
+        request = WorkerRequest(command=COMMAND_STATUS)
+        worker.start()
+        try:
+            worker.submit_request(request)
+            self.assertTrue(runtime.status_entered.wait(timeout=1.0))
+            self.assertFalse(worker.stop(timeout=0.01))
+            runtime.release_status.set()
+            self.assertTrue(request.response_queue.get(timeout=1.0).ok)
+            self.assertTrue(worker.stop(timeout=1.0))
+        finally:
+            runtime.release_status.set()
+            worker.stop(timeout=1.0)
 
     def test_submit_tick_requires_running_worker(self) -> None:
         worker = RuntimeWorker(self.make_runtime())

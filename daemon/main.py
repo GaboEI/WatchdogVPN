@@ -52,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     server = IPCServer(request_socket_path, event_socket_path, worker)
     watchdog_loop = WatchdogLoop(worker, app_config=runtime.app_config)
     scheduled_rotation_loop = ScheduledRotationLoop(worker, app_config=runtime.app_config)
+    shutdown_ok = True
     try:
         server.start()
         watchdog_loop.start()
@@ -59,10 +60,17 @@ def main(argv: list[str] | None = None) -> int:
         systemd_helper.notify("READY=1")
         stop_event.wait()
     finally:
+        systemd_helper.notify("STOPPING=1")
         scheduled_rotation_loop.stop()
         watchdog_loop.stop()
-        server.stop()
-    return 0
+        worker_stopped = server.stop()
+        if worker_stopped:
+            shutdown_ok = runtime.shutdown()
+        else:
+            shutdown_ok = False
+        if not shutdown_ok:
+            systemd_helper.notify("STATUS=runtime cleanup failed during shutdown")
+    return 0 if shutdown_ok else 1
 
 
 def _build_parser() -> argparse.ArgumentParser:

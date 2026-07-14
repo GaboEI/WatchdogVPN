@@ -426,6 +426,36 @@ class WatchdogRuntime:
         LOGGER.info("VPN manually disabled. Will not auto-reconnect.")
         return result
 
+    def shutdown(self) -> bool:
+        """Tear down runtime state without changing the user's desired state."""
+        desired_on = True
+        try:
+            desired_on = self.state_manager.get("vpn_desired_state", "off") == "on"
+        except (PersistentStoreError, PersistentValidationError):
+            LOGGER.error("watchdog_shutdown_desired_state_unreadable", exc_info=True)
+
+        protection_ok = True
+        if desired_on:
+            try:
+                protection_ok = self._apply_desired_on_protection(self._active_profile())
+            except Exception:
+                protection_ok = False
+                LOGGER.error("watchdog_shutdown_protection_failed", exc_info=True)
+
+        disconnected = False
+        try:
+            disconnected = self.driver.disconnect()
+        except Exception:
+            LOGGER.error("watchdog_shutdown_driver_cleanup_failed", exc_info=True)
+        finally:
+            self._restore_dns_snapshot_if_present()
+            if not desired_on:
+                self._handle_manual_disconnect_kill_switch()
+
+        if desired_on and not protection_ok:
+            LOGGER.error("watchdog_shutdown_fail_closed_barrier_unavailable")
+        return disconnected and protection_ok
+
     def health_check(self) -> str:
         if not self.automatic_actions_enabled():
             return "standby"

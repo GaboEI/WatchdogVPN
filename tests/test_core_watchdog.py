@@ -567,6 +567,40 @@ class WatchdogCoreTests(unittest.TestCase):
         kill_switch.disable_mock.assert_called_once_with()
 
         self.assertFalse(runtime._desired_on_kill_switch_forced)
+
+    def test_shutdown_preserves_desired_on_and_keeps_fail_closed_barrier(self) -> None:
+        self.set_desired_state("on")
+        self.profile_store.add(self.profile)
+        self.state_manager.set("active_profile_id", self.profile.id)
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=True)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            kill_switch=kill_switch,
+        )
+
+        self.assertTrue(runtime.shutdown())
+
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+        kill_switch.apply_atomic_mock.assert_called_once_with()
+        kill_switch.disable_mock.assert_not_called()
+        driver.disconnect_mock.assert_called_once_with()
+
+    def test_shutdown_desired_off_removes_active_product_firewall(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=True)
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager, kill_switch=kill_switch)
+
+        self.assertTrue(runtime.shutdown())
+
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        kill_switch.apply_atomic_mock.assert_not_called()
+        kill_switch.disable_mock.assert_called_once_with()
+        driver.disconnect_mock.assert_called_once_with()
+
     def test_disconnect_keeps_active_kill_switch_when_configured(self) -> None:
         self.set_desired_state("on")
         driver = FakeDriver()

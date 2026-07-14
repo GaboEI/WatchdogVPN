@@ -91,11 +91,12 @@ class RuntimeWorker:
         self._thread.start()
         self._started.wait(timeout=5.0)
 
-    def stop(self, timeout: float | None = 5.0) -> None:
+    def stop(self, timeout: float | None = 5.0) -> bool:
         if not self._thread.is_alive():
-            return
+            return True
         self._queue.put(_STOP)
         self._thread.join(timeout=timeout)
+        return not self._thread.is_alive()
 
     def submit(
         self,

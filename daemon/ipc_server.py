@@ -169,7 +169,7 @@ class IPCServer:
             self._threads = []
             raise
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
         servers = [self._request_server, self._event_server]
         for server in servers:
             if server is not None:
@@ -182,10 +182,11 @@ class IPCServer:
                 server.server_close()
         for thread in self._threads:
             thread.join(timeout=5.0)
-        self.worker.stop()
+        worker_stopped = self.worker.stop()
         self._request_server = None
         self._event_server = None
         self._threads = []
+        return worker_stopped
 
 
 def _prepare_socket_path(path: Path) -> None:

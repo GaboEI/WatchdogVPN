@@ -105,6 +105,60 @@ class DaemonStartupProtectionTests(unittest.TestCase):
         )
 
 
+class DaemonShutdownTests(unittest.TestCase):
+    def test_sigterm_path_stops_ipc_before_runtime_shutdown(self) -> None:
+        runtime = Mock()
+        runtime.startup.return_value = Mock(status="standby")
+        runtime.shutdown.return_value = True
+        runtime.app_config = Mock()
+
+        def request_stop(event) -> None:
+            event.set()
+
+        with (
+            patch("daemon.main.build_watchdog") as build_watchdog_mock,
+            patch("daemon.main.systemd_helper.notify") as notify_mock,
+            patch("daemon.main._install_signal_handlers", side_effect=request_stop),
+            patch("daemon.main.IPCServer") as ipc_server_mock,
+            patch("daemon.main.WatchdogLoop") as watchdog_loop_mock,
+            patch("daemon.main.ScheduledRotationLoop") as scheduled_loop_mock,
+        ):
+            build_watchdog_mock.return_value = runtime
+
+            self.assertEqual(main([]), 0)
+
+        runtime.startup.assert_called_once_with(require_restart_protection=True)
+        runtime.shutdown.assert_called_once_with()
+        ipc_server_mock.return_value.start.assert_called_once_with()
+        ipc_server_mock.return_value.stop.assert_called_once_with()
+        watchdog_loop_mock.return_value.stop.assert_called_once_with()
+        scheduled_loop_mock.return_value.stop.assert_called_once_with()
+        notify_mock.assert_any_call("STOPPING=1")
+
+    def test_shutdown_does_not_clean_runtime_while_ipc_worker_is_alive(self) -> None:
+        runtime = Mock()
+        runtime.startup.return_value = Mock(status="standby")
+        runtime.app_config = Mock()
+
+        def request_stop(event) -> None:
+            event.set()
+
+        with (
+            patch("daemon.main.build_watchdog") as build_watchdog_mock,
+            patch("daemon.main.systemd_helper.notify") as notify_mock,
+            patch("daemon.main._install_signal_handlers", side_effect=request_stop),
+            patch("daemon.main.IPCServer") as ipc_server_mock,
+            patch("daemon.main.WatchdogLoop"),
+            patch("daemon.main.ScheduledRotationLoop"),
+        ):
+            build_watchdog_mock.return_value = runtime
+            ipc_server_mock.return_value.stop.return_value = False
+
+            self.assertEqual(main([]), 1)
+
+        runtime.shutdown.assert_not_called()
+        notify_mock.assert_any_call("STATUS=runtime cleanup failed during shutdown")
+
 class DaemonCapabilityTests(unittest.TestCase):
     def test_parse_cap_eff_from_proc_status_fixture(self) -> None:
         status_text = "Name:\tpython3\nCapEff:\t0000000000001400\n"
