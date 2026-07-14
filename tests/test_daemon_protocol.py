@@ -4,11 +4,15 @@ import json
 import unittest
 
 from daemon.protocol import (
+    ALLOWED_COMMANDS,
     COMMAND_CONNECT,
+    COMMAND_COMMAND_CANCEL,
+    COMMAND_COMMAND_OUTCOME,
     COMMAND_DISCONNECT,
     COMMAND_NODE_GROUP_AUTO_TEST,
     COMMAND_ROTATE,
     COMMAND_STATUS,
+    COMMAND_TIMEOUT_SECONDS,
     EVENT_HEALTH_CHECK,
     EVENT_STATE_CHANGED,
     MESSAGE_TYPE_EVENT,
@@ -31,17 +35,20 @@ from daemon.protocol import (
     encode_message,
     encode_request,
     encode_response,
+    command_timeout_seconds,
 )
 
 
 class DaemonProtocolRoundTripTests(unittest.TestCase):
     def test_request_round_trip(self) -> None:
-        line = encode_request(COMMAND_CONNECT, {"profile_id": "p1"})
+        command_id = "123e4567-e89b-12d3-a456-426614174000"
+        line = encode_request(COMMAND_CONNECT, {"profile_id": "p1"}, command_id=command_id)
 
         request = decode_request_line(line)
 
         self.assertEqual(request.command, COMMAND_CONNECT)
         self.assertEqual(request.payload, {"profile_id": "p1"})
+        self.assertEqual(request.command_id, command_id)
         self.assertEqual(decode_message_line(line), request)
 
     def test_response_round_trip(self) -> None:
@@ -84,6 +91,8 @@ class DaemonProtocolRoundTripTests(unittest.TestCase):
     def test_all_command_constants_are_accepted(self) -> None:
         for command in (
             COMMAND_CONNECT,
+            COMMAND_COMMAND_CANCEL,
+            COMMAND_COMMAND_OUTCOME,
             COMMAND_DISCONNECT,
             COMMAND_NODE_GROUP_AUTO_TEST,
             COMMAND_STATUS,
@@ -91,6 +100,13 @@ class DaemonProtocolRoundTripTests(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 self.assertEqual(decode_request_line(encode_request(command)).command, command)
+
+    def test_each_command_has_one_authoritative_deadline(self) -> None:
+        self.assertEqual(command_timeout_seconds(COMMAND_CONNECT), 30.0)
+        self.assertEqual(command_timeout_seconds(COMMAND_DISCONNECT), 30.0)
+        self.assertEqual(command_timeout_seconds(COMMAND_ROTATE), 30.0)
+        self.assertEqual(command_timeout_seconds(COMMAND_NODE_GROUP_AUTO_TEST), 120.0)
+        self.assertEqual(set(COMMAND_TIMEOUT_SECONDS), set(ALLOWED_COMMANDS))
 
 
 class DaemonProtocolMalformedTests(unittest.TestCase):
@@ -140,6 +156,15 @@ class DaemonProtocolMalformedTests(unittest.TestCase):
 
     def test_rejects_non_object_payload(self) -> None:
         line = b'{"version":1,"type":"request","command":"status","payload":[]}\n'
+
+        with self.assertRaises(MalformedMessageError):
+            decode_request_line(line)
+
+    def test_rejects_non_canonical_command_id(self) -> None:
+        line = (
+            b'{"version":1,"type":"request","command":"status","payload":{},'
+            b'"command_id":"not-a-uuid"}\n'
+        )
 
         with self.assertRaises(MalformedMessageError):
             decode_request_line(line)

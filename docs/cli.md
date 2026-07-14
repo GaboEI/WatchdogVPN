@@ -135,6 +135,8 @@ watchdog connect <profile_id> [--json]
 watchdog disconnect [--json]
 watchdog status [--json]
 watchdog rotate [--force] [--json]
+watchdog command outcome <command-uuid> [--json]
+watchdog command cancel <command-uuid> [--json]
 watchdog version [--json]
 watchdog panic sleep|wake|status
 watchdog doctor [--json]
@@ -186,6 +188,15 @@ watchdog CLI -> daemon IPC socket -> RuntimeWorker -> WatchdogRuntime/driver
 
 They do not directly mutate DNS, routes, firewall, interfaces or driver
 processes from the CLI process.
+
+Every daemon-backed request has a command UUID. If a mutation reaches its
+server deadline before it finishes, the daemon never reports an ambiguous
+success or a generic timeout: it either acknowledges cancellation before the
+mutation starts, or returns `command_in_progress` with that UUID. Inspect the
+authoritative final result with `watchdog command outcome <command-uuid>`.
+`watchdog command cancel <command-uuid>` only acknowledges cancellation while
+the command is still queued; it never claims to interrupt a running network
+operation.
 
 ### `watchdog connect`
 

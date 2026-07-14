@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
+import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -19,6 +22,7 @@ from daemon.protocol import (
     EVENT_STATE_CHANGED,
     ALLOWED_COMMANDS,
     Event,
+    MUTATING_COMMANDS,
     Response,
     UnknownCommandError,
 )
@@ -67,10 +71,23 @@ _SCHEDULED_ROTATE = object()
 class WorkerRequest:
     command: str
     payload: dict[str, Any] = field(default_factory=dict)
+    command_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    deadline_monotonic: float | None = None
     response_queue: "queue.Queue[Response]" = field(default_factory=queue.Queue)
+    cancellation_requested: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass(slots=True)
+class _CommandRecord:
+    command: str
+    state: str = "queued"
+    response: Response | None = None
+    request: WorkerRequest | None = None
 
 
 class RuntimeWorker:
+    _MAX_RETAINED_FINAL_OUTCOMES = 512
+
     def __init__(
         self,
         runtime: RuntimeLike,
@@ -85,6 +102,9 @@ class RuntimeWorker:
         self._started = threading.Event()
         self._stopped = threading.Event()
         self._last_tick_status: str | None = None
+        self._command_lock = threading.Lock()
+        self._command_records: dict[str, _CommandRecord] = {}
+        self._final_command_ids: deque[str] = deque()
 
     def start(self) -> None:
         if self._thread.is_alive():
@@ -104,15 +124,97 @@ class RuntimeWorker:
         command: str,
         payload: dict[str, Any] | None = None,
         timeout: float | None = 30.0,
+        *,
+        command_id: str | None = None,
+        deadline_seconds: float | None = None,
     ) -> Response:
-        request = WorkerRequest(command=command, payload=dict(payload or {}))
+        request = WorkerRequest(
+            command=command,
+            payload=dict(payload or {}),
+            command_id=command_id or str(uuid.uuid4()),
+            deadline_monotonic=(time.monotonic() + deadline_seconds)
+            if deadline_seconds
+            else None,
+        )
         self.submit_request(request)
         return request.response_queue.get(timeout=timeout)
 
     def submit_request(self, request: WorkerRequest) -> None:
         if not self._thread.is_alive():
             raise RuntimeError("runtime worker is not running")
+        if request.command not in MUTATING_COMMANDS:
+            self._queue.put(request)
+            return
+        with self._command_lock:
+            if request.command_id in self._command_records:
+                raise RuntimeError(f"duplicate command id: {request.command_id}")
+            self._command_records[request.command_id] = _CommandRecord(
+                command=request.command,
+                request=request,
+            )
         self._queue.put(request)
+
+    def command_outcome(self, command_id: str) -> Response:
+        """Return the authoritative state or final response for one IPC command.
+
+        This bypasses the serialized runtime queue deliberately: status lookup
+        must remain available while a network mutation is still executing.
+        """
+        with self._command_lock:
+            record = self._command_records.get(command_id)
+            if record is None:
+                return Response(
+                    ok=False,
+                    payload={"command_id": command_id, "error_kind": "command_not_found"},
+                    error="command outcome not found",
+                )
+            if record.response is not None:
+                return record.response
+            return Response(
+                ok=False,
+                payload={
+                    "command_id": command_id,
+                    "command": record.command,
+                    "outcome": record.state,
+                    "error_kind": "command_in_progress",
+                },
+                error="command is still running",
+            )
+
+    def cancel_command(self, command_id: str) -> Response:
+        """Cancel only a command that has not started executing.
+
+        Runtime network operations are not safely interruptible in this worker.
+        A running command is therefore never reported as cancelled; callers get
+        its ID and must query the final authoritative outcome instead.
+        """
+        with self._command_lock:
+            record = self._command_records.get(command_id)
+            if record is None:
+                return Response(
+                    ok=False,
+                    payload={"command_id": command_id, "error_kind": "command_not_found"},
+                    error="command outcome not found",
+                )
+            if record.response is not None:
+                return record.response
+            if record.state == "queued" and record.request is not None:
+                record.request.cancellation_requested.set()
+                response = _cancelled_response(command_id, record.command)
+                record.state = "cancelled"
+                record.response = response
+                self._retain_final_command_locked(command_id)
+                return response
+            return Response(
+                ok=False,
+                payload={
+                    "command_id": command_id,
+                    "command": record.command,
+                    "outcome": "running",
+                    "error_kind": "command_in_progress",
+                },
+                error="command is already running; query command outcome for its final result",
+            )
 
     def submit_tick(self) -> None:
         """Enqueue an autonomous health-check tick (see daemon.watchdog_loop).
@@ -156,9 +258,57 @@ class RuntimeWorker:
                     continue
                 if not isinstance(item, WorkerRequest):
                     continue
-                item.response_queue.put(self._handle_request(item))
+                self._execute_request(item)
         finally:
             self._stopped.set()
+
+    def _execute_request(self, request: WorkerRequest) -> None:
+        if request.command not in MUTATING_COMMANDS:
+            request.response_queue.put(self._handle_request(request))
+            return
+        if request.cancellation_requested.is_set() or _deadline_expired(request):
+            response = _cancelled_response(request.command_id, request.command)
+            self._record_final_response(request, response, state="cancelled")
+            request.response_queue.put(response)
+            return
+        with self._command_lock:
+            record = self._command_records.get(request.command_id)
+            if record is None or record.response is not None:
+                response = _cancelled_response(request.command_id, request.command)
+                request.response_queue.put(response)
+                return
+            record.state = "running"
+        response = _with_command_metadata(
+            self._handle_request(request), request.command_id, request.command
+        )
+        self._record_final_response(request, response, state="completed")
+        request.response_queue.put(response)
+
+    def _record_final_response(
+        self,
+        request: WorkerRequest,
+        response: Response,
+        *,
+        state: str,
+    ) -> None:
+        with self._command_lock:
+            record = self._command_records.get(request.command_id)
+            if record is None:
+                return
+            # A queued cancellation is final before the queued item reaches
+            # the worker. Never overwrite that acknowledged cancellation.
+            if record.response is None:
+                record.state = state
+                record.response = response
+                self._retain_final_command_locked(request.command_id)
+
+    def _retain_final_command_locked(self, command_id: str) -> None:
+        self._final_command_ids.append(command_id)
+        while len(self._final_command_ids) > self._MAX_RETAINED_FINAL_OUTCOMES:
+            expired_id = self._final_command_ids.popleft()
+            record = self._command_records.get(expired_id)
+            if record is not None and record.response is not None:
+                self._command_records.pop(expired_id, None)
 
     def _handle_tick(self) -> None:
         # A tick has no caller waiting on a response - an unexpected
@@ -360,6 +510,35 @@ def _state_payload(state: ConnectionState) -> dict[str, Any]:
 
 def _rotate_outcome_reason(status: str) -> str:
     return f"rotation did not recover a healthy connection: status={status}"
+
+
+def _deadline_expired(request: WorkerRequest) -> bool:
+    return request.deadline_monotonic is not None and time.monotonic() >= request.deadline_monotonic
+
+
+def _cancelled_response(command_id: str, command: str) -> Response:
+    return Response(
+        ok=False,
+        payload={
+            "command_id": command_id,
+            "command": command,
+            "outcome": "cancelled",
+            "error_kind": "command_cancelled",
+        },
+        error="command cancelled before execution",
+    )
+
+
+def _with_command_metadata(response: Response, command_id: str, command: str) -> Response:
+    payload = dict(response.payload)
+    payload.update(
+        {
+            "command_id": command_id,
+            "command": command,
+            "outcome": "completed",
+        }
+    )
+    return Response(ok=response.ok, payload=payload, error=response.error)
 
 
 def _require_string(value: Any, field_name: str) -> str:

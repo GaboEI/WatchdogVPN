@@ -21,12 +21,12 @@ overrides whose argparse help is suppressed remain intentionally absent.
 ## Snapshot
 
 - Schema version: `1`
-- Routes including the canonical root: `121`
-- Command routes excluding the root: `120`
-- Argparse-backed routes: `113`
+- Routes including the canonical root: `124`
+- Command routes excluding the root: `123`
+- Argparse-backed routes: `116`
 - Documented maintenance passthrough routes: `8`
-- Group/root routes: `17`
-- Leaf routes: `104`
+- Group/root routes: `18`
+- Leaf routes: `106`
 
 ## Route Index
 
@@ -37,122 +37,125 @@ overrides whose argparse help is suppressed remain intentionally absent.
 | 3 | `watchdog disconnect` | command | argparse | Disconnect through the WatchdogVPN daemon |
 | 4 | `watchdog status` | command | argparse | Show daemon connection status |
 | 5 | `watchdog rotate` | command | argparse | Rotate connection through the WatchdogVPN daemon |
-| 6 | `watchdog version` | command | argparse | Print WatchdogVPN version |
-| 7 | `watchdog panic` | command | argparse | Run the WatchdogVPN panic button |
-| 8 | `watchdog doctor` | command | argparse | Run the repository doctor |
-| 9 | `watchdog setup` | command | argparse | Configure local WatchdogVPN defaults |
-| 10 | `watchdog uninstall` | command | argparse | Run the safe WatchdogVPN uninstall flow |
-| 11 | `watchdog maintenance` | group | argparse | Run local support, update and legacy-preference commands |
-| 12 | `watchdog maintenance backend` | passthrough | documented-passthrough-choice | Show the legacy custom-VPS backend capability summary |
-| 13 | `watchdog maintenance config` | passthrough | documented-passthrough-choice | Manage legacy language, TUI and reporting preferences |
-| 14 | `watchdog maintenance logs` | passthrough | documented-passthrough-choice | Read and sanitize local WatchdogVPN logs |
-| 15 | `watchdog maintenance report` | passthrough | documented-passthrough-choice | Generate a private local diagnostic report |
-| 16 | `watchdog maintenance runtime-update` | passthrough | documented-passthrough-choice | Run the confirmed source-checkout runtime update flow |
-| 17 | `watchdog maintenance tui` | passthrough | documented-passthrough-choice | Open the current WatchdogVPN terminal UI |
-| 18 | `watchdog maintenance update-check` | passthrough | documented-passthrough-choice | Inspect local checkout update state without network access |
-| 19 | `watchdog maintenance update-plan` | passthrough | documented-passthrough-choice | Print a safe manual update plan |
-| 20 | `watchdog backup` | group | argparse | Create, inspect and restore backups |
-| 21 | `watchdog backup create` | command | argparse | Create a backup archive |
-| 22 | `watchdog backup export` | command | argparse | Alias for backup create |
-| 23 | `watchdog backup inspect` | command | argparse | Inspect and validate a backup archive |
-| 24 | `watchdog backup restore` | command | argparse | Restore a backup archive |
-| 25 | `watchdog backup import` | command | argparse | Alias for backup restore |
-| 26 | `watchdog profile` | group | argparse | Manage local profiles |
-| 27 | `watchdog profile add` | command | argparse | Add a manual profile |
-| 28 | `watchdog profile list` | command | argparse | List saved profiles |
-| 29 | `watchdog profile remove` | command | argparse | Remove a saved profile |
-| 30 | `watchdog profile enable` | command | argparse | Enable a saved profile |
-| 31 | `watchdog profile disable` | command | argparse | Disable a saved profile |
-| 32 | `watchdog profile rotation` | command | argparse | Change profile rotation-pool membership |
-| 33 | `watchdog provider` | group | argparse | Manage external providers |
-| 34 | `watchdog provider add` | command | argparse | Add an external provider |
-| 35 | `watchdog provider list` | command | argparse | List external providers |
-| 36 | `watchdog provider stats` | command | argparse | Show provider statistics |
-| 37 | `watchdog provider update` | command | argparse | Update provider nodes |
-| 38 | `watchdog provider remove` | command | argparse | Remove provider and owned nodes |
-| 39 | `watchdog provider edit` | command | argparse | Edit provider name or subscription URL |
-| 40 | `watchdog provider rotation` | command | argparse | Enable or disable provider rotation |
-| 41 | `watchdog provider node` | command | argparse | Change provider node settings |
-| 42 | `watchdog node-group` | group | argparse | Manage node groups |
-| 43 | `watchdog node-group list` | command | argparse | List node groups |
-| 44 | `watchdog node-group create` | command | argparse | Create a node group |
-| 45 | `watchdog node-group add-profile` | command | argparse | Add a profile to a node group |
-| 46 | `watchdog node-group auto-test` | command | argparse | Measure and rank a node group's eligible candidates |
-| 47 | `watchdog node-group select` | command | argparse | Set a node group to auto mode or pin one profile |
-| 48 | `watchdog node-group add-provider` | command | argparse | Add a provider to a node group |
-| 49 | `watchdog node-group remove-provider` | command | argparse | Remove a provider from a node group |
-| 50 | `watchdog node-group exclude` | command | argparse | Exclude a profile from a node group's candidates |
-| 51 | `watchdog node-group unexclude` | command | argparse | Remove a profile from a node group's exclusion list |
-| 52 | `watchdog node-group resilience` | command | argparse | Set a node group's resilience policy |
-| 53 | `watchdog node-group enable` | command | argparse | Enable a node group |
-| 54 | `watchdog node-group disable` | command | argparse | Disable a node group |
-| 55 | `watchdog dns` | group | argparse | Manage DNS v2 policy and state |
-| 56 | `watchdog dns status` | command | argparse | Show DNS v2 status |
-| 57 | `watchdog dns test` | command | argparse | Test DNS v2 resolvers |
-| 58 | `watchdog dns diagnose` | command | argparse | Explain route and DNS policy for hypothetical traffic |
-| 59 | `watchdog dns apply` | command | argparse | Apply DNS v2 local entrypoint |
-| 60 | `watchdog dns reset` | command | argparse | Restore DNS from the saved v2 snapshot |
-| 61 | `watchdog dns channel` | group | argparse | Manage DNS channels |
-| 62 | `watchdog dns channel add` | command | argparse | Add an empty DNS channel |
-| 63 | `watchdog dns channel remove` | command | argparse | Remove a DNS channel and its resolvers |
-| 64 | `watchdog dns resolver` | group | argparse | Manage DNS resolvers |
-| 65 | `watchdog dns resolver add` | command | argparse | Add a resolver to a DNS channel |
-| 66 | `watchdog dns resolver remove` | command | argparse | Remove a resolver from a DNS channel |
-| 67 | `watchdog dns resolver enable` | command | argparse | Enable a resolver in a DNS channel |
-| 68 | `watchdog dns resolver disable` | command | argparse | Disable a resolver in a DNS channel |
-| 69 | `watchdog dns rule` | group | argparse | Manage DNS diversion rules |
-| 70 | `watchdog dns rule add` | command | argparse | Add a DNS diversion rule |
-| 71 | `watchdog dns rule remove` | command | argparse | Remove a DNS diversion rule |
-| 72 | `watchdog dns rule enable` | command | argparse | Enable a DNS diversion rule |
-| 73 | `watchdog dns rule disable` | command | argparse | Disable a DNS diversion rule |
-| 74 | `watchdog dns static-ip` | group | argparse | Manage static IP mappings |
-| 75 | `watchdog dns static-ip add` | command | argparse | Add a static IP mapping |
-| 76 | `watchdog dns static-ip remove` | command | argparse | Remove static IP mapping(s) for a domain |
-| 77 | `watchdog config` | group | argparse | Manage WatchdogVPN configuration |
-| 78 | `watchdog config set` | command | argparse | Set a configuration value |
-| 79 | `watchdog config routing-contract` | command | argparse | Show routing and capture coexistence contract |
-| 80 | `watchdog config lan-sharing-credentials` | command | argparse | Show LAN sharing credential status |
-| 81 | `watchdog stats` | group | argparse | Inspect local observability metrics |
-| 82 | `watchdog stats status` | command | argparse | Show metrics status |
-| 83 | `watchdog stats summary` | command | argparse | Show aggregate metrics summary |
-| 84 | `watchdog stats purge` | command | argparse | Purge local observability metrics |
-| 85 | `watchdog stats privacy-mode` | command | argparse | Set metrics privacy mode |
-| 86 | `watchdog rules` | group | argparse | Inspect configured routing rules |
-| 87 | `watchdog rules list` | command | argparse | List routing rule groups |
-| 88 | `watchdog rules explain` | command | argparse | Explain how configured rules would handle hypothetical traffic |
-| 89 | `watchdog rules enable` | command | argparse | Enable a rule group |
-| 90 | `watchdog rules disable` | command | argparse | Disable a rule group |
-| 91 | `watchdog rules add-rule` | command | argparse | Add a rule to a group |
-| 92 | `watchdog rules remove-rule` | command | argparse | Remove a rule from a group |
-| 93 | `watchdog rules set-priority` | command | argparse | Set a rule group's priority |
-| 94 | `watchdog rules enable-rule` | command | argparse | Enable a single rule within a group |
-| 95 | `watchdog rules disable-rule` | command | argparse | Disable a single rule within a group |
-| 96 | `watchdog rules import` | command | argparse | Import a rule group JSON file |
-| 97 | `watchdog rules export` | command | argparse | Export a rule group |
-| 98 | `watchdog ruleset` | group | argparse | Inspect and refresh trusted remote or built-in rule sets |
-| 99 | `watchdog ruleset status` | command | argparse | Show rule-set trust and cache status |
-| 100 | `watchdog ruleset refresh` | command | argparse | Refresh trusted rule-set cache files |
-| 101 | `watchdog ruleset add` | command | argparse | Define a rule-set trust policy |
-| 102 | `watchdog ruleset remove` | command | argparse | Remove a rule-set trust policy |
-| 103 | `watchdog app-policy` | group | argparse | Manage minimal Linux app/process policy |
-| 104 | `watchdog app-policy status` | command | argparse | Show app policy |
-| 105 | `watchdog app-policy enable` | command | argparse | Enable app policy |
-| 106 | `watchdog app-policy disable` | command | argparse | Disable app policy |
-| 107 | `watchdog app-policy mode` | command | argparse | Set app policy mode |
-| 108 | `watchdog app-policy default-action` | command | argparse | Set app policy default action |
-| 109 | `watchdog app-policy add` | command | argparse | Add an app policy rule |
-| 110 | `watchdog app-policy remove` | command | argparse | Remove an app policy rule |
-| 111 | `watchdog app-policy enable-rule` | command | argparse | Enable a single app policy rule |
-| 112 | `watchdog app-policy disable-rule` | command | argparse | Disable a single app policy rule |
-| 113 | `watchdog chain` | group | argparse | Manage proxy route chains |
-| 114 | `watchdog chain list` | command | argparse | List route chains |
-| 115 | `watchdog chain show` | command | argparse | Show a route chain |
-| 116 | `watchdog chain create` | command | argparse | Create a route chain |
-| 117 | `watchdog chain add-hop` | command | argparse | Append a hop to a route chain |
-| 118 | `watchdog chain remove-hop` | command | argparse | Remove a hop from a route chain by position |
-| 119 | `watchdog chain enable` | command | argparse | Enable a route chain |
-| 120 | `watchdog chain disable` | command | argparse | Disable a route chain |
-| 121 | `watchdog chain remove` | command | argparse | Remove a route chain |
+| 6 | `watchdog command` | group | argparse | Inspect or cancel an identifiable daemon command |
+| 7 | `watchdog command outcome` | command | argparse | Show the authoritative outcome of a daemon command |
+| 8 | `watchdog command cancel` | command | argparse | Cancel a queued daemon command before it starts |
+| 9 | `watchdog version` | command | argparse | Print WatchdogVPN version |
+| 10 | `watchdog panic` | command | argparse | Run the WatchdogVPN panic button |
+| 11 | `watchdog doctor` | command | argparse | Run the repository doctor |
+| 12 | `watchdog setup` | command | argparse | Configure local WatchdogVPN defaults |
+| 13 | `watchdog uninstall` | command | argparse | Run the safe WatchdogVPN uninstall flow |
+| 14 | `watchdog maintenance` | group | argparse | Run local support, update and legacy-preference commands |
+| 15 | `watchdog maintenance backend` | passthrough | documented-passthrough-choice | Show the legacy custom-VPS backend capability summary |
+| 16 | `watchdog maintenance config` | passthrough | documented-passthrough-choice | Manage legacy language, TUI and reporting preferences |
+| 17 | `watchdog maintenance logs` | passthrough | documented-passthrough-choice | Read and sanitize local WatchdogVPN logs |
+| 18 | `watchdog maintenance report` | passthrough | documented-passthrough-choice | Generate a private local diagnostic report |
+| 19 | `watchdog maintenance runtime-update` | passthrough | documented-passthrough-choice | Run the confirmed source-checkout runtime update flow |
+| 20 | `watchdog maintenance tui` | passthrough | documented-passthrough-choice | Open the current WatchdogVPN terminal UI |
+| 21 | `watchdog maintenance update-check` | passthrough | documented-passthrough-choice | Inspect local checkout update state without network access |
+| 22 | `watchdog maintenance update-plan` | passthrough | documented-passthrough-choice | Print a safe manual update plan |
+| 23 | `watchdog backup` | group | argparse | Create, inspect and restore backups |
+| 24 | `watchdog backup create` | command | argparse | Create a backup archive |
+| 25 | `watchdog backup export` | command | argparse | Alias for backup create |
+| 26 | `watchdog backup inspect` | command | argparse | Inspect and validate a backup archive |
+| 27 | `watchdog backup restore` | command | argparse | Restore a backup archive |
+| 28 | `watchdog backup import` | command | argparse | Alias for backup restore |
+| 29 | `watchdog profile` | group | argparse | Manage local profiles |
+| 30 | `watchdog profile add` | command | argparse | Add a manual profile |
+| 31 | `watchdog profile list` | command | argparse | List saved profiles |
+| 32 | `watchdog profile remove` | command | argparse | Remove a saved profile |
+| 33 | `watchdog profile enable` | command | argparse | Enable a saved profile |
+| 34 | `watchdog profile disable` | command | argparse | Disable a saved profile |
+| 35 | `watchdog profile rotation` | command | argparse | Change profile rotation-pool membership |
+| 36 | `watchdog provider` | group | argparse | Manage external providers |
+| 37 | `watchdog provider add` | command | argparse | Add an external provider |
+| 38 | `watchdog provider list` | command | argparse | List external providers |
+| 39 | `watchdog provider stats` | command | argparse | Show provider statistics |
+| 40 | `watchdog provider update` | command | argparse | Update provider nodes |
+| 41 | `watchdog provider remove` | command | argparse | Remove provider and owned nodes |
+| 42 | `watchdog provider edit` | command | argparse | Edit provider name or subscription URL |
+| 43 | `watchdog provider rotation` | command | argparse | Enable or disable provider rotation |
+| 44 | `watchdog provider node` | command | argparse | Change provider node settings |
+| 45 | `watchdog node-group` | group | argparse | Manage node groups |
+| 46 | `watchdog node-group list` | command | argparse | List node groups |
+| 47 | `watchdog node-group create` | command | argparse | Create a node group |
+| 48 | `watchdog node-group add-profile` | command | argparse | Add a profile to a node group |
+| 49 | `watchdog node-group auto-test` | command | argparse | Measure and rank a node group's eligible candidates |
+| 50 | `watchdog node-group select` | command | argparse | Set a node group to auto mode or pin one profile |
+| 51 | `watchdog node-group add-provider` | command | argparse | Add a provider to a node group |
+| 52 | `watchdog node-group remove-provider` | command | argparse | Remove a provider from a node group |
+| 53 | `watchdog node-group exclude` | command | argparse | Exclude a profile from a node group's candidates |
+| 54 | `watchdog node-group unexclude` | command | argparse | Remove a profile from a node group's exclusion list |
+| 55 | `watchdog node-group resilience` | command | argparse | Set a node group's resilience policy |
+| 56 | `watchdog node-group enable` | command | argparse | Enable a node group |
+| 57 | `watchdog node-group disable` | command | argparse | Disable a node group |
+| 58 | `watchdog dns` | group | argparse | Manage DNS v2 policy and state |
+| 59 | `watchdog dns status` | command | argparse | Show DNS v2 status |
+| 60 | `watchdog dns test` | command | argparse | Test DNS v2 resolvers |
+| 61 | `watchdog dns diagnose` | command | argparse | Explain route and DNS policy for hypothetical traffic |
+| 62 | `watchdog dns apply` | command | argparse | Apply DNS v2 local entrypoint |
+| 63 | `watchdog dns reset` | command | argparse | Restore DNS from the saved v2 snapshot |
+| 64 | `watchdog dns channel` | group | argparse | Manage DNS channels |
+| 65 | `watchdog dns channel add` | command | argparse | Add an empty DNS channel |
+| 66 | `watchdog dns channel remove` | command | argparse | Remove a DNS channel and its resolvers |
+| 67 | `watchdog dns resolver` | group | argparse | Manage DNS resolvers |
+| 68 | `watchdog dns resolver add` | command | argparse | Add a resolver to a DNS channel |
+| 69 | `watchdog dns resolver remove` | command | argparse | Remove a resolver from a DNS channel |
+| 70 | `watchdog dns resolver enable` | command | argparse | Enable a resolver in a DNS channel |
+| 71 | `watchdog dns resolver disable` | command | argparse | Disable a resolver in a DNS channel |
+| 72 | `watchdog dns rule` | group | argparse | Manage DNS diversion rules |
+| 73 | `watchdog dns rule add` | command | argparse | Add a DNS diversion rule |
+| 74 | `watchdog dns rule remove` | command | argparse | Remove a DNS diversion rule |
+| 75 | `watchdog dns rule enable` | command | argparse | Enable a DNS diversion rule |
+| 76 | `watchdog dns rule disable` | command | argparse | Disable a DNS diversion rule |
+| 77 | `watchdog dns static-ip` | group | argparse | Manage static IP mappings |
+| 78 | `watchdog dns static-ip add` | command | argparse | Add a static IP mapping |
+| 79 | `watchdog dns static-ip remove` | command | argparse | Remove static IP mapping(s) for a domain |
+| 80 | `watchdog config` | group | argparse | Manage WatchdogVPN configuration |
+| 81 | `watchdog config set` | command | argparse | Set a configuration value |
+| 82 | `watchdog config routing-contract` | command | argparse | Show routing and capture coexistence contract |
+| 83 | `watchdog config lan-sharing-credentials` | command | argparse | Show LAN sharing credential status |
+| 84 | `watchdog stats` | group | argparse | Inspect local observability metrics |
+| 85 | `watchdog stats status` | command | argparse | Show metrics status |
+| 86 | `watchdog stats summary` | command | argparse | Show aggregate metrics summary |
+| 87 | `watchdog stats purge` | command | argparse | Purge local observability metrics |
+| 88 | `watchdog stats privacy-mode` | command | argparse | Set metrics privacy mode |
+| 89 | `watchdog rules` | group | argparse | Inspect configured routing rules |
+| 90 | `watchdog rules list` | command | argparse | List routing rule groups |
+| 91 | `watchdog rules explain` | command | argparse | Explain how configured rules would handle hypothetical traffic |
+| 92 | `watchdog rules enable` | command | argparse | Enable a rule group |
+| 93 | `watchdog rules disable` | command | argparse | Disable a rule group |
+| 94 | `watchdog rules add-rule` | command | argparse | Add a rule to a group |
+| 95 | `watchdog rules remove-rule` | command | argparse | Remove a rule from a group |
+| 96 | `watchdog rules set-priority` | command | argparse | Set a rule group's priority |
+| 97 | `watchdog rules enable-rule` | command | argparse | Enable a single rule within a group |
+| 98 | `watchdog rules disable-rule` | command | argparse | Disable a single rule within a group |
+| 99 | `watchdog rules import` | command | argparse | Import a rule group JSON file |
+| 100 | `watchdog rules export` | command | argparse | Export a rule group |
+| 101 | `watchdog ruleset` | group | argparse | Inspect and refresh trusted remote or built-in rule sets |
+| 102 | `watchdog ruleset status` | command | argparse | Show rule-set trust and cache status |
+| 103 | `watchdog ruleset refresh` | command | argparse | Refresh trusted rule-set cache files |
+| 104 | `watchdog ruleset add` | command | argparse | Define a rule-set trust policy |
+| 105 | `watchdog ruleset remove` | command | argparse | Remove a rule-set trust policy |
+| 106 | `watchdog app-policy` | group | argparse | Manage minimal Linux app/process policy |
+| 107 | `watchdog app-policy status` | command | argparse | Show app policy |
+| 108 | `watchdog app-policy enable` | command | argparse | Enable app policy |
+| 109 | `watchdog app-policy disable` | command | argparse | Disable app policy |
+| 110 | `watchdog app-policy mode` | command | argparse | Set app policy mode |
+| 111 | `watchdog app-policy default-action` | command | argparse | Set app policy default action |
+| 112 | `watchdog app-policy add` | command | argparse | Add an app policy rule |
+| 113 | `watchdog app-policy remove` | command | argparse | Remove an app policy rule |
+| 114 | `watchdog app-policy enable-rule` | command | argparse | Enable a single app policy rule |
+| 115 | `watchdog app-policy disable-rule` | command | argparse | Disable a single app policy rule |
+| 116 | `watchdog chain` | group | argparse | Manage proxy route chains |
+| 117 | `watchdog chain list` | command | argparse | List route chains |
+| 118 | `watchdog chain show` | command | argparse | Show a route chain |
+| 119 | `watchdog chain create` | command | argparse | Create a route chain |
+| 120 | `watchdog chain add-hop` | command | argparse | Append a hop to a route chain |
+| 121 | `watchdog chain remove-hop` | command | argparse | Remove a hop from a route chain by position |
+| 122 | `watchdog chain enable` | command | argparse | Enable a route chain |
+| 123 | `watchdog chain disable` | command | argparse | Disable a route chain |
+| 124 | `watchdog chain remove` | command | argparse | Remove a route chain |
 
 ## Route Contracts
 
@@ -162,7 +165,7 @@ overrides whose argparse help is suppressed remain intentionally absent.
 - Source: `argparse`
 - Summary: Canonical WatchdogVPN command root
 - Help: `watchdog --help`
-- Direct child routes: `connect`, `disconnect`, `status`, `rotate`, `version`, `panic`, `doctor`, `setup`, `uninstall`, `maintenance`, `backup`, `profile`, `provider`, `node-group`, `dns`, `config`, `stats`, `rules`, `ruleset`, `app-policy`, `chain`
+- Direct child routes: `connect`, `disconnect`, `status`, `rotate`, `command`, `version`, `panic`, `doctor`, `setup`, `uninstall`, `maintenance`, `backup`, `profile`, `provider`, `node-group`, `dns`, `config`, `stats`, `rules`, `ruleset`, `app-policy`, `chain`
 
 Usage:
 
@@ -243,7 +246,59 @@ usage: watchdog rotate [-h] [--force] [--json]
 | `--force` | option | no | flag | — | Force rotation even if conservative checks apply |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 6. `watchdog version`
+### 6. `watchdog command`
+
+- Kind: `group`
+- Source: `argparse`
+- Summary: Inspect or cancel an identifiable daemon command
+- Help: `watchdog command --help`
+- Direct child routes: `outcome`, `cancel`
+
+Usage:
+
+```text
+usage: watchdog command [-h] {outcome,cancel} ...
+```
+
+Public route-specific arguments: none.
+
+### 7. `watchdog command outcome`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Show the authoritative outcome of a daemon command
+- Help: `watchdog command outcome --help`
+
+Usage:
+
+```text
+usage: watchdog command outcome [-h] [--json] command_id
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `command_id` | positional | yes | one | — | Command UUID returned by the daemon |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 8. `watchdog command cancel`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Cancel a queued daemon command before it starts
+- Help: `watchdog command cancel --help`
+
+Usage:
+
+```text
+usage: watchdog command cancel [-h] [--json] command_id
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `command_id` | positional | yes | one | — | Command UUID returned by the daemon |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 9. `watchdog version`
 
 - Kind: `command`
 - Source: `argparse`
@@ -260,7 +315,7 @@ usage: watchdog version [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 7. `watchdog panic`
+### 10. `watchdog panic`
 
 - Kind: `command`
 - Source: `argparse`
@@ -277,7 +332,7 @@ usage: watchdog panic [-h] {sleep,wake,status}
 |---|---|---|---|---|---|
 | `mode` | positional | yes | one | sleep, wake, status | Panic mode |
 
-### 8. `watchdog doctor`
+### 11. `watchdog doctor`
 
 - Kind: `command`
 - Source: `argparse`
@@ -295,7 +350,7 @@ usage: watchdog doctor [-h] [--json] [--no-color]
 | `--json` | option | no | flag | — | Print JSON |
 | `--no-color` | option | no | flag | — | Disable ANSI color in human output |
 
-### 9. `watchdog setup`
+### 12. `watchdog setup`
 
 - Kind: `command`
 - Source: `argparse`
@@ -326,7 +381,7 @@ usage: watchdog setup [-h] [--dry-run] [--yes] [--json] [--language LANGUAGE] [-
 | `--app-policy-default-action` | option | no | one | current, direct, block | Set app policy default action |
 | `--acknowledge-backup-warning` | option | no | flag | — | Acknowledge that local setup changes should be backed up |
 
-### 10. `watchdog uninstall`
+### 13. `watchdog uninstall`
 
 - Kind: `command`
 - Source: `argparse`
@@ -353,7 +408,7 @@ usage: watchdog uninstall [-h] [--keep-data | --backup-first | --delete-all-data
 | `--confirm-delete` | option | no | one | — | Required literal DELETE for --delete-all-data |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 11. `watchdog maintenance`
+### 14. `watchdog maintenance`
 
 - Kind: `group`
 - Source: `argparse`
@@ -371,7 +426,7 @@ usage: watchdog maintenance [-h] {backend,config,logs,report,runtime-update,tui,
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the selected maintenance command |
 
-### 12. `watchdog maintenance backend`
+### 15. `watchdog maintenance backend`
 
 - Kind: `passthrough`
 - Source: `documented-passthrough-choice`
@@ -388,7 +443,7 @@ usage: watchdog maintenance backend [arguments ...]
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the maintenance backend |
 
-### 13. `watchdog maintenance config`
+### 16. `watchdog maintenance config`
 
 - Kind: `passthrough`
 - Source: `documented-passthrough-choice`
@@ -405,7 +460,7 @@ usage: watchdog maintenance config [arguments ...]
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the maintenance backend |
 
-### 14. `watchdog maintenance logs`
+### 17. `watchdog maintenance logs`
 
 - Kind: `passthrough`
 - Source: `documented-passthrough-choice`
@@ -422,7 +477,7 @@ usage: watchdog maintenance logs [arguments ...]
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the maintenance backend |
 
-### 15. `watchdog maintenance report`
+### 18. `watchdog maintenance report`
 
 - Kind: `passthrough`
 - Source: `documented-passthrough-choice`
@@ -439,7 +494,7 @@ usage: watchdog maintenance report [arguments ...]
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the maintenance backend |
 
-### 16. `watchdog maintenance runtime-update`
+### 19. `watchdog maintenance runtime-update`
 
 - Kind: `passthrough`
 - Source: `documented-passthrough-choice`
@@ -456,7 +511,7 @@ usage: watchdog maintenance runtime-update [arguments ...]
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the maintenance backend |
 
-### 17. `watchdog maintenance tui`
+### 20. `watchdog maintenance tui`
 
 - Kind: `passthrough`
 - Source: `documented-passthrough-choice`
@@ -473,7 +528,7 @@ usage: watchdog maintenance tui [arguments ...]
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the maintenance backend |
 
-### 18. `watchdog maintenance update-check`
+### 21. `watchdog maintenance update-check`
 
 - Kind: `passthrough`
 - Source: `documented-passthrough-choice`
@@ -490,7 +545,7 @@ usage: watchdog maintenance update-check [arguments ...]
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the maintenance backend |
 
-### 19. `watchdog maintenance update-plan`
+### 22. `watchdog maintenance update-plan`
 
 - Kind: `passthrough`
 - Source: `documented-passthrough-choice`
@@ -507,7 +562,7 @@ usage: watchdog maintenance update-plan [arguments ...]
 |---|---|---|---|---|---|
 | `arguments` | positional | no | remainder | — | Arguments forwarded to the maintenance backend |
 
-### 20. `watchdog backup`
+### 23. `watchdog backup`
 
 - Kind: `group`
 - Source: `argparse`
@@ -523,7 +578,7 @@ usage: watchdog backup [-h] {create,export,inspect,restore,import} ...
 
 Public route-specific arguments: none.
 
-### 21. `watchdog backup create`
+### 24. `watchdog backup create`
 
 - Kind: `command`
 - Source: `argparse`
@@ -544,7 +599,7 @@ usage: watchdog backup create [-h] [--output OUTPUT] [--section {settings,profil
 | `--password-env` | option | no | one | — | Environment variable containing the encrypted-backup password |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 22. `watchdog backup export`
+### 25. `watchdog backup export`
 
 - Kind: `command`
 - Source: `argparse`
@@ -565,7 +620,7 @@ usage: watchdog backup export [-h] [--output OUTPUT] [--section {settings,profil
 | `--password-env` | option | no | one | — | Environment variable containing the encrypted-backup password |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 23. `watchdog backup inspect`
+### 26. `watchdog backup inspect`
 
 - Kind: `command`
 - Source: `argparse`
@@ -584,7 +639,7 @@ usage: watchdog backup inspect [-h] [--password-env PASSWORD_ENV] [--json] file
 | `--password-env` | option | no | one | — | Environment variable containing the encrypted-backup password |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 24. `watchdog backup restore`
+### 27. `watchdog backup restore`
 
 - Kind: `command`
 - Source: `argparse`
@@ -607,7 +662,7 @@ usage: watchdog backup restore [-h] [--section {settings,profiles,providers,prov
 | `--dry-run` | option | no | flag | — | Validate restore without writing local state |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 25. `watchdog backup import`
+### 28. `watchdog backup import`
 
 - Kind: `command`
 - Source: `argparse`
@@ -630,7 +685,7 @@ usage: watchdog backup import [-h] [--section {settings,profiles,providers,provi
 | `--dry-run` | option | no | flag | — | Validate restore without writing local state |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 26. `watchdog profile`
+### 29. `watchdog profile`
 
 - Kind: `group`
 - Source: `argparse`
@@ -646,7 +701,7 @@ usage: watchdog profile [-h] {add,list,remove,enable,disable,rotation} ...
 
 Public route-specific arguments: none.
 
-### 27. `watchdog profile add`
+### 30. `watchdog profile add`
 
 - Kind: `command`
 - Source: `argparse`
@@ -667,7 +722,7 @@ usage: watchdog profile add [-h] (--clipboard | --uri URI | --file FILE | --text
 | `--text` | option | no | flag | — | Read profile content from stdin or editor |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 28. `watchdog profile list`
+### 31. `watchdog profile list`
 
 - Kind: `command`
 - Source: `argparse`
@@ -693,7 +748,7 @@ usage: watchdog profile list [-h] [--json] [--pool] [--source SOURCE] [--protoco
 | `--wide` | option | no | flag | — | Print the untruncated human table; lines may exceed terminal width |
 | `--no-color` | option | no | flag | — | Disable ANSI color in human output |
 
-### 29. `watchdog profile remove`
+### 32. `watchdog profile remove`
 
 - Kind: `command`
 - Source: `argparse`
@@ -711,7 +766,7 @@ usage: watchdog profile remove [-h] [--json] profile_id
 | `profile_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 30. `watchdog profile enable`
+### 33. `watchdog profile enable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -729,7 +784,7 @@ usage: watchdog profile enable [-h] [--json] profile_id
 | `profile_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 31. `watchdog profile disable`
+### 34. `watchdog profile disable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -747,7 +802,7 @@ usage: watchdog profile disable [-h] [--json] profile_id
 | `profile_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 32. `watchdog profile rotation`
+### 35. `watchdog profile rotation`
 
 - Kind: `command`
 - Source: `argparse`
@@ -769,7 +824,7 @@ usage: watchdog profile rotation [-h] (--enable | --disable | --on | --off) [--j
 | `--off` | option | no | flag | — | Alias for --disable |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 33. `watchdog provider`
+### 36. `watchdog provider`
 
 - Kind: `group`
 - Source: `argparse`
@@ -785,7 +840,7 @@ usage: watchdog provider [-h] {add,list,stats,update,remove,edit,rotation,node} 
 
 Public route-specific arguments: none.
 
-### 34. `watchdog provider add`
+### 37. `watchdog provider add`
 
 - Kind: `command`
 - Source: `argparse`
@@ -804,7 +859,7 @@ usage: watchdog provider add [-h] [--name NAME] [--json] [url]
 | `--name` | option | no | one | — | Free-form provider label |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 35. `watchdog provider list`
+### 38. `watchdog provider list`
 
 - Kind: `command`
 - Source: `argparse`
@@ -822,7 +877,7 @@ usage: watchdog provider list [-h] [--json] [--no-color]
 | `--json` | option | no | flag | — | Print JSON |
 | `--no-color` | option | no | flag | — | Disable ANSI color in human output |
 
-### 36. `watchdog provider stats`
+### 39. `watchdog provider stats`
 
 - Kind: `command`
 - Source: `argparse`
@@ -840,7 +895,7 @@ usage: watchdog provider stats [-h] [--json] provider_id
 | `provider_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 37. `watchdog provider update`
+### 40. `watchdog provider update`
 
 - Kind: `command`
 - Source: `argparse`
@@ -859,7 +914,7 @@ usage: watchdog provider update [-h] [--json] (--all | provider_id)
 | `--all` | option | no | flag | — | Update all providers |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 38. `watchdog provider remove`
+### 41. `watchdog provider remove`
 
 - Kind: `command`
 - Source: `argparse`
@@ -877,7 +932,7 @@ usage: watchdog provider remove [-h] [--json] provider_id
 | `provider_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 39. `watchdog provider edit`
+### 42. `watchdog provider edit`
 
 - Kind: `command`
 - Source: `argparse`
@@ -897,7 +952,7 @@ usage: watchdog provider edit [-h] [--name NAME] [--url URL] [--json] provider_i
 | `--url` | option | no | one | — | New subscription URL |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 40. `watchdog provider rotation`
+### 43. `watchdog provider rotation`
 
 - Kind: `command`
 - Source: `argparse`
@@ -917,7 +972,7 @@ usage: watchdog provider rotation [-h] (--enable | --disable) [--json] provider_
 | `--disable` | option | no | flag | — | Disable provider rotation |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 41. `watchdog provider node`
+### 44. `watchdog provider node`
 
 - Kind: `command`
 - Source: `argparse`
@@ -939,7 +994,7 @@ usage: watchdog provider node [-h] --rotation (--enable | --disable) [--json] pr
 | `--disable` | option | no | flag | — | Disable node rotation |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 42. `watchdog node-group`
+### 45. `watchdog node-group`
 
 - Kind: `group`
 - Source: `argparse`
@@ -955,7 +1010,7 @@ usage: watchdog node-group [-h] {list,create,add-profile,auto-test,select,add-pr
 
 Public route-specific arguments: none.
 
-### 43. `watchdog node-group list`
+### 46. `watchdog node-group list`
 
 - Kind: `command`
 - Source: `argparse`
@@ -972,7 +1027,7 @@ usage: watchdog node-group list [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 44. `watchdog node-group create`
+### 47. `watchdog node-group create`
 
 - Kind: `command`
 - Source: `argparse`
@@ -990,7 +1045,7 @@ usage: watchdog node-group create [-h] [--json] name
 | `name` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 45. `watchdog node-group add-profile`
+### 48. `watchdog node-group add-profile`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1009,7 +1064,7 @@ usage: watchdog node-group add-profile [-h] [--json] group profile
 | `profile` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 46. `watchdog node-group auto-test`
+### 49. `watchdog node-group auto-test`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1027,7 +1082,7 @@ usage: watchdog node-group auto-test [-h] [--json] group
 | `group` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 47. `watchdog node-group select`
+### 50. `watchdog node-group select`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1046,7 +1101,7 @@ usage: watchdog node-group select [-h] [--json] group selection
 | `selection` | positional | yes | one | — | Profile ID or 'auto' |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 48. `watchdog node-group add-provider`
+### 51. `watchdog node-group add-provider`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1065,7 +1120,7 @@ usage: watchdog node-group add-provider [-h] [--json] group provider
 | `provider` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 49. `watchdog node-group remove-provider`
+### 52. `watchdog node-group remove-provider`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1084,7 +1139,7 @@ usage: watchdog node-group remove-provider [-h] [--json] group provider
 | `provider` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 50. `watchdog node-group exclude`
+### 53. `watchdog node-group exclude`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1103,7 +1158,7 @@ usage: watchdog node-group exclude [-h] [--json] group profile
 | `profile` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 51. `watchdog node-group unexclude`
+### 54. `watchdog node-group unexclude`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1122,7 +1177,7 @@ usage: watchdog node-group unexclude [-h] [--json] group profile
 | `profile` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 52. `watchdog node-group resilience`
+### 55. `watchdog node-group resilience`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1141,7 +1196,7 @@ usage: watchdog node-group resilience [-h] [--json] group {resilient_only,prefer
 | `policy` | positional | yes | one | resilient_only, preferred, compatibility_allowed | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 53. `watchdog node-group enable`
+### 56. `watchdog node-group enable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1159,7 +1214,7 @@ usage: watchdog node-group enable [-h] [--json] group
 | `group` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 54. `watchdog node-group disable`
+### 57. `watchdog node-group disable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1177,7 +1232,7 @@ usage: watchdog node-group disable [-h] [--json] group
 | `group` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 55. `watchdog dns`
+### 58. `watchdog dns`
 
 - Kind: `group`
 - Source: `argparse`
@@ -1193,7 +1248,7 @@ usage: watchdog dns [-h] {status,test,diagnose,apply,reset,channel,resolver,rule
 
 Public route-specific arguments: none.
 
-### 56. `watchdog dns status`
+### 59. `watchdog dns status`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1214,7 +1269,7 @@ usage: watchdog dns status [-h] [--policy-file POLICY_FILE] [--snapshot-file SNA
 | `--json` | option | no | flag | — | Print JSON |
 | `--no-color` | option | no | flag | — | Disable ANSI color in human output |
 
-### 57. `watchdog dns test`
+### 60. `watchdog dns test`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1235,7 +1290,7 @@ usage: watchdog dns test [-h] [--policy-file POLICY_FILE] [--json] [--auto] [--d
 | `--domain` | option | no | one | — | Override the policy test domain |
 | `--timeout` | option | no | one | — | Resolver probe timeout in seconds |
 
-### 58. `watchdog dns diagnose`
+### 61. `watchdog dns diagnose`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1261,7 +1316,7 @@ usage: watchdog dns diagnose [-h] [--policy-file POLICY_FILE] [--domain DOMAIN] 
 | `--ruleset-trust-file` | option | no | one | — | Rule-set trust registry JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 59. `watchdog dns apply`
+### 62. `watchdog dns apply`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1288,7 +1343,7 @@ usage: watchdog dns apply [-h] [--policy-file POLICY_FILE] [--snapshot-file SNAP
 | `--skip-entrypoint-check` | option | no | flag | — | Skip local DNS entrypoint reachability check |
 | `--entrypoint-timeout` | option | no | one | — | Local DNS entrypoint TCP check timeout in seconds |
 
-### 60. `watchdog dns reset`
+### 63. `watchdog dns reset`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1309,7 +1364,7 @@ usage: watchdog dns reset [-h] [--policy-file POLICY_FILE] [--snapshot-file SNAP
 | `--json` | option | no | flag | — | Print JSON |
 | `--yes` | option | no | flag | — | Confirm DNS restore |
 
-### 61. `watchdog dns channel`
+### 64. `watchdog dns channel`
 
 - Kind: `group`
 - Source: `argparse`
@@ -1325,7 +1380,7 @@ usage: watchdog dns channel [-h] {add,remove} ...
 
 Public route-specific arguments: none.
 
-### 62. `watchdog dns channel add`
+### 65. `watchdog dns channel add`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1344,7 +1399,7 @@ usage: watchdog dns channel add [-h] [--policy-file POLICY_FILE] [--json] {boots
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 63. `watchdog dns channel remove`
+### 66. `watchdog dns channel remove`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1363,7 +1418,7 @@ usage: watchdog dns channel remove [-h] [--policy-file POLICY_FILE] [--json] {bo
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 64. `watchdog dns resolver`
+### 67. `watchdog dns resolver`
 
 - Kind: `group`
 - Source: `argparse`
@@ -1379,7 +1434,7 @@ usage: watchdog dns resolver [-h] {add,remove,enable,disable} ...
 
 Public route-specific arguments: none.
 
-### 65. `watchdog dns resolver add`
+### 68. `watchdog dns resolver add`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1402,7 +1457,7 @@ usage: watchdog dns resolver add [-h] [--label LABEL] [--strategy {auto}] [--dis
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 66. `watchdog dns resolver remove`
+### 69. `watchdog dns resolver remove`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1422,7 +1477,7 @@ usage: watchdog dns resolver remove [-h] [--policy-file POLICY_FILE] [--json] {b
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 67. `watchdog dns resolver enable`
+### 70. `watchdog dns resolver enable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1442,7 +1497,7 @@ usage: watchdog dns resolver enable [-h] [--policy-file POLICY_FILE] [--json] {b
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 68. `watchdog dns resolver disable`
+### 71. `watchdog dns resolver disable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1462,7 +1517,7 @@ usage: watchdog dns resolver disable [-h] [--policy-file POLICY_FILE] [--json] {
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 69. `watchdog dns rule`
+### 72. `watchdog dns rule`
 
 - Kind: `group`
 - Source: `argparse`
@@ -1478,7 +1533,7 @@ usage: watchdog dns rule [-h] {add,remove,enable,disable} ...
 
 Public route-specific arguments: none.
 
-### 70. `watchdog dns rule add`
+### 73. `watchdog dns rule add`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1502,7 +1557,7 @@ usage: watchdog dns rule add [-h] --pattern PATTERN --action {use_channel,reject
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 71. `watchdog dns rule remove`
+### 74. `watchdog dns rule remove`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1521,7 +1576,7 @@ usage: watchdog dns rule remove [-h] [--policy-file POLICY_FILE] [--json] id
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 72. `watchdog dns rule enable`
+### 75. `watchdog dns rule enable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1540,7 +1595,7 @@ usage: watchdog dns rule enable [-h] [--policy-file POLICY_FILE] [--json] id
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 73. `watchdog dns rule disable`
+### 76. `watchdog dns rule disable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1559,7 +1614,7 @@ usage: watchdog dns rule disable [-h] [--policy-file POLICY_FILE] [--json] id
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 74. `watchdog dns static-ip`
+### 77. `watchdog dns static-ip`
 
 - Kind: `group`
 - Source: `argparse`
@@ -1575,7 +1630,7 @@ usage: watchdog dns static-ip [-h] {add,remove} ...
 
 Public route-specific arguments: none.
 
-### 75. `watchdog dns static-ip add`
+### 78. `watchdog dns static-ip add`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1596,7 +1651,7 @@ usage: watchdog dns static-ip add [-h] [--disabled] [--policy-file POLICY_FILE] 
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 76. `watchdog dns static-ip remove`
+### 79. `watchdog dns static-ip remove`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1616,7 +1671,7 @@ usage: watchdog dns static-ip remove [-h] [--ip IP] [--policy-file POLICY_FILE] 
 | `--policy-file` | option | no | one | — | DNS policy JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 77. `watchdog config`
+### 80. `watchdog config`
 
 - Kind: `group`
 - Source: `argparse`
@@ -1632,7 +1687,7 @@ usage: watchdog config [-h] {set,routing-contract,lan-sharing-credentials} ...
 
 Public route-specific arguments: none.
 
-### 78. `watchdog config set`
+### 81. `watchdog config set`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1651,7 +1706,7 @@ usage: watchdog config set [-h] [--json] key value
 | `value` | positional | yes | one | — | Configuration value |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 79. `watchdog config routing-contract`
+### 82. `watchdog config routing-contract`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1668,7 +1723,7 @@ usage: watchdog config routing-contract [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 80. `watchdog config lan-sharing-credentials`
+### 83. `watchdog config lan-sharing-credentials`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1686,7 +1741,7 @@ usage: watchdog config lan-sharing-credentials [-h] [--json] [--show-secret]
 | `--json` | option | no | flag | — | Print JSON |
 | `--show-secret` | option | no | flag | — | Print the LAN sharing password explicitly |
 
-### 81. `watchdog stats`
+### 84. `watchdog stats`
 
 - Kind: `group`
 - Source: `argparse`
@@ -1702,7 +1757,7 @@ usage: watchdog stats [-h] {status,summary,purge,privacy-mode} ...
 
 Public route-specific arguments: none.
 
-### 82. `watchdog stats status`
+### 85. `watchdog stats status`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1719,7 +1774,7 @@ usage: watchdog stats status [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 83. `watchdog stats summary`
+### 86. `watchdog stats summary`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1736,7 +1791,7 @@ usage: watchdog stats summary [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 84. `watchdog stats purge`
+### 87. `watchdog stats purge`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1754,7 +1809,7 @@ usage: watchdog stats purge [-h] [--yes] [--json]
 | `--yes` | option | no | flag | — | Confirm metrics purge |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 85. `watchdog stats privacy-mode`
+### 88. `watchdog stats privacy-mode`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1772,7 +1827,7 @@ usage: watchdog stats privacy-mode [-h] [--json] {off,aggregate,detailed}
 | `mode` | positional | yes | one | off, aggregate, detailed | Metrics privacy mode |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 86. `watchdog rules`
+### 89. `watchdog rules`
 
 - Kind: `group`
 - Source: `argparse`
@@ -1788,7 +1843,7 @@ usage: watchdog rules [-h] {list,explain,enable,disable,add-rule,remove-rule,set
 
 Public route-specific arguments: none.
 
-### 87. `watchdog rules list`
+### 90. `watchdog rules list`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1805,7 +1860,7 @@ usage: watchdog rules list [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 88. `watchdog rules explain`
+### 91. `watchdog rules explain`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1830,7 +1885,7 @@ usage: watchdog rules explain [-h] [--domain DOMAIN] [--ip IP] [--port PORT] [--
 | `--ruleset-trust-file` | option | no | one | — | Rule-set trust registry JSON file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 89. `watchdog rules enable`
+### 92. `watchdog rules enable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1848,7 +1903,7 @@ usage: watchdog rules enable [-h] [--json] group
 | `group` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 90. `watchdog rules disable`
+### 93. `watchdog rules disable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1866,7 +1921,7 @@ usage: watchdog rules disable [-h] [--json] group
 | `group` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 91. `watchdog rules add-rule`
+### 94. `watchdog rules add-rule`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1887,7 +1942,7 @@ usage: watchdog rules add-rule [-h] --action ACTION --condition KEY=VALUE [--jso
 | `--condition` | option | yes | one | — | Rule condition; repeat to add multiple values or condition types |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 92. `watchdog rules remove-rule`
+### 95. `watchdog rules remove-rule`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1906,7 +1961,7 @@ usage: watchdog rules remove-rule [-h] [--json] group rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 93. `watchdog rules set-priority`
+### 96. `watchdog rules set-priority`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1925,7 +1980,7 @@ usage: watchdog rules set-priority [-h] [--json] group priority
 | `priority` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 94. `watchdog rules enable-rule`
+### 97. `watchdog rules enable-rule`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1944,7 +1999,7 @@ usage: watchdog rules enable-rule [-h] [--json] group rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 95. `watchdog rules disable-rule`
+### 98. `watchdog rules disable-rule`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1963,7 +2018,7 @@ usage: watchdog rules disable-rule [-h] [--json] group rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 96. `watchdog rules import`
+### 99. `watchdog rules import`
 
 - Kind: `command`
 - Source: `argparse`
@@ -1986,7 +2041,7 @@ usage: watchdog rules import [-h] [--name NAME] [--default-action DEFAULT_ACTION
 | `--replace` | option | no | flag | — | Replace an existing group with the same name after writing a backup |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 97. `watchdog rules export`
+### 100. `watchdog rules export`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2005,7 +2060,7 @@ usage: watchdog rules export [-h] [--output OUTPUT] [--json] group
 | `--output` | option | no | one | — | Write exported group JSON to this file |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 98. `watchdog ruleset`
+### 101. `watchdog ruleset`
 
 - Kind: `group`
 - Source: `argparse`
@@ -2021,7 +2076,7 @@ usage: watchdog ruleset [-h] {status,refresh,add,remove} ...
 
 Public route-specific arguments: none.
 
-### 99. `watchdog ruleset status`
+### 102. `watchdog ruleset status`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2038,7 +2093,7 @@ usage: watchdog ruleset status [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 100. `watchdog ruleset refresh`
+### 103. `watchdog ruleset refresh`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2059,7 +2114,7 @@ usage: watchdog ruleset refresh [-h] [--referenced-only] [--force] [--no-evict] 
 | `--no-evict` | option | no | flag | — | Do not remove unowned cache files |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 101. `watchdog ruleset add`
+### 104. `watchdog ruleset add`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2085,7 +2140,7 @@ usage: watchdog ruleset add [-h] --kind {remote,built-in} --source SOURCE [--sha
 | `--failure-behavior` | option | no | one | fail-closed, warn-and-skip | Override the failure-behavior derived from --critical |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 102. `watchdog ruleset remove`
+### 105. `watchdog ruleset remove`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2103,7 +2158,7 @@ usage: watchdog ruleset remove [-h] [--json] id
 | `id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 103. `watchdog app-policy`
+### 106. `watchdog app-policy`
 
 - Kind: `group`
 - Source: `argparse`
@@ -2119,7 +2174,7 @@ usage: watchdog app-policy [-h] {status,enable,disable,mode,default-action,add,r
 
 Public route-specific arguments: none.
 
-### 104. `watchdog app-policy status`
+### 107. `watchdog app-policy status`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2136,7 +2191,7 @@ usage: watchdog app-policy status [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 105. `watchdog app-policy enable`
+### 108. `watchdog app-policy enable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2153,7 +2208,7 @@ usage: watchdog app-policy enable [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 106. `watchdog app-policy disable`
+### 109. `watchdog app-policy disable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2170,7 +2225,7 @@ usage: watchdog app-policy disable [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 107. `watchdog app-policy mode`
+### 110. `watchdog app-policy mode`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2188,7 +2243,7 @@ usage: watchdog app-policy mode [-h] [--json] {whitelist,blacklist}
 | `mode` | positional | yes | one | whitelist, blacklist | App policy mode |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 108. `watchdog app-policy default-action`
+### 111. `watchdog app-policy default-action`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2206,7 +2261,7 @@ usage: watchdog app-policy default-action [-h] [--json] {current,direct,block}
 | `default_action` | positional | yes | one | current, direct, block | Default route action |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 109. `watchdog app-policy add`
+### 112. `watchdog app-policy add`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2230,7 +2285,7 @@ usage: watchdog app-policy add [-h] (--process-name PROCESS_NAME | --process-pat
 | `--id` | option | no | one | — | Rule ID; generated when omitted |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 110. `watchdog app-policy remove`
+### 113. `watchdog app-policy remove`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2248,7 +2303,7 @@ usage: watchdog app-policy remove [-h] [--json] rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 111. `watchdog app-policy enable-rule`
+### 114. `watchdog app-policy enable-rule`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2266,7 +2321,7 @@ usage: watchdog app-policy enable-rule [-h] [--json] rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 112. `watchdog app-policy disable-rule`
+### 115. `watchdog app-policy disable-rule`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2284,7 +2339,7 @@ usage: watchdog app-policy disable-rule [-h] [--json] rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 113. `watchdog chain`
+### 116. `watchdog chain`
 
 - Kind: `group`
 - Source: `argparse`
@@ -2300,7 +2355,7 @@ usage: watchdog chain [-h] {list,show,create,add-hop,remove-hop,enable,disable,r
 
 Public route-specific arguments: none.
 
-### 114. `watchdog chain list`
+### 117. `watchdog chain list`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2317,7 +2372,7 @@ usage: watchdog chain list [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 115. `watchdog chain show`
+### 118. `watchdog chain show`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2335,7 +2390,7 @@ usage: watchdog chain show [-h] [--json] id
 | `id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 116. `watchdog chain create`
+### 119. `watchdog chain create`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2355,7 +2410,7 @@ usage: watchdog chain create [-h] --hop TYPE:TARGET [--description DESCRIPTION] 
 | `--description` | option | no | one | — | Free-form chain description |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 117. `watchdog chain add-hop`
+### 120. `watchdog chain add-hop`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2376,7 +2431,7 @@ usage: watchdog chain add-hop [-h] --type {profile,group} --target TARGET [--sel
 | `--selection-policy` | option | no | one | group_policy | Only valid for --type group |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 118. `watchdog chain remove-hop`
+### 121. `watchdog chain remove-hop`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2395,7 +2450,7 @@ usage: watchdog chain remove-hop [-h] --index INDEX [--json] id
 | `--index` | option | yes | one | — | 1-based hop position, see `chain show` |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 119. `watchdog chain enable`
+### 122. `watchdog chain enable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2413,7 +2468,7 @@ usage: watchdog chain enable [-h] [--json] id
 | `id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 120. `watchdog chain disable`
+### 123. `watchdog chain disable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2431,7 +2486,7 @@ usage: watchdog chain disable [-h] [--json] id
 | `id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 121. `watchdog chain remove`
+### 124. `watchdog chain remove`
 
 - Kind: `command`
 - Source: `argparse`

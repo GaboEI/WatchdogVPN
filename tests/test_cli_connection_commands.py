@@ -88,6 +88,42 @@ class CliConnectionCommandTests(unittest.TestCase):
         self.assertTrue(data["payload"]["lifecycle"]["cleanup_expectations"]["applies"])
         client_cls.return_value.disconnect.assert_called_once_with()
 
+    def test_command_outcome_uses_ipc_client_and_preserves_final_response_json(self) -> None:
+        command_id = "123e4567-e89b-12d3-a456-426614174000"
+        response = Response(
+            ok=True,
+            payload={"command_id": command_id, "command": "connect", "outcome": "completed"},
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.command_outcome.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["command", "outcome", command_id, "--json"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["payload"]["outcome"], "completed")
+        client_cls.return_value.command_outcome.assert_called_once_with(command_id)
+
+    def test_command_cancel_reports_queued_cancellation(self) -> None:
+        command_id = "123e4567-e89b-12d3-a456-426614174000"
+        response = Response(
+            ok=False,
+            payload={
+                "command_id": command_id,
+                "command": "disconnect",
+                "outcome": "cancelled",
+                "error_kind": "command_cancelled",
+            },
+            error="command cancelled before execution",
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.cancel_command.return_value = response
+            with redirect_stderr(StringIO()) as stderr:
+                result = cli.main.main(["command", "cancel", command_id])
+
+        self.assertEqual(result, 70)
+        self.assertIn(f"watchdog command outcome {command_id}", stderr.getvalue())
+        client_cls.return_value.cancel_command.assert_called_once_with(command_id)
+
     def test_disconnect_human_output_documents_cleanup_expectations(self) -> None:
         response = Response(
             ok=True,

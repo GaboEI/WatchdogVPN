@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "cli": "watchdog",
-  "route_count": 121,
-  "command_route_count": 120,
-  "parser_route_count": 113,
+  "route_count": 124,
+  "command_route_count": 123,
+  "parser_route_count": 116,
   "passthrough_route_count": 8,
-  "group_route_count": 17,
-  "leaf_route_count": 104,
+  "group_route_count": 18,
+  "leaf_route_count": 106,
   "routes": [
     {
       "path": [],
@@ -21,6 +21,7 @@
         "disconnect",
         "status",
         "rotate",
+        "command",
         "version",
         "panic",
         "doctor",
@@ -142,6 +143,84 @@
           "cardinality": "flag",
           "choices": [],
           "description": "Force rotation even if conservative checks apply"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ]
+    },
+    {
+      "path": [
+        "command"
+      ],
+      "command": "watchdog command",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Inspect or cancel an identifiable daemon command",
+      "usage": "usage: watchdog command [-h] {outcome,cancel} ...",
+      "help_command": "watchdog command --help",
+      "children": [
+        "outcome",
+        "cancel"
+      ],
+      "arguments": []
+    },
+    {
+      "path": [
+        "command",
+        "outcome"
+      ],
+      "command": "watchdog command outcome",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show the authoritative outcome of a daemon command",
+      "usage": "usage: watchdog command outcome [-h] [--json] command_id",
+      "help_command": "watchdog command outcome --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "command_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Command UUID returned by the daemon"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ]
+    },
+    {
+      "path": [
+        "command",
+        "cancel"
+      ],
+      "command": "watchdog command cancel",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Cancel a queued daemon command before it starts",
+      "usage": "usage: watchdog command cancel [-h] [--json] command_id",
+      "help_command": "watchdog command cancel --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "command_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Command UUID returned by the daemon"
         },
         {
           "name": "--json",

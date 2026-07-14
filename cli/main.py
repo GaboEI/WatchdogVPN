@@ -223,6 +223,7 @@ ROOT_HELP_SECTIONS = (
             ("disconnect", "Disconnect through the WatchdogVPN daemon"),
             ("status", "Show daemon connection status"),
             ("rotate", "Rotate connection through the WatchdogVPN daemon"),
+            ("command", "Inspect or cancel an identifiable daemon command"),
         ),
     ),
     (
@@ -666,6 +667,26 @@ def _build_parser() -> argparse.ArgumentParser:
     rotate_parser.add_argument("--force", action="store_true", help="Force rotation even if conservative checks apply")
     rotate_parser.add_argument("--json", action="store_true", help="Print JSON")
     rotate_parser.set_defaults(handler=_connection_rotate)
+
+    command_parser = subparsers.add_parser(
+        "command", help="Inspect or cancel an identifiable daemon command"
+    )
+    command_subparsers = command_parser.add_subparsers(dest="command_action")
+    command_subparsers.required = True
+
+    command_outcome_parser = command_subparsers.add_parser(
+        "outcome", help="Show the authoritative outcome of a daemon command"
+    )
+    command_outcome_parser.add_argument("command_id", help="Command UUID returned by the daemon")
+    command_outcome_parser.add_argument("--json", action="store_true", help="Print JSON")
+    command_outcome_parser.set_defaults(handler=_command_outcome)
+
+    command_cancel_parser = command_subparsers.add_parser(
+        "cancel", help="Cancel a queued daemon command before it starts"
+    )
+    command_cancel_parser.add_argument("command_id", help="Command UUID returned by the daemon")
+    command_cancel_parser.add_argument("--json", action="store_true", help="Print JSON")
+    command_cancel_parser.set_defaults(handler=_command_cancel)
 
     version_parser = subparsers.add_parser("version", help="Print WatchdogVPN version")
     version_parser.add_argument("--json", action="store_true", help="Print JSON")
@@ -1651,6 +1672,7 @@ def _connection_status(args: argparse.Namespace) -> int:
         return 0 if response.ok else 70
     if not response.ok:
         _error(response.error or "daemon command failed")
+        _print_command_outcome_hint(response)
         for hint in _connection_recovery_hints(response.error or "daemon command failed"):
             print(f"hint: {hint}", file=sys.stderr)
         return 70
@@ -1673,6 +1695,22 @@ def _connection_rotate(args: argparse.Namespace) -> int:
         success_label="Rotation requested",
         command="rotate",
     )
+
+
+def _command_outcome(args: argparse.Namespace) -> int:
+    try:
+        response = WatchdogIPCClient().command_outcome(args.command_id)
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("command outcome", args, exc)
+    return _command_response_output(response, json_output=bool(args.json))
+
+
+def _command_cancel(args: argparse.Namespace) -> int:
+    try:
+        response = WatchdogIPCClient().cancel_command(args.command_id)
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("command cancel", args, exc)
+    return _command_response_output(response, json_output=bool(args.json))
 
 
 def _version(args: argparse.Namespace) -> int:
@@ -2476,6 +2514,7 @@ def _connection_response_output(
         return 0 if response.ok else 70
     if not response.ok:
         _error(response.error or "daemon command failed")
+        _print_command_outcome_hint(response)
         for hint in _connection_recovery_hints(response.error or "daemon command failed"):
             print(f"hint: {hint}", file=sys.stderr)
         return 70
@@ -2488,6 +2527,33 @@ def _connection_response_output(
     if "state" in response.payload:
         _print_connection_state(response.payload["state"], command=command)
     return 0
+
+
+def _command_response_output(response: Response, *, json_output: bool) -> int:
+    if json_output:
+        _print_json(response.to_dict())
+        return 0 if response.ok else 70
+    command_id = response.payload.get("command_id")
+    outcome = response.payload.get("outcome")
+    if not response.ok:
+        _error(response.error or "daemon command failed")
+        _print_command_outcome_hint(response)
+        return 70
+    if isinstance(command_id, str) and isinstance(outcome, str):
+        print(f"Command {command_id}: {outcome}")
+    else:
+        print("Command outcome available")
+    if "state" in response.payload:
+        _print_connection_state(response.payload["state"], command="command outcome")
+    return 0
+
+
+def _print_command_outcome_hint(response: Response) -> None:
+    command_id = response.payload.get("command_id")
+    error_kind = response.payload.get("error_kind")
+    if isinstance(command_id, str) and error_kind in {"command_in_progress", "command_cancelled"}:
+        print(f"command_id: {command_id}", file=sys.stderr)
+        print(f"query: watchdog command outcome {command_id}", file=sys.stderr)
 
 
 def _connection_ipc_error_output(command: str, args: argparse.Namespace, exc: WatchdogIPCError) -> int:
@@ -3309,9 +3375,13 @@ def _node_group_set_enabled(args: argparse.Namespace) -> int:
 
 
 def _node_group_auto_test(args: argparse.Namespace) -> int:
-    response = WatchdogIPCClient().node_group_auto_test(args.group)
+    try:
+        response = WatchdogIPCClient().node_group_auto_test(args.group)
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("node-group auto-test", args, exc)
     if not response.ok:
         _error(response.error or "node-group auto-test failed")
+        _print_command_outcome_hint(response)
         return 70
     data = response.payload
     if args.json:

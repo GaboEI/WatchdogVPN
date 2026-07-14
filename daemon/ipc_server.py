@@ -6,10 +6,17 @@ import socket
 import socketserver
 import stat
 import threading
+import uuid
 from pathlib import Path
 
 from daemon.protocol import (
+    COMMAND_COMMAND_CANCEL,
+    COMMAND_COMMAND_OUTCOME,
     ProtocolError,
+    Request,
+    Response,
+    MUTATING_COMMANDS,
+    command_timeout_seconds,
     decode_request_line,
     encode_event,
     encode_response,
@@ -19,7 +26,6 @@ from daemon.runtime_worker import RuntimeWorker
 
 DEFAULT_SOCKET_MODE = 0o660
 EVENT_POLL_TIMEOUT_SECONDS = 0.2
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 class ThreadingUnixStreamServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
@@ -39,7 +45,7 @@ class _RequestSocketServer(ThreadingUnixStreamServer):
         self,
         socket_path: Path,
         worker: RuntimeWorker,
-        request_timeout_seconds: float,
+        request_timeout_seconds: float | None,
     ) -> None:
         self.socket_path = socket_path
         self.worker = worker
@@ -47,6 +53,11 @@ class _RequestSocketServer(ThreadingUnixStreamServer):
         _prepare_socket_path(socket_path)
         super().__init__(str(socket_path), _RequestHandler)
         os.chmod(socket_path, DEFAULT_SOCKET_MODE)
+
+    def timeout_for(self, command: str) -> float:
+        if self.request_timeout_seconds is not None:
+            return self.request_timeout_seconds
+        return command_timeout_seconds(command)
 
     def server_close(self) -> None:
         try:
@@ -77,15 +88,9 @@ class _RequestHandler(socketserver.StreamRequestHandler):
         for raw_line in self.rfile:
             try:
                 request = decode_request_line(raw_line)
-                response = self.server.worker.submit(
-                    request.command,
-                    request.payload,
-                    timeout=self.server.request_timeout_seconds,
-                )
+                response = self._dispatch(request)
             except ProtocolError as exc:
                 response = encode_response(False, error=str(exc))
-            except queue.Empty:
-                response = encode_response(False, error="daemon runtime command timed out")
             except Exception as exc:
                 response = encode_response(False, error=str(exc))
             else:
@@ -95,6 +100,34 @@ class _RequestHandler(socketserver.StreamRequestHandler):
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 return
+
+    def _dispatch(self, request: Request) -> Response:
+        if request.command == COMMAND_COMMAND_OUTCOME:
+            return self.server.worker.command_outcome(_command_id_from_payload(request.payload))
+        if request.command == COMMAND_COMMAND_CANCEL:
+            return self.server.worker.cancel_command(_command_id_from_payload(request.payload))
+
+        command_id = request.command_id or str(uuid.uuid4())
+        timeout = self.server.timeout_for(request.command)
+        try:
+            return self.server.worker.submit(
+                request.command,
+                request.payload,
+                timeout=timeout,
+                command_id=command_id,
+                deadline_seconds=timeout,
+            )
+        except queue.Empty:
+            if request.command not in MUTATING_COMMANDS:
+                return Response(
+                    ok=False,
+                    payload={"command": request.command, "error_kind": "command_timeout"},
+                    error="daemon runtime command timed out",
+                )
+            # The worker can only acknowledge cancellation before it starts a
+            # network mutation. A running operation remains explicitly
+            # observable by this command ID until its final response exists.
+            return self.server.worker.cancel_command(command_id)
 
 
 class _EventHandler(socketserver.StreamRequestHandler):
@@ -123,7 +156,7 @@ class IPCServer:
         request_socket_path: Path,
         event_socket_path: Path,
         worker: RuntimeWorker,
-        request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        request_timeout_seconds: float | None = None,
     ) -> None:
         self.request_socket_path = request_socket_path
         self.event_socket_path = event_socket_path
@@ -206,3 +239,19 @@ def _unlink_socket(path: Path) -> None:
             path.unlink()
     except FileNotFoundError:
         return
+
+
+def _command_id_from_payload(payload: dict[str, object]) -> str:
+    command_id = payload.get("command_id")
+    if not isinstance(command_id, str):
+        raise ProtocolError("command_id must be a UUID string")
+    # Request.command_id already performs canonical UUID validation for the
+    # envelope. Control-command payload validation is intentionally local
+    # until the full payload schema work in R-20.
+    try:
+        parsed = uuid.UUID(command_id)
+    except ValueError as exc:
+        raise ProtocolError("command_id must be a UUID string") from exc
+    if str(parsed) != command_id.lower():
+        raise ProtocolError("command_id must be a canonical UUID string")
+    return command_id.lower()
