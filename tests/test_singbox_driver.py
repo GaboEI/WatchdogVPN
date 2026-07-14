@@ -1453,6 +1453,38 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_cleans_up_when_tun_profile_egress_is_blackholed(
+        self, popen_mock, generate_mock, binary_mock
+    ) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+        process.pid = 4242
+
+        def blackhole_profile_egress(_target: str) -> bool:
+            process.poll.return_value = 1
+            return False
+
+        with (
+            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
+            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
+            patch.object(SingBoxDriver, "_http_via_proxy", side_effect=blackhole_profile_egress),
+            patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
+            patch.object(self.driver, "_capture_tun_cleanup_state") as capture_mock,
+            patch.object(self.driver, "_cleanup_tun_residue") as cleanup_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+
+        self.assertIsNone(self.driver._active_profile)
+        self.assertIsNone(self.driver._connected_at)
+        self.assertFalse(self.driver._tun_expected)
+        self.assertGreaterEqual(capture_mock.call_count, 1)
+        cleanup_mock.assert_called_once()
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
     def test_connect_with_app_policy_requires_tun_profile_egress(
         self, popen_mock, generate_mock, binary_mock
     ) -> None:
