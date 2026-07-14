@@ -360,8 +360,23 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             time.sleep(0.25)
         return False
 
+    def _cleanup_expected_interface(self) -> bool:
+        """Delete only this generation's exact OpenVPN interface and routes."""
+        if not self._expected_interface:
+            return True
+        if not shutil.which("ip"):
+            return False
+        subprocess.run(
+            ["ip", "link", "delete", "dev", self._expected_interface],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return not self._vpn_interface_active()
+
     def _teardown_children(self) -> bool:
         """Stop both children without discarding evidence on any uncertainty."""
+        openvpn_was_started = self._openvpn_process is not None
         openvpn_stopped = self._stop_process(self._openvpn_process)
         ck_stopped = self._stop_process(self._ck_process)
         if not openvpn_stopped or not ck_stopped:
@@ -369,6 +384,8 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
 
         kill_all_recorded_children(RUNTIME_PREFIX)
         if self._runtime_dir is not None and not recorded_children_terminated(self._runtime_dir):
+            return False
+        if openvpn_was_started and not self._cleanup_expected_interface():
             return False
 
         self._openvpn_process = None

@@ -548,6 +548,53 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         ovpn.terminate.assert_called_once()
         ovpn.kill.assert_called_once()
 
+    @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=False)
+    @patch("drivers.openvpn_cloak_driver.subprocess.run")
+    @patch("drivers.openvpn_cloak_driver.shutil.which", return_value="/usr/bin/ip")
+    def test_cleanup_expected_interface_deletes_only_current_generation(
+        self, _which, run_mock, _active
+    ) -> None:
+        self.driver._expected_interface = "wdtunowned"
+
+        self.assertTrue(self.driver._cleanup_expected_interface())
+
+        run_mock.assert_called_once_with(
+            ["ip", "link", "delete", "dev", "wdtunowned"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    @patch("drivers.openvpn_cloak_driver.shutil.which", return_value=None)
+    def test_cleanup_expected_interface_fails_closed_without_ip_tool(self, _which) -> None:
+        self.driver._expected_interface = "wdtunowned"
+
+        self.assertFalse(self.driver._cleanup_expected_interface())
+
+    @patch.object(OpenVPNCloakDriver, "_cleanup_expected_interface", return_value=False)
+    @patch("drivers.openvpn_cloak_driver.kill_all_recorded_children")
+    def test_disconnect_retains_runtime_when_interface_cleanup_cannot_be_verified(
+        self, _kill_recorded, _cleanup_interface
+    ) -> None:
+        self.driver._ensure_runtime_paths()
+        runtime_dir = self.driver._runtime_dir
+        self.driver._expected_interface = "wdtunowned"
+        ck = Mock()
+        ck.poll.return_value = None
+        ovpn = Mock()
+        ovpn.poll.return_value = None
+        self.driver._ck_process = ck
+        self.driver._openvpn_process = ovpn
+        self.driver._active_profile = self.profile
+
+        self.assertFalse(self.driver.disconnect())
+
+        self.assertIs(self.driver._ck_process, ck)
+        self.assertIs(self.driver._openvpn_process, ovpn)
+        self.assertTrue(runtime_dir.exists())
+        ck.terminate.assert_called_once()
+        ovpn.terminate.assert_called_once()
+
 
 
 if __name__ == "__main__":
