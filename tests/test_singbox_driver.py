@@ -1393,6 +1393,34 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.record_child_process")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_rejects_foreign_proxy_listener(
+        self, popen_mock, record_mock, generate_mock, binary_mock
+    ) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+        process.pid = 4242
+
+        with (
+            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
+            patch.object(
+                SingBoxDriver,
+                "_owned_proxy_runtime_observation",
+                return_value=((), TCPListenerObservation(True, ())),
+            ),
+            patch.object(SingBoxDriver, "_append_log"),
+            patch.object(self.driver, "disconnect") as disconnect_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile))
+
+        generate_mock.assert_called_once()
+        record_mock.assert_called_once()
+        disconnect_mock.assert_called_once_with()
+
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
     def test_connect_disconnects_stale_process_before_starting_new_one(
         self, popen_mock, generate_mock, binary_mock
@@ -1496,6 +1524,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         with (
             patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
+            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", side_effect=mark_child_dead),
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
             patch.object(self.driver, "_capture_tun_cleanup_state") as capture_mock,
@@ -1941,6 +1970,19 @@ table inet sing-box {
         self.assertFalse(state.proxy_active)
         self.assertIn("missing_proxy_listener:tcp/2081", state.runtime_artifacts)
 
+    def test_status_rejects_foreign_proxy_listeners_for_live_process(self) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        state = self._status(ports=())
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertFalse(state.proxy_active)
+        self.assertIn("missing_proxy_listener:tcp/2080", state.runtime_artifacts)
+        self.assertIn("missing_proxy_listener:tcp/2081", state.runtime_artifacts)
+
     @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
     def test_status_reports_unexpected_tun_routing_in_proxy_mode(self, tun_mock) -> None:
         process = unittest.mock.Mock()
@@ -2064,10 +2106,23 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.process.poll.return_value = None
         self.driver._process = self.process
 
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_ok_requires_local_proxy_listener(self, port_mock) -> None:
+    def test_health_check_ok_requires_owned_proxy_listeners(
+        self, port_mock, ownership_mock
+    ) -> None:
         self.assertEqual(self.driver.health_check(), "ok")
         port_mock.assert_called_once_with()
+        ownership_mock.assert_called_once_with()
+
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=False)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_degraded_for_proxy_mode_when_listener_is_foreign(
+        self, port_mock, ownership_mock
+    ) -> None:
+        self.assertEqual(self.driver.health_check(), "degraded")
+        port_mock.assert_called_once_with()
+        ownership_mock.assert_called_once_with()
 
     @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)

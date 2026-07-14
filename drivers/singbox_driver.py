@@ -1451,6 +1451,9 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             self._append_log("health_check: local proxy ports are not responding\n")
             return "degraded"
 
+        if not self._owned_proxy_egress_ready():
+            return "degraded"
+
         if self._tun_expected:
             if not self._wait_for_tun_interface():
                 self._append_log("health_check: TUN interface is not active\n")
@@ -1458,9 +1461,6 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             if not self._wait_for_tun_auto_redirect_ready():
                 self._append_log("health_check: TUN auto_redirect nftables state is not ready\n")
                 return "degraded"
-            if not self._owned_proxy_egress_ready():
-                return "degraded"
-            return "ok"
 
         return "ok"
 
