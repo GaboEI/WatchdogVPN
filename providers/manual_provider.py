@@ -80,40 +80,51 @@ class ManualProvider(BaseProvider):
         if not profiles:
             raise ParseError("no profiles found in manual input")
 
-        saved: list[Profile] = []
         for profile in profiles:
             try:
                 validate_profile_endpoint(profile)
             except EndpointPolicyError as exc:
                 raise ParseError(str(exc)) from exc
+
+        for profile in profiles:
             profile.source = ProfileSource.MANUAL
             profile.provider_id = None
-            duplicate = self._duplicate_profile(profile)
-            if duplicate is not None:
-                raise ParseError(f"profile already exists: {duplicate.id}")
-            profile.id = self._unique_profile_id(profile.id)
             profile.in_rotation_pool = bool(self.rotation_prompt(profile))
-            self.profile_store.add(profile)
-            saved.append(profile)
+
+        def commit(current: list[Profile]) -> tuple[list[Profile], list[Profile]]:
+            existing_by_fingerprint = {
+                profile_fingerprint(profile): profile
+                for profile in current
+                if profile.source == ProfileSource.MANUAL
+            }
+            batch_fingerprints: set[str] = set()
+            for profile in profiles:
+                fingerprint = profile_fingerprint(profile)
+                duplicate = existing_by_fingerprint.get(fingerprint)
+                if duplicate is not None:
+                    raise ParseError(f"profile already exists: {duplicate.id}")
+                if fingerprint in batch_fingerprints:
+                    raise ParseError("manual import contains duplicate profiles")
+                batch_fingerprints.add(fingerprint)
+
+            used_ids = {profile.id for profile in current}
+            saved: list[Profile] = []
+            for profile in profiles:
+                profile.id = self._unique_profile_id_from_used_ids(profile.id, used_ids)
+                used_ids.add(profile.id)
+                saved.append(profile)
+            return [*current, *saved], saved
+
+        saved = self.profile_store.update_atomically(commit)
 
         self._last_imported = saved
         return saved[0]
 
-    def _duplicate_profile(self, profile: Profile) -> Profile | None:
-        fingerprint = profile_fingerprint(profile)
-        for existing in self.profile_store.list():
-            if (
-                existing.source == ProfileSource.MANUAL
-                and profile_fingerprint(existing) == fingerprint
-            ):
-                return existing
-        return None
-
-    def _unique_profile_id(self, requested_id: str) -> str:
+    def _unique_profile_id_from_used_ids(self, requested_id: str, used_ids: set[str]) -> str:
         base = (requested_id or "manual-profile").strip() or "manual-profile"
         candidate = base
         suffix = 2
-        while self.profile_store.get(candidate) is not None:
+        while candidate in used_ids:
             candidate = f"{base}-{suffix}"
             suffix += 1
         return candidate

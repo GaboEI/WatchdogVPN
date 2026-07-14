@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from unittest.mock import patch
 
 from config.profile_store import ProfileStore
@@ -247,6 +249,99 @@ class ManualProviderTests(unittest.TestCase):
             stored = ProfileStore(store_path).list()
             self.assertEqual([p.protocol for p in stored], [ProtocolType.SHADOWSOCKS, ProtocolType.HTTP])
             self.assertEqual([p.id for p in stored], ["ss-1", "http-1"])
+
+    def test_multi_profile_duplicate_later_item_leaves_store_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "profiles.json"
+            provider = self._provider(store_path)
+            ProfileStore(store_path).add(
+                Profile(
+                    id="existing",
+                    name="existing",
+                    protocol=ProtocolType.VLESS,
+                    config={"host": "example.com", "port": 443, "uuid": "existing-uuid"},
+                    source=ProfileSource.MANUAL,
+                )
+            )
+            before = store_path.read_bytes()
+
+            with self.assertRaisesRegex(ParseError, "manual import contains duplicate profiles"):
+                provider.from_text(
+                    "\n".join(
+                        (
+                            "vless://duplicate-uuid@duplicate.example.com:443?encryption=none#duplicate",
+                            "vless://duplicate-uuid@duplicate.example.com:443?encryption=none#duplicate",
+                        )
+                    )
+                )
+
+            self.assertEqual(store_path.read_bytes(), before)
+            self.assertEqual([profile.id for profile in ProfileStore(store_path).list()], ["existing"])
+            self.assertEqual(provider.last_imported, [])
+
+    def test_multi_profile_storage_failure_leaves_store_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "profiles.json"
+            store = ProfileStore(store_path)
+            provider = ManualProvider(store, rotation_prompt=lambda _profile: False)
+            store.add(
+                Profile(
+                    id="existing",
+                    name="existing",
+                    protocol=ProtocolType.VLESS,
+                    config={"host": "example.com", "port": 443, "uuid": "existing-uuid"},
+                    source=ProfileSource.MANUAL,
+                )
+            )
+            before = store_path.read_bytes()
+
+            with patch.object(store, "_save_raw", side_effect=OSError("injected storage failure")):
+                with self.assertRaisesRegex(OSError, "injected storage failure"):
+                    provider.from_text(
+                        "\n".join(
+                            (
+                                "vless://first-uuid@first.example.com:443?encryption=none#first",
+                                "vless://second-uuid@second.example.com:443?encryption=none#second",
+                            )
+                        )
+                    )
+
+            self.assertEqual(store_path.read_bytes(), before)
+            self.assertEqual([profile.id for profile in ProfileStore(store_path).list()], ["existing"])
+            self.assertEqual(provider.last_imported, [])
+
+    def test_concurrent_multi_profile_imports_keep_each_batch_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "profiles.json"
+            barrier = Barrier(2)
+
+            def import_batch(prefix: str) -> list[str]:
+                provider = self._provider(store_path)
+                barrier.wait()
+                provider.from_text(
+                    "\n".join(
+                        (
+                            f"vless://{prefix}-one@example.com:443?encryption=none#shared",
+                            f"vless://{prefix}-two@example.com:443?encryption=none#shared",
+                        )
+                    )
+                )
+                return [profile.config["uuid"] for profile in provider.last_imported]
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                imported = list(executor.map(import_batch, ("alpha", "beta")))
+
+            stored = ProfileStore(store_path).list()
+            stored_uuids = [profile.config["uuid"] for profile in stored]
+            self.assertEqual(len(stored), 4)
+            self.assertEqual(set(stored_uuids), {"alpha-one", "alpha-two", "beta-one", "beta-two"})
+            self.assertEqual({tuple(batch) for batch in imported}, {
+                ("alpha-one", "alpha-two"),
+                ("beta-one", "beta-two"),
+            })
+            for batch in imported:
+                positions = sorted(stored_uuids.index(uuid) for uuid in batch)
+                self.assertEqual(positions[1] - positions[0], 1)
 
     def test_from_file_reads_and_saves_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
