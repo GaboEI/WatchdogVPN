@@ -4,6 +4,7 @@ from typing import Any
 
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
+from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 
 
 _TYPE_TO_PROTOCOL: dict[str, ProtocolType] = {
@@ -158,15 +159,18 @@ def parse_clash_yaml(text: str) -> list[Profile]:
         name = _profile_name(proxy, protocol)
         config = dict(proxy)
         config.setdefault("raw", proxy)
-        profiles.append(
-            Profile(
-                id=name,
-                name=name,
-                protocol=protocol,
-                config=config,
-                source=ProfileSource.MANUAL,
-            )
+        profile = Profile(
+            id=name,
+            name=name,
+            protocol=protocol,
+            config=config,
+            source=ProfileSource.MANUAL,
         )
+        try:
+            validate_profile_endpoint(profile)
+        except EndpointPolicyError as exc:
+            raise ParseError(str(exc)) from exc
+        profiles.append(profile)
     if not profiles:
         raise ParseError("Clash YAML contains no supported profiles")
     return profiles

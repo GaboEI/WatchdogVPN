@@ -6,6 +6,7 @@ from typing import Any
 
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
+from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 
 
 _KEYVAL_RE = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_-]+)\s*:\s*(?P<value>.*?)\s*$")
@@ -86,6 +87,14 @@ def _bandwidth_mbps(value: Any) -> int | None:
     return int(match.group(0))
 
 
+def _validated_profile(profile: Profile) -> Profile:
+    try:
+        validate_profile_endpoint(profile)
+    except EndpointPolicyError as exc:
+        raise ParseError(str(exc)) from exc
+    return profile
+
+
 def parse_hysteria2_yaml(text: str) -> Profile:
     data = _parse_simple_yaml(text)
     if "server" not in data or "auth" not in data:
@@ -120,10 +129,10 @@ def parse_hysteria2_yaml(text: str) -> Profile:
         config["down_mbps"] = down_mbps
 
     name = str(data.get("name") or host or "hysteria2")
-    return Profile(
+    return _validated_profile(Profile(
         id=name,
         name=name,
         protocol=ProtocolType.HYSTERIA2,
         config=config,
         source=ProfileSource.MANUAL,
-    )
+    ))

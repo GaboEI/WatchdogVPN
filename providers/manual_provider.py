@@ -22,6 +22,7 @@ from parsers import (
     parse_wg_config,
 )
 from providers.base import BaseProvider
+from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_profile
 
 RotationPrompt = Callable[[Profile], bool]
@@ -81,6 +82,10 @@ class ManualProvider(BaseProvider):
 
         saved: list[Profile] = []
         for profile in profiles:
+            try:
+                validate_profile_endpoint(profile)
+            except EndpointPolicyError as exc:
+                raise ParseError(str(exc)) from exc
             profile.source = ProfileSource.MANUAL
             profile.provider_id = None
             duplicate = self._duplicate_profile(profile)

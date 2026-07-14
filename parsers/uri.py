@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import base64
-import ipaddress
 import json
 from typing import Any
 from urllib.parse import parse_qs, urlparse, unquote
 
 from models.profile import Profile, ProfileSource, ProtocolType
+from parsers.endpoint_policy import EndpointPolicyError, canonicalize_remote_endpoint
 
 
 class ParseError(ValueError):
@@ -60,21 +60,16 @@ def _safe_port(parsed, label: str) -> int | None:
 
 
 def _is_loopback_host(host: str) -> bool:
-    normalized = host.strip().lower().rstrip(".")
-    if normalized in LOCAL_HOSTNAMES:
-        return True
     try:
-        return ipaddress.ip_address(normalized).is_loopback
-    except ValueError:
-        return False
-
+        canonicalize_remote_endpoint(host)
+    except EndpointPolicyError:
+        return True
+    return False
 
 def _reject_loopback_host(host: str, label: str, allow_local: bool = False) -> None:
-    if allow_local:
-        return
     if _is_loopback_host(host):
         raise ParseError(
-            f"{label} URI uses a local endpoint; add allow_local=true only for intentional local testing"
+            f"{label} URI endpoint is not a globally routable address"
         )
 
 

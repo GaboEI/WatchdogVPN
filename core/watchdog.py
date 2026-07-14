@@ -39,6 +39,7 @@ from dns.models import DNSPolicy
 from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from parsers.endpoint_policy import EndpointPolicyError, profile_endpoint_host, validate_profile_endpoint
 from node_groups.models import NodeGroup, NodeGroupSelectionMode, group_target
 from node_groups.resolver import resolve_candidates as resolve_node_group_candidates
 from node_groups.scoring import rank_candidates
@@ -55,6 +56,10 @@ from rules.ruleset_lifecycle import RuleSetLifecycleManager
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+class EndpointPolicyConnectionError(RuntimeError):
+    """A profile endpoint failed mandatory pre-connection validation."""
 MANAGED_DRIVER_TYPES = (
     AmneziaWGDriver,
     OpenVPNCloakDriver,
@@ -702,6 +707,11 @@ class WatchdogRuntime:
         unsupported = self._requested_policy_capabilities() - policy_capabilities
         if unsupported:
             raise UnsupportedDriverPolicyError(driver_name, unsupported)
+        if profile_endpoint_host(profile) is not None:
+            try:
+                validate_profile_endpoint(profile, require_resolution=True)
+            except EndpointPolicyError as exc:
+                raise EndpointPolicyConnectionError(f"endpoint policy rejected connection: {exc}") from exc
         driver = self._candidate_driver_for_profile(profile)
         options = self._connect_options()
         management_preflight = getattr(driver, "preflight_management_path", None)
@@ -966,6 +976,10 @@ class WatchdogRuntime:
         except ManagementPathSafetyError as exc:
             LOGGER.error("watchdog_reconnect_management_path_unsafe error=%s", exc)
             self._record_last_failure("management_path_unprotected")
+            return False
+        except EndpointPolicyConnectionError as exc:
+            LOGGER.error("watchdog_reconnect_endpoint_policy_rejected error=%s", exc)
+            self._record_last_failure("endpoint_policy_rejected")
             return False
         try:
             driver = self._activate_driver(selected_driver)

@@ -5,6 +5,7 @@ from typing import Any
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_config
 from parsers.uri import ParseError
+from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 
 
 
@@ -21,6 +22,14 @@ def _profile_name(remote_host: str | None, remote_port: str | None) -> str:
     if remote_host:
         return f"openvpn-{remote_host}"
     return "openvpn"
+
+
+def _validated_profile(profile: Profile) -> Profile:
+    try:
+        validate_profile_endpoint(profile)
+    except EndpointPolicyError as exc:
+        raise ParseError(str(exc)) from exc
+    return profile
 
 
 def parse_openvpn_config(text: str) -> Profile:
@@ -61,10 +70,10 @@ def parse_openvpn_config(text: str) -> Profile:
         config["dev"] = dev
 
     name = _profile_name(remote_host, remote_port)
-    return Profile(
+    return _validated_profile(Profile(
         id=name,
         name=name,
         protocol=ProtocolType.OPENVPN,
         config=config,
         source=ProfileSource.MANUAL,
-    )
+    ))

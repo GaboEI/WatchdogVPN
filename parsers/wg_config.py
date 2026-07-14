@@ -5,6 +5,7 @@ from typing import Any
 
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
+from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 
 
 _SECTION_RE = re.compile(r"^\[(?P<section>[^\]]+)\]\s*$")
@@ -47,6 +48,14 @@ def _is_amneziawg(sections: dict[str, dict[str, str]]) -> bool:
     peer = sections.get("peer", {})
     keys = {k.lower() for k in interface} | {k.lower() for k in peer}
     return bool(keys & _OBFUSCATION_KEYS)
+
+
+def _validated_profile(profile: Profile) -> Profile:
+    try:
+        validate_profile_endpoint(profile)
+    except EndpointPolicyError as exc:
+        raise ParseError(str(exc)) from exc
+    return profile
 
 
 def parse_wg_config(text: str) -> Profile:
@@ -95,10 +104,10 @@ def parse_wg_config(text: str) -> Profile:
         config["persistent_keepalive"] = peer["persistentkeepalive"]
 
     name = interface.get("address") or endpoint
-    return Profile(
+    return _validated_profile(Profile(
         id=str(name),
         name=str(name),
         protocol=protocol,
         config=config,
         source=ProfileSource.MANUAL,
-    )
+    ))

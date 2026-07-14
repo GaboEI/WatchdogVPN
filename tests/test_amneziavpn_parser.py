@@ -26,7 +26,7 @@ _CLOAK_CONF = {
     "NumConn": 1,
     "ProxyMethod": "openvpn",
     "PublicKey": "TEST-ONLY-NOT-A-PUBLIC-KEY",
-    "RemoteHost": "192.0.2.10",
+    "RemoteHost": "1.1.1.1",
     "RemotePort": "8443",
     "ServerName": "vpn.example.invalid",
     "StreamTimeout": 300,
@@ -65,7 +65,7 @@ _MINIMAL_PAYLOAD = {
     "description": "test-server",
     "dns1": "192.0.2.53",
     "dns2": "198.51.100.53",
-    "hostName": "192.0.2.10",
+    "hostName": "1.1.1.1",
     "nameOverriddenByUser": False,
 }
 
@@ -108,7 +108,7 @@ class ParseAmneziaVpnTests(unittest.TestCase):
     def test_profile_has_cloak_config(self) -> None:
         p = parse_amneziavpn(_VALID_VPN)[0]
         ck = p.config["cloak_config"]
-        self.assertEqual(ck["RemoteHost"], "192.0.2.10")
+        self.assertEqual(ck["RemoteHost"], "1.1.1.1")
         self.assertEqual(ck["RemotePort"], "8443")
         self.assertEqual(ck["ServerName"], "vpn.example.invalid")
         self.assertEqual(ck["UID"], "TEST-ONLY-NOT-A-UID")
@@ -134,7 +134,7 @@ class ParseAmneziaVpnTests(unittest.TestCase):
 
     def test_profile_host_stored(self) -> None:
         p = parse_amneziavpn(_VALID_VPN)[0]
-        self.assertEqual(p.config["host"], "192.0.2.10")
+        self.assertEqual(p.config["host"], "1.1.1.1")
 
     def test_profile_client_id_stored(self) -> None:
         p = parse_amneziavpn(_VALID_VPN)[0]
@@ -218,7 +218,7 @@ class ParseAmneziaVpnTests(unittest.TestCase):
         self.assertEqual(len(profiles), 1)
         p = profiles[0]
         self.assertEqual(p.protocol, ProtocolType.OPENVPN_CLOAK)
-        self.assertEqual(p.config["cloak_config"]["RemoteHost"], "192.0.2.10")
+        self.assertEqual(p.config["cloak_config"]["RemoteHost"], "1.1.1.1")
         self.assertEqual(p.config["cloak_config"]["RemotePort"], "8443")
         self.assertEqual(p.config["cloak_config"]["LocalPort"], "1194")
         self.assertIn("-----BEGIN CERTIFICATE-----", p.config["raw_config"])

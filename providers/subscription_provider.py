@@ -12,6 +12,7 @@ from config.provider_store import DuplicateProviderError, ProviderLimitError, Pr
 from models.profile import Profile, ProfileSource, profile_fingerprint
 from models.provider import Provider, normalized_provider_url
 from parsers import ParseError, fetch_and_parse, fetch_subscription
+from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 from providers.base import BaseProvider
 
 SubscriptionFetcher = Callable[[str], list[Profile]]
@@ -204,6 +205,10 @@ class SubscriptionProvider(BaseProvider):
             for profile in existing_profiles or []
         }
         for index, profile in enumerate(profiles, start=1):
+            try:
+                validate_profile_endpoint(profile)
+            except EndpointPolicyError as exc:
+                raise ParseError(str(exc)) from exc
             fingerprint = profile_fingerprint(profile)
             if fingerprint in used_fingerprints:
                 continue

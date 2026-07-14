@@ -53,15 +53,14 @@ class UriParserTests(unittest.TestCase):
             parse_uri("vless://uuid@example.com:99999?encryption=none")
 
     def test_remote_uri_rejects_loopback_endpoint(self) -> None:
-        with self.assertRaisesRegex(ParseError, "local endpoint"):
+        with self.assertRaisesRegex(ParseError, "globally routable"):
             parse_uri("vless://uuid@127.0.0.1:443?encryption=none")
-        with self.assertRaisesRegex(ParseError, "local endpoint"):
+        with self.assertRaisesRegex(ParseError, "globally routable"):
             parse_uri("trojan://secret@localhost:443?security=tls")
 
-    def test_remote_uri_allows_explicit_local_testing(self) -> None:
-        profile = parse_uri("vless://uuid@127.0.0.1:443?encryption=none&allow_local=true")
-        self.assertEqual(profile.protocol, ProtocolType.VLESS)
-        self.assertEqual(profile.config["host"], "127.0.0.1")
+    def test_remote_uri_does_not_trust_untrusted_allow_local(self) -> None:
+        with self.assertRaisesRegex(ParseError, "globally routable"):
+            parse_uri("vless://uuid@127.0.0.1:443?encryption=none&allow_local=true")
 
     def test_parse_uri_decodes_fragment_name(self) -> None:
         profile = parse_uri("vless://uuid@example.com:443?encryption=none#Austria%2C%20Vienna%20%5B3GBIT%5D")

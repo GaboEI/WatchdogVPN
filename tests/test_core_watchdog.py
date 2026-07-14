@@ -1236,7 +1236,7 @@ class WatchdogCoreTests(unittest.TestCase):
             name="Runtime VLESS",
             protocol=ProtocolType.VLESS,
             config={
-                "server": "vless.example.com",
+                "server": "1.1.1.1",
                 "port": 443,
                 "uuid": "00000000-0000-4000-8000-000000000001",
                 "security": "none",
@@ -2549,7 +2549,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         driver = FakeDriver()
         driver.health_check_mock.return_value = "down"
         kill_switch = FakeKillSwitch(active=False)
-        self.profile.config["host"] = "203.0.113.10"
+        self.profile.config["host"] = "1.1.1.1"
         self.state_manager.set("active_profile_id", self.profile.id)
         self.profile_store.add(self.profile)
 
@@ -2580,7 +2580,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "kill_switch_active")
         self.assertEqual(kill_switch.apply_atomic_mock.call_count, 2)
-        self.assertEqual(kill_switch.allowed_endpoints, ("203.0.113.10",))
+        self.assertEqual(kill_switch.allowed_endpoints, ("1.1.1.1",))
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))

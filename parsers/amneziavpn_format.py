@@ -25,6 +25,7 @@ from typing import Any
 
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
+from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_config
 
 _VPN_PREFIX = "vpn://"
@@ -34,6 +35,14 @@ _CONTAINER_PARSERS: dict[str, str] = {
     "amnezia-openvpn-cloak": "openvpn_cloak",
     "amnezia-awg2": "amneziawg",
 }
+
+
+def _validated_profile(profile: Profile) -> Profile:
+    try:
+        validate_profile_endpoint(profile)
+    except EndpointPolicyError as exc:
+        raise ParseError(str(exc)) from exc
+    return profile
 
 
 def is_amneziavpn_format(text: str) -> bool:
@@ -132,7 +141,7 @@ def _parse_openvpn_cloak(
     profile_id = f"oc-{host}-{client_id[:8]}" if client_id else f"oc-{host}"
     name = description or f"openvpn-cloak-{host}"
 
-    return Profile(
+    return _validated_profile(Profile(
         id=profile_id,
         name=name,
         protocol=ProtocolType.OPENVPN_CLOAK,
@@ -144,7 +153,7 @@ def _parse_openvpn_cloak(
             "client_id": client_id,
         },
         source=ProfileSource.MANUAL,
-    )
+    ))
 
 
 def _parse_amneziawg(
@@ -166,7 +175,7 @@ def _parse_amneziawg(
     profile_id = f"awg-{host}-{client_id[:8]}" if client_id else f"awg-{host}"
     name = description or f"amneziawg-{host}"
 
-    return Profile(
+    return _validated_profile(Profile(
         id=profile_id,
         name=name,
         protocol=ProtocolType.AMNEZIAWG,
@@ -177,7 +186,7 @@ def _parse_amneziawg(
             "port": awg_config.get("port") or awg_section.get("port"),
         },
         source=ProfileSource.MANUAL,
-    )
+    ))
 
 
 def parse_amneziavpn(text: str) -> list[Profile]:
