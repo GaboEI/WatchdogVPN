@@ -134,6 +134,9 @@ restart_watchdogvpn_service_after_runtime_update() {
     return 1
   fi
 
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint restart
+  fi
   run_step sudo systemctl restart watchdogvpn.service
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     info "daemon process-generation change will be verified during a real update"
@@ -152,6 +155,21 @@ restart_watchdogvpn_service_after_runtime_update() {
   fi
   WATCHDOGVPN_DAEMON_PID_AFTER_UPDATE="$current_pid"
   ok "daemon runtime refreshed: pid=$WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE -> $current_pid"
+}
+
+restore_watchdogvpn_service_after_runtime_rollback() {
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    return 0
+  fi
+  run_step sudo systemctl daemon-reload || return 1
+  if [[ "${WATCHDOGVPN_DAEMON_WAS_ACTIVE:-0}" == "1" ]]; then
+    run_step sudo systemctl restart watchdogvpn.service || return 1
+    systemctl is-active --quiet watchdogvpn.service || return 1
+    return 0
+  fi
+  if systemctl is-active --quiet watchdogvpn.service 2>/dev/null; then
+    run_step sudo systemctl stop watchdogvpn.service || return 1
+  fi
 }
 
 enable_watchdogvpn_service_unless_hibernating() {
@@ -225,9 +243,12 @@ verify_systemd_units() {
 }
 
 install_systemd_units() {
-  local unit
+  local unit runtime_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint unit
+  fi
   for unit in "${SYSTEMD_UNITS[@]}"; do
-    install_root_file "$ROOT_DIR/systemd/$unit" "/etc/systemd/system/$unit" 0644
+    install_root_file "$runtime_root/systemd/$unit" "/etc/systemd/system/$unit" 0644
   done
 }
 

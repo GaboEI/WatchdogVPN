@@ -56,11 +56,16 @@ remove_legacy_runtime_files() {
 }
 
 install_runtime_files() {
+  local runtime_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_prepare_candidate "$ROOT_DIR"
+    runtime_root="$WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT"
+  fi
   create_system_user_no_home watchdogvpn
   add_installing_user_to_watchdogvpn_group
   create_root_dir /var/log/myvpn 0755
 
-  create_config_if_missing "$ROOT_DIR/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
+  create_config_if_missing "$runtime_root/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
   install_config_defaults
   install_sysctl_defaults
   migrate_watchdogvpn_shared_state
@@ -73,25 +78,25 @@ install_runtime_files() {
   remove_legacy_systemd_units
   remove_legacy_runtime_files
 
-  install_root_file "$ROOT_DIR/bin/no_vpn" /usr/local/bin/no_vpn 0755
-  install_root_file "$ROOT_DIR/bin/vpn_dns_rescue" /usr/local/bin/vpn_dns_rescue 0755
-  install_root_file "$ROOT_DIR/bin/vpn_domain_bypass_rescue" /usr/local/bin/vpn_domain_bypass_rescue 0755
-  install_root_file "$ROOT_DIR/bin/watchdog_panic" /usr/local/bin/watchdog_panic 0755
-  install_root_file "$ROOT_DIR/bin/vpn_backend" /usr/local/bin/vpn_backend 0755
-  install_root_file "$ROOT_DIR/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755
-  install_root_file "$ROOT_DIR/bin/vpn_notify" /usr/local/bin/vpn_notify 0755
-  install_root_file "$ROOT_DIR/bin/vpn_truth_check" /usr/local/bin/vpn_truth_check 0755
-  install_root_file "$ROOT_DIR/bin/vpnctl" /usr/local/bin/vpnctl 0755
+  install_root_file "$runtime_root/bin/no_vpn" /usr/local/bin/no_vpn 0755
+  install_root_file "$runtime_root/bin/vpn_dns_rescue" /usr/local/bin/vpn_dns_rescue 0755
+  install_root_file "$runtime_root/bin/vpn_domain_bypass_rescue" /usr/local/bin/vpn_domain_bypass_rescue 0755
+  install_root_file "$runtime_root/bin/watchdog_panic" /usr/local/bin/watchdog_panic 0755
+  install_root_file "$runtime_root/bin/vpn_backend" /usr/local/bin/vpn_backend 0755
+  install_root_file "$runtime_root/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755
+  install_root_file "$runtime_root/bin/vpn_notify" /usr/local/bin/vpn_notify 0755
+  install_root_file "$runtime_root/bin/vpn_truth_check" /usr/local/bin/vpn_truth_check 0755
+  install_root_file "$runtime_root/bin/vpnctl" /usr/local/bin/vpnctl 0755
   install_python_module_wrapper /usr/local/bin/watchdog cli.main
-  install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
+  install_root_file "$runtime_root/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
   install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main
 
-  install_root_file "$ROOT_DIR/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
+  install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
 
-  install_user_file "$ROOT_DIR/tui/VPN" "$HOME/.local/bin/VPN" 0755
+  install_user_file "$runtime_root/tui/VPN" "$HOME/.local/bin/VPN" 0755
   remove_user_path "$HOME/.local/bin/watchdogvpn"
-  install_user_dir "$ROOT_DIR/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"
-  install_root_file "$ROOT_DIR/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
+  install_user_dir "$runtime_root/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"
+  install_root_file "$runtime_root/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
   install_systemd_units
 }
 
@@ -101,7 +106,8 @@ install_runtime_files() {
 # connect time (see drivers/amneziawg_driver.py), so it is applied once
 # here, at install/update time, as root, outside the daemon's sandbox.
 install_sysctl_defaults() {
-  install_root_file "$ROOT_DIR/etc/sysctl.d/99-watchdogvpn.conf" /etc/sysctl.d/99-watchdogvpn.conf 0644
+  local runtime_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
+  install_root_file "$runtime_root/etc/sysctl.d/99-watchdogvpn.conf" /etc/sysctl.d/99-watchdogvpn.conf 0644
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] sudo sysctl -p /etc/sysctl.d/99-watchdogvpn.conf\n'
     return 0
@@ -125,23 +131,50 @@ install_python_module_wrapper() {
 }
 
 install_python_package_tree() {
-  local dest="${1:-$PYTHON_PACKAGE_DIR}" package item
+  local dest="${1:-$PYTHON_PACKAGE_DIR}" package item stage source_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] install Python runtime packages to %s\n' "$dest"
-    record_installed_version
+    return 0
+  fi
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint disk
+    stage="$(sudo mktemp -d "$(dirname "$dest")/.${dest##*/}.candidate.XXXXXX")" || return 1
+    runtime_transaction_register_cleanup_path "$stage"
+    for package in "${PYTHON_RUNTIME_PACKAGES[@]}"; do
+      runtime_transaction_checkpoint copy
+      run_step sudo cp -a "$source_root/$package" "$stage/"
+    done
+    for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}"; do
+      runtime_transaction_checkpoint copy
+      run_step sudo cp -a "$source_root/$item" "$stage/"
+    done
+    for item in "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"; do
+      runtime_transaction_checkpoint copy
+      run_step sudo cp -a "$source_root/$item" "$stage/"
+    done
+    runtime_transaction_checkpoint permission
+    run_step sudo chown -R root:root "$stage"
+    run_step sudo find "$stage" -type d -exec chmod 0755 {} +
+    run_step sudo find "$stage" -type f -exec chmod 0644 {} +
+    for item in "${PYTHON_RUNTIME_SUPPORT_EXECUTABLES[@]}"; do
+      run_step sudo chmod 0755 "$stage/$item"
+    done
+    run_step sudo find "$stage/bin" "$stage/sbin" -type f -exec chmod 0755 {} +
+    _validate_staged_python_runtime "$stage"
+    runtime_transaction_replace_directory_from_stage "$stage" "$dest"
     return 0
   fi
   backup_path "$dest"
   run_step sudo rm -rf -- "$dest"
   run_step sudo install -d -m 0755 -o root -g root "$dest"
   for package in "${PYTHON_RUNTIME_PACKAGES[@]}"; do
-    run_step sudo cp -a "$ROOT_DIR/$package" "$dest/"
+    run_step sudo cp -a "$source_root/$package" "$dest/"
   done
   for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}"; do
-    run_step sudo cp -a "$ROOT_DIR/$item" "$dest/"
+    run_step sudo cp -a "$source_root/$item" "$dest/"
   done
   for item in "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"; do
-    run_step sudo cp -a "$ROOT_DIR/$item" "$dest/"
+    run_step sudo cp -a "$source_root/$item" "$dest/"
   done
   run_step sudo chown -R root:root "$dest"
   run_step sudo find "$dest" -type d -exec chmod 0755 {} +
@@ -150,7 +183,23 @@ install_python_package_tree() {
     run_step sudo chmod 0755 "$dest/$item"
   done
   run_step sudo find "$dest/bin" "$dest/sbin" -type f -exec chmod 0755 {} +
-  record_installed_version
+}
+
+_validate_staged_python_runtime() {
+  local stage="$1" package item
+  for package in "${PYTHON_RUNTIME_PACKAGES[@]}"; do
+    [[ -d "$stage/$package" ]] || {
+      printf 'ERROR: staged Python runtime is missing package: %s\n' "$package" >&2
+      return 1
+    }
+  done
+  for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}" "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"; do
+    [[ -e "$stage/$item" ]] || {
+      printf 'ERROR: staged Python runtime is missing support path: %s\n' "$item" >&2
+      return 1
+    }
+  done
+  python3 -m compileall -q "$stage"
 }
 
 migrate_watchdogvpn_shared_state() {
@@ -419,6 +468,10 @@ smoke_test_watchdogvpn_daemon() {
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] smoke test watchdogvpn.service and daemon IPC status\n'
     return 0
+  fi
+
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint smoke
   fi
 
   if [[ "${ENABLE_VPN_AUTOMATION:-1}" != "1" ]]; then

@@ -18,6 +18,7 @@ STUB_ACTIVE=0
 STUB_MAIN_PID=0
 STUB_RESTART_CALLED=0
 STUB_RESTART_PID=0
+STUB_STOP_CALLED=0
 systemctl() {
   case "$1" in
     is-active)
@@ -30,6 +31,11 @@ systemctl() {
       STUB_RESTART_CALLED=1
       STUB_MAIN_PID="$STUB_RESTART_PID"
       STUB_ACTIVE=1
+      ;;
+    stop)
+      STUB_STOP_CALLED=1
+      STUB_ACTIVE=0
+      STUB_MAIN_PID=0
       ;;
     *)
       return 0
@@ -107,6 +113,31 @@ capture_watchdogvpn_service_state >/dev/null
 restart_watchdogvpn_service_after_runtime_update >/dev/null
 if ((STUB_RESTART_CALLED != 0)); then
   printf 'FAIL: an inactive pre-update daemon must not be force-restarted\n' >&2
+  exit 1
+fi
+
+# A failed update must restore the prior daemon generation after the runtime
+# files and units have been rolled back. Conversely, an originally inactive
+# service must not remain accidentally started by a failed update.
+INSTALL_DRY_RUN=0
+STUB_ACTIVE=1
+STUB_MAIN_PID=888
+STUB_RESTART_PID=889
+STUB_RESTART_CALLED=0
+WATCHDOGVPN_DAEMON_WAS_ACTIVE=1
+restore_watchdogvpn_service_after_runtime_rollback >/dev/null
+if ((STUB_RESTART_CALLED != 1 || STUB_ACTIVE != 1)); then
+  printf 'FAIL: rollback must restart the prior active daemon generation\n' >&2
+  exit 1
+fi
+
+STUB_ACTIVE=1
+STUB_MAIN_PID=990
+STUB_STOP_CALLED=0
+WATCHDOGVPN_DAEMON_WAS_ACTIVE=0
+restore_watchdogvpn_service_after_runtime_rollback >/dev/null
+if ((STUB_STOP_CALLED != 1 || STUB_ACTIVE != 0)); then
+  printf 'FAIL: rollback must restore an originally inactive daemon state\n' >&2
   exit 1
 fi
 

@@ -51,7 +51,7 @@ assert_install_order() {
   fi
 }
 
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700' "domain bypass helper must be installed root-only executable"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700' "domain bypass helper must be installed root-only executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_config_defaults' "runtime install must create persistent config defaults"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'migrate_watchdogvpn_shared_state' "runtime install must migrate shared WatchdogVPN state"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_package_tree' "runtime install must install Python packages for daemon and v2 CLI wrappers"
@@ -76,10 +76,10 @@ if grep -Fq 'create_root_dir /var/lib/watchdogvpn 0755' "$ROOT_DIR/lib/runtime.s
   printf 'FAIL: runtime install must not pre-create /var/lib/watchdogvpn as root-owned state\n' >&2
   exit 1
 fi
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/vpn_backend" /usr/local/bin/vpn_backend 0755' "backend helper must be installed as user command"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755' "manual-off state helper must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/bin/vpn_backend" /usr/local/bin/vpn_backend 0755' "backend helper must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755' "manual-off state helper must be installed as user command"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdog cli.main' "v2 watchdog CLI wrapper must be installed with checkout PYTHONPATH"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755' "watchdogvpn CLI must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755' "watchdogvpn CLI must be installed as user command"
 assert_contains "$ROOT_DIR/bin/watchdogvpn" 'watchdogvpn is deprecated; use watchdog' "watchdogvpn must identify itself as a deprecated compatibility alias"
 assert_contains "$ROOT_DIR/bin/watchdogvpn" 'exec "$canonical_cli" maintenance "$@"' "legacy-only commands must route through the canonical maintenance namespace"
 assert_contains "$ROOT_DIR/bin/watchdogvpn" 'WATCHDOGVPN_MAINTENANCE_INTERNAL' "maintenance backend execution must use an explicit internal boundary"
@@ -105,9 +105,9 @@ if grep -Fq 'install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"'
   printf 'FAIL: migration must not create /var/lib/watchdogvpn with install -d\n' >&2
   exit 1
 fi
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_file "$ROOT_DIR/tui/VPN" "$HOME/.local/bin/VPN" 0755' "TUI launcher must be user executable"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_file "$runtime_root/tui/VPN" "$HOME/.local/bin/VPN" 0755' "TUI launcher must be user executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_user_path "$HOME/.local/bin/watchdogvpn"' "legacy TUI package path must be removed so watchdogvpn CLI is not shadowed"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$ROOT_DIR/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"' "TUI package must be installed outside PATH"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$runtime_root/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"' "TUI package must be installed outside PATH"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_user_path "$HOME/.local/share/watchdogvpn"' "uninstall must remove installed TUI support package"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/vpn_backend' "uninstall must remove backend helper"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/watchdogvpn-daemon' "uninstall must remove daemon wrapper"
@@ -122,8 +122,8 @@ assert_contains "$ROOT_DIR/lib/common.sh" 'print_installer_failure_recovery()' "
 assert_contains "$ROOT_DIR/lib/common.sh" '/etc/watchdogvpn/' "failure recovery guidance must state config preservation"
 assert_contains "$ROOT_DIR/lib/common.sh" '/var/lib/watchdogvpn/' "failure recovery guidance must state state preservation"
 assert_contains "$ROOT_DIR/lib/common.sh" '${BACKUP_ROOT:-/var/backups/watchdogvpn}' "failure recovery guidance must point at installer backups"
-assert_contains "$ROOT_DIR/install.sh" 'trap '\''install_failure_trap "install.sh"'\'' ERR' "installer must print recovery guidance on unexpected failure"
-assert_contains "$ROOT_DIR/update.sh" 'trap '\''install_failure_trap "update.sh"'\'' ERR' "updater must print recovery guidance on unexpected failure"
+assert_contains "$ROOT_DIR/install.sh" 'trap '\''runtime_transaction_failure_trap "install.sh"'\'' ERR' "installer must roll back and print recovery guidance on unexpected failure"
+assert_contains "$ROOT_DIR/update.sh" 'trap '\''runtime_transaction_failure_trap "update.sh"'\'' ERR' "updater must roll back and print recovery guidance on unexpected failure"
 assert_order "$ROOT_DIR/install.sh" "enable_systemd_units" "smoke_test_watchdogvpn_daemon" "installer must smoke test after enabling services"
 assert_order "$ROOT_DIR/update.sh" "enable_systemd_units" "smoke_test_watchdogvpn_daemon" "updater must smoke test after enabling services"
 assert_order "$ROOT_DIR/update.sh" "capture_watchdogvpn_service_state" "install_runtime_files" "updater must snapshot the old daemon before replacing its imported modules"

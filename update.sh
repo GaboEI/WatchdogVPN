@@ -11,6 +11,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/packages.sh"
 # shellcheck source=lib/install_files.sh
 . "$ROOT_DIR/lib/install_files.sh"
+# shellcheck source=lib/runtime_transaction.sh
+. "$ROOT_DIR/lib/runtime_transaction.sh"
 # shellcheck source=lib/config.sh
 . "$ROOT_DIR/lib/config.sh"
 # shellcheck source=lib/version_marker.sh
@@ -31,7 +33,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ASSUME_YES=0
 RUN_DOCTOR=1
 
-trap 'install_failure_trap "update.sh"' ERR
+trap 'runtime_transaction_failure_trap "update.sh"' ERR
 
 usage() {
   cat <<'USAGE'
@@ -229,6 +231,7 @@ if ! prompt_continue; then
 fi
 
 capture_watchdogvpn_service_state
+runtime_transaction_begin
 print_section "Replace product files"
 install_runtime_files
 print_section "Systemd verification"
@@ -239,5 +242,8 @@ print_section "Refresh daemon process"
 restart_watchdogvpn_service_after_runtime_update
 print_section "Daemon smoke test"
 smoke_test_watchdogvpn_daemon
+print_section "Publish installed runtime"
+runtime_transaction_publish_installed_version
 ensure_user_local_bin_path
 final_report
+runtime_transaction_commit

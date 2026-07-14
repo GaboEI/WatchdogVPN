@@ -29,11 +29,19 @@ backup_path() {
 install_root_file() {
   local src="$1" dest="$2" mode="$3"
   backup_path "$dest"
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint copy
+    runtime_transaction_snapshot_path "$dest"
+  fi
   run_step sudo install -m "$mode" -o root -g root "$src" "$dest"
 }
 
 install_user_file() {
   local src="$1" dest="$2" mode="$3"
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint copy
+    runtime_transaction_snapshot_path "$dest"
+  fi
   run_step install -d -m 0755 "$(dirname "$dest")"
   if [[ -e "$dest" ]]; then
     if [[ "$INSTALL_DRY_RUN" == "1" ]]; then
@@ -51,6 +59,10 @@ install_user_file() {
 
 install_user_dir() {
   local src="$1" dest="$2"
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint copy
+    runtime_transaction_snapshot_path "$dest"
+  fi
   run_step install -d -m 0755 "$(dirname "$dest")"
   if [[ -e "$dest" ]]; then
     if [[ "$INSTALL_DRY_RUN" == "1" ]]; then
@@ -109,6 +121,9 @@ remove_root_path() {
     return 0
   fi
   backup_path "$path"
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_snapshot_path "$path"
+  fi
   run_step sudo rm -rf -- "$path"
 }
 
@@ -117,6 +132,9 @@ remove_user_path() {
   if [[ ! -e "$path" && ! -L "$path" ]]; then
     printf '[KEEP] absent: %s\n' "$path"
     return 0
+  fi
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_snapshot_path "$path"
   fi
   if [[ "$INSTALL_DRY_RUN" == "1" ]]; then
     printf '[DRY-RUN] remove user path %s\n' "$path"

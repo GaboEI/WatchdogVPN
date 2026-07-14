@@ -24,7 +24,7 @@ assert_contains "$SYSCTL_FILE" "net.ipv4.conf.default.src_valid_mark = 1" \
 
 assert_contains "$RUNTIME_LIB" "install_sysctl_defaults" \
   "install_runtime_files must call install_sysctl_defaults"
-assert_contains "$RUNTIME_LIB" "install_root_file \"\$ROOT_DIR/etc/sysctl.d/99-watchdogvpn.conf\" /etc/sysctl.d/99-watchdogvpn.conf" \
+assert_contains "$RUNTIME_LIB" "install_root_file \"\$runtime_root/etc/sysctl.d/99-watchdogvpn.conf\" /etc/sysctl.d/99-watchdogvpn.conf" \
   "install_sysctl_defaults must install the tracked sysctl.d file"
 assert_contains "$RUNTIME_LIB" "sudo sysctl -q -p /etc/sysctl.d/99-watchdogvpn.conf" \
   "install_sysctl_defaults must apply the sysctl file at install/update time"
