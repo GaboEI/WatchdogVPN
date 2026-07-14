@@ -308,6 +308,34 @@ def kill_recorded_children(runtime_dir: Path, *, timeout: float = 5.0) -> None:
             continue
 
 
+def recorded_children_terminated(runtime_dir: Path) -> bool:
+    """Return whether every durable child record is safe to discard.
+
+    A live PID keeps its record and runtime directory unless a recorded kernel
+    start time proves that the PID was reused by an unrelated process. This is
+    intentionally stricter than read-only ownership reporting: teardown must
+    retain recovery evidence whenever it cannot prove the recorded child ended.
+    """
+    for entry in _read_children(runtime_dir).values():
+        try:
+            pid = int(entry.get("pid"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+        if not _pid_is_alive(pid):
+            continue
+        raw_start_time = entry.get("start_time_ticks")
+        if raw_start_time is None:
+            return False
+        try:
+            expected_start_time = int(raw_start_time)
+        except (TypeError, ValueError):
+            return False
+        observed_start_time = _process_start_time_ticks(pid)
+        if observed_start_time is None or observed_start_time == expected_start_time:
+            return False
+    return True
+
+
 def kill_all_recorded_children(prefix: str) -> None:
     """Reap every recorded child under every runtime dir matching prefix,
     regardless of whether that dir's owner (the daemon) is still alive.

@@ -291,8 +291,50 @@ class ChildProcessTrackingTests(unittest.TestCase):
 
                     self.assertTrue(_wait_until(lambda: proc.poll() is not None))
                     self.assertTrue(live_dir.exists(), "kill_all_recorded_children must not remove directories")
+
                 finally:
                     self._stop(proc)
+    def test_recorded_children_terminated_requires_verified_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_dir = Path(tmp)
+            proc = self._spawn_sleeper()
+            try:
+                runtime_paths.record_child_process(
+                    runtime_dir, "process", proc.pid, Path(sys.executable).name
+                )
+                self.assertFalse(runtime_paths.recorded_children_terminated(runtime_dir))
+                proc.terminate()
+                self.assertTrue(
+                    _wait_until(
+                        lambda: runtime_paths.recorded_children_terminated(runtime_dir)
+                    )
+                )
+            finally:
+                self._stop(proc)
+
+    def test_recorded_children_terminated_allows_verified_pid_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_dir = Path(tmp)
+            runtime_paths.write_private_file(
+                runtime_dir / runtime_paths.CHILD_PIDS_NAME,
+                '{"process":{"pid":1234,"exe_hint":"openvpn","start_time_ticks":100}}',
+            )
+            with (
+                patch.object(runtime_paths, "_pid_is_alive", return_value=True),
+                patch.object(runtime_paths, "_process_start_time_ticks", return_value=101),
+            ):
+                self.assertTrue(runtime_paths.recorded_children_terminated(runtime_dir))
+
+    def test_recorded_children_terminated_retains_live_legacy_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_dir = Path(tmp)
+            runtime_paths.write_private_file(
+                runtime_dir / runtime_paths.CHILD_PIDS_NAME,
+                '{"process":{"pid":1234,"exe_hint":"openvpn"}}',
+            )
+            with patch.object(runtime_paths, "_pid_is_alive", return_value=True):
+                self.assertFalse(runtime_paths.recorded_children_terminated(runtime_dir))
+
 
 
 if __name__ == "__main__":

@@ -392,22 +392,31 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     def test_status_reports_runtime_mismatch_when_recorded_child_alive(self, alive_mock, tun_mock) -> None:
         self.assertEqual(self.driver.status().status, "runtime_mismatch")
 
-    @patch.object(OpenVPNCloakDriver, "_cleanup_configs")
-    def test_status_standby_when_ck_died(self, cleanup_mock) -> None:
+    def test_status_keeps_live_openvpn_and_runtime_when_ck_dies(self) -> None:
+        self.driver._ensure_runtime_paths()
+        children_path = self.driver._runtime_dir / "children.json"
+        children_path.write_text("{\"ck_process\": {\"pid\": 999999}}", encoding="utf-8")
+        before = children_path.read_text(encoding="utf-8")
         ck = Mock()
         ck.poll.return_value = 1
+        ovpn = Mock()
+        ovpn.poll.return_value = None
         self.driver._ck_process = ck
-        self.driver._openvpn_process = Mock()
-        self.driver._openvpn_process.poll.return_value = None
+        self.driver._openvpn_process = ovpn
         self.driver._active_profile = self.profile
 
         state = self.driver.status()
 
-        self.assertEqual(state.status, "standby")
-        self.assertIsNone(self.driver._ck_process)
-        self.assertIsNone(self.driver._openvpn_process)
-        self.assertIsNone(self.driver._active_profile)
-        cleanup_mock.assert_called_once()
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertIn("ck-client", state.last_failure_reason)
+        self.assertIs(self.driver._ck_process, ck)
+        self.assertIs(self.driver._openvpn_process, ovpn)
+        self.assertTrue(self.driver._runtime_dir.exists())
+        self.assertEqual(children_path.read_text(encoding="utf-8"), before)
+        self.assertTrue(self.driver.disconnect())
+        ovpn.terminate.assert_called_once()
+        self.assertIsNone(self.driver._runtime_dir)
+
     @patch.object(OpenVPNCloakDriver, "_readiness_evidence_ready", return_value=True)
 
     @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=True)
@@ -486,6 +495,58 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.driver._openvpn_process = ovpn
 
         self.assertEqual(self.driver.health_check(), "degraded")
+
+
+    def test_status_keeps_live_ck_client_and_runtime_when_openvpn_dies(self) -> None:
+        self.driver._ensure_runtime_paths()
+        children_path = self.driver._runtime_dir / "children.json"
+        children_path.write_text("{\"openvpn_process\": {\"pid\": 999999}}", encoding="utf-8")
+        before = children_path.read_text(encoding="utf-8")
+        ck = Mock()
+        ck.poll.return_value = None
+        ovpn = Mock()
+        ovpn.poll.return_value = 1
+        self.driver._ck_process = ck
+        self.driver._openvpn_process = ovpn
+        self.driver._active_profile = self.profile
+
+        state = self.driver.status()
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertIn("openvpn", state.last_failure_reason)
+        self.assertIs(self.driver._ck_process, ck)
+        self.assertIs(self.driver._openvpn_process, ovpn)
+        self.assertEqual(children_path.read_text(encoding="utf-8"), before)
+        self.assertTrue(self.driver.disconnect())
+        ck.terminate.assert_called_once()
+        self.assertIsNone(self.driver._runtime_dir)
+
+    def test_disconnect_retains_children_and_runtime_when_termination_is_unverified(self) -> None:
+        self.driver._ensure_runtime_paths()
+        runtime_dir = self.driver._runtime_dir
+        children_path = runtime_dir / "children.json"
+        children_path.write_text("{\"openvpn_process\": {\"pid\": 999999}}", encoding="utf-8")
+        ovpn = Mock()
+        ovpn.poll.return_value = None
+        ovpn.wait.side_effect = [
+            subprocess.TimeoutExpired(cmd="openvpn", timeout=5),
+            subprocess.TimeoutExpired(cmd="openvpn", timeout=5),
+        ]
+        ck = Mock()
+        ck.poll.return_value = 1
+        self.driver._openvpn_process = ovpn
+        self.driver._ck_process = ck
+        self.driver._active_profile = self.profile
+
+        self.assertFalse(self.driver.disconnect())
+
+        self.assertIs(self.driver._openvpn_process, ovpn)
+        self.assertIs(self.driver._ck_process, ck)
+        self.assertIs(self.driver._active_profile, self.profile)
+        self.assertTrue(runtime_dir.exists())
+        self.assertTrue(children_path.exists())
+        ovpn.terminate.assert_called_once()
+        ovpn.kill.assert_called_once()
 
 
 

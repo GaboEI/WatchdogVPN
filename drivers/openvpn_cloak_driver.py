@@ -18,6 +18,7 @@ from drivers.runtime_paths import (
     cleanup_stale_runtime_dirs,
     kill_all_recorded_children,
     make_runtime_dir,
+    recorded_children_terminated,
     record_child_process,
     write_private_file,
 )
@@ -359,33 +360,29 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             time.sleep(0.25)
         return False
 
-    def _cleanup_all(self) -> None:
-        self._stop_process(self._openvpn_process)
-        self._stop_process(self._ck_process)
+    def _teardown_children(self) -> bool:
+        """Stop both children without discarding evidence on any uncertainty."""
+        openvpn_stopped = self._stop_process(self._openvpn_process)
+        ck_stopped = self._stop_process(self._ck_process)
+        if not openvpn_stopped or not ck_stopped:
+            return False
+
+        kill_all_recorded_children(RUNTIME_PREFIX)
+        if self._runtime_dir is not None and not recorded_children_terminated(self._runtime_dir):
+            return False
+
         self._openvpn_process = None
         self._ck_process = None
         self._active_profile = None
         self._connected_at = None
-        kill_all_recorded_children(RUNTIME_PREFIX)
         self._cleanup_configs()
+        return True
+
+    def _cleanup_all(self) -> bool:
+        return self._teardown_children()
 
     def disconnect(self) -> bool:
-        openvpn_stopped = True
-        ck_stopped = True
-        try:
-            openvpn_stopped = self._stop_process(self._openvpn_process)
-            ck_stopped = self._stop_process(self._ck_process)
-        finally:
-            self._openvpn_process = None
-            self._ck_process = None
-            self._active_profile = None
-            self._connected_at = None
-            # Best-effort sweep of every child this driver type has ever
-            # recorded, not just the two this instance held a reference to -
-            # catches anything orphaned by a past bug or crash too.
-            kill_all_recorded_children(RUNTIME_PREFIX)
-            self._cleanup_configs()
-        return openvpn_stopped and ck_stopped
+        return self._teardown_children()
 
     def health_check(self) -> str:
         ck = self._ck_process
@@ -412,12 +409,15 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
                 return ConnectionState(status="runtime_mismatch")
             return ConnectionState(status="standby")
         if ck.poll() is not None or ovpn.poll() is not None:
-            self._ck_process = None
-            self._openvpn_process = None
-            self._active_profile = None
-            self._connected_at = None
-            self._cleanup_configs()
-            return ConnectionState(status="standby")
+            exited_children = []
+            if ck.poll() is not None:
+                exited_children.append("ck-client")
+            if ovpn.poll() is not None:
+                exited_children.append("openvpn")
+            return ConnectionState(
+                status="runtime_mismatch",
+                last_failure_reason="OpenVPN+Cloak child exited: " + ", ".join(exited_children),
+            )
         ready = self._vpn_interface_active() and self._readiness_evidence_ready()
         profile_id = self._active_profile.id if self._active_profile else ""
         return ConnectionState(
