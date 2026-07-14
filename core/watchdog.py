@@ -26,7 +26,12 @@ from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager, parse_captu
 from core.kill_switch import KillSwitch
 from core.runtime_observation import observe_effective_runtime
 from drivers.amneziawg_driver import AmneziaWGDriver
-from drivers.base import BaseDriver, ManagementPathSafetyError, UnsupportedDriverPolicyError
+from drivers.base import (
+    BaseDriver,
+    ManagementPathSafetyError,
+    TeardownBarrierError,
+    UnsupportedDriverPolicyError,
+)
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
 from drivers.singbox_driver import SingBoxDriver
@@ -107,6 +112,8 @@ class WatchdogRuntime:
     _reconnect_failures: int = field(default=0, init=False, repr=False)
 
     _desired_on_kill_switch_forced: bool = field(default=False, init=False, repr=False)
+
+    _cleanup_barrier_failed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.driver_selector is ORIGINAL_SELECT_DRIVER and type(self.driver) not in MANAGED_DRIVER_TYPES:
@@ -414,10 +421,14 @@ class WatchdogRuntime:
             LOGGER.error("watchdog_startup_management_path_unsafe error=%s", exc)
             self._record_last_failure("management_path_unprotected")
             return ConnectionState(status="standby", mode="standby")
+        try:
+            active_driver = self._activate_driver(driver)
+        except TeardownBarrierError:
+            return self._cleanup_failure_state()
         if not require_restart_protection and not self._protect_connection_attempt(profile):
             return ConnectionState(status="kill_switch_failed", mode="standby")
 
-        connected = self._activate_driver(driver).connect(
+        connected = active_driver.connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
             **options,
@@ -426,16 +437,18 @@ class WatchdogRuntime:
             if not isinstance(self.driver, SingBoxDriver) or self._checked_and_recorded(profile, self.driver) == "ok":
                 self._clear_last_failure()
             else:
-                self.driver.disconnect()
+                if not self._teardown_active_driver():
+                    return self._cleanup_failure_state()
         return self.driver.status()
 
     def connect(self, profile: Profile) -> bool:
         driver, options = self._prepare_driver_for_connection(profile)
+        active_driver = self._activate_driver(driver)
         if not self._protect_connection_attempt(profile):
             return False
         self.state_manager.set("vpn_desired_state", "on")
         self.state_manager.set("active_profile_id", profile.id)
-        connected = self._activate_driver(driver).connect(
+        connected = active_driver.connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
             **options,
@@ -444,7 +457,7 @@ class WatchdogRuntime:
             if not isinstance(self.driver, SingBoxDriver) or self._checked_and_recorded(profile, self.driver) == "ok":
                 self._clear_last_failure()
             else:
-                self.driver.disconnect()
+                self._teardown_active_driver()
                 return False
         return connected
 
@@ -453,12 +466,15 @@ class WatchdogRuntime:
         return str(getattr(self.driver, "last_error", "") or "")
 
     def disconnect(self) -> bool:
-        result = self.driver.disconnect()
+        if not self._teardown_active_driver():
+            LOGGER.error("watchdog_manual_disconnect_blocked reason=cleanup_failed")
+            return False
         self._handle_manual_disconnect_kill_switch()
         self._restore_dns_snapshot_if_present()
         self.state_manager.set("vpn_desired_state", "off")
+        self._clear_last_failure()
         LOGGER.info("VPN manually disabled. Will not auto-reconnect.")
-        return result
+        return True
 
     def shutdown(self) -> bool:
         """Tear down runtime state without changing the user's desired state."""
@@ -524,6 +540,8 @@ class WatchdogRuntime:
         # rather than trusting the passed-in state to already be clean.
         reason = str(self.state_manager.get("last_failure_reason", "") or "")
         state.last_failure_reason = reason
+        if reason == "cleanup_failed":
+            state.status = "cleanup_failed"
         at_raw = str(self.state_manager.get("last_failure_at", "") or "") if reason else ""
         state.last_failure_at = None
         if at_raw:
@@ -648,16 +666,33 @@ class WatchdogRuntime:
         selected_driver = self.driver_selector(profile)
         return self.driver if type(selected_driver) is type(self.driver) else selected_driver
 
+    def _teardown_active_driver(self) -> bool:
+        """Stop the current runtime or retain it as a hard lifecycle barrier."""
+        try:
+            disconnected = self.driver.disconnect()
+        except Exception:
+            LOGGER.error("watchdog_cleanup_barrier_exception driver=%s", type(self.driver).__name__, exc_info=True)
+            disconnected = False
+        if disconnected:
+            self._cleanup_barrier_failed = False
+            return True
+        self._cleanup_barrier_failed = True
+        self._record_last_failure("cleanup_failed")
+        LOGGER.error("watchdog_cleanup_barrier_failed driver=%s", type(self.driver).__name__)
+        return False
+
+    def _cleanup_failure_state(self) -> ConnectionState:
+        state = self.status()
+        state.status = "cleanup_failed"
+        return state
+
     def _activate_driver(
         self, selected_driver: BaseDriver, *, disconnect_current: bool = True
     ) -> BaseDriver:
-        if selected_driver is self.driver:
-            if disconnect_current:
-                self.driver.disconnect()
-            return self.driver
-        if disconnect_current:
-            self.driver.disconnect()
-        self.driver = selected_driver
+        if disconnect_current and not self._teardown_active_driver():
+            raise TeardownBarrierError(type(self.driver).__name__)
+        if selected_driver is not self.driver:
+            self.driver = selected_driver
         return self.driver
 
     def _prepare_driver_for_connection(
@@ -932,8 +967,10 @@ class WatchdogRuntime:
             LOGGER.error("watchdog_reconnect_management_path_unsafe error=%s", exc)
             self._record_last_failure("management_path_unprotected")
             return False
-        driver = self._activate_driver(selected_driver, disconnect_current=False)
-        driver.disconnect()
+        try:
+            driver = self._activate_driver(selected_driver)
+        except TeardownBarrierError:
+            return False
         if not self._protect_connection_attempt(profile):
             return False
         if not driver.connect(
@@ -944,10 +981,11 @@ class WatchdogRuntime:
             return False
         if self._checked_and_recorded(profile, driver) == "ok":
             return True
-        driver.disconnect()
+        self._teardown_active_driver()
         return False
 
     def _recover_from_failure(self) -> ConnectionState:
+        self._cleanup_barrier_failed = False
         config = self.app_config.load()
         self._configure_recovery(config)
         if not self.recovery.can_retry_now():
@@ -959,6 +997,8 @@ class WatchdogRuntime:
             self._reconnect_failures = 0
             self.recovery.record_success()
             return self._recovered_state_after_stable_connection(config)
+        if self._cleanup_barrier_failed:
+            return self._cleanup_failure_state()
 
         self._reconnect_failures += 1
         reconnect_attempts = int(config.get("watchdog", {}).get("reconnect_attempts", 3))
@@ -980,6 +1020,7 @@ class WatchdogRuntime:
         force: bool = False,
         exclude_profile_id: str | None = None,
     ) -> ConnectionState:
+        self._cleanup_barrier_failed = False
         self._configure_recovery(config)
         if not force and not self._rotation_enabled(config):
             LOGGER.warning("rotation_unavailable reason=disabled")
@@ -1007,6 +1048,9 @@ class WatchdogRuntime:
             force=force,
             dns_policy=self.dns_policy_store.load(),
         )
+
+        if result.cleanup_failed or self._cleanup_barrier_failed:
+            return self._cleanup_failure_state()
 
         if result.success and result.profile is not None:
             self._reconnect_failures = 0
@@ -1344,6 +1388,7 @@ class WatchdogRuntime:
 class _RuntimeDriverRouter(BaseDriver):
     def __init__(self, runtime: WatchdogRuntime) -> None:
         self.runtime = runtime
+        self._teardown_verified = False
 
     def connect(
         self,
@@ -1358,10 +1403,16 @@ class _RuntimeDriverRouter(BaseDriver):
         lan_gateway=None,
         chain_runtime_plans=None,
     ) -> bool:
+        if not self._teardown_verified:
+            self.runtime._cleanup_barrier_failed = True
+            self.runtime._record_last_failure("cleanup_failed")
+            LOGGER.error("watchdog_rotation_connect_blocked reason=unverified_teardown")
+            return False
         driver, options = self.runtime._prepare_driver_for_connection(profile)
+        driver = self.runtime._activate_driver(driver, disconnect_current=False)
         if not self.runtime._protect_connection_attempt(profile):
             return False
-        driver = self.runtime._activate_driver(driver, disconnect_current=False)
+        self._teardown_verified = False
         options.setdefault("final_policy", final_policy)
         return driver.connect(
             profile,
@@ -1370,7 +1421,8 @@ class _RuntimeDriverRouter(BaseDriver):
         )
 
     def disconnect(self) -> bool:
-        return self.runtime.driver.disconnect()
+        self._teardown_verified = self.runtime._teardown_active_driver()
+        return self._teardown_verified
 
     def health_check(self) -> str:
         return self.runtime.driver.health_check()

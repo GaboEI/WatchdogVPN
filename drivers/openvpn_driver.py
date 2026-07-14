@@ -191,7 +191,9 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         lan_gateway=None,
         capture_modes=None,
     ) -> bool:
-        self._ensure_disconnected_before_connect()
+        if not self._ensure_disconnected_before_connect():
+            self.last_error = "existing OpenVPN runtime teardown failed"
+            return False
         binary = self.find_openvpn_binary()
         if not binary:
             return False

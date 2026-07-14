@@ -144,6 +144,19 @@ class OpenVPNDriverTests(unittest.TestCase):
         stale_process.terminate.assert_called_once()
         self.assertIs(self.driver._process, new_process)
 
+    def test_connect_refuses_spawn_after_failed_teardown(self) -> None:
+        self.driver._process = unittest.mock.Mock()
+        with (
+            patch.object(self.driver, "disconnect", return_value=False) as disconnect_mock,
+            patch.object(OpenVPNDriver, "find_openvpn_binary") as binary_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile))
+
+        disconnect_mock.assert_called_once_with()
+        binary_mock.assert_not_called()
+        self.assertIn("teardown failed", self.driver.last_error)
+
+
     @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value=None)
     @patch("drivers.openvpn_driver.subprocess.Popen")
     def test_connect_returns_false_when_binary_missing(self, popen_mock, binary_mock) -> None:

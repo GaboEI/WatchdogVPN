@@ -37,6 +37,16 @@ class ManagementPathSafetyError(RuntimeError):
     """Raised before connection mutation when a live control path is unsafe."""
 
 
+class TeardownBarrierError(RuntimeError):
+    """Raised when an existing runtime cannot be verified as torn down."""
+
+    def __init__(self, driver_name: str) -> None:
+        self.driver_name = driver_name
+        super().__init__(
+            f"runtime cleanup failed for {driver_name}; refusing to start another runtime"
+        )
+
+
 class BaseDriver(ABC):
     # Every driver must explicitly declare the WatchdogVPN policy it can
     # enforce at runtime. An empty set is deliberate fail-closed behavior.
@@ -104,6 +114,7 @@ class ReentrantConnectGuard:
     def _has_existing_connection(self) -> bool:
         raise NotImplementedError
 
-    def _ensure_disconnected_before_connect(self) -> None:
-        if self._has_existing_connection():
-            self.disconnect()
+    def _ensure_disconnected_before_connect(self) -> bool:
+        if not self._has_existing_connection():
+            return True
+        return self.disconnect()

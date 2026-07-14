@@ -737,5 +737,44 @@ class EventBusTests(unittest.TestCase):
             subscription.get(timeout=0.05)
 
 
+class RuntimeWorkerCleanupBarrierTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
+        self.profile = Profile(
+            id="cleanup-profile",
+            name="Cleanup profile",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        self.profile_store.add(self.profile)
+
+    def test_worker_connect_reports_structured_cleanup_failure(self) -> None:
+        driver = FakeWorkerDriver()
+        driver.disconnect_result = False
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=StateManager(Path(self.tmpdir.name) / "state.toml"),
+            profile_store=self.profile_store,
+        )
+        worker = RuntimeWorker(runtime)
+        worker.start()
+        try:
+            response = worker.submit(
+                COMMAND_CONNECT, {"profile_id": self.profile.id}, timeout=2.0
+            )
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.payload.get("error_kind"), "cleanup_failed")
+        self.assertEqual(response.payload["state"]["status"], "cleanup_failed")
+        self.assertEqual(response.payload["state"]["last_failure_reason"], "cleanup_failed")
+        self.assertEqual(driver.disconnect_calls, 1)
+        self.assertEqual(driver.connect_calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

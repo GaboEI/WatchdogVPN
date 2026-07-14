@@ -2594,7 +2594,7 @@ def _connection_lifecycle_summary(
         profile_available: bool | None = True
     elif error_kind == "profile_not_found":
         profile_available = False
-    elif error_kind in {"connect_failed", "unsupported_policy", "management_path_unprotected"}:
+    elif error_kind in {"connect_failed", "unsupported_policy", "management_path_unprotected", "cleanup_failed"}:
         profile_available = True
     else:
         profile_available = None

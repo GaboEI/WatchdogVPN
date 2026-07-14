@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from daemon.event_bus import EventBus
-from drivers.base import ManagementPathSafetyError, UnsupportedDriverPolicyError
+from drivers.base import ManagementPathSafetyError, TeardownBarrierError, UnsupportedDriverPolicyError
 from daemon.protocol import (
     COMMAND_CONNECT,
     COMMAND_DISCONNECT,
@@ -255,6 +255,23 @@ class RuntimeWorker:
                 ok=False,
                 payload={
                     "error_kind": "management_path_unprotected",
+                    "profile_id": profile.id,
+                    "state": state_payload,
+                    "error_detail": str(exc),
+                },
+                error=str(exc),
+            )
+        except TeardownBarrierError as exc:
+            state_payload = _state_payload(self.runtime.status())
+            self.metrics_recorder.record_connection_result(
+                profile_id=profile.id,
+                connected=False,
+            )
+            self._broadcast_state(state_payload)
+            return Response(
+                ok=False,
+                payload={
+                    "error_kind": "cleanup_failed",
                     "profile_id": profile.id,
                     "state": state_payload,
                     "error_detail": str(exc),

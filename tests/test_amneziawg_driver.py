@@ -192,6 +192,19 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertIn("RTNETLINK answers: Operation not permitted", self.driver.last_error)
         self.assertNotIn("should-not-leak", self.driver.last_error)
 
+    def test_connect_refuses_setup_after_failed_teardown(self) -> None:
+        self.driver._active_profile = self.profile
+        with (
+            patch.object(self.driver, "disconnect", return_value=False) as disconnect_mock,
+            patch.object(AmneziaWGDriver, "find_ip_tool") as ip_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile))
+
+        disconnect_mock.assert_called_once_with()
+        ip_mock.assert_not_called()
+        self.assertIn("teardown failed", self.driver.last_error)
+
+
     @patch.object(AmneziaWGDriver, "find_wg_tool", return_value=None)
     def test_connect_returns_false_when_no_binary(self, _tool) -> None:
         self.assertFalse(self.driver.connect(self.profile))

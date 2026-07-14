@@ -1333,7 +1333,9 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 )
             except ManagementPathSafetyError:
                 return False
-        self._ensure_disconnected_before_connect()
+        if not self._ensure_disconnected_before_connect():
+            self.last_error = "existing sing-box runtime teardown failed"
+            return False
         binary = self.find_singbox_binary()
         if not binary:
             return False

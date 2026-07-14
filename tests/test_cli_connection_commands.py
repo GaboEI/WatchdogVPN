@@ -311,6 +311,23 @@ class CliConnectionCommandTests(unittest.TestCase):
         data = json.loads(stdout.getvalue())
         self.assertIs(data["payload"]["lifecycle"]["profile_available"], True)
 
+    def test_connect_cleanup_failure_reports_profile_available_true(self) -> None:
+        response = Response(
+            ok=False,
+            payload={"error_kind": "cleanup_failed", "state": {"status": "cleanup_failed"}},
+            error="runtime cleanup failed",
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.connect.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["connect", "p1", "--json"])
+
+        self.assertEqual(result, 70)
+        data = json.loads(stdout.getvalue())
+        self.assertIs(data["payload"]["lifecycle"]["profile_available"], True)
+        self.assertEqual(data["payload"]["lifecycle"]["actual_runtime_state"], "cleanup_failed")
+
+
     def test_rotate_all_failed_reports_ok_false_and_exit_70(self) -> None:
         # Regression guard for WDCLI-002: rotate must not report success
         # when the resulting status is a terminal failure.

@@ -248,6 +248,21 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.assertIs(self.driver._ck_process, new_ck)
         self.assertIs(self.driver._openvpn_process, new_ovpn)
 
+    def test_connect_refuses_spawn_after_failed_teardown(self) -> None:
+        self.driver._ck_process = Mock()
+        with (
+            patch.object(self.driver, "disconnect", return_value=False) as disconnect_mock,
+            patch.object(OpenVPNCloakDriver, "find_openvpn_binary") as openvpn_mock,
+            patch.object(OpenVPNCloakDriver, "find_ck_client_binary") as cloak_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile))
+
+        disconnect_mock.assert_called_once_with()
+        openvpn_mock.assert_not_called()
+        cloak_mock.assert_not_called()
+        self.assertIn("teardown failed", self.driver.last_error)
+
+
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value=None)
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
     def test_connect_returns_false_when_openvpn_missing(self, _ck, _ovpn) -> None:

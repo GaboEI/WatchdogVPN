@@ -468,7 +468,9 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         lan_gateway=None,
         capture_modes=None,
     ) -> bool:
-        self._ensure_disconnected_before_connect()
+        if not self._ensure_disconnected_before_connect():
+            self.last_error = "existing OpenVPN+Cloak runtime teardown failed"
+            return False
         openvpn_bin = self.find_openvpn_binary()
         ck_bin = self.find_ck_client_binary()
         if not openvpn_bin or not ck_bin:

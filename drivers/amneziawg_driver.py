@@ -587,8 +587,10 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
         lan_gateway=None,
         capture_modes=None,
     ) -> bool:
-        self._ensure_disconnected_before_connect()
         self.last_error = ""
+        if not self._ensure_disconnected_before_connect():
+            self._set_last_error("existing AmneziaWG runtime teardown failed")
+            return False
         if not self.find_ip_tool():
             self._set_last_error("ip command was not found")
             return False

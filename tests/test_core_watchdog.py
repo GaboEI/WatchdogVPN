@@ -25,6 +25,7 @@ from drivers.amneziawg_driver import AmneziaWGDriver
 from drivers.base import (
     DRIVER_POLICY_CAPABILITIES,
     ManagementPathSafetyError,
+    TeardownBarrierError,
     BaseDriver,
     UnsupportedDriverPolicyError,
 )
@@ -3053,6 +3054,117 @@ class WatchdogIntegrationTests(unittest.TestCase):
         # 4. The same real build_pool() call now includes it again.
         pool_after_cooldown = pool_builder.build_pool(self.profile_store, provider_store, config)
         self.assertEqual([p.id for p in pool_after_cooldown], ["flaky"])
+
+
+class WatchdogCleanupBarrierTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.state_manager = StateManager(Path(self.tmpdir.name) / "state.toml")
+        self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
+        self.profile = Profile(
+            id="next-profile",
+            name="Next profile",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        self.profile_store.add(self.profile)
+
+    def _runtime(self, current: FakeDriver, candidate: FakeDriver) -> WatchdogRuntime:
+        return WatchdogRuntime(
+            driver=current,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=AppConfig(Path(self.tmpdir.name) / "config.toml"),
+            driver_selector=lambda _profile=None: candidate,
+            kill_switch=FakeKillSwitch(),
+        )
+
+    def test_connect_keeps_current_driver_and_selection_when_teardown_fails(self) -> None:
+        current = FakeSingBoxDriver()
+        current.disconnect_mock.return_value = False
+        candidate = FakeAWGDriver()
+        runtime = self._runtime(current, candidate)
+
+        with self.assertRaises(TeardownBarrierError):
+            runtime.connect(self.profile)
+
+        self.assertIs(runtime.driver, current)
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(self.state_manager.get("active_profile_id"), "")
+        current.disconnect_mock.assert_called_once_with()
+        candidate.connect_mock.assert_not_called()
+        self.assertEqual(self.state_manager.get("last_failure_reason"), "cleanup_failed")
+
+    def test_reconnect_failure_blocks_rotation_and_new_connect(self) -> None:
+        current = FakeDriver()
+        current.disconnect_mock.return_value = False
+        candidate = FakeDriver()
+        runtime = self._runtime(current, candidate)
+        self.state_manager.set("vpn_desired_state", "on")
+        self.state_manager.set("active_profile_id", self.profile.id)
+
+        state = runtime._recover_from_failure()
+
+        self.assertEqual(state.status, "cleanup_failed")
+        current.disconnect_mock.assert_called_once_with()
+        candidate.connect_mock.assert_not_called()
+        self.assertEqual(self.state_manager.get("active_profile_id"), self.profile.id)
+
+    def test_rotation_failure_does_not_try_second_profile(self) -> None:
+        current = FakeDriver()
+        current.disconnect_mock.return_value = False
+        candidate = FakeDriver()
+        runtime = self._runtime(current, candidate)
+        alternative = Profile(
+            id="alternative",
+            name="Alternative",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+
+        with patch.object(runtime, "_compatible_pool", return_value=[alternative]):
+            state = runtime._attempt_rotation({"rotation": {"enabled": True}}, force=True)
+
+        self.assertEqual(state.status, "cleanup_failed")
+        current.disconnect_mock.assert_called_once_with()
+        candidate.connect_mock.assert_not_called()
+        self.assertEqual(self.state_manager.get("active_profile_id"), "")
+
+    def test_manual_disconnect_preserves_desired_state_and_kill_switch_on_failure(self) -> None:
+        current = FakeDriver()
+        current.disconnect_mock.return_value = False
+        kill_switch = FakeKillSwitch(active=True)
+        runtime = self._runtime(current, FakeDriver())
+        runtime.kill_switch = kill_switch
+        self.state_manager.set("vpn_desired_state", "on")
+        self.state_manager.set("active_profile_id", self.profile.id)
+
+        self.assertFalse(runtime.disconnect())
+
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+        kill_switch.disable_mock.assert_not_called()
+        self.assertEqual(self.state_manager.get("last_failure_reason"), "cleanup_failed")
+
+    def test_manual_disconnect_clears_cleanup_failure_after_verified_recovery(self) -> None:
+        current = FakeDriver()
+        current.disconnect_mock.side_effect = [False, True]
+        current.status_mock.return_value = ConnectionState(status="standby", mode="standby")
+        runtime = self._runtime(current, FakeDriver())
+        self.state_manager.set("vpn_desired_state", "on")
+        self.state_manager.set("active_profile_id", self.profile.id)
+
+        self.assertFalse(runtime.disconnect())
+        self.assertTrue(runtime.disconnect())
+
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(self.state_manager.get("last_failure_reason"), "")
+        self.assertFalse(runtime._cleanup_barrier_failed)
+        self.assertEqual(runtime.status().status, "standby")
 
 
 if __name__ == "__main__":

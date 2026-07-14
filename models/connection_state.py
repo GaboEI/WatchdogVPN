@@ -23,6 +23,7 @@ ALLOWED_STATUSES = {
     # disconnect owns cleanup.
     "runtime_mismatch",
     "unsupported_policy",
+    "cleanup_failed",
 }
 
 # Terminal/exhausted outcomes - a caller (CLI exit code, status surfacing)
@@ -40,6 +41,7 @@ FAILURE_STATUSES = frozenset(
         "waiting_retry",
         "runtime_mismatch",
         "unsupported_policy",
+        "cleanup_failed",
     }
 )
 
