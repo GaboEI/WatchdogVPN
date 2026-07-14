@@ -614,6 +614,35 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
 
     @patch("drivers.openvpn_cloak_driver.shutil.which", return_value="/usr/bin/ip")
     @patch("drivers.openvpn_cloak_driver.subprocess.run")
+    def test_cleanup_removes_new_server_route_logged_by_openvpn(
+        self, run_mock, _which
+    ) -> None:
+        self.driver._ensure_runtime_paths()
+        self.driver._route_snapshot_captured = True
+        self.driver._route_snapshot_path.write_text(
+            "default via 192.0.2.1 dev eth0\n", encoding="utf-8"
+        )
+        self.driver._ovpn_log_path.write_text(
+            "net_route_v4_add: 198.51.100.7/32 via 192.0.2.1 dev [NULL] table 0 metric 200\n",
+            encoding="utf-8",
+        )
+        baseline = "default via 192.0.2.1 dev eth0\n"
+        orphan = "198.51.100.7 via 192.0.2.1 dev eth0 metric 200\n"
+        run_mock.side_effect = [
+            Mock(returncode=0, stdout=baseline + orphan),
+            Mock(returncode=0, stdout=""),
+            Mock(returncode=0, stdout=baseline),
+        ]
+
+        self.assertTrue(self.driver._cleanup_openvpn_endpoint_routes())
+
+        self.assertEqual(
+            run_mock.call_args_list[1].args[0],
+            ["ip", "route", "del", "198.51.100.7", "via", "192.0.2.1", "dev", "eth0", "metric", "200"],
+        )
+
+    @patch("drivers.openvpn_cloak_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_cloak_driver.subprocess.run")
     def test_cleanup_keeps_preexisting_route_to_same_openvpn_endpoint(
         self, run_mock, _which
     ) -> None:

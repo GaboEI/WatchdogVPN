@@ -43,6 +43,9 @@ CONNECT_READY_TIMEOUT_SECONDS = 15.0
 _PRESERVED_REMOTE_RE = re.compile(
     r"Preserving recently used remote address: \[(?:AF_INET|AF_INET6)\](\S+)"
 )
+_ADDED_ROUTE_RE = re.compile(
+    r"net_route_v[46]_add: (\S+)(?: via (\S+))? dev \S+ table \d+ metric (-?\d+)"
+)
 
 
 @dataclass(slots=True)
@@ -251,7 +254,8 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._route_snapshot_captured = True
         return True
 
-    def _preserved_remote_endpoints(self) -> set[str] | None:
+    def _owned_route_selectors(self) -> set[tuple[str, str | None, int | None]] | None:
+        """Return log-proven route identities created by this OpenVPN generation."""
         if self._ovpn_log_path is None:
             return None
         try:
@@ -259,18 +263,33 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         except OSError:
             return None
 
-        endpoints: set[str] = set()
+        selectors: set[tuple[str, str | None, int | None]] = set()
         for token in _PRESERVED_REMOTE_RE.findall(log):
             candidate = token.rstrip(",")
             while candidate:
                 try:
-                    endpoints.add(str(ipaddress.ip_address(candidate)))
+                    selectors.add((str(ipaddress.ip_address(candidate)), None, None))
                     break
                 except ValueError:
                     candidate, separator, _port = candidate.rpartition(":")
                     if not separator:
                         break
-        return endpoints
+        for destination, gateway, metric_text in _ADDED_ROUTE_RE.findall(log):
+            try:
+                normalized_destination = str(
+                    ipaddress.ip_address(destination.split("/", 1)[0])
+                )
+                metric = int(metric_text)
+            except ValueError:
+                continue
+            selectors.add(
+                (
+                    normalized_destination,
+                    gateway if gateway and gateway != "0.0.0.0" else None,
+                    metric if metric >= 0 else None,
+                )
+            )
+        return selectors
 
     @staticmethod
     def _route_destination(route: str) -> str | None:
@@ -280,12 +299,32 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         except ValueError:
             return None
 
-    def _cleanup_openvpn_endpoint_routes(self) -> bool:
-        """Remove only this generation's orphaned OpenVPN endpoint routes.
+    @classmethod
+    def _route_matches_selector(
+        cls, route: str, selector: tuple[str, str | None, int | None]
+    ) -> bool:
+        destination, gateway, metric = selector
+        tokens = route.split()
+        if cls._route_destination(route) != destination:
+            return False
+        if gateway is not None and (
+            "via" not in tokens or tokens[tokens.index("via") + 1] != gateway
+        ):
+            return False
+        if metric is not None and (
+            "metric" not in tokens or tokens[tokens.index("metric") + 1] != str(metric)
+        ):
+            return False
+        return True
 
-        The endpoint comes from OpenVPN's own log and every deletion is limited
-        to a route absent from the pre-connect snapshot. Ambiguity is retained
-        as runtime evidence instead of deleting a possibly unrelated route.
+    def _cleanup_openvpn_endpoint_routes(self) -> bool:
+        """Remove only this generation's orphaned OpenVPN-owned routes.
+
+        Route identity comes from OpenVPN's own log and every deletion is limited
+        to a route absent from the pre-connect snapshot. This includes server
+        routes which OpenVPN adds after the Cloak transport is ready; a SIGKILL
+        prevents OpenVPN from removing them itself. Ambiguity is retained as
+        runtime evidence instead of deleting a possibly unrelated route.
         """
         if not self._route_snapshot_captured:
             return True
@@ -301,10 +340,10 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             }
         except OSError:
             return False
-        endpoints = self._preserved_remote_endpoints()
-        if endpoints is None:
+        selectors = self._owned_route_selectors()
+        if selectors is None:
             return False
-        if not endpoints:
+        if not selectors:
             return True
         current = self._current_route_lines()
         if current is None:
@@ -312,7 +351,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         orphaned = {
             route
             for route in current - baseline
-            if self._route_destination(route) in endpoints
+            if any(self._route_matches_selector(route, selector) for selector in selectors)
         }
         for route in orphaned:
             result = subprocess.run(
@@ -329,7 +368,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         return not {
             route
             for route in remaining - baseline
-            if self._route_destination(route) in endpoints
+            if any(self._route_matches_selector(route, selector) for selector in selectors)
         }
 
     def _stop_process(self, process: subprocess.Popen[str] | None) -> bool:
