@@ -5,6 +5,7 @@ import unittest
 
 from daemon.protocol import (
     ALLOWED_COMMANDS,
+    COMMAND_PAYLOAD_FIELDS,
     COMMAND_CONNECT,
     COMMAND_COMMAND_CANCEL,
     COMMAND_COMMAND_OUTCOME,
@@ -27,6 +28,7 @@ from daemon.protocol import (
     UnknownEventError,
     UnexpectedMessageTypeError,
     UnsupportedVersionError,
+    UnsupportedPayloadFieldsError,
     decode_event_line,
     decode_message_line,
     decode_request_line,
@@ -108,6 +110,22 @@ class DaemonProtocolRoundTripTests(unittest.TestCase):
         self.assertEqual(command_timeout_seconds(COMMAND_NODE_GROUP_AUTO_TEST), 120.0)
         self.assertEqual(set(COMMAND_TIMEOUT_SECONDS), set(ALLOWED_COMMANDS))
 
+    def test_each_command_accepts_only_its_documented_payload_fields(self) -> None:
+        expected_payloads = {
+            COMMAND_CONNECT: {"profile_id": "p1"},
+            COMMAND_DISCONNECT: {},
+            COMMAND_STATUS: {},
+            COMMAND_ROTATE: {"force": True},
+            COMMAND_NODE_GROUP_AUTO_TEST: {"group_name": "paris"},
+            COMMAND_COMMAND_OUTCOME: {"command_id": "123e4567-e89b-12d3-a456-426614174000"},
+            COMMAND_COMMAND_CANCEL: {"command_id": "123e4567-e89b-12d3-a456-426614174000"},
+        }
+
+        self.assertEqual(set(expected_payloads), set(COMMAND_PAYLOAD_FIELDS))
+        for command, payload in expected_payloads.items():
+            with self.subTest(command=command):
+                self.assertEqual(decode_request_line(encode_request(command, payload)).payload, payload)
+
 
 class DaemonProtocolMalformedTests(unittest.TestCase):
     def test_rejects_non_json_line(self) -> None:
@@ -168,6 +186,14 @@ class DaemonProtocolMalformedTests(unittest.TestCase):
 
         with self.assertRaises(MalformedMessageError):
             decode_request_line(line)
+
+    def test_rejects_unsupported_payload_keys_for_every_command(self) -> None:
+        for command in ALLOWED_COMMANDS:
+            with self.subTest(command=command):
+                with self.assertRaises(UnsupportedPayloadFieldsError) as cm:
+                    encode_request(command, {"unexpected": True})
+                self.assertEqual(cm.exception.command, command)
+                self.assertEqual(cm.exception.fields, ("unexpected",))
 
     def test_rejects_non_boolean_response_ok(self) -> None:
         line = b'{"version":1,"type":"response","ok":"true","payload":{},"error":null}\n'

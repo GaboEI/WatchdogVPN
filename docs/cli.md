@@ -198,6 +198,10 @@ authoritative final result with `watchdog command outcome <command-uuid>`.
 the command is still queued; it never claims to interrupt a running network
 operation.
 
+The IPC protocol also has an exact payload schema per command. Unsupported
+payload keys are rejected at the daemon boundary with a structured
+`unsupported_payload_fields` response; they are never silently ignored.
+
 ### `watchdog connect`
 
 Requests a daemon-managed connection to a saved profile.

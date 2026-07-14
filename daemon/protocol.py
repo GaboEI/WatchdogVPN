@@ -32,6 +32,19 @@ ALLOWED_COMMANDS = frozenset(
     }
 )
 
+# Protocol version 1 has no extension namespace for command payloads. Reject
+# unknown keys rather than silently ignoring a misspelt network-affecting
+# option or accepting a client/server schema mismatch.
+COMMAND_PAYLOAD_FIELDS = {
+    COMMAND_CONNECT: frozenset({"profile_id"}),
+    COMMAND_DISCONNECT: frozenset(),
+    COMMAND_STATUS: frozenset(),
+    COMMAND_ROTATE: frozenset({"force"}),
+    COMMAND_NODE_GROUP_AUTO_TEST: frozenset({"group_name"}),
+    COMMAND_COMMAND_OUTCOME: frozenset({"command_id"}),
+    COMMAND_COMMAND_CANCEL: frozenset({"command_id"}),
+}
+
 # The server is authoritative for these deadlines.  IPC clients use the same
 # values plus transport grace so an operation cannot become unobservable just
 # because their socket deadline expires first.
@@ -104,6 +117,14 @@ class UnknownEventError(ProtocolError):
     pass
 
 
+class UnsupportedPayloadFieldsError(MalformedMessageError):
+    def __init__(self, command: str, fields: tuple[str, ...]) -> None:
+        self.command = command
+        self.fields = fields
+        names = ", ".join(fields)
+        super().__init__(f"request.payload contains unsupported fields for {command}: {names}")
+
+
 @dataclass(frozen=True, slots=True)
 class Request:
     command: str
@@ -114,6 +135,7 @@ class Request:
         if self.command not in ALLOWED_COMMANDS:
             raise UnknownCommandError(f"unknown command: {self.command}")
         _require_mapping(self.payload, "request.payload")
+        _reject_unsupported_payload_keys(self.command, self.payload)
         if self.command_id is not None:
             _require_command_id(self.command_id, "request.command_id")
 
@@ -296,6 +318,13 @@ def _reject_unknown_keys(data: dict[str, Any], allowed: frozenset[str], object_n
     if unknown:
         names = ", ".join(unknown)
         raise MalformedMessageError(f"{object_name} contains unsupported fields: {names}")
+
+
+def _reject_unsupported_payload_keys(command: str, payload: dict[str, Any]) -> None:
+    allowed = COMMAND_PAYLOAD_FIELDS[command]
+    unknown = tuple(sorted(set(payload) - allowed))
+    if unknown:
+        raise UnsupportedPayloadFieldsError(command, unknown)
 
 
 def _optional_mapping(value: Any, field_name: str) -> dict[str, Any]:

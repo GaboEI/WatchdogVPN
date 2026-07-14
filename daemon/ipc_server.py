@@ -16,6 +16,7 @@ from daemon.protocol import (
     Request,
     Response,
     MUTATING_COMMANDS,
+    UnsupportedPayloadFieldsError,
     command_timeout_seconds,
     decode_request_line,
     encode_event,
@@ -89,6 +90,16 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             try:
                 request = decode_request_line(raw_line)
                 response = self._dispatch(request)
+            except UnsupportedPayloadFieldsError as exc:
+                response = encode_response(
+                    False,
+                    payload={
+                        "error_kind": "unsupported_payload_fields",
+                        "command": exc.command,
+                        "unsupported_fields": list(exc.fields),
+                    },
+                    error=str(exc),
+                )
             except ProtocolError as exc:
                 response = encode_response(False, error=str(exc))
             except Exception as exc:
