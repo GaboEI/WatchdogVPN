@@ -30,6 +30,7 @@ RUNTIME_PREFIX = "watchdogvpn-openvpn-cloak-"
 OC_OVPN_CONFIG_NAME = "openvpn.conf"
 CLOAK_CONFIG_NAME = "cloak.json"
 OC_OVPN_LOG_NAME = "openvpn.log"
+OC_OVPN_STATUS_NAME = "openvpn.status"
 CLOAK_LOG_NAME = "cloak.log"
 
 _CLOAK_STARTUP_WAIT = 1.5
@@ -75,6 +76,9 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._cloak_config_path: Path | None = None
         self._ovpn_log_path: Path | None = None
         self._cloak_log_path: Path | None = None
+        self._ovpn_status_path: Path | None = None
+        self._expected_interface = ""
+        self._expected_device_type = ""
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def _find_binary(self, candidates: tuple[str, ...], which_name: str) -> str | None:
@@ -135,6 +139,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             self._ovpn_config_path = self._runtime_dir / OC_OVPN_CONFIG_NAME
             self._cloak_config_path = self._runtime_dir / CLOAK_CONFIG_NAME
             self._ovpn_log_path = self._runtime_dir / OC_OVPN_LOG_NAME
+            self._ovpn_status_path = self._runtime_dir / OC_OVPN_STATUS_NAME
             self._cloak_log_path = self._runtime_dir / CLOAK_LOG_NAME
         return (
             self._ovpn_config_path,
@@ -178,9 +183,18 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._cloak_config_path = None
         self._ovpn_log_path = None
         self._cloak_log_path = None
+        self._ovpn_status_path = None
+        self._expected_interface = ""
+        self._expected_device_type = ""
 
     def _reset_logs(self) -> None:
         _, _, ovpn_log_path, cloak_log_path = self._ensure_runtime_paths()
+        status_path = self._ovpn_status_path
+        if status_path is not None:
+            try:
+                status_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         for path in (cloak_log_path, ovpn_log_path):
             try:
                 path.unlink(missing_ok=True)
@@ -218,9 +232,49 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             parts = line.split(":", 2)
             if len(parts) >= 2:
                 iface = parts[1].strip()
+                if self._expected_interface:
+                    if iface == self._expected_interface:
+                        return True
+                    continue
                 if iface.startswith("tun") or iface.startswith("tap"):
                     return True
         return False
+
+    def _configure_readiness(self, profile: Profile) -> tuple[str, ...]:
+        if self._runtime_dir is None or self._ovpn_status_path is None:
+            raise RuntimeError("OpenVPN+Cloak runtime paths are unavailable")
+        configured_type = str(profile.config.get("dev_type") or "").strip().lower()
+        configured_dev = str(profile.config.get("dev") or "").strip().lower()
+        self._expected_device_type = (
+            "tap" if configured_type == "tap" or configured_dev.startswith("tap") else "tun"
+        )
+        token = self._runtime_dir.name.rsplit("-", 1)[-1].replace("_", "")[:10]
+        self._expected_interface = f"wd{self._expected_device_type}{token}"
+        return (
+            "--dev",
+            self._expected_interface,
+            "--dev-type",
+            self._expected_device_type,
+            "--status",
+            str(self._ovpn_status_path),
+            "1",
+            "--status-version",
+            "3",
+        )
+
+    def _readiness_evidence_ready(self) -> bool:
+        if (
+            not self._expected_interface
+            or self._ovpn_status_path is None
+            or self._ovpn_log_path is None
+        ):
+            return False
+        try:
+            status = self._ovpn_status_path.read_text(encoding="utf-8", errors="replace")
+            log = self._ovpn_log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        return "OpenVPN" in status and "Initialization Sequence Completed" in log
 
     def connect(
         self,
@@ -247,6 +301,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._write_configs(profile)
         self._reset_logs()
         ovpn_config_path, cloak_config_path, ovpn_log_path, cloak_log_path = self._ensure_runtime_paths()
+        readiness_options = self._configure_readiness(profile)
 
         try:
             ck_log = cloak_log_path.open("w", encoding="utf-8")
@@ -272,7 +327,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         except OSError:
             ovpn_log = open(os.devnull, "w")
         self._openvpn_process = subprocess.Popen(
-            build_openvpn_command(openvpn_bin, ovpn_config_path),
+            build_openvpn_command(openvpn_bin, ovpn_config_path, runtime_options=readiness_options),
             text=True,
             stdout=ovpn_log,
             stderr=subprocess.STDOUT,
@@ -299,7 +354,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
                 return False
             if ck.poll() is not None or ovpn.poll() is not None:
                 return False
-            if self._vpn_interface_active():
+            if self._vpn_interface_active() and self._readiness_evidence_ready():
                 return True
             time.sleep(0.25)
         return False
@@ -339,7 +394,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             return "down"
         if ck.poll() is not None or ovpn.poll() is not None:
             return "down"
-        if self._vpn_interface_active():
+        if self._vpn_interface_active() and self._readiness_evidence_ready():
             return "ok"
         return "degraded"
 
@@ -363,12 +418,14 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             self._connected_at = None
             self._cleanup_configs()
             return ConnectionState(status="standby")
+        ready = self._vpn_interface_active() and self._readiness_evidence_ready()
         profile_id = self._active_profile.id if self._active_profile else ""
         return ConnectionState(
             active_profile_id=profile_id,
             connected_at=self._connected_at,
             mode="openvpn_cloak",
-            tun_active=self._vpn_interface_active(),
+            tun_active=ready,
             proxy_active=False,
-            status="connected",
+            status="connected" if ready else "runtime_mismatch",
+            last_failure_reason="OpenVPN readiness evidence is incomplete" if not ready else "",
         )

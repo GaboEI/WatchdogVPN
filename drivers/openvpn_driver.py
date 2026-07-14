@@ -27,6 +27,7 @@ from parsers.openvpn_safety import validate_openvpn_profile
 RUNTIME_PREFIX = "watchdogvpn-openvpn-"
 CONFIG_NAME = "openvpn.conf"
 LOG_NAME = "openvpn.log"
+STATUS_NAME = "openvpn.status"
 CONNECT_READY_TIMEOUT_SECONDS = 10.0
 
 
@@ -60,6 +61,9 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         self._runtime_dir: Path | None = None
         self._config_path: Path | None = None
         self._log_path: Path | None = None
+        self._status_path: Path | None = None
+        self._expected_interface = ""
+        self._expected_device_type = ""
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def find_openvpn_binary(self) -> str | None:
@@ -92,6 +96,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             self._runtime_dir = make_runtime_dir(RUNTIME_PREFIX)
             self._config_path = self._runtime_dir / CONFIG_NAME
             self._log_path = self._runtime_dir / LOG_NAME
+            self._status_path = self._runtime_dir / STATUS_NAME
         return self._config_path, self._log_path  # type: ignore[return-value]
 
     def generate_openvpn_config(self, profile: Profile) -> str:
@@ -114,6 +119,9 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         self._runtime_dir = None
         self._config_path = None
         self._log_path = None
+        self._status_path = None
+        self._expected_interface = ""
+        self._expected_device_type = ""
 
     def _vpn_interface_active(self, profile: Profile | None = None) -> bool:
         if not shutil.which("ip"):
@@ -121,8 +129,8 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         result = subprocess.run(["ip", "-o", "link", "show"], text=True, capture_output=True, check=False)
         if result.returncode != 0:
             return False
-        configured_dev = ""
-        if profile is not None:
+        configured_dev = self._expected_interface
+        if not configured_dev and profile is not None:
             configured_dev = str(profile.config.get("dev") or "").strip()
         for line in result.stdout.splitlines():
             parts = line.split(":", 2)
@@ -134,6 +142,38 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             if not configured_dev and (interface.startswith("tun") or interface.startswith("tap")):
                 return True
         return False
+
+    def _configure_readiness(self, profile: Profile) -> tuple[str, ...]:
+        if self._runtime_dir is None or self._status_path is None:
+            raise RuntimeError("OpenVPN runtime paths are unavailable")
+        configured_type = str(profile.config.get("dev_type") or "").strip().lower()
+        configured_dev = str(profile.config.get("dev") or "").strip().lower()
+        self._expected_device_type = (
+            "tap" if configured_type == "tap" or configured_dev.startswith("tap") else "tun"
+        )
+        token = self._runtime_dir.name.rsplit("-", 1)[-1].replace("_", "")[:10]
+        self._expected_interface = f"wd{self._expected_device_type}{token}"
+        return (
+            "--dev",
+            self._expected_interface,
+            "--dev-type",
+            self._expected_device_type,
+            "--status",
+            str(self._status_path),
+            "1",
+            "--status-version",
+            "3",
+        )
+
+    def _readiness_evidence_ready(self) -> bool:
+        if not self._expected_interface or self._status_path is None or self._log_path is None:
+            return False
+        try:
+            status = self._status_path.read_text(encoding="utf-8", errors="replace")
+            log = self._log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        return "OpenVPN" in status and "Initialization Sequence Completed" in log
 
     def connect(
         self,
@@ -157,9 +197,14 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return False
         self.generate_openvpn_config(profile)
         config_path, log_path = self._ensure_runtime_paths()
+        readiness_options = self._configure_readiness(profile)
+        try:
+            self._status_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
-            build_openvpn_command(binary, config_path),
+            build_openvpn_command(binary, config_path, runtime_options=readiness_options),
             text=True,
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -181,7 +226,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             process = self._process
             if process is None or process.poll() is not None:
                 return False
-            if self._vpn_interface_active(profile):
+            if self._vpn_interface_active(profile) and self._readiness_evidence_ready():
                 return True
             time.sleep(0.25)
         return False
@@ -216,7 +261,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         process = self._process
         if process is None or process.poll() is not None:
             return "down"
-        if self._vpn_interface_active(self._active_profile):
+        if self._vpn_interface_active(self._active_profile) and self._readiness_evidence_ready():
             return "ok"
         return "degraded"
 
@@ -234,13 +279,18 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return ConnectionState(status="standby")
         if process.poll() is None:
             profile_id = self._active_profile.id if self._active_profile else ""
+            ready = (
+                self._vpn_interface_active(self._active_profile)
+                and self._readiness_evidence_ready()
+            )
             return ConnectionState(
                 active_profile_id=profile_id,
                 connected_at=self._connected_at,
                 mode="openvpn",
-                tun_active=self._vpn_interface_active(self._active_profile),
+                tun_active=ready,
                 proxy_active=False,
-                status="connected",
+                status="connected" if ready else "runtime_mismatch",
+                last_failure_reason="OpenVPN readiness evidence is incomplete" if not ready else "",
             )
         self._process = None
         self._active_profile = None

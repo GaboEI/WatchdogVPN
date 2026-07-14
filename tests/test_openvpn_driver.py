@@ -101,7 +101,21 @@ class OpenVPNDriverTests(unittest.TestCase):
         popen_mock.assert_called_once()
         command = popen_mock.call_args.args[0]
         self.assertEqual(command[1:4], ["--nnp", "--inh-caps=-all,+net_admin,+net_raw", "--ambient-caps=-all,+net_admin,+net_raw"])
-        self.assertEqual(command[-3:], ["/usr/sbin/openvpn", "--config", str(self.driver._config_path)])
+        self.assertEqual(command[5:8], ["/usr/sbin/openvpn", "--config", str(self.driver._config_path)])
+        self.assertEqual(
+            command[-9:],
+            [
+                "--dev",
+                self.driver._expected_interface,
+                "--dev-type",
+                "tun",
+                "--status",
+                str(self.driver._status_path),
+                "1",
+                "--status-version",
+                "3",
+            ],
+        )
         self.assertEqual(command[4], "--")
         self.assertIs(self.driver._process, process)
         self.assertIs(self.driver._active_profile, self.profile)
@@ -194,9 +208,10 @@ class OpenVPNDriverTests(unittest.TestCase):
     @patch("drivers.openvpn_driver.any_recorded_child_alive", return_value=True)
     def test_status_reports_runtime_mismatch_when_recorded_child_alive(self, alive_mock, tun_mock) -> None:
         self.assertEqual(self.driver.status().status, "runtime_mismatch")
+    @patch.object(OpenVPNDriver, "_readiness_evidence_ready", return_value=True)
 
     @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=True)
-    def test_status_returns_connected_when_process_alive(self, tun_mock) -> None:
+    def test_status_returns_connected_when_process_alive(self, evidence_mock, tun_mock) -> None:
         process = unittest.mock.Mock()
         process.poll.return_value = None
         self.driver._process = process
@@ -234,12 +249,74 @@ class OpenVPNDriverTests(unittest.TestCase):
         self.driver._process = process
         self.assertEqual(self.driver.health_check(), "degraded")
 
+    @patch.object(OpenVPNDriver, "_readiness_evidence_ready", return_value=True)
     @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=True)
-    def test_health_check_ok_with_process_and_tun(self, tun_mock) -> None:
+    def test_health_check_ok_with_process_and_tun(self, tun_mock, evidence_mock) -> None:
         process = unittest.mock.Mock()
         process.poll.return_value = None
         self.driver._process = process
         self.assertEqual(self.driver.health_check(), "ok")
+    @patch.object(OpenVPNDriver, "_readiness_evidence_ready", return_value=False)
+    @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=True)
+    def test_status_rejects_live_process_without_current_generation_evidence(
+        self, _interface, _evidence
+    ) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        state = self.driver.status()
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertFalse(state.tun_active)
+        self.assertIn("readiness evidence", state.last_failure_reason)
+
+    def test_readiness_rejects_unrelated_tun_and_requires_current_evidence(self) -> None:
+        self.driver._ensure_runtime_paths()
+        self.driver._configure_readiness(self.profile)
+        expected = self.driver._expected_interface
+        result = unittest.mock.Mock(returncode=0, stdout="7: tun0: <POINTOPOINT>\n")
+        with (
+            patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip"),
+            patch("drivers.openvpn_driver.subprocess.run", return_value=result),
+        ):
+            self.assertFalse(self.driver._vpn_interface_active(self.profile))
+            result.stdout = f"7: {expected}: <POINTOPOINT>\n"
+            self.assertTrue(self.driver._vpn_interface_active(self.profile))
+
+        self.assertFalse(self.driver._readiness_evidence_ready())
+        self.driver._status_path.write_text("OpenVPN STATISTICS\n", encoding="utf-8")
+        self.driver._log_path.write_text("Initialization Sequence Completed\n", encoding="utf-8")
+        self.assertTrue(self.driver._readiness_evidence_ready())
+
+    def test_readiness_owns_a_short_tap_name_when_profile_requests_tap(self) -> None:
+        profile = Profile(
+            id="openvpn-tap",
+            name="openvpn-tap",
+            protocol=ProtocolType.OPENVPN,
+            config={"raw_config": "client\ndev tap\n", "dev": "tap"},
+            source=ProfileSource.MANUAL,
+        )
+        self.driver._ensure_runtime_paths()
+        options = self.driver._configure_readiness(profile)
+
+        self.assertEqual(self.driver._expected_device_type, "tap")
+        self.assertTrue(self.driver._expected_interface.startswith("wdtap"))
+        self.assertLessEqual(len(self.driver._expected_interface), 15)
+        self.assertEqual(options[0:4], ("--dev", self.driver._expected_interface, "--dev-type", "tap"))
+
+    @patch.object(OpenVPNDriver, "_readiness_evidence_ready", return_value=False)
+    @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=True)
+    def test_health_rejects_interface_without_current_generation_evidence(
+        self, _interface, _evidence
+    ) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+
+        self.assertEqual(self.driver.health_check(), "degraded")
+
 
 
 if __name__ == "__main__":
