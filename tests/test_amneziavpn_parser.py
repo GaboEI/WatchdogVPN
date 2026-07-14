@@ -169,7 +169,7 @@ class ParseAmneziaVpnTests(unittest.TestCase):
             "[Interface]\nPrivateKey = TEST-ONLY-NOT-A-PRIVATE-KEY\n"
             "Address = 192.0.2.2/32\nJc = 4\n"
             "[Peer]\nPublicKey = TEST-ONLY-NOT-A-PUBLIC-KEY\n"
-            "Endpoint = 192.0.2.20:30919\nAllowedIPs = 0.0.0.0/0\n"
+            "Endpoint = 8.8.8.8:30919\nAllowedIPs = 0.0.0.0/0\n"
         )
         payload = dict(_MINIMAL_PAYLOAD)
         payload["containers"] = [

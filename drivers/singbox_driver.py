@@ -41,6 +41,7 @@ from drivers.runtime_paths import (
 )
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from parsers.profile_schema import validate_profile_semantics
 from route_chains.models import chain_target
 from route_chains.runtime import ChainRuntimePlan
 from rules.models import SIMPLE_RULE_ACTIONS, RuleGroup
@@ -517,6 +518,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         *,
         tag: str | None = None,
     ) -> dict[str, Any]:
+        validate_profile_semantics(profile)
         if profile.protocol is ProtocolType.WIREGUARD:
             endpoint = self._wireguard_to_endpoint(profile, tag=tag)
             config.setdefault("endpoints", []).append(endpoint)
@@ -536,7 +538,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "uuid": cfg.get("uuid") or profile.id,
+                "uuid": cfg.get("uuid"),
                 "flow": cfg.get("flow"),
                 "network": cfg.get("network") or cfg.get("type") or "tcp",
             }
@@ -567,7 +569,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "uuid": cfg.get("uuid") or profile.id,
+                "uuid": cfg.get("uuid"),
                 "alter_id": self._normalize_port(self._first_config_value(cfg, "alter_id", "alterId", "aid"), 0) or 0,
                 "security": self._first_config_value(cfg, "security", "scy") or "auto",
             }
@@ -584,7 +586,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "password": cfg.get("password") or profile.id,
+                "password": cfg.get("password"),
                 "tls": tls_options,
             }
         if profile.protocol is ProtocolType.HYSTERIA2:
@@ -602,7 +604,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "password": cfg.get("password") or profile.id,
+                "password": cfg.get("password"),
                 "tls": tls_options,
             }
             up_mbps = self._normalize_port(cfg.get("up_mbps") or cfg.get("upload_mbps") or cfg.get("uploadMbps"))
@@ -623,8 +625,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "uuid": cfg.get("uuid") or profile.id,
-                "password": cfg.get("password") or profile.id,
+                "uuid": cfg.get("uuid"),
+                "password": cfg.get("password"),
                 "congestion_control": cfg.get("congestion_control", "bbr"),
                 "tls": self._build_standard_tls_options(cfg, cfg.get("host") or cfg.get("server")),
             }
@@ -638,8 +640,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "method": cfg.get("method", "chacha20-ietf-poly1305"),
-                "password": cfg.get("password") or profile.id,
+                "method": cfg.get("method"),
+                "password": cfg.get("password"),
             }
         if profile.protocol is ProtocolType.SOCKS:
             outbound = {

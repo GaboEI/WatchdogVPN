@@ -24,6 +24,7 @@ from parsers import (
 from providers.base import BaseProvider
 from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_profile
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
 
 RotationPrompt = Callable[[Profile], bool]
 
@@ -111,6 +112,10 @@ class ManualProvider(BaseProvider):
             saved: list[Profile] = []
             for profile in profiles:
                 profile.id = self._unique_profile_id_from_used_ids(profile.id, used_ids)
+                try:
+                    validate_profile_semantics(profile)
+                except ProfileSemanticValidationError as exc:
+                    raise ParseError(str(exc)) from exc
                 used_ids.add(profile.id)
                 saved.append(profile)
             return [*current, *saved], saved

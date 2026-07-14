@@ -11,11 +11,20 @@ from providers.subscription_provider import ProviderNotFoundError, SubscriptionP
 
 
 def _profile(profile_id: str, name: str, host: str, protocol: ProtocolType = ProtocolType.VLESS) -> Profile:
+    config = {"host": host, "port": 443}
+    if protocol in {ProtocolType.VLESS, ProtocolType.VMESS}:
+        config["uuid"] = "test-uuid"
+    elif protocol in {ProtocolType.TROJAN, ProtocolType.HYSTERIA2}:
+        config["password"] = "test-password"
+    elif protocol is ProtocolType.TUIC:
+        config.update({"uuid": "test-uuid", "password": "test-password"})
+    elif protocol is ProtocolType.SHADOWSOCKS:
+        config.update({"method": "chacha20-ietf-poly1305", "password": "test-password"})
     return Profile(
         id=profile_id,
         name=name,
         protocol=protocol,
-        config={"host": host, "port": 443},
+        config=config,
         source=ProfileSource.MANUAL,
     )
 

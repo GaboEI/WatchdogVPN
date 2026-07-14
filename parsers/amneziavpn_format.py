@@ -27,6 +27,8 @@ from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
 from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
 from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_config
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
+from parsers.wg_config import parse_wg_config
 
 _VPN_PREFIX = "vpn://"
 _DNS_PLACEHOLDER = re.compile(r"\$PRIMARY_DNS|\$SECONDARY_DNS")
@@ -40,7 +42,8 @@ _CONTAINER_PARSERS: dict[str, str] = {
 def _validated_profile(profile: Profile) -> Profile:
     try:
         validate_profile_endpoint(profile)
-    except EndpointPolicyError as exc:
+        validate_profile_semantics(profile)
+    except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
         raise ParseError(str(exc)) from exc
     return profile
 
@@ -171,6 +174,10 @@ def _parse_amneziawg(
     if not raw_config.strip():
         raise ParseError("amneziavpn: empty amneziawg config")
 
+    parsed = parse_wg_config(raw_config)
+    if parsed.protocol is not ProtocolType.AMNEZIAWG:
+        raise ParseError("amneziavpn: awg config lacks AmneziaWG obfuscation settings")
+
     client_id = awg_config.get("clientId") or ""
     profile_id = f"awg-{host}-{client_id[:8]}" if client_id else f"awg-{host}"
     name = description or f"amneziawg-{host}"
@@ -180,10 +187,9 @@ def _parse_amneziawg(
         name=name,
         protocol=ProtocolType.AMNEZIAWG,
         config={
+            **parsed.config,
             "raw": raw_config,
-            "host": host,
             "client_id": client_id,
-            "port": awg_config.get("port") or awg_section.get("port"),
         },
         source=ProfileSource.MANUAL,
     ))

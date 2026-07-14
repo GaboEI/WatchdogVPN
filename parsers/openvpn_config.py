@@ -6,6 +6,7 @@ from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_config
 from parsers.uri import ParseError
 from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
 
 
 
@@ -27,7 +28,8 @@ def _profile_name(remote_host: str | None, remote_port: str | None) -> str:
 def _validated_profile(profile: Profile) -> Profile:
     try:
         validate_profile_endpoint(profile)
-    except EndpointPolicyError as exc:
+        validate_profile_semantics(profile)
+    except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
         raise ParseError(str(exc)) from exc
     return profile
 

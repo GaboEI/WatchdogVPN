@@ -6,6 +6,7 @@ from typing import Any
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
 from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
 
 
 _SECTION_RE = re.compile(r"^\[(?P<section>[^\]]+)\]\s*$")
@@ -53,7 +54,8 @@ def _is_amneziawg(sections: dict[str, dict[str, str]]) -> bool:
 def _validated_profile(profile: Profile) -> Profile:
     try:
         validate_profile_endpoint(profile)
-    except EndpointPolicyError as exc:
+        validate_profile_semantics(profile)
+    except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
         raise ParseError(str(exc)) from exc
     return profile
 

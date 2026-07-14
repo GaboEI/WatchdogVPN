@@ -317,6 +317,19 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             self.driver.generate_singbox_config(profile)
 
     @patch.object(SingBoxDriver, "_write_config")
+    def test_generation_never_uses_profile_identifier_as_a_secret(self, write_mock) -> None:
+        profile = self._profile(
+            ProtocolType.TROJAN,
+            id="display-id-is-not-a-password",
+            host="trojan.example.com",
+            port=443,
+        )
+
+        with self.assertRaisesRegex(ValueError, "non-empty password"):
+            self.driver.generate_singbox_config(profile)
+        write_mock.assert_not_called()
+
+    @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_config_written_is_json_serializable(self, bind_mock, write_mock) -> None:
         profile = self._profile(ProtocolType.TROJAN, host="trojan.example.com", port=443, password="secret")

@@ -81,12 +81,14 @@ class ManualProviderTests(unittest.TestCase):
                                 "tag": "vless-1",
                                 "server": "vless.example.com",
                                 "server_port": 443,
+                                "uuid": "uuid-1",
                             },
                             {
                                 "type": "trojan",
                                 "tag": "trojan-1",
                                 "server": "trojan.example.com",
                                 "server_port": 443,
+                                "password": "secret",
                             },
                         ]
                     }
@@ -141,6 +143,22 @@ class ManualProviderTests(unittest.TestCase):
             profile = provider.from_text(json.dumps(source_profile.to_dict()))
 
             self.assertEqual(profile.config["uuid"], "vmess-uuid")
+
+    def test_watchdog_profile_json_missing_secret_is_not_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "profiles.json"
+            provider = self._provider(store_path)
+            source_profile = Profile(
+                id="visible-label",
+                name="Visible label",
+                protocol=ProtocolType.TROJAN,
+                config={"host": "trojan.example.com", "port": 443},
+                source=ProfileSource.MANUAL,
+            )
+
+            with self.assertRaisesRegex(ParseError, "non-empty password"):
+                provider.from_text(json.dumps(source_profile.to_dict()))
+            self.assertEqual(ProfileStore(store_path).list(), [])
 
     def test_from_text_normalizes_watchdog_wireguard_raw_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

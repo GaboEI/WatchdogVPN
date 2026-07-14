@@ -5,6 +5,7 @@ from typing import Any
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
 from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
 
 
 _TYPE_TO_PROTOCOL: dict[str, ProtocolType] = {
@@ -158,6 +159,8 @@ def parse_clash_yaml(text: str) -> list[Profile]:
             continue
         name = _profile_name(proxy, protocol)
         config = dict(proxy)
+        if protocol is ProtocolType.SHADOWSOCKS and not config.get("method"):
+            config["method"] = config.get("cipher")
         config.setdefault("raw", proxy)
         profile = Profile(
             id=name,
@@ -168,7 +171,8 @@ def parse_clash_yaml(text: str) -> list[Profile]:
         )
         try:
             validate_profile_endpoint(profile)
-        except EndpointPolicyError as exc:
+            validate_profile_semantics(profile)
+        except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
             raise ParseError(str(exc)) from exc
         profiles.append(profile)
     if not profiles:

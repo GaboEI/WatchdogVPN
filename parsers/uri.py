@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlparse, unquote
 
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.endpoint_policy import EndpointPolicyError, canonicalize_remote_endpoint
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
 
 
 class ParseError(ValueError):
@@ -289,18 +290,25 @@ def _parse_vmess(uri: str):
 
 def parse_uri(uri: str) -> Profile:
     scheme = detect_scheme(uri)
+    profile: Profile
     if scheme == "vless":
-        return _parse_vless(uri)
-    if scheme == "vmess":
-        return _parse_vmess(uri)
-    if scheme == "trojan":
-        return _parse_trojan(uri)
-    if scheme in ("hysteria2", "hy2"):
-        return _parse_hysteria2(uri)
-    if scheme == "ss":
-        return _parse_shadowsocks(uri)
-    if scheme == "tuic":
-        return _parse_tuic(uri)
-    if scheme == "wg":
-        return _parse_wireguard(uri)
-    raise ParseError(f"unsupported URI scheme: {scheme}")
+        profile = _parse_vless(uri)
+    elif scheme == "vmess":
+        profile = _parse_vmess(uri)
+    elif scheme == "trojan":
+        profile = _parse_trojan(uri)
+    elif scheme in ("hysteria2", "hy2"):
+        profile = _parse_hysteria2(uri)
+    elif scheme == "ss":
+        profile = _parse_shadowsocks(uri)
+    elif scheme == "tuic":
+        profile = _parse_tuic(uri)
+    elif scheme == "wg":
+        profile = _parse_wireguard(uri)
+    else:
+        raise ParseError(f"unsupported URI scheme: {scheme}")
+    try:
+        validate_profile_semantics(profile)
+    except ProfileSemanticValidationError as exc:
+        raise ParseError(str(exc)) from exc
+    return profile

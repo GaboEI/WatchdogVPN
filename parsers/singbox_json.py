@@ -6,6 +6,7 @@ from typing import Any
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
 from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
 
 
 _TYPE_TO_PROTOCOL: dict[str, ProtocolType] = {
@@ -83,7 +84,15 @@ def _build_v2ray_profile(outbound: dict[str, Any]) -> Profile | None:
 
     settings = outbound.get("settings") if isinstance(outbound.get("settings"), dict) else {}
     servers = settings.get("servers") if isinstance(settings, dict) else None
-    server = servers[0] if isinstance(servers, list) and servers and isinstance(servers[0], dict) else {}
+    vnext = settings.get("vnext") if isinstance(settings, dict) else None
+    server_list = vnext if protocol in {ProtocolType.VLESS, ProtocolType.VMESS} else servers
+    server = (
+        server_list[0]
+        if isinstance(server_list, list) and server_list and isinstance(server_list[0], dict)
+        else {}
+    )
+    users = server.get("users") if isinstance(server.get("users"), list) else []
+    user = users[0] if users and isinstance(users[0], dict) else {}
     stream = outbound.get("streamSettings") if isinstance(outbound.get("streamSettings"), dict) else {}
     tls = stream.get("tlsSettings") if isinstance(stream.get("tlsSettings"), dict) else {}
 
@@ -95,6 +104,11 @@ def _build_v2ray_profile(outbound: dict[str, Any]) -> Profile | None:
     }
     if protocol is ProtocolType.TROJAN:
         config["password"] = server.get("password")
+    elif protocol in {ProtocolType.VLESS, ProtocolType.VMESS}:
+        config["uuid"] = user.get("id") or user.get("uuid")
+        if protocol is ProtocolType.VMESS:
+            config["alter_id"] = user.get("alterId") or user.get("alter_id")
+            config["security"] = user.get("security")
     if tls:
         config["tls"] = True
         if tls.get("serverName"):
@@ -120,7 +134,8 @@ def parse_singbox_json(data: str | dict[str, Any]) -> list[Profile]:
         if profile is not None:
             try:
                 validate_profile_endpoint(profile)
-            except EndpointPolicyError as exc:
+                validate_profile_semantics(profile)
+            except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
                 raise ParseError(str(exc)) from exc
             profiles.append(profile)
     if not profiles:

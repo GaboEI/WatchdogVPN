@@ -13,6 +13,7 @@ from models.profile import Profile, ProfileSource, profile_fingerprint
 from models.provider import Provider, normalized_provider_url
 from parsers import ParseError, fetch_and_parse, fetch_subscription
 from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
 from providers.base import BaseProvider
 
 SubscriptionFetcher = Callable[[str], list[Profile]]
@@ -223,6 +224,10 @@ class SubscriptionProvider(BaseProvider):
             profile.source = ProfileSource.SUBSCRIPTION
             profile.provider_id = provider.id
             profile.in_rotation_pool = True
+            try:
+                validate_profile_semantics(profile)
+            except ProfileSemanticValidationError as exc:
+                raise ParseError(str(exc)) from exc
             normalized.append(profile)
         return normalized
 

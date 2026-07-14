@@ -14,6 +14,7 @@ from parsers import (
     fetch_and_parse,
     fetch_subscription,
     parse_clash_yaml,
+    parse_hysteria2_yaml,
     parse_openvpn_config,
     parse_singbox_json,
     parse_uri,
@@ -167,6 +168,14 @@ class UriParserTests(unittest.TestCase):
         with self.assertRaises(ParseError):
             parse_uri("ftp://example.com")
 
+    def test_uri_rejects_invalid_semantic_fields(self) -> None:
+        with self.assertRaisesRegex(ParseError, "between 1 and 65535"):
+            parse_uri("vless://uuid@example.com:0?encryption=none")
+        with self.assertRaisesRegex(ParseError, "non-empty uuid"):
+            parse_uri("vless://@example.com:443?encryption=none")
+        with self.assertRaisesRegex(ParseError, "non-empty password"):
+            parse_uri("trojan://@example.com:443?security=tls")
+
     def test_parse_wireguard_config(self) -> None:
         profile = parse_wg_config(
             """
@@ -227,6 +236,23 @@ class UriParserTests(unittest.TestCase):
                 Endpoint = wg.example.com:51820
                 """
             )
+        with self.assertRaisesRegex(ParseError, "endpoint must include a port"):
+            parse_wg_config(
+                """
+                [Interface]
+                PrivateKey = private-key
+
+                [Peer]
+                PublicKey = public-key
+                Endpoint = wg.example.com
+                """
+            )
+
+    def test_hysteria2_yaml_requires_a_valid_server_port(self) -> None:
+        with self.assertRaisesRegex(ParseError, "requires a port"):
+            parse_hysteria2_yaml("server: hy.example.com\nauth: secret\n")
+        with self.assertRaisesRegex(ParseError, "between 1 and 65535"):
+            parse_hysteria2_yaml("server: hy.example.com:70000\nauth: secret\n")
 
 
 class SingboxJsonParserTests(unittest.TestCase):
@@ -251,8 +277,8 @@ class SingboxJsonParserTests(unittest.TestCase):
             json.dumps(
                 {
                     "outbounds": [
-                        {"type": "vmess", "tag": "vm1", "server": "vmess.example.com", "server_port": 443},
-                        {"type": "trojan", "tag": "tr1", "server": "trojan.example.com", "server_port": 443},
+                        {"type": "vmess", "tag": "vm1", "server": "vmess.example.com", "server_port": 443, "uuid": "uuid-1"},
+                        {"type": "trojan", "tag": "tr1", "server": "trojan.example.com", "server_port": 443, "password": "secret"},
                         {"type": "direct", "tag": "bypass"},
                     ]
                 }
@@ -268,6 +294,16 @@ class SingboxJsonParserTests(unittest.TestCase):
             parse_singbox_json(json.dumps(["invalid", "shape"]))
         with self.assertRaisesRegex(ParseError, "no supported profiles"):
             parse_singbox_json(json.dumps({"outbounds": [{"type": "direct", "tag": "bypass"}]}))
+
+    def test_parse_singbox_json_rejects_invalid_port_and_missing_secret(self) -> None:
+        with self.assertRaisesRegex(ParseError, "between 1 and 65535"):
+            parse_singbox_json(
+                {"type": "vless", "tag": "primary", "server": "sb.example.com", "server_port": 70000, "uuid": "uuid-1"}
+            )
+        with self.assertRaisesRegex(ParseError, "non-empty password"):
+            parse_singbox_json(
+                {"type": "trojan", "tag": "primary", "server": "sb.example.com", "server_port": 443}
+            )
 
 
 class OpenVPNConfigParserTests(unittest.TestCase):
@@ -332,6 +368,10 @@ class ClashYamlParserTests(unittest.TestCase):
             parse_clash_yaml("proxies:\n  name: bad")
         with self.assertRaisesRegex(ParseError, "no supported profiles"):
             parse_clash_yaml("proxies:\n  - name: bypass\n    type: direct\n")
+        with self.assertRaisesRegex(ParseError, "non-empty password"):
+            parse_clash_yaml(
+                "proxies:\n  - name: trojan\n    type: trojan\n    server: trojan.example.com\n    port: 443\n"
+            )
 
 
 class SubscriptionParserTests(unittest.TestCase):
@@ -351,7 +391,7 @@ class SubscriptionParserTests(unittest.TestCase):
             json.dumps(
                 {
                     "outbounds": [
-                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
                     ]
                 }
             ).encode("utf-8"),
@@ -436,7 +476,7 @@ class SubscriptionParserTests(unittest.TestCase):
             json.dumps(
                 {
                     "outbounds": [
-                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
                     ]
                 }
             ).encode("utf-8"),
@@ -533,7 +573,7 @@ class SubscriptionUserinfoTests(unittest.TestCase):
             json.dumps(
                 {
                     "outbounds": [
-                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
                     ]
                 }
             ).encode("utf-8"),
@@ -557,7 +597,7 @@ class SubscriptionUserinfoTests(unittest.TestCase):
             json.dumps(
                 {
                     "outbounds": [
-                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
                     ]
                 }
             ).encode("utf-8"),
@@ -576,7 +616,7 @@ class SubscriptionUserinfoTests(unittest.TestCase):
             json.dumps(
                 {
                     "outbounds": [
-                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
                     ]
                 }
             ).encode("utf-8"),
