@@ -157,6 +157,8 @@ migrate_watchdogvpn_shared_state() {
   local source_dir="${WATCHDOGVPN_LEGACY_CONFIG_DIR:-$HOME/.config/watchdogvpn}"
   local target_dir="${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}"
   local marker="$target_dir/.migrated"
+  local journal="$target_dir/.migration-in-progress"
+  local stage_dir marker_tmp journal_tmp entry_name
   local has_legacy_data=0
 
   # NOTE: the marker means "the shared state directory is ready for the CLI
@@ -168,8 +170,18 @@ migrate_watchdogvpn_shared_state() {
   # state on any install that never had legacy per-user config. Found during
   # the Phase 18 Task 18.4 shared-state permissions audit.
   if [[ -e "$marker" ]]; then
+    # A crash after marker publication but before journal cleanup is already a
+    # completed migration: marker publication only follows target validation.
+    if [[ -e "$journal" ]]; then
+      run_step sudo rm -f -- "$journal"
+    fi
     printf '[KEEP] WatchdogVPN shared state already migrated: %s\n' "$target_dir"
     return 0
+  fi
+  if [[ -e "$journal" ]] \
+    && { [[ ! -f "$journal" ]] || ! sudo grep -Fxq 'watchdogvpn-state-migration-v1' "$journal"; }; then
+    printf 'ERROR: WatchdogVPN migration recovery journal is invalid: %s\n' "$journal" >&2
+    return 1
   fi
   if [[ -e "$target_dir" && ! -d "$target_dir" ]]; then
     printf 'ERROR: WatchdogVPN shared state target is not a directory: %s\n' "$target_dir" >&2
@@ -199,14 +211,150 @@ migrate_watchdogvpn_shared_state() {
     return 0
   fi
 
-  if ((has_legacy_data == 1)); then
-    run_step sudo cp -a --update=none "$source_dir/." "$target_dir/"
-    printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
-  else
+  if ((has_legacy_data == 0)); then
     printf '[SKIP] no legacy WatchdogVPN user state to migrate; marking shared state ready: %s\n' "$target_dir"
+    _publish_watchdogvpn_migration_marker "$marker" || return 1
+    repair_watchdogvpn_shared_state_permissions "$target_dir"
+    return 0
   fi
-  run_step sudo touch "$marker"
+
+  stage_dir="$(sudo mktemp -d "$target_dir/.migration-stage.XXXXXX")" || {
+    printf 'ERROR: unable to create WatchdogVPN migration staging directory in %s\n' "$target_dir" >&2
+    return 1
+  }
+  if ! _stage_watchdogvpn_legacy_state "$source_dir" "$stage_dir"; then
+    run_step sudo rm -rf -- "$stage_dir"
+    return 1
+  fi
+  if ! _validate_watchdogvpn_migration_tree "$source_dir" "$stage_dir" stage-validate; then
+    printf 'ERROR: staged WatchdogVPN legacy state failed content validation\n' >&2
+    run_step sudo rm -rf -- "$stage_dir"
+    return 1
+  fi
+
+  if [[ ! -e "$journal" ]] && ! _watchdogvpn_migration_target_is_publishable "$stage_dir" "$target_dir"; then
+    printf 'ERROR: WatchdogVPN shared state has unmarked conflicting entries; refusing to certify migration\n' >&2
+    run_step sudo rm -rf -- "$stage_dir"
+    return 1
+  fi
+  if [[ ! -e "$journal" ]]; then
+    journal_tmp="$(sudo mktemp "$target_dir/.migration-journal.XXXXXX")" || {
+      run_step sudo rm -rf -- "$stage_dir"
+      return 1
+    }
+    if ! printf 'watchdogvpn-state-migration-v1\n' | sudo tee "$journal_tmp" >/dev/null \
+      || ! _watchdogvpn_migration_checkpoint journal-publish \
+      || ! run_step sudo mv -f -- "$journal_tmp" "$journal"; then
+      printf 'ERROR: unable to publish WatchdogVPN migration recovery journal\n' >&2
+      run_step sudo rm -f -- "$journal_tmp"
+      run_step sudo rm -rf -- "$stage_dir"
+      return 1
+    fi
+  fi
+
+  while IFS= read -r -d '' entry_name; do
+    if ! _watchdogvpn_migration_checkpoint "publish:$entry_name"; then
+      printf 'ERROR: WatchdogVPN migration interrupted before publishing %s\n' "$entry_name" >&2
+      run_step sudo rm -rf -- "$stage_dir"
+      return 1
+    fi
+    # Each staged top-level entry is published with one same-filesystem rename.
+    # A recovery rerun leaves an already-published identical entry untouched;
+    # any divergent entry is rejected rather than deleted and falsely repaired.
+    if [[ -e "$target_dir/$entry_name" || -L "$target_dir/$entry_name" ]]; then
+      if ! run_step sudo diff -r --no-dereference -- \
+        "$stage_dir/$entry_name" "$target_dir/$entry_name" >/dev/null; then
+        printf 'ERROR: journaled WatchdogVPN migration entry diverged: %s\n' "$entry_name" >&2
+        run_step sudo rm -rf -- "$stage_dir"
+        return 1
+      fi
+      continue
+    fi
+    if ! run_step sudo mv -- "$stage_dir/$entry_name" "$target_dir/$entry_name"; then
+      printf 'ERROR: unable to atomically publish WatchdogVPN state entry: %s\n' "$entry_name" >&2
+      run_step sudo rm -rf -- "$stage_dir"
+      return 1
+    fi
+  done < <(_watchdogvpn_migration_entries "$stage_dir")
+  run_step sudo rm -rf -- "$stage_dir"
+
+  if ! _watchdogvpn_migration_checkpoint target-validate \
+    || ! _validate_watchdogvpn_migration_tree "$source_dir" "$target_dir" target-content-validate; then
+    printf 'ERROR: published WatchdogVPN legacy state failed content validation; recovery journal retained\n' >&2
+    return 1
+  fi
+  if ! _watchdogvpn_migration_checkpoint marker-publish \
+    || ! _publish_watchdogvpn_migration_marker "$marker"; then
+    printf 'ERROR: WatchdogVPN shared state is complete but not certified; recovery journal retained\n' >&2
+    return 1
+  fi
+  run_step sudo rm -f -- "$journal"
+  printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
   repair_watchdogvpn_shared_state_permissions "$target_dir"
+}
+
+
+_watchdogvpn_migration_entries() {
+  local directory="$1"
+  find "$directory" -mindepth 1 -maxdepth 1 \
+    ! -name .migrated \
+    ! -name .migration-in-progress \
+    -printf '%f\0' | sort -z
+}
+
+
+_stage_watchdogvpn_legacy_state() {
+  local source_dir="$1" stage_dir="$2" entry_name
+  while IFS= read -r -d '' entry_name; do
+    if ! _watchdogvpn_migration_checkpoint "stage-copy:$entry_name" \
+      || ! run_step sudo cp -a -- "$source_dir/$entry_name" "$stage_dir/$entry_name"; then
+      printf 'ERROR: unable to stage WatchdogVPN legacy state entry: %s\n' "$entry_name" >&2
+      return 1
+    fi
+  done < <(_watchdogvpn_migration_entries "$source_dir")
+}
+
+
+_validate_watchdogvpn_migration_tree() {
+  local source_dir="$1" candidate_dir="$2" checkpoint="$3" entry_name
+  if ! _watchdogvpn_migration_checkpoint "$checkpoint"; then
+    return 1
+  fi
+  while IFS= read -r -d '' entry_name; do
+    if ! run_step sudo diff -r --no-dereference -- \
+      "$source_dir/$entry_name" "$candidate_dir/$entry_name" >/dev/null; then
+      return 1
+    fi
+  done < <(_watchdogvpn_migration_entries "$source_dir")
+}
+
+
+_watchdogvpn_migration_target_is_publishable() {
+  local stage_dir="$1" target_dir="$2" entry_name
+  while IFS= read -r -d '' entry_name; do
+    if [[ -e "$target_dir/$entry_name" || -L "$target_dir/$entry_name" ]]; then
+      return 1
+    fi
+  done < <(_watchdogvpn_migration_entries "$stage_dir")
+  return 0
+}
+
+
+_publish_watchdogvpn_migration_marker() {
+  local marker="$1" marker_tmp
+  marker_tmp="$(sudo mktemp "${marker}.tmp.XXXXXX")" || return 1
+  if ! printf 'watchdogvpn-shared-state-ready-v2\n' | sudo tee "$marker_tmp" >/dev/null \
+    || ! run_step sudo mv -f -- "$marker_tmp" "$marker"; then
+    run_step sudo rm -f -- "$marker_tmp"
+    return 1
+  fi
+}
+
+
+_watchdogvpn_migration_checkpoint() {
+  # Test seam: unit coverage replaces this function to inject interruptions at
+  # every staging, validation, publication, and marker boundary.
+  return 0
 }
 
 prepare_watchdogvpn_state_directory() {
