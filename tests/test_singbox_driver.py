@@ -549,6 +549,42 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(direct["bind_interface"], "enp0s8")
 
     @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="must-not-be-used")
+    def test_native_transport_companion_uses_native_direct_and_separate_management_outbounds(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.AMNEZIAWG, raw="[Interface]\nAddress = 10.0.0.2/32")
+        config = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            capture_modes=("local_proxy", "tun"),
+            native_transport=True,
+            management_routes={"198.51.100.9": "enp0s8", "2001:db8::9": "eth0"},
+        )
+
+        self.assertEqual(
+            config["route"]["rules"][:2],
+            [
+                {
+                    "ip_cidr": ["198.51.100.9/32"],
+                    "action": "route",
+                    "outbound": "watchdogvpn-management-1",
+                },
+                {
+                    "ip_cidr": ["2001:db8::9/128"],
+                    "action": "route",
+                    "outbound": "watchdogvpn-management-2",
+                },
+            ],
+        )
+        outbounds = {outbound["tag"]: outbound for outbound in config["outbounds"]}
+        self.assertEqual(outbounds["direct"], {"type": "direct", "tag": "direct"})
+        self.assertEqual(outbounds["watchdogvpn-management-1"]["bind_interface"], "enp0s8")
+        self.assertEqual(outbounds["watchdogvpn-management-2"]["bind_interface"], "eth0")
+        self.assertNotIn("must-not-be-used", repr(config))
+        self.assertTrue(any(inbound["type"] == "tun" for inbound in config["inbounds"]))
+
+    @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_proxy_mode_routes_global_no_extra_inbound(
         self, bind_mock, write_mock

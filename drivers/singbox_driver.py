@@ -320,6 +320,20 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         config["outbounds"].append(direct_outbound)
         return direct_outbound
 
+    def _ensure_management_outbound(
+        self, config: dict[str, Any], *, tag: str, bind_interface: str
+    ) -> dict[str, Any]:
+        for outbound in config["outbounds"]:
+            if outbound.get("tag") == tag:
+                return outbound
+        outbound: dict[str, Any] = {
+            "type": "direct",
+            "tag": tag,
+            "bind_interface": bind_interface,
+        }
+        config["outbounds"].append(outbound)
+        return outbound
+
     def _append_chain_outbounds(
         self,
         config: dict[str, Any],
@@ -1187,6 +1201,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         lan_proxy: LANProxyRuntimeConfig | None = None,
         capture_modes: tuple[str, ...] | None = None,
         management_peers: tuple[str, ...] = (),
+        native_transport: bool = False,
+        management_routes: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
             raise ValueError(f"unsupported connection mode: {mode!r}")
@@ -1198,7 +1214,10 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             "inbounds": self._build_inbounds(lan_proxy),
             "outbounds": [],
         }
-        outbound = self._profile_to_route_target(profile, config)
+        if native_transport:
+            outbound = self._ensure_direct_outbound(config)
+        else:
+            outbound = self._profile_to_route_target(profile, config)
         self._append_chain_outbounds(config, chain_runtime_plans or {})
         if self._mode_requires_tun(mode, capture_modes):
             config["inbounds"].append(self._build_tun_inbound())
@@ -1256,7 +1275,9 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                     self._ensure_direct_outbound(
                         config,
                         dns_config.direct_domain_resolver,
-                        bind_interface=self._outbound_bind_interface(profile),
+                        bind_interface=(
+                            None if native_transport else self._outbound_bind_interface(profile)
+                        ),
                     )
 
         # "rules" mode evaluates the loaded rule groups; every other mode
@@ -1274,7 +1295,10 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             effective_final_policy = "direct" if mode == "direct" else final_policy
         if mode in {"rules", "direct"} or management_peers:
             self._ensure_direct_outbound(
-                config, bind_interface=self._outbound_bind_interface(profile)
+                config,
+                bind_interface=(
+                    None if native_transport else self._outbound_bind_interface(profile)
+                ),
             )
         mode_route_rules = build_singbox_route_rules(
             effective_groups,
@@ -1296,7 +1320,27 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         if mode == "rules" and rule_set_declarations:
             route_config["rule_set"] = list(rule_set_declarations)
         _merge_route_config(config, route_config)
-        if management_rules:
+        if management_routes:
+            native_management_rules: list[dict[str, Any]] = []
+            for index, (peer, interface) in enumerate(
+                sorted(management_routes.items()), start=1
+            ):
+                tag = f"watchdogvpn-management-{index}"
+                self._ensure_management_outbound(
+                    config, tag=tag, bind_interface=interface
+                )
+                native_management_rules.append(
+                    {
+                        "ip_cidr": [f"{peer}/128" if ":" in peer else f"{peer}/32"],
+                        "action": "route",
+                        "outbound": tag,
+                    }
+                )
+            config["route"]["rules"] = [
+                *native_management_rules,
+                *config["route"]["rules"],
+            ]
+        elif management_rules:
             # Must precede every ordinary route (including DNS diversion),
             # not merely the mode catch-all: the SSH session is the control
             # plane that can recover a failed activation.
@@ -1323,6 +1367,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         lan_gateway: LANGatewayRuntimeConfig | None = None,
         capture_modes: tuple[str, ...] | None = None,
         management_peers: tuple[str, ...] | None = None,
+        native_transport: bool = False,
+        management_routes: dict[str, str] | None = None,
     ) -> bool:
         self.last_error = ""
         tun_expected = self._mode_requires_tun(mode, capture_modes)
@@ -1355,6 +1401,10 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             "chain_runtime_plans": chain_runtime_plans,
             "capture_modes": capture_modes,
         }
+        if native_transport:
+            config_kwargs["native_transport"] = True
+        if management_routes:
+            config_kwargs["management_routes"] = management_routes
         if management_peers:
             config_kwargs["management_peers"] = management_peers
         if lan_proxy is not None:
