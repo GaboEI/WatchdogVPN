@@ -1,7 +1,7 @@
 # Phase 23 R28-01 — Crash-Recoverable Backup Restore
 
 Date: 2026-07-15
-Status: source validated; commit, publication, installed validation, and independent closure pending.
+Status: CLOSED for R28-001 after source, installed-runtime, and closure re-audit validation.
 
 ## Finding
 
@@ -21,9 +21,16 @@ A residual journal is always rollback-required, never a successful commit.
 - KeyboardInterrupt regression restores original profile bytes and leaves no journal.
 - Persisted-journal profile/provider recovery is automatic on the first ProfileStore read.
 
-## Remaining Closure Work
+## Closure Evidence
 
-1. Review, commit, push, and install the exact diff.
-2. Run isolated installed journal recovery.
-3. Verify source/origin/installed marker alignment and clean standby.
-4. Independently review R28-001 before changing its status to CLOSED.
+R28-001 is closed at dba2a9c507db22a7b66bbc400042be072201cb9d after implementation commit 1ee26a9ebfb17590c4bfe34d88b243515b489d9c. Both code commits are published on phase-23-cli-field-validation; at runtime validation, source, origin, and installed marker aligned at dba2a9c.
+
+Closure review found and corrected one defect in the first candidate: recovery had an overbroad cleanup of unknown JSON files under shared state. Journal schema v2 now prunes only unlisted top-level rule documents, the only files a restore itself can create or remove. Schema-v1 journal recovery uses that same safe rule-only scope. Unmanaged JSON is explicitly preserved.
+
+After the corrective commit, the focused backup suite passed 36 of 36, tests/unit.sh and tests/syntax.sh passed, and the full Python suite passed 1651 of 1651 in 222.158 seconds. The transactional update completed, refreshed the daemon from PID 87528 to 97996, and passed its IPC smoke test.
+
+An isolated installed-runtime proof interrupted profile and provider publication, added an interrupted rule, and retained an unmanaged JSON fixture. The next locked profile read restored the byte-exact profile and provider state, removed only the interrupted rule and journal, and preserved the unmanaged JSON.
+
+doctor.sh confirms the installed runtime matches the source checkout. watchdog status --json confirms daemon reachable, desired state off, clean standby, no runtime artifacts, inactive kill switch, and disabled LAN gateway. The bypass timer remains deliberately disabled and inactive. Doctor warnings are environment observations for unsynchronized NTP and VPN truth DOWN, not failures.
+
+No R28-001 debt is accepted. R28-002 remains pending explicit authorization. Phase 23 and Task 23.4 remain open and unmergeable until all R28 items and the final audit exit gate are complete.
