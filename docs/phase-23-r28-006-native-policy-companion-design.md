@@ -147,3 +147,33 @@ it is not the remediation for this HIGH finding and cannot close R28-006.
 
 R28-006, Task 23.4, Phase 23, PR, and merge remain blocked until all slices
 pass and the installed evidence is documented.
+
+## Implementation and installed evidence - 2026-07-15
+
+Implementation commits: `c57bf4d`, `4f4b673`, `287ec05`, `963f13c`,
+`fc9f88b`, and `7450a22`.
+
+The native policy companion is now selected for AmneziaWG, OpenVPN, and
+OpenVPN+Cloak. It starts the native transport first, requires native health,
+then starts a sing-box TUN/DNS/routing companion; companion failure rolls the
+native transport back, and teardown is companion before native. The companion
+uses a direct transport route for the native tunnel and separate,
+physical-interface-bound routes for established SSH peers.
+
+Installed evidence at `7450a22`:
+
+- OpenVPN connected with owned OpenVPN and sing-box processes, TUN, DNS,
+  listeners, and sing-box routing. SOCKS and normal TUN egress both returned
+  `138.124.58.47`; disconnect returned clean standby.
+- OpenVPN+Cloak connected with owned ck-client, OpenVPN, and sing-box
+  processes, TUN, DNS, listeners, and routing. Both egress paths returned
+  `138.124.58.47`; disconnect returned clean standby.
+- AmneziaWG reached the native driver but failed during native interface
+  configuration (`ip link set mtu ... watchdogvpn_awg`) with amneziawg-go
+  requesting the kernel module. The connection failed closed and explicit
+  disconnect restored clean standby. This is a runtime/dependency blocker,
+  not a policy bypass.
+
+R28-006 remains open: add dedicated regression coverage for switching between
+two native wrapper transports, complete full source gates, classify/resolve the
+AmneziaWG runtime dependency, and perform the independent re-audit.
