@@ -226,22 +226,27 @@ class BackupManagerTests(unittest.TestCase):
             root = Path(tmp)
             self.seed_config(root)
             manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+            unmanaged = root / "procattr-test.json"
+            unmanaged.write_bytes(b"unmanaged\n")
             snapshot = manager._snapshot_targets()
             original_profiles = (root / "profiles.json").read_bytes()
             original_providers = (root / "providers.json").read_bytes()
             write_restore_transaction_journal(
                 root,
                 snapshot.files,
-                remove_unlisted_json=True,
+                prune_unlisted_rule_files=True,
             )
             atomic_write_bytes(root / "profiles.json", b"[]\n")
             atomic_write_bytes(root / "providers.json", b"[]\n")
+            atomic_write_bytes(root / "rules" / "interrupted.json", b"{}\n")
 
             profiles = ProfileStore(root / "profiles.json").list()
 
             self.assertEqual([profile.id for profile in profiles], ["profile-one"])
             self.assertEqual((root / "profiles.json").read_bytes(), original_profiles)
             self.assertEqual((root / "providers.json").read_bytes(), original_providers)
+            self.assertEqual(unmanaged.read_bytes(), b"unmanaged\n")
+            self.assertFalse((root / "rules" / "interrupted.json").exists())
             self.assertFalse(restore_transaction_journal_path(root).exists())
 
     def test_restore_rolls_back_when_apply_fails(self) -> None:

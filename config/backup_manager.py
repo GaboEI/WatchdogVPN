@@ -742,7 +742,7 @@ class BackupManager:
             write_restore_transaction_journal(
                 self.config_dir,
                 snapshot.files,
-                remove_unlisted_json=True,
+                prune_unlisted_rule_files=True,
             )
             try:
                 if restore_mode == "replace":

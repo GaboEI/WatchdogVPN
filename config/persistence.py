@@ -23,7 +23,7 @@ class PersistentValidationError(PersistentStoreError):
 SHARED_DIR_SETGID_MODE = 0o2770
 SHARED_FILE_MODE = 0o660
 RESTORE_TRANSACTION_JOURNAL_NAME = ".watchdogvpn-restore-transaction.json"
-RESTORE_TRANSACTION_JOURNAL_SCHEMA_VERSION = 1
+RESTORE_TRANSACTION_JOURNAL_SCHEMA_VERSION = 2
 
 _held_lock_paths: ContextVar[frozenset[str]] = ContextVar(
     "watchdogvpn_held_lock_paths",
@@ -223,7 +223,7 @@ def write_restore_transaction_journal(
     directory: Path,
     snapshots: dict[Path, bytes | None],
     *,
-    remove_unlisted_json: bool = False,
+    prune_unlisted_rule_files: bool = False,
 ) -> Path:
     directory = Path(directory)
     journal = restore_transaction_journal_path(directory)
@@ -240,7 +240,7 @@ def write_restore_transaction_journal(
     atomic_write_text(journal, json.dumps({
         "schema_version": RESTORE_TRANSACTION_JOURNAL_SCHEMA_VERSION,
         "kind": "watchdogvpn-restore-rollback",
-        "remove_unlisted_json": remove_unlisted_json,
+        "prune_unlisted_rule_files": prune_unlisted_rule_files,
         "files": entries,
     }, indent=2, sort_keys=True) + "\n")
     return journal
@@ -268,17 +268,18 @@ def recover_pending_restore_transaction(directory: Path) -> bool:
                 return False
             try:
                 data = json.loads(journal.read_text(encoding="utf-8"))
-                files, remove_unlisted_json = _restore_journal_payload(data, directory)
+                files, prune_unlisted_rule_files = _restore_journal_payload(data, directory)
             except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                 raise PersistentStoreError(f"invalid restore transaction journal {journal}: {exc}") from exc
             lock_paths = set(files)
-            if remove_unlisted_json:
-                lock_paths.update(path for path in directory.rglob("*.json") if path != journal)
+            rules_dir = directory / "rules"
+            if prune_unlisted_rule_files and rules_dir.exists():
+                lock_paths.update(rules_dir.glob("*.json"))
             for path in sorted(lock_paths, key=lambda item: str(item.resolve(strict=False))):
                 stack.enter_context(file_lock(path))
-            if remove_unlisted_json:
-                for path in directory.rglob("*.json"):
-                    if path != journal and path not in files:
+            if prune_unlisted_rule_files and rules_dir.exists():
+                for path in rules_dir.glob("*.json"):
+                    if path not in files:
                         path.unlink(missing_ok=True)
                         fsync_parent_directory(path)
             for path, content in files.items():
@@ -299,13 +300,19 @@ def _restore_journal_payload(
 ) -> tuple[dict[Path, bytes | None], bool]:
     if not isinstance(data, dict):
         raise ValueError("journal must be an object")
-    if data.get("schema_version") != RESTORE_TRANSACTION_JOURNAL_SCHEMA_VERSION:
+    schema_version = data.get("schema_version")
+    if schema_version not in {1, RESTORE_TRANSACTION_JOURNAL_SCHEMA_VERSION}:
         raise ValueError("unsupported schema_version")
     if data.get("kind") != "watchdogvpn-restore-rollback":
         raise ValueError("unsupported journal kind")
-    remove_unlisted_json = data.get("remove_unlisted_json", False)
+    if schema_version == 1:
+        # Version 1 used a dangerously broad name. Restore only the class of
+        # paths a backup restore itself can create: top-level rule documents.
+        prune_unlisted_rule_files = data.get("remove_unlisted_json", False)
+    else:
+        prune_unlisted_rule_files = data.get("prune_unlisted_rule_files", False)
     entries = data.get("files")
-    if not isinstance(remove_unlisted_json, bool) or not isinstance(entries, list):
+    if not isinstance(prune_unlisted_rule_files, bool) or not isinstance(entries, list):
         raise ValueError("journal structure is invalid")
     files: dict[Path, bytes | None] = {}
     for entry in entries:
@@ -324,7 +331,7 @@ def _restore_journal_payload(
             files[path] = base64.b64decode(encoded.encode("ascii"), validate=True)
         else:
             raise ValueError("journal content is invalid")
-    return files, remove_unlisted_json
+    return files, prune_unlisted_rule_files
 
 
 def _restore_journal_directory(directory: Path) -> Path | None:
