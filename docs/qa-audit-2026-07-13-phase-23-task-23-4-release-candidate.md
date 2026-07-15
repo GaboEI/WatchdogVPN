@@ -315,7 +315,7 @@ The installed state and IPC permission contract was correct during inspection:
 - Scenario: systemd stop, kill-switch deletion, domain-bypass rescue, or DNS rescue fails during uninstall.
 - Impact: A live daemon, blocking firewall, stale routes, or broken DNS can remain after the product and its recovery tools are deleted.
 - Status: CLOSED by R-24 on 2026-07-14; independent R-28 re-audit remains mandatory.
-- Evidence: `uninstall.sh` now aborts before any product-file removal unless daemon inactivity, kill-switch firewall cleanup, domain-bypass route cleanup, and DNS cleanup each return verified success. The strict helpers reject a failed `systemctl`, nftables/iptables, route, or installed DNS cleanup command and emit exact retained-tool recovery instructions. Failure injection covers daemon stop and nftables deletion; ordering regression proves the guards precede product removal.
+- Evidence: `uninstall.sh` now aborts before any product-file removal unless daemon inactivity, kill-switch firewall cleanup, domain-bypass route cleanup, and DNS cleanup each return verified success. The strict helpers reject a failed `systemctl`, nftables/iptables, route, or installed DNS cleanup command and emit exact retained-tool recovery instructions. Failure injection covers daemon stop and nftables deletion; ordering regression proves the guards precede product removal. The installed safety library passed the same two injected failure barriers after transactional update.
 - Recommendation: Closed. Preserve the fail-closed ordering and strict-helper contract in future uninstall changes.
 
 ### AUD-20260713-021
