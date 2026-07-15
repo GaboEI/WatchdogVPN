@@ -242,8 +242,8 @@ The installed state and IPC permission contract was correct during inspection:
 - Description: Clipboard import helpers launch external clipboard tools without a timeout.
 - Scenario: wl-paste, xclip, xsel, or pbpaste exists but hangs.
 - Impact: watchdog profile add --clipboard blocks indefinitely with no bounded recovery.
-- Status: CLOSED by R-27 on 2026-07-15; independent R-28 re-audit remains mandatory.
-- Evidence: each supported helper now runs through `Popen(start_new_session=True)` with a two-second communication deadline, group-wide SIGTERM, bounded SIGKILL escalation, and verified process-group absence before any result is accepted. `wl-paste`, `xclip`, `xsel`, and `pbpaste` each have success, nonzero, timeout and real resistant-child cleanup coverage. Missing/unavailable/timeout/cleanup-uncertain paths return actionable human or JSON errors without traceback or helper stderr disclosure. The installed runtime repeated a real timeout against a child that ignored SIGTERM and removed the child in 2.513 seconds.
+- Status: CLOSED by R-27 on 2026-07-15, with corrective closure at `cd5dc4e478a1785fc0c1b900c7a03bd669f39f05` after external verification reopened the finding; independent R-28 re-audit remains mandatory.
+- Evidence: each supported helper now runs through `Popen(start_new_session=True)` with a two-second communication deadline, group-wide SIGTERM, bounded SIGKILL escalation, and verification that no live process-group member remains before any result is accepted. Linux verification distinguishes a dead zombie awaiting PID-1 collection from an executable survivor, while unreadable or malformed `/proc` observations remain fail-closed. `wl-paste`, `xclip`, `xsel`, and `pbpaste` each have success, nonzero, timeout and real resistant-child cleanup coverage. Missing/unavailable/timeout/cleanup-uncertain paths return actionable human or JSON errors without traceback or helper stderr disclosure. The installed corrected runtime repeated the resistant-child timeout, returned the terminated-group message in 0.748 seconds, and independently proved zombie/live/uncertain classification.
 - Recommendation: Closed. Preserve the private-process-group boundary, bounded escalation, cleanup verification and non-disclosure of helper stderr.
 
 ### AUD-20260713-015
@@ -530,3 +530,35 @@ with `OK=110 WARN=2 FAIL=0`; status is desired-off clean standby and the bypass
 timer is disabled/inactive. All 28 original findings are remediated. Task 23.4
 and Phase 23 remain OPEN and unmergeable until the mandatory independent R-28
 re-audit is explicitly authorized, completed, documented and approved.
+
+## R-27 / AUD-014 corrective closure (2026-07-15)
+
+External repetition of the resistant-child regression reopened R-27 after the
+initial closure: it failed deterministically when the killed orphan remained a
+zombie until PID 1 collected it. `killpg(pgid, 0)` still reports such a process
+group, so the first implementation incorrectly treated reaping latency as a
+live survivor and returned the cleanup-uncertain error. The test also used a
+150 ms startup deadline that could expire before the helper published its
+child PID. This was a real portability and verification defect, not a missing
+message literal and not a clipboard-helper escape.
+
+Corrective commit `cd5dc4e478a1785fc0c1b900c7a03bd669f39f05`
+(`fix: distinguish dead clipboard helper zombies`) defines cleanup success as
+the absence of live group members. Linux `/proc/<pid>/stat` inspection treats
+only `Z`, `X`, and `x` members as already dead; any unreadable or malformed
+observation remains indeterminate and therefore fail-closed. Deterministic
+regressions cover zombie-only, live-member, malformed-observation, and real
+SIGTERM-resistant descendant cases. The helper startup allowance is 500 ms,
+while the complete cleanup assertion remains bounded to three seconds.
+
+The formerly failing test passed 8/8 repetitions. Targeted tests passed 43/43;
+mandatory gates passed 1,649 Python tests in 257.050 seconds plus unit, syntax,
+inventory parity 124/124 and diff. The commit was pushed and installed, moving
+daemon PID `49162 -> 60429`; source, origin and installed marker aligned at
+`cd5dc4e`. The installed package proved zombie/live/uncertain classification
+and removed a real resistant descendant in 0.748 seconds while returning the
+documented terminated-group message. Doctor returned nested exit zero with
+`OK=110 WARN=2 FAIL=0`; status remains desired-off clean standby and the domain
+bypass timer disabled/inactive. This evidence supersedes the initial R-27
+closure evidence above. AUD-014 has no accepted technical debt; all 28 original
+findings are remediated, while R-28 remains a mandatory independent gate.
