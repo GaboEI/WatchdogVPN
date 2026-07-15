@@ -29,5 +29,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT_DIR/tests/unit/test_amneziawg_sysctl_defaults.sh"
 python3 "$ROOT_DIR/scripts/generate_cli_inventory.py" --check
 python3 "$ROOT_DIR/tests/unit/test_tui_modules.py"
+python3 "$ROOT_DIR/tests/test_tui_terminal_capabilities.py"
 
 echo "unit behavior checks passed"

@@ -22,6 +22,19 @@ def move(y: int, x: int):
 
 
 def write(y: int, x: int, text: str, style: str = ""):
+    """Write only inside the current terminal viewport.
+
+    Layout callers intentionally stay simple, so this final primitive enforces
+    the invariant that a resize can never produce a cursor address beyond the
+    current rows or columns.
+    """
+    rows, cols = get_size()
+    if y < 1 or x < 1 or y > rows or x > cols:
+        return
+    available = cols - x + 1
+    text = strip_ansi(str(text)).replace("\n", " ")[:available]
+    if not text:
+        return
     move(y, x)
     sys.stdout.write(style + text + RESET)
 
@@ -44,6 +57,8 @@ def box(y: int, x: int, h: int, w: int, title: str = ""):
 
 def fit(text: str, width: int) -> str:
     text = strip_ansi(str(text)).replace("\n", " ").strip()
+    if width <= 0:
+        return ""
     return text if len(text) <= width else text[: max(0, width - 1)] + "…"
 
 

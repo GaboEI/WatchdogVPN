@@ -3,6 +3,7 @@ import atexit
 import os
 import re
 import select
+import signal
 import shlex
 import sys
 import termios
@@ -22,6 +23,11 @@ elif os.path.isdir(os.path.join(INSTALLED_SUPPORT_DIR, "watchdogvpn")):
 import watchdogvpn.render as render_module
 import watchdogvpn.styles as styles_module
 from watchdogvpn import dns as dns_tui
+from watchdogvpn.terminal import (
+    WIDE_COLUMNS,
+    detect_terminal,
+    plain_terminal_message,
+)
 
 from watchdogvpn.constants import (
     AUTO_REFRESH_SECONDS,
@@ -79,6 +85,8 @@ from watchdogvpn.validators import valid_domain
 STATUS_LINE = "Listo"
 SUDO_KEEPALIVE_STOP = threading.Event()
 SUDO_KEEPALIVE_THREAD = None
+RESIZE_PENDING = False
+RESIZE_POLL_SECONDS = 0.2
 ORIGINAL_FG = FG.copy()
 ORIGINAL_BG = BG.copy()
 ORIGINAL_BOLD = BOLD
@@ -849,33 +857,83 @@ def confirm_update_fetch() -> bool:
 
 
 class Terminal:
-    def __init__(self):
+    def __init__(self, *, mouse: bool):
         self.fd = sys.stdin.fileno()
         self.old = termios.tcgetattr(self.fd)
+        self.mouse = mouse
 
     def enter(self):
         tty.setraw(self.fd)
-        sys.stdout.write(
-            CSI + "?1049h"
-            + CSI + "?25l"
-            + CSI + "?1000h"
-            + CSI + "?1006h"
-            + CSI + "2J"
-            + CSI + "H"
-        )
+        sequence = CSI + "?1049h" + CSI + "?25l"
+        if self.mouse:
+            sequence += CSI + "?1000h" + CSI + "?1006h"
+        sys.stdout.write(sequence + CSI + "2J" + CSI + "H")
         sys.stdout.flush()
 
     def exit(self):
         termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
-        sys.stdout.write(ORIGINAL_RESET + CSI + "?1000l" + CSI + "?1006l" + CSI + "?25h" + CSI + "?1049l")
+        sequence = ORIGINAL_RESET
+        if self.mouse:
+            sequence += CSI + "?1000l" + CSI + "?1006l"
+        sys.stdout.write(sequence + CSI + "?25h" + CSI + "?1049l")
         sys.stdout.flush()
 
 
 term = None
 
 
+def mark_resize(_signum, _frame):
+    """Signal-safe notification; drawing happens later in the normal loop."""
+    global RESIZE_PENDING
+    RESIZE_PENDING = True
+
+
+def consume_resize() -> bool:
+    global RESIZE_PENDING
+    if not RESIZE_PENDING:
+        return False
+    RESIZE_PENDING = False
+    return True
+
+
+def install_resize_handler():
+    previous = signal.getsignal(signal.SIGWINCH)
+    signal.signal(signal.SIGWINCH, mark_resize)
+    return previous
+
+
+def restore_resize_handler(previous):
+    signal.signal(signal.SIGWINCH, previous)
+
+
+def render_compact(selected: int, dashboard_cache):
+    """One-column dashboard for a 40-column ANSI terminal."""
+    rows, cols = get_size()
+    clear()
+    box(1, 1, rows, cols, "WatchdogVPN")
+    label = menu_label(selected)
+    write(2, 3, fit(f"{label} · compacto", cols - 4), FG["cyan"] + BOLD)
+
+    data = dict(dashboard_cache)
+    y = 4
+    for key in ("VPN", "Tun", "Route", "IP", "Country", "DNS", "Bypass"):
+        if y >= rows - 2:
+            break
+        value = display_value(key, data.get(key, "-"))
+        write(y, 3, fit(f"{display_label(key)}: {value}", cols - 4), semantic_style(key, value))
+        y += 1
+
+    if y < rows - 2:
+        write(y, 3, fit("↑↓ cambiar · Enter abrir", cols - 4), FG["yellow"] + BOLD)
+    write(rows - 1, 3, fit(f"r refrescar · q salir · {STATUS_LINE}", cols - 4), FG["gray"])
+    sys.stdout.flush()
+
+
 def render(selected: int, dashboard_cache):
     rows, cols = get_size()
+    if cols < WIDE_COLUMNS:
+        render_compact(selected, dashboard_cache)
+        return
     clear()
     left_w = 24
     head_h = 3
@@ -1106,11 +1164,17 @@ def main_menu_index_at(x: int, y: int, selected: int):
 
 
 def read_key(timeout: float | None = None, text_mode: bool = False):
+    deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
     while True:
-        r, _, _ = select.select([sys.stdin], [], [], timeout)
+        remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+        wait = RESIZE_POLL_SECONDS if remaining is None else min(remaining, RESIZE_POLL_SECONDS)
+        r, _, _ = select.select([sys.stdin], [], [], wait)
+        if consume_resize():
+            return "resize"
         if not r:
-            return None
-        timeout = None
+            if deadline is not None and time.monotonic() >= deadline:
+                return None
+            continue
         ch = os.read(sys.stdin.fileno(), 1)
         if not ch:
             continue
@@ -1147,6 +1211,16 @@ def read_key(timeout: float | None = None, text_mode: bool = False):
             return "backspace"
         if 32 <= ord(ch) <= 126:
             return f"char:{ch.decode('utf-8', 'ignore')}"
+
+
+def read_input_byte():
+    """Read one raw prompt byte while allowing SIGWINCH to wake the view."""
+    while True:
+        ready, _, _ = select.select([sys.stdin], [], [], RESIZE_POLL_SECONDS)
+        if consume_resize():
+            return None
+        if ready:
+            return os.read(sys.stdin.fileno(), 1)
 
 
 def center_message(message: str):
@@ -1256,7 +1330,7 @@ def show_output(title: str, text: str):
                 break
             line = lines[offset + i]
             write(3 + i, 3, fit(line, body_w), output_line_style(line))
-        footer = "↑↓ scroll   g inicio   G final   q volver"
+        footer = "↑↓ scroll · q volver" if cols < WIDE_COLUMNS else "↑↓ scroll   g inicio   G final   q volver"
         if len(lines) > body_h:
             footer += f"   lineas {offset + 1}-{min(offset + body_h, len(lines))}/{len(lines)}"
         write(rows - 2, 3, fit(footer, cols - 6), FG["yellow"] + BOLD)
@@ -1293,7 +1367,8 @@ def select_list(title: str, items):
             style = BG["cyan"] + FG["black"] + BOLD if offset + i == idx else FG["white"]
             line = f"{tag:<4} {fit(desc, body_w - 5)}"
             write(3 + i, 3, line.ljust(body_w), style)
-        write(rows - 2, 3, "↑↓ mover   Enter seleccionar   q volver", FG["yellow"] + BOLD)
+        footer = "↑↓ · Enter elegir · q volver" if cols < WIDE_COLUMNS else "↑↓ mover   Enter seleccionar   q volver"
+        write(rows - 2, 3, fit(footer, cols - 6), FG["yellow"] + BOLD)
         sys.stdout.flush()
         key = read_key(text_mode=True)
         if is_mouse_click(key):
@@ -1347,7 +1422,9 @@ def prompt_input(title: str, prompt: str):
         write(y + 4, x + 2, fit(value, w - 4), FG["cyan"] + BOLD)
         write(y + 5, x + 2, "Enter confirmar   Esc cancelar", FG["yellow"])
         sys.stdout.flush()
-        ch = os.read(sys.stdin.fileno(), 1)
+        ch = read_input_byte()
+        if ch is None:
+            continue
         if ch in (b"\r", b"\n"):
             set_status(f"{title} captured")
             return value.strip()
@@ -1369,21 +1446,21 @@ def prompt_input(title: str, prompt: str):
 
 
 def alert(title: str, message: str):
-    rows, cols = get_size()
-    clear()
-    w = min(84, cols - 4)
-    wrapped = textwrap.wrap(message, max(20, w - 6)) or [""]
-    h = max(7, min(rows - 4, len(wrapped) + 5))
-    x = max(2, (cols - w) // 2)
-    y = max(2, rows // 2 - h // 2)
-    box(y, x, h, w, title)
-    line_y = y + 2
-    for line in wrapped[: h - 5]:
-        write(line_y, x + 3, fit(line, w - 6), FG["white"])
-        line_y += 1
-    write(y + h - 2, x + 3, "Enter volver", FG["yellow"] + BOLD)
-    sys.stdout.flush()
     while True:
+        rows, cols = get_size()
+        clear()
+        w = min(84, cols - 4)
+        wrapped = textwrap.wrap(message, max(20, w - 6)) or [""]
+        h = max(7, min(rows - 4, len(wrapped) + 5))
+        x = max(2, (cols - w) // 2)
+        y = max(2, rows // 2 - h // 2)
+        box(y, x, h, w, title)
+        line_y = y + 2
+        for line in wrapped[: h - 5]:
+            write(line_y, x + 3, fit(line, w - 6), FG["white"])
+            line_y += 1
+        write(y + h - 2, x + 3, "Enter volver", FG["yellow"] + BOLD)
+        sys.stdout.flush()
         key = read_key(text_mode=True)
         if key in ("enter", "esc", "q", "char:q", "char:Q", "left"):
             return
@@ -1400,7 +1477,8 @@ def confirm_exit() -> bool:
         box(y, x, h, w, "Confirmar salida")
         write(y + 2, x + 3, "¿Salir de WatchdogVPN?", FG["white"] + BOLD)
         write(y + 4, x + 3, "La VPN, timers y servicios quedan como estan.", FG["gray"])
-        write(y + 6, x + 3, "s / Enter salir    n / Esc cancelar", FG["yellow"] + BOLD)
+        footer = "Enter salir · Esc cancelar" if cols < WIDE_COLUMNS else "s / Enter salir    n / Esc cancelar"
+        write(y + 6, x + 3, fit(footer, w - 6), FG["yellow"] + BOLD)
         sys.stdout.flush()
         key = read_key(text_mode=True)
         if key in ("enter", "char:s", "char:S", "char:y", "char:Y"):
@@ -1422,7 +1500,9 @@ def prompt_secret(title: str, prompt: str):
         write(y + 4, x + 2, fit("•" * len(value), w - 4), FG["cyan"] + BOLD)
         write(y + 5, x + 2, "Enter confirmar   Esc cancelar", FG["yellow"])
         sys.stdout.flush()
-        ch = os.read(sys.stdin.fileno(), 1)
+        ch = read_input_byte()
+        if ch is None:
+            continue
         if ch in (b"\r", b"\n"):
             return value
         if ch == b"\x1b":
@@ -1918,11 +1998,49 @@ def submenu(title: str, items):
     return select_list(title, [(str(i + 1), label) for i, (label, _) in enumerate(items)])
 
 
+def compact_section_panel(section: str, items):
+    idx = 0
+    offset = 0
+    while True:
+        rows, cols = get_size()
+        clear()
+        box(1, 1, rows, cols, section)
+        visible_h = max(1, rows - 5)
+        if idx < offset:
+            offset = idx
+        if idx >= offset + visible_h:
+            offset = idx - visible_h + 1
+        visible = items[offset : offset + visible_h]
+        for i, (label, _) in enumerate(visible):
+            absolute_idx = offset + i
+            style = BG["cyan"] + FG["black"] + BOLD if absolute_idx == idx else FG["gray"]
+            prefix = "› " if absolute_idx == idx else "  "
+            write(3 + i, 2, (prefix + fit(label, cols - 6)).ljust(max(0, cols - 3)), style)
+        write(rows - 1, 3, fit("↑↓ · Enter abrir · q volver", cols - 4), FG["yellow"] + BOLD)
+        sys.stdout.flush()
+
+        key = read_key(text_mode=True)
+        if key in ("esc", "left", "q", "char:q", "char:Q"):
+            return None
+        if key in ("enter", "right"):
+            return str(idx + 1)
+        if key == "down" and idx < len(items) - 1:
+            idx += 1
+        if key == "up" and idx > 0:
+            idx -= 1
+        if key == "char:g":
+            idx = 0
+        if key == "char:G":
+            idx = len(items) - 1
+
+
 def section_panel(section: str, items):
     idx = 0
     offset = 0
     while True:
         rows, cols = get_size()
+        if cols < WIDE_COLUMNS:
+            return compact_section_panel(section, items)
         clear()
         head_h = 3
         foot_h = 2
@@ -2383,12 +2501,15 @@ def handle_menu(label: str):
 
 def main():
     global term
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        print("VPN requiere una terminal interactiva.")
+    capabilities = detect_terminal()
+    if capabilities.layout in ("plain", "too-small"):
+        print(plain_terminal_message(capabilities))
         return
-    term = Terminal()
+    term = Terminal(mouse=capabilities.layout == "wide" and capabilities.mouse)
     atexit.register(term.exit)
     term.enter()
+    previous_resize_handler = install_resize_handler()
+    atexit.register(restore_resize_handler, previous_resize_handler)
     apply_tui_preferences()
     sudo_ready = initialize_sudo()
     selected = 0
@@ -2445,6 +2566,9 @@ def main():
         if menu_id(selected) == "dashboard":
             timeout = 0.2
         key = read_key(timeout)
+        if key == "resize":
+            redraw = True
+            continue
         if consume_dashboard_refresh():
             redraw = True
         if is_mouse_click(key):
