@@ -11,7 +11,10 @@ from models.profile import Profile, ProfileSource, ProtocolType
 
 class NativePolicyDriverTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.profile = Profile("native", "native", ProtocolType.AMNEZIAWG, {}, ProfileSource.MANUAL)
+        self.profile = Profile(
+            "native", "native", ProtocolType.AMNEZIAWG,
+            {"host": "198.51.100.7"}, ProfileSource.MANUAL,
+        )
         self.native = Mock()
         self.native.connect.return_value = True
         self.native.health_check.return_value = "ok"
@@ -34,7 +37,8 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.assertFalse(self.driver.connect(self.profile, mode="rules"))
         self.native.connect.assert_called_once_with(self.profile)
         self.companion.connect.assert_called_once_with(
-            self.profile, dns_policy=None, mode="rules", native_transport=True, management_peers=()
+            self.profile, dns_policy=None, mode="rules", native_transport=True,
+            native_bypass_cidrs=("198.51.100.7/32",), management_peers=(),
         )
         self.companion.disconnect.assert_called_once_with()
         self.native.disconnect.assert_called_once_with()

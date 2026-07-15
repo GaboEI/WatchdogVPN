@@ -559,12 +559,18 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             mode="rules",
             capture_modes=("local_proxy", "tun"),
             native_transport=True,
+            native_bypass_cidrs=("138.124.58.47/32",),
             management_routes={"198.51.100.9": "enp0s8", "2001:db8::9": "eth0"},
         )
 
         self.assertEqual(
-            config["route"]["rules"][:2],
+            config["route"]["rules"][:3],
             [
+                {
+                    "ip_cidr": ["138.124.58.47/32"],
+                    "network": "udp",
+                    "action": "bypass",
+                },
                 {
                     "ip_cidr": ["198.51.100.9/32"],
                     "action": "route",

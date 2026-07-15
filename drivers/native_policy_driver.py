@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from ipaddress import ip_address
+import socket
 from typing import Any
 
 from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver, ReentrantConnectGuard
@@ -31,6 +33,37 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
     def _has_existing_connection(self) -> bool:
         return self._active_profile is not None
 
+    @staticmethod
+    def _native_endpoint_bypass_cidrs(profile: Profile) -> tuple[str, ...]:
+        """Return the native transport's UDP endpoints as stable CIDRs.
+
+        The companion's transparent TUN must never recapture encrypted native
+        transport packets. Resolve a hostname before TUN activation; an IP
+        export takes the fast deterministic path.
+        """
+        raw_host = profile.config.get("host") or profile.config.get("server")
+        if not isinstance(raw_host, str) or not raw_host.strip():
+            return ()
+        host = raw_host.strip().strip("[]")
+        try:
+            address = ip_address(host)
+            return (f"{address}/{128 if address.version == 6 else 32}",)
+        except ValueError:
+            pass
+        try:
+            records = socket.getaddrinfo(host, None, type=socket.SOCK_DGRAM)
+        except OSError:
+            return ()
+        addresses = {
+            ip_address(record[4][0])
+            for record in records
+            if record[4] and record[4][0]
+        }
+        return tuple(sorted(
+            f"{address}/{128 if address.version == 6 else 32}"
+            for address in addresses
+        ))
+
     def connect(self, profile: Profile, dns_policy=None, **options: Any) -> bool:
         self.last_error = ""
         if not self._ensure_disconnected_before_connect():
@@ -57,6 +90,7 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
             return False
         companion_options = dict(options)
         companion_options["native_transport"] = True
+        companion_options["native_bypass_cidrs"] = self._native_endpoint_bypass_cidrs(profile)
         # Native preflight above already installed the only safe SSH plan; do not
         # invoke the ordinary profile-bound preflight a second time.
         companion_options["management_peers"] = ()

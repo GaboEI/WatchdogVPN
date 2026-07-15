@@ -1227,6 +1227,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         capture_modes: tuple[str, ...] | None = None,
         management_peers: tuple[str, ...] = (),
         native_transport: bool = False,
+        native_bypass_cidrs: tuple[str, ...] = (),
         management_routes: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
@@ -1341,6 +1342,14 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             }
             for peer in management_peers
         ]
+        native_bypass_rules = [
+            {
+                "ip_cidr": [cidr],
+                "network": "udp",
+                "action": "bypass",
+            }
+            for cidr in native_bypass_cidrs
+        ]
         route_config: dict[str, Any] = {"rules": mode_route_rules}
         if mode == "rules" and rule_set_declarations:
             route_config["rule_set"] = list(rule_set_declarations)
@@ -1362,6 +1371,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                     }
                 )
             config["route"]["rules"] = [
+                *native_bypass_rules,
                 *native_management_rules,
                 *config["route"]["rules"],
             ]
@@ -1370,7 +1380,13 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             # not merely the mode catch-all: the SSH session is the control
             # plane that can recover a failed activation.
             config["route"]["rules"] = [
+                *native_bypass_rules,
                 *management_rules,
+                *config["route"]["rules"],
+            ]
+        elif native_bypass_rules:
+            config["route"]["rules"] = [
+                *native_bypass_rules,
                 *config["route"]["rules"],
             ]
         self._write_config(config)
@@ -1393,6 +1409,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         capture_modes: tuple[str, ...] | None = None,
         management_peers: tuple[str, ...] | None = None,
         native_transport: bool = False,
+        native_bypass_cidrs: tuple[str, ...] = (),
         management_routes: dict[str, str] | None = None,
     ) -> bool:
         self.last_error = ""
@@ -1428,6 +1445,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         }
         if native_transport:
             config_kwargs["native_transport"] = True
+        if native_bypass_cidrs:
+            config_kwargs["native_bypass_cidrs"] = native_bypass_cidrs
         if management_routes:
             config_kwargs["management_routes"] = management_routes
         if management_peers:
