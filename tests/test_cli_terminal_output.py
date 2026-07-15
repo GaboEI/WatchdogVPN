@@ -255,7 +255,11 @@ class CliTerminalOutputTests(unittest.TestCase):
     def test_human_profile_output_neutralizes_control_sequences(self) -> None:
         profile = Profile(
             id="unsafe-profile-id",
-            name="Unsafe\x1b[31m\nInjected Name",
+            name=(
+                "Unsafe\x1b[31m\nInjected "
+                "\x1b]52;c;U0VDUkVU\x07"
+                "\x1bPterminal-action\x1b\\Name\x9b31m"
+            ),
             protocol=ProtocolType.VLESS,
             config={"host": "example.invalid", "port": 443, "uuid": "test-only"},
             source=ProfileSource.MANUAL,
@@ -270,8 +274,35 @@ class CliTerminalOutputTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("\x1b", result.stdout)
-        self.assertIn("Unsafe?[31m Injected Name", result.stdout)
+        self.assertNotIn("\x9b", result.stdout)
+        self.assertNotIn("U0VDUkVU", result.stdout)
+        self.assertNotIn("terminal-action", result.stdout)
+        self.assertIn("Unsafe Injected Name", result.stdout)
         self.assert_output_fits(result.stdout, 40)
+
+    def test_human_provider_output_neutralizes_terminal_actions(self) -> None:
+        provider = Provider(
+            id="unsafe-provider",
+            name=(
+                "Provider界\x1b]0;owned\x07 "
+                "\x1bPpayload\x1b\\e\u0301 👨\u200d👩\u200d👧\u200d👦"
+            ),
+            url="https://provider.invalid/private-token",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ProviderStore(Path(tmp) / "providers.json").add(provider)
+            result = self.run_watchdog(
+                ["provider", "list"],
+                tmp,
+                columns=120,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("\x1b", result.stdout)
+        self.assertNotIn("owned", result.stdout)
+        self.assertNotIn("payload", result.stdout)
+        self.assertIn("Provider界 e\u0301", result.stdout)
+        self.assert_output_fits(result.stdout, 120)
 
     def test_common_command_typos_suggest_without_changing_exit_code(self) -> None:
         cases = (
@@ -337,7 +368,10 @@ class CliTerminalOutputTests(unittest.TestCase):
     def test_terminal_helpers_use_display_width_and_safe_text(self) -> None:
         self.assertEqual(visible_width("abc界"), 5)
         self.assertEqual(visible_width("\x1b[31mred\x1b[0m"), 3)
-        self.assertEqual(terminal_safe_text("a\x1b[31m\nb"), "a?[31m b")
+        self.assertEqual(visible_width("e\u0301"), 1)
+        self.assertEqual(visible_width("👨\u200d👩\u200d👧\u200d👦"), 2)
+        self.assertEqual(visible_width("🇩🇰"), 2)
+        self.assertEqual(terminal_safe_text("a\x1b[31m\nb"), "a b")
         rendered = truncate_to_width("alpha界omega", 8)
         self.assertLessEqual(visible_width(rendered), 8)
         self.assertTrue(rendered.endswith("..."))

@@ -108,6 +108,7 @@ fi
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_file "$runtime_root/tui/VPN" "$HOME/.local/bin/VPN" 0755' "TUI launcher must be user executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_user_path "$HOME/.local/bin/watchdogvpn"' "legacy TUI package path must be removed so watchdogvpn CLI is not shadowed"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$runtime_root/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"' "TUI package must be installed outside PATH"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$runtime_root/terminal_safety" "$HOME/.local/share/watchdogvpn/terminal_safety"' "TUI must install the shared terminal-safety package outside PATH"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_user_path "$HOME/.local/share/watchdogvpn"' "uninstall must remove installed TUI support package"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/vpn_backend' "uninstall must remove backend helper"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/watchdogvpn-daemon' "uninstall must remove daemon wrapper"

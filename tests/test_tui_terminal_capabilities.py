@@ -13,9 +13,11 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tui"))
 
 from watchdogvpn import render as render_module
+from watchdogvpn.formatting import terminal_safe_text, visible_width
 from watchdogvpn.terminal import (
     MIN_COLUMNS,
     MIN_ROWS,
@@ -41,6 +43,19 @@ def load_launcher():
 
 
 class TuiTerminalCapabilitiesTests(unittest.TestCase):
+    HOSTILE_TEXT = (
+        "safe界e\u0301👨\u200d👩\u200d👧\u200d👦 "
+        "\x00\x07\x1b[2J\x1b]52;c;U0VDUkVU\x07"
+        "\x1bPterminal-action\x1b\\\x9dtitle\x9c end"
+    )
+
+    def assert_hostile_controls_removed(self, output: str) -> None:
+        self.assertNotIn("\x1b]", output)
+        self.assertNotIn("\x1bP", output)
+        self.assertNotIn("\x9d", output)
+        self.assertNotIn("U0VDUkVU", output)
+        self.assertNotIn("terminal-action", output)
+
     def assert_cursor_writes_fit(self, output: str, rows: int, columns: int) -> None:
         moves = re.findall(r"\x1b\[(\d+);(\d+)H", output)
         self.assertTrue(moves, "render emitted no cursor-addressed writes")
@@ -109,6 +124,58 @@ class TuiTerminalCapabilitiesTests(unittest.TestCase):
             render_module.write(25, 90, "stale")
             render_module.write(12, MIN_COLUMNS - 2, "too-long-for-the-new-width")
         self.assert_cursor_writes_fit(output.getvalue(), 12, MIN_COLUMNS)
+
+    def test_shared_geometry_handles_cjk_combining_flags_and_emoji_clusters(self):
+        self.assertEqual(visible_width("界" * 20), 40)
+        self.assertEqual(visible_width("e\u0301"), 1)
+        self.assertEqual(visible_width("🇩🇰"), 2)
+        self.assertEqual(visible_width("👨\u200d👩\u200d👧\u200d👦"), 2)
+        fitted = render_module.fit("界" * 20, 20)
+        self.assertLessEqual(visible_width(fitted), 20)
+        self.assertTrue(fitted.endswith("…"))
+
+    def test_final_write_boundary_strips_controls_and_clips_by_cells(self):
+        output = StringIO()
+        with patch.object(render_module, "get_size", return_value=(12, 12)), \
+             patch.object(render_module, "RESET", ""), \
+             patch("sys.stdout", output):
+            render_module.write(4, 5, self.HOSTILE_TEXT)
+
+        rendered = output.getvalue()
+        self.assertTrue(rendered.startswith("\x1b[4;5H"))
+        payload = rendered.removeprefix("\x1b[4;5H")
+        self.assertLessEqual(visible_width(payload), 8)
+        self.assert_hostile_controls_removed(rendered)
+        self.assertIn("safe界e\u0301", payload)
+
+    def test_dashboard_and_text_surfaces_neutralize_hostile_runtime_values(self):
+        launcher = load_launcher()
+        dashboard = [
+            ("VPN", "ACTIVO"),
+            ("Event", self.HOSTILE_TEXT),
+            ("Country", "DK"),
+        ]
+        output = StringIO()
+        with patch.object(launcher, "get_size", return_value=(24, 40)), \
+             patch.object(render_module, "get_size", return_value=(24, 40)), \
+             patch("sys.stdout", output):
+            launcher.render(0, dashboard)
+        self.assert_hostile_controls_removed(output.getvalue())
+
+        for title in ("Eventos", "Logs", "Perfiles", "Proveedores"):
+            output = StringIO()
+            with self.subTest(surface=title), \
+                 patch.object(launcher, "get_size", return_value=(24, 40)), \
+                 patch.object(render_module, "get_size", return_value=(24, 40)), \
+                 patch.object(launcher, "read_key", return_value="q"), \
+                 patch("sys.stdout", output):
+                launcher.show_output(title, self.HOSTILE_TEXT)
+            self.assert_hostile_controls_removed(output.getvalue())
+            self.assert_cursor_writes_fit(output.getvalue(), 24, 40)
+            self.assertEqual(
+                terminal_safe_text(self.HOSTILE_TEXT),
+                "safe界e\u0301👨\u200d👩\u200d👧\u200d👦 end",
+            )
 
     def test_resize_notification_wakes_input_without_keyboard(self):
         launcher = load_launcher()

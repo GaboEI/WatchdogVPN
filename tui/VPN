@@ -14,9 +14,11 @@ import time
 import traceback
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SOURCE_ROOT = os.path.dirname(SCRIPT_DIR)
 INSTALLED_SUPPORT_DIR = os.path.expanduser("~/.local/share/watchdogvpn")
 if os.path.isdir(os.path.join(SCRIPT_DIR, "watchdogvpn")):
     sys.path.insert(0, SCRIPT_DIR)
+    sys.path.insert(0, SOURCE_ROOT)
 elif os.path.isdir(os.path.join(INSTALLED_SUPPORT_DIR, "watchdogvpn")):
     sys.path.insert(0, INSTALLED_SUPPORT_DIR)
 
@@ -57,6 +59,7 @@ from watchdogvpn.actions import (
     rotate_now_command,
 )
 from watchdogvpn.parsers import parse_event_line
+from watchdogvpn.formatting import pad_to_width, visible_width
 from watchdogvpn.render import (
     box,
     clear,
@@ -380,7 +383,7 @@ def build_installation_text() -> str:
     lines = []
     for title, paragraphs in blocks:
         lines.append(title)
-        lines.append("-" * len(title))
+        lines.append("-" * visible_width(title))
         for paragraph in paragraphs:
             lines.extend(textwrap.wrap(paragraph, width=86) or [""])
         lines.append("")
@@ -975,7 +978,7 @@ def render(selected: int, dashboard_cache):
         style = BG["cyan"] + FG["black"] + BOLD if is_selected else FG["gray"]
         prefix = "› " if is_selected else "  "
         text = prefix + fit(item_label, left_w - 6)
-        write(y, 2, text.ljust(left_w - 3), style)
+        write(y, 2, pad_to_width(text, left_w - 3), style)
 
     if selected_id == "dashboard":
         data = {k: v for k, v in dashboard_cache}
@@ -1227,7 +1230,7 @@ def center_message(message: str):
     rows, cols = get_size()
     clear()
     box(max(2, rows // 2 - 2), max(2, cols // 2 - 30), 5, min(60, cols - 4), "VPN")
-    write(rows // 2, max(4, (cols - len(message)) // 2), message, FG["yellow"] + BOLD)
+    write(rows // 2, max(4, (cols - visible_width(message)) // 2), message, FG["yellow"] + BOLD)
     sys.stdout.flush()
 
 
@@ -1366,7 +1369,7 @@ def select_list(title: str, items):
         for i, (tag, desc) in enumerate(visible):
             style = BG["cyan"] + FG["black"] + BOLD if offset + i == idx else FG["white"]
             line = f"{tag:<4} {fit(desc, body_w - 5)}"
-            write(3 + i, 3, line.ljust(body_w), style)
+            write(3 + i, 3, pad_to_width(line, body_w), style)
         footer = "↑↓ · Enter elegir · q volver" if cols < WIDE_COLUMNS else "↑↓ mover   Enter seleccionar   q volver"
         write(rows - 2, 3, fit(footer, cols - 6), FG["yellow"] + BOLD)
         sys.stdout.flush()
@@ -2015,7 +2018,7 @@ def compact_section_panel(section: str, items):
             absolute_idx = offset + i
             style = BG["cyan"] + FG["black"] + BOLD if absolute_idx == idx else FG["gray"]
             prefix = "› " if absolute_idx == idx else "  "
-            write(3 + i, 2, (prefix + fit(label, cols - 6)).ljust(max(0, cols - 3)), style)
+            write(3 + i, 2, pad_to_width(prefix + fit(label, cols - 6), max(0, cols - 3)), style)
         write(rows - 1, 3, fit("↑↓ · Enter abrir · q volver", cols - 4), FG["yellow"] + BOLD)
         sys.stdout.flush()
 
@@ -2068,7 +2071,7 @@ def section_panel(section: str, items):
             selected = absolute_idx == idx
             style = BG["cyan"] + FG["black"] + BOLD if selected else FG["gray"]
             prefix = "› " if selected else "  "
-            write(head_h + 2 + i, 2, (prefix + fit(label, left_w - 6)).ljust(left_w - 3), style)
+            write(head_h + 2 + i, 2, pad_to_width(prefix + fit(label, left_w - 6), left_w - 3), style)
 
         y = head_h + 2
         selected_label = items[idx][0]

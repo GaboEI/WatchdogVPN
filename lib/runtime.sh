@@ -20,6 +20,7 @@ PYTHON_RUNTIME_PACKAGES=(
   route_chains
   rotation
   rules
+  terminal_safety
 )
 PYTHON_RUNTIME_SUPPORT_FILES=(
   doctor.sh
@@ -96,6 +97,7 @@ install_runtime_files() {
   install_user_file "$runtime_root/tui/VPN" "$HOME/.local/bin/VPN" 0755
   remove_user_path "$HOME/.local/bin/watchdogvpn"
   install_user_dir "$runtime_root/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"
+  install_user_dir "$runtime_root/terminal_safety" "$HOME/.local/share/watchdogvpn/terminal_safety"
   install_root_file "$runtime_root/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
   install_systemd_units
 }

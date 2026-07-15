@@ -10,8 +10,9 @@ home_dir="$tmpdir/home"
 install -d -m 0755 "$home_dir/.local/bin" "$home_dir/.local/share/watchdogvpn"
 install -m 0755 "$ROOT_DIR/tui/VPN" "$home_dir/.local/bin/VPN"
 cp -a "$ROOT_DIR/tui/watchdogvpn" "$home_dir/.local/share/watchdogvpn/watchdogvpn"
+cp -a "$ROOT_DIR/terminal_safety" "$home_dir/.local/share/watchdogvpn/terminal_safety"
 
-python3 -m py_compile "$home_dir/.local/bin/VPN" "$home_dir"/.local/share/watchdogvpn/watchdogvpn/*.py
+python3 -m py_compile "$home_dir/.local/bin/VPN" "$home_dir"/.local/share/watchdogvpn/watchdogvpn/*.py "$home_dir"/.local/share/watchdogvpn/terminal_safety/*.py
 HOME="$home_dir" python3 - "$home_dir/.local/bin/VPN" <<'PY'
 import importlib.util
 import importlib.machinery

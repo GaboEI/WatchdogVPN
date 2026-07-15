@@ -3006,7 +3006,13 @@ def _provider_list(args: argparse.Namespace) -> int:
         for summary in summaries
     ]
     columns = ("ID", "Name", "Enabled", "Nodes", "Last update", "Traffic", "Expires")
-    widths = [max(len(str(row[index])) for row in [columns, *rows]) for index in range(len(columns))]
+    widths = [
+        max(
+            visible_width(terminal_safe_text(row[index]))
+            for row in [columns, *rows]
+        )
+        for index in range(len(columns))
+    ]
     print(_format_profile_row(columns, widths))
     print(_format_profile_row(tuple("-" * width for width in widths), widths))
     for row in rows:
