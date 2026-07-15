@@ -75,6 +75,8 @@ def build_singbox_dns_config(
     if _fakeip_enabled(policy, channel_servers):
         servers.append(_fakeip_server(policy))
 
+    _validate_domain_resolver_graph(servers)
+
     direct_server = _first_tag(channel_servers, DNSChannelName.DIRECT)
     proxy_server = _first_tag(channel_servers, DNSChannelName.PROXY)
 
@@ -159,11 +161,15 @@ def _server_tag(channel_name: DNSChannelName, index: int) -> str:
 
 
 def _planned_bootstrap_tag(policy: DNSPolicy) -> str | None:
+    """Return an independently resolvable bootstrap server tag, if configured."""
     bootstrap = policy.channels.get(DNSChannelName.BOOTSTRAP)
     if bootstrap is None:
         return None
     for index, resolver in enumerate(bootstrap.resolvers):
-        if resolver.enabled:
+        if not resolver.enabled:
+            continue
+        parsed = parse_resolver_uri(resolver.uri)
+        if not _resolver_needs_domain_resolver(parsed):
             return _server_tag(DNSChannelName.BOOTSTRAP, index)
     return None
 
@@ -177,7 +183,12 @@ def _resolver_to_singbox_server(
 ) -> dict[str, Any]:
     parsed = parse_resolver_uri(resolver.uri)
     server = _parsed_resolver_to_server(parsed, tag)
-    if bootstrap_tag and _resolver_needs_domain_resolver(parsed):
+    if _resolver_needs_domain_resolver(parsed):
+        if bootstrap_tag is None:
+            raise ValueError(
+                "hostname DNS resolver requires an enabled bootstrap resolver "
+                "using an IP address, local, or DHCP transport"
+            )
         server["domain_resolver"] = bootstrap_tag
     if channel_name == DNSChannelName.PROXY:
         server["detour"] = proxy_outbound_tag
@@ -284,6 +295,53 @@ def _resolver_needs_domain_resolver(parsed: ParsedResolver) -> bool:
     except ValueError:
         return True
     return False
+
+
+def _validate_domain_resolver_graph(servers: list[dict[str, Any]]) -> None:
+    """Reject unresolved and cyclic sing-box DNS server dependencies."""
+    server_tags = {
+        server.get("tag")
+        for server in servers
+        if isinstance(server.get("tag"), str) and server["tag"]
+    }
+    dependencies: dict[str, str] = {}
+    for server in servers:
+        tag = server.get("tag")
+        domain_resolver = server.get("domain_resolver")
+        if domain_resolver is None:
+            continue
+        if not isinstance(tag, str) or not tag:
+            raise ValueError("DNS server dependency has no valid server tag")
+        if not isinstance(domain_resolver, str) or not domain_resolver:
+            raise ValueError(
+                f"DNS server {tag} has an invalid domain resolver dependency"
+            )
+        if domain_resolver not in server_tags:
+            raise ValueError(
+                f"DNS server {tag} references unknown domain resolver {domain_resolver}"
+            )
+        dependencies[tag] = domain_resolver
+
+    states: dict[str, int] = {}
+
+    def visit(tag: str, path: list[str]) -> None:
+        state = states.get(tag, 0)
+        if state == 1:
+            cycle_start = path.index(tag)
+            cycle = path[cycle_start:] + [tag]
+            raise ValueError(
+                "DNS domain resolver dependency cycle: " + " -> ".join(cycle)
+            )
+        if state == 2:
+            return
+        states[tag] = 1
+        dependency = dependencies.get(tag)
+        if dependency is not None:
+            visit(dependency, path + [tag])
+        states[tag] = 2
+
+    for tag in dependencies:
+        visit(tag, [])
 
 
 def _build_channel_rules(

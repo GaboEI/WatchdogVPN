@@ -16,6 +16,7 @@ from dns.singbox import (
     DNS_HIJACK_INBOUND_TAGS,
     FAKEIP_SERVER_TAG,
     STATIC_IP_SERVER_TAG,
+    _validate_domain_resolver_graph,
     build_dns_hijack_inbounds,
     build_dns_hijack_route,
     build_singbox_dns_config,
@@ -77,6 +78,119 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             "watchdogvpn-bootstrap-1",
         )
         self.assertEqual(servers["watchdogvpn-final-1"]["type"], "udp")
+
+    def test_hostname_bootstrap_uses_an_independent_ip_bootstrap(self) -> None:
+        policy = DNSPolicy(
+            channels={
+                DNSChannelName.BOOTSTRAP: DNSChannel(
+                    name=DNSChannelName.BOOTSTRAP,
+                    resolvers=[
+                        Resolver(uri="https://bootstrap.example.test/dns-query"),
+                        Resolver(uri="udp://1.1.1.1"),
+                    ],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://resolver.example.test/dns-query")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        servers = {server["tag"]: server for server in result.config["servers"]}
+        self.assertEqual(
+            servers["watchdogvpn-bootstrap-1"]["domain_resolver"],
+            "watchdogvpn-bootstrap-2",
+        )
+        self.assertNotIn("domain_resolver", servers["watchdogvpn-bootstrap-2"])
+        self.assertEqual(
+            servers["watchdogvpn-proxy-1"]["domain_resolver"],
+            "watchdogvpn-bootstrap-2",
+        )
+        for tag, server in servers.items():
+            self.assertNotEqual(server.get("domain_resolver"), tag)
+
+    def test_ip_bootstrap_has_no_domain_resolver_and_resolves_hostname_servers(
+        self,
+    ) -> None:
+        policy = DNSPolicy(
+            channels={
+                DNSChannelName.BOOTSTRAP: DNSChannel(
+                    name=DNSChannelName.BOOTSTRAP,
+                    resolvers=[Resolver(uri="udp://1.1.1.1")],
+                ),
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="tls://resolver.example.test")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        servers = {server["tag"]: server for server in result.config["servers"]}
+        self.assertNotIn("domain_resolver", servers["watchdogvpn-bootstrap-1"])
+        self.assertEqual(
+            servers["watchdogvpn-final-1"]["domain_resolver"],
+            "watchdogvpn-bootstrap-1",
+        )
+
+    def test_hostname_resolver_rejects_disabled_only_independent_bootstrap(
+        self,
+    ) -> None:
+        policy = DNSPolicy(
+            channels={
+                DNSChannelName.BOOTSTRAP: DNSChannel(
+                    name=DNSChannelName.BOOTSTRAP,
+                    resolvers=[
+                        Resolver(uri="https://bootstrap.example.test/dns-query"),
+                        Resolver(uri="udp://1.1.1.1", enabled=False),
+                    ],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://resolver.example.test/dns-query")],
+                ),
+            },
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "enabled bootstrap resolver using an IP address"
+        ):
+            build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+
+    def test_domain_resolver_graph_rejects_self_and_multi_node_cycles(self) -> None:
+        with self.assertRaisesRegex(ValueError, "alpha -> alpha"):
+            _validate_domain_resolver_graph(
+                [
+                    {
+                        "tag": "alpha",
+                        "type": "https",
+                        "domain_resolver": "alpha",
+                    }
+                ]
+            )
+
+        with self.assertRaisesRegex(ValueError, "alpha -> beta -> alpha"):
+            _validate_domain_resolver_graph(
+                [
+                    {
+                        "tag": "alpha",
+                        "type": "https",
+                        "domain_resolver": "beta",
+                    },
+                    {
+                        "tag": "beta",
+                        "type": "https",
+                        "domain_resolver": "alpha",
+                    },
+                ]
+            )
 
     def test_off_policy_returns_none(self) -> None:
         policy = DNSPolicy(mode=DNSMode.OFF)
