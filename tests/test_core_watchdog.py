@@ -31,6 +31,7 @@ from drivers.base import (
 )
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
+from drivers.native_policy_driver import NativePolicyDriver
 from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -249,7 +250,7 @@ class WatchdogCoreTests(unittest.TestCase):
             source=ProfileSource.MANUAL,
         )
         driver = select_driver(profile)
-        self.assertIsInstance(driver, AmneziaWGDriver)
+        self.assertIsInstance(driver, NativePolicyDriver)
 
     def test_select_driver_routes_to_openvpn(self) -> None:
         profile = Profile(
@@ -260,7 +261,7 @@ class WatchdogCoreTests(unittest.TestCase):
             source=ProfileSource.MANUAL,
         )
         driver = select_driver(profile)
-        self.assertIsInstance(driver, OpenVPNDriver)
+        self.assertIsInstance(driver, NativePolicyDriver)
 
     def test_select_driver_routes_to_openvpn_cloak(self) -> None:
         profile = Profile(
@@ -271,7 +272,7 @@ class WatchdogCoreTests(unittest.TestCase):
             source=ProfileSource.MANUAL,
         )
         driver = select_driver(profile)
-        self.assertIsInstance(driver, OpenVPNCloakDriver)
+        self.assertIsInstance(driver, NativePolicyDriver)
 
     def test_select_driver_routes_to_singbox_by_default(self) -> None:
         profile = Profile(

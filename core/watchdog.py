@@ -34,6 +34,7 @@ from drivers.base import (
 )
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
+from drivers.native_policy_driver import NativePolicyDriver
 from drivers.singbox_driver import SingBoxDriver
 from dns.models import DNSPolicy
 from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
@@ -64,6 +65,7 @@ MANAGED_DRIVER_TYPES = (
     AmneziaWGDriver,
     OpenVPNCloakDriver,
     OpenVPNDriver,
+    NativePolicyDriver,
     SingBoxDriver,
 )
 
@@ -77,17 +79,19 @@ _LATENCY_NOT_MEASURED = object()
 def driver_type_for_profile(profile: Profile | None = None) -> type[BaseDriver]:
     if profile is None:
         return SingBoxDriver
-    if profile.protocol is ProtocolType.AMNEZIAWG:
-        return AmneziaWGDriver
-    if profile.protocol is ProtocolType.OPENVPN:
-        return OpenVPNDriver
-    if profile.protocol is ProtocolType.OPENVPN_CLOAK:
-        return OpenVPNCloakDriver
+    if profile.protocol in {ProtocolType.AMNEZIAWG, ProtocolType.OPENVPN, ProtocolType.OPENVPN_CLOAK}:
+        return NativePolicyDriver
     return SingBoxDriver
 
 
 def select_driver(profile: Profile | None = None) -> BaseDriver:
-    return driver_type_for_profile(profile)()
+    if profile is not None and profile.protocol is ProtocolType.AMNEZIAWG:
+        return NativePolicyDriver(AmneziaWGDriver())
+    if profile is not None and profile.protocol is ProtocolType.OPENVPN:
+        return NativePolicyDriver(OpenVPNDriver())
+    if profile is not None and profile.protocol is ProtocolType.OPENVPN_CLOAK:
+        return NativePolicyDriver(OpenVPNCloakDriver())
+    return SingBoxDriver()
 
 
 ORIGINAL_SELECT_DRIVER = select_driver
