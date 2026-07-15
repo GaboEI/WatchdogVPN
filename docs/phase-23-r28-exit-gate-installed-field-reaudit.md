@@ -72,3 +72,43 @@ kill switch, or owned runtime artifacts; the independent external tun0
 remained UP. This is not a release closure: Shadowsocks and WireGuard require
 diagnosis or explicit compatibility classification before the installed exit
 gate can be declared green.
+
+## Final independent field validation — installed field-gate point 1 (2026-07-15)
+
+Point 1 is GREEN and complete. An independent tester in Spain cloned and
+installed WatchdogVPN, created WireGuard and Shadowsocks profiles, and reported
+both protocols connected with stable real traffic. The validation included
+Facebook, YouTube, a stable 4K video stream, and approximately 200 Mb/s in
+each direction as reported by the tester.
+
+This independent evidence supersedes the local environment's protocol-specific
+transport observations. WireGuard and Shadowsocks are validated for
+WatchdogVPN: neither is an R28 finding, release blocker, GitHub issue,
+technical-debt item, or code-change request. No profile recreation is needed.
+
+The raw local matrix remains retained as historical execution evidence, but its
+WireGuard and Shadowsocks rows are now fully green by maintainer disposition
+and independent real-traffic confirmation.
+
+## Fresh detection-only R28 re-audit — installed field-gate point 2 (2026-07-15)
+
+Point 2 is GREEN and complete. This pass reviewed the R28 recovery, bounded
+archive, network-observation, DNS acyclicity, aggregate-metrics, native-policy
+and provider-reconciliation invariants directly, then re-ran the source gates.
+bash tests/syntax.sh, bash tests/unit.sh, compileall and diff-check passed;
+the complete source suite passed 1673/1673 in 218.946 seconds.
+
+The installed runtime was initially behind the audited candidate. The managed
+transactional update completed successfully, refreshed the daemon, and aligned
+the marker and each audited critical module with 4d9821a. Root systemd
+verification passed during that transaction; no systemd unit is failed.
+
+A controlled AmneziaWG connect/disconnect after the update proved the default
+native-policy path with TUN, proxy and nftables kill switch, then restored
+desired-off standby with no runtime artifacts or retained failure record.
+Doctor reports 110 OK, 2 WARN, 0 FAIL; the warnings are the intentional
+disconnected truth state and NTP synchronization without measured skew.
+
+No new R28 finding, release blocker, technical debt, or code change resulted
+from this re-audit. The only remaining R28 exit-gate item is formal Task 23.4 /
+Phase 23 closure and its final documentation/PR decision.
