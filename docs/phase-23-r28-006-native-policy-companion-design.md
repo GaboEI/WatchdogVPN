@@ -1,9 +1,7 @@
 # R28-006 - Native driver policy companion design
 
-Status: implementation design accepted for R28-006 remediation. This document does
-not close the finding. Native connections remain rejected by the existing
-fail-closed capability gate until the implementation and installed proof below
-are complete.
+Status: CLOSED. This is the original design record, retained with its final
+implementation and installed evidence below.
 
 ## Problem
 
@@ -171,9 +169,25 @@ Installed evidence at `7450a22`:
 - AmneziaWG reached the native driver but failed during native interface
   configuration (`ip link set mtu ... watchdogvpn_awg`) with amneziawg-go
   requesting the kernel module. The connection failed closed and explicit
-  disconnect restored clean standby. This is a runtime/dependency blocker,
+  disconnect restored clean standby. This was a runtime/dependency blocker,
   not a policy bypass.
 
-R28-006 remains open: add dedicated regression coverage for switching between
-two native wrapper transports, complete full source gates, classify/resolve the
-AmneziaWG runtime dependency, and perform the independent re-audit.
+## Final closure evidence - 2026-07-15
+
+The remaining AmneziaWG runtime dependency was resolved without weakening
+policy: the supported LTS kernel has the DKMS module installed, while the
+unsupported mainline kernel continues to fail closed. The native tunnel now
+uses the policy companion's reserved output-bypass mark, preventing its UDP
+transport from being captured into sing-box and looping back to itself.
+
+The approved AmneziaWG field profile connected in native-policy mode with an
+owned TUN, proxy, kill switch, handshake, and real SOCKS egress. An explicit
+disconnect restored clean desired-off standby. The same profile's historical
+duplicate import also connected after the routing-mark correction, confirming
+the prior divergence was runtime policy state rather than profile content.
+
+Dedicated regressions cover policy composition, deep native egress proof,
+manual failed-connect cleanup, native endpoint bypass, and the reserved
+routing mark. R28-006 is CLOSED. This closure does not authorize automatic
+deletion of historical duplicate imports; that remains separate reversible
+maintenance work.
