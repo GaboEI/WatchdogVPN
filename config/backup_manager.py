@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -20,8 +21,13 @@ from config.persistence import (
     PersistentValidationError,
     atomic_write_bytes,
     atomic_write_text,
+    clear_restore_transaction_journal,
     dump_json,
     file_lock,
+    fsync_parent_directory,
+    recover_pending_restore_transaction,
+    restore_transaction_journal_path,
+    write_restore_transaction_journal,
 )
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
@@ -235,6 +241,7 @@ class BackupManager:
         replace_confirmation: str | None = None,
         password: str | None = None,
     ) -> RestoreResult:
+        recover_pending_restore_transaction(self.config_dir)
         parsed = self.inspect_backup(backup_path, password=password)
         selected_sections = _normalize_sections(
             sections,
@@ -255,21 +262,15 @@ class BackupManager:
             encrypt=parsed.encrypted,
             password=password if parsed.encrypted else None,
         )
-        snapshot = self._snapshot_targets()
-        try:
-            section_payloads = {
-                SECTION_FILE_BY_NAME[section]: parsed.sections[
-                    SECTION_FILE_BY_NAME[section]
-                ]
-                for section in selected_sections
-            }
-            if restore_mode == "replace":
-                self._apply_sections(section_payloads)
-            else:
-                self._merge_sections(section_payloads)
-        except Exception:
-            self._restore_snapshot(snapshot)
-            raise
+        section_payloads = {
+            SECTION_FILE_BY_NAME[section]: parsed.sections[SECTION_FILE_BY_NAME[section]]
+            for section in selected_sections
+        }
+        self._apply_restore_transaction(
+            self._snapshot_targets(),
+            section_payloads,
+            restore_mode,
+        )
         return RestoreResult(
             path=backup_path,
             manifest=parsed.manifest,
@@ -725,6 +726,38 @@ class BackupManager:
             },
         )
 
+    def _apply_restore_transaction(
+        self,
+        snapshot: _RestoreSnapshot,
+        sections: dict[str, dict[str, Any]],
+        restore_mode: str,
+    ) -> None:
+        journal = restore_transaction_journal_path(self.config_dir)
+        with ExitStack() as stack:
+            for path in sorted(
+                [journal, *snapshot.files],
+                key=lambda item: str(item.resolve(strict=False)),
+            ):
+                stack.enter_context(file_lock(path))
+            write_restore_transaction_journal(
+                self.config_dir,
+                snapshot.files,
+                remove_unlisted_json=True,
+            )
+            try:
+                if restore_mode == "replace":
+                    self._apply_sections(sections)
+                else:
+                    self._merge_sections(sections)
+            except BaseException:
+                try:
+                    self._restore_snapshot(snapshot)
+                except BaseException:
+                    raise
+                clear_restore_transaction_journal(self.config_dir)
+                raise
+            clear_restore_transaction_journal(self.config_dir)
+
     def _restore_snapshot(self, snapshot: _RestoreSnapshot) -> None:
         rules_dir = self.config_dir / "rules"
         if rules_dir.exists():
@@ -735,6 +768,8 @@ class BackupManager:
                             path.unlink()
                         except FileNotFoundError:
                             pass
+                        else:
+                            fsync_parent_directory(path)
         for path, content in snapshot.files.items():
             with file_lock(path):
                 if content is None:
@@ -742,6 +777,8 @@ class BackupManager:
                         path.unlink()
                     except FileNotFoundError:
                         pass
+                    else:
+                        fsync_parent_directory(path)
                 else:
                     atomic_write_bytes(path, content)
 

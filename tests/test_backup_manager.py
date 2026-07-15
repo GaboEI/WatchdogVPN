@@ -29,6 +29,7 @@ from config.backup_manager import (
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
+from config.persistence import atomic_write_bytes, restore_transaction_journal_path, write_restore_transaction_journal
 from config.state_manager import StateManager
 from dns.models import DNSPolicy
 from metrics.models import MetricsBucket, MetricsDocument
@@ -201,6 +202,47 @@ class BackupManagerTests(unittest.TestCase):
                 sorted(item["id"] for item in previous["items"]),
                 ["changed", "profile-one"],
             )
+
+    def test_restore_rolls_back_keyboard_interrupt_and_clears_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+            backup = manager.create_backup(root / "source.zip").path
+            original_profiles = (root / "profiles.json").read_bytes()
+
+            with patch.object(BackupManager, "_write_json_file", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    manager.restore_backup(
+                        backup,
+                        replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+                    )
+
+            self.assertEqual((root / "profiles.json").read_bytes(), original_profiles)
+            self.assertFalse(restore_transaction_journal_path(root).exists())
+
+    def test_pending_restore_journal_recovers_before_profile_store_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+            snapshot = manager._snapshot_targets()
+            original_profiles = (root / "profiles.json").read_bytes()
+            original_providers = (root / "providers.json").read_bytes()
+            write_restore_transaction_journal(
+                root,
+                snapshot.files,
+                remove_unlisted_json=True,
+            )
+            atomic_write_bytes(root / "profiles.json", b"[]\n")
+            atomic_write_bytes(root / "providers.json", b"[]\n")
+
+            profiles = ProfileStore(root / "profiles.json").list()
+
+            self.assertEqual([profile.id for profile in profiles], ["profile-one"])
+            self.assertEqual((root / "profiles.json").read_bytes(), original_profiles)
+            self.assertEqual((root / "providers.json").read_bytes(), original_providers)
+            self.assertFalse(restore_transaction_journal_path(root).exists())
 
     def test_restore_rolls_back_when_apply_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
