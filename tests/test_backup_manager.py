@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import stat
@@ -20,6 +21,10 @@ from config.backup_manager import (
     BACKUP_ENCRYPTION_SUPPORTED,
     BACKUP_SCHEMA_VERSION,
     BACKUP_SECTION_SCHEMA_VERSION,
+    MAX_BACKUP_ARCHIVE_MEMBERS,
+    MAX_BACKUP_COMPRESSION_RATIO,
+    MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES,
+    MAX_BACKUP_TOTAL_UNCOMPRESSED_BYTES,
     BACKUP_SENSITIVE_WARNING,
     AUTO_BACKUP_REASONS,
     BackupManager,
@@ -169,6 +174,107 @@ class BackupManagerTests(unittest.TestCase):
                     target.writestr(item.filename, data)
             with self.assertRaisesRegex(BackupValidationError, "encrypted"):
                 manager.inspect_backup(encrypted)
+
+    def test_inspect_backup_enforces_archive_limits_before_member_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manager = BackupManager(config_dir=root)
+
+            too_many = root / "too-many.zip"
+            with ZipFile(too_many, "w") as archive:
+                for index in range(MAX_BACKUP_ARCHIVE_MEMBERS + 1):
+                    archive.writestr(f"entry-{index}.json", b"{}")
+            with self.assertRaisesRegex(BackupValidationError, "member count exceeds limit"):
+                manager.inspect_backup(too_many)
+
+            oversized = root / "oversized.zip"
+            with ZipFile(oversized, "w") as archive:
+                archive.writestr(
+                    "oversized.json",
+                    b"x" * (MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES + 1),
+                )
+            with self.assertRaisesRegex(BackupValidationError, "uncompressed size exceeds limit"):
+                manager.inspect_backup(oversized)
+
+            high_ratio = root / "high-ratio.zip"
+            with ZipFile(high_ratio, "w", compression=ZIP_DEFLATED) as archive:
+                archive.writestr(
+                    "ratio.json",
+                    b"x" * (MAX_BACKUP_COMPRESSION_RATIO * 4096),
+                )
+            with self.assertRaisesRegex(BackupValidationError, "compression ratio exceeds limit"):
+                manager.inspect_backup(high_ratio)
+
+            compressed = root / "compressed.zip"
+            compressed_chunk_size = MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES - 1024
+            with ZipFile(compressed, "w") as archive:
+                for index in range(9):
+                    archive.writestr(
+                        f"compressed-{index}.json",
+                        os.urandom(compressed_chunk_size),
+                    )
+            with self.assertRaisesRegex(BackupValidationError, "compressed size exceeds limit"):
+                manager.inspect_backup(compressed)
+
+            aggregate = root / "aggregate.zip"
+            chunk_size = MAX_BACKUP_TOTAL_UNCOMPRESSED_BYTES // 5 + 1
+            with ZipFile(aggregate, "w") as archive:
+                for index in range(5):
+                    archive.writestr(f"aggregate-{index}.json", os.urandom(chunk_size))
+            with self.assertRaisesRegex(BackupValidationError, "aggregate uncompressed size exceeds limit"):
+                manager.inspect_backup(aggregate)
+
+    @unittest.skipUnless(BACKUP_ENCRYPTION_SUPPORTED, "cryptography dependency unavailable")
+    def test_inspect_backup_enforces_limits_inside_encrypted_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+            encrypted = manager.create_backup(
+                root / "encrypted.zip",
+                encrypt=True,
+                password="secret",
+            ).path
+            inner = io.BytesIO()
+            with ZipFile(inner, "w", compression=ZIP_DEFLATED) as archive:
+                archive.writestr(
+                    "ratio.json",
+                    b"x" * (MAX_BACKUP_COMPRESSION_RATIO * 4096),
+                )
+
+            with patch(
+                "config.backup_manager._decrypt_backup_payload",
+                return_value=inner.getvalue(),
+            ):
+                with self.assertRaisesRegex(
+                    BackupValidationError,
+                    "compression ratio exceeds limit",
+                ):
+                    manager.inspect_backup(encrypted, password="secret")
+
+    def test_inspect_backup_rejects_oversized_encrypted_payload_before_decrypt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            encrypted = Path(tmp) / "oversized-encrypted.zip"
+            with ZipFile(encrypted, "w") as archive:
+                archive.writestr("manifest.json", b"{}")
+                archive.writestr(
+                    "payload.bin",
+                    b"x" * (MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES + 1),
+                )
+
+            with self.assertRaisesRegex(BackupValidationError, "uncompressed size exceeds limit"):
+                BackupManager(config_dir=Path(tmp)).inspect_backup(encrypted, password="secret")
+
+    def test_inspect_backup_uses_bounded_reader_not_zipfile_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            backup = BackupManager(config_dir=root).create_backup(root / "clean.zip").path
+
+            with patch.object(ZipFile, "read", side_effect=AssertionError("unbounded read")):
+                parsed = BackupManager(config_dir=root).inspect_backup(backup)
+
+            self.assertIn("profiles.json", parsed.sections)
 
     def test_restore_validates_before_mutation_and_creates_pre_restore_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
