@@ -267,10 +267,12 @@ class RuntimeWorkerTests(unittest.TestCase):
 
         counters = metrics_store.load().buckets[0].counters
         self.assertEqual(counters["command.connect.success"], 1)
-        self.assertEqual(counters["profile.p1.connect.success"], 1)
         self.assertEqual(counters["rotation.manual.attempt"], 1)
-        self.assertEqual(counters["profile.rotated.rotation.manual.recovered"], 1)
-        self.assertEqual(counters["node_group.paris.auto_test.unavailable"], 1)
+        self.assertEqual(counters["rotation.manual.status.recovered"], 1)
+        self.assertEqual(counters["node_group.auto_test.unavailable"], 1)
+        self.assertNotIn("profile.p1.connect.success", counters)
+        self.assertNotIn("rotated", " ".join(counters))
+        self.assertNotIn("paris", " ".join(counters))
         self.assertEqual(counters["command.disconnect.success"], 1)
 
     def test_worker_status_returns_current_state_without_event(self) -> None:

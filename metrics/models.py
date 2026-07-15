@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
+
+from models.connection_state import ALLOWED_STATUSES
 
 from config.persistence import (
     PersistentValidationError,
@@ -33,6 +35,53 @@ METRICS_BUCKET_FIELDS = frozenset(
         "counters",
     }
 )
+
+AGGREGATE_COUNTER_KEYS = frozenset(
+    {
+        "command.connect.attempt",
+        "command.connect.success",
+        "command.connect.failure",
+        "command.disconnect.attempt",
+        "command.disconnect.success",
+        "command.disconnect.failure",
+        "rotation.manual.attempt",
+        "rotation.scheduled.attempt",
+        "node_group.auto_test.attempt",
+        "node_group.auto_test.selected",
+        "node_group.auto_test.unavailable",
+        "node_group.auto_test.unknown",
+        "error.runtime",
+        "route_action.recorded",
+        "rule_group.recorded",
+        "profile.event",
+    }
+)
+AGGREGATE_STATUS_COUNTER_PREFIXES = (
+    "rotation.manual.status.",
+    "rotation.scheduled.status.",
+    "health_check.status.",
+    "recovery.status.",
+)
+
+
+def is_aggregate_counter_key(key: str) -> bool:
+    if key in AGGREGATE_COUNTER_KEYS:
+        return True
+    return any(
+        key == f"{prefix}{status}"
+        for prefix in AGGREGATE_STATUS_COUNTER_PREFIXES
+        for status in ALLOWED_STATUSES
+    )
+
+
+def aggregate_counters(counters: Mapping[str, int]) -> dict[str, int]:
+    """Return only the fixed, non-identifying aggregate counter dimensions."""
+    return {
+        key: value
+        for key, value in counters.items()
+        if isinstance(key, str) and is_aggregate_counter_key(key)
+    }
+
 
 METRICS_DOCUMENT_FIELDS = frozenset(
     {

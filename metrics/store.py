@@ -15,7 +15,7 @@ from config.persistence import (
     require_mapping,
 )
 
-from .models import MetricsBucket, MetricsDocument
+from .models import MetricsBucket, MetricsDocument, aggregate_counters
 
 
 def _metrics_path() -> Path:
@@ -36,10 +36,16 @@ class MetricsStore:
             data = require_mapping(load_json(self.path, {}), self.path)
             if not data:
                 return MetricsDocument()
-            return MetricsDocument.from_dict(data)
+            document = MetricsDocument.from_dict(data)
+            sanitized = self._sanitize_document(document)
+            if sanitized != document:
+                sanitized = sanitized.with_updated_at_now()
+                self._validate_size(sanitized)
+                dump_json(self.path, sanitized.to_dict())
+            return sanitized
 
     def save(self, document: MetricsDocument) -> None:
-        document = document.with_updated_at_now()
+        document = self._sanitize_document(document).with_updated_at_now()
         self._validate_size(document)
         with file_lock(self.path):
             dump_json(self.path, document.to_dict())
@@ -50,6 +56,7 @@ class MetricsStore:
         *,
         now: datetime | None = None,
     ) -> bool:
+        counters = aggregate_counters(counters)
         if not counters:
             return False
         now = now or datetime.now(timezone.utc)
@@ -138,6 +145,25 @@ class MetricsStore:
             updated_at=document.updated_at,
         )
         return pruned
+
+    def _sanitize_document(self, document: MetricsDocument) -> MetricsDocument:
+        buckets = tuple(
+            MetricsBucket(
+                bucket_start=bucket.bucket_start,
+                bucket_end=bucket.bucket_end,
+                counters=aggregate_counters(bucket.counters),
+            )
+            for bucket in document.buckets
+        )
+        return MetricsDocument(
+            schema_version=document.schema_version,
+            enabled=document.enabled,
+            retention_days=document.retention_days,
+            redaction_mode=document.redaction_mode,
+            max_bytes=document.max_bytes,
+            buckets=buckets,
+            updated_at=document.updated_at,
+        )
 
     def purge(self) -> bool:
         with file_lock(self.path):

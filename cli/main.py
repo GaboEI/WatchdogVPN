@@ -193,11 +193,11 @@ VISIBLE_STATS_COUNTER_PREFIXES = (
     "rotation.",
     "health_check.status.",
     "recovery.status.",
-    "node_group.",
-    "error.",
-    "profile.",
-    "route_action.",
-    "rule_group.",
+    "node_group.auto_test.",
+    "error.runtime",
+    "profile.event",
+    "route_action.recorded",
+    "rule_group.recorded",
 )
 
 SIGNAL_EXIT_CODE_BASE = 128
