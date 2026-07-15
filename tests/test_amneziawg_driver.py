@@ -11,6 +11,7 @@ from drivers.amneziawg_driver import (
     HANDSHAKE_TIMEOUT_SECONDS,
     INTERFACE_NAME,
     ROUTE_TABLE,
+    NATIVE_ROUTING_MARK,
     AmneziaWGDriver,
 )
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -167,9 +168,9 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertIn(["/usr/bin/ip", "link", "add", INTERFACE_NAME, "type", "amneziawg"], calls)
         self.assertIn(["/usr/bin/awg", "setconf", INTERFACE_NAME, str(self.driver._config_path)], calls)
         self.assertIn(["/usr/bin/ip", "-4", "address", "add", "10.8.1.5/32", "dev", INTERFACE_NAME], calls)
-        self.assertIn(["/usr/bin/awg", "set", INTERFACE_NAME, "fwmark", ROUTE_TABLE], calls)
+        self.assertIn( ["/usr/bin/awg", "set", INTERFACE_NAME, "fwmark", NATIVE_ROUTING_MARK], calls)
         self.assertIn(
-            ["/usr/bin/ip", "-4", "rule", "add", "not", "fwmark", ROUTE_TABLE, "table", ROUTE_TABLE],
+             ["/usr/bin/ip", "-4", "rule", "add", "not", "fwmark", NATIVE_ROUTING_MARK, "table", ROUTE_TABLE],
             calls,
         )
         self.assertIs(self.driver._active_profile, self.profile)

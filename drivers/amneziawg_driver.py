@@ -46,6 +46,9 @@ USERSPACE_LOG_TAIL_LINES = 20
 USERSPACE_LOG_TAIL_MAX_CHARS = 300
 SECRET_LINE_RE = re.compile(r"^\s*(?:PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
 ROUTE_TABLE = "51820"
+# sing-box auto_redirect returns packets carrying this mark before its UDP
+# capture chain. Native tunnel encapsulation must use it to avoid self-loops.
+NATIVE_ROUTING_MARK = "0x2024"
 INTERFACE_CONFIG_KEYS = {
     "address",
     "dns",
@@ -482,15 +485,15 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
         default_v4 = "0.0.0.0/0" in allowed_ips
         default_v6 = "::/0" in allowed_ips
         if default_v4 or default_v6:
-            self._run([awg_tool, "set", INTERFACE_NAME, "fwmark", ROUTE_TABLE])
+            self._run([awg_tool, "set", INTERFACE_NAME, "fwmark", NATIVE_ROUTING_MARK])
         if default_v4:
             self._run([ip_tool, "-4", "route", "add", "0.0.0.0/0", "dev", INTERFACE_NAME, "table", ROUTE_TABLE])
-            self._run([ip_tool, "-4", "rule", "add", "not", "fwmark", ROUTE_TABLE, "table", ROUTE_TABLE])
+            self._run([ip_tool, "-4", "rule", "add", "not", "fwmark", NATIVE_ROUTING_MARK, "table", ROUTE_TABLE])
             self._run([ip_tool, "-4", "rule", "add", "table", "main", "suppress_prefixlength", "0"])
             self._ensure_src_valid_mark()
         if default_v6:
             self._run([ip_tool, "-6", "route", "add", "::/0", "dev", INTERFACE_NAME, "table", ROUTE_TABLE])
-            self._run([ip_tool, "-6", "rule", "add", "not", "fwmark", ROUTE_TABLE, "table", ROUTE_TABLE])
+            self._run([ip_tool, "-6", "rule", "add", "not", "fwmark", NATIVE_ROUTING_MARK, "table", ROUTE_TABLE])
             self._run([ip_tool, "-6", "rule", "add", "table", "main", "suppress_prefixlength", "0"])
         for cidr in allowed_ips:
             if cidr in {"0.0.0.0/0", "::/0"}:
@@ -502,10 +505,10 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
         if not ip_tool:
             return
         cleanup_commands = [
-            [ip_tool, "-4", "rule", "delete", "not", "fwmark", ROUTE_TABLE, "table", ROUTE_TABLE],
+            [ip_tool, "-4", "rule", "delete", "not", "fwmark", NATIVE_ROUTING_MARK, "table", ROUTE_TABLE],
             [ip_tool, "-4", "rule", "delete", "table", "main", "suppress_prefixlength", "0"],
             [ip_tool, "-4", "route", "flush", "table", ROUTE_TABLE],
-            [ip_tool, "-6", "rule", "delete", "not", "fwmark", ROUTE_TABLE, "table", ROUTE_TABLE],
+            [ip_tool, "-6", "rule", "delete", "not", "fwmark", NATIVE_ROUTING_MARK, "table", ROUTE_TABLE],
             [ip_tool, "-6", "rule", "delete", "table", "main", "suppress_prefixlength", "0"],
             [ip_tool, "-6", "route", "flush", "table", ROUTE_TABLE],
         ]
