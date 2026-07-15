@@ -19,6 +19,8 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
 
     policy_capabilities = DRIVER_POLICY_CAPABILITIES
 
+    requires_profile_egress_check = True
+
     def __init__(self, native: BaseDriver, companion: SingBoxDriver | None = None) -> None:
         self.native = native
         self.companion = companion or SingBoxDriver()

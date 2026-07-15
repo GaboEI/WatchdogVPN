@@ -323,6 +323,32 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertTrue(runtime.disconnect())
 
 
+    def test_connect_rejects_native_policy_when_deep_egress_check_fails(self) -> None:
+        profile = Profile(
+            id="awg-deep-check",
+            name="AWG deep check",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        native = Mock()
+        companion = Mock(spec=SingBoxDriver)
+        driver = NativePolicyDriver(native, companion)
+        driver.connect = Mock(return_value=True)
+        driver.disconnect = Mock(return_value=True)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            driver_selector=lambda _profile=None: driver,
+        )
+
+        with patch.object(runtime, "_checked_and_recorded", return_value="down") as check:
+            self.assertFalse(runtime.connect(profile))
+
+        check.assert_called_once_with(profile, driver)
+        self.assertGreaterEqual(driver.disconnect.call_count, 1)
+
+
     def test_connect_rejects_singbox_when_policy_quorum_is_not_met(self) -> None:
         self.set_desired_state("on")
         driver = SingBoxDriver()

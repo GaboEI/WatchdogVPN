@@ -152,7 +152,7 @@ class WatchdogRuntime:
             self._record_last_failure("kill_switch_failed")
             return ConnectionState(status="kill_switch_failed", mode=self.driver.status().mode)
         active_profile = self._active_profile()
-        if active_profile is not None and isinstance(self.driver, SingBoxDriver):
+        if active_profile is not None and getattr(self.driver, "requires_profile_egress_check", False):
             status = self._checked_and_recorded(active_profile, self.driver)
         else:
             status = self.driver.health_check()
@@ -443,7 +443,7 @@ class WatchdogRuntime:
             **options,
         )
         if connected:
-            if not isinstance(self.driver, SingBoxDriver) or self._checked_and_recorded(profile, self.driver) == "ok":
+            if not getattr(self.driver, "requires_profile_egress_check", False) or self._checked_and_recorded(profile, self.driver) == "ok":
                 self._clear_last_failure()
             else:
                 if not self._teardown_active_driver():
@@ -463,7 +463,7 @@ class WatchdogRuntime:
             **options,
         )
         if connected:
-            if not isinstance(self.driver, SingBoxDriver) or self._checked_and_recorded(profile, self.driver) == "ok":
+            if not getattr(self.driver, "requires_profile_egress_check", False) or self._checked_and_recorded(profile, self.driver) == "ok":
                 self._clear_last_failure()
             else:
                 self._teardown_active_driver()

@@ -52,6 +52,10 @@ class BaseDriver(ABC):
     # enforce at runtime. An empty set is deliberate fail-closed behavior.
     policy_capabilities: frozenset[str] = frozenset()
 
+    # Drivers that route application traffic through a verifiable egress path
+    # must request the deep checker after connect and on every iteration.
+    requires_profile_egress_check: bool = False
+
     def unsupported_policy_capabilities(
         self, requested_capabilities: frozenset[str]
     ) -> frozenset[str]:

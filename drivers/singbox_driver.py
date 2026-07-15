@@ -169,6 +169,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
 
     policy_capabilities = DRIVER_POLICY_CAPABILITIES
 
+    requires_profile_egress_check = True
+
     def _has_existing_connection(self) -> bool:
         return self._process is not None
 
