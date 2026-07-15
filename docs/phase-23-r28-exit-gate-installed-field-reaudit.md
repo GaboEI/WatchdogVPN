@@ -3,7 +3,9 @@
 Date: 2026-07-15
 Target: archvm:/home/gabodev/WatchdogVPN
 Candidate: phase-23-cli-field-validation at 7157df396c6f86d382b9b1bb24358804a8800869
-Verdict: FAIL - not ready for PR, merge, Task 23.4 closure, or Phase 23 closure.
+Verdict (2026-07-15, initial pass on candidate 7157df396c6f86d382b9b1bb24358804a8800869): FAIL - not ready for PR, merge, Task 23.4 closure, or Phase 23 closure, due to open R28-006.
+
+FINAL DISPOSITION (2026-07-16): GREEN. R28-006 and R28-007 are closed (see "R28 factual disposition" and the commit history for `963f13c`, `e787436`, `18e3b6b`, `26a3894`). Installed field-gate point 1 ("Final independent field validation") and point 2 ("Fresh detection-only R28 re-audit") below are both GREEN and complete. No R28 finding, release blocker, or technical debt remains. The FAIL verdict above is retained as historical audit evidence for the candidate it was recorded against; it does not describe current status. Task 23.4 and Phase 23 are formally closed on this evidence; the remaining action is the PR/merge decision, which requires Gabo's separate explicit authorization.
 
 ## Executed installed evidence
 

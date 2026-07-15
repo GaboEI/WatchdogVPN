@@ -562,3 +562,22 @@ documented terminated-group message. Doctor returned nested exit zero with
 bypass timer disabled/inactive. This evidence supersedes the initial R-27
 closure evidence above. AUD-014 has no accepted technical debt; all 28 original
 findings are remediated, while R-28 remains a mandatory independent gate.
+
+
+## Task 23.4 / Phase 23 formal closure (2026-07-16)
+
+The mandatory independent R-28 re-audit referenced above is complete. R28-001
+through R28-007 are closed with no accepted technical debt (see
+`docs/phase-23-r28-*.md` for each record; R28-006 closed via `963f13c` and
+`e787436`, R28-007 via `18e3b6b` and `26a3894`). The installed exit-gate's two
+field-gate points are both GREEN and complete (see
+`docs/phase-23-r28-exit-gate-installed-field-reaudit.md`, "Final independent
+field validation" and "Fresh detection-only R28 re-audit").
+
+Combined with the 28 original R-01..R-27 findings already remediated with no
+accepted debt, all mandatory gates for this release candidate are satisfied:
+source/origin/installed alignment, `doctor.sh` at `OK=110 WARN=2 FAIL=0`, and
+the full test suite passing. Task 23.4 and Phase 23 are formally CLOSED on
+this evidence. The remaining action is the PR/merge decision toward `main`,
+which requires Gabo's separate explicit authorization and is not implied by
+this closure entry.
