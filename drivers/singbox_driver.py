@@ -1153,6 +1153,29 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 continue
         return tuple(sorted(peers))
 
+    def preflight_native_management_routes(
+        self, *, mode: str, capture_modes: tuple[str, ...] | None
+    ) -> dict[str, str]:
+        if not self._mode_requires_tun(mode, capture_modes):
+            return {}
+        peers = self._active_ssh_management_peers()
+        if peers is None or not shutil.which("ip"):
+            raise ManagementPathSafetyError(
+                "native policy TUN refused: SSH peers or physical routes cannot be inspected"
+            )
+        routes: dict[str, str] = {}
+        for peer in peers:
+            result = subprocess.run(
+                ["ip", "route", "get", peer], text=True, capture_output=True, check=False
+            )
+            match = re.search(r"\bdev\s+(\S+)", result.stdout)
+            if result.returncode != 0 or match is None or not self._is_physical_interface(match.group(1)):
+                raise ManagementPathSafetyError(
+                    "native policy TUN refused: SSH peer lacks a physical management route"
+                )
+            routes[peer] = match.group(1)
+        return routes
+
     def preflight_management_path(
         self,
         profile: Profile,

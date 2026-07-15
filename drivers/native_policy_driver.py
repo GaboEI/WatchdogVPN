@@ -34,6 +34,14 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
         if not self._ensure_disconnected_before_connect():
             self.last_error = "existing native policy runtime teardown failed"
             return False
+        try:
+            management_routes = self.companion.preflight_native_management_routes(
+                mode=str(options.get("mode", "global")),
+                capture_modes=options.get("capture_modes"),
+            )
+        except Exception as exc:
+            self.last_error = str(exc)
+            return False
         if not self.native.connect(profile):
             self.last_error = getattr(self.native, "last_error", "") or "native transport failed"
             return False
@@ -43,6 +51,8 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
             return False
         companion_options = dict(options)
         companion_options["native_transport"] = True
+        if management_routes:
+            companion_options["management_routes"] = management_routes
         if not self.companion.connect(profile, dns_policy=dns_policy, **companion_options):
             self.last_error = self.companion.last_error or "policy companion failed"
             companion_stopped = self.companion.disconnect()

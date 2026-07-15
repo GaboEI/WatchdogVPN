@@ -20,6 +20,7 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.native.is_available.return_value = True
         self.companion = Mock(spec=SingBoxDriver)
         self.companion.connect.return_value = True
+        self.companion.preflight_native_management_routes.return_value = {}
         self.companion.health_check.return_value = "ok"
         self.companion.disconnect.return_value = True
         self.companion.status.return_value = ConnectionState(tun_active=True, proxy_active=True, status="connected")
