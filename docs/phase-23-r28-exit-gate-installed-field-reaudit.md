@@ -57,6 +57,8 @@ The twelve real stored fixtures were exercised without re-importing them:
 - WireGuard returned connect rc=70 with clean fail-closed rollback in both
   states. This row is not approved.
 
+Context: standard WireGuard and Shadowsocks are documented compatibility-tier protocols, not resilient/anti-DPI protocols (see WatchdogVPN_v2_MASTER_PLAN.md protocol classification, e.g. "Standard WireGuard is treated as a compatibility profile, not a resilient anti-DPI profile"; "Shadowsocks standard ... Compatibility unless explicitly validated with anti-DPI layer"). A network path that blocks these protocols, as observed in this local environment, is out-of-scope behavior for the compatibility tier by design - it does not regress the resilient-tier guarantees this audit protects. This does not change the row's local result; it clarifies scope.
+
 Provider validation is complete: refresh returned zero changes, a real owned
 Trojan node connected, normal, SOCKS and HTTP egress passed, and disconnect
 restored clean standby. Provider-node rotation was exercised and restored to
