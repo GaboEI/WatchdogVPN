@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import stat
@@ -19,6 +20,11 @@ from config.backup_manager import (
     BACKUP_ENCRYPTION_FORMAT,
     BACKUP_ENCRYPTION_SUPPORTED,
     BACKUP_SCHEMA_VERSION,
+    BACKUP_SECTION_SCHEMA_VERSION,
+    MAX_BACKUP_ARCHIVE_MEMBERS,
+    MAX_BACKUP_COMPRESSION_RATIO,
+    MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES,
+    MAX_BACKUP_TOTAL_UNCOMPRESSED_BYTES,
     BACKUP_SENSITIVE_WARNING,
     AUTO_BACKUP_REASONS,
     BackupManager,
@@ -28,6 +34,7 @@ from config.backup_manager import (
 from config.dns_policy_store import DNSPolicyStore
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
+from config.persistence import atomic_write_bytes, restore_transaction_journal_path, write_restore_transaction_journal
 from config.state_manager import StateManager
 from dns.models import DNSPolicy
 from metrics.models import MetricsBucket, MetricsDocument
@@ -82,6 +89,42 @@ class BackupManagerTests(unittest.TestCase):
                     "work-safe",
                 )
 
+    def test_create_backup_is_private_regardless_of_umask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            backup_path = root / "backup.zip"
+            old_umask = os.umask(0o022)
+            try:
+                BackupManager(config_dir=root, backup_dir=root / "backups").create_backup(
+                    backup_path,
+                    reason="test",
+                )
+            finally:
+                os.umask(old_umask)
+
+            mode = stat.S_IMODE(backup_path.stat().st_mode)
+            self.assertEqual(mode, 0o600)
+
+    def test_create_backup_does_not_follow_symlinked_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            sentinel = root / "sentinel"
+            sentinel.write_bytes(b"do not overwrite")
+            output_path = root / "output.zip"
+            output_path.symlink_to(sentinel)
+
+            BackupManager(config_dir=root, backup_dir=root / "backups").create_backup(
+                output_path,
+                reason="test",
+            )
+
+            self.assertEqual(sentinel.read_bytes(), b"do not overwrite")
+            self.assertFalse(output_path.is_symlink())
+            with ZipFile(output_path) as archive:
+                self.assertIn("manifest.json", archive.namelist())
+
     def test_inspect_backup_rejects_path_traversal_duplicate_and_schema_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -132,6 +175,107 @@ class BackupManagerTests(unittest.TestCase):
             with self.assertRaisesRegex(BackupValidationError, "encrypted"):
                 manager.inspect_backup(encrypted)
 
+    def test_inspect_backup_enforces_archive_limits_before_member_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manager = BackupManager(config_dir=root)
+
+            too_many = root / "too-many.zip"
+            with ZipFile(too_many, "w") as archive:
+                for index in range(MAX_BACKUP_ARCHIVE_MEMBERS + 1):
+                    archive.writestr(f"entry-{index}.json", b"{}")
+            with self.assertRaisesRegex(BackupValidationError, "member count exceeds limit"):
+                manager.inspect_backup(too_many)
+
+            oversized = root / "oversized.zip"
+            with ZipFile(oversized, "w") as archive:
+                archive.writestr(
+                    "oversized.json",
+                    b"x" * (MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES + 1),
+                )
+            with self.assertRaisesRegex(BackupValidationError, "uncompressed size exceeds limit"):
+                manager.inspect_backup(oversized)
+
+            high_ratio = root / "high-ratio.zip"
+            with ZipFile(high_ratio, "w", compression=ZIP_DEFLATED) as archive:
+                archive.writestr(
+                    "ratio.json",
+                    b"x" * (MAX_BACKUP_COMPRESSION_RATIO * 4096),
+                )
+            with self.assertRaisesRegex(BackupValidationError, "compression ratio exceeds limit"):
+                manager.inspect_backup(high_ratio)
+
+            compressed = root / "compressed.zip"
+            compressed_chunk_size = MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES - 1024
+            with ZipFile(compressed, "w") as archive:
+                for index in range(9):
+                    archive.writestr(
+                        f"compressed-{index}.json",
+                        os.urandom(compressed_chunk_size),
+                    )
+            with self.assertRaisesRegex(BackupValidationError, "compressed size exceeds limit"):
+                manager.inspect_backup(compressed)
+
+            aggregate = root / "aggregate.zip"
+            chunk_size = MAX_BACKUP_TOTAL_UNCOMPRESSED_BYTES // 5 + 1
+            with ZipFile(aggregate, "w") as archive:
+                for index in range(5):
+                    archive.writestr(f"aggregate-{index}.json", os.urandom(chunk_size))
+            with self.assertRaisesRegex(BackupValidationError, "aggregate uncompressed size exceeds limit"):
+                manager.inspect_backup(aggregate)
+
+    @unittest.skipUnless(BACKUP_ENCRYPTION_SUPPORTED, "cryptography dependency unavailable")
+    def test_inspect_backup_enforces_limits_inside_encrypted_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root)
+            encrypted = manager.create_backup(
+                root / "encrypted.zip",
+                encrypt=True,
+                password="secret",
+            ).path
+            inner = io.BytesIO()
+            with ZipFile(inner, "w", compression=ZIP_DEFLATED) as archive:
+                archive.writestr(
+                    "ratio.json",
+                    b"x" * (MAX_BACKUP_COMPRESSION_RATIO * 4096),
+                )
+
+            with patch(
+                "config.backup_manager._decrypt_backup_payload",
+                return_value=inner.getvalue(),
+            ):
+                with self.assertRaisesRegex(
+                    BackupValidationError,
+                    "compression ratio exceeds limit",
+                ):
+                    manager.inspect_backup(encrypted, password="secret")
+
+    def test_inspect_backup_rejects_oversized_encrypted_payload_before_decrypt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            encrypted = Path(tmp) / "oversized-encrypted.zip"
+            with ZipFile(encrypted, "w") as archive:
+                archive.writestr("manifest.json", b"{}")
+                archive.writestr(
+                    "payload.bin",
+                    b"x" * (MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES + 1),
+                )
+
+            with self.assertRaisesRegex(BackupValidationError, "uncompressed size exceeds limit"):
+                BackupManager(config_dir=Path(tmp)).inspect_backup(encrypted, password="secret")
+
+    def test_inspect_backup_uses_bounded_reader_not_zipfile_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            backup = BackupManager(config_dir=root).create_backup(root / "clean.zip").path
+
+            with patch.object(ZipFile, "read", side_effect=AssertionError("unbounded read")):
+                parsed = BackupManager(config_dir=root).inspect_backup(backup)
+
+            self.assertIn("profiles.json", parsed.sections)
+
     def test_restore_validates_before_mutation_and_creates_pre_restore_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -164,6 +308,52 @@ class BackupManagerTests(unittest.TestCase):
                 sorted(item["id"] for item in previous["items"]),
                 ["changed", "profile-one"],
             )
+
+    def test_restore_rolls_back_keyboard_interrupt_and_clears_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+            backup = manager.create_backup(root / "source.zip").path
+            original_profiles = (root / "profiles.json").read_bytes()
+
+            with patch.object(BackupManager, "_write_json_file", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    manager.restore_backup(
+                        backup,
+                        replace_confirmation=RESTORE_REPLACE_CONFIRMATION,
+                    )
+
+            self.assertEqual((root / "profiles.json").read_bytes(), original_profiles)
+            self.assertFalse(restore_transaction_journal_path(root).exists())
+
+    def test_pending_restore_journal_recovers_before_profile_store_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.seed_config(root)
+            manager = BackupManager(config_dir=root, backup_dir=root / "backups")
+            unmanaged = root / "procattr-test.json"
+            unmanaged.write_bytes(b"unmanaged\n")
+            snapshot = manager._snapshot_targets()
+            original_profiles = (root / "profiles.json").read_bytes()
+            original_providers = (root / "providers.json").read_bytes()
+            write_restore_transaction_journal(
+                root,
+                snapshot.files,
+                prune_unlisted_rule_files=True,
+            )
+            atomic_write_bytes(root / "profiles.json", b"[]\n")
+            atomic_write_bytes(root / "providers.json", b"[]\n")
+            atomic_write_bytes(root / "rules" / "interrupted.json", b"{}\n")
+
+            profiles = ProfileStore(root / "profiles.json").list()
+
+            self.assertEqual([profile.id for profile in profiles], ["profile-one"])
+            self.assertEqual((root / "profiles.json").read_bytes(), original_profiles)
+            self.assertEqual((root / "providers.json").read_bytes(), original_providers)
+            self.assertEqual(unmanaged.read_bytes(), b"unmanaged\n")
+            self.assertFalse((root / "rules" / "interrupted.json").exists())
+            self.assertFalse(restore_transaction_journal_path(root).exists())
 
     def test_restore_rolls_back_when_apply_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -853,6 +1043,25 @@ class BackupManagerTests(unittest.TestCase):
 
             with self.assertRaisesRegex(BackupValidationError, "max_backups"):
                 BackupManager(config_dir=root).inspect_backup(broken)
+
+    def test_profiles_section_rejects_unsafe_openvpn_before_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = Profile(
+                id="unsafe-openvpn",
+                name="unsafe-openvpn",
+                protocol=ProtocolType.OPENVPN,
+                config={
+                    "raw_config": "client\nremote vpn.example.com 1194\nplugin /tmp/evil.so\n",
+                },
+                source=ProfileSource.MANUAL,
+            )
+            payload = {
+                "schema_version": BACKUP_SECTION_SCHEMA_VERSION,
+                "items": [profile.to_dict()],
+            }
+            with self.assertRaisesRegex(BackupValidationError, "unsafe OpenVPN"):
+                BackupManager(config_dir=root)._validate_section("profiles.json", payload)
 
     def seed_config(self, root: Path) -> None:
         AppConfig(root / "config.toml").save(AppConfig(root / "config.toml").load())

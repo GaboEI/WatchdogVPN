@@ -75,6 +75,8 @@ def build_singbox_dns_config(
     if _fakeip_enabled(policy, channel_servers):
         servers.append(_fakeip_server(policy))
 
+    _validate_domain_resolver_graph(servers)
+
     direct_server = _first_tag(channel_servers, DNSChannelName.DIRECT)
     proxy_server = _first_tag(channel_servers, DNSChannelName.PROXY)
 
@@ -159,11 +161,15 @@ def _server_tag(channel_name: DNSChannelName, index: int) -> str:
 
 
 def _planned_bootstrap_tag(policy: DNSPolicy) -> str | None:
+    """Return an independently resolvable bootstrap server tag, if configured."""
     bootstrap = policy.channels.get(DNSChannelName.BOOTSTRAP)
     if bootstrap is None:
         return None
     for index, resolver in enumerate(bootstrap.resolvers):
-        if resolver.enabled:
+        if not resolver.enabled:
+            continue
+        parsed = parse_resolver_uri(resolver.uri)
+        if not _resolver_needs_domain_resolver(parsed):
             return _server_tag(DNSChannelName.BOOTSTRAP, index)
     return None
 
@@ -177,7 +183,12 @@ def _resolver_to_singbox_server(
 ) -> dict[str, Any]:
     parsed = parse_resolver_uri(resolver.uri)
     server = _parsed_resolver_to_server(parsed, tag)
-    if bootstrap_tag and _resolver_needs_domain_resolver(parsed):
+    if _resolver_needs_domain_resolver(parsed):
+        if bootstrap_tag is None:
+            raise ValueError(
+                "hostname DNS resolver requires an enabled bootstrap resolver "
+                "using an IP address, local, or DHCP transport"
+            )
         server["domain_resolver"] = bootstrap_tag
     if channel_name == DNSChannelName.PROXY:
         server["detour"] = proxy_outbound_tag
@@ -229,10 +240,16 @@ def _fakeip_enabled(
     policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
 ) -> bool:
+    return fakeip_policy_ready(policy) and DNSChannelName.PROXY in channel_servers
+
+
+def fakeip_policy_ready(policy: DNSPolicy) -> bool:
+    proxy_channel = policy.channels.get(DNSChannelName.PROXY)
     return (
         policy.mode != DNSMode.OFF
         and policy.proxy_resolution_channel == "fakeip"
-        and DNSChannelName.PROXY in channel_servers
+        and proxy_channel is not None
+        and any(resolver.enabled for resolver in proxy_channel.resolvers)
     )
 
 
@@ -280,6 +297,53 @@ def _resolver_needs_domain_resolver(parsed: ParsedResolver) -> bool:
     return False
 
 
+def _validate_domain_resolver_graph(servers: list[dict[str, Any]]) -> None:
+    """Reject unresolved and cyclic sing-box DNS server dependencies."""
+    server_tags = {
+        server.get("tag")
+        for server in servers
+        if isinstance(server.get("tag"), str) and server["tag"]
+    }
+    dependencies: dict[str, str] = {}
+    for server in servers:
+        tag = server.get("tag")
+        domain_resolver = server.get("domain_resolver")
+        if domain_resolver is None:
+            continue
+        if not isinstance(tag, str) or not tag:
+            raise ValueError("DNS server dependency has no valid server tag")
+        if not isinstance(domain_resolver, str) or not domain_resolver:
+            raise ValueError(
+                f"DNS server {tag} has an invalid domain resolver dependency"
+            )
+        if domain_resolver not in server_tags:
+            raise ValueError(
+                f"DNS server {tag} references unknown domain resolver {domain_resolver}"
+            )
+        dependencies[tag] = domain_resolver
+
+    states: dict[str, int] = {}
+
+    def visit(tag: str, path: list[str]) -> None:
+        state = states.get(tag, 0)
+        if state == 1:
+            cycle_start = path.index(tag)
+            cycle = path[cycle_start:] + [tag]
+            raise ValueError(
+                "DNS domain resolver dependency cycle: " + " -> ".join(cycle)
+            )
+        if state == 2:
+            return
+        states[tag] = 1
+        dependency = dependencies.get(tag)
+        if dependency is not None:
+            visit(dependency, path + [tag])
+        states[tag] = 2
+
+    for tag in dependencies:
+        visit(tag, [])
+
+
 def _build_channel_rules(
     policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
@@ -316,13 +380,15 @@ def _dns_diversion_rules(
     for _, rule in sorted(indexed_rules, key=lambda item: (item[1].priority, item[0])):
         if not rule.enabled:
             continue
-        rules.append(_dns_diversion_rule(rule, channel_servers))
+        rules.append(_dns_diversion_rule(rule, channel_servers, policy=policy))
     return rules
 
 
 def _dns_diversion_rule(
     rule: DNSRule,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
+    *,
+    policy: DNSPolicy,
 ) -> dict[str, Any]:
     singbox_rule = _dns_rule_match_fields(rule.pattern)
     if rule.action == DNSRuleAction.REJECT:
@@ -330,13 +396,23 @@ def _dns_diversion_rule(
         return singbox_rule
     if rule.channel is None:
         raise ValueError("dns diversion rule channel is required")
-    server = _first_tag(channel_servers, rule.channel)
+    server = _dns_rule_channel_server(policy, channel_servers, rule.channel)
     if server is None:
         raise ValueError(
             f"dns diversion rule channel has no server: {rule.channel.value}"
         )
     singbox_rule["server"] = server
     return singbox_rule
+
+
+def _dns_rule_channel_server(
+    policy: DNSPolicy,
+    channel_servers: dict[DNSChannelName, tuple[str, ...]],
+    channel: DNSChannelName,
+) -> str | None:
+    if channel == DNSChannelName.PROXY and _fakeip_enabled(policy, channel_servers):
+        return FAKEIP_SERVER_TAG
+    return _first_tag(channel_servers, channel)
 
 
 def _dns_rule_match_fields(pattern: str) -> dict[str, Any]:

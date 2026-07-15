@@ -24,15 +24,23 @@ from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import ALLOWED_ACTIVE_MODES, StateManager, parse_capture_modes
 from core.kill_switch import KillSwitch
+from core.runtime_observation import observe_effective_runtime
 from drivers.amneziawg_driver import AmneziaWGDriver
-from drivers.base import BaseDriver
+from drivers.base import (
+    BaseDriver,
+    ManagementPathSafetyError,
+    TeardownBarrierError,
+    UnsupportedDriverPolicyError,
+)
 from drivers.openvpn_cloak_driver import OpenVPNCloakDriver
 from drivers.openvpn_driver import OpenVPNDriver
+from drivers.native_policy_driver import NativePolicyDriver
 from drivers.singbox_driver import SingBoxDriver
 from dns.models import DNSPolicy
 from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from parsers.endpoint_policy import EndpointPolicyError, profile_endpoint_host, validate_profile_endpoint
 from node_groups.models import NodeGroup, NodeGroupSelectionMode, group_target
 from node_groups.resolver import resolve_candidates as resolve_node_group_candidates
 from node_groups.scoring import rank_candidates
@@ -49,10 +57,15 @@ from rules.ruleset_lifecycle import RuleSetLifecycleManager
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+class EndpointPolicyConnectionError(RuntimeError):
+    """A profile endpoint failed mandatory pre-connection validation."""
 MANAGED_DRIVER_TYPES = (
     AmneziaWGDriver,
     OpenVPNCloakDriver,
     OpenVPNDriver,
+    NativePolicyDriver,
     SingBoxDriver,
 )
 
@@ -63,15 +76,21 @@ MANAGED_DRIVER_TYPES = (
 _LATENCY_NOT_MEASURED = object()
 
 
-def select_driver(profile: Profile | None = None) -> BaseDriver:
+def driver_type_for_profile(profile: Profile | None = None) -> type[BaseDriver]:
     if profile is None:
-        return SingBoxDriver()
-    if profile.protocol is ProtocolType.AMNEZIAWG:
-        return AmneziaWGDriver()
-    if profile.protocol is ProtocolType.OPENVPN:
-        return OpenVPNDriver()
-    if profile.protocol is ProtocolType.OPENVPN_CLOAK:
-        return OpenVPNCloakDriver()
+        return SingBoxDriver
+    if profile.protocol in {ProtocolType.AMNEZIAWG, ProtocolType.OPENVPN, ProtocolType.OPENVPN_CLOAK}:
+        return NativePolicyDriver
+    return SingBoxDriver
+
+
+def select_driver(profile: Profile | None = None) -> BaseDriver:
+    if profile is not None and profile.protocol is ProtocolType.AMNEZIAWG:
+        return NativePolicyDriver(AmneziaWGDriver())
+    if profile is not None and profile.protocol is ProtocolType.OPENVPN:
+        return NativePolicyDriver(OpenVPNDriver())
+    if profile is not None and profile.protocol is ProtocolType.OPENVPN_CLOAK:
+        return NativePolicyDriver(OpenVPNCloakDriver())
     return SingBoxDriver()
 
 
@@ -101,6 +120,10 @@ class WatchdogRuntime:
 
     _reconnect_failures: int = field(default=0, init=False, repr=False)
 
+    _desired_on_kill_switch_forced: bool = field(default=False, init=False, repr=False)
+
+    _cleanup_barrier_failed: bool = field(default=False, init=False, repr=False)
+
     def __post_init__(self) -> None:
         if self.driver_selector is ORIGINAL_SELECT_DRIVER and type(self.driver) not in MANAGED_DRIVER_TYPES:
             self.driver_selector = lambda _profile=None: self.driver
@@ -125,10 +148,16 @@ class WatchdogRuntime:
     def run_iteration(self) -> ConnectionState:
         if not self.automatic_actions_enabled():
             return self.standby_state()
-        status = self.driver.health_check()
+        if not self._maintain_kill_switch_for_active_runtime():
+            self._record_last_failure("kill_switch_failed")
+            return ConnectionState(status="kill_switch_failed", mode=self.driver.status().mode)
         active_profile = self._active_profile()
-        if active_profile is not None:
-            self._record_health_result(active_profile, status)
+        if active_profile is not None and getattr(self.driver, "requires_profile_egress_check", False):
+            status = self._checked_and_recorded(active_profile, self.driver)
+        else:
+            status = self.driver.health_check()
+            if active_profile is not None:
+                self._record_health_result(active_profile, status)
         if status == "ok":
             self.recovery.record_success()
             return self.driver.status()
@@ -189,12 +218,15 @@ class WatchdogRuntime:
 
     def _configured_verify(self, config: dict) -> health_checker.VerifyFn:
         rotation_config = config.get("rotation", {})
-        test_url = str(rotation_config.get("test_url", health_checker.EXTERNAL_CHECK_URL))
+        targets = tuple(rotation_config.get("health_targets", health_checker.DEFAULT_HEALTH_TARGETS))
+        success_quorum = int(
+            rotation_config.get("health_success_quorum", health_checker.DEFAULT_SUCCESS_QUORUM)
+        )
         timeout = float(
             rotation_config.get("test_timeout_seconds", health_checker.DEFAULT_TIMEOUT_SECONDS)
         )
-        return lambda via_proxy: health_checker.reachable_and_public_ip(
-            via_proxy, timeout=timeout, test_url=test_url
+        return lambda via_proxy: health_checker.verify_health_targets(
+            via_proxy, timeout=timeout, targets=targets, success_quorum=success_quorum
         )
 
     def _checked_and_recorded(self, profile: Profile, driver: BaseDriver) -> str:
@@ -206,10 +238,9 @@ class WatchdogRuntime:
         three paths get persistence for free, with zero changes to
         rotation/rotation_engine.py, which stays store-agnostic by design.
 
-        Uses the configured rotation.test_url/test_timeout_seconds (Task
-        14.7) for every candidate, in every call site - one shared
-        reference point is what makes latency comparable across profiles,
-        not a per-profile setting.
+        Uses the configured multi-target rotation health policy and timeout
+        for every candidate and every call site. A shared quorum policy keeps
+        latency and failure interpretation comparable across profiles.
         """
         config = self.app_config.load()
         verify = self._configured_verify(config)
@@ -259,6 +290,8 @@ class WatchdogRuntime:
         active exit node or trigger kill-switch/all-failed recovery policy.
         """
         state = self.status()
+        if state.kill_switch_active or state.kill_switch_status != "inactive":
+            raise RuntimeError("node-group auto-test requires the kill switch to be inactive")
         if (
             state.active_profile_id
             or state.tun_active
@@ -266,8 +299,6 @@ class WatchdogRuntime:
             or state.status != "standby"
         ):
             raise RuntimeError("node-group auto-test requires standby/disconnected state")
-        if self.kill_switch.is_active() or state.kill_switch_active:
-            raise RuntimeError("node-group auto-test requires the kill switch to be inactive")
 
         group = self.node_group_store.get(group_name)
         if group is None:
@@ -279,14 +310,27 @@ class WatchdogRuntime:
         candidates = resolve_node_group_candidates(
             group, self.profile_store, self.provider_store, config
         )
+        requested_capabilities = self._requested_policy_capabilities()
+        for profile in candidates:
+            driver_name, policy_capabilities = self._driver_policy_contract_for_profile(profile)
+            unsupported = requested_capabilities - policy_capabilities
+            if unsupported:
+                raise UnsupportedDriverPolicyError(driver_name, unsupported)
+
+        options = self._connect_options()
+        dns_policy = self.dns_policy_store.load()
         test_results: list[dict[str, object]] = []
         ok_profile_ids: set[str] = set()
         for profile in candidates:
-            driver = self._driver_for_profile(profile)
+            # The standby assertion above covers the first iteration and the
+            # loop disconnects unconditionally before advancing.
+            driver = self._activate_driver(
+                self._candidate_driver_for_profile(profile), disconnect_current=False
+            )
             connected = driver.connect(
                 profile,
-                dns_policy=self.dns_policy_store.load(),
-                **self._connect_options(),
+                dns_policy=dns_policy,
+                **options,
             )
             if not connected:
                 self._record_health_result(profile, "down", latency_ms=None)
@@ -348,7 +392,7 @@ class WatchdogRuntime:
         )
         return hours > 0
 
-    def startup(self) -> ConnectionState:
+    def startup(self, *, require_restart_protection: bool = False) -> ConnectionState:
         try:
             state = self.state_manager.load()
         except (PersistentStoreError, PersistentValidationError):
@@ -361,43 +405,135 @@ class WatchdogRuntime:
             LOGGER.error("standby mode - invalid vpn_desired_state: %r", state.get("vpn_desired_state"))
             return self.standby_state()
 
+        active_profile_id = str(state.get("active_profile_id", ""))
+        profile = self.profile_store.get(active_profile_id) if active_profile_id else None
+        if require_restart_protection and not self._apply_desired_on_protection(profile):
+            self._record_last_failure("kill_switch_failed")
+            return ConnectionState(status="kill_switch_failed", mode="standby")
+
         if not state.get("vpn_autoconnect_enabled", False):
             LOGGER.info("standby mode - autoconnect disabled")
             return self.standby_state()
-
-        active_profile_id = str(state.get("active_profile_id", ""))
         if not active_profile_id:
             LOGGER.warning("standby mode - no active profile configured")
             return self.standby_state()
-
-        profile = self.profile_store.get(active_profile_id)
         if profile is None:
             LOGGER.warning("standby mode - active profile not found: %s", active_profile_id)
             return self.standby_state()
+        try:
+            driver, options = self._prepare_driver_for_connection(profile)
+        except UnsupportedDriverPolicyError as exc:
+            LOGGER.error("watchdog_startup_policy_unsupported error=%s", exc)
+            self._record_last_failure("unsupported_policy")
+            return ConnectionState(status="unsupported_policy", mode="standby")
+        except ManagementPathSafetyError as exc:
+            LOGGER.error("watchdog_startup_management_path_unsafe error=%s", exc)
+            self._record_last_failure("management_path_unprotected")
+            return ConnectionState(status="standby", mode="standby")
+        try:
+            active_driver = self._activate_driver(driver)
+        except TeardownBarrierError:
+            return self._cleanup_failure_state()
+        if not require_restart_protection and not self._protect_connection_attempt(profile):
+            return ConnectionState(status="kill_switch_failed", mode="standby")
 
-        self._driver_for_profile(profile).connect(
+        connected = active_driver.connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
-            **self._connect_options(),
+            **options,
         )
+        if connected:
+            if not getattr(self.driver, "requires_profile_egress_check", False) or self._checked_and_recorded(profile, self.driver) == "ok":
+                self._clear_last_failure()
+            else:
+                if not self._teardown_active_driver():
+                    return self._cleanup_failure_state()
         return self.driver.status()
 
     def connect(self, profile: Profile) -> bool:
+        driver, options = self._prepare_driver_for_connection(profile)
+        active_driver = self._activate_driver(driver)
+        if not self._protect_connection_attempt(profile):
+            return False
         self.state_manager.set("vpn_desired_state", "on")
         self.state_manager.set("active_profile_id", profile.id)
-        return self._driver_for_profile(profile).connect(
+        connected = active_driver.connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
-            **self._connect_options(),
+            **options,
         )
+        if not connected:
+            return self._fail_manual_connect()
+        if (
+            getattr(self.driver, "requires_profile_egress_check", False)
+            and self._checked_and_recorded(profile, self.driver) != "ok"
+        ):
+            return self._fail_manual_connect()
+        self._clear_last_failure()
+        return True
 
-    def disconnect(self) -> bool:
-        result = self.driver.disconnect()
+    def _fail_manual_connect(self) -> bool:
+        """Return a failed manual connect to an explicit clean standby state.
+
+        A manual request is not permission to keep retrying indefinitely.  If
+        teardown is provably complete, disable temporary protection and clear
+        the requested profile so a failed handshake or egress gate cannot turn
+        into a background reconnect loop.  A failed teardown remains
+        fail-closed and is recorded by the teardown barrier.
+        """
+        if not self._teardown_active_driver():
+            return False
         self._handle_manual_disconnect_kill_switch()
         self._restore_dns_snapshot_if_present()
         self.state_manager.set("vpn_desired_state", "off")
+        self.state_manager.set("active_profile_id", "")
+        self._record_last_failure("connect_failed")
+        return False
+
+    @property
+    def last_error(self) -> str:
+        return str(getattr(self.driver, "last_error", "") or "")
+
+    def disconnect(self) -> bool:
+        if not self._teardown_active_driver():
+            LOGGER.error("watchdog_manual_disconnect_blocked reason=cleanup_failed")
+            return False
+        self._handle_manual_disconnect_kill_switch()
+        self._restore_dns_snapshot_if_present()
+        self.state_manager.set("vpn_desired_state", "off")
+        self._clear_last_failure()
         LOGGER.info("VPN manually disabled. Will not auto-reconnect.")
-        return result
+        return True
+
+    def shutdown(self) -> bool:
+        """Tear down runtime state without changing the user's desired state."""
+        desired_on = True
+        try:
+            desired_on = self.state_manager.get("vpn_desired_state", "off") == "on"
+        except (PersistentStoreError, PersistentValidationError):
+            LOGGER.error("watchdog_shutdown_desired_state_unreadable", exc_info=True)
+
+        protection_ok = True
+        if desired_on:
+            try:
+                protection_ok = self._apply_desired_on_protection(self._active_profile())
+            except Exception:
+                protection_ok = False
+                LOGGER.error("watchdog_shutdown_protection_failed", exc_info=True)
+
+        disconnected = False
+        try:
+            disconnected = self.driver.disconnect()
+        except Exception:
+            LOGGER.error("watchdog_shutdown_driver_cleanup_failed", exc_info=True)
+        finally:
+            self._restore_dns_snapshot_if_present()
+            if not desired_on:
+                self._handle_manual_disconnect_kill_switch()
+
+        if desired_on and not protection_ok:
+            LOGGER.error("watchdog_shutdown_fail_closed_barrier_unavailable")
+        return disconnected and protection_ok
 
     def health_check(self) -> str:
         if not self.automatic_actions_enabled():
@@ -405,7 +541,94 @@ class WatchdogRuntime:
         return self.driver.health_check()
 
     def status(self) -> ConnectionState:
-        return self._with_lan_gateway_status(self.driver.status())
+        state = self._with_effective_runtime_status(self.driver.status())
+        return self._with_last_failure(
+            self._with_lan_gateway_status(self._with_kill_switch_status(state))
+        )
+
+    def _with_effective_runtime_status(self, state: ConnectionState) -> ConnectionState:
+        observation = observe_effective_runtime()
+        artifacts = list(state.runtime_artifacts)
+        artifacts.extend(observation.artifacts)
+        if observation.processes and not observation.listener_observable:
+            artifacts.append("observation:owned-listeners-unavailable")
+        state.runtime_artifacts = tuple(sorted(set(artifacts)))
+        state.tun_active = state.tun_active or bool(observation.interfaces)
+        state.proxy_active = state.proxy_active or bool(
+            {2080, 2081}.intersection(observation.listener_ports)
+        )
+        if state.status == "standby" and state.runtime_artifacts:
+            state.status = "runtime_mismatch"
+        if state.status == "runtime_mismatch":
+            state.runtime_mismatch_severity = "critical"
+        return state
+
+    def _with_last_failure(self, state: ConnectionState) -> ConnectionState:
+        # Explicitly owns both fields - always sets them from the persisted
+        # record (clearing to the dataclass defaults when there is none),
+        # rather than trusting the passed-in state to already be clean.
+        reason = str(self.state_manager.get("last_failure_reason", "") or "")
+        state.last_failure_reason = reason
+        if reason == "cleanup_failed":
+            state.status = "cleanup_failed"
+        at_raw = str(self.state_manager.get("last_failure_at", "") or "") if reason else ""
+        state.last_failure_at = None
+        if at_raw:
+            try:
+                state.last_failure_at = datetime.fromisoformat(at_raw)
+            except ValueError:
+                pass
+        return state
+
+    def _record_last_failure(self, reason: str) -> None:
+        self.state_manager.set("last_failure_reason", reason)
+        self.state_manager.set("last_failure_at", datetime.now(timezone.utc).isoformat())
+
+    def _clear_last_failure(self) -> None:
+        self.state_manager.set("last_failure_reason", "")
+        self.state_manager.set("last_failure_at", "")
+
+    def _with_kill_switch_status(self, state: ConnectionState) -> ConnectionState:
+        try:
+            config = self.app_config.load()
+            self._configure_kill_switch(config, self._active_profile())
+        except (PersistentStoreError, PersistentValidationError, ValueError):
+            LOGGER.error("kill_switch_status_config_invalid", exc_info=True)
+
+        raw_status = self.kill_switch.status()
+        active = bool(
+            raw_status["active"]
+            if "active" in raw_status
+            else self.kill_switch.is_active()
+        )
+        artifacts_present = bool(raw_status.get("artifacts_present", active))
+        consistent = bool(raw_status.get("consistent", True))
+        method = str(raw_status.get("method") or "")
+        reasons_raw = raw_status.get("mismatch_reasons", ())
+        reasons = (
+            tuple(str(reason) for reason in reasons_raw)
+            if isinstance(reasons_raw, (list, tuple))
+            else ()
+        )
+
+        state.kill_switch_active = state.kill_switch_active or active
+        state.kill_switch_method = method
+        state.kill_switch_consistent = consistent
+        if artifacts_present and consistent and active:
+            state.kill_switch_status = "applied"
+            if state.status == "standby":
+                state.status = "kill_switch_active"
+        elif artifacts_present:
+            state.kill_switch_status = "partial"
+            artifacts = list(state.runtime_artifacts)
+            artifacts.append(f"kill_switch:{method or 'unknown'}/partial")
+            artifacts.extend(f"kill_switch_mismatch:{reason}" for reason in reasons)
+            state.runtime_artifacts = tuple(sorted(set(artifacts)))
+            state.status = "runtime_mismatch"
+            state.runtime_mismatch_severity = "critical"
+        else:
+            state.kill_switch_status = "inactive"
+        return state
 
     def _with_lan_gateway_status(self, state: ConnectionState) -> ConnectionState:
         config_gateway = False
@@ -427,6 +650,110 @@ class WatchdogRuntime:
             return state
         state.lan_gateway_status = "disabled"
         return state
+
+    def _requested_policy_capabilities(self) -> frozenset[str]:
+        """Return every WatchdogVPN policy requested by persistent state.
+
+        This read-only preflight intentionally runs before _connect_options(),
+        whose rule-set and LAN helpers can create runtime state. Native drivers
+        must never reach those helpers while unable to enforce the policy.
+        """
+        state = self.state_manager.load()
+        config = self.app_config.load()
+        capabilities = {"dns", "routing", "capture"}
+        if state.get("routing_policy") == "rule":
+            app_policy = self._runtime_app_policy()
+            if app_policy.enabled:
+                capabilities.add("app_policy")
+            chain_actions = _chain_actions_from_rule_groups(self.rule_store.list_groups())
+            chain_actions.update(_chain_actions_from_app_policy(app_policy))
+            if chain_actions:
+                capabilities.add("chains")
+        if chain_target(str(state.get("default_route_action", "current"))) is not None:
+            capabilities.add("chains")
+        lan_config = config.get("lan_sharing", {})
+        if isinstance(lan_config, dict) and lan_config.get("enabled") is True:
+            if lan_config.get("mode") == "proxy":
+                capabilities.add("lan_proxy")
+            elif lan_config.get("mode") == "gateway":
+                capabilities.add("lan_gateway")
+        return frozenset(capabilities)
+
+    def _driver_policy_contract_for_profile(
+        self, profile: Profile
+    ) -> tuple[str, frozenset[str]]:
+        if self.driver_selector is ORIGINAL_SELECT_DRIVER:
+            driver_type = driver_type_for_profile(profile)
+            return driver_type.__name__, driver_type.policy_capabilities
+        driver = self._candidate_driver_for_profile(profile)
+        return type(driver).__name__, driver.policy_capabilities
+
+    def _candidate_driver_for_profile(self, profile: Profile) -> BaseDriver:
+        if self.driver_selector is ORIGINAL_SELECT_DRIVER:
+            candidate = select_driver(profile)
+            if type(candidate) is not type(self.driver):
+                return candidate
+            if isinstance(candidate, NativePolicyDriver) and isinstance(self.driver, NativePolicyDriver):
+                return self.driver if type(candidate.native) is type(self.driver.native) else candidate
+            return self.driver
+        selected_driver = self.driver_selector(profile)
+        return self.driver if type(selected_driver) is type(self.driver) else selected_driver
+
+    def _teardown_active_driver(self) -> bool:
+        """Stop the current runtime or retain it as a hard lifecycle barrier."""
+        try:
+            disconnected = self.driver.disconnect()
+        except Exception:
+            LOGGER.error("watchdog_cleanup_barrier_exception driver=%s", type(self.driver).__name__, exc_info=True)
+            disconnected = False
+        if disconnected:
+            self._cleanup_barrier_failed = False
+            return True
+        self._cleanup_barrier_failed = True
+        self._record_last_failure("cleanup_failed")
+        LOGGER.error("watchdog_cleanup_barrier_failed driver=%s", type(self.driver).__name__)
+        return False
+
+    def _cleanup_failure_state(self) -> ConnectionState:
+        state = self.status()
+        state.status = "cleanup_failed"
+        return state
+
+    def _activate_driver(
+        self, selected_driver: BaseDriver, *, disconnect_current: bool = True
+    ) -> BaseDriver:
+        if disconnect_current and not self._teardown_active_driver():
+            raise TeardownBarrierError(type(self.driver).__name__)
+        if selected_driver is not self.driver:
+            self.driver = selected_driver
+        return self.driver
+
+    def _prepare_driver_for_connection(
+        self, profile: Profile
+    ) -> tuple[BaseDriver, dict[str, object]]:
+        driver_name, policy_capabilities = self._driver_policy_contract_for_profile(profile)
+        unsupported = self._requested_policy_capabilities() - policy_capabilities
+        if unsupported:
+            raise UnsupportedDriverPolicyError(driver_name, unsupported)
+        if profile_endpoint_host(profile) is not None:
+            try:
+                validate_profile_endpoint(profile, require_resolution=True)
+            except EndpointPolicyError as exc:
+                raise EndpointPolicyConnectionError(f"endpoint policy rejected connection: {exc}") from exc
+        driver = self._candidate_driver_for_profile(profile)
+        options = self._connect_options()
+        management_preflight = getattr(driver, "preflight_management_path", None)
+        if callable(management_preflight):
+            peers = management_preflight(
+                profile,
+                mode=str(options["mode"]),
+                capture_modes=options["capture_modes"],
+            )
+            # An empty result is still a successful fail-closed preflight.
+            # It must happen before desired state, kill switch, process,
+            # route, or DNS mutation.
+            options["management_peers"] = peers
+        return driver, options
 
     def _active_profile(self) -> Profile | None:
         active_profile_id = str(self.state_manager.get("active_profile_id", ""))
@@ -477,7 +804,11 @@ class WatchdogRuntime:
         else:
             mode = "global"
 
-        options: dict[str, object] = {"mode": mode, "final_policy": final_policy}
+        options: dict[str, object] = {
+            "mode": mode,
+            "final_policy": final_policy,
+            "capture_modes": capture_modes,
+        }
         runtime_config = self.app_config.load()
         dns_policy = self.dns_policy_store.load()
         chain_actions = {default_action} if chain_target(default_action) is not None else set()
@@ -664,17 +995,39 @@ class WatchdogRuntime:
 
     def _try_reconnect(self, profile: Profile) -> bool:
         LOGGER.info("watchdog_reconnect_attempt profile_id=%s", profile.id)
-        driver = self._driver_for_profile(profile)
-        driver.disconnect()
+        try:
+            selected_driver, options = self._prepare_driver_for_connection(profile)
+        except UnsupportedDriverPolicyError as exc:
+            LOGGER.error("watchdog_reconnect_policy_unsupported error=%s", exc)
+            self._record_last_failure("unsupported_policy")
+            return False
+        except ManagementPathSafetyError as exc:
+            LOGGER.error("watchdog_reconnect_management_path_unsafe error=%s", exc)
+            self._record_last_failure("management_path_unprotected")
+            return False
+        except EndpointPolicyConnectionError as exc:
+            LOGGER.error("watchdog_reconnect_endpoint_policy_rejected error=%s", exc)
+            self._record_last_failure("endpoint_policy_rejected")
+            return False
+        try:
+            driver = self._activate_driver(selected_driver)
+        except TeardownBarrierError:
+            return False
+        if not self._protect_connection_attempt(profile):
+            return False
         if not driver.connect(
             profile,
             dns_policy=self.dns_policy_store.load(),
-            **self._connect_options(),
+            **options,
         ):
             return False
-        return self._checked_and_recorded(profile, driver) == "ok"
+        if self._checked_and_recorded(profile, driver) == "ok":
+            return True
+        self._teardown_active_driver()
+        return False
 
     def _recover_from_failure(self) -> ConnectionState:
+        self._cleanup_barrier_failed = False
         config = self.app_config.load()
         self._configure_recovery(config)
         if not self.recovery.can_retry_now():
@@ -686,6 +1039,8 @@ class WatchdogRuntime:
             self._reconnect_failures = 0
             self.recovery.record_success()
             return self._recovered_state_after_stable_connection(config)
+        if self._cleanup_barrier_failed:
+            return self._cleanup_failure_state()
 
         self._reconnect_failures += 1
         reconnect_attempts = int(config.get("watchdog", {}).get("reconnect_attempts", 3))
@@ -707,6 +1062,7 @@ class WatchdogRuntime:
         force: bool = False,
         exclude_profile_id: str | None = None,
     ) -> ConnectionState:
+        self._cleanup_barrier_failed = False
         self._configure_recovery(config)
         if not force and not self._rotation_enabled(config):
             LOGGER.warning("rotation_unavailable reason=disabled")
@@ -715,6 +1071,17 @@ class WatchdogRuntime:
         pool = self._compatible_pool(config)
         if exclude_profile_id:
             pool = [p for p in pool if p.id != exclude_profile_id]
+        try:
+            requested_capabilities = self._requested_policy_capabilities()
+            for profile in pool:
+                driver_name, policy_capabilities = self._driver_policy_contract_for_profile(profile)
+                unsupported = requested_capabilities - policy_capabilities
+                if unsupported:
+                    raise UnsupportedDriverPolicyError(driver_name, unsupported)
+        except UnsupportedDriverPolicyError as exc:
+            LOGGER.error("watchdog_rotation_policy_unsupported error=%s", exc)
+            self._record_last_failure("unsupported_policy")
+            return ConnectionState(status="unsupported_policy", mode=self.driver.status().mode)
         rotation_driver = _RuntimeDriverRouter(self)
         result = self.rotation_engine.rotate(
             pool,
@@ -724,10 +1091,14 @@ class WatchdogRuntime:
             dns_policy=self.dns_policy_store.load(),
         )
 
+        if result.cleanup_failed or self._cleanup_barrier_failed:
+            return self._cleanup_failure_state()
+
         if result.success and result.profile is not None:
             self._reconnect_failures = 0
             self.recovery.record_success()
             self.state_manager.set("active_profile_id", result.profile.id)
+            self._clear_last_failure()
             LOGGER.info(
                 "watchdog_rotation_recovered profile_id=%s rolled_back=%s",
                 result.profile.id,
@@ -740,12 +1111,17 @@ class WatchdogRuntime:
 
         kill_switch_active = self._apply_all_failed_kill_switch(config)
         action = self.recovery.handle_all_failed(kill_switch_active=kill_switch_active)
-        status = "kill_switch_active" if action.kill_switch_active else "all_failed"
+        status = (
+            "all_failed"
+            if self._desired_on_kill_switch_forced
+            else ("kill_switch_active" if action.kill_switch_active else "all_failed")
+        )
         LOGGER.error(
             "watchdog_all_failed kill_switch=%s consecutive_failures=%d",
             "on" if action.kill_switch_active else "off",
             self.recovery.consecutive_failures,
         )
+        self._record_last_failure(status)
         return ConnectionState(status=status, mode=self.driver.status().mode)
 
     def _rotation_enabled(self, config: dict) -> bool:
@@ -757,13 +1133,18 @@ class WatchdogRuntime:
             kill_switch_active=kill_switch_active,
             reason=reason,
         )
-        status = "kill_switch_active" if action.kill_switch_active else "rotation_unavailable"
+        status = (
+            "rotation_unavailable"
+            if self._desired_on_kill_switch_forced
+            else ("kill_switch_active" if action.kill_switch_active else "rotation_unavailable")
+        )
         LOGGER.error(
             "watchdog_rotation_unavailable reason=%s kill_switch=%s consecutive_failures=%d",
             reason,
             "on" if action.kill_switch_active else "off",
             self.recovery.consecutive_failures,
         )
+        self._record_last_failure(status)
         return ConnectionState(status=status, mode=self.driver.status().mode)
 
     def _compatible_pool(self, config: dict) -> list[Profile]:
@@ -851,13 +1232,10 @@ class WatchdogRuntime:
         return [by_id[score.profile_id] for score in ranked]
 
     def _driver_for_profile(self, profile: Profile, disconnect_current: bool = True) -> BaseDriver:
-        selected_driver = self.driver_selector(profile)
-        if type(selected_driver) is type(self.driver):
-            return self.driver
-        if disconnect_current:
-            self.driver.disconnect()
-        self.driver = selected_driver
-        return self.driver
+        return self._activate_driver(
+            self._candidate_driver_for_profile(profile),
+            disconnect_current=disconnect_current,
+        )
 
     def _configure_recovery(self, config: dict) -> None:
         watchdog_config = config.get("watchdog", {})
@@ -873,9 +1251,9 @@ class WatchdogRuntime:
         if self.kill_switch.is_active():
             LOGGER.warning("watchdog_all_failed_kill_switch action=keep_active")
             return True
-        if not configured:
+        if not configured and not self._desired_on_kill_switch_forced:
             return False
-        if self.kill_switch.enable():
+        if self.kill_switch.apply_atomic():
             LOGGER.warning("watchdog_all_failed_kill_switch action=enabled")
             return True
         LOGGER.error("watchdog_all_failed_kill_switch action=enable_failed")
@@ -886,13 +1264,64 @@ class WatchdogRuntime:
         return self._as_recovered(self.driver.status(), kill_switch_active=kill_switch_active)
 
     def _restore_kill_switch_after_recovery(self, config: dict) -> bool:
-        self._configure_kill_switch(config, self._active_profile())
-        if not self.kill_switch.is_active():
-            return False
-        if self.kill_switch.enable():
+        configured = strict_bool(
+            config.get("kill_switch", {}).get("enabled", False),
+            "kill_switch.enabled",
+        )
+        if not configured and not self._desired_on_kill_switch_forced:
+            return self.kill_switch.is_active()
+
+        # enable() removes the active table and then recreates it command by
+        # command. Recovery must retain that policy or replace it atomically.
+        if self._maintain_kill_switch_for_active_runtime():
             LOGGER.info("watchdog_kill_switch_restored_after_recovery")
             return True
         LOGGER.error("watchdog_kill_switch_restore_failed_after_recovery")
+        return False
+
+    def _apply_desired_on_protection(self, profile: Profile | None) -> bool:
+        """Install fail-closed protection for the entire desired-on lifecycle."""
+
+        config = self.app_config.load()
+        self._configure_kill_switch(config, profile)
+        if self.kill_switch.apply_atomic():
+            # A desired-on session is never permitted to run without the
+            # policy. The setting only records whether the policy was forced
+            # by this invariant rather than explicitly requested by the user.
+            configured = strict_bool(
+                config.get("kill_switch", {}).get("enabled", False),
+                "kill_switch.enabled",
+            )
+            self._desired_on_kill_switch_forced = not configured
+            return True
+        LOGGER.error("watchdog_desired_on_protection_failed")
+        return False
+
+    def _protect_connection_attempt(self, profile: Profile) -> bool:
+        """Install the candidate policy before a driver can open a socket."""
+        return self._apply_desired_on_protection(profile)
+
+    def _maintain_kill_switch_for_active_runtime(self) -> bool:
+        config = self.app_config.load()
+        configured = strict_bool(
+            config.get("kill_switch", {}).get("enabled", False),
+            "kill_switch.enabled",
+        )
+        if not configured and not self._desired_on_kill_switch_forced:
+            return True
+        self._configure_kill_switch(config, self._active_profile())
+        status = self.kill_switch.status()
+        active = (
+            bool(status["active"])
+            if "active" in status
+            else self.kill_switch.is_active()
+        )
+        if active and bool(status.get("consistent", True)):
+            return True
+        if self.kill_switch.apply_atomic():
+            LOGGER.warning("watchdog_kill_switch_reapplied")
+            return True
+        LOGGER.error("watchdog_kill_switch_unavailable_for_active_runtime")
         return False
 
     def _configure_kill_switch(self, config: dict, profile: Profile | None = None) -> None:
@@ -933,12 +1362,14 @@ class WatchdogRuntime:
         config = self.app_config.load()
         self._configure_kill_switch(config, self._active_profile())
         if not self.kill_switch.is_active():
+            self._desired_on_kill_switch_forced = False
             return
 
         policy = str(
             config.get("kill_switch", {}).get("on_manual_disconnect", "disable")
         ).strip().lower()
         if policy == "keep":
+            self._desired_on_kill_switch_forced = False
             LOGGER.warning("watchdog_manual_disconnect_kill_switch action=keep_active")
             return
         if policy != "disable":
@@ -947,6 +1378,7 @@ class WatchdogRuntime:
                 policy,
             )
         if self.kill_switch.disable():
+            self._desired_on_kill_switch_forced = False
             LOGGER.info("watchdog_manual_disconnect_kill_switch action=disabled")
             return
         LOGGER.error("watchdog_manual_disconnect_kill_switch action=disable_failed")
@@ -981,6 +1413,11 @@ class WatchdogRuntime:
             kill_switch_active=(
                 state.kill_switch_active if kill_switch_active is None else kill_switch_active
             ),
+            kill_switch_status=state.kill_switch_status,
+            kill_switch_method=state.kill_switch_method,
+            kill_switch_consistent=state.kill_switch_consistent,
+            runtime_mismatch_severity=state.runtime_mismatch_severity,
+            runtime_artifacts=state.runtime_artifacts,
             lan_gateway_active=state.lan_gateway_active,
             lan_gateway_interface=state.lan_gateway_interface,
             lan_gateway_client_cidr=state.lan_gateway_client_cidr,
@@ -993,6 +1430,7 @@ class WatchdogRuntime:
 class _RuntimeDriverRouter(BaseDriver):
     def __init__(self, runtime: WatchdogRuntime) -> None:
         self.runtime = runtime
+        self._teardown_verified = False
 
     def connect(
         self,
@@ -1007,8 +1445,16 @@ class _RuntimeDriverRouter(BaseDriver):
         lan_gateway=None,
         chain_runtime_plans=None,
     ) -> bool:
-        driver = self.runtime._driver_for_profile(profile, disconnect_current=False)
-        options = self.runtime._connect_options()
+        if not self._teardown_verified:
+            self.runtime._cleanup_barrier_failed = True
+            self.runtime._record_last_failure("cleanup_failed")
+            LOGGER.error("watchdog_rotation_connect_blocked reason=unverified_teardown")
+            return False
+        driver, options = self.runtime._prepare_driver_for_connection(profile)
+        driver = self.runtime._activate_driver(driver, disconnect_current=False)
+        if not self.runtime._protect_connection_attempt(profile):
+            return False
+        self._teardown_verified = False
         options.setdefault("final_policy", final_policy)
         return driver.connect(
             profile,
@@ -1017,7 +1463,8 @@ class _RuntimeDriverRouter(BaseDriver):
         )
 
     def disconnect(self) -> bool:
-        return self.runtime.driver.disconnect()
+        self._teardown_verified = self.runtime._teardown_active_driver()
+        return self._teardown_verified
 
     def health_check(self) -> str:
         return self.runtime.driver.health_check()

@@ -3,11 +3,14 @@ from __future__ import annotations
 import tempfile
 import unittest
 import os
+import errno
 import stat
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from app_policy.models import AppPolicy
+from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig, DEFAULT_CONFIG
 from config.dns_policy_store import DNSPolicyStore
 from config.persistence import (
@@ -43,10 +46,134 @@ class ConfigStorageTests(unittest.TestCase):
             self.assertEqual(restored["selected_language"], "es")
             self.assertEqual(manager.get("vpn_desired_state"), "on")
 
+    def test_directory_fsync_failure_reports_uncertain_durability_after_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            atomic_write_text(path, "old\n")
+
+            with patch(
+                "config.persistence.os.fsync",
+                side_effect=[None, OSError(errno.EINVAL, "directory fsync unsupported")],
+            ):
+                with self.assertRaisesRegex(PersistentStoreError, "durability is not confirmed"):
+                    atomic_write_text(path, "new\n")
+
+            # rename already published the new inode. The caller received an
+            # error and must not certify it as crash durable, but no stale
+            # in-memory or on-disk value is silently reported as current.
+            self.assertEqual(path.read_text(encoding="utf-8"), "new\n")
+            self.assertEqual(list(Path(tmp).glob("*.tmp")), [])
+
+    def test_state_store_propagates_directory_durability_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            store = StateManager(path)
+            store.save(dict(DEFAULT_STATE))
+            state = store.load()
+            state["vpn_desired_state"] = "on"
+
+            with patch(
+                "config.persistence.fsync_parent_directory",
+                side_effect=PersistentStoreError("durability is not confirmed"),
+            ):
+                with self.assertRaisesRegex(PersistentStoreError, "durability"):
+                    store.save(state)
+
+            self.assertEqual(store.load()["vpn_desired_state"], "on")
+
+    def test_profile_store_propagates_directory_durability_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "profiles.json"
+            store = ProfileStore(path)
+            first = Profile(
+                id="first",
+                name="first",
+                protocol=ProtocolType.VLESS,
+                config={},
+                source=ProfileSource.MANUAL,
+            )
+            second = Profile(
+                id="second",
+                name="second",
+                protocol=ProtocolType.VLESS,
+                config={},
+                source=ProfileSource.MANUAL,
+            )
+            store.add(first)
+
+            with patch(
+                "config.persistence.fsync_parent_directory",
+                side_effect=PersistentStoreError("durability is not confirmed"),
+            ):
+                with self.assertRaisesRegex(PersistentStoreError, "durability"):
+                    store.add(second)
+
+            self.assertEqual({profile.id for profile in store.list()}, {"first", "second"})
+
+    def test_provider_store_propagates_directory_durability_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "providers.json"
+            store = ProviderStore(path)
+            store.add(Provider(id="first", name="first", url="https://one.example/sub"))
+
+            with patch(
+                "config.persistence.fsync_parent_directory",
+                side_effect=PersistentStoreError("durability is not confirmed"),
+            ):
+                with self.assertRaisesRegex(PersistentStoreError, "durability"):
+                    store.add(Provider(id="second", name="second", url="https://two.example/sub"))
+
+            self.assertEqual({provider.id for provider in store.list()}, {"first", "second"})
+
+    def test_app_policy_store_propagates_directory_durability_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "app-policy.json"
+            store = AppPolicyStore(path)
+            store.save(AppPolicy())
+
+            with patch(
+                "config.persistence.fsync_parent_directory",
+                side_effect=PersistentStoreError("durability is not confirmed"),
+            ):
+                with self.assertRaisesRegex(PersistentStoreError, "durability"):
+                    store.save(AppPolicy(enabled=True))
+
+            self.assertTrue(store.load().enabled)
+
+    def test_app_config_store_propagates_directory_durability_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            store = AppConfig(path)
+            config = store.load()
+            store.save(config)
+            config["kill_switch"]["enabled"] = True
+
+            with patch(
+                "config.persistence.fsync_parent_directory",
+                side_effect=PersistentStoreError("durability is not confirmed"),
+            ):
+                with self.assertRaisesRegex(PersistentStoreError, "durability"):
+                    store.save(config)
+
+            self.assertTrue(store.load()["kill_switch"]["enabled"])
+
+    def test_state_manager_last_failure_fields_default_empty_and_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.toml"
+            manager = StateManager(path)
+            self.assertEqual(manager.get("last_failure_reason"), "")
+            self.assertEqual(manager.get("last_failure_at"), "")
+
+            manager.set("last_failure_reason", "all_failed")
+            manager.set("last_failure_at", "2026-07-12T10:00:00+00:00")
+
+            self.assertEqual(manager.get("last_failure_reason"), "all_failed")
+            self.assertEqual(manager.get("last_failure_at"), "2026-07-12T10:00:00+00:00")
+
     def test_state_manager_migrates_legacy_active_modes(self) -> None:
         cases = {
-            "rules": ("rule", "local_proxy", "current"),
-            "global": ("global", "local_proxy", "current"),
+            "rules": ("rule", "local_proxy,tun", "current"),
+            "global": ("global", "local_proxy,tun", "current"),
             "direct": ("global", "local_proxy", "direct"),
             "tun": ("global", "local_proxy,tun", "current"),
             "proxy": ("global", "local_proxy", "current"),
@@ -281,11 +408,41 @@ class ConfigStorageTests(unittest.TestCase):
             loaded = AppConfig(path).load()
             self.assertEqual(loaded["watchdog"]["check_interval_seconds"], 5)
 
-    def test_app_config_default_rotation_test_settings(self) -> None:
+
+    def test_app_config_rejects_invalid_recovery_backoff_bounds(self) -> None:
+        cases = (
+            ("[watchdog]\nreconnect_backoff_seconds = 0\n", "reconnect_backoff_seconds"),
+            ("[rotation]\nmax_backoff_interval_seconds = 0\n", "max_backoff_interval_seconds"),
+            (
+                "[watchdog]\nreconnect_backoff_seconds = 10\n"
+                "[rotation]\nmax_backoff_interval_seconds = 5\n",
+                "at least watchdog.reconnect_backoff_seconds",
+            ),
+            ("[rotation]\nmax_backoff_interval_seconds = 86401\n", "max_backoff_interval_seconds"),
+        )
+
+        for payload, message in cases:
+            with self.subTest(payload=payload):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "config.toml"
+                    path.write_text(payload, encoding="utf-8")
+
+                    with self.assertRaisesRegex(PersistentValidationError, message):
+                        AppConfig(path).load()
+
+    def test_app_config_default_rotation_health_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             loaded = AppConfig(Path(tmp) / "config.toml").load()
 
-            self.assertEqual(loaded["rotation"]["test_url"], "https://example.com")
+            self.assertEqual(
+                loaded["rotation"]["health_targets"],
+                [
+                    "https://www.cloudflare.com/cdn-cgi/trace",
+                    "https://www.ietf.org/",
+                    "https://www.wikipedia.org/",
+                ],
+            )
+            self.assertEqual(loaded["rotation"]["health_success_quorum"], 2)
             self.assertEqual(loaded["rotation"]["test_timeout_seconds"], 5)
             self.assertEqual(loaded["rotation"]["latency_max_stale_seconds"], 300)
 
@@ -309,22 +466,34 @@ class ConfigStorageTests(unittest.TestCase):
                 },
             )
 
-    def test_app_config_rejects_test_url_without_scheme(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "config.toml"
-            path.write_text('[rotation]\ntest_url = "example.com"\n', encoding="utf-8")
-
-            with self.assertRaises(PersistentValidationError):
-                AppConfig(path).load()
-
-    def test_app_config_accepts_custom_test_url(self) -> None:
+    def test_app_config_migrates_legacy_test_url_to_multi_target_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
             path.write_text('[rotation]\ntest_url = "https://custom.example/probe"\n', encoding="utf-8")
 
             loaded = AppConfig(path).load()
 
-            self.assertEqual(loaded["rotation"]["test_url"], "https://custom.example/probe")
+            self.assertEqual(loaded["rotation"]["health_targets"][0], "https://custom.example/probe")
+            self.assertEqual(loaded["rotation"]["health_success_quorum"], 2)
+
+    def test_app_config_rejects_non_https_or_single_target_health_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text('[rotation]\nhealth_targets = ["http://unsafe.example/"]\n', encoding="utf-8")
+
+            with self.assertRaises(PersistentValidationError):
+                AppConfig(path).load()
+
+    def test_app_config_rejects_health_quorum_outside_target_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                '[rotation]\nhealth_targets = ["https://one.example/", "https://two.example/"]\nhealth_success_quorum = 3\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(PersistentValidationError):
+                AppConfig(path).load()
 
     def test_app_config_rejects_test_timeout_below_minimum(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,10 +1,19 @@
 """Pure formatting helpers for the WatchdogVPN TUI."""
 
-import re
+from terminal_safety import (
+    clip_to_width,
+    pad_to_width,
+    strip_terminal_sequences,
+    terminal_safe_text,
+    truncate_to_width,
+    visible_width,
+)
 
 
 def strip_ansi(text: str) -> str:
-    return re.sub(r"\x1B\[[0-9;]*[A-Za-z]", "", text)
+    """Compatibility alias that removes every terminal-control sequence."""
+
+    return strip_terminal_sequences(text)
 
 
 def format_span(seconds: int) -> str:

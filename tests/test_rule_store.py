@@ -147,6 +147,50 @@ class RuleStoreTests(unittest.TestCase):
 
             self.assertEqual(store.get_group("custom").rules[0].conditions["domain"], ["a.com"])
 
+    def test_set_priority_persists_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuleStore(Path(tmp) / "rules")
+            store.add_group(RuleGroup(name="custom", priority=100))
+
+            updated = store.set_priority("custom", 25)
+
+            self.assertEqual(updated.priority, 25)
+            self.assertEqual(store.get_group("custom").priority, 25)
+
+    def test_set_priority_missing_group_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuleStore(Path(tmp) / "rules")
+            with self.assertRaises(RuleStoreError):
+                store.set_priority("does-not-exist", 25)
+
+    def test_set_rule_enabled_toggles_single_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuleStore(Path(tmp) / "rules")
+            store.add_group(
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(id="r1", action="direct", conditions={"domain": ["a.com"]}),
+                        Rule(id="r2", action="block", conditions={"domain": ["b.com"]}),
+                    ],
+                )
+            )
+
+            updated = store.set_rule_enabled("custom", "r1", False)
+
+            rules_by_id = {rule.id: rule for rule in updated.rules}
+            self.assertFalse(rules_by_id["r1"].enabled)
+            self.assertTrue(rules_by_id["r2"].enabled)
+            self.assertFalse(store.get_group("custom").rules[0].enabled)
+
+    def test_set_rule_enabled_missing_rule_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuleStore(Path(tmp) / "rules")
+            store.add_group(RuleGroup(name="custom"))
+
+            with self.assertRaises(RuleStoreError):
+                store.set_rule_enabled("custom", "missing", False)
+
     def test_remove_rule_rejects_missing_rule_without_clobbering_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = RuleStore(Path(tmp) / "rules")

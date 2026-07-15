@@ -67,7 +67,7 @@ class CliConfigCommandTests(unittest.TestCase):
                     "active_mode_role": "compatibility-display-only",
                     "routing_state_version": "1",
                     "routing_policy": "global",
-                    "capture_modes": ["local_proxy"],
+                    "capture_modes": ["local_proxy", "tun"],
                     "default_route_action": "current",
                 },
             )
@@ -180,18 +180,32 @@ class CliConfigCommandTests(unittest.TestCase):
             config_path = Path(tmp) / "config.toml"
             self.assertIn("scheduled_interval_hours = 0", config_path.read_text(encoding="utf-8"))
 
-    def test_set_rotation_test_url_json_output(self) -> None:
+    def test_set_rotation_health_targets_json_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(
-                ["config", "set", "rotation.test_url", "https://example.net/probe", "--json"],
+                ["config", "set", "rotation.health_targets", "https://one.example/,https://two.example/,https://three.example/", "--json"],
                 tmp,
             )
 
             data = json.loads(result.stdout)
             self.assertEqual(
                 data,
-                {"key": "rotation.test_url", "value": "https://example.net/probe"},
+                {"key": "rotation.health_targets", "value": ["https://one.example/", "https://two.example/", "https://three.example/"]},
             )
+
+    def test_set_rotation_health_success_quorum_persists_integer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "rotation.health_success_quorum", "2", "--json"],
+                tmp,
+            )
+
+            self.assertEqual(
+                json.loads(result.stdout),
+                {"key": "rotation.health_success_quorum", "value": 2},
+            )
+            config_path = Path(tmp) / "config.toml"
+            self.assertIn("health_success_quorum = 2", config_path.read_text(encoding="utf-8"))
 
     def test_set_lan_sharing_bind_address_scaffold(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -202,6 +216,50 @@ class CliConfigCommandTests(unittest.TestCase):
 
             data = json.loads(result.stdout)
             self.assertEqual(data, {"key": "lan_sharing.bind_address", "value": "192.168.0.228"})
+
+    def test_set_kill_switch_bool_fields_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "kill_switch.block_ipv6", "false", "--json"],
+                tmp,
+            )
+            data = json.loads(result.stdout)
+            self.assertEqual(data, {"key": "kill_switch.block_ipv6", "value": False})
+
+            result = self.run_watchdog(
+                ["config", "set", "kill_switch.allow_lan", "false", "--json"],
+                tmp,
+            )
+            data = json.loads(result.stdout)
+            self.assertEqual(data, {"key": "kill_switch.allow_lan", "value": False})
+
+    def test_set_kill_switch_tunnel_interface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "kill_switch.tunnel_interface", "wdvpn-tun1", "--json"],
+                tmp,
+            )
+            data = json.loads(result.stdout)
+            self.assertEqual(data, {"key": "kill_switch.tunnel_interface", "value": "wdvpn-tun1"})
+
+    def test_set_kill_switch_on_manual_disconnect_accepts_allowed_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "kill_switch.on_manual_disconnect", "keep", "--json"],
+                tmp,
+            )
+            data = json.loads(result.stdout)
+            self.assertEqual(data, {"key": "kill_switch.on_manual_disconnect", "value": "keep"})
+
+    def test_set_kill_switch_on_manual_disconnect_rejects_unknown_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "kill_switch.on_manual_disconnect", "bogus"],
+                tmp,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 70)
+            self.assertIn("on_manual_disconnect", result.stderr)
 
     def test_set_lan_sharing_bool_uses_boolean_value(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

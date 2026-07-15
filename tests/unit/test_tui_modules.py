@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tui"))
 
 from watchdogvpn import actions
@@ -91,7 +92,7 @@ class TuiModuleTests(unittest.TestCase):
         self.assertEqual(actions.restart_vpn_command("DK"), "/usr/local/bin/vpnctl restart")
         self.assertEqual(actions.restart_vpn_command("sin valor"), "/usr/local/bin/vpnctl restart")
         self.assertEqual(actions.disconnect_vpn_command(), "/usr/local/bin/vpnctl disconnect")
-        self.assertIn("/usr/local/bin/watchdogvpn rotate --force", actions.rotate_now_command())
+        self.assertIn("/usr/local/bin/watchdog rotate --force", actions.rotate_now_command())
         self.assertEqual(actions.real_status_command(), "/usr/local/bin/vpnctl status")
         self.assertFalse(hasattr(actions, "dns_current_command"))
         self.assertFalse(hasattr(actions, "dns_apply_command"))

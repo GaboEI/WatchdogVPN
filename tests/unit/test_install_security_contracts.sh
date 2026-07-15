@@ -51,21 +51,41 @@ assert_install_order() {
   fi
 }
 
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700' "domain bypass helper must be installed root-only executable"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700' "domain bypass helper must be installed root-only executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_config_defaults' "runtime install must create persistent config defaults"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'migrate_watchdogvpn_shared_state' "runtime install must migrate shared WatchdogVPN state"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_package_tree' "runtime install must install Python packages for daemon and v2 CLI wrappers"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'PYTHON_PACKAGE_DIR="${PYTHON_PACKAGE_DIR:-/usr/local/lib/watchdogvpn}"' "Python runtime package directory must be outside the user home"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'PYTHON_RUNTIME_SUPPORT_FILES=(' "runtime install must define support files for cwd-independent doctor/uninstall"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'doctor.sh' "runtime support tree must include doctor.sh"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'uninstall.sh' "runtime support tree must include uninstall.sh"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'PYTHON_RUNTIME_SUPPORT_DIRS=(' "runtime install must define support directories for cwd-independent doctor/uninstall"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '  lib' "runtime support tree must include shell libraries"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '  bin' "runtime support tree must include helper binaries for doctor/uninstall"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '  systemd' "runtime support tree must include systemd unit definitions for doctor"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '  examples' "runtime support tree must include config examples for sourced libs"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '  distros' "runtime support tree must include distro adapters required by installed doctor"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '  tui' "runtime support tree must include repository-runtime files checked by installed doctor"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'PYTHON_RUNTIME_SUPPORT_EXECUTABLES=(' "runtime install must declare executable support paths separately from copied content"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '  tui/VPN' "installed doctor runtime must preserve the executable TUI launcher"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo chmod 0755 "$dest/$item"' "runtime support scripts must stay executable after permission normalization"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo find "$dest/bin" "$dest/sbin" -type f -exec chmod 0755 {} +' "installed helper scripts must stay executable after permission normalization"
 assert_contains "$ROOT_DIR/lib/runtime.sh" '  node_groups' "runtime install must include node_groups package required by daemon imports"
 assert_contains "$ROOT_DIR/lib/runtime.sh" '  route_chains' "runtime install must include route_chains package required by backup/config imports"
 if grep -Fq 'create_root_dir /var/lib/watchdogvpn 0755' "$ROOT_DIR/lib/runtime.sh"; then
   printf 'FAIL: runtime install must not pre-create /var/lib/watchdogvpn as root-owned state\n' >&2
   exit 1
 fi
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/vpn_backend" /usr/local/bin/vpn_backend 0755' "backend helper must be installed as user command"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755' "manual-off state helper must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/bin/vpn_backend" /usr/local/bin/vpn_backend 0755' "backend helper must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755' "manual-off state helper must be installed as user command"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdog cli.main' "v2 watchdog CLI wrapper must be installed with checkout PYTHONPATH"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755' "watchdogvpn CLI must be installed as user command"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755' "watchdogvpn CLI must be installed as user command"
+assert_contains "$ROOT_DIR/bin/watchdogvpn" 'watchdogvpn is deprecated; use watchdog' "watchdogvpn must identify itself as a deprecated compatibility alias"
+assert_contains "$ROOT_DIR/bin/watchdogvpn" 'exec "$canonical_cli" maintenance "$@"' "legacy-only commands must route through the canonical maintenance namespace"
+assert_contains "$ROOT_DIR/bin/watchdogvpn" 'WATCHDOGVPN_MAINTENANCE_INTERNAL' "maintenance backend execution must use an explicit internal boundary"
+assert_contains "$ROOT_DIR/cli/main.py" '"maintenance"' "canonical CLI parser must expose the maintenance namespace"
+assert_contains "$ROOT_DIR/tui/watchdogvpn/constants.py" 'WATCHDOG_CLI = "/usr/local/bin/watchdog"' "TUI must build product commands with the canonical CLI"
+assert_not_contains "$ROOT_DIR/tui/watchdogvpn/actions.py" '/usr/local/bin/watchdogvpn' "TUI actions must not invoke the deprecated alias"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main' "daemon wrapper must be installed with checkout PYTHONPATH"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'create_system_user_no_home watchdogvpn' "runtime install must create watchdogvpn as a system user without a home directory"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'add_installing_user_to_watchdogvpn_group' "runtime install must grant the desktop CLI user access to shared daemon state"
@@ -85,27 +105,39 @@ if grep -Fq 'install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"'
   printf 'FAIL: migration must not create /var/lib/watchdogvpn with install -d\n' >&2
   exit 1
 fi
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_file "$ROOT_DIR/tui/VPN" "$HOME/.local/bin/VPN" 0755' "TUI launcher must be user executable"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_file "$runtime_root/tui/VPN" "$HOME/.local/bin/VPN" 0755' "TUI launcher must be user executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'remove_user_path "$HOME/.local/bin/watchdogvpn"' "legacy TUI package path must be removed so watchdogvpn CLI is not shadowed"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$ROOT_DIR/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"' "TUI package must be installed outside PATH"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$runtime_root/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"' "TUI package must be installed outside PATH"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_user_dir "$runtime_root/terminal_safety" "$HOME/.local/share/watchdogvpn/terminal_safety"' "TUI must install the shared terminal-safety package outside PATH"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_user_path "$HOME/.local/share/watchdogvpn"' "uninstall must remove installed TUI support package"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/vpn_backend' "uninstall must remove backend helper"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/watchdogvpn-daemon' "uninstall must remove daemon wrapper"
 assert_contains "$ROOT_DIR/install.sh" "settle_vpn_after_install" "installer must run VPN settle check before final validation"
 assert_contains "$ROOT_DIR/install.sh" "smoke_test_watchdogvpn_daemon" "installer must run daemon smoke validation"
 assert_contains "$ROOT_DIR/update.sh" "smoke_test_watchdogvpn_daemon" "updater must run daemon smoke validation"
+assert_contains "$ROOT_DIR/update.sh" "capture_watchdogvpn_service_state" "updater must capture the live daemon generation before replacing runtime files"
+assert_contains "$ROOT_DIR/update.sh" "restart_watchdogvpn_service_after_runtime_update" "updater must restart an active daemon after replacing imported Python modules"
+assert_contains "$ROOT_DIR/lib/systemd.sh" 'systemctl restart watchdogvpn.service' "runtime update restart must be an explicit systemd lifecycle action"
+assert_contains "$ROOT_DIR/lib/systemd.sh" 'WATCHDOGVPN_DAEMON_PID_BEFORE_UPDATE' "runtime update must verify that the daemon enters a new process generation"
 assert_contains "$ROOT_DIR/lib/common.sh" 'print_installer_failure_recovery()' "shared installer failure recovery guidance must exist"
 assert_contains "$ROOT_DIR/lib/common.sh" '/etc/watchdogvpn/' "failure recovery guidance must state config preservation"
 assert_contains "$ROOT_DIR/lib/common.sh" '/var/lib/watchdogvpn/' "failure recovery guidance must state state preservation"
 assert_contains "$ROOT_DIR/lib/common.sh" '${BACKUP_ROOT:-/var/backups/watchdogvpn}' "failure recovery guidance must point at installer backups"
-assert_contains "$ROOT_DIR/install.sh" 'trap '\''install_failure_trap "install.sh"'\'' ERR' "installer must print recovery guidance on unexpected failure"
-assert_contains "$ROOT_DIR/update.sh" 'trap '\''install_failure_trap "update.sh"'\'' ERR' "updater must print recovery guidance on unexpected failure"
+assert_contains "$ROOT_DIR/install.sh" 'trap '\''runtime_transaction_failure_trap "install.sh"'\'' ERR' "installer must roll back and print recovery guidance on unexpected failure"
+assert_contains "$ROOT_DIR/update.sh" 'trap '\''runtime_transaction_failure_trap "update.sh"'\'' ERR' "updater must roll back and print recovery guidance on unexpected failure"
 assert_order "$ROOT_DIR/install.sh" "enable_systemd_units" "smoke_test_watchdogvpn_daemon" "installer must smoke test after enabling services"
 assert_order "$ROOT_DIR/update.sh" "enable_systemd_units" "smoke_test_watchdogvpn_daemon" "updater must smoke test after enabling services"
+assert_order "$ROOT_DIR/update.sh" "capture_watchdogvpn_service_state" "install_runtime_files" "updater must snapshot the old daemon before replacing its imported modules"
+assert_order "$ROOT_DIR/update.sh" "restart_watchdogvpn_service_after_runtime_update" "smoke_test_watchdogvpn_daemon" "updater must restart the daemon before accepting the IPC smoke test"
 assert_install_order "$ROOT_DIR/install.sh" "settle_vpn_after_install" "post_install_validation" "installer must settle VPN before final validation"
 assert_contains "$ROOT_DIR/install.sh" "If the dashboard stays degraded, reboot once" "installer must provide degraded-state recovery guidance"
 
-assert_runtime_order "$ROOT_DIR/uninstall.sh" "rescue_system_dns" "remove_runtime_files" "uninstall must run DNS rescue before removing runtime files"
+dns_rescue_line="$(grep -nF 'if ! rescue_system_dns; then' "$ROOT_DIR/uninstall.sh" | head -n1 | cut -d: -f1)"
+remove_product_line="$(grep -nF 'print_section "Remove product files"' "$ROOT_DIR/uninstall.sh" | head -n1 | cut -d: -f1)"
+if [[ -z "$dns_rescue_line" || -z "$remove_product_line" || "$dns_rescue_line" -ge "$remove_product_line" ]]; then
+  printf 'FAIL: uninstall must run DNS rescue before removing runtime files\n' >&2
+  exit 1
+fi
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''/etc/watchdogvpn/\n'\''' "uninstall preservation contract must mention WatchdogVPN config directory"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$WATCHDOGVPN_ETC_CONFIG_DIR"' "purge-config must remove WatchdogVPN config directory"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] config: %s\n'\'' "$WATCHDOGVPN_ETC_CONFIG_DIR"' "uninstall must preserve WatchdogVPN config by default"
@@ -140,7 +172,7 @@ assert_runtime_order "$ROOT_DIR/uninstall.sh" "remove_systemd_units" "remove_leg
 # only covered uninstall.sh).
 assert_contains "$ROOT_DIR/lib/runtime.sh" $'  remove_legacy_systemd_units\n  remove_legacy_runtime_files' "install_runtime_files must call legacy systemd cleanup then legacy file cleanup on every install/update"
 
-assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn' "OpenVPN normal compatibility requires installer dependency detection"
+assert_contains "$ROOT_DIR/lib/packages.sh" 'printf '\''%s\n'\'' bash python3 curl tar ip systemctl sudo logrotate awk sed openvpn setpriv' "OpenVPN hardening requires installer dependency detection"
 assert_contains "$ROOT_DIR/distros/ubuntu.sh" "openvpn" "Ubuntu package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/debian.sh" "openvpn" "Debian package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/arch.sh" "openvpn" "Arch package set must include OpenVPN"

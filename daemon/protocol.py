@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,16 +17,62 @@ COMMAND_DISCONNECT = "disconnect"
 COMMAND_STATUS = "status"
 COMMAND_ROTATE = "rotate"
 COMMAND_NODE_GROUP_AUTO_TEST = "node_group_auto_test"
+COMMAND_COMMAND_OUTCOME = "command_outcome"
+COMMAND_COMMAND_CANCEL = "command_cancel"
 
 ALLOWED_COMMANDS = frozenset(
     {
         COMMAND_CONNECT,
+        COMMAND_COMMAND_CANCEL,
+        COMMAND_COMMAND_OUTCOME,
         COMMAND_DISCONNECT,
         COMMAND_NODE_GROUP_AUTO_TEST,
         COMMAND_STATUS,
         COMMAND_ROTATE,
     }
 )
+
+# Protocol version 1 has no extension namespace for command payloads. Reject
+# unknown keys rather than silently ignoring a misspelt network-affecting
+# option or accepting a client/server schema mismatch.
+COMMAND_PAYLOAD_FIELDS = {
+    COMMAND_CONNECT: frozenset({"profile_id"}),
+    COMMAND_DISCONNECT: frozenset(),
+    COMMAND_STATUS: frozenset(),
+    COMMAND_ROTATE: frozenset({"force"}),
+    COMMAND_NODE_GROUP_AUTO_TEST: frozenset({"group_name"}),
+    COMMAND_COMMAND_OUTCOME: frozenset({"command_id"}),
+    COMMAND_COMMAND_CANCEL: frozenset({"command_id"}),
+}
+
+# The server is authoritative for these deadlines.  IPC clients use the same
+# values plus transport grace so an operation cannot become unobservable just
+# because their socket deadline expires first.
+COMMAND_TIMEOUT_SECONDS = {
+    COMMAND_STATUS: 5.0,
+    COMMAND_CONNECT: 30.0,
+    COMMAND_DISCONNECT: 30.0,
+    COMMAND_ROTATE: 30.0,
+    COMMAND_NODE_GROUP_AUTO_TEST: 120.0,
+    COMMAND_COMMAND_OUTCOME: 5.0,
+    COMMAND_COMMAND_CANCEL: 5.0,
+}
+
+MUTATING_COMMANDS = frozenset(
+    {
+        COMMAND_CONNECT,
+        COMMAND_DISCONNECT,
+        COMMAND_ROTATE,
+        COMMAND_NODE_GROUP_AUTO_TEST,
+    }
+)
+
+
+def command_timeout_seconds(command: str) -> float:
+    try:
+        return COMMAND_TIMEOUT_SECONDS[command]
+    except KeyError as exc:
+        raise UnknownCommandError(f"unknown command: {command}") from exc
 
 EVENT_STATE_CHANGED = "state_changed"
 EVENT_HEALTH_CHECK = "health_check"
@@ -41,7 +88,7 @@ ALLOWED_EVENTS = frozenset(
     }
 )
 
-REQUEST_FIELDS = frozenset({"version", "type", "command", "payload"})
+REQUEST_FIELDS = frozenset({"version", "type", "command", "payload", "command_id"})
 RESPONSE_FIELDS = frozenset({"version", "type", "ok", "payload", "error"})
 EVENT_FIELDS = frozenset({"version", "type", "event", "payload"})
 
@@ -70,23 +117,38 @@ class UnknownEventError(ProtocolError):
     pass
 
 
+class UnsupportedPayloadFieldsError(MalformedMessageError):
+    def __init__(self, command: str, fields: tuple[str, ...]) -> None:
+        self.command = command
+        self.fields = fields
+        names = ", ".join(fields)
+        super().__init__(f"request.payload contains unsupported fields for {command}: {names}")
+
+
 @dataclass(frozen=True, slots=True)
 class Request:
     command: str
     payload: dict[str, Any] = field(default_factory=dict)
+    command_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.command not in ALLOWED_COMMANDS:
             raise UnknownCommandError(f"unknown command: {self.command}")
         _require_mapping(self.payload, "request.payload")
+        _reject_unsupported_payload_keys(self.command, self.payload)
+        if self.command_id is not None:
+            _require_command_id(self.command_id, "request.command_id")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "version": PROTOCOL_VERSION,
             "type": MESSAGE_TYPE_REQUEST,
             "command": self.command,
             "payload": dict(self.payload),
         }
+        if self.command_id is not None:
+            data["command_id"] = self.command_id
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Request":
@@ -96,6 +158,7 @@ class Request:
         return cls(
             command=_require_string(data.get("command"), "request.command"),
             payload=_optional_mapping(data.get("payload"), "request.payload"),
+            command_id=_optional_command_id(data.get("command_id"), "request.command_id"),
         )
 
 
@@ -168,8 +231,13 @@ class Event:
         )
 
 
-def encode_request(command: str, payload: dict[str, Any] | None = None) -> bytes:
-    return encode_message(Request(command=command, payload=payload or {}))
+def encode_request(
+    command: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    command_id: str | None = None,
+) -> bytes:
+    return encode_message(Request(command=command, payload=payload or {}, command_id=command_id))
 
 
 def decode_request_line(line: bytes | str) -> Request:
@@ -252,10 +320,35 @@ def _reject_unknown_keys(data: dict[str, Any], allowed: frozenset[str], object_n
         raise MalformedMessageError(f"{object_name} contains unsupported fields: {names}")
 
 
+def _reject_unsupported_payload_keys(command: str, payload: dict[str, Any]) -> None:
+    allowed = COMMAND_PAYLOAD_FIELDS[command]
+    unknown = tuple(sorted(set(payload) - allowed))
+    if unknown:
+        raise UnsupportedPayloadFieldsError(command, unknown)
+
+
 def _optional_mapping(value: Any, field_name: str) -> dict[str, Any]:
     if value is None:
         return {}
     return _require_mapping(value, field_name)
+
+
+def _optional_command_id(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _require_command_id(value, field_name)
+
+
+def _require_command_id(value: Any, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise MalformedMessageError(f"{field_name} must be a UUID string")
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError) as exc:
+        raise MalformedMessageError(f"{field_name} must be a UUID string") from exc
+    if str(parsed) != value.lower():
+        raise MalformedMessageError(f"{field_name} must be a canonical UUID string")
+    return value.lower()
 
 
 def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:

@@ -4,13 +4,16 @@ import json
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 import cli.main
+from config.profile_store import ProfileStore
+from config.provider_store import ProviderStore
 from models.profile import Profile, ProfileSource, ProtocolType
+from models.provider import Provider
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WATCHDOG = ROOT_DIR / "bin" / "watchdog"
@@ -60,6 +63,81 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertNotIn("config", profiles[0])
             self.assertNotIn("uuid", result.stdout)
 
+    def test_profile_list_human_groups_by_source_and_summarizes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_store = ProfileStore(Path(tmp) / "profiles.json")
+            provider_store = ProviderStore(Path(tmp) / "providers.json")
+            provider_store.add(
+                Provider(
+                    id="provider-one",
+                    name="Provider One",
+                    url="https://provider.example/token",
+                    profiles=["provider-one:very-long-provider-node-id-that-should-truncate"],
+                )
+            )
+            profile_store.add(
+                Profile(
+                    id="manual-profile",
+                    name="Manual Profile",
+                    protocol=ProtocolType.VLESS,
+                    config={"host": "manual.example.com", "port": 443, "uuid": "manual-uuid"},
+                    source=ProfileSource.MANUAL,
+                    health_status="ok",
+                )
+            )
+            profile_store.add(
+                Profile(
+                    id="provider-one:very-long-provider-node-id-that-should-truncate",
+                    name="Provider Node",
+                    protocol=ProtocolType.TROJAN,
+                    config={"host": "provider.example.com", "port": 443, "password": "secret"},
+                    source=ProfileSource.SUBSCRIPTION,
+                    provider_id="provider-one",
+                    in_rotation_pool=True,
+                    health_status="unknown",
+                )
+            )
+
+            result = self.run_watchdog(["profile", "list"], tmp)
+            json_result = self.run_watchdog(["profile", "list", "--json"], tmp)
+
+            self.assertIn("Profiles (all saved profiles)", result.stdout)
+            self.assertIn("Total: 2 | Manual: 1 | Provider-owned: 1 | Enabled: 2 | Rotation: 1", result.stdout)
+            self.assertIn("Health: ok=1 unknown=1 down=0 degraded=0", result.stdout)
+            self.assertIn("Manual profiles", result.stdout)
+            self.assertIn("Provider: Provider One (provider-one)", result.stdout)
+            self.assertIn("Name", result.stdout)
+            self.assertIn("Protocol", result.stdout)
+            self.assertIn("ID", result.stdout)
+            self.assertIn("Manual Profile", result.stdout)
+            self.assertIn("Provider Node", result.stdout)
+            self.assertIn("provider-one:very-long", result.stdout)
+            self.assertIn("...", result.stdout)
+            self.assertNotIn("very-long-provider-node-id-that-should-truncate", result.stdout)
+            profiles = json.loads(json_result.stdout)
+            self.assertEqual(
+                profiles[1]["id"],
+                "provider-one:very-long-provider-node-id-that-should-truncate",
+            )
+            self.assertNotIn("secret", json_result.stdout)
+
+    def test_profile_list_wide_keeps_full_human_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_store = ProfileStore(Path(tmp) / "profiles.json")
+            profile_store.add(
+                Profile(
+                    id="manual-profile-with-a-very-long-id",
+                    name="Manual",
+                    protocol=ProtocolType.VLESS,
+                    config={"host": "manual.example.com", "port": 443, "uuid": "manual-uuid"},
+                    source=ProfileSource.MANUAL,
+                )
+            )
+
+            result = self.run_watchdog(["profile", "list", "--wide"], tmp)
+
+            self.assertIn("manual-profile-with-a-very-long-id", result.stdout)
+
     def test_profile_add_file_and_list_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile_file = Path(tmp) / "profile.txt"
@@ -94,6 +172,19 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertEqual(result.stdout, "")
             self.assertEqual(result.returncode, 65)
             self.assertIn("unsupported URI scheme: missing", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_profile_add_duplicate_uri_fails_without_secret_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            uri = "vless://secret-uuid@example.com:443?encryption=none#demo"
+            self.run_watchdog(["profile", "add", "--uri", uri], tmp)
+
+            result = self.run_watchdog(["profile", "add", "--uri", uri], tmp, check=False)
+
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("profile already exists: demo", result.stderr)
+            self.assertNotIn("secret-uuid", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
 
     def test_profile_enable_disable_rotation_and_remove(self) -> None:
@@ -137,6 +228,29 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertFalse(json.loads(disabled.stdout)["profile"]["enabled"])
             self.assertTrue(json.loads(rotation.stdout)["profile"]["in_rotation_pool"])
 
+    def test_profile_add_json_does_not_prompt_for_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {
+                "WATCHDOGVPN_CONFIG_DIR": tmp,
+                "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
+            }
+            with patch.dict("os.environ", env, clear=False), patch(
+                "cli.main._prompt_rotation_pool",
+                side_effect=AssertionError("json profile add must not prompt"),
+            ), redirect_stdout(StringIO()) as stdout:
+                rc = cli.main.main([
+                    "profile",
+                    "add",
+                    "--uri",
+                    "vless://uuid@example.com:443?encryption=none#json-demo",
+                    "--json",
+                ])
+
+            self.assertEqual(rc, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["profiles"][0]["id"], "json-demo")
+            self.assertFalse(payload["profiles"][0]["in_rotation_pool"])
+
     def test_profile_missing_id_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["profile", "enable", "missing"], tmp, check=False)
@@ -166,9 +280,9 @@ class CliProfileCommandTests(unittest.TestCase):
 
             result = self.run_watchdog(["profile", "list", "--json"], tmp, check=False)
 
-            self.assertEqual(result.stdout, "")
             self.assertEqual(result.returncode, 70)
-            self.assertIn("profile contains unsupported fields: failure_count", result.stderr)
+            self.assertIn("profile contains unsupported fields: failure_count", result.stdout)
+            self.assertNotIn("Traceback", result.stdout)
             self.assertNotIn("Traceback", result.stderr)
 
     def test_profile_add_clipboard_uses_manual_provider(self) -> None:
@@ -189,6 +303,25 @@ class CliProfileCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         provider.from_clipboard.assert_called_once_with()
+
+    def test_profile_add_clipboard_unavailable_is_actionable_without_traceback(self) -> None:
+        for as_json in (False, True):
+            stdout = StringIO()
+            stderr = StringIO()
+            args = ["profile", "add", "--clipboard"]
+            if as_json:
+                args.append("--json")
+            with self.subTest(json=as_json), patch(
+                "providers.manual_provider.shutil.which",
+                return_value=None,
+            ), redirect_stdout(stdout), redirect_stderr(stderr):
+                result = cli.main.main(args)
+
+            self.assertEqual(result, 65)
+            combined = stdout.getvalue() + stderr.getvalue()
+            self.assertIn("clipboard unavailable", combined)
+            self.assertIn("--file/--text", combined)
+            self.assertNotIn("Traceback", combined)
 
 
 if __name__ == "__main__":

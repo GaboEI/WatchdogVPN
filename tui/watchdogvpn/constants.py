@@ -9,7 +9,7 @@ TRUTH_BIN = "/usr/local/bin/vpn_truth_check"
 BACKEND_BIN = "/usr/local/bin/vpn_backend"
 MANUAL_STATE_BIN = "/usr/local/bin/vpn_manual_state"
 NO_VPN = "/usr/local/bin/no_vpn"
-WATCHDOGVPN_CLI = "/usr/local/bin/watchdogvpn"
+WATCHDOG_CLI = "/usr/local/bin/watchdog"
 WATCHDOGVPN_CONFIG = "/etc/watchdogvpn/config.toml"
 
 LOGROTATE_TIMER = "myvpn-logrotate.timer"

@@ -12,7 +12,7 @@ from models.profile import ProtocolType
 
 
 def _encode_payload(data: dict) -> str:
-    """Serializa un dict al formato vpn:// de AmneziaVPN."""
+    """Serialize a dictionary into the AmneziaVPN vpn:// format."""
     raw = json.dumps(data).encode()
     compressed = zlib.compress(raw)
     header = struct.pack(">I", len(raw))
@@ -25,18 +25,21 @@ _CLOAK_CONF = {
     "EncryptionMethod": "aes-gcm",
     "NumConn": 1,
     "ProxyMethod": "openvpn",
-    "PublicKey": "fakePubKey==",
-    "RemoteHost": "10.0.0.1",
+    "PublicKey": "TEST-ONLY-NOT-A-PUBLIC-KEY",
+    "RemoteHost": "1.1.1.1",
     "RemotePort": "8443",
-    "ServerName": "example.com",
+    "ServerName": "vpn.example.invalid",
     "StreamTimeout": 300,
     "Transport": "direct",
-    "UID": "fakeUID==",
+    "UID": "TEST-ONLY-NOT-A-UID",
 }
 
 _OVPN_CONFIG = (
     "client\ndev tun\nproto tcp\nremote 127.0.0.1 1194\nnobind\n"
-    "<ca>\n-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n</ca>\n"
+    "<ca>\n-----BEGIN CERTIFICATE-----\nTEST-ONLY-NOT-A-CERTIFICATE\n"
+    "-----END CERTIFICATE-----\n</ca>\n"
+    "<key>\n-----BEGIN PRIVATE KEY-----\nTEST-ONLY-NOT-A-PRIVATE-KEY\n"
+    "-----END PRIVATE KEY-----\n</key>\n"
     "dhcp-option DNS $PRIMARY_DNS\ndhcp-option DNS $SECONDARY_DNS\n"
 )
 
@@ -60,9 +63,9 @@ _MINIMAL_PAYLOAD = {
     ],
     "defaultContainer": "amnezia-openvpn-cloak",
     "description": "test-server",
-    "dns1": "8.8.8.8",
-    "dns2": "8.8.4.4",
-    "hostName": "10.0.0.1",
+    "dns1": "192.0.2.53",
+    "dns2": "198.51.100.53",
+    "hostName": "1.1.1.1",
     "nameOverriddenByUser": False,
 }
 
@@ -105,11 +108,11 @@ class ParseAmneziaVpnTests(unittest.TestCase):
     def test_profile_has_cloak_config(self) -> None:
         p = parse_amneziavpn(_VALID_VPN)[0]
         ck = p.config["cloak_config"]
-        self.assertEqual(ck["RemoteHost"], "10.0.0.1")
+        self.assertEqual(ck["RemoteHost"], "1.1.1.1")
         self.assertEqual(ck["RemotePort"], "8443")
-        self.assertEqual(ck["ServerName"], "example.com")
-        self.assertEqual(ck["UID"], "fakeUID==")
-        self.assertEqual(ck["PublicKey"], "fakePubKey==")
+        self.assertEqual(ck["ServerName"], "vpn.example.invalid")
+        self.assertEqual(ck["UID"], "TEST-ONLY-NOT-A-UID")
+        self.assertEqual(ck["PublicKey"], "TEST-ONLY-NOT-A-PUBLIC-KEY")
 
     def test_cloak_config_has_local_host_port(self) -> None:
         p = parse_amneziavpn(_VALID_VPN)[0]
@@ -122,8 +125,8 @@ class ParseAmneziaVpnTests(unittest.TestCase):
         raw = p.config["raw_config"]
         self.assertNotIn("$PRIMARY_DNS", raw)
         self.assertNotIn("$SECONDARY_DNS", raw)
-        self.assertIn("8.8.8.8", raw)
-        self.assertIn("8.8.4.4", raw)
+        self.assertIn("192.0.2.53", raw)
+        self.assertIn("198.51.100.53", raw)
 
     def test_profile_name_uses_description(self) -> None:
         p = parse_amneziavpn(_VALID_VPN)[0]
@@ -131,7 +134,7 @@ class ParseAmneziaVpnTests(unittest.TestCase):
 
     def test_profile_host_stored(self) -> None:
         p = parse_amneziavpn(_VALID_VPN)[0]
-        self.assertEqual(p.config["host"], "10.0.0.1")
+        self.assertEqual(p.config["host"], "1.1.1.1")
 
     def test_profile_client_id_stored(self) -> None:
         p = parse_amneziavpn(_VALID_VPN)[0]
@@ -161,6 +164,37 @@ class ParseAmneziaVpnTests(unittest.TestCase):
         with self.assertRaises(ParseError):
             parse_amneziavpn(_encode_payload(payload))
 
+    def test_parses_amneziawg_container(self) -> None:
+        awg_raw = (
+            "[Interface]\nPrivateKey = TEST-ONLY-NOT-A-PRIVATE-KEY\n"
+            "Address = 192.0.2.2/32\nJc = 4\n"
+            "[Peer]\nPublicKey = TEST-ONLY-NOT-A-PUBLIC-KEY\n"
+            "Endpoint = 8.8.8.8:30919\nAllowedIPs = 0.0.0.0/0\n"
+        )
+        payload = dict(_MINIMAL_PAYLOAD)
+        payload["containers"] = [
+            {
+                "container": "amnezia-awg2",
+                "awg": {
+                    "port": "30919",
+                    "last_config": json.dumps(
+                        {
+                            "clientId": "awgclientid",
+                            "config": awg_raw,
+                            "port": 30919,
+                        }
+                    ),
+                },
+            }
+        ]
+        payload["defaultContainer"] = "amnezia-awg2"
+
+        profiles = parse_amneziavpn(_encode_payload(payload))
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].protocol, ProtocolType.AMNEZIAWG)
+        self.assertIn("[Interface]", profiles[0].config["raw"])
+
     def test_empty_containers_raises(self) -> None:
         payload = dict(_MINIMAL_PAYLOAD)
         payload["containers"] = []
@@ -179,21 +213,17 @@ class ParseAmneziaVpnTests(unittest.TestCase):
         p = parse_amneziavpn(_encode_payload(payload))[0]
         self.assertEqual(p.config["cloak_config"]["LocalPort"], "9999")
 
-    def test_real_vpn_file(self) -> None:
-        try:
-            with open("/home/gabodev/Escritorio/temporales/amnezia_config.vpn") as f:
-                content = f.read().strip()
-        except FileNotFoundError:
-            self.skipTest("archivo .vpn real no disponible")
-        profiles = parse_amneziavpn(content)
+    def test_sanitized_export_preserves_embedded_material(self) -> None:
+        profiles = parse_amneziavpn(_VALID_VPN)
         self.assertEqual(len(profiles), 1)
         p = profiles[0]
         self.assertEqual(p.protocol, ProtocolType.OPENVPN_CLOAK)
-        self.assertEqual(p.config["cloak_config"]["RemoteHost"], "138.124.58.47")
+        self.assertEqual(p.config["cloak_config"]["RemoteHost"], "1.1.1.1")
         self.assertEqual(p.config["cloak_config"]["RemotePort"], "8443")
         self.assertEqual(p.config["cloak_config"]["LocalPort"], "1194")
         self.assertIn("-----BEGIN CERTIFICATE-----", p.config["raw_config"])
         self.assertIn("-----BEGIN PRIVATE KEY-----", p.config["raw_config"])
+        self.assertIn("TEST-ONLY-NOT-A-PRIVATE-KEY", p.config["raw_config"])
 
 
 if __name__ == "__main__":

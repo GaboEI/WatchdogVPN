@@ -117,6 +117,14 @@ class DNSModelTests(unittest.TestCase):
         self.assertFalse(policy.ecs_direct_enabled)
         self.assertIsNone(policy.ecs_direct_subnet)
 
+    def test_dns_policy_accepts_compound_positive_ttl(self) -> None:
+        self.assertEqual(DNSPolicy(ttl="1h30m").ttl, "1h30m")
+
+    def test_dns_policy_rejects_invalid_or_zero_ttl(self) -> None:
+        for ttl in ("-1", "0s", "12", "1d", "forever"):
+            with self.subTest(ttl=ttl), self.assertRaisesRegex(ValueError, "dns ttl"):
+                DNSPolicy(ttl=ttl)
+
     def test_dns_policy_rejects_invalid_proxy_resolution_channel(self) -> None:
         with self.assertRaises(ValueError):
             DNSPolicy(proxy_resolution_channel="ecs")

@@ -36,6 +36,46 @@ class BackoffIntervalTests(unittest.TestCase):
         self.assertEqual(recovery.backoff_interval(20), 300.0)
 
 
+    def test_extreme_attempt_saturates_before_exponentiation(self) -> None:
+        recovery = make_recovery()
+
+        self.assertEqual(recovery.backoff_interval(10**1000), 300.0)
+
+    def test_inverted_direct_bounds_are_normalized_without_busy_loop(self) -> None:
+        recovery = make_recovery(base_interval_seconds=10.0, max_interval_seconds=5.0)
+
+        with self.assertLogs("rotation.recovery", level="ERROR") as logs:
+            interval = recovery.backoff_interval(1)
+
+        self.assertEqual(interval, 10.0)
+        self.assertIn("action=raise_to_base", "\n".join(logs.output))
+
+    def test_invalid_direct_bounds_are_clamped_to_a_positive_interval(self) -> None:
+        recovery = make_recovery(base_interval_seconds=0.0, max_interval_seconds=0.0)
+
+        with self.assertLogs("rotation.recovery", level="ERROR"):
+            interval = recovery.backoff_interval(10**1000)
+
+        self.assertEqual(interval, 1.0)
+
+    def test_excessive_direct_bounds_are_clamped_without_overflow(self) -> None:
+        recovery = make_recovery(base_interval_seconds=float("inf"), max_interval_seconds=float("inf"))
+
+        with self.assertLogs("rotation.recovery", level="ERROR"):
+            interval = recovery.backoff_interval(10**1000)
+
+        self.assertEqual(interval, 300.0)
+
+
+    def test_huge_integer_bounds_are_clamped_without_float_conversion_failure(self) -> None:
+        recovery = make_recovery(base_interval_seconds=10**1000, max_interval_seconds=10**1000)
+
+        with self.assertLogs("rotation.recovery", level="ERROR"):
+            interval = recovery.backoff_interval(10**1000)
+
+        self.assertEqual(interval, 300.0)
+
+
 class RecordFailureSuccessTests(unittest.TestCase):
     def test_record_failure_increments_consecutive_count(self) -> None:
         recovery = make_recovery()
@@ -99,6 +139,25 @@ class CanRetryNowTests(unittest.TestCase):
         recovery.record_failure()
 
         self.assertTrue(recovery.can_retry_now(force=True))
+
+
+    def test_clock_boundary_is_not_ready_before_interval_and_ready_at_interval(self) -> None:
+        clock = FakeClock(start=100.0)
+        recovery = make_recovery(clock=clock)
+
+        recovery.record_failure()
+        clock.advance(9.999)
+        self.assertFalse(recovery.can_retry_now())
+        clock.advance(0.001)
+        self.assertTrue(recovery.can_retry_now())
+
+    def test_clock_rollback_does_not_make_retry_ready_early(self) -> None:
+        clock = FakeClock(start=100.0)
+        recovery = make_recovery(clock=clock)
+
+        recovery.record_failure()
+        clock.value = 99.0
+        self.assertFalse(recovery.can_retry_now())
 
     def test_never_permanently_blocked_even_after_many_failures(self) -> None:
         clock = FakeClock()

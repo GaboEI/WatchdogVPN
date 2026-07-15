@@ -32,11 +32,24 @@ DEFAULT_STATE = {
     "active_profile_id": "",
     "routing_state_version": "1",
     "routing_policy": "rule",
-    "capture_modes": "local_proxy",
+    # A fresh install with default_route_action="current" means "route
+    # everything through the active profile" - capture must actually
+    # include "tun" for that to be true, not just local_proxy (Phase 23
+    # Task 23.3.4; see also Task 23.3.3, which stopped an already-TUN'd
+    # session from silently losing TUN, but did not by itself make a fresh
+    # install ever gain it).
+    "capture_modes": "local_proxy,tun",
     "default_route_action": "current",
     "active_mode": "rules",
     "language_mode": "system",
     "selected_language": "en",
+    # Terminal-rotation failure memory (WDCLI-003): survives past the
+    # single RPC call that produced it, so `watchdog status` doesn't
+    # silently revert to a bare "standby" moments after an all_failed
+    # rotation. Empty string means "no failure recorded". Cleared on the
+    # next confirmed reconnect/rotation, not on any timer.
+    "last_failure_reason": "",
+    "last_failure_at": "",
 }
 
 ALLOWED_VPN_DESIRED_STATES = {"on", "off"}
@@ -67,6 +80,8 @@ STATE_STRING_FIELDS = {
     "active_mode",
     "language_mode",
     "selected_language",
+    "last_failure_reason",
+    "last_failure_at",
 }
 ROUTING_STATE_FIELDS = {
     "routing_state_version",
@@ -75,16 +90,23 @@ ROUTING_STATE_FIELDS = {
     "default_route_action",
 }
 LEGACY_MODE_TO_ROUTING_STATE = {
+    # "rules" and "global" both mean "use the VPN as default connectivity"
+    # (default_route_action="current"), so migrating a pre-Phase-19 install
+    # that never wrote explicit routing_state fields must land on real
+    # system-wide capture, not silently proxy-only (Phase 23 Task 23.3.4).
+    # "direct" and "proxy" keep local_proxy-only: those names are
+    # deliberately, explicitly weaker than "rules"/"global" and must stay
+    # that way.
     "rules": {
         "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
         "routing_policy": "rule",
-        "capture_modes": "local_proxy",
+        "capture_modes": "local_proxy,tun",
         "default_route_action": "current",
     },
     "global": {
         "routing_state_version": SUPPORTED_ROUTING_STATE_VERSION,
         "routing_policy": "global",
-        "capture_modes": "local_proxy",
+        "capture_modes": "local_proxy,tun",
         "default_route_action": "current",
     },
     "direct": {

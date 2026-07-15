@@ -5,9 +5,13 @@ import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 from zipfile import ZipFile
 
+import cli.main
 from config.app_config import AppConfig
 from config.backup_manager import BACKUP_ENCRYPTION_SUPPORTED, BackupManager, BackupValidationError
 from config.profile_store import ProfileStore
@@ -143,6 +147,34 @@ class CliUninstallCommandTests(unittest.TestCase):
             self.assertIsNone(data["uninstall_exit_code"])
             self.assertEqual(data["uninstall_stdout"], "")
             self.assertIn("product_managed_files", data["contract"])
+
+    def test_uninstall_resolves_installed_runtime_without_cwd_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            runtime_root = tmp / "runtime"
+            (runtime_root / "cli").mkdir(parents=True)
+            script = runtime_root / "uninstall.sh"
+            script.write_text("#!/usr/bin/env bash\nprintf 'installed uninstall ok\\n'\n", encoding="utf-8")
+            script.chmod(0o755)
+            unrelated_cwd = tmp / "home"
+            unrelated_cwd.mkdir()
+
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "WATCHDOGVPN_CONFIG_DIR": str(tmp / "config"),
+            }
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch.object(cli.main, "__file__", str(runtime_root / "cli" / "main.py")),
+                patch("pathlib.Path.cwd", return_value=unrelated_cwd),
+                redirect_stdout(StringIO()) as stdout,
+            ):
+                result = cli.main.main(["uninstall", "--keep-data", "--dry-run", "--json"])
+
+        self.assertEqual(result, 0)
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["command"], [str(script), "--dry-run"])
+        self.assertIsNone(data["uninstall_exit_code"])
 
     def test_backup_first_exports_backup_before_uninstall(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:

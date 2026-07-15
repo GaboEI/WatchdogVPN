@@ -81,13 +81,51 @@ class CliStatsCommandTests(unittest.TestCase):
             result = self.run_watchdog(["stats", "summary", "--json"], tmp)
             data = json.loads(result.stdout)
 
-            self.assertEqual(data["total_events"], 23)
-            self.assertEqual(data["withheld_counter_keys"], 1)
+            self.assertEqual(data["total_events"], 3)
+            self.assertEqual(data["withheld_counter_keys"], 0)
             self.assertEqual(data["counters"]["command.connect.success"], 3)
-            self.assertEqual(data["counters"]["profile.office.connect.success"], 2)
-            self.assertEqual(data["counters"]["rule_group.work"], 4)
-            self.assertEqual(data["counters"]["route_action.group:secure"], 5)
+            self.assertNotIn("profile.office.connect.success", data["counters"])
+            self.assertNotIn("rule_group.work", data["counters"])
+            self.assertNotIn("route_action.group:secure", data["counters"])
             self.assertNotIn("dns_query.secret.example", data["counters"])
+
+    def test_privacy_mode_aggregate_migrates_legacy_identifier_counters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metrics.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "enabled": True,
+                        "retention_days": 7,
+                        "redaction_mode": "detailed",
+                        "max_bytes": 1024 * 1024,
+                        "buckets": [
+                            {
+                                "bucket_start": "2026-07-06T10:00:00+00:00",
+                                "bucket_end": "2026-07-06T11:00:00+00:00",
+                                "counters": {
+                                    "command.connect.success": 1,
+                                    "profile.alice@example.com_198.51.100.7.connect.success": 2,
+                                    "route_action.https://secret.example.test/token": 3,
+                                },
+                            }
+                        ],
+                        "updated_at": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_watchdog(["stats", "privacy-mode", "aggregate", "--json"], tmp)
+            summary = self.run_watchdog(["stats", "summary", "--json"], tmp)
+            raw = path.read_text(encoding="utf-8")
+
+        self.assertEqual(json.loads(result.stdout)["redaction_mode"], "aggregate")
+        self.assertEqual(json.loads(summary.stdout)["counters"], {"command.connect.success": 1})
+        for canary in ("alice@example.com", "198.51.100.7", "secret.example.test"):
+            self.assertNotIn(canary, raw)
+            self.assertNotIn(canary, summary.stdout)
 
     def test_stats_purge_requires_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

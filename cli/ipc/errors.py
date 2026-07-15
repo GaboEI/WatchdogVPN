@@ -46,8 +46,15 @@ class DaemonPermissionError(WatchdogIPCError):
 class DaemonTimeoutError(WatchdogIPCError):
     exit_code = 75
 
-    def __init__(self) -> None:
-        super().__init__(DAEMON_TIMEOUT_MESSAGE)
+    def __init__(self, command_id: str | None = None) -> None:
+        self.command_id = command_id
+        message = DAEMON_TIMEOUT_MESSAGE
+        if command_id is not None:
+            message = (
+                f"{message} The command may have reached the daemon; query its authoritative "
+                f"outcome with: watchdog command outcome {command_id}"
+            )
+        super().__init__(message)
 
 
 class UnexpectedDaemonResponseError(WatchdogIPCError):

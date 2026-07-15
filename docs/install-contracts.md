@@ -85,7 +85,8 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   `install.sh` offers to download and checksum-verify it the same way as
   sing-box, but defaults to no and is skipped without prompting under
   `--dry-run`, since most installs never use this protocol combination.
-- **AmneziaWG tooling (`amneziawg-dkms`, `amneziawg-tools`/`awg-quick`)**:
+- **AmneziaWG tooling (`amneziawg-tools`/`awg`, plus `amneziawg-dkms` or
+  `amneziawg-go`)**:
   never installed unattended by WatchdogVPN itself - the official install
   path adds a third-party APT repository (Ubuntu/Debian) or builds an AUR
   package (Arch), which WatchdogVPN treats as the user's own trust decision
@@ -96,9 +97,13 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   terminal, then re-checks and reports success or exactly what is still
   missing, repeating up to a few attempts. `doctor.sh` only reports detection
   state (`WARN` if missing) and points back to `install.sh` for the guided
-  setup, keeping its own read-only contract. Standard WireGuard tooling
-  (`wg-quick`/`wg`, `wireguard` kernel module) is accepted as a compatible
-  fallback if AmneziaWG-specific packages are not available.
+  setup, keeping its own read-only contract. A valid runtime has
+  AmneziaWG-specific `awg` tooling plus either the `amneziawg` kernel module or
+  the `amneziawg-go` userspace fallback used directly by the native driver.
+  Standard
+  WireGuard tooling (`wg-quick`/`wg`, `wireguard` kernel module) is not a
+  substitute for AmneziaWG-specific profiles; plain WireGuard remains its own
+  compatibility protocol.
 - **Python `cryptography` module**: needed for encrypted backups
   (`watchdog backup --encrypt-backup`, Phase 17). `install.sh` and
   `update.sh` install the distro package (`python3-cryptography` on
@@ -119,10 +124,15 @@ weaker experience than a fresh install.
 **Installed/source version marker:** `install.sh`/`update.sh` record the
 installed source commit and timestamp (`lib/version_marker.sh`) every time
 the Python runtime package tree is (re)installed. `doctor.sh` compares that
-marker against `git rev-parse HEAD` of the checkout it is run from and warns
-if they differ, so "is the installed runtime the same code as this
-checkout" has a real answer instead of only the hand-edited `VERSION`
-string in `bin/watchdogvpn`.
+marker against `git rev-parse HEAD` of the checkout it is run from and warns if
+they differ. The marker certifies files on disk, not already-imported Python
+modules in a long-running daemon. Therefore `update.sh` also snapshots whether
+`watchdogvpn.service` was active before replacement, restarts that active
+service after installation, and requires a different nonzero systemd `MainPID`
+before the IPC smoke test. A hibernating daemon remains stopped. Together these
+checks answer both "does the installed tree match this checkout?" and "is the
+daemon actually executing the refreshed tree?" instead of trusting only the
+hand-edited `VERSION` string in `bin/watchdogvpn`.
 
 ## Domain Bypass Network Contract
 
@@ -195,7 +205,12 @@ AmneziaWG guided setup, Python `cryptography`) and, on every run, sweeps
 orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts if a
 legacy-contaminated machine still has them - not only on a full uninstall.
 It also records the installed-vs-source version marker used by
-`doctor.sh`'s version-skew check (see "Dependency Contract" above).
+`doctor.sh`'s version-skew check (see "Dependency Contract" above). If the
+daemon was active when the update began, it must be restarted after the new
+files and units are installed; the updater rejects an unchanged, missing or
+zero `MainPID` before running the final IPC smoke test. If the daemon was
+inactive, the normal hibernate-aware enable path decides whether it should be
+started, so an explicit panic/sleep state is never undone by an update.
 
 ## uninstall.sh
 

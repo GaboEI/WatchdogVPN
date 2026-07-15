@@ -7,12 +7,14 @@ from subprocess import CompletedProcess
 from pathlib import Path
 from unittest.mock import patch
 
+from config.persistence import PersistentStoreError
 from dns.resolver_inventory import ResolverManager
 from dns.state_manager import (
     DNSStateError,
     LocalDNSEntryPoint,
     SystemDNSStateManager,
     _run_command,
+    _replace_symlink,
     default_snapshot_path,
     load_snapshot,
 )
@@ -48,6 +50,23 @@ class FakeRunner:
 
 
 class DNSStateManagerTests(unittest.TestCase):
+    def test_symlink_replace_reports_directory_durability_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target"
+            target.write_text("nameserver 127.0.0.1\n", encoding="utf-8")
+            path = root / "resolv.conf"
+            path.symlink_to(root / "old-target")
+
+            with patch(
+                "dns.state_manager.fsync_parent_directory",
+                side_effect=PersistentStoreError("durability is not confirmed"),
+            ):
+                with self.assertRaisesRegex(DNSStateError, "durability"):
+                    _replace_symlink(path, target)
+
+            self.assertEqual(path.resolve(), target.resolve())
+
     def test_save_state_detects_systemd_resolved_and_apply_restore_link(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resolv_conf = Path(tmp) / "resolv.conf"
@@ -65,6 +84,82 @@ class DNSStateManagerTests(unittest.TestCase):
             self.assertIn(["resolvectl", "domain", "tun0", "~."], runner.commands)
             self.assertIn(["resolvectl", "revert", "tun0"], runner.commands)
             self.assertEqual(resolv_conf.read_text(encoding="utf-8"), "nameserver 127.0.0.53\n")
+
+    def test_systemd_resolved_restore_does_not_touch_resolv_conf_symlink(self) -> None:
+        # apply_local_dns for systemd-resolved only ever calls resolvectl -
+        # it never touches /etc/resolv.conf. Real /etc/resolv.conf is a
+        # symlink to systemd-resolved's own stub file
+        # (/run/systemd/resolve/stub-resolv.conf), owned by root; a real
+        # field run showed restore attempting to replace that symlink
+        # anyway, failing with "Permission denied" for a normal caller even
+        # though the actual resolvectl revert had already succeeded.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "stub-resolv.conf"
+            stub.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.symlink_to(stub)
+            runner = FakeRunner(active_services={"systemd-resolved.service"})
+            manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+
+            snapshot = manager.apply_local_dns(
+                LocalDNSEntryPoint(address="127.0.0.1", systemd_link="tun0")
+            )
+            with patch("dns.state_manager._replace_symlink") as replace_symlink:
+                manager.restore_state(snapshot)
+            replace_symlink.assert_not_called()
+            self.assertIn(["resolvectl", "revert", "tun0"], runner.commands)
+            self.assertEqual(resolv_conf.resolve(), stub.resolve())
+
+    def test_systemd_resolved_restore_skips_revert_when_link_is_gone(self) -> None:
+        # Field bug: a profile can connect in proxy-only capture mode (no
+        # TUN device), so "dns apply --systemd-link wdvpn-tun0" saves a
+        # snapshot naming a link that was never actually brought up. If
+        # restore always calls "resolvectl revert <link>" unconditionally,
+        # it fails with "No such device" forever afterward - every later
+        # "dns reset" against that same stale snapshot keeps failing the
+        # same way, since the link never comes back on its own. Restoring
+        # against a link that is gone should be a clean no-op instead: the
+        # systemd-resolved config that link would have carried is already
+        # gone with the interface itself.
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+            runner = FakeRunner(
+                active_services={"systemd-resolved.service"},
+                fail_on=("ip -o link show tun0",),
+            )
+            manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+            snapshot = manager.save_state(systemd_link="tun0")
+
+            manager.restore_state(snapshot)
+
+            self.assertIn(["ip", "-o", "link", "show", "tun0"], runner.commands)
+            self.assertNotIn(["resolvectl", "revert", "tun0"], runner.commands)
+
+    def test_apply_local_dns_failure_rolls_back_cleanly_when_link_is_gone(self) -> None:
+        # Companion bug: when the apply itself fails because the named link
+        # doesn't exist, apply_local_dns's own rollback (restore_state) used
+        # to attempt the identical "resolvectl revert <link>" call, which
+        # failed the same way and masked the original, more useful error
+        # ("failed to apply local DNS entry point: ...") with a bare,
+        # unwrapped "No such device" from the rollback attempt instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+            runner = FakeRunner(
+                active_services={"systemd-resolved.service"},
+                fail_on=("resolvectl dns", "ip -o link show tun0"),
+            )
+            manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+
+            with self.assertRaises(DNSStateError) as ctx:
+                manager.apply_local_dns(
+                    LocalDNSEntryPoint(address="127.0.0.1", systemd_link="tun0")
+                )
+
+            message = str(ctx.exception)
+            self.assertIn("failed to apply local DNS entry point", message)
+            self.assertNotIn(["resolvectl", "revert", "tun0"], runner.commands)
 
     def test_network_manager_apply_and_restore_connection_dns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

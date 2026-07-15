@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -14,12 +16,24 @@ from typing import NoReturn
 
 from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPolicyRule
 from app_policy.store import AppPolicyStore
+from cli import color
+from cli.command_inventory import DocumentedPassthroughAction
 from cli.ipc.client import WatchdogIPCClient
 from cli.ipc.errors import WatchdogIPCError
+from cli.terminal import (
+    pad_to_width,
+    strip_ansi,
+    terminal_safe_text,
+    terminal_width,
+    truncate_to_width,
+    visible_width,
+    wrap_to_width,
+)
 from config.app_config import AppConfig
 from config.backup_manager import (
     BACKUP_SENSITIVE_WARNING,
     BackupManager,
+    INFORMATIONAL_SECTION_NAMES,
     MERGE_SECTION_NAMES,
     RESTORE_REPLACE_CONFIRMATION,
     SUPPORTED_SECTION_NAMES,
@@ -30,9 +44,9 @@ from config.lan_sharing import (
     load_or_create_lan_sharing_credentials,
 )
 from config.paths import resolve_config_dir
-from config.persistence import PersistentStoreError, dump_json
+from config.persistence import PersistentStoreError, atomic_write_bytes, dump_json
 from config.profile_store import ProfileStore
-from config.provider_store import ProviderLimitError, ProviderStore
+from config.provider_store import DuplicateProviderError, ProviderLimitError, ProviderStore
 from config.state_manager import (
     ALLOWED_ACTIVE_MODES,
     ALLOWED_DEFAULT_ROUTE_ACTIONS,
@@ -43,8 +57,18 @@ from config.state_manager import (
     parse_capture_modes,
 )
 from dns.hijack import DNSHijackController, DNSHijackError
-from dns.models import DNSChannelName, DNSMode, DNSPolicy
+from dns.models import (
+    DNSChannel,
+    DNSChannelName,
+    DNSMode,
+    DNSPolicy,
+    DNSRule,
+    DNSRuleAction,
+    Resolver,
+    StaticIPEntry,
+)
 from dns.resolver_inventory import detect_resolver_manager
+from dns.singbox import fakeip_policy_ready
 from dns.state_manager import (
     DNSStateError,
     DNSStateSnapshot,
@@ -60,12 +84,19 @@ from diagnostics.chain_routes import ChainRouteDiagnostic, diagnose_chain_route_
 from diagnostics.routing import RouteDiagnostic, diagnose_route
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
-from models.profile import Profile, profile_resilience_category
-from models.provider import Provider
-from node_groups.models import NodeGroup, NodeGroupSelectionMode
+from models.connection_state import FAILURE_STATUSES
+from models.profile import (
+    Profile,
+    ProfileSource,
+    ProtocolType,
+    profile_fingerprint,
+    profile_resilience_category,
+)
+from models.provider import Provider, normalized_provider_url
+from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore, NodeGroupStoreError
 from parsers import ParseError
-from parsers import parse_uri
+from parsers import parse_uri, validate_subscription_url
 from providers.manual_provider import ManualProvider
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 from rotation import pool_builder
@@ -81,8 +112,9 @@ from rules.ruleset_lifecycle import (
     RuleSetLifecycleManager,
     referenced_rule_set_ids,
 )
-from rules.ruleset_trust_store import RuleSetTrustStore
-from route_chains.models import chain_target
+from rules.ruleset_trust import RuleSetFailureBehavior, RuleSetKind, RuleSetTrustPolicy
+from rules.ruleset_trust_store import RuleSetTrustStore, RuleSetTrustStoreError
+from route_chains.models import ChainHop, ChainHopType, RouteChain, chain_target
 from route_chains.runtime import ChainRuntimeResolver
 from route_chains.store import RouteChainStore
 
@@ -92,9 +124,14 @@ CONFIG_SET_KEYS = frozenset(
     {
         "watchdog.check_interval_seconds",
         "rotation.scheduled_interval_hours",
-        "rotation.test_url",
+        "rotation.health_targets",
+        "rotation.health_success_quorum",
         "rotation.test_timeout_seconds",
         "rotation.latency_max_stale_seconds",
+        "kill_switch.block_ipv6",
+        "kill_switch.allow_lan",
+        "kill_switch.tunnel_interface",
+        "kill_switch.on_manual_disconnect",
         "lan_sharing.enabled",
         "lan_sharing.mode",
         "lan_sharing.bind_address",
@@ -111,6 +148,7 @@ CONFIG_INT_SET_KEYS = frozenset(
     {
         "watchdog.check_interval_seconds",
         "rotation.scheduled_interval_hours",
+        "rotation.health_success_quorum",
         "rotation.test_timeout_seconds",
         "rotation.latency_max_stale_seconds",
         "lan_sharing.socks_port",
@@ -119,9 +157,35 @@ CONFIG_INT_SET_KEYS = frozenset(
 )
 CONFIG_BOOL_SET_KEYS = frozenset(
     {
+        "kill_switch.block_ipv6",
+        "kill_switch.allow_lan",
         "lan_sharing.enabled",
         "lan_sharing.authentication_required",
         "lan_sharing.firewall_managed",
+    }
+)
+DNS_POLICY_SET_KEYS = frozenset(
+    {
+        "dns.proxy_resolution_channel",
+        "dns.fakeip_inet4_range",
+        "dns.fakeip_inet6_range",
+        "dns.ecs_direct_enabled",
+        "dns.ecs_direct_subnet",
+        "dns.resolve_inbound_domains",
+        "dns.static_ip_enabled",
+        "dns.rules_enabled",
+        "dns.ttl",
+        "dns.test_domain",
+        "dns.tun_hijack",
+    }
+)
+DNS_POLICY_BOOL_SET_KEYS = frozenset(
+    {
+        "dns.ecs_direct_enabled",
+        "dns.resolve_inbound_domains",
+        "dns.static_ip_enabled",
+        "dns.rules_enabled",
+        "dns.tun_hijack",
     }
 )
 VISIBLE_STATS_COUNTER_PREFIXES = (
@@ -129,54 +193,461 @@ VISIBLE_STATS_COUNTER_PREFIXES = (
     "rotation.",
     "health_check.status.",
     "recovery.status.",
-    "node_group.",
-    "error.",
-    "profile.",
-    "route_action.",
-    "rule_group.",
+    "node_group.auto_test.",
+    "error.runtime",
+    "profile.event",
+    "route_action.recorded",
+    "rule_group.recorded",
+)
+
+SIGNAL_EXIT_CODE_BASE = 128
+INTERRUPTED_EXIT_CODE = SIGNAL_EXIT_CODE_BASE + signal.SIGINT
+BROKEN_PIPE_EXIT_CODE = SIGNAL_EXIT_CODE_BASE + signal.SIGPIPE
+MAINTENANCE_COMMAND_HELP = {
+    "backend": "Show the legacy custom-VPS backend capability summary",
+    "config": "Manage legacy language, TUI and reporting preferences",
+    "logs": "Read and sanitize local WatchdogVPN logs",
+    "report": "Generate a private local diagnostic report",
+    "runtime-update": "Run the confirmed source-checkout runtime update flow",
+    "tui": "Open the current WatchdogVPN terminal UI",
+    "update-check": "Inspect local checkout update state without network access",
+    "update-plan": "Print a safe manual update plan",
+}
+
+ROOT_HELP_TITLE = "WatchdogVPN — local network control plane for resilient VPN/proxy routing"
+ROOT_HELP_SECTIONS = (
+    (
+        "Core",
+        (
+            ("connect", "Connect through the WatchdogVPN daemon"),
+            ("disconnect", "Disconnect through the WatchdogVPN daemon"),
+            ("status", "Show daemon connection status"),
+            ("rotate", "Rotate connection through the WatchdogVPN daemon"),
+            ("command", "Inspect or cancel an identifiable daemon command"),
+        ),
+    ),
+    (
+        "Diagnostics",
+        (
+            ("doctor", "Run the repository doctor"),
+            ("stats", "Inspect local observability metrics"),
+            ("version", "Print WatchdogVPN version"),
+        ),
+    ),
+    (
+        "Profiles and providers",
+        (
+            ("profile", "Manage local profiles"),
+            ("provider", "Manage external providers"),
+        ),
+    ),
+    (
+        "Policy",
+        (
+            ("dns", "Manage DNS v2 policy and state"),
+            ("rules", "Inspect configured routing rules"),
+            ("ruleset", "Inspect and refresh trusted remote or built-in rule sets"),
+            ("app-policy", "Manage minimal Linux app/process policy"),
+            ("node-group", "Manage node groups"),
+            ("config", "Manage WatchdogVPN configuration"),
+        ),
+    ),
+    (
+        "Maintenance",
+        (
+            ("backup", "Create, inspect and restore backups"),
+            ("setup", "Configure local WatchdogVPN defaults"),
+            ("panic", "Run the WatchdogVPN panic button"),
+            ("uninstall", "Run the safe WatchdogVPN uninstall flow"),
+            ("maintenance", "Run local support, update and legacy-preference commands"),
+        ),
+    ),
+)
+ROOT_HELP_EXAMPLES = (
+    "watchdog status",
+    "watchdog doctor",
+    "watchdog profile list",
+    "watchdog dns status",
+    "watchdog connect <profile-id>",
+    "watchdog disconnect",
+)
+ROOT_USAGE_TEMPLATE = "%(prog)s <command> [options]"
+ROOT_USAGE_PLACEHOLDERS = frozenset({"<command>", "[options]"})
+
+
+def _root_help(*, no_color: bool = False, width: int | None = None) -> str:
+    columns = terminal_width() if width is None else max(int(width), 1)
+    lines = wrap_to_width(ROOT_HELP_TITLE, columns)
+    lines.extend(["", *wrap_to_width("Usage: watchdog <command> [options]", columns), ""])
+
+    command_width = max(
+        len(command)
+        for _, commands in ROOT_HELP_SECTIONS
+        for command, _ in commands
+    ) + 2
+    for section, commands in ROOT_HELP_SECTIONS:
+        lines.append(color.style(f"{section}:", "bold", no_color=no_color))
+        for command, description in commands:
+            prefix = f"  {command:<{command_width}}"
+            wrapped = wrap_to_width(
+                description,
+                columns,
+                initial_indent=prefix,
+                subsequent_indent=" " * len(prefix),
+            )
+            wrapped[0] = (
+                wrapped[0][:2]
+                + color.command(command, no_color=no_color)
+                + wrapped[0][2 + len(command) :]
+            )
+            lines.extend(wrapped)
+        lines.append("")
+
+    lines.append(color.style("Examples:", "bold", no_color=no_color))
+    for example in ROOT_HELP_EXAMPLES:
+        wrapped = wrap_to_width(
+            example,
+            columns,
+            initial_indent="  ",
+            subsequent_indent="    ",
+        )
+        for line in wrapped:
+            plain = line.lstrip()
+            indent = line[: len(line) - len(plain)]
+            lines.append(indent + color.command(plain, no_color=no_color))
+    lines.append("")
+
+    use_command = "watchdog <command> --help"
+    for line in wrap_to_width(f"Use: {use_command}", columns, subsequent_indent="  "):
+        if use_command in line:
+            line = line.replace(
+                use_command,
+                color.command(use_command, no_color=no_color),
+            )
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+class _JSONAwareArgumentParser(argparse.ArgumentParser):
+    """Emits a JSON error envelope on parse failure when --json was requested.
+
+    argparse's own .error() runs before parsing finishes, so args.json
+    isn't available yet - main() sets this class attribute from the raw
+    argv right before parse_args() (WDCLI-009: previously argparse-level
+    errors - missing args, bad choices - always printed plain text to
+    stderr, ignoring --json entirely).
+    """
+
+    _json_requested = False
+
+    def format_help(self) -> str:
+        return _constrain_argparse_output(super().format_help())
+
+    def format_usage(self) -> str:
+        return _constrain_argparse_output(super().format_usage())
+
+    def error(self, message: str) -> None:
+        command_error = _command_parse_error(self, message)
+        if command_error is not None:
+            invalid_command, suggestion = command_error
+            error_text = _command_error_text(self, invalid_command, suggestion)
+            if _JSONAwareArgumentParser._json_requested:
+                _print_json(
+                    {
+                        "version": 1,
+                        "type": "response",
+                        "ok": False,
+                        "payload": {},
+                        "error": error_text,
+                    }
+                )
+                self.exit(2)
+            width = terminal_width()
+            command_prog = _canonical_parser_prog(self)
+            rendered = wrap_to_width(
+                f"Usage: {command_prog} <command> [options]",
+                width,
+            )
+            for line in error_text.splitlines():
+                rendered.extend(wrap_to_width(line, width))
+            self.exit(2, "\n".join(rendered) + "\n")
+        if _JSONAwareArgumentParser._json_requested:
+            _print_json({"version": 1, "type": "response", "ok": False, "payload": {}, "error": message})
+            self.exit(2)
+        super().error(message)
+
+
+def _constrain_argparse_output(rendered: str) -> str:
+    """Keep generated argparse help readable at the active terminal width."""
+
+    width = terminal_width()
+    lines = rendered.splitlines()
+    if all(visible_width(line) <= width for line in lines):
+        return rendered
+
+    constrained: list[str] = []
+    for raw_line in lines:
+        line = strip_ansi(raw_line)
+        if visible_width(line) <= width:
+            constrained.append(line)
+            continue
+        content = line.lstrip()
+        original_indent = len(line) - len(content)
+        indent_width = min(original_indent, 4)
+        initial_indent = " " * indent_width
+        subsequent_indent = initial_indent
+        if original_indent == 0 and content.startswith("usage:"):
+            subsequent_indent = "  "
+        constrained.extend(
+            wrap_to_width(
+                content,
+                width,
+                initial_indent=initial_indent,
+                subsequent_indent=subsequent_indent,
+            )
+        )
+    suffix = "\n" if rendered.endswith("\n") else ""
+    return "\n".join(constrained) + suffix
+
+
+_INVALID_CHOICE_RE = re.compile(
+    r"^argument (?P<destination>[^:]+): invalid choice: "
+    r"(?P<value>.+?) \(choose from .+\)$"
 )
 
 
+def _command_parse_error(
+    parser: argparse.ArgumentParser,
+    message: str,
+) -> tuple[str, str | None] | None:
+    match = _INVALID_CHOICE_RE.match(message)
+    if match is None:
+        return None
+    action = next(
+        (
+            candidate
+            for candidate in parser._actions
+            if isinstance(candidate, argparse._SubParsersAction)
+            and candidate.dest == match.group("destination")
+        ),
+        None,
+    )
+    if action is None:
+        return None
+    try:
+        raw_value = ast.literal_eval(match.group("value"))
+    except (SyntaxError, ValueError):
+        return None
+    if not isinstance(raw_value, str):
+        return None
+    invalid_command = terminal_safe_text(raw_value)
+    suggestion = _closest_command(invalid_command, tuple(action.choices))
+    return invalid_command, suggestion
+
+
+def _command_error_text(
+    parser: argparse.ArgumentParser,
+    invalid_command: str,
+    suggestion: str | None,
+) -> str:
+    command_prog = _canonical_parser_prog(parser)
+    lines = [f"{command_prog}: error: invalid command {invalid_command!r}"]
+    if suggestion is not None:
+        lines.append(f"Did you mean '{command_prog} {suggestion}'?")
+    lines.append(f"Run '{command_prog} --help' to list available commands.")
+    return "\n".join(lines)
+
+
+def _canonical_parser_prog(parser: argparse.ArgumentParser) -> str:
+    """Return a command path without leaked root-usage metavariables.
+
+    Some argparse versions derive child ``prog`` values from an explicitly
+    configured parent usage template. Keep error recovery and documentation
+    stable even if a parser tree was built by such a runtime.
+    """
+
+    tokens = [
+        token
+        for token in parser.prog.split()
+        if token not in ROOT_USAGE_PLACEHOLDERS
+    ]
+    return " ".join(tokens)
+
+
+def _closest_command(value: str, choices: tuple[str, ...]) -> str | None:
+    normalized = value.casefold()
+    if not normalized or len(normalized) > 128:
+        return None
+    maximum_distance = 1 if len(normalized) <= 4 else 2
+    ranked: list[tuple[tuple[int, int, int], str]] = []
+    for choice in choices:
+        candidate = choice.casefold()
+        distance = _damerau_levenshtein_distance(normalized, candidate)
+        if distance > maximum_distance:
+            continue
+        rank = (
+            distance,
+            0 if candidate.startswith(normalized) else 1,
+            abs(len(candidate) - len(normalized)),
+        )
+        ranked.append((rank, choice))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+        return None
+    return ranked[0][1]
+
+
+def _damerau_levenshtein_distance(left: str, right: str) -> int:
+    rows = len(left) + 1
+    columns = len(right) + 1
+    distances = [[0] * columns for _ in range(rows)]
+    for row in range(rows):
+        distances[row][0] = row
+    for column in range(columns):
+        distances[0][column] = column
+    for row in range(1, rows):
+        for column in range(1, columns):
+            substitution_cost = 0 if left[row - 1] == right[column - 1] else 1
+            distances[row][column] = min(
+                distances[row - 1][column] + 1,
+                distances[row][column - 1] + 1,
+                distances[row - 1][column - 1] + substitution_cost,
+            )
+            if (
+                row > 1
+                and column > 1
+                and left[row - 1] == right[column - 2]
+                and left[row - 2] == right[column - 1]
+            ):
+                distances[row][column] = min(
+                    distances[row][column],
+                    distances[row - 2][column - 2] + 1,
+                )
+    return distances[-1][-1]
+
+
+class RootHelpArgumentParser(_JSONAwareArgumentParser):
+    def format_help(self) -> str:
+        return _root_help()
+
+
 def main(argv: list[str] | None = None) -> int:
+    parsed_argv = sys.argv[1:] if argv is None else list(argv)
+    try:
+        return _run_cli(parsed_argv)
+    except KeyboardInterrupt:
+        try:
+            _error("operation cancelled", as_json="--json" in parsed_argv)
+        except BrokenPipeError:
+            return _broken_pipe_exit()
+        return INTERRUPTED_EXIT_CODE
+    except BrokenPipeError:
+        return _broken_pipe_exit()
+
+
+def _run_cli(parsed_argv: list[str]) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    restore_no_color = None
+    if "--no-color" in parsed_argv:
+        restore_no_color = os.environ.get("NO_COLOR")
+        os.environ["NO_COLOR"] = "1"
+    _JSONAwareArgumentParser._json_requested = "--json" in parsed_argv
+    try:
+        args = parser.parse_args(parsed_argv)
+    finally:
+        _JSONAwareArgumentParser._json_requested = False
+        if restore_no_color is None and "--no-color" in parsed_argv:
+            os.environ.pop("NO_COLOR", None)
+        elif restore_no_color is not None:
+            os.environ["NO_COLOR"] = restore_no_color
     if not hasattr(args, "handler"):
         parser.print_help()
         return 0
+    as_json = bool(getattr(args, "json", False))
     try:
-        return int(args.handler(args))
-    except (ProviderLimitError, ProviderNotFoundError) as exc:
-        _error(str(exc))
+        return _normalize_exit_code(int(args.handler(args)))
+    except (DuplicateProviderError, ProviderLimitError, ProviderNotFoundError) as exc:
+        _error(str(exc), as_json=as_json)
         return 65
     except RuleStoreError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 65
     except RuleSetLifecycleError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
+        return 65
+    except RuleSetTrustStoreError as exc:
+        _error(str(exc), as_json=as_json)
         return 65
     except NodeGroupStoreError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 65
     except ParseError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 65
     except FileNotFoundError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 66
     except PersistentStoreError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 70
     except WatchdogIPCError as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return exc.exit_code
+    except BrokenPipeError:
+        raise
     except (DNSHijackError, DNSStateError, OSError, ValueError) as exc:
-        _error(str(exc))
+        _error(str(exc), as_json=as_json)
         return 70
+
+
+def _normalize_exit_code(returncode: int) -> int:
+    if returncode < 0:
+        return SIGNAL_EXIT_CODE_BASE + abs(returncode)
+    return returncode
+
+
+def _broken_pipe_exit() -> int:
+    # A caught BrokenPipeError can otherwise be reported again while Python
+    # flushes its buffered streams during interpreter shutdown. Redirect both
+    # output descriptors because the process is exiting and the broken stream
+    # is not reliably identifiable from the exception alone.
+    _redirect_stream_to_devnull(sys.stdout)
+    _redirect_stream_to_devnull(sys.stderr)
+    return BROKEN_PIPE_EXIT_CODE
+
+
+def _redirect_stream_to_devnull(stream: object) -> None:
+    try:
+        stream_fd = stream.fileno()  # type: ignore[attr-defined]
+    except (AttributeError, OSError, ValueError):
+        return
+
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    except OSError:
+        return
+    try:
+        os.dup2(devnull_fd, stream_fd)
+    finally:
+        os.close(devnull_fd)
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="watchdog", description="WatchdogVPN command line")
-    subparsers = parser.add_subparsers(dest="command")
+    # Do not set the explicit root usage until every subparser exists. Some
+    # argparse versions use parent usage text to derive child ``prog`` values,
+    # which can leak literal "<command> [options]" into nested help and typo
+    # recovery output.
+    parser = RootHelpArgumentParser(prog="watchdog")
+    parser.add_argument("--no-color", action="store_true", help=argparse.SUPPRESS)
+    subparsers = parser.add_subparsers(
+        dest="command",
+        # Deliberately _JSONAwareArgumentParser, not RootHelpArgumentParser:
+        # the latter's format_help() override is root-only and would break
+        # every subcommand's own --help text if it propagated down here.
+        parser_class=_JSONAwareArgumentParser,
+    )
 
     connect_parser = subparsers.add_parser("connect", help="Connect through the WatchdogVPN daemon")
     connect_parser.add_argument("profile_id", help="Profile ID to connect")
@@ -189,12 +660,33 @@ def _build_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="Show daemon connection status")
     status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    status_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     status_parser.set_defaults(handler=_connection_status)
 
     rotate_parser = subparsers.add_parser("rotate", help="Rotate connection through the WatchdogVPN daemon")
     rotate_parser.add_argument("--force", action="store_true", help="Force rotation even if conservative checks apply")
     rotate_parser.add_argument("--json", action="store_true", help="Print JSON")
     rotate_parser.set_defaults(handler=_connection_rotate)
+
+    command_parser = subparsers.add_parser(
+        "command", help="Inspect or cancel an identifiable daemon command"
+    )
+    command_subparsers = command_parser.add_subparsers(dest="command_action")
+    command_subparsers.required = True
+
+    command_outcome_parser = command_subparsers.add_parser(
+        "outcome", help="Show the authoritative outcome of a daemon command"
+    )
+    command_outcome_parser.add_argument("command_id", help="Command UUID returned by the daemon")
+    command_outcome_parser.add_argument("--json", action="store_true", help="Print JSON")
+    command_outcome_parser.set_defaults(handler=_command_outcome)
+
+    command_cancel_parser = command_subparsers.add_parser(
+        "cancel", help="Cancel a queued daemon command before it starts"
+    )
+    command_cancel_parser.add_argument("command_id", help="Command UUID returned by the daemon")
+    command_cancel_parser.add_argument("--json", action="store_true", help="Print JSON")
+    command_cancel_parser.set_defaults(handler=_command_cancel)
 
     version_parser = subparsers.add_parser("version", help="Print WatchdogVPN version")
     version_parser.add_argument("--json", action="store_true", help="Print JSON")
@@ -208,6 +700,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser("doctor", help="Run the repository doctor")
     doctor_parser.add_argument("--json", action="store_true", help="Print JSON")
+    doctor_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     doctor_parser.add_argument("--doctor-script", help=argparse.SUPPRESS)
     doctor_parser.set_defaults(handler=_doctor)
 
@@ -282,6 +775,32 @@ def _build_parser() -> argparse.ArgumentParser:
     uninstall_parser.add_argument("--json", action="store_true", help="Print JSON")
     uninstall_parser.set_defaults(handler=_uninstall)
 
+    maintenance_parser = subparsers.add_parser(
+        "maintenance",
+        help="Run local support, update and legacy-preference commands",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Commands:\n"
+            + "\n".join(
+                f"  {command:<16} {help_text}"
+                for command, help_text in MAINTENANCE_COMMAND_HELP.items()
+            )
+        ),
+    )
+    maintenance_parser.add_argument(
+        "maintenance_command",
+        action=DocumentedPassthroughAction,
+        route_summaries=MAINTENANCE_COMMAND_HELP,
+        help="Maintenance command",
+    )
+    maintenance_parser.add_argument(
+        "maintenance_args",
+        nargs=argparse.REMAINDER,
+        metavar="arguments",
+        help="Arguments forwarded to the selected maintenance command",
+    )
+    maintenance_parser.set_defaults(handler=_maintenance)
+
     backup_parser = subparsers.add_parser("backup", help="Create, inspect and restore backups")
     backup_subparsers = backup_parser.add_subparsers(dest="backup_command")
     backup_subparsers.required = True
@@ -324,6 +843,47 @@ def _build_parser() -> argparse.ArgumentParser:
     list_parser = profile_subparsers.add_parser("list", help="List saved profiles")
     list_parser.add_argument("--json", action="store_true", help="Print JSON")
     list_parser.add_argument("--pool", action="store_true", help="Show rotation pool only")
+    list_parser.add_argument(
+        "--source",
+        choices=("manual", "provider"),
+        metavar="SOURCE",
+        help="Filter by source: manual, provider",
+    )
+    list_parser.add_argument(
+        "--protocol",
+        choices=tuple(protocol.value for protocol in ProtocolType),
+        metavar="PROTOCOL",
+        help="Filter by protocol: "
+        + ", ".join(protocol.value for protocol in ProtocolType),
+    )
+    list_parser.add_argument(
+        "--health",
+        choices=("ok", "unknown", "down", "degraded"),
+        metavar="HEALTH",
+        help="Filter by health: ok, unknown, down, degraded",
+    )
+    list_parser.add_argument(
+        "--provider",
+        dest="provider_id",
+        help="Filter by provider ID",
+    )
+    profile_state_filter = list_parser.add_mutually_exclusive_group()
+    profile_state_filter.add_argument(
+        "--enabled-only",
+        action="store_true",
+        help="Show enabled profiles only",
+    )
+    profile_state_filter.add_argument(
+        "--disabled-only",
+        action="store_true",
+        help="Show disabled profiles only",
+    )
+    list_parser.add_argument(
+        "--wide",
+        action="store_true",
+        help="Print the untruncated human table; lines may exceed terminal width",
+    )
+    list_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     list_parser.set_defaults(handler=_profile_list)
 
     remove_parser = profile_subparsers.add_parser("remove", help="Remove a saved profile")
@@ -365,6 +925,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     provider_list_parser = provider_subparsers.add_parser("list", help="List external providers")
     provider_list_parser.add_argument("--json", action="store_true", help="Print JSON")
+    provider_list_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     provider_list_parser.set_defaults(handler=_provider_list)
 
     provider_stats_parser = provider_subparsers.add_parser("stats", help="Show provider statistics")
@@ -384,7 +945,9 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_remove_parser.set_defaults(handler=_provider_remove)
 
-    provider_edit_parser = provider_subparsers.add_parser("edit", help="Edit provider metadata")
+    provider_edit_parser = provider_subparsers.add_parser(
+        "edit", help="Edit provider name or subscription URL"
+    )
     provider_edit_parser.add_argument("provider_id")
     provider_edit_parser.add_argument("--name", help="New free-form provider label")
     provider_edit_parser.add_argument("--url", help="New subscription URL")
@@ -445,6 +1008,58 @@ def _build_parser() -> argparse.ArgumentParser:
     node_group_select_parser.add_argument("--json", action="store_true", help="Print JSON")
     node_group_select_parser.set_defaults(handler=_node_group_select)
 
+    node_group_add_provider_parser = node_group_subparsers.add_parser(
+        "add-provider", help="Add a provider to a node group"
+    )
+    node_group_add_provider_parser.add_argument("group")
+    node_group_add_provider_parser.add_argument("provider")
+    node_group_add_provider_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_add_provider_parser.set_defaults(handler=_node_group_add_provider)
+
+    node_group_remove_provider_parser = node_group_subparsers.add_parser(
+        "remove-provider", help="Remove a provider from a node group"
+    )
+    node_group_remove_provider_parser.add_argument("group")
+    node_group_remove_provider_parser.add_argument("provider")
+    node_group_remove_provider_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_remove_provider_parser.set_defaults(handler=_node_group_remove_provider)
+
+    node_group_exclude_parser = node_group_subparsers.add_parser(
+        "exclude", help="Exclude a profile from a node group's candidates"
+    )
+    node_group_exclude_parser.add_argument("group")
+    node_group_exclude_parser.add_argument("profile")
+    node_group_exclude_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_exclude_parser.set_defaults(handler=_node_group_exclude)
+
+    node_group_unexclude_parser = node_group_subparsers.add_parser(
+        "unexclude", help="Remove a profile from a node group's exclusion list"
+    )
+    node_group_unexclude_parser.add_argument("group")
+    node_group_unexclude_parser.add_argument("profile")
+    node_group_unexclude_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_unexclude_parser.set_defaults(handler=_node_group_unexclude)
+
+    node_group_resilience_parser = node_group_subparsers.add_parser(
+        "resilience", help="Set a node group's resilience policy"
+    )
+    node_group_resilience_parser.add_argument("group")
+    node_group_resilience_parser.add_argument(
+        "policy", choices=[item.value for item in NodeGroupResiliencePolicy]
+    )
+    node_group_resilience_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_resilience_parser.set_defaults(handler=_node_group_set_resilience)
+
+    node_group_enable_parser = node_group_subparsers.add_parser("enable", help="Enable a node group")
+    node_group_enable_parser.add_argument("group")
+    node_group_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_enable_parser.set_defaults(handler=_node_group_set_enabled, enabled=True)
+
+    node_group_disable_parser = node_group_subparsers.add_parser("disable", help="Disable a node group")
+    node_group_disable_parser.add_argument("group")
+    node_group_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    node_group_disable_parser.set_defaults(handler=_node_group_set_enabled, enabled=False)
+
     dns_parser = subparsers.add_parser("dns", help="Manage DNS v2 policy and state")
     dns_subparsers = dns_parser.add_subparsers(dest="dns_command")
     dns_subparsers.required = True
@@ -452,6 +1067,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dns_status_parser = dns_subparsers.add_parser("status", help="Show DNS v2 status")
     _add_dns_common_paths(dns_status_parser)
     dns_status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_status_parser.add_argument("--no-color", action="store_true", help="Disable ANSI color in human output")
     dns_status_parser.set_defaults(handler=_dns_status)
 
     dns_test_parser = dns_subparsers.add_parser("test", help="Test DNS v2 resolvers")
@@ -505,12 +1121,150 @@ def _build_parser() -> argparse.ArgumentParser:
     dns_reset_parser.add_argument("--yes", action="store_true", help="Confirm DNS restore")
     dns_reset_parser.set_defaults(handler=_dns_reset)
 
+    dns_channel_parser = dns_subparsers.add_parser("channel", help="Manage DNS channels")
+    dns_channel_subparsers = dns_channel_parser.add_subparsers(dest="dns_channel_command")
+    dns_channel_subparsers.required = True
+
+    dns_channel_add_parser = dns_channel_subparsers.add_parser(
+        "add", help="Add an empty DNS channel"
+    )
+    dns_channel_add_parser.add_argument("name", choices=[item.value for item in DNSChannelName])
+    _add_dns_common_paths(dns_channel_add_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_channel_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_channel_add_parser.set_defaults(handler=_dns_channel_add)
+
+    dns_channel_remove_parser = dns_channel_subparsers.add_parser(
+        "remove", help="Remove a DNS channel and its resolvers"
+    )
+    dns_channel_remove_parser.add_argument("name", choices=[item.value for item in DNSChannelName])
+    _add_dns_common_paths(dns_channel_remove_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_channel_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_channel_remove_parser.set_defaults(handler=_dns_channel_remove)
+
+    dns_resolver_parser = dns_subparsers.add_parser("resolver", help="Manage DNS resolvers")
+    dns_resolver_subparsers = dns_resolver_parser.add_subparsers(dest="dns_resolver_command")
+    dns_resolver_subparsers.required = True
+
+    dns_resolver_add_parser = dns_resolver_subparsers.add_parser(
+        "add", help="Add a resolver to a DNS channel"
+    )
+    dns_resolver_add_parser.add_argument("channel", choices=[item.value for item in DNSChannelName])
+    dns_resolver_add_parser.add_argument("uri", help="Resolver URI, for example udp://1.1.1.1")
+    dns_resolver_add_parser.add_argument("--label", help="Free-form resolver label")
+    dns_resolver_add_parser.add_argument(
+        "--strategy",
+        choices=["auto"],
+        default="auto",
+        help="Channel resolver strategy",
+    )
+    dns_resolver_add_parser.add_argument(
+        "--disabled", action="store_true", help="Add the resolver disabled"
+    )
+    _add_dns_common_paths(dns_resolver_add_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_resolver_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_resolver_add_parser.set_defaults(handler=_dns_resolver_add)
+
+    dns_resolver_remove_parser = dns_resolver_subparsers.add_parser(
+        "remove", help="Remove a resolver from a DNS channel"
+    )
+    dns_resolver_remove_parser.add_argument("channel", choices=[item.value for item in DNSChannelName])
+    dns_resolver_remove_parser.add_argument("uri")
+    _add_dns_common_paths(dns_resolver_remove_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_resolver_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_resolver_remove_parser.set_defaults(handler=_dns_resolver_remove)
+
+    dns_resolver_enable_parser = dns_resolver_subparsers.add_parser(
+        "enable", help="Enable a resolver in a DNS channel"
+    )
+    dns_resolver_enable_parser.add_argument("channel", choices=[item.value for item in DNSChannelName])
+    dns_resolver_enable_parser.add_argument("uri")
+    _add_dns_common_paths(dns_resolver_enable_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_resolver_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_resolver_enable_parser.set_defaults(handler=_dns_resolver_set_enabled, enabled=True)
+
+    dns_resolver_disable_parser = dns_resolver_subparsers.add_parser(
+        "disable", help="Disable a resolver in a DNS channel"
+    )
+    dns_resolver_disable_parser.add_argument("channel", choices=[item.value for item in DNSChannelName])
+    dns_resolver_disable_parser.add_argument("uri")
+    _add_dns_common_paths(dns_resolver_disable_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_resolver_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_resolver_disable_parser.set_defaults(handler=_dns_resolver_set_enabled, enabled=False)
+
+    dns_rule_parser = dns_subparsers.add_parser("rule", help="Manage DNS diversion rules")
+    dns_rule_subparsers = dns_rule_parser.add_subparsers(dest="dns_rule_command")
+    dns_rule_subparsers.required = True
+
+    dns_rule_add_parser = dns_rule_subparsers.add_parser("add", help="Add a DNS diversion rule")
+    dns_rule_add_parser.add_argument("id")
+    dns_rule_add_parser.add_argument(
+        "--pattern", required=True, help="For example domain:example.com or suffix:example.com"
+    )
+    dns_rule_add_parser.add_argument(
+        "--action", required=True, choices=[item.value for item in DNSRuleAction]
+    )
+    dns_rule_add_parser.add_argument(
+        "--channel", choices=[item.value for item in DNSChannelName], help="Required for --action use_channel"
+    )
+    dns_rule_add_parser.add_argument("--priority", type=int, default=100)
+    dns_rule_add_parser.add_argument(
+        "--disabled", action="store_true", help="Add the rule disabled"
+    )
+    _add_dns_common_paths(dns_rule_add_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_rule_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_rule_add_parser.set_defaults(handler=_dns_rule_add)
+
+    dns_rule_remove_parser = dns_rule_subparsers.add_parser("remove", help="Remove a DNS diversion rule")
+    dns_rule_remove_parser.add_argument("id")
+    _add_dns_common_paths(dns_rule_remove_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_rule_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_rule_remove_parser.set_defaults(handler=_dns_rule_remove)
+
+    dns_rule_enable_parser = dns_rule_subparsers.add_parser("enable", help="Enable a DNS diversion rule")
+    dns_rule_enable_parser.add_argument("id")
+    _add_dns_common_paths(dns_rule_enable_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_rule_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_rule_enable_parser.set_defaults(handler=_dns_rule_set_enabled, enabled=True)
+
+    dns_rule_disable_parser = dns_rule_subparsers.add_parser("disable", help="Disable a DNS diversion rule")
+    dns_rule_disable_parser.add_argument("id")
+    _add_dns_common_paths(dns_rule_disable_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_rule_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_rule_disable_parser.set_defaults(handler=_dns_rule_set_enabled, enabled=False)
+
+    dns_static_ip_parser = dns_subparsers.add_parser("static-ip", help="Manage static IP mappings")
+    dns_static_ip_subparsers = dns_static_ip_parser.add_subparsers(dest="dns_static_ip_command")
+    dns_static_ip_subparsers.required = True
+
+    dns_static_ip_add_parser = dns_static_ip_subparsers.add_parser(
+        "add", help="Add a static IP mapping"
+    )
+    dns_static_ip_add_parser.add_argument("domain")
+    dns_static_ip_add_parser.add_argument("ip")
+    dns_static_ip_add_parser.add_argument(
+        "--disabled", action="store_true", help="Add the mapping disabled"
+    )
+    _add_dns_common_paths(dns_static_ip_add_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_static_ip_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_static_ip_add_parser.set_defaults(handler=_dns_static_ip_add)
+
+    dns_static_ip_remove_parser = dns_static_ip_subparsers.add_parser(
+        "remove", help="Remove static IP mapping(s) for a domain"
+    )
+    dns_static_ip_remove_parser.add_argument("domain")
+    dns_static_ip_remove_parser.add_argument(
+        "--ip", help="Only remove this specific IP; defaults to removing all IPs for the domain"
+    )
+    _add_dns_common_paths(dns_static_ip_remove_parser, include_resolv_conf=False, include_snapshot=False)
+    dns_static_ip_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    dns_static_ip_remove_parser.set_defaults(handler=_dns_static_ip_remove)
+
     config_parser = subparsers.add_parser("config", help="Manage WatchdogVPN configuration")
     config_subparsers = config_parser.add_subparsers(dest="config_command")
     config_subparsers.required = True
 
     config_set_parser = config_subparsers.add_parser("set", help="Set a configuration value")
-    config_set_parser.add_argument("key", help="Configuration key, for example mode or rotation.test_url")
+    config_set_parser.add_argument("key", help="Configuration key, for example mode or rotation.health_targets")
     config_set_parser.add_argument("value", help="Configuration value")
     config_set_parser.add_argument("--json", action="store_true", help="Print JSON")
     config_set_parser.set_defaults(handler=_config_set)
@@ -616,6 +1370,30 @@ def _build_parser() -> argparse.ArgumentParser:
     rules_remove_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
     rules_remove_rule_parser.set_defaults(handler=_rules_remove_rule)
 
+    rules_set_priority_parser = rules_subparsers.add_parser(
+        "set-priority", help="Set a rule group's priority"
+    )
+    rules_set_priority_parser.add_argument("group")
+    rules_set_priority_parser.add_argument("priority", type=int)
+    rules_set_priority_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_set_priority_parser.set_defaults(handler=_rules_set_priority)
+
+    rules_enable_rule_parser = rules_subparsers.add_parser(
+        "enable-rule", help="Enable a single rule within a group"
+    )
+    rules_enable_rule_parser.add_argument("group")
+    rules_enable_rule_parser.add_argument("rule_id")
+    rules_enable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_enable_rule_parser.set_defaults(handler=_rules_set_rule_enabled, enabled=True)
+
+    rules_disable_rule_parser = rules_subparsers.add_parser(
+        "disable-rule", help="Disable a single rule within a group"
+    )
+    rules_disable_rule_parser.add_argument("group")
+    rules_disable_rule_parser.add_argument("rule_id")
+    rules_disable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    rules_disable_rule_parser.set_defaults(handler=_rules_set_rule_enabled, enabled=False)
+
     rules_import_parser = rules_subparsers.add_parser("import", help="Import a rule group JSON file")
     rules_import_parser.add_argument("file")
     rules_import_parser.add_argument("--name", help="Override imported group name")
@@ -674,6 +1452,46 @@ def _build_parser() -> argparse.ArgumentParser:
     ruleset_refresh_parser.add_argument("--json", action="store_true", help="Print JSON")
     ruleset_refresh_parser.set_defaults(handler=_ruleset_refresh)
 
+    ruleset_add_parser = ruleset_subparsers.add_parser(
+        "add", help="Define a rule-set trust policy"
+    )
+    ruleset_add_parser.add_argument("id")
+    ruleset_add_parser.add_argument(
+        "--kind", required=True, choices=[item.value for item in RuleSetKind]
+    )
+    ruleset_add_parser.add_argument("--source", required=True, help="Rule-set URL or built-in identifier")
+    ruleset_add_parser.add_argument(
+        "--sha256", help="Expected SHA-256 hex digest; required for --kind remote"
+    )
+    ruleset_add_parser.add_argument(
+        "--critical", dest="critical", action="store_true", default=None,
+        help="Treat load failure as fail-closed (default)",
+    )
+    ruleset_add_parser.add_argument(
+        "--no-critical", dest="critical", action="store_false",
+        help="Treat load failure as warn-and-skip",
+    )
+    ruleset_add_parser.add_argument(
+        "--update-interval-seconds", type=int, help="Refresh interval; default 86400"
+    )
+    ruleset_add_parser.add_argument(
+        "--max-stale-seconds", type=int, help="Maximum cache staleness; default 604800"
+    )
+    ruleset_add_parser.add_argument(
+        "--failure-behavior",
+        choices=[item.value for item in RuleSetFailureBehavior],
+        help="Override the failure-behavior derived from --critical",
+    )
+    ruleset_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+    ruleset_add_parser.set_defaults(handler=_ruleset_add)
+
+    ruleset_remove_parser = ruleset_subparsers.add_parser(
+        "remove", help="Remove a rule-set trust policy"
+    )
+    ruleset_remove_parser.add_argument("id")
+    ruleset_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    ruleset_remove_parser.set_defaults(handler=_ruleset_remove)
+
     app_policy_parser = subparsers.add_parser(
         "app-policy",
         help="Manage minimal Linux app/process policy",
@@ -718,6 +1536,11 @@ def _build_parser() -> argparse.ArgumentParser:
     app_policy_add_match = app_policy_add_parser.add_mutually_exclusive_group(required=True)
     app_policy_add_match.add_argument("--process-name", help="Process executable name")
     app_policy_add_match.add_argument("--process-path", help="Exact process executable path")
+    app_policy_add_match.add_argument(
+        "--process-path-regex", help="Regex matching a process executable path"
+    )
+    app_policy_add_match.add_argument("--user", help="Unix username")
+    app_policy_add_match.add_argument("--user-id", type=int, help="Unix numeric user ID")
     app_policy_add_parser.add_argument(
         "--action",
         required=True,
@@ -732,6 +1555,84 @@ def _build_parser() -> argparse.ArgumentParser:
     app_policy_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
     app_policy_remove_parser.set_defaults(handler=_app_policy_remove)
 
+    app_policy_enable_rule_parser = app_policy_subparsers.add_parser(
+        "enable-rule", help="Enable a single app policy rule"
+    )
+    app_policy_enable_rule_parser.add_argument("rule_id")
+    app_policy_enable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_enable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=True)
+
+    app_policy_disable_rule_parser = app_policy_subparsers.add_parser(
+        "disable-rule", help="Disable a single app policy rule"
+    )
+    app_policy_disable_rule_parser.add_argument("rule_id")
+    app_policy_disable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+    app_policy_disable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=False)
+
+    chain_parser = subparsers.add_parser("chain", help="Manage proxy route chains")
+    chain_subparsers = chain_parser.add_subparsers(dest="chain_command")
+    chain_subparsers.required = True
+
+    chain_list_parser = chain_subparsers.add_parser("list", help="List route chains")
+    chain_list_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_list_parser.set_defaults(handler=_chain_list)
+
+    chain_show_parser = chain_subparsers.add_parser("show", help="Show a route chain")
+    chain_show_parser.add_argument("id")
+    chain_show_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_show_parser.set_defaults(handler=_chain_show)
+
+    chain_create_parser = chain_subparsers.add_parser("create", help="Create a route chain")
+    chain_create_parser.add_argument("id")
+    chain_create_parser.add_argument(
+        "--hop",
+        action="append",
+        required=True,
+        metavar="TYPE:TARGET",
+        help="Chain hop, e.g. profile:my-node or group:my-group; repeat for multiple hops",
+    )
+    chain_create_parser.add_argument("--description", help="Free-form chain description")
+    chain_create_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_create_parser.set_defaults(handler=_chain_create)
+
+    chain_add_hop_parser = chain_subparsers.add_parser("add-hop", help="Append a hop to a route chain")
+    chain_add_hop_parser.add_argument("id")
+    chain_add_hop_parser.add_argument("--type", required=True, choices=[item.value for item in ChainHopType])
+    chain_add_hop_parser.add_argument("--target", required=True, help="Profile ID or node-group name")
+    chain_add_hop_parser.add_argument(
+        "--selection-policy",
+        choices=["group_policy"],
+        help="Only valid for --type group",
+    )
+    chain_add_hop_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_add_hop_parser.set_defaults(handler=_chain_add_hop)
+
+    chain_remove_hop_parser = chain_subparsers.add_parser(
+        "remove-hop", help="Remove a hop from a route chain by position"
+    )
+    chain_remove_hop_parser.add_argument("id")
+    chain_remove_hop_parser.add_argument(
+        "--index", type=int, required=True, help="1-based hop position, see `chain show`"
+    )
+    chain_remove_hop_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_remove_hop_parser.set_defaults(handler=_chain_remove_hop)
+
+    chain_enable_parser = chain_subparsers.add_parser("enable", help="Enable a route chain")
+    chain_enable_parser.add_argument("id")
+    chain_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_enable_parser.set_defaults(handler=_chain_set_enabled, enabled=True)
+
+    chain_disable_parser = chain_subparsers.add_parser("disable", help="Disable a route chain")
+    chain_disable_parser.add_argument("id")
+    chain_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_disable_parser.set_defaults(handler=_chain_set_enabled, enabled=False)
+
+    chain_remove_parser = chain_subparsers.add_parser("remove", help="Remove a route chain")
+    chain_remove_parser.add_argument("id")
+    chain_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+    chain_remove_parser.set_defaults(handler=_chain_remove)
+
+    parser.usage = ROOT_USAGE_TEMPLATE
     return parser
 
 
@@ -771,10 +1672,15 @@ def _connection_status(args: argparse.Namespace) -> int:
         return 0 if response.ok else 70
     if not response.ok:
         _error(response.error or "daemon command failed")
+        _print_command_outcome_hint(response)
         for hint in _connection_recovery_hints(response.error or "daemon command failed"):
             print(f"hint: {hint}", file=sys.stderr)
         return 70
-    _print_connection_state(response.payload.get("state", {}), command="status")
+    _print_connection_state(
+        response.payload.get("state", {}),
+        command="status",
+        no_color=bool(getattr(args, "no_color", False)),
+    )
     return 0
 
 
@@ -789,6 +1695,22 @@ def _connection_rotate(args: argparse.Namespace) -> int:
         success_label="Rotation requested",
         command="rotate",
     )
+
+
+def _command_outcome(args: argparse.Namespace) -> int:
+    try:
+        response = WatchdogIPCClient().command_outcome(args.command_id)
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("command outcome", args, exc)
+    return _command_response_output(response, json_output=bool(args.json))
+
+
+def _command_cancel(args: argparse.Namespace) -> int:
+    try:
+        response = WatchdogIPCClient().cancel_command(args.command_id)
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("command cancel", args, exc)
+    return _command_response_output(response, json_output=bool(args.json))
 
 
 def _version(args: argparse.Namespace) -> int:
@@ -815,10 +1737,41 @@ def _watchdogvpn_version(source: str | None = None) -> str:
     return match.group(1)
 
 
+def _maintenance(args: argparse.Namespace) -> int:
+    script = _maintenance_script_path()
+    command = [str(script), args.maintenance_command, *args.maintenance_args]
+    env = os.environ.copy()
+    env["WATCHDOGVPN_MAINTENANCE_INTERNAL"] = "1"
+    completed = subprocess.run(command, check=False, env=env)
+    return _normalize_exit_code(int(completed.returncode))
+
+
+def _maintenance_script_path() -> Path:
+    if os.environ.get("WATCHDOGVPN_MAINTENANCE_CLI"):
+        candidates = [Path(os.environ["WATCHDOGVPN_MAINTENANCE_CLI"]).expanduser()]
+    else:
+        runtime_root = Path(__file__).resolve().parents[1]
+        candidates = [
+            runtime_root / "bin" / "watchdogvpn",
+            Path("/usr/local/lib/watchdogvpn/bin/watchdogvpn"),
+            Path("/usr/local/bin/watchdogvpn"),
+            Path.cwd() / "bin" / "watchdogvpn",
+        ]
+    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+    if not script.exists():
+        raise FileNotFoundError(
+            "WatchdogVPN maintenance backend not found; reinstall WatchdogVPN or set "
+            "WATCHDOGVPN_MAINTENANCE_CLI"
+        )
+    if not os.access(script, os.X_OK):
+        raise PermissionError(f"maintenance backend is not executable: {script}")
+    return script
+
+
 def _panic(args: argparse.Namespace) -> int:
     script = _panic_script_path(args.panic_script)
     completed = subprocess.run([str(script), args.mode], check=False)
-    return int(completed.returncode)
+    return _normalize_exit_code(int(completed.returncode))
 
 
 def _panic_script_path(value: str | None) -> Path:
@@ -847,39 +1800,66 @@ def _doctor(args: argparse.Namespace) -> int:
     command = [str(script)]
     if args.json:
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        exit_code = _normalize_exit_code(int(completed.returncode))
         _print_json(
             {
                 "command": command,
-                "doctor_exit_code": int(completed.returncode),
+                "doctor_exit_code": exit_code,
                 "doctor_stdout": completed.stdout,
                 "doctor_stderr": completed.stderr,
                 "read_only": True,
                 "mutates_runtime": False,
             }
         )
-        return int(completed.returncode)
-    completed = subprocess.run(command, check=False)
-    return int(completed.returncode)
+        return exit_code
+    env = os.environ.copy()
+    if bool(getattr(args, "no_color", False)):
+        env["NO_COLOR"] = "1"
+    completed = subprocess.run(command, check=False, env=env)
+    return _normalize_exit_code(int(completed.returncode))
 
 
 def _doctor_script_path(value: str | None) -> Path:
-    if value:
-        candidates = [Path(value).expanduser()]
-    elif os.environ.get("WATCHDOGVPN_DOCTOR_SCRIPT"):
-        candidates = [Path(os.environ["WATCHDOGVPN_DOCTOR_SCRIPT"]).expanduser()]
+    script = _support_script_path(
+        "doctor.sh",
+        value,
+        "WATCHDOGVPN_DOCTOR_SCRIPT",
+        "doctor.sh not found; install WatchdogVPN again, run from the checkout, or set WATCHDOGVPN_REPO_DIR",
+    )
+    if not os.access(script, os.X_OK):
+        raise PermissionError(f"doctor script is not executable: {script}")
+    return script
+
+
+def _support_script_path(
+    script_name: str,
+    explicit_value: str | None,
+    env_var: str,
+    missing_message: str,
+) -> Path:
+    if explicit_value:
+        candidates = [Path(explicit_value).expanduser()]
+    elif os.environ.get(env_var):
+        candidates = [Path(os.environ[env_var]).expanduser()]
     else:
         candidates = []
         if os.environ.get("WATCHDOGVPN_REPO_DIR"):
-            candidates.append(Path(os.environ["WATCHDOGVPN_REPO_DIR"]).expanduser() / "doctor.sh")
-        candidates.append(Path.cwd() / "doctor.sh")
-        candidates.append(Path(__file__).resolve().parents[1] / "doctor.sh")
-    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+            candidates.append(Path(os.environ["WATCHDOGVPN_REPO_DIR"]).expanduser() / script_name)
+        candidates.append(Path(__file__).resolve().parents[1] / script_name)
+        if os.environ.get("WATCHDOGVPN_INSTALLED_LIB"):
+            candidates.append(Path(os.environ["WATCHDOGVPN_INSTALLED_LIB"]).expanduser() / script_name)
+        candidates.append(Path("/usr/local/lib/watchdogvpn") / script_name)
+        candidates.append(Path.cwd() / script_name)
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(candidate)
+    script = next((candidate for candidate in deduped if candidate.exists()), deduped[0])
     if not script.exists():
-        raise FileNotFoundError(
-            "doctor.sh not found; run from the WatchdogVPN checkout or set WATCHDOGVPN_REPO_DIR"
-        )
-    if not os.access(script, os.X_OK):
-        raise PermissionError(f"doctor script is not executable: {script}")
+        raise FileNotFoundError(missing_message)
     return script
 
 
@@ -894,10 +1874,17 @@ def _setup(args: argparse.Namespace) -> int:
     if not args.dry_run and plan["has_changes"]:
         backup_path = _create_setup_backup(plan)
         _apply_setup(args, plan)
+    if not plan["has_changes"]:
+        outcome = "no_changes"
+    elif args.dry_run:
+        outcome = "dry_run"
+    else:
+        outcome = "applied"
     data = {
         **plan,
         "dry_run": bool(args.dry_run),
         "applied": bool(not args.dry_run and plan["has_changes"]),
+        "outcome": outcome,
         "backup_path": str(backup_path) if backup_path else None,
         "backup_warning_acknowledged": bool(args.acknowledge_backup_warning),
     }
@@ -910,72 +1897,139 @@ def _setup(args: argparse.Namespace) -> int:
 
 def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
     operations: list[dict[str, object]] = []
-    if args.language:
-        operations.append({"target": "selection-state", "key": "selected_language", "value": args.language})
-        operations.append({"target": "selection-state", "key": "language_mode", "value": "manual"})
-    if args.autostart:
-        operations.append(
-            {
-                "target": "selection-state",
-                "key": "app_autostart_enabled",
-                "value": args.autostart == "enable",
-            }
-        )
-    if args.autoconnect:
-        operations.append(
-            {
-                "target": "selection-state",
-                "key": "vpn_autoconnect_enabled",
-                "value": args.autoconnect == "enable",
-            }
-        )
+    if args.language or args.autostart or args.autoconnect:
+        state = StateManager().load()
+        if args.language:
+            _append_setup_value_change(
+                operations,
+                target="selection-state",
+                key="selected_language",
+                current=state["selected_language"],
+                requested=args.language,
+            )
+            _append_setup_value_change(
+                operations,
+                target="selection-state",
+                key="language_mode",
+                current=state["language_mode"],
+                requested="manual",
+            )
+        if args.autostart:
+            _append_setup_value_change(
+                operations,
+                target="selection-state",
+                key="app_autostart_enabled",
+                current=state["app_autostart_enabled"],
+                requested=args.autostart == "enable",
+            )
+        if args.autoconnect:
+            _append_setup_value_change(
+                operations,
+                target="selection-state",
+                key="vpn_autoconnect_enabled",
+                current=state["vpn_autoconnect_enabled"],
+                requested=args.autoconnect == "enable",
+            )
     if args.profile_uri:
         profile = parse_uri(args.profile_uri)
-        operations.append(
-            {
-                "target": "profiles",
-                "action": "import-profile-uri",
-                "profile": _profile_summary(profile),
-            }
+        fingerprint = profile_fingerprint(profile)
+        duplicate = next(
+            (
+                existing
+                for existing in ProfileStore().list()
+                if existing.source == ProfileSource.MANUAL
+                and profile_fingerprint(existing) == fingerprint
+            ),
+            None,
         )
+        if duplicate is None:
+            operations.append(
+                {
+                    "target": "profiles",
+                    "action": "import-profile-uri",
+                    "profile": _profile_summary(profile),
+                }
+            )
     if args.provider_url:
         provider = _setup_provider_document(args.provider_url, args.provider_name)
-        operations.append(
-            {
-                "target": "providers",
-                "action": "store-provider-url",
-                "provider": _provider_summary(provider),
-                "network_fetch_performed": False,
-            }
+        existing_providers = ProviderStore().list()
+        existing_by_id = next(
+            (existing for existing in existing_providers if existing.id == provider.id),
+            None,
         )
+        if existing_by_id is not None and not _setup_provider_definition_matches(
+            existing_by_id,
+            provider,
+        ):
+            raise ParseError(
+                f"provider id already exists with a different definition: {provider.id}; "
+                "use `watchdog provider remove` before replacing it"
+            )
+        existing_by_url = next(
+            (
+                existing
+                for existing in existing_providers
+                if normalized_provider_url(existing.url) == provider.url
+            ),
+            None,
+        )
+        if existing_by_url is not None and existing_by_url.id != provider.id:
+            raise ParseError(f"provider already exists: {existing_by_url.id}")
+        if existing_by_id is None:
+            if len(existing_providers) >= 2:
+                raise ParseError("maximum 2 external providers allowed")
+            operations.append(
+                {
+                    "target": "providers",
+                    "action": "store-provider-url",
+                    "provider": _provider_summary(provider),
+                    "network_fetch_performed": False,
+                }
+            )
     if args.kill_switch:
-        operations.append(
-            {
-                "target": "settings",
-                "key": "kill_switch.enabled",
-                "value": args.kill_switch == "enable",
-            }
+        app_config = AppConfig().load()
+        _append_setup_value_change(
+            operations,
+            target="settings",
+            key="kill_switch.enabled",
+            current=app_config["kill_switch"]["enabled"],
+            requested=args.kill_switch == "enable",
         )
     if args.dns_mode:
-        operations.append({"target": "dns-policy", "key": "mode", "value": args.dns_mode})
-    if args.app_policy:
-        operations.append(
-            {
-                "target": "app-policy",
-                "key": "enabled",
-                "value": args.app_policy == "enable",
-            }
+        dns_policy = DNSPolicyStore().load()
+        _append_setup_value_change(
+            operations,
+            target="dns-policy",
+            key="mode",
+            current=dns_policy.mode.value,
+            requested=args.dns_mode,
         )
-    if args.app_policy_mode:
-        operations.append({"target": "app-policy", "key": "mode", "value": args.app_policy_mode})
-    if args.app_policy_default_action:
-        operations.append(
-            {
-                "target": "app-policy",
-                "key": "default_action",
-                "value": args.app_policy_default_action,
-            }
-        )
+    if args.app_policy or args.app_policy_mode or args.app_policy_default_action:
+        app_policy = AppPolicyStore().load()
+        if args.app_policy:
+            _append_setup_value_change(
+                operations,
+                target="app-policy",
+                key="enabled",
+                current=app_policy.enabled,
+                requested=args.app_policy == "enable",
+            )
+        if args.app_policy_mode:
+            _append_setup_value_change(
+                operations,
+                target="app-policy",
+                key="mode",
+                current=app_policy.mode.value,
+                requested=args.app_policy_mode,
+            )
+        if args.app_policy_default_action:
+            _append_setup_value_change(
+                operations,
+                target="app-policy",
+                key="default_action",
+                current=app_policy.default_action.value,
+                requested=args.app_policy_default_action,
+            )
     sections = sorted({str(item["target"]) for item in operations})
     return {
         "has_changes": bool(operations),
@@ -987,51 +2041,56 @@ def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _append_setup_value_change(
+    operations: list[dict[str, object]],
+    *,
+    target: str,
+    key: str,
+    current: object,
+    requested: object,
+) -> None:
+    if current == requested:
+        return
+    operations.append({"target": target, "key": key, "value": requested})
+
+
 def _apply_setup(args: argparse.Namespace, plan: dict[str, object]) -> None:
     sections = set(plan.get("sections", []))
-    state_manager = StateManager()
-    state = state_manager.load()
-    app_config_store = AppConfig()
-    app_config = app_config_store.load()
-    dns_store = DNSPolicyStore()
-    dns_policy = dns_store.load()
-    app_policy_store = AppPolicyStore()
-    app_policy = app_policy_store.load()
-
-    if args.language:
-        state["selected_language"] = args.language
-        state["language_mode"] = "manual"
-    if args.autostart:
-        state["app_autostart_enabled"] = args.autostart == "enable"
-    if args.autoconnect:
-        state["vpn_autoconnect_enabled"] = args.autoconnect == "enable"
-    if args.kill_switch:
-        app_config["kill_switch"]["enabled"] = args.kill_switch == "enable"
-    if args.dns_mode:
-        dns_policy.mode = DNSMode(args.dns_mode)
-        dns_policy = DNSPolicy.from_dict(dns_policy.to_dict())
-    if args.app_policy:
-        app_policy.enabled = args.app_policy == "enable"
-    if args.app_policy_mode:
-        app_policy.mode = AppPolicyMode(args.app_policy_mode)
-    if args.app_policy_default_action:
-        app_policy.default_action = AppPolicyAction(args.app_policy_default_action)
-    app_policy = AppPolicy.from_dict(app_policy.to_dict())
-
-    if args.profile_uri:
-        profile = ManualProvider(rotation_prompt=lambda _profile: False).from_uri(args.profile_uri)
-        ProfileStore().add(profile)
-    if args.provider_url:
-        ProviderStore().add(_setup_provider_document(args.provider_url, args.provider_name))
-
     if "selection-state" in sections:
+        state_manager = StateManager()
+        state = state_manager.load()
+        if args.language:
+            state["selected_language"] = args.language
+            state["language_mode"] = "manual"
+        if args.autostart:
+            state["app_autostart_enabled"] = args.autostart == "enable"
+        if args.autoconnect:
+            state["vpn_autoconnect_enabled"] = args.autoconnect == "enable"
         state_manager.save(state)
     if "settings" in sections:
+        app_config_store = AppConfig()
+        app_config = app_config_store.load()
+        app_config["kill_switch"]["enabled"] = args.kill_switch == "enable"
         app_config_store.save(app_config)
     if "dns-policy" in sections:
-        dns_store.save(dns_policy)
+        dns_store = DNSPolicyStore()
+        dns_policy = dns_store.load()
+        dns_policy.mode = DNSMode(args.dns_mode)
+        dns_store.save(DNSPolicy.from_dict(dns_policy.to_dict()))
     if "app-policy" in sections:
-        app_policy_store.save(app_policy)
+        app_policy_store = AppPolicyStore()
+        app_policy = app_policy_store.load()
+        if args.app_policy:
+            app_policy.enabled = args.app_policy == "enable"
+        if args.app_policy_mode:
+            app_policy.mode = AppPolicyMode(args.app_policy_mode)
+        if args.app_policy_default_action:
+            app_policy.default_action = AppPolicyAction(args.app_policy_default_action)
+        app_policy_store.save(AppPolicy.from_dict(app_policy.to_dict()))
+    if "profiles" in sections:
+        ManualProvider(rotation_prompt=lambda _profile: False).from_uri(args.profile_uri)
+    if "providers" in sections:
+        ProviderStore().add(_setup_provider_document(args.provider_url, args.provider_name))
 
 
 def _create_setup_backup(plan: dict[str, object]) -> Path:
@@ -1043,15 +2102,24 @@ def _create_setup_backup(plan: dict[str, object]) -> Path:
 
 
 def _setup_provider_document(url: str, name: str | None) -> Provider:
-    label = name or _setup_provider_id(url)
+    normalized_url = validate_subscription_url(url)
+    label = name or _setup_provider_id(normalized_url)
     return Provider(
         id=_setup_provider_id(label),
         name=label,
-        url=url,
+        url=normalized_url,
         last_updated=None,
         profiles=[],
         rotation_enabled=False,
         metadata={"setup_staged_without_fetch": True},
+    )
+
+
+def _setup_provider_definition_matches(existing: Provider, requested: Provider) -> bool:
+    return (
+        existing.id == requested.id
+        and existing.name == requested.name
+        and normalized_provider_url(existing.url) == normalized_provider_url(requested.url)
     )
 
 
@@ -1065,13 +2133,14 @@ def _print_setup_plan(data: dict[str, object]) -> None:
     print("WatchdogVPN setup plan")
     print(f"Dry run: {_on_off(bool(data['dry_run']))}")
     print(f"Applied: {_on_off(bool(data['applied']))}")
+    print(f"Outcome: {data['outcome']}")
     print(f"Runtime action executed: {_on_off(bool(data['runtime_action_executed']))}")
     print(f"Network fetch performed: {_on_off(bool(data['network_fetch_performed']))}")
     print(f"Backup: {data.get('backup_path') or '-'}")
     operations = data.get("operations", [])
     if not operations:
         print("Operations: none")
-        print("Use --dry-run with setup flags to preview local setup changes.")
+        print("Requested setup configuration is already effective or no changes were requested.")
         return
     print("Operations:")
     if isinstance(operations, list):
@@ -1125,14 +2194,15 @@ def _uninstall(args: argparse.Namespace) -> int:
         return 0
     if args.json:
         completed = subprocess.run(command, text=True, capture_output=True, check=False)
-        data["uninstall_exit_code"] = int(completed.returncode)
+        exit_code = _normalize_exit_code(int(completed.returncode))
+        data["uninstall_exit_code"] = exit_code
         data["uninstall_stdout"] = completed.stdout
         data["uninstall_stderr"] = completed.stderr
         _print_json(data)
-        return int(completed.returncode)
+        return exit_code
     _print_uninstall_plan(data)
     completed = subprocess.run(command, check=False)
-    return int(completed.returncode)
+    return _normalize_exit_code(int(completed.returncode))
 
 
 def _uninstall_mode(args: argparse.Namespace) -> str:
@@ -1215,21 +2285,12 @@ def _uninstall_script_command(args: argparse.Namespace, mode: str) -> list[str]:
 
 
 def _uninstall_script_path(value: str | None) -> Path:
-    if value:
-        candidates = [Path(value).expanduser()]
-    elif os.environ.get("WATCHDOGVPN_UNINSTALL_SCRIPT"):
-        candidates = [Path(os.environ["WATCHDOGVPN_UNINSTALL_SCRIPT"]).expanduser()]
-    else:
-        candidates = []
-        if os.environ.get("WATCHDOGVPN_REPO_DIR"):
-            candidates.append(Path(os.environ["WATCHDOGVPN_REPO_DIR"]).expanduser() / "uninstall.sh")
-        candidates.append(Path.cwd() / "uninstall.sh")
-        candidates.append(Path(__file__).resolve().parents[1] / "uninstall.sh")
-    script = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
-    if not script.exists():
-        raise FileNotFoundError(
-            f"uninstall.sh not found; run from the WatchdogVPN checkout or set WATCHDOGVPN_REPO_DIR"
-        )
+    script = _support_script_path(
+        "uninstall.sh",
+        value,
+        "WATCHDOGVPN_UNINSTALL_SCRIPT",
+        "uninstall.sh not found; install WatchdogVPN again, run from the checkout, or set WATCHDOGVPN_REPO_DIR",
+    )
     if not os.access(script, os.X_OK):
         raise PermissionError(f"uninstall script is not executable: {script}")
     return script
@@ -1384,11 +2445,19 @@ def _backup_restore(args: argparse.Namespace) -> int:
         replace_confirmation=args.confirm,
         password=password,
     )
+    informational_sections = [
+        section for section in selected_sections if section in INFORMATIONAL_SECTION_NAMES
+    ]
+    restored_sections = [
+        section for section in selected_sections if section not in INFORMATIONAL_SECTION_NAMES
+    ]
     data = {
         **_backup_manifest_summary(result.path, result.manifest, encrypted=bool(parsed.encrypted)),
         "dry_run": False,
         "restore_mode": args.mode,
         "selected_sections": selected_sections,
+        "restored_sections": restored_sections,
+        "informational_sections": informational_sections,
         "pre_restore_backup": str(result.pre_restore_backup),
         "restore_would_write": True,
     }
@@ -1397,7 +2466,12 @@ def _backup_restore(args: argparse.Namespace) -> int:
     else:
         print(f"Backup restored: {result.path}")
         print(f"Mode: {args.mode}")
-        print(f"Sections: {', '.join(selected_sections)}")
+        print(f"Sections restored: {', '.join(restored_sections) or '-'}")
+        if informational_sections:
+            print(
+                "Sections informational (not restored, no persisted state to write): "
+                f"{', '.join(informational_sections)}"
+            )
         print(f"Pre-restore backup: {result.pre_restore_backup}")
     return 0
 
@@ -1440,15 +2514,46 @@ def _connection_response_output(
         return 0 if response.ok else 70
     if not response.ok:
         _error(response.error or "daemon command failed")
+        _print_command_outcome_hint(response)
         for hint in _connection_recovery_hints(response.error or "daemon command failed"):
             print(f"hint: {hint}", file=sys.stderr)
         return 70
-    print(success_label)
+    if "performed" in response.payload and not response.payload["performed"]:
+        print("Rotation skipped: automatic actions are disabled (VPN is off).")
+    else:
+        print(success_label)
     if "profile_id" in response.payload:
         print(f"Profile: {response.payload['profile_id']}")
     if "state" in response.payload:
         _print_connection_state(response.payload["state"], command=command)
     return 0
+
+
+def _command_response_output(response: Response, *, json_output: bool) -> int:
+    if json_output:
+        _print_json(response.to_dict())
+        return 0 if response.ok else 70
+    command_id = response.payload.get("command_id")
+    outcome = response.payload.get("outcome")
+    if not response.ok:
+        _error(response.error or "daemon command failed")
+        _print_command_outcome_hint(response)
+        return 70
+    if isinstance(command_id, str) and isinstance(outcome, str):
+        print(f"Command {command_id}: {outcome}")
+    else:
+        print("Command outcome available")
+    if "state" in response.payload:
+        _print_connection_state(response.payload["state"], command="command outcome")
+    return 0
+
+
+def _print_command_outcome_hint(response: Response) -> None:
+    command_id = response.payload.get("command_id")
+    error_kind = response.payload.get("error_kind")
+    if isinstance(command_id, str) and error_kind in {"command_in_progress", "command_cancelled"}:
+        print(f"command_id: {command_id}", file=sys.stderr)
+        print(f"query: watchdog command outcome {command_id}", file=sys.stderr)
 
 
 def _connection_ipc_error_output(command: str, args: argparse.Namespace, exc: WatchdogIPCError) -> int:
@@ -1465,11 +2570,13 @@ def _connection_response_document(response: Response, *, command: str) -> dict[s
     data = response.to_dict()
     payload = dict(data.get("payload") or {})
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+    error_kind = payload.get("error_kind")
     payload["lifecycle"] = _connection_lifecycle_summary(
         command=command,
         daemon_reachable=True,
         state=state if isinstance(state, dict) else {},
         error=response.error,
+        error_kind=error_kind if isinstance(error_kind, str) else None,
     )
     if response.error:
         payload["recovery_hints"] = _connection_recovery_hints(response.error)
@@ -1488,6 +2595,7 @@ def _connection_error_document(command: str, error: str, *, exit_code: int) -> d
                 daemon_reachable=False,
                 state={},
                 error=error,
+                error_kind=None,
             ),
             "recovery_hints": _connection_recovery_hints(error),
             "exit_code": exit_code,
@@ -1502,13 +2610,29 @@ def _connection_lifecycle_summary(
     daemon_reachable: bool,
     state: dict[str, object],
     error: str | None,
+    error_kind: str | None = None,
 ) -> dict[str, object]:
     desired_state = _connection_desired_state()
     runtime_status = str(state.get("status") or "unknown")
     proxy_active = bool(state.get("proxy_active", False))
     tun_active = bool(state.get("tun_active", False))
+    kill_switch_active = bool(state.get("kill_switch_active", False))
+    kill_switch_status = str(state.get("kill_switch_status") or "inactive")
+    runtime_artifacts_raw = state.get("runtime_artifacts", ())
+    runtime_artifacts = (
+        [str(value) for value in runtime_artifacts_raw]
+        if isinstance(runtime_artifacts_raw, (list, tuple))
+        else []
+    )
     lan_gateway_status = str(state.get("lan_gateway_status") or "disabled")
-    runtime_active = proxy_active or tun_active or bool(state.get("lan_gateway_active", False))
+    runtime_active = (
+        proxy_active
+        or tun_active
+        or kill_switch_active
+        or kill_switch_status == "partial"
+        or bool(runtime_artifacts)
+        or bool(state.get("lan_gateway_active", False))
+    )
     disconnected_cleanly = (
         daemon_reachable
         and desired_state == "off"
@@ -1516,18 +2640,30 @@ def _connection_lifecycle_summary(
         and not runtime_active
         and lan_gateway_status in {"disabled", "configured", ""}
     )
-    failure_statuses = {
-        "all_failed",
-        "kill_switch_active",
-        "normal_network_temp",
-        "rotation_unavailable",
-        "waiting_retry",
-    }
+    last_failure_reason = str(state.get("last_failure_reason") or "")
     failure_or_degraded = (
         bool(error)
-        or runtime_status in failure_statuses
+        or runtime_status in FAILURE_STATUSES
         or lan_gateway_status == "degraded"
+        or bool(last_failure_reason)
     )
+    # profile_available is derived from a structured error_kind (set by
+    # daemon/runtime_worker.py::_handle_connect), not by guessing at the
+    # free-text error message (WDCLI-005: that used to substring-match
+    # "profile not found", which silently defaulted to True for any other
+    # failure wording, including "profile_id must be a non-empty string").
+    # None means genuinely indeterminate: "invalid_input" has no profile
+    # identity to assess at all, and an unstructured/transport-level error
+    # (e.g. WatchdogIPCError, daemon never reached) carries no error_kind -
+    # neither case should guess True or False.
+    if error is None:
+        profile_available: bool | None = True
+    elif error_kind == "profile_not_found":
+        profile_available = False
+    elif error_kind in {"connect_failed", "unsupported_policy", "management_path_unprotected", "cleanup_failed"}:
+        profile_available = True
+    else:
+        profile_available = None
     profile_id = state.get("active_profile_id") or ""
     return {
         "command": command,
@@ -1538,12 +2674,23 @@ def _connection_lifecycle_summary(
         "runtime_active": runtime_active,
         "proxy_active": proxy_active,
         "tun_active": tun_active,
-        "kill_switch_active": bool(state.get("kill_switch_active", False)),
+        "kill_switch_active": kill_switch_active,
+        "kill_switch_status": kill_switch_status,
+        "kill_switch_method": str(state.get("kill_switch_method") or ""),
+        "kill_switch_consistent": bool(state.get("kill_switch_consistent", True)),
+        "runtime_mismatch_severity": str(state.get("runtime_mismatch_severity") or ""),
+        "runtime_artifacts": runtime_artifacts,
         "lan_gateway_status": lan_gateway_status,
-        "profile_available": not (error and "profile not found" in error),
-        "runtime_available": daemon_reachable and not (error and "unavailable" in error.lower()),
+        "profile_available": profile_available,
+        # Nothing in the codebase currently distinguishes "daemon reachable
+        # but runtime subsystem down" from "daemon reachable" - the old
+        # substring match on "unavailable" was guessing at a distinction
+        # that doesn't exist anywhere else.
+        "runtime_available": daemon_reachable,
         "disconnected_cleanly": disconnected_cleanly,
         "failure_or_degraded": failure_or_degraded,
+        "last_failure_reason": last_failure_reason,
+        "last_failure_at": str(state.get("last_failure_at") or ""),
         "cleanup_expectations": _connection_cleanup_expectations(command, state),
     }
 
@@ -1573,6 +2720,12 @@ def _connection_cleanup_expectations(command: str, state: dict[str, object]) -> 
             "proxy_active": bool(state.get("proxy_active", False)),
             "tun_active": bool(state.get("tun_active", False)),
             "lan_gateway_status": str(state.get("lan_gateway_status") or "disabled"),
+            "kill_switch_status": str(state.get("kill_switch_status") or "inactive"),
+            "runtime_artifacts": (
+                [str(value) for value in state.get("runtime_artifacts", ())]
+                if isinstance(state.get("runtime_artifacts", ()), (list, tuple))
+                else []
+            ),
         },
     }
 
@@ -1592,6 +2745,11 @@ def _connection_recovery_hints(error: str) -> list[str]:
         return ["check daemon logs with: sudo journalctl -u watchdogvpn"]
     if "profile not found" in lowered:
         return ["run: watchdog profile list"]
+    if "tun refused:" in lowered:
+        return [
+            "TUN was refused before network activation because the SSH control path cannot be proven safe",
+            "use a local console or restore ss/iproute2, then run: watchdog status",
+        ]
     if "connect failed" in lowered:
         return [
             "run: watchdog status",
@@ -1605,31 +2763,47 @@ def _connection_recovery_hints(error: str) -> list[str]:
     return []
 
 
-def _print_connection_state(state: dict, *, command: str) -> None:
+def _print_connection_state(state: dict, *, command: str, no_color: bool = False) -> None:
     lifecycle = _connection_lifecycle_summary(
         command=command,
         daemon_reachable=True,
         state=state,
         error=None,
     )
-    print(f"Daemon: {'reachable' if lifecycle['daemon_reachable'] else 'unreachable'}")
-    print(f"Desired state: {lifecycle['desired_state']}")
-    print(f"Status: {state.get('status', 'unknown')}")
-    print(f"Actual runtime state: {lifecycle['actual_runtime_state']}")
+    print(f"Daemon: {_semantic('reachable' if lifecycle['daemon_reachable'] else 'unreachable', no_color=no_color)}")
+    print(f"Desired state: {_semantic(lifecycle['desired_state'], no_color=no_color)}")
+    print(f"Status: {_semantic(state.get('status', 'unknown'), no_color=no_color)}")
+    print(f"Actual runtime state: {_semantic(lifecycle['actual_runtime_state'], no_color=no_color)}")
     print(f"Mode: {state.get('mode', '-')}")
     active_profile_id = state.get("active_profile_id") or "-"
     print(f"Active profile: {active_profile_id}")
-    print(f"TUN: {_on_off(bool(state.get('tun_active', False)))}")
-    print(f"Proxy: {_on_off(bool(state.get('proxy_active', False)))}")
+    print(f"TUN: {_on_off(bool(state.get('tun_active', False)), no_color=no_color)}")
+    print(f"Proxy: {_on_off(bool(state.get('proxy_active', False)), no_color=no_color)}")
     lan_gateway_status = str(state.get("lan_gateway_status", "disabled"))
-    print(f"LAN gateway: {lan_gateway_status}")
+    print(f"LAN gateway: {_semantic(lan_gateway_status, no_color=no_color)}")
     if lan_gateway_status != "disabled" or state.get("lan_gateway_active"):
         print(f"LAN gateway interface: {state.get('lan_gateway_interface') or '-'}")
         print(f"LAN gateway clients: {state.get('lan_gateway_client_cidr') or '-'}")
         print(f"LAN gateway DNS: {state.get('lan_gateway_dns_mode') or '-'}")
-    print(f"Kill switch: {_on_off(bool(state.get('kill_switch_active', False)))}")
-    print(f"Disconnected cleanly: {_on_off(bool(lifecycle['disconnected_cleanly']))}")
-    print(f"Failure/degraded: {_on_off(bool(lifecycle['failure_or_degraded']))}")
+    print(f"Kill switch: {_danger_on_off(bool(state.get('kill_switch_active', False)), no_color=no_color)}")
+    print(f"Kill switch state: {_semantic(state.get('kill_switch_status', 'inactive'), no_color=no_color)}")
+    if state.get("kill_switch_method"):
+        print(f"Kill switch backend: {state['kill_switch_method']}")
+    if state.get("status") == "runtime_mismatch":
+        severity = str(state.get("runtime_mismatch_severity") or "critical")
+        print(f"Runtime mismatch severity: {_semantic(severity, no_color=no_color)}")
+        artifacts = state.get("runtime_artifacts", ())
+        if isinstance(artifacts, (list, tuple)):
+            print("Effective runtime evidence:")
+            for artifact in artifacts:
+                print(f"  - {artifact}")
+        print("Recovery: inspect daemon logs, then run `watchdog disconnect` to reconcile owned state.")
+    print(f"Disconnected cleanly: {_on_off(bool(lifecycle['disconnected_cleanly']), no_color=no_color)}")
+    print(f"Failure/degraded: {_danger_on_off(bool(lifecycle['failure_or_degraded']), no_color=no_color)}")
+    last_failure_reason = str(lifecycle.get("last_failure_reason") or "")
+    if last_failure_reason:
+        last_failure_at = str(lifecycle.get("last_failure_at") or "-")
+        print(f"Last failure: {_semantic(last_failure_reason, no_color=no_color)} at {last_failure_at}")
     if command == "disconnect":
         print("Cleanup expectations:")
         cleanup = lifecycle["cleanup_expectations"]
@@ -1639,7 +2813,8 @@ def _print_connection_state(state: dict, *, command: str) -> None:
 
 
 def _profile_add(args: argparse.Namespace) -> int:
-    provider = ManualProvider(rotation_prompt=_prompt_rotation_pool)
+    rotation_prompt = (lambda _profile: False) if args.json else _prompt_rotation_pool
+    provider = ManualProvider(rotation_prompt=rotation_prompt)
     if args.clipboard:
         profile = provider.from_clipboard()
         if profile is None:
@@ -1675,33 +2850,76 @@ def _profile_add(args: argparse.Namespace) -> int:
 def _profile_list(args: argparse.Namespace) -> int:
     store = ProfileStore()
     if args.pool:
-        profiles = pool_builder.build_pool(store, ProviderStore(), AppConfig().load())
+        available_profiles = pool_builder.build_pool(
+            store,
+            ProviderStore(),
+            AppConfig().load(),
+        )
     else:
-        profiles = store.list()
+        available_profiles = store.list()
+    profiles, active_filters = _filter_profiles(available_profiles, args)
     data = [_profile_summary(profile) for profile in profiles]
     if args.json:
         _print_json(data)
         return 0
     if not profiles:
-        print("No profiles found.")
+        if available_profiles and active_filters:
+            print("No profiles match the selected filters.")
+        else:
+            print("No profiles found.")
         return 0
-    print("ID\tProtocol\tCategory\tSource\tEnabled\tRotation\tHealth\tName")
-    for item in data:
-        print(
-            "\t".join(
-                [
-                    str(item["id"]),
-                    str(item["protocol"]),
-                    str(item["resilience_category"]),
-                    str(item["source"]),
-                    _on_off(bool(item["enabled"])),
-                    _on_off(bool(item["in_rotation_pool"])),
-                    str(item["health_status"]),
-                    str(item["name"]),
-                ]
-            )
-        )
+    _print_profile_list(
+        profiles,
+        wide=bool(args.wide),
+        pool_only=bool(args.pool),
+        no_color=bool(getattr(args, "no_color", False)),
+        available_count=len(available_profiles),
+        active_filters=active_filters,
+    )
     return 0
+
+
+def _filter_profiles(
+    profiles: list[Profile],
+    args: argparse.Namespace,
+) -> tuple[list[Profile], list[str]]:
+    source = getattr(args, "source", None)
+    provider_id = getattr(args, "provider_id", None)
+    if source == "manual" and provider_id:
+        raise ParseError("--provider cannot be combined with --source manual")
+
+    filtered = list(profiles)
+    active_filters: list[str] = []
+    if source is not None:
+        expected_source = (
+            ProfileSource.MANUAL
+            if source == "manual"
+            else ProfileSource.SUBSCRIPTION
+        )
+        filtered = [profile for profile in filtered if profile.source == expected_source]
+        active_filters.append(f"source={source}")
+    protocol = getattr(args, "protocol", None)
+    if protocol is not None:
+        filtered = [
+            profile for profile in filtered if profile.protocol.value == protocol
+        ]
+        active_filters.append(f"protocol={protocol}")
+    health = getattr(args, "health", None)
+    if health is not None:
+        filtered = [profile for profile in filtered if profile.health_status == health]
+        active_filters.append(f"health={health}")
+    if provider_id:
+        filtered = [
+            profile for profile in filtered if profile.provider_id == provider_id
+        ]
+        active_filters.append(f"provider={provider_id}")
+    if bool(getattr(args, "enabled_only", False)):
+        filtered = [profile for profile in filtered if profile.enabled]
+        active_filters.append("state=enabled")
+    elif bool(getattr(args, "disabled_only", False)):
+        filtered = [profile for profile in filtered if not profile.enabled]
+        active_filters.append("state=disabled")
+    return filtered, active_filters
 
 
 def _profile_remove(args: argparse.Namespace) -> int:
@@ -1775,19 +2993,35 @@ def _provider_list(args: argparse.Namespace) -> int:
     if not summaries:
         print("No providers found.")
         return 0
-    print("ID\tName\tEnabled\tNodes\tLast update\tTraffic\tExpires")
-    for summary in summaries:
+    rows = [
+        (
+            summary["id"],
+            summary["name"],
+            _on_off_plain(bool(summary["rotation_enabled"])),
+            str(summary["node_count"]),
+            str(summary["last_updated"] or "-"),
+            str(summary["traffic"] or "-"),
+            str(summary["expires_at"] or "-"),
+        )
+        for summary in summaries
+    ]
+    columns = ("ID", "Name", "Enabled", "Nodes", "Last update", "Traffic", "Expires")
+    widths = [
+        max(
+            visible_width(terminal_safe_text(row[index]))
+            for row in [columns, *rows]
+        )
+        for index in range(len(columns))
+    ]
+    print(_format_profile_row(columns, widths))
+    print(_format_profile_row(tuple("-" * width for width in widths), widths))
+    for row in rows:
         print(
-            "\t".join(
-                [
-                    summary["id"],
-                    summary["name"],
-                    _on_off(bool(summary["rotation_enabled"])),
-                    str(summary["node_count"]),
-                    str(summary["last_updated"] or "-"),
-                    str(summary["traffic"] or "-"),
-                    str(summary["expires_at"] or "-"),
-                ]
+            _format_profile_row(
+                row,
+                widths,
+                semantic_columns={2},
+                no_color=bool(getattr(args, "no_color", False)),
             )
         )
     return 0
@@ -2029,10 +3263,131 @@ def _node_group_select(args: argparse.Namespace) -> int:
     return 0
 
 
+def _node_group_add_provider(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    provider = _require_provider(ProviderStore(), args.provider)
+    backup_path = _create_section_backup("node-groups")
+    group = store.add_member_provider(args.group, provider.id)
+    data = {
+        "group": _node_group_summary(group),
+        "added_provider_id": provider.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Added provider to node group: {group.name} provider={provider.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_remove_provider(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    provider = _require_provider(ProviderStore(), args.provider)
+    backup_path = _create_section_backup("node-groups")
+    group = store.remove_member_provider(args.group, provider.id)
+    data = {
+        "group": _node_group_summary(group),
+        "removed_provider_id": provider.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Removed provider from node group: {group.name} provider={provider.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_exclude(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    profile = _require_profile(ProfileStore(), args.profile)
+    backup_path = _create_section_backup("node-groups")
+    group = store.add_exclude_profile(args.group, profile.id)
+    data = {
+        "group": _node_group_summary(group),
+        "excluded_profile_id": profile.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Excluded profile from node group: {group.name} profile={profile.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_unexclude(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    profile = _require_profile(ProfileStore(), args.profile)
+    backup_path = _create_section_backup("node-groups")
+    group = store.remove_exclude_profile(args.group, profile.id)
+    data = {
+        "group": _node_group_summary(group),
+        "unexcluded_profile_id": profile.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Removed profile from node group exclusion list: {group.name} profile={profile.id}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_set_resilience(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    policy = NodeGroupResiliencePolicy(args.policy)
+    backup_path = _create_section_backup("node-groups")
+    group = store.set_resilience_policy(args.group, policy)
+    data = {
+        "group": _node_group_summary(group),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Node group resilience policy set: {group.name} policy={policy.value}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
+def _node_group_set_enabled(args: argparse.Namespace) -> int:
+    store = NodeGroupStore()
+    _require_node_group(store, args.group)
+    backup_path = _create_section_backup("node-groups")
+    group = store.set_enabled(args.group, bool(args.enabled))
+    data = {
+        "group": _node_group_summary(group),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("node-groups", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Node group {'enabled' if group.enabled else 'disabled'}: {group.name}")
+    print(f"Backup: {backup_path}")
+    return 0
+
+
 def _node_group_auto_test(args: argparse.Namespace) -> int:
-    response = WatchdogIPCClient().node_group_auto_test(args.group)
+    try:
+        response = WatchdogIPCClient().node_group_auto_test(args.group)
+    except WatchdogIPCError as exc:
+        return _connection_ipc_error_output("node-group auto-test", args, exc)
     if not response.ok:
         _error(response.error or "node-group auto-test failed")
+        _print_command_outcome_hint(response)
         return 70
     data = response.payload
     if args.json:
@@ -2047,6 +3402,8 @@ def _config_set(args: argparse.Namespace) -> int:
         return _config_set_mode_value(args.value, args.json)
     if args.key in {"routing-policy", "capture-modes", "default-route-action"}:
         return _config_set_routing_value(args.key, args.value, args.json)
+    if args.key.startswith("dns."):
+        return _config_set_dns_value(args.key, args.value, args.json)
     if args.key not in CONFIG_SET_KEYS:
         supported = ", ".join(
             [
@@ -2054,6 +3411,7 @@ def _config_set(args: argparse.Namespace) -> int:
                 "routing-policy",
                 "capture-modes",
                 "default-route-action",
+                *sorted(DNS_POLICY_SET_KEYS),
                 *sorted(CONFIG_SET_KEYS),
             ]
         )
@@ -2155,6 +3513,43 @@ def _config_set_routing_value(key: str, value: str, json_output: bool) -> int:
     else:
         print("Routing state updated.")
         _print_routing_state_summary(data)
+    return 0
+
+
+def _config_set_dns_value(key: str, value: str, json_output: bool) -> int:
+    if key not in DNS_POLICY_SET_KEYS:
+        supported = ", ".join(sorted(DNS_POLICY_SET_KEYS))
+        raise ParseError(f"unsupported dns config key: {key} (supported: {supported})")
+    field_name = key.split(".", 1)[1]
+    store = DNSPolicyStore()
+    policy = store.load()
+    parsed: object
+    if key in DNS_POLICY_BOOL_SET_KEYS:
+        lowered = value.lower()
+        if lowered == "true":
+            parsed = True
+        elif lowered == "false":
+            parsed = False
+        else:
+            raise ParseError(f"{key} must be true or false")
+    elif key == "dns.ecs_direct_subnet" and value.lower() in {"none", "null", ""}:
+        parsed = None
+    else:
+        parsed = value
+    setattr(policy, field_name, parsed)
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    mutation_data = _save_dns_policy_mutation(store, policy)
+    data = {
+        "key": key,
+        "value": getattr(policy, field_name),
+        "backup_path": mutation_data["backup_path"],
+        "rollback_point": mutation_data["rollback_point"],
+    }
+    if json_output:
+        _print_json(data)
+    else:
+        print(f"Config set: {key}={data['value']}")
+        print(f"Backup: {data['backup_path']}")
     return 0
 
 
@@ -2264,9 +3659,11 @@ def _print_routing_state_summary(data: dict[str, object]) -> None:
     print("Compatibility active_mode: display only")
 
 
-def _parse_config_value(key: str, value: str) -> bool | int | str:
+def _parse_config_value(key: str, value: str) -> bool | int | str | list[str]:
     if key == "rotation.scheduled_interval_hours" and value == "off":
         return 0
+    if key == "rotation.health_targets":
+        return [item.strip() for item in value.split(",")]
     if key in CONFIG_BOOL_SET_KEYS:
         lowered = value.lower()
         if lowered == "true":
@@ -2576,6 +3973,59 @@ def _rules_remove_rule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rules_set_priority(args: argparse.Namespace) -> int:
+    store = RuleStore()
+    existing = store.get_group(args.group)
+    if existing is None:
+        raise RuleStoreError(
+            f"rule group not found: {args.group}; run `watchdog rules list` to inspect rule groups"
+        )
+    backup_path = store.replace_group(existing, backup_existing=True)
+    group = store.set_priority(args.group, args.priority)
+    data = {
+        "group": group.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Rule group priority set: {group.name} priority={group.priority}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _rules_set_rule_enabled(args: argparse.Namespace) -> int:
+    store = RuleStore()
+    existing = store.get_group(args.group)
+    if existing is None:
+        raise RuleStoreError(
+            f"rule group not found: {args.group}; run `watchdog rules list` to inspect rule groups"
+        )
+    if not any(rule.id == args.rule_id for rule in existing.rules):
+        raise RuleStoreError(
+            f"rule not found: {args.rule_id}; run `watchdog rules export {args.group} --json` to inspect rules"
+        )
+    backup_path = store.replace_group(existing, backup_existing=True)
+    group = store.set_rule_enabled(args.group, args.rule_id, bool(args.enabled))
+    data = {
+        "group": group.to_dict(),
+        "rule_id": args.rule_id,
+        "enabled": bool(args.enabled),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if args.enabled else "disabled"
+        print(f"Rule {state}: {group.name}/{args.rule_id}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
 def _rules_import(args: argparse.Namespace) -> int:
     source = Path(args.file)
     try:
@@ -2721,6 +4171,272 @@ def _ruleset_refresh(args: argparse.Namespace) -> int:
                 ]
             )
         )
+    return 0
+
+
+def _ruleset_add(args: argparse.Namespace) -> int:
+    store = RuleSetTrustStore()
+    kwargs: dict[str, object] = {
+        "id": args.id,
+        "kind": args.kind,
+        "source": args.source,
+    }
+    if args.sha256 is not None:
+        kwargs["expected_sha256"] = args.sha256
+    if args.critical is not None:
+        kwargs["critical"] = args.critical
+    if args.update_interval_seconds is not None:
+        kwargs["update_interval_seconds"] = args.update_interval_seconds
+    if args.max_stale_seconds is not None:
+        kwargs["max_stale_seconds"] = args.max_stale_seconds
+    if args.failure_behavior is not None:
+        kwargs["failure_behavior"] = args.failure_behavior
+    try:
+        policy = RuleSetTrustPolicy(**kwargs)
+    except ValueError as exc:
+        raise ParseError(str(exc)) from exc
+    backup_path = store.add(policy)
+    data = {
+        "policy": policy.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Rule-set trust policy added: {policy.id}")
+        print(f"Kind: {policy.kind.value}")
+        print(f"Failure behavior: {policy.failure_behavior.value}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _ruleset_remove(args: argparse.Namespace) -> int:
+    store = RuleSetTrustStore()
+    backup_path = store.remove(args.id)
+    data = {
+        "removed": args.id,
+        "backup_path": str(backup_path) if backup_path else None,
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Rule-set trust policy removed: {args.id}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _require_chain(store: RouteChainStore, chain_id: str) -> RouteChain:
+    chain = store.get(chain_id)
+    if chain is None:
+        raise ParseError(
+            f"route chain not found: {chain_id}; run `watchdog chain list` to inspect route chains"
+        )
+    return chain
+
+
+def _parse_chain_hop_spec(spec: str) -> ChainHop:
+    hop_type, sep, target = spec.partition(":")
+    if not sep:
+        raise ParseError(f"invalid --hop value, expected TYPE:TARGET: {spec}")
+    normalized_type = hop_type.strip()
+    selection_policy = "group_policy" if normalized_type == ChainHopType.GROUP.value else None
+    return ChainHop(
+        type=normalized_type,
+        target=target.strip(),
+        selection_policy=selection_policy,
+    )
+
+
+def _chain_summary(chain: RouteChain) -> dict:
+    return chain.to_dict()
+
+
+def _validate_chain_hop_targets(hops: list[ChainHop]) -> None:
+    profile_store = ProfileStore()
+    node_group_store = NodeGroupStore()
+    for hop in hops:
+        if hop.type == ChainHopType.PROFILE:
+            _require_profile(profile_store, hop.target)
+        elif hop.type == ChainHopType.GROUP:
+            _require_node_group(node_group_store, hop.target)
+
+
+def _updated_chain(
+    chain: RouteChain,
+    *,
+    hops: list[ChainHop] | None = None,
+    enabled: bool | None = None,
+) -> RouteChain:
+    data = chain.to_dict()
+    if hops is not None:
+        data["hops"] = [hop.to_dict() for hop in hops]
+    if enabled is not None:
+        data["enabled"] = enabled
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return RouteChain.from_dict(data)
+
+
+def _chain_list(args: argparse.Namespace) -> int:
+    chains = RouteChainStore().list()
+    data = [_chain_summary(chain) for chain in chains]
+    if args.json:
+        _print_json(data)
+        return 0
+    if not chains:
+        print("No route chains found.")
+        return 0
+    print("ID\tEnabled\tHops\tDescription")
+    for chain in chains:
+        print(
+            "\t".join(
+                [
+                    chain.id,
+                    _on_off(chain.enabled),
+                    str(len(chain.hops)),
+                    chain.description or "-",
+                ]
+            )
+        )
+    return 0
+
+
+def _chain_show(args: argparse.Namespace) -> int:
+    chain = _require_chain(RouteChainStore(), args.id)
+    data = _chain_summary(chain)
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"Chain: {chain.id}")
+    print(f"Enabled: {_on_off(chain.enabled)}")
+    print(f"Description: {chain.description or '-'}")
+    print("Hops:")
+    for index, hop in enumerate(chain.hops, start=1):
+        extra = f" selection_policy={hop.selection_policy}" if hop.selection_policy else ""
+        print(f"  {index}. {hop.type.value}:{hop.target}{extra}")
+    return 0
+
+
+def _chain_create(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    if store.get(args.id) is not None:
+        raise ParseError(
+            f"route chain already exists: {args.id}; run `watchdog chain show {args.id}` to inspect it"
+        )
+    hops = [_parse_chain_hop_spec(spec) for spec in args.hop]
+    _validate_chain_hop_targets(hops)
+    created_at = datetime.now(timezone.utc).isoformat()
+    chain = RouteChain(
+        id=args.id,
+        hops=hops,
+        description=args.description,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    backup_path = _create_section_backup("route-chains")
+    store.add(chain)
+    data = {
+        "chain": _chain_summary(chain),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Created route chain: {chain.id} (disabled; run `watchdog chain enable {chain.id}` when ready)")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _chain_add_hop(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    chain = _require_chain(store, args.id)
+    new_hop = ChainHop(type=args.type, target=args.target, selection_policy=args.selection_policy)
+    _validate_chain_hop_targets([new_hop])
+    updated = _updated_chain(chain, hops=[*chain.hops, new_hop])
+    backup_path = _create_section_backup("route-chains")
+    store.add(updated)
+    data = {
+        "chain": _chain_summary(updated),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added hop to route chain: {chain.id} {args.type}:{args.target}")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _chain_remove_hop(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    chain = _require_chain(store, args.id)
+    if args.index < 1 or args.index > len(chain.hops):
+        raise ParseError(
+            f"chain hop index out of range: {args.index}; run `watchdog chain show {chain.id}` to inspect hops"
+        )
+    if len(chain.hops) == 1:
+        raise ParseError(
+            f"cannot remove the last hop from route chain: {chain.id}; "
+            f"run `watchdog chain remove {chain.id}` to remove the whole chain instead"
+        )
+    remaining = [hop for position, hop in enumerate(chain.hops, start=1) if position != args.index]
+    updated = _updated_chain(chain, hops=remaining)
+    backup_path = _create_section_backup("route-chains")
+    store.add(updated)
+    data = {
+        "chain": _chain_summary(updated),
+        "removed_index": args.index,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed hop {args.index} from route chain: {chain.id}")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _chain_set_enabled(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    chain = _require_chain(store, args.id)
+    if args.enabled:
+        _validate_chain_hop_targets(chain.hops)
+    updated = _updated_chain(chain, enabled=bool(args.enabled))
+    backup_path = _create_section_backup("route-chains")
+    store.add(updated)
+    data = {
+        "chain": _chain_summary(updated),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if updated.enabled else "disabled"
+        print(f"Route chain {state}: {chain.id}")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _chain_remove(args: argparse.Namespace) -> int:
+    store = RouteChainStore()
+    _require_chain(store, args.id)
+    backup_path = _create_section_backup("route-chains")
+    store.remove(args.id)
+    data = {
+        "removed": args.id,
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("route-chains", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed route chain: {args.id}")
+        print(f"Backup: {backup_path}")
     return 0
 
 
@@ -2922,11 +4638,17 @@ def _app_policy_set_default_action(args: argparse.Namespace) -> int:
 def _app_policy_add(args: argparse.Namespace) -> int:
     store = AppPolicyStore()
     policy = store.load()
-    match: dict[str, list[str]] = {}
+    match: dict[str, list[str] | list[int]] = {}
     if args.process_name:
         match["process_name"] = [args.process_name]
     if args.process_path:
         match["process_path"] = [args.process_path]
+    if args.process_path_regex:
+        match["process_path_regex"] = [args.process_path_regex]
+    if args.user:
+        match["user"] = [args.user]
+    if args.user_id is not None:
+        match["user_id"] = [args.user_id]
     rule_id = args.id or _next_app_policy_rule_id(policy, match, args.action)
     if any(rule.id == rule_id for rule in policy.rules):
         raise ParseError(
@@ -2979,6 +4701,38 @@ def _app_policy_remove(args: argparse.Namespace) -> int:
         _print_json(data)
     else:
         print(f"Removed app policy rule: {args.rule_id}")
+        print(f"Backup: {backup_path}")
+    return 0
+
+
+def _app_policy_set_rule_enabled(args: argparse.Namespace) -> int:
+    store = AppPolicyStore()
+    policy = store.load()
+    if not any(rule.id == args.rule_id for rule in policy.rules):
+        raise ParseError(
+            f"app policy rule not found: {args.rule_id}; run `watchdog app-policy status` to inspect rules"
+        )
+    policy.rules = [
+        AppPolicyRule(id=rule.id, action=rule.action, match=rule.match, enabled=bool(args.enabled))
+        if rule.id == args.rule_id
+        else rule
+        for rule in policy.rules
+    ]
+    policy = AppPolicy.from_dict(policy.to_dict())
+    backup_path = _create_section_backup("app-policy")
+    store.save(policy)
+    data = {
+        "rule_id": args.rule_id,
+        "enabled": bool(args.enabled),
+        "policy": _app_policy_status_data(policy),
+        "backup_path": str(backup_path),
+        "rollback_point": _section_backup_rollback("app-policy", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if args.enabled else "disabled"
+        print(f"App policy rule {state}: {args.rule_id}")
         print(f"Backup: {backup_path}")
     return 0
 
@@ -3107,16 +4861,25 @@ def _dns_status(args: argparse.Namespace) -> int:
     if args.json:
         _print_json(data)
         return 0
-    print(f"DNS mode: {policy.mode.value}")
-    print(f"TUN hijack: {_on_off(policy.tun_hijack)}")
+    no_color = bool(getattr(args, "no_color", False))
+    print(f"DNS mode: {_semantic(policy.mode.value, no_color=no_color)}")
+    print(f"TUN hijack: {_on_off(policy.tun_hijack, no_color=no_color)}")
     print(f"Resolver manager: {data['resolver_manager']['manager']}")
     print(f"Nameservers: {', '.join(data['resolver_manager']['nameservers']) or '-'}")
     print(f"Channels: {data['channels']['configured']}/{data['channels']['total']}")
-    print(f"Static IP: {_on_off(policy.static_ip_enabled)} ({len(policy.static_ips)} entries)")
-    print(f"Rules: {_on_off(policy.rules_enabled)} ({len(policy.rules)} rules)")
-    print(f"FakeIP: {policy.fakeip_inet4_range}, {policy.fakeip_inet6_range}")
-    print(f"ECS direct: {_on_off(policy.ecs_direct_enabled)}")
-    print(f"Snapshot: {data['snapshot']['path']} ({data['snapshot']['status']})")
+    print(f"Static IP: {_on_off(policy.static_ip_enabled, no_color=no_color)} ({len(policy.static_ips)} entries)")
+    print(f"Rules: {_on_off(policy.rules_enabled, no_color=no_color)} ({len(policy.rules)} rules)")
+    fakeip_active = data["features"]["proxy_resolution_channel_active"]
+    fakeip_suffix = ""
+    if not fakeip_active:
+        fakeip_suffix = f" - {_fakeip_inactive_reason(policy)}"
+    print(
+        f"FakeIP: {_on_off(bool(fakeip_active), no_color=no_color)} "
+        f"({policy.fakeip_inet4_range}, {policy.fakeip_inet6_range})"
+        + fakeip_suffix
+    )
+    print(f"ECS direct: {_on_off(policy.ecs_direct_enabled, no_color=no_color)}")
+    print(f"Snapshot: {data['snapshot']['path']} ({_semantic(data['snapshot']['status'], no_color=no_color)})")
     return 0
 
 
@@ -3271,7 +5034,23 @@ def _dns_reset(args: argparse.Namespace) -> int:
     if not args.yes:
         raise ParseError("dns reset requires --yes")
     snapshot_path = _dns_snapshot_path(args)
-    snapshot = _load_dns_snapshot(snapshot_path)
+    snapshot = load_snapshot(snapshot_path)
+    if snapshot is None:
+        data = {
+            "status": "nothing-to-restore",
+            "snapshot_path": str(snapshot_path),
+            "rollback_snapshot": {
+                "path": str(snapshot_path),
+                "status": "not-found",
+                "restored": False,
+            },
+        }
+        if args.json:
+            _print_json(data)
+        else:
+            print("No DNS snapshot found; nothing to restore.")
+            print(f"Snapshot: {snapshot_path}")
+        return 0
     manager = SystemDNSStateManager(resolv_conf_path=Path(args.resolv_conf_path))
     manager.restore_state(snapshot)
     try:
@@ -3294,6 +5073,301 @@ def _dns_reset(args: argparse.Namespace) -> int:
     else:
         print("DNS state restored.")
         print(f"Snapshot: {snapshot_path}")
+    return 0
+
+
+def _dns_policy_store(args: argparse.Namespace) -> DNSPolicyStore:
+    path = Path(args.policy_file) if getattr(args, "policy_file", None) else None
+    return DNSPolicyStore(path)
+
+
+def _dns_policy_mutation_data(
+    policy: DNSPolicy,
+    backup_path: Path,
+    rollback_point: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "policy": policy.to_dict(),
+        "backup_path": str(backup_path),
+        "rollback_point": rollback_point,
+    }
+
+
+def _create_dns_policy_backup(
+    store: DNSPolicyStore,
+) -> tuple[Path, dict[str, object]]:
+    if store.path.name == "dns-policy.json":
+        backup_path = BackupManager(config_dir=store.path.parent).create_backup(
+            reason="pre-policy-mutation",
+            sections=["dns-policy"],
+        ).path
+        return backup_path, _section_backup_rollback("dns-policy", backup_path)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backup_path = (
+        store.path.parent
+        / "backups"
+        / f"{store.path.stem}-pre-policy-mutation-{stamp}{store.path.suffix or '.json'}"
+    )
+    payload = store.path.read_bytes() if store.path.exists() else b"{}\n"
+    atomic_write_bytes(backup_path, payload)
+    return backup_path, {
+        "kind": "file-backup",
+        "path": str(backup_path),
+        "target": str(store.path),
+    }
+
+
+def _save_dns_policy_mutation(
+    store: DNSPolicyStore,
+    policy: DNSPolicy,
+) -> dict[str, object]:
+    backup_path, rollback_point = _create_dns_policy_backup(store)
+    store.save(policy)
+    return _dns_policy_mutation_data(policy, backup_path, rollback_point)
+
+
+def _dns_channel_add(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.name)
+    if name in policy.channels:
+        raise ParseError(
+            f"dns channel already exists: {name.value}; run `watchdog dns status --json` to inspect channels"
+        )
+    policy.channels[name] = DNSChannel(name=name)
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added DNS channel: {name.value}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_channel_remove(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.name)
+    if name not in policy.channels:
+        raise ParseError(
+            f"dns channel not found: {name.value}; run `watchdog dns status --json` to inspect channels"
+        )
+    referencing_rules = [rule.id for rule in policy.rules if rule.channel == name]
+    if referencing_rules:
+        raise ParseError(
+            f"dns channel {name.value} is referenced by rule(s): "
+            f"{', '.join(sorted(referencing_rules))}; remove those rules first"
+        )
+    del policy.channels[name]
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed DNS channel: {name.value}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_resolver_add(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.channel)
+    channel = policy.channels.setdefault(
+        name,
+        DNSChannel(name=name, strategy=args.strategy),
+    )
+    if any(resolver.uri == args.uri for resolver in channel.resolvers):
+        raise ParseError(f"resolver already exists in channel {name.value}: {args.uri}")
+    channel.resolvers.append(
+        Resolver(uri=args.uri, label=args.label, enabled=not args.disabled)
+    )
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added resolver to channel {name.value}: {args.uri}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_resolver_remove(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.channel)
+    channel = policy.channels.get(name)
+    if channel is None or not any(resolver.uri == args.uri for resolver in channel.resolvers):
+        raise ParseError(f"resolver not found in channel {name.value}: {args.uri}")
+    channel.resolvers = [resolver for resolver in channel.resolvers if resolver.uri != args.uri]
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed resolver from channel {name.value}: {args.uri}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_resolver_set_enabled(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    name = DNSChannelName(args.channel)
+    channel = policy.channels.get(name)
+    if channel is None or not any(resolver.uri == args.uri for resolver in channel.resolvers):
+        raise ParseError(f"resolver not found in channel {name.value}: {args.uri}")
+    channel.resolvers = [
+        Resolver(uri=resolver.uri, label=resolver.label, enabled=bool(args.enabled), metadata=resolver.metadata)
+        if resolver.uri == args.uri
+        else resolver
+        for resolver in channel.resolvers
+    ]
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if args.enabled else "disabled"
+        print(f"Resolver {state} in channel {name.value}: {args.uri}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_rule_add(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    if any(rule.id == args.id for rule in policy.rules):
+        raise ParseError(
+            f"dns rule already exists: {args.id}; run `watchdog dns status --json` to inspect rules"
+        )
+    rule = DNSRule(
+        id=args.id,
+        pattern=args.pattern,
+        action=DNSRuleAction(args.action),
+        channel=DNSChannelName(args.channel) if args.channel else None,
+        enabled=not args.disabled,
+        priority=args.priority,
+    )
+    if rule.action == DNSRuleAction.REJECT and args.channel is not None:
+        raise ParseError("--channel is incompatible with --action reject")
+    if rule.channel is not None and rule.channel not in policy.channels:
+        raise ParseError(
+            f"dns channel not found: {rule.channel.value}; "
+            "create it before adding a rule that uses it"
+        )
+    policy.rules.append(rule)
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added DNS rule: {rule.id}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_rule_remove(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    original_count = len(policy.rules)
+    policy.rules = [rule for rule in policy.rules if rule.id != args.id]
+    if len(policy.rules) == original_count:
+        raise ParseError(
+            f"dns rule not found: {args.id}; run `watchdog dns status --json` to inspect rules"
+        )
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed DNS rule: {args.id}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_rule_set_enabled(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    if not any(rule.id == args.id for rule in policy.rules):
+        raise ParseError(
+            f"dns rule not found: {args.id}; run `watchdog dns status --json` to inspect rules"
+        )
+    policy.rules = [
+        DNSRule(
+            id=rule.id,
+            pattern=rule.pattern,
+            action=rule.action,
+            channel=rule.channel,
+            enabled=bool(args.enabled),
+            priority=rule.priority,
+        )
+        if rule.id == args.id
+        else rule
+        for rule in policy.rules
+    ]
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        state = "enabled" if args.enabled else "disabled"
+        print(f"DNS rule {state}: {args.id}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_static_ip_add(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    new_entry = StaticIPEntry(
+        domain=args.domain,
+        ip=args.ip,
+        enabled=not args.disabled,
+    )
+    if any(
+        entry.domain == new_entry.domain and entry.ip == new_entry.ip
+        for entry in policy.static_ips
+    ):
+        raise ParseError(
+            f"static IP mapping already exists: {new_entry.domain} -> {new_entry.ip}"
+        )
+    policy.static_ips.append(new_entry)
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added static IP mapping: {args.domain} -> {args.ip}")
+        print(f"Backup: {data['backup_path']}")
+    return 0
+
+
+def _dns_static_ip_remove(args: argparse.Namespace) -> int:
+    store = _dns_policy_store(args)
+    policy = store.load()
+    domain = args.domain.strip().lower().rstrip(".")
+    target_ip = args.ip.strip() if args.ip else None
+    original_count = len(policy.static_ips)
+    if target_ip:
+        policy.static_ips = [
+            entry
+            for entry in policy.static_ips
+            if not (entry.domain == domain and entry.ip == target_ip)
+        ]
+    else:
+        policy.static_ips = [entry for entry in policy.static_ips if entry.domain != domain]
+    if len(policy.static_ips) == original_count:
+        raise ParseError(f"static IP mapping not found for domain: {args.domain}")
+    policy = DNSPolicy.from_dict(policy.to_dict())
+    data = _save_dns_policy_mutation(store, policy)
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed static IP mapping(s) for domain: {args.domain}")
+        print(f"Backup: {data['backup_path']}")
     return 0
 
 
@@ -3345,12 +5419,24 @@ def _dns_status_data(
             "rules_enabled": policy.rules_enabled,
             "ecs_direct_enabled": policy.ecs_direct_enabled,
             "proxy_resolution_channel": policy.proxy_resolution_channel,
+            "proxy_resolution_channel_active": fakeip_policy_ready(policy),
         },
         "snapshot": {
             "path": str(snapshot_path),
             "status": "present" if snapshot_path.exists() else "missing",
         },
     }
+
+
+def _fakeip_inactive_reason(policy: DNSPolicy) -> str:
+    if policy.mode == DNSMode.OFF:
+        return "DNS mode is off"
+    if policy.proxy_resolution_channel != "fakeip":
+        return f"proxy resolution uses {policy.proxy_resolution_channel}"
+    proxy_channel = policy.channels.get(DNSChannelName.PROXY)
+    if proxy_channel is None:
+        return "requires a configured proxy DNS channel"
+    return "requires an enabled resolver in the proxy DNS channel"
 
 
 def _dns_channel_results(data: dict[str, object]) -> dict[str, dict]:
@@ -3425,13 +5511,6 @@ def _save_dns_snapshot(path: Path, snapshot: DNSStateSnapshot) -> None:
     save_snapshot(path, snapshot)
 
 
-def _load_dns_snapshot(path: Path) -> DNSStateSnapshot:
-    snapshot = load_snapshot(path)
-    if snapshot is None:
-        raise FileNotFoundError(path)
-    return snapshot
-
-
 def _print_json(data: object) -> None:
     print(json.dumps(data, indent=2, sort_keys=True))
 
@@ -3490,6 +5569,381 @@ def _require_node_group(store: NodeGroupStore, name: str) -> NodeGroup:
 
 def _node_group_summary(group: NodeGroup) -> dict:
     return group.to_dict()
+
+
+def _print_profile_list(
+    profiles: list[Profile],
+    *,
+    wide: bool,
+    pool_only: bool,
+    no_color: bool = False,
+    available_count: int | None = None,
+    active_filters: list[str] | None = None,
+) -> None:
+    columns = terminal_width()
+    providers = {provider.id: provider for provider in ProviderStore().list()}
+    summary = _profile_list_summary(profiles)
+    scope = "rotation pool" if pool_only else "all saved profiles"
+    print(
+        color.style(
+            truncate_to_width(f"Profiles ({scope})", columns),
+            "bold",
+            no_color=no_color,
+        )
+    )
+    _print_wrapped(
+        "Total: {total} | Manual: {manual} | Provider-owned: {provider_owned} | "
+        "Enabled: {enabled} | Rotation: {rotation}".format(**summary),
+        columns,
+    )
+    _print_wrapped(
+        "Health: ok={ok} unknown={unknown} down={down} degraded={degraded}".format(
+            **summary["health"]
+        ),
+        columns,
+    )
+    active_filters = active_filters or []
+    if active_filters:
+        _print_wrapped(
+            "Filters: "
+            + ", ".join(active_filters)
+            + f" | Showing {len(profiles)} of {available_count or len(profiles)}",
+            columns,
+        )
+    duplicate_groups = _duplicate_profile_candidate_count(profiles)
+    if duplicate_groups:
+        warning = (
+            "Warning: duplicate profile candidates detected: "
+            f"{duplicate_groups} group(s); no data changed."
+        )
+        for line in wrap_to_width(warning, columns):
+            if line.startswith("Warning"):
+                line = line.replace(
+                    "Warning",
+                    color.warning_label(no_color=no_color),
+                    1,
+                )
+            print(line)
+    print()
+
+    values_truncated = False
+    manual_profiles = [
+        profile for profile in profiles if profile.source == ProfileSource.MANUAL
+    ]
+    if manual_profiles:
+        values_truncated |= _print_profile_group(
+            "Manual profiles",
+            manual_profiles,
+            wide=wide,
+            terminal_columns=columns,
+            no_color=no_color,
+        )
+
+    provider_profiles: dict[str, list[Profile]] = {}
+    for profile in profiles:
+        if profile.source != ProfileSource.SUBSCRIPTION:
+            continue
+        provider_profiles.setdefault(profile.provider_id or "-", []).append(profile)
+
+    for provider_id in sorted(provider_profiles):
+        provider = providers.get(provider_id)
+        if provider is None:
+            title = f"Provider: {provider_id}"
+        elif provider.name == provider.id:
+            title = f"Provider: {provider.id}"
+        else:
+            title = f"Provider: {provider.name} ({provider.id})"
+        values_truncated |= _print_profile_group(
+            title,
+            provider_profiles[provider_id],
+            wide=wide,
+            terminal_columns=columns,
+            no_color=no_color,
+        )
+
+    if values_truncated and not wide:
+        _print_wrapped(
+            "Some values were truncated to fit the terminal. "
+            "Use --wide or --json for complete values.",
+            columns,
+        )
+
+
+def _print_wrapped(value: object, width: int) -> None:
+    for line in wrap_to_width(value, width):
+        print(line)
+
+
+def _profile_list_summary(profiles: list[Profile]) -> dict[str, object]:
+    health = {"ok": 0, "unknown": 0, "down": 0, "degraded": 0}
+    for profile in profiles:
+        status = profile.health_status if profile.health_status in health else "unknown"
+        health[status] += 1
+    return {
+        "total": len(profiles),
+        "manual": len([profile for profile in profiles if profile.source == ProfileSource.MANUAL]),
+        "provider_owned": len(
+            [profile for profile in profiles if profile.source == ProfileSource.SUBSCRIPTION]
+        ),
+        "enabled": len([profile for profile in profiles if profile.enabled]),
+        "rotation": len([profile for profile in profiles if profile.in_rotation_pool]),
+        "health": health,
+    }
+
+
+def _duplicate_profile_candidate_count(profiles: list[Profile]) -> int:
+    by_fingerprint: dict[str, int] = {}
+    for profile in profiles:
+        fingerprint = profile_fingerprint(profile)
+        by_fingerprint[fingerprint] = by_fingerprint.get(fingerprint, 0) + 1
+    return len([count for count in by_fingerprint.values() if count > 1])
+
+
+def _print_profile_group(
+    title: str,
+    profiles: list[Profile],
+    *,
+    wide: bool,
+    terminal_columns: int,
+    no_color: bool = False,
+) -> bool:
+    safe_title = terminal_safe_text(title)
+    rendered_title = (
+        safe_title
+        if wide
+        else truncate_to_width(safe_title, terminal_columns)
+    )
+    print(color.style(rendered_title, "bold", no_color=no_color))
+    sorted_profiles = _sorted_profiles(profiles)
+    title_truncated = visible_width(safe_title) > visible_width(rendered_title)
+
+    if not wide and terminal_columns < 72:
+        values_truncated = title_truncated
+        for profile in sorted_profiles:
+            truncated = _print_stacked_profile(
+                profile,
+                terminal_columns,
+                no_color=no_color,
+            )
+            values_truncated |= truncated
+        print()
+        return values_truncated
+
+    if wide or terminal_columns >= 100:
+        headers = (
+            "Name",
+            "Protocol",
+            "Category",
+            "Health",
+            "Enabled",
+            "Rotation",
+            "ID",
+        )
+        rows = [_profile_row(profile) for profile in sorted_profiles]
+        semantic_columns = {3, 4, 5}
+    else:
+        headers = ("Name", "Protocol", "Category", "Health", "State", "ID")
+        rows = [_compact_profile_row(profile) for profile in sorted_profiles]
+        semantic_columns = {3}
+
+    if wide:
+        widths = [
+            max(visible_width(row[index]) for row in [headers, *rows])
+            for index in range(len(headers))
+        ]
+    else:
+        widths = _responsive_profile_widths(
+            headers,
+            rows,
+            terminal_columns,
+        )
+    rendered_rows, values_truncated = _constrain_profile_rows(rows, widths)
+    print(_format_profile_row(headers, widths))
+    print(_format_profile_row(tuple("-" * width for width in widths), widths))
+    for row in rendered_rows:
+        print(
+            _format_profile_row(
+                row,
+                widths,
+                semantic_columns=semantic_columns,
+                no_color=no_color,
+            )
+        )
+    print()
+    return title_truncated or values_truncated
+
+
+def _profile_row(profile: Profile) -> tuple[str, str, str, str, str, str, str]:
+    return (
+        profile.name,
+        profile.protocol.value,
+        profile_resilience_category(profile).value,
+        _profile_health_label(profile.health_status),
+        _on_off_plain(profile.enabled),
+        _on_off_plain(profile.in_rotation_pool),
+        profile.id,
+    )
+
+
+def _compact_profile_row(profile: Profile) -> tuple[str, str, str, str, str, str]:
+    if profile.enabled and profile.in_rotation_pool:
+        state = "on+rot"
+    elif profile.enabled:
+        state = "on"
+    elif profile.in_rotation_pool:
+        state = "off+rot"
+    else:
+        state = "off"
+    return (
+        profile.name,
+        profile.protocol.value,
+        profile_resilience_category(profile).value,
+        _profile_health_label(profile.health_status),
+        state,
+        profile.id,
+    )
+
+
+def _responsive_profile_widths(
+    headers: tuple[str, ...],
+    rows: list[tuple[str, ...]],
+    terminal_columns: int,
+) -> list[int]:
+    separator_width = 2 * (len(headers) - 1)
+    flexible_indices = {0, len(headers) - 1}
+    widths = []
+    desired = []
+    for index, header in enumerate(headers):
+        column_desired = max(
+            visible_width(row[index])
+            for row in [headers, *rows]
+        )
+        desired.append(column_desired)
+        widths.append(visible_width(header) if index in flexible_indices else column_desired)
+
+    remaining = max(terminal_columns - separator_width - sum(widths), 0)
+    while remaining:
+        allocated = False
+        for index in sorted(flexible_indices):
+            if remaining == 0:
+                break
+            if widths[index] >= desired[index]:
+                continue
+            widths[index] += 1
+            remaining -= 1
+            allocated = True
+        if not allocated:
+            break
+    return widths
+
+
+def _constrain_profile_rows(
+    rows: list[tuple[str, ...]],
+    widths: list[int],
+) -> tuple[list[tuple[str, ...]], bool]:
+    rendered_rows: list[tuple[str, ...]] = []
+    truncated = False
+    for row in rows:
+        rendered: list[str] = []
+        for value, width in zip(row, widths):
+            safe = terminal_safe_text(value)
+            constrained = truncate_to_width(safe, width)
+            truncated |= visible_width(safe) > visible_width(constrained)
+            rendered.append(constrained)
+        rendered_rows.append(tuple(rendered))
+    return rendered_rows, truncated
+
+
+def _print_stacked_profile(
+    profile: Profile,
+    width: int,
+    *,
+    no_color: bool,
+) -> bool:
+    name = terminal_safe_text(profile.name)
+    profile_id = terminal_safe_text(profile.id)
+    rendered_name = truncate_to_width(name, width)
+    print(rendered_name)
+
+    health = _profile_health_label(profile.health_status)
+    details = (
+        f"{profile.protocol.value}/"
+        f"{profile_resilience_category(profile).value} {health}"
+    )
+    for line in wrap_to_width(details, width):
+        if health in line:
+            line = line.replace(
+                health,
+                _semantic(health, no_color=no_color),
+                1,
+            )
+        print(line)
+
+    state = (
+        f"enabled={_on_off_plain(profile.enabled)} "
+        f"rotation={_on_off_plain(profile.in_rotation_pool)}"
+    )
+    identifier_prefix = f"{state} ID="
+    if visible_width(identifier_prefix) < width:
+        identifier_width = width - visible_width(identifier_prefix)
+        rendered_id = truncate_to_width(profile_id, identifier_width)
+        print(identifier_prefix + rendered_id)
+    else:
+        _print_wrapped(state, width)
+        identifier_prefix = "ID="
+        rendered_id = truncate_to_width(
+            profile_id,
+            width - visible_width(identifier_prefix),
+        )
+        print(identifier_prefix + rendered_id)
+    return (
+        visible_width(name) > visible_width(rendered_name)
+        or visible_width(profile_id) > visible_width(rendered_id)
+    )
+
+
+def _sorted_profiles(profiles: list[Profile]) -> list[Profile]:
+    return sorted(
+        profiles,
+        key=lambda profile: (
+            not profile.enabled,
+            not profile.in_rotation_pool,
+            profile.health_status != "ok",
+            profile.name.lower(),
+            profile.id,
+        ),
+    )
+
+
+def _profile_health_label(status: str) -> str:
+    if status == "ok":
+        return "OK"
+    if status == "down":
+        return "DOWN"
+    if status == "degraded":
+        return "DEGRADED"
+    return "UNKNOWN"
+
+
+def _format_profile_row(
+    row: tuple[str, ...],
+    widths: list[int],
+    *,
+    semantic_columns: set[int] | None = None,
+    no_color: bool = False,
+) -> str:
+    semantic_columns = semantic_columns or set()
+    parts = []
+    for index, (value, width) in enumerate(zip(row, widths)):
+        text = terminal_safe_text(value)
+        if index in semantic_columns:
+            parts.append(
+                _semantic(text, no_color=no_color)
+                + (" " * max(width - visible_width(text), 0))
+            )
+        else:
+            parts.append(pad_to_width(text, width))
+    return "  ".join(parts)
 
 
 def _profile_summary(profile: Profile) -> dict[str, object]:
@@ -3574,8 +6028,23 @@ def _prompt_rotation_pool(profile: Profile) -> bool:
     return answer in {"y", "yes"}
 
 
-def _on_off(value: bool) -> str:
+def _on_off_plain(value: bool) -> str:
     return "on" if value else "off"
+
+
+def _on_off(value: bool, *, no_color: bool = False) -> str:
+    return _semantic(_on_off_plain(value), no_color=no_color)
+
+
+def _danger_on_off(value: bool, *, no_color: bool = False) -> str:
+    text = _on_off_plain(value)
+    if not value:
+        return text
+    return color.style(text, "red", no_color=no_color)
+
+
+def _semantic(value: object, *, no_color: bool = False) -> str:
+    return color.semantic(value, no_color=no_color)
 
 
 def _redact_url(url: str) -> str:
@@ -3586,8 +6055,16 @@ def _redact_url(url: str) -> str:
     return f"{scheme}://{host}/<redacted>"
 
 
-def _error(message: str) -> None:
-    print(f"error: {message}", file=sys.stderr)
+def _error(message: str, *, as_json: bool = False) -> None:
+    if as_json:
+        # One JSON envelope, one channel, whether the command succeeds or
+        # fails (WDCLI-009): stdout, matching the shape connection commands
+        # already use (daemon/protocol.py::Response.to_dict()), so a
+        # consumer never has to guess which stream or schema an error will
+        # arrive on. Human-readable diagnostics stay on stderr, unchanged.
+        _print_json({"version": 1, "type": "response", "ok": False, "payload": {}, "error": message})
+    else:
+        print(f"error: {message}", file=sys.stderr)
 
 
 def _exit() -> NoReturn:

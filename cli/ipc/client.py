@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import socket
+import uuid
 from pathlib import Path
 from typing import Iterator
 
@@ -14,13 +15,17 @@ from cli.ipc.errors import (
 )
 from daemon.protocol import (
     COMMAND_CONNECT,
+    COMMAND_COMMAND_CANCEL,
+    COMMAND_COMMAND_OUTCOME,
     COMMAND_DISCONNECT,
     COMMAND_NODE_GROUP_AUTO_TEST,
     COMMAND_ROTATE,
     COMMAND_STATUS,
     Event,
+    MUTATING_COMMANDS,
     ProtocolError,
     Response,
+    command_timeout_seconds,
     decode_event_line,
     decode_response_line,
     encode_request,
@@ -28,8 +33,14 @@ from daemon.protocol import (
 
 
 DEFAULT_SOCKET_PATH = Path("/run/watchdogvpn/control.sock")
-DEFAULT_TIMEOUT_SECONDS = 5.0
-NODE_GROUP_AUTO_TEST_TIMEOUT_SECONDS = 120.0
+TRANSPORT_GRACE_SECONDS = 5.0
+DEFAULT_TIMEOUT_SECONDS = command_timeout_seconds(COMMAND_STATUS) + TRANSPORT_GRACE_SECONDS
+LIFECYCLE_MUTATION_TIMEOUT_SECONDS = (
+    command_timeout_seconds(COMMAND_CONNECT) + TRANSPORT_GRACE_SECONDS
+)
+NODE_GROUP_AUTO_TEST_TIMEOUT_SECONDS = (
+    command_timeout_seconds(COMMAND_NODE_GROUP_AUTO_TEST) + TRANSPORT_GRACE_SECONDS
+)
 SOCKET_PATH_ENV = "WATCHDOGVPN_SOCKET_PATH"
 EVENT_SOCKET_PATH_ENV = "WATCHDOGVPN_EVENT_SOCKET_PATH"
 
@@ -52,32 +63,64 @@ class WatchdogIPCClient:
         self.timeout = timeout
 
     def connect(self, profile_id: str) -> Response:
-        return self.request(COMMAND_CONNECT, {"profile_id": profile_id})
+        return self.request(
+            COMMAND_CONNECT,
+            {"profile_id": profile_id},
+            timeout=_command_client_timeout(COMMAND_CONNECT),
+        )
 
     def disconnect(self) -> Response:
-        return self.request(COMMAND_DISCONNECT)
+        return self.request(COMMAND_DISCONNECT, timeout=_command_client_timeout(COMMAND_DISCONNECT))
 
     def status(self) -> Response:
         return self.request(COMMAND_STATUS)
 
     def rotate(self, force: bool = False) -> Response:
-        return self.request(COMMAND_ROTATE, {"force": force})
+        return self.request(
+            COMMAND_ROTATE,
+            {"force": force},
+            timeout=_command_client_timeout(COMMAND_ROTATE),
+        )
 
     def node_group_auto_test(self, group_name: str) -> Response:
         return self.request(
             COMMAND_NODE_GROUP_AUTO_TEST,
             {"group_name": group_name},
-            timeout=NODE_GROUP_AUTO_TEST_TIMEOUT_SECONDS,
+            timeout=_command_client_timeout(COMMAND_NODE_GROUP_AUTO_TEST),
         )
 
-    def request(self, command: str, payload: dict | None = None, timeout: float | None = None) -> Response:
-        request_line = encode_request(command, payload or {})
+    def command_outcome(self, command_id: str) -> Response:
+        return self.request(
+            COMMAND_COMMAND_OUTCOME,
+            {"command_id": command_id},
+            timeout=_command_client_timeout(COMMAND_COMMAND_OUTCOME),
+        )
+
+    def cancel_command(self, command_id: str) -> Response:
+        return self.request(
+            COMMAND_COMMAND_CANCEL,
+            {"command_id": command_id},
+            timeout=_command_client_timeout(COMMAND_COMMAND_CANCEL),
+        )
+
+    def request(
+        self,
+        command: str,
+        payload: dict | None = None,
+        timeout: float | None = None,
+        *,
+        command_id: str | None = None,
+    ) -> Response:
+        command_id = command_id or (
+            str(uuid.uuid4()) if command in MUTATING_COMMANDS else None
+        )
+        request_line = encode_request(command, payload or {}, command_id=command_id)
         with self._connect(self.request_socket_path, timeout=timeout) as sock:
             try:
                 sock.sendall(request_line)
                 return decode_response_line(_read_line(sock))
             except socket.timeout as exc:
-                raise DaemonTimeoutError() from exc
+                raise DaemonTimeoutError(command_id=command_id) from exc
             except ProtocolError as exc:
                 raise UnexpectedDaemonResponseError() from exc
             except EOFError as exc:
@@ -149,3 +192,7 @@ def _read_line(sock: socket.socket) -> bytes:
         chunks.append(chunk)
         if chunk == b"\n":
             return b"".join(chunks)
+
+
+def _command_client_timeout(command: str) -> float:
+    return command_timeout_seconds(command) + TRANSPORT_GRACE_SECONDS

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Callable
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+MIN_BACKOFF_INTERVAL_SECONDS = 1.0
+MAX_BACKOFF_INTERVAL_SECONDS = 86_400.0
 
 
 @dataclass(slots=True)
@@ -34,22 +39,69 @@ class Recovery:
     clock: Callable[[], float] = time.monotonic
 
     _consecutive_failures: int = field(default=0, init=False, repr=False)
-    _next_retry_at: float | None = field(default=None, init=False, repr=False)
+    _retry_started_at: float | None = field(default=None, init=False, repr=False)
+    _retry_interval_seconds: float = field(default=0.0, init=False, repr=False)
 
     @property
     def consecutive_failures(self) -> int:
         return self._consecutive_failures
 
+    @staticmethod
+    def _normalized_interval(value: object, field: str, default: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            LOGGER.error("recovery_backoff_config_invalid field=%s action=use_default", field)
+            return default
+        try:
+            interval = float(value)
+        except OverflowError:
+            LOGGER.error("recovery_backoff_config_invalid field=%s action=use_default", field)
+            return default
+        if not math.isfinite(interval):
+            LOGGER.error("recovery_backoff_config_invalid field=%s action=use_default", field)
+            return default
+        if interval < MIN_BACKOFF_INTERVAL_SECONDS:
+            LOGGER.error("recovery_backoff_config_invalid field=%s action=clamp_minimum", field)
+            return MIN_BACKOFF_INTERVAL_SECONDS
+        if interval > MAX_BACKOFF_INTERVAL_SECONDS:
+            LOGGER.error("recovery_backoff_config_invalid field=%s action=clamp_maximum", field)
+            return MAX_BACKOFF_INTERVAL_SECONDS
+        return interval
+
+    def _interval_bounds(self) -> tuple[float, float]:
+        base = self._normalized_interval(
+            self.base_interval_seconds,
+            "base_interval_seconds",
+            10.0,
+        )
+        maximum = self._normalized_interval(
+            self.max_interval_seconds,
+            "max_interval_seconds",
+            300.0,
+        )
+        if maximum < base:
+            LOGGER.error(
+                "recovery_backoff_config_invalid field=max_interval_seconds action=raise_to_base"
+            )
+            maximum = base
+        return base, maximum
+
     def backoff_interval(self, attempt: int) -> float:
-        if attempt <= 0:
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt <= 0:
             return 0.0
-        interval = self.base_interval_seconds * (2 ** (attempt - 1))
-        return min(interval, self.max_interval_seconds)
+        interval, maximum = self._interval_bounds()
+        remaining_doublings = attempt - 1
+        while remaining_doublings > 0 and interval < maximum:
+            if interval >= maximum / 2:
+                return maximum
+            interval *= 2
+            remaining_doublings -= 1
+        return interval
 
     def record_failure(self) -> float:
         self._consecutive_failures += 1
         interval = self.backoff_interval(self._consecutive_failures)
-        self._next_retry_at = self.clock() + interval
+        self._retry_started_at = self.clock()
+        self._retry_interval_seconds = interval
         LOGGER.warning(
             "recovery_backoff consecutive_failures=%d interval_seconds=%.1f",
             self._consecutive_failures,
@@ -61,14 +113,16 @@ class Recovery:
         if self._consecutive_failures:
             LOGGER.info("recovery_backoff_reset consecutive_failures=%d", self._consecutive_failures)
         self._consecutive_failures = 0
-        self._next_retry_at = None
+        self._retry_started_at = None
+        self._retry_interval_seconds = 0.0
 
     def can_retry_now(self, force: bool = False) -> bool:
         if force:
             return True
-        if self._next_retry_at is None:
+        if self._retry_started_at is None:
             return True
-        return self.clock() >= self._next_retry_at
+        elapsed = self.clock() - self._retry_started_at
+        return elapsed >= self._retry_interval_seconds
 
     def handle_all_failed(self, kill_switch_active: bool) -> AllFailedAction:
         interval = self.record_failure()

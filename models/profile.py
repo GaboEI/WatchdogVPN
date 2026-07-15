@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -63,6 +65,72 @@ def profile_resilience_category(profile: "Profile") -> ResilienceCategory:
     is enforced separately by a test iterating every ProtocolType - a masked
     default here would defeat that fail-loud guarantee."""
     return PROTOCOL_RESILIENCE_CATEGORY[profile.protocol]
+
+
+PROFILE_FINGERPRINT_SECRET_KEYS = {
+    "auth",
+    "auth_str",
+    "auth_str_type",
+    "obfs_password",
+    "password",
+    "private_key",
+    "psk",
+    "secret",
+    "token",
+    "uuid",
+}
+PROFILE_FINGERPRINT_RAW_KEYS = {
+    "raw_config",
+}
+PROFILE_FINGERPRINT_DISPLAY_KEYS = {
+    "fragment",
+    "name",
+    "tag",
+}
+
+
+def profile_fingerprint(profile: "Profile") -> str:
+    """Return a stable, secret-safe identity fingerprint for duplicate checks.
+
+    The fingerprint is intentionally not persisted and never shown to users. It
+    uses protocol plus normalized runtime config, excludes display-only labels,
+    and hashes secret/raw material before hashing the whole canonical payload.
+    """
+    payload = {
+        "protocol": profile.protocol.value,
+        "config": _fingerprint_value(profile.config),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_value(value: Any, *, key: str | None = None) -> Any:
+    if key in PROFILE_FINGERPRINT_DISPLAY_KEYS:
+        return None
+    if key in PROFILE_FINGERPRINT_SECRET_KEYS or key in PROFILE_FINGERPRINT_RAW_KEYS:
+        return {"sha256": _secret_digest(value)}
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for item_key, item_value in value.items():
+            normalized_key = str(item_key).strip().lower()
+            if normalized_key in PROFILE_FINGERPRINT_DISPLAY_KEYS:
+                continue
+            normalized_value = _fingerprint_value(item_value, key=normalized_key)
+            if normalized_value is not None:
+                result[normalized_key] = normalized_value
+        return result
+    if isinstance(value, list):
+        return [_fingerprint_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_fingerprint_value(item) for item in value]
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
+def _secret_digest(value: Any) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 PROFILE_FIELDS = {

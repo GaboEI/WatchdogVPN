@@ -67,7 +67,7 @@ reports.
 Use:
 
 ```sh
-watchdogvpn report
+watchdog maintenance report
 ```
 
 The command writes a local text file named like:

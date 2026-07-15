@@ -1,0 +1,5254 @@
+{
+  "schema_version": 2,
+  "cli": "watchdog",
+  "route_count": 124,
+  "command_route_count": 123,
+  "parser_route_count": 116,
+  "passthrough_route_count": 8,
+  "group_route_count": 18,
+  "leaf_route_count": 106,
+  "routes": [
+    {
+      "path": [],
+      "command": "watchdog",
+      "kind": "root",
+      "source": "argparse",
+      "summary": "Canonical WatchdogVPN command root",
+      "usage": "usage: watchdog <command> [options]",
+      "help_command": "watchdog --help",
+      "children": [
+        "connect",
+        "disconnect",
+        "status",
+        "rotate",
+        "command",
+        "version",
+        "panic",
+        "doctor",
+        "setup",
+        "uninstall",
+        "maintenance",
+        "backup",
+        "profile",
+        "provider",
+        "node-group",
+        "dns",
+        "config",
+        "stats",
+        "rules",
+        "ruleset",
+        "app-policy",
+        "chain"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "connect"
+      ],
+      "command": "watchdog connect",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Connect through the WatchdogVPN daemon",
+      "usage": "usage: watchdog connect [-h] [--json] profile_id",
+      "help_command": "watchdog connect --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "profile_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Profile ID to connect"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "disconnect"
+      ],
+      "command": "watchdog disconnect",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disconnect through the WatchdogVPN daemon",
+      "usage": "usage: watchdog disconnect [-h] [--json]",
+      "help_command": "watchdog disconnect --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "status"
+      ],
+      "command": "watchdog status",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show daemon connection status",
+      "usage": "usage: watchdog status [-h] [--json] [--no-color]",
+      "help_command": "watchdog status --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--no-color",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Disable ANSI color in human output"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rotate"
+      ],
+      "command": "watchdog rotate",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Rotate connection through the WatchdogVPN daemon",
+      "usage": "usage: watchdog rotate [-h] [--force] [--json]",
+      "help_command": "watchdog rotate --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--force",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Force rotation even if conservative checks apply"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "command"
+      ],
+      "command": "watchdog command",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Inspect or cancel an identifiable daemon command",
+      "usage": "usage: watchdog command [-h] {outcome,cancel} ...",
+      "help_command": "watchdog command --help",
+      "children": [
+        "outcome",
+        "cancel"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "command",
+        "outcome"
+      ],
+      "command": "watchdog command outcome",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show the authoritative outcome of a daemon command",
+      "usage": "usage: watchdog command outcome [-h] [--json] command_id",
+      "help_command": "watchdog command outcome --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "command_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Command UUID returned by the daemon"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "command",
+        "cancel"
+      ],
+      "command": "watchdog command cancel",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Cancel a queued daemon command before it starts",
+      "usage": "usage: watchdog command cancel [-h] [--json] command_id",
+      "help_command": "watchdog command cancel --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "command_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Command UUID returned by the daemon"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "version"
+      ],
+      "command": "watchdog version",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Print WatchdogVPN version",
+      "usage": "usage: watchdog version [-h] [--json]",
+      "help_command": "watchdog version --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "panic"
+      ],
+      "command": "watchdog panic",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Run the WatchdogVPN panic button",
+      "usage": "usage: watchdog panic [-h] {sleep,wake,status}",
+      "help_command": "watchdog panic --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "mode",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "sleep",
+            "wake",
+            "status"
+          ],
+          "description": "Panic mode"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "doctor"
+      ],
+      "command": "watchdog doctor",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Run the repository doctor",
+      "usage": "usage: watchdog doctor [-h] [--json] [--no-color]",
+      "help_command": "watchdog doctor --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--no-color",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Disable ANSI color in human output"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "setup"
+      ],
+      "command": "watchdog setup",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Configure local WatchdogVPN defaults",
+      "usage": "usage: watchdog setup [-h] [--dry-run] [--yes] [--json] [--language LANGUAGE] [--autostart {enable,disable}] [--autoconnect {enable,disable}] [--profile-uri PROFILE_URI] [--provider-url PROVIDER_URL] [--provider-name PROVIDER_NAME] [--kill-switch {enable,disable}] [--dns-mode {auto,off,custom,advanced}] [--app-policy {enable,disable}] [--app-policy-mode {whitelist,blacklist}] [--app-policy-default-action {current,direct,block}] [--acknowledge-backup-warning]",
+      "help_command": "watchdog setup --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--dry-run",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Show setup plan without writing local state"
+        },
+        {
+          "name": "--yes",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Apply local setup changes"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--language",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Set selected language, for example en or es"
+        },
+        {
+          "name": "--autostart",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "enable",
+            "disable"
+          ],
+          "description": "Set app autostart intent"
+        },
+        {
+          "name": "--autoconnect",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "enable",
+            "disable"
+          ],
+          "description": "Set VPN autoconnect intent"
+        },
+        {
+          "name": "--profile-uri",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Import one local profile URI"
+        },
+        {
+          "name": "--provider-url",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Store one provider subscription URL without refreshing it"
+        },
+        {
+          "name": "--provider-name",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Provider label for --provider-url"
+        },
+        {
+          "name": "--kill-switch",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "enable",
+            "disable"
+          ],
+          "description": "Set kill switch policy"
+        },
+        {
+          "name": "--dns-mode",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "auto",
+            "off",
+            "custom",
+            "advanced"
+          ],
+          "description": "Set DNS policy mode"
+        },
+        {
+          "name": "--app-policy",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "enable",
+            "disable"
+          ],
+          "description": "Set app policy enabled state"
+        },
+        {
+          "name": "--app-policy-mode",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "whitelist",
+            "blacklist"
+          ],
+          "description": "Set app policy mode"
+        },
+        {
+          "name": "--app-policy-default-action",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "current",
+            "direct",
+            "block"
+          ],
+          "description": "Set app policy default action"
+        },
+        {
+          "name": "--acknowledge-backup-warning",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Acknowledge that local setup changes should be backed up"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "uninstall"
+      ],
+      "command": "watchdog uninstall",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Run the safe WatchdogVPN uninstall flow",
+      "usage": "usage: watchdog uninstall [-h] [--keep-data | --backup-first | --delete-all-data] [--yes] [--dry-run] [--skip-dns-rescue] [--backup-output BACKUP_OUTPUT] [--encrypt-backup] [--backup-password-env BACKUP_PASSWORD_ENV] [--confirm-delete CONFIRM_DELETE] [--json]",
+      "help_command": "watchdog uninstall --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--keep-data",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Uninstall product files and preserve local WatchdogVPN data"
+        },
+        {
+          "name": "--backup-first",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Export a backup before uninstalling product files"
+        },
+        {
+          "name": "--delete-all-data",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Export a pre-delete backup, then uninstall and purge WatchdogVPN data"
+        },
+        {
+          "name": "--yes",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Confirm product uninstall"
+        },
+        {
+          "name": "--dry-run",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Show plan without changing the system"
+        },
+        {
+          "name": "--skip-dns-rescue",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Skip uninstall DNS rescue"
+        },
+        {
+          "name": "--backup-output",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Backup path for backup-first/delete-all-data"
+        },
+        {
+          "name": "--encrypt-backup",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Encrypt the backup using a password from --backup-password-env"
+        },
+        {
+          "name": "--backup-password-env",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Environment variable containing the encrypted-backup password"
+        },
+        {
+          "name": "--confirm-delete",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Required literal DELETE for --delete-all-data"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": false,
+          "members": [
+            "--keep-data",
+            "--backup-first",
+            "--delete-all-data"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "maintenance"
+      ],
+      "command": "watchdog maintenance",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Run local support, update and legacy-preference commands",
+      "usage": "usage: watchdog maintenance [-h] {backend,config,logs,report,runtime-update,tui,update-check,update-plan} ...",
+      "help_command": "watchdog maintenance --help",
+      "children": [
+        "backend",
+        "config",
+        "logs",
+        "report",
+        "runtime-update",
+        "tui",
+        "update-check",
+        "update-plan"
+      ],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the selected maintenance command"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "maintenance",
+        "backend"
+      ],
+      "command": "watchdog maintenance backend",
+      "kind": "passthrough",
+      "source": "documented-passthrough-choice",
+      "summary": "Show the legacy custom-VPS backend capability summary",
+      "usage": "usage: watchdog maintenance backend [arguments ...]",
+      "help_command": "watchdog maintenance backend --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the maintenance backend"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "maintenance",
+        "config"
+      ],
+      "command": "watchdog maintenance config",
+      "kind": "passthrough",
+      "source": "documented-passthrough-choice",
+      "summary": "Manage legacy language, TUI and reporting preferences",
+      "usage": "usage: watchdog maintenance config [arguments ...]",
+      "help_command": "watchdog maintenance config --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the maintenance backend"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "maintenance",
+        "logs"
+      ],
+      "command": "watchdog maintenance logs",
+      "kind": "passthrough",
+      "source": "documented-passthrough-choice",
+      "summary": "Read and sanitize local WatchdogVPN logs",
+      "usage": "usage: watchdog maintenance logs [arguments ...]",
+      "help_command": "watchdog maintenance logs --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the maintenance backend"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "maintenance",
+        "report"
+      ],
+      "command": "watchdog maintenance report",
+      "kind": "passthrough",
+      "source": "documented-passthrough-choice",
+      "summary": "Generate a private local diagnostic report",
+      "usage": "usage: watchdog maintenance report [arguments ...]",
+      "help_command": "watchdog maintenance report --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the maintenance backend"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "maintenance",
+        "runtime-update"
+      ],
+      "command": "watchdog maintenance runtime-update",
+      "kind": "passthrough",
+      "source": "documented-passthrough-choice",
+      "summary": "Run the confirmed source-checkout runtime update flow",
+      "usage": "usage: watchdog maintenance runtime-update [arguments ...]",
+      "help_command": "watchdog maintenance runtime-update --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the maintenance backend"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "maintenance",
+        "tui"
+      ],
+      "command": "watchdog maintenance tui",
+      "kind": "passthrough",
+      "source": "documented-passthrough-choice",
+      "summary": "Open the current WatchdogVPN terminal UI",
+      "usage": "usage: watchdog maintenance tui [arguments ...]",
+      "help_command": "watchdog maintenance tui --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the maintenance backend"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "maintenance",
+        "update-check"
+      ],
+      "command": "watchdog maintenance update-check",
+      "kind": "passthrough",
+      "source": "documented-passthrough-choice",
+      "summary": "Inspect local checkout update state without network access",
+      "usage": "usage: watchdog maintenance update-check [arguments ...]",
+      "help_command": "watchdog maintenance update-check --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the maintenance backend"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "maintenance",
+        "update-plan"
+      ],
+      "command": "watchdog maintenance update-plan",
+      "kind": "passthrough",
+      "source": "documented-passthrough-choice",
+      "summary": "Print a safe manual update plan",
+      "usage": "usage: watchdog maintenance update-plan [arguments ...]",
+      "help_command": "watchdog maintenance update-plan --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "arguments",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "remainder",
+          "choices": [],
+          "description": "Arguments forwarded to the maintenance backend"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "backup"
+      ],
+      "command": "watchdog backup",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Create, inspect and restore backups",
+      "usage": "usage: watchdog backup [-h] {create,export,inspect,restore,import} ...",
+      "help_command": "watchdog backup --help",
+      "children": [
+        "create",
+        "export",
+        "inspect",
+        "restore",
+        "import"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "backup",
+        "create"
+      ],
+      "command": "watchdog backup create",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Create a backup archive",
+      "usage": "usage: watchdog backup create [-h] [--output OUTPUT] [--section {settings,profiles,providers,provider-state,routing-rules,app-policy,node-groups,route-chains,selection-state,dns-policy,metrics-policy,backup-policy,metadata,diagnostics}] [--encrypt] [--password-env PASSWORD_ENV] [--json]",
+      "help_command": "watchdog backup create --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--output",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Backup output path; defaults to config backups directory"
+        },
+        {
+          "name": "--section",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "settings",
+            "profiles",
+            "providers",
+            "provider-state",
+            "routing-rules",
+            "app-policy",
+            "node-groups",
+            "route-chains",
+            "selection-state",
+            "dns-policy",
+            "metrics-policy",
+            "backup-policy",
+            "metadata",
+            "diagnostics"
+          ],
+          "description": "Backup section to include; repeat for multiple sections"
+        },
+        {
+          "name": "--encrypt",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Encrypt backup using --password-env"
+        },
+        {
+          "name": "--password-env",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Environment variable containing the encrypted-backup password"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "backup",
+        "export"
+      ],
+      "command": "watchdog backup export",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Alias for backup create",
+      "usage": "usage: watchdog backup export [-h] [--output OUTPUT] [--section {settings,profiles,providers,provider-state,routing-rules,app-policy,node-groups,route-chains,selection-state,dns-policy,metrics-policy,backup-policy,metadata,diagnostics}] [--encrypt] [--password-env PASSWORD_ENV] [--json]",
+      "help_command": "watchdog backup export --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--output",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Backup output path; defaults to config backups directory"
+        },
+        {
+          "name": "--section",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "settings",
+            "profiles",
+            "providers",
+            "provider-state",
+            "routing-rules",
+            "app-policy",
+            "node-groups",
+            "route-chains",
+            "selection-state",
+            "dns-policy",
+            "metrics-policy",
+            "backup-policy",
+            "metadata",
+            "diagnostics"
+          ],
+          "description": "Backup section to include; repeat for multiple sections"
+        },
+        {
+          "name": "--encrypt",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Encrypt backup using --password-env"
+        },
+        {
+          "name": "--password-env",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Environment variable containing the encrypted-backup password"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "backup",
+        "inspect"
+      ],
+      "command": "watchdog backup inspect",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Inspect and validate a backup archive",
+      "usage": "usage: watchdog backup inspect [-h] [--password-env PASSWORD_ENV] [--json] file",
+      "help_command": "watchdog backup inspect --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "file",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--password-env",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Environment variable containing the encrypted-backup password"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "backup",
+        "restore"
+      ],
+      "command": "watchdog backup restore",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Restore a backup archive",
+      "usage": "usage: watchdog backup restore [-h] [--section {settings,profiles,providers,provider-state,routing-rules,app-policy,node-groups,route-chains,selection-state,dns-policy,metrics-policy,backup-policy,metadata,diagnostics}] [--mode {replace,merge}] [--confirm CONFIRM] [--password-env PASSWORD_ENV] [--dry-run] [--json] file",
+      "help_command": "watchdog backup restore --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "file",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--section",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "settings",
+            "profiles",
+            "providers",
+            "provider-state",
+            "routing-rules",
+            "app-policy",
+            "node-groups",
+            "route-chains",
+            "selection-state",
+            "dns-policy",
+            "metrics-policy",
+            "backup-policy",
+            "metadata",
+            "diagnostics"
+          ],
+          "description": "Restore section; repeat for multiple sections"
+        },
+        {
+          "name": "--mode",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "replace",
+            "merge"
+          ],
+          "description": "Restore mode"
+        },
+        {
+          "name": "--confirm",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Required literal RESTORE-WATCHDOGVPN-BACKUP for replace restore"
+        },
+        {
+          "name": "--password-env",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Environment variable containing the encrypted-backup password"
+        },
+        {
+          "name": "--dry-run",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Validate restore without writing local state"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "backup",
+        "import"
+      ],
+      "command": "watchdog backup import",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Alias for backup restore",
+      "usage": "usage: watchdog backup import [-h] [--section {settings,profiles,providers,provider-state,routing-rules,app-policy,node-groups,route-chains,selection-state,dns-policy,metrics-policy,backup-policy,metadata,diagnostics}] [--mode {replace,merge}] [--confirm CONFIRM] [--password-env PASSWORD_ENV] [--dry-run] [--json] file",
+      "help_command": "watchdog backup import --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "file",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--section",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "settings",
+            "profiles",
+            "providers",
+            "provider-state",
+            "routing-rules",
+            "app-policy",
+            "node-groups",
+            "route-chains",
+            "selection-state",
+            "dns-policy",
+            "metrics-policy",
+            "backup-policy",
+            "metadata",
+            "diagnostics"
+          ],
+          "description": "Restore section; repeat for multiple sections"
+        },
+        {
+          "name": "--mode",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "replace",
+            "merge"
+          ],
+          "description": "Restore mode"
+        },
+        {
+          "name": "--confirm",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Required literal RESTORE-WATCHDOGVPN-BACKUP for replace restore"
+        },
+        {
+          "name": "--password-env",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Environment variable containing the encrypted-backup password"
+        },
+        {
+          "name": "--dry-run",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Validate restore without writing local state"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "profile"
+      ],
+      "command": "watchdog profile",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage local profiles",
+      "usage": "usage: watchdog profile [-h] {add,list,remove,enable,disable,rotation} ...",
+      "help_command": "watchdog profile --help",
+      "children": [
+        "add",
+        "list",
+        "remove",
+        "enable",
+        "disable",
+        "rotation"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "profile",
+        "add"
+      ],
+      "command": "watchdog profile add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a manual profile",
+      "usage": "usage: watchdog profile add [-h] (--clipboard | --uri URI | --file FILE | --text) [--json]",
+      "help_command": "watchdog profile add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--clipboard",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Read profile content from clipboard"
+        },
+        {
+          "name": "--uri",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Import one profile URI"
+        },
+        {
+          "name": "--file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Import profile content from file"
+        },
+        {
+          "name": "--text",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Read profile content from stdin or editor"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--clipboard",
+            "--uri",
+            "--file",
+            "--text"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "profile",
+        "list"
+      ],
+      "command": "watchdog profile list",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "List saved profiles",
+      "usage": "usage: watchdog profile list [-h] [--json] [--pool] [--source SOURCE] [--protocol PROTOCOL] [--health HEALTH] [--provider PROVIDER_ID] [--enabled-only | --disabled-only] [--wide] [--no-color]",
+      "help_command": "watchdog profile list --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--pool",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Show rotation pool only"
+        },
+        {
+          "name": "--source",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "manual",
+            "provider"
+          ],
+          "description": "Filter by source: manual, provider"
+        },
+        {
+          "name": "--protocol",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "vless",
+            "vmess",
+            "trojan",
+            "hysteria2",
+            "tuic",
+            "shadowsocks",
+            "wireguard",
+            "amneziawg",
+            "socks",
+            "http",
+            "openvpn",
+            "openvpn_cloak"
+          ],
+          "description": "Filter by protocol: vless, vmess, trojan, hysteria2, tuic, shadowsocks, wireguard, amneziawg, socks, http, openvpn, openvpn_cloak"
+        },
+        {
+          "name": "--health",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "ok",
+            "unknown",
+            "down",
+            "degraded"
+          ],
+          "description": "Filter by health: ok, unknown, down, degraded"
+        },
+        {
+          "name": "--provider",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Filter by provider ID"
+        },
+        {
+          "name": "--enabled-only",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Show enabled profiles only"
+        },
+        {
+          "name": "--disabled-only",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Show disabled profiles only"
+        },
+        {
+          "name": "--wide",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print the untruncated human table; lines may exceed terminal width"
+        },
+        {
+          "name": "--no-color",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Disable ANSI color in human output"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": false,
+          "members": [
+            "--enabled-only",
+            "--disabled-only"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "profile",
+        "remove"
+      ],
+      "command": "watchdog profile remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a saved profile",
+      "usage": "usage: watchdog profile remove [-h] [--json] profile_id",
+      "help_command": "watchdog profile remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "profile_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "profile",
+        "enable"
+      ],
+      "command": "watchdog profile enable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a saved profile",
+      "usage": "usage: watchdog profile enable [-h] [--json] profile_id",
+      "help_command": "watchdog profile enable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "profile_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "profile",
+        "disable"
+      ],
+      "command": "watchdog profile disable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a saved profile",
+      "usage": "usage: watchdog profile disable [-h] [--json] profile_id",
+      "help_command": "watchdog profile disable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "profile_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "profile",
+        "rotation"
+      ],
+      "command": "watchdog profile rotation",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Change profile rotation-pool membership",
+      "usage": "usage: watchdog profile rotation [-h] (--enable | --disable | --on | --off) [--json] profile_id",
+      "help_command": "watchdog profile rotation --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "profile_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--enable",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Add profile to rotation pool"
+        },
+        {
+          "name": "--disable",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Remove profile from rotation pool"
+        },
+        {
+          "name": "--on",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Alias for --enable"
+        },
+        {
+          "name": "--off",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Alias for --disable"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--enable",
+            "--disable",
+            "--on",
+            "--off"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "provider"
+      ],
+      "command": "watchdog provider",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage external providers",
+      "usage": "usage: watchdog provider [-h] {add,list,stats,update,remove,edit,rotation,node} ...",
+      "help_command": "watchdog provider --help",
+      "children": [
+        "add",
+        "list",
+        "stats",
+        "update",
+        "remove",
+        "edit",
+        "rotation",
+        "node"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "provider",
+        "add"
+      ],
+      "command": "watchdog provider add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add an external provider",
+      "usage": "usage: watchdog provider add [-h] [--name NAME] [--json] [url]",
+      "help_command": "watchdog provider add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "url",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "zero-or-one",
+          "choices": [],
+          "description": "External provider subscription URL"
+        },
+        {
+          "name": "--name",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Free-form provider label"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "provider",
+        "list"
+      ],
+      "command": "watchdog provider list",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "List external providers",
+      "usage": "usage: watchdog provider list [-h] [--json] [--no-color]",
+      "help_command": "watchdog provider list --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--no-color",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Disable ANSI color in human output"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "provider",
+        "stats"
+      ],
+      "command": "watchdog provider stats",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show provider statistics",
+      "usage": "usage: watchdog provider stats [-h] [--json] provider_id",
+      "help_command": "watchdog provider stats --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "provider_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "provider",
+        "update"
+      ],
+      "command": "watchdog provider update",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Update provider nodes",
+      "usage": "usage: watchdog provider update [-h] [--json] (--all | provider_id)",
+      "help_command": "watchdog provider update --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "provider_id",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "zero-or-one",
+          "choices": [],
+          "description": "Provider ID"
+        },
+        {
+          "name": "--all",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Update all providers"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "provider_id",
+            "--all"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "provider",
+        "remove"
+      ],
+      "command": "watchdog provider remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove provider and owned nodes",
+      "usage": "usage: watchdog provider remove [-h] [--json] provider_id",
+      "help_command": "watchdog provider remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "provider_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "provider",
+        "edit"
+      ],
+      "command": "watchdog provider edit",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Edit provider name or subscription URL",
+      "usage": "usage: watchdog provider edit [-h] [--name NAME] [--url URL] [--json] provider_id",
+      "help_command": "watchdog provider edit --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "provider_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--name",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "New free-form provider label"
+        },
+        {
+          "name": "--url",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "New subscription URL"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "provider",
+        "rotation"
+      ],
+      "command": "watchdog provider rotation",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable or disable provider rotation",
+      "usage": "usage: watchdog provider rotation [-h] (--enable | --disable) [--json] provider_id",
+      "help_command": "watchdog provider rotation --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "provider_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--enable",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Enable provider rotation"
+        },
+        {
+          "name": "--disable",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Disable provider rotation"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--enable",
+            "--disable"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "provider",
+        "node"
+      ],
+      "command": "watchdog provider node",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Change provider node settings",
+      "usage": "usage: watchdog provider node [-h] --rotation (--enable | --disable) [--json] provider_id node_id",
+      "help_command": "watchdog provider node --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "provider_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "node_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--rotation",
+          "kind": "option",
+          "required": true,
+          "cardinality": "flag",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--enable",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Enable node rotation"
+        },
+        {
+          "name": "--disable",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Disable node rotation"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--enable",
+            "--disable"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "node-group"
+      ],
+      "command": "watchdog node-group",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage node groups",
+      "usage": "usage: watchdog node-group [-h] {list,create,add-profile,auto-test,select,add-provider,remove-provider,exclude,unexclude,resilience,enable,disable} ...",
+      "help_command": "watchdog node-group --help",
+      "children": [
+        "list",
+        "create",
+        "add-profile",
+        "auto-test",
+        "select",
+        "add-provider",
+        "remove-provider",
+        "exclude",
+        "unexclude",
+        "resilience",
+        "enable",
+        "disable"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "list"
+      ],
+      "command": "watchdog node-group list",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "List node groups",
+      "usage": "usage: watchdog node-group list [-h] [--json]",
+      "help_command": "watchdog node-group list --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "create"
+      ],
+      "command": "watchdog node-group create",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Create a node group",
+      "usage": "usage: watchdog node-group create [-h] [--json] name",
+      "help_command": "watchdog node-group create --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "name",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "add-profile"
+      ],
+      "command": "watchdog node-group add-profile",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a profile to a node group",
+      "usage": "usage: watchdog node-group add-profile [-h] [--json] group profile",
+      "help_command": "watchdog node-group add-profile --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "profile",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "auto-test"
+      ],
+      "command": "watchdog node-group auto-test",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Measure and rank a node group's eligible candidates",
+      "usage": "usage: watchdog node-group auto-test [-h] [--json] group",
+      "help_command": "watchdog node-group auto-test --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "select"
+      ],
+      "command": "watchdog node-group select",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set a node group to auto mode or pin one profile",
+      "usage": "usage: watchdog node-group select [-h] [--json] group selection",
+      "help_command": "watchdog node-group select --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "selection",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Profile ID or 'auto'"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "add-provider"
+      ],
+      "command": "watchdog node-group add-provider",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a provider to a node group",
+      "usage": "usage: watchdog node-group add-provider [-h] [--json] group provider",
+      "help_command": "watchdog node-group add-provider --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "provider",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "remove-provider"
+      ],
+      "command": "watchdog node-group remove-provider",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a provider from a node group",
+      "usage": "usage: watchdog node-group remove-provider [-h] [--json] group provider",
+      "help_command": "watchdog node-group remove-provider --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "provider",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "exclude"
+      ],
+      "command": "watchdog node-group exclude",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Exclude a profile from a node group's candidates",
+      "usage": "usage: watchdog node-group exclude [-h] [--json] group profile",
+      "help_command": "watchdog node-group exclude --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "profile",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "unexclude"
+      ],
+      "command": "watchdog node-group unexclude",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a profile from a node group's exclusion list",
+      "usage": "usage: watchdog node-group unexclude [-h] [--json] group profile",
+      "help_command": "watchdog node-group unexclude --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "profile",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "resilience"
+      ],
+      "command": "watchdog node-group resilience",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set a node group's resilience policy",
+      "usage": "usage: watchdog node-group resilience [-h] [--json] group {resilient_only,preferred,compatibility_allowed}",
+      "help_command": "watchdog node-group resilience --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "policy",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "resilient_only",
+            "preferred",
+            "compatibility_allowed"
+          ],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "enable"
+      ],
+      "command": "watchdog node-group enable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a node group",
+      "usage": "usage: watchdog node-group enable [-h] [--json] group",
+      "help_command": "watchdog node-group enable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "node-group",
+        "disable"
+      ],
+      "command": "watchdog node-group disable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a node group",
+      "usage": "usage: watchdog node-group disable [-h] [--json] group",
+      "help_command": "watchdog node-group disable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns"
+      ],
+      "command": "watchdog dns",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage DNS v2 policy and state",
+      "usage": "usage: watchdog dns [-h] {status,test,diagnose,apply,reset,channel,resolver,rule,static-ip} ...",
+      "help_command": "watchdog dns --help",
+      "children": [
+        "status",
+        "test",
+        "diagnose",
+        "apply",
+        "reset",
+        "channel",
+        "resolver",
+        "rule",
+        "static-ip"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "status"
+      ],
+      "command": "watchdog dns status",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show DNS v2 status",
+      "usage": "usage: watchdog dns status [-h] [--policy-file POLICY_FILE] [--snapshot-file SNAPSHOT_FILE] [--resolv-conf-path RESOLV_CONF_PATH] [--json] [--no-color]",
+      "help_command": "watchdog dns status --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--snapshot-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS state snapshot JSON file"
+        },
+        {
+          "name": "--resolv-conf-path",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "resolv.conf path"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--no-color",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Disable ANSI color in human output"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "test"
+      ],
+      "command": "watchdog dns test",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Test DNS v2 resolvers",
+      "usage": "usage: watchdog dns test [-h] [--policy-file POLICY_FILE] [--json] [--auto] [--domain DOMAIN] [--timeout TIMEOUT]",
+      "help_command": "watchdog dns test --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--auto",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Test default auto setup candidates"
+        },
+        {
+          "name": "--domain",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Override the policy test domain"
+        },
+        {
+          "name": "--timeout",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Resolver probe timeout in seconds"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "diagnose"
+      ],
+      "command": "watchdog dns diagnose",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Explain route and DNS policy for hypothetical traffic",
+      "usage": "usage: watchdog dns diagnose [-h] [--policy-file POLICY_FILE] [--domain DOMAIN] [--ip IP] [--port PORT] [--protocol PROTOCOL] [--network NETWORK] [--process-name PROCESS_NAME] [--process-path PROCESS_PATH] [--ruleset-trust-file RULESET_TRUST_FILE] [--json]",
+      "help_command": "watchdog dns diagnose --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--domain",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Traffic domain name"
+        },
+        {
+          "name": "--ip",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Traffic destination IP"
+        },
+        {
+          "name": "--port",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Traffic destination port"
+        },
+        {
+          "name": "--protocol",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Traffic protocol, for example tls"
+        },
+        {
+          "name": "--network",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Network transport, for example tcp"
+        },
+        {
+          "name": "--process-name",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Process executable name"
+        },
+        {
+          "name": "--process-path",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Exact process executable path"
+        },
+        {
+          "name": "--ruleset-trust-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Rule-set trust registry JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "apply"
+      ],
+      "command": "watchdog dns apply",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Apply DNS v2 local entrypoint",
+      "usage": "usage: watchdog dns apply [-h] [--policy-file POLICY_FILE] [--snapshot-file SNAPSHOT_FILE] [--resolv-conf-path RESOLV_CONF_PATH] [--json] [--dry-run] [--yes] [--systemd-link SYSTEMD_LINK] [--entrypoint-address ENTRYPOINT_ADDRESS] [--entrypoint-port ENTRYPOINT_PORT] [--skip-entrypoint-check] [--entrypoint-timeout ENTRYPOINT_TIMEOUT]",
+      "help_command": "watchdog dns apply --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--snapshot-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS state snapshot JSON file"
+        },
+        {
+          "name": "--resolv-conf-path",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "resolv.conf path"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--dry-run",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print the apply plan without changing DNS"
+        },
+        {
+          "name": "--yes",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Confirm system DNS mutation"
+        },
+        {
+          "name": "--systemd-link",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "systemd-resolved link name, for example tun0"
+        },
+        {
+          "name": "--entrypoint-address",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Local DNS entrypoint address"
+        },
+        {
+          "name": "--entrypoint-port",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Local DNS entrypoint port"
+        },
+        {
+          "name": "--skip-entrypoint-check",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Skip local DNS entrypoint reachability check"
+        },
+        {
+          "name": "--entrypoint-timeout",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Local DNS entrypoint TCP check timeout in seconds"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "reset"
+      ],
+      "command": "watchdog dns reset",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Restore DNS from the saved v2 snapshot",
+      "usage": "usage: watchdog dns reset [-h] [--policy-file POLICY_FILE] [--snapshot-file SNAPSHOT_FILE] [--resolv-conf-path RESOLV_CONF_PATH] [--json] [--yes]",
+      "help_command": "watchdog dns reset --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--snapshot-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS state snapshot JSON file"
+        },
+        {
+          "name": "--resolv-conf-path",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "resolv.conf path"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--yes",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Confirm DNS restore"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "channel"
+      ],
+      "command": "watchdog dns channel",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage DNS channels",
+      "usage": "usage: watchdog dns channel [-h] {add,remove} ...",
+      "help_command": "watchdog dns channel --help",
+      "children": [
+        "add",
+        "remove"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "channel",
+        "add"
+      ],
+      "command": "watchdog dns channel add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add an empty DNS channel",
+      "usage": "usage: watchdog dns channel add [-h] [--policy-file POLICY_FILE] [--json] {bootstrap_dns,dns_server,proxy_server,direct,proxy,final}",
+      "help_command": "watchdog dns channel add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "name",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "bootstrap_dns",
+            "dns_server",
+            "proxy_server",
+            "direct",
+            "proxy",
+            "final"
+          ],
+          "description": ""
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "channel",
+        "remove"
+      ],
+      "command": "watchdog dns channel remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a DNS channel and its resolvers",
+      "usage": "usage: watchdog dns channel remove [-h] [--policy-file POLICY_FILE] [--json] {bootstrap_dns,dns_server,proxy_server,direct,proxy,final}",
+      "help_command": "watchdog dns channel remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "name",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "bootstrap_dns",
+            "dns_server",
+            "proxy_server",
+            "direct",
+            "proxy",
+            "final"
+          ],
+          "description": ""
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "resolver"
+      ],
+      "command": "watchdog dns resolver",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage DNS resolvers",
+      "usage": "usage: watchdog dns resolver [-h] {add,remove,enable,disable} ...",
+      "help_command": "watchdog dns resolver --help",
+      "children": [
+        "add",
+        "remove",
+        "enable",
+        "disable"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "resolver",
+        "add"
+      ],
+      "command": "watchdog dns resolver add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a resolver to a DNS channel",
+      "usage": "usage: watchdog dns resolver add [-h] [--label LABEL] [--strategy {auto}] [--disabled] [--policy-file POLICY_FILE] [--json] {bootstrap_dns,dns_server,proxy_server,direct,proxy,final} uri",
+      "help_command": "watchdog dns resolver add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "channel",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "bootstrap_dns",
+            "dns_server",
+            "proxy_server",
+            "direct",
+            "proxy",
+            "final"
+          ],
+          "description": ""
+        },
+        {
+          "name": "uri",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Resolver URI, for example udp://1.1.1.1"
+        },
+        {
+          "name": "--label",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Free-form resolver label"
+        },
+        {
+          "name": "--strategy",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "auto"
+          ],
+          "description": "Channel resolver strategy"
+        },
+        {
+          "name": "--disabled",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Add the resolver disabled"
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "resolver",
+        "remove"
+      ],
+      "command": "watchdog dns resolver remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a resolver from a DNS channel",
+      "usage": "usage: watchdog dns resolver remove [-h] [--policy-file POLICY_FILE] [--json] {bootstrap_dns,dns_server,proxy_server,direct,proxy,final} uri",
+      "help_command": "watchdog dns resolver remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "channel",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "bootstrap_dns",
+            "dns_server",
+            "proxy_server",
+            "direct",
+            "proxy",
+            "final"
+          ],
+          "description": ""
+        },
+        {
+          "name": "uri",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "resolver",
+        "enable"
+      ],
+      "command": "watchdog dns resolver enable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a resolver in a DNS channel",
+      "usage": "usage: watchdog dns resolver enable [-h] [--policy-file POLICY_FILE] [--json] {bootstrap_dns,dns_server,proxy_server,direct,proxy,final} uri",
+      "help_command": "watchdog dns resolver enable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "channel",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "bootstrap_dns",
+            "dns_server",
+            "proxy_server",
+            "direct",
+            "proxy",
+            "final"
+          ],
+          "description": ""
+        },
+        {
+          "name": "uri",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "resolver",
+        "disable"
+      ],
+      "command": "watchdog dns resolver disable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a resolver in a DNS channel",
+      "usage": "usage: watchdog dns resolver disable [-h] [--policy-file POLICY_FILE] [--json] {bootstrap_dns,dns_server,proxy_server,direct,proxy,final} uri",
+      "help_command": "watchdog dns resolver disable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "channel",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "bootstrap_dns",
+            "dns_server",
+            "proxy_server",
+            "direct",
+            "proxy",
+            "final"
+          ],
+          "description": ""
+        },
+        {
+          "name": "uri",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "rule"
+      ],
+      "command": "watchdog dns rule",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage DNS diversion rules",
+      "usage": "usage: watchdog dns rule [-h] {add,remove,enable,disable} ...",
+      "help_command": "watchdog dns rule --help",
+      "children": [
+        "add",
+        "remove",
+        "enable",
+        "disable"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "rule",
+        "add"
+      ],
+      "command": "watchdog dns rule add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a DNS diversion rule",
+      "usage": "usage: watchdog dns rule add [-h] --pattern PATTERN --action {use_channel,reject} [--channel {bootstrap_dns,dns_server,proxy_server,direct,proxy,final}] [--priority PRIORITY] [--disabled] [--policy-file POLICY_FILE] [--json] id",
+      "help_command": "watchdog dns rule add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--pattern",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "For example domain:example.com or suffix:example.com"
+        },
+        {
+          "name": "--action",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "use_channel",
+            "reject"
+          ],
+          "description": ""
+        },
+        {
+          "name": "--channel",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "bootstrap_dns",
+            "dns_server",
+            "proxy_server",
+            "direct",
+            "proxy",
+            "final"
+          ],
+          "description": "Required for --action use_channel"
+        },
+        {
+          "name": "--priority",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--disabled",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Add the rule disabled"
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "rule",
+        "remove"
+      ],
+      "command": "watchdog dns rule remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a DNS diversion rule",
+      "usage": "usage: watchdog dns rule remove [-h] [--policy-file POLICY_FILE] [--json] id",
+      "help_command": "watchdog dns rule remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "rule",
+        "enable"
+      ],
+      "command": "watchdog dns rule enable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a DNS diversion rule",
+      "usage": "usage: watchdog dns rule enable [-h] [--policy-file POLICY_FILE] [--json] id",
+      "help_command": "watchdog dns rule enable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "rule",
+        "disable"
+      ],
+      "command": "watchdog dns rule disable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a DNS diversion rule",
+      "usage": "usage: watchdog dns rule disable [-h] [--policy-file POLICY_FILE] [--json] id",
+      "help_command": "watchdog dns rule disable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "static-ip"
+      ],
+      "command": "watchdog dns static-ip",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage static IP mappings",
+      "usage": "usage: watchdog dns static-ip [-h] {add,remove} ...",
+      "help_command": "watchdog dns static-ip --help",
+      "children": [
+        "add",
+        "remove"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "static-ip",
+        "add"
+      ],
+      "command": "watchdog dns static-ip add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a static IP mapping",
+      "usage": "usage: watchdog dns static-ip add [-h] [--disabled] [--policy-file POLICY_FILE] [--json] domain ip",
+      "help_command": "watchdog dns static-ip add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "domain",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "ip",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--disabled",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Add the mapping disabled"
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "dns",
+        "static-ip",
+        "remove"
+      ],
+      "command": "watchdog dns static-ip remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove static IP mapping(s) for a domain",
+      "usage": "usage: watchdog dns static-ip remove [-h] [--ip IP] [--policy-file POLICY_FILE] [--json] domain",
+      "help_command": "watchdog dns static-ip remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "domain",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--ip",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Only remove this specific IP; defaults to removing all IPs for the domain"
+        },
+        {
+          "name": "--policy-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "DNS policy JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "config"
+      ],
+      "command": "watchdog config",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage WatchdogVPN configuration",
+      "usage": "usage: watchdog config [-h] {set,routing-contract,lan-sharing-credentials} ...",
+      "help_command": "watchdog config --help",
+      "children": [
+        "set",
+        "routing-contract",
+        "lan-sharing-credentials"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "config",
+        "set"
+      ],
+      "command": "watchdog config set",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set a configuration value",
+      "usage": "usage: watchdog config set [-h] [--json] key value",
+      "help_command": "watchdog config set --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "key",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Configuration key, for example mode or rotation.health_targets"
+        },
+        {
+          "name": "value",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Configuration value"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "config",
+        "routing-contract"
+      ],
+      "command": "watchdog config routing-contract",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show routing and capture coexistence contract",
+      "usage": "usage: watchdog config routing-contract [-h] [--json]",
+      "help_command": "watchdog config routing-contract --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "config",
+        "lan-sharing-credentials"
+      ],
+      "command": "watchdog config lan-sharing-credentials",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show LAN sharing credential status",
+      "usage": "usage: watchdog config lan-sharing-credentials [-h] [--json] [--show-secret]",
+      "help_command": "watchdog config lan-sharing-credentials --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        },
+        {
+          "name": "--show-secret",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print the LAN sharing password explicitly"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "stats"
+      ],
+      "command": "watchdog stats",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Inspect local observability metrics",
+      "usage": "usage: watchdog stats [-h] {status,summary,purge,privacy-mode} ...",
+      "help_command": "watchdog stats --help",
+      "children": [
+        "status",
+        "summary",
+        "purge",
+        "privacy-mode"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "stats",
+        "status"
+      ],
+      "command": "watchdog stats status",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show metrics status",
+      "usage": "usage: watchdog stats status [-h] [--json]",
+      "help_command": "watchdog stats status --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "stats",
+        "summary"
+      ],
+      "command": "watchdog stats summary",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show aggregate metrics summary",
+      "usage": "usage: watchdog stats summary [-h] [--json]",
+      "help_command": "watchdog stats summary --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "stats",
+        "purge"
+      ],
+      "command": "watchdog stats purge",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Purge local observability metrics",
+      "usage": "usage: watchdog stats purge [-h] [--yes] [--json]",
+      "help_command": "watchdog stats purge --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--yes",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Confirm metrics purge"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "stats",
+        "privacy-mode"
+      ],
+      "command": "watchdog stats privacy-mode",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set metrics privacy mode",
+      "usage": "usage: watchdog stats privacy-mode [-h] [--json] {off,aggregate,detailed}",
+      "help_command": "watchdog stats privacy-mode --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "mode",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "off",
+            "aggregate",
+            "detailed"
+          ],
+          "description": "Metrics privacy mode"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules"
+      ],
+      "command": "watchdog rules",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Inspect configured routing rules",
+      "usage": "usage: watchdog rules [-h] {list,explain,enable,disable,add-rule,remove-rule,set-priority,enable-rule,disable-rule,import,export} ...",
+      "help_command": "watchdog rules --help",
+      "children": [
+        "list",
+        "explain",
+        "enable",
+        "disable",
+        "add-rule",
+        "remove-rule",
+        "set-priority",
+        "enable-rule",
+        "disable-rule",
+        "import",
+        "export"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "list"
+      ],
+      "command": "watchdog rules list",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "List routing rule groups",
+      "usage": "usage: watchdog rules list [-h] [--json]",
+      "help_command": "watchdog rules list --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "explain"
+      ],
+      "command": "watchdog rules explain",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Explain how configured rules would handle hypothetical traffic",
+      "usage": "usage: watchdog rules explain [-h] [--domain DOMAIN] [--ip IP] [--port PORT] [--protocol PROTOCOL] [--network NETWORK] [--process-name PROCESS_NAME] [--process-path PROCESS_PATH] [--ruleset-trust-file RULESET_TRUST_FILE] [--json]",
+      "help_command": "watchdog rules explain --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--domain",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Traffic domain name"
+        },
+        {
+          "name": "--ip",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Traffic destination IP"
+        },
+        {
+          "name": "--port",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Traffic destination port"
+        },
+        {
+          "name": "--protocol",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Traffic protocol, for example tls"
+        },
+        {
+          "name": "--network",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Network transport, for example tcp"
+        },
+        {
+          "name": "--process-name",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Process executable name"
+        },
+        {
+          "name": "--process-path",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Exact process executable path"
+        },
+        {
+          "name": "--ruleset-trust-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Rule-set trust registry JSON file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "enable"
+      ],
+      "command": "watchdog rules enable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a rule group",
+      "usage": "usage: watchdog rules enable [-h] [--json] group",
+      "help_command": "watchdog rules enable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "disable"
+      ],
+      "command": "watchdog rules disable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a rule group",
+      "usage": "usage: watchdog rules disable [-h] [--json] group",
+      "help_command": "watchdog rules disable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "add-rule"
+      ],
+      "command": "watchdog rules add-rule",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a rule to a group",
+      "usage": "usage: watchdog rules add-rule [-h] --action ACTION --condition KEY=VALUE [--json] group rule_id",
+      "help_command": "watchdog rules add-rule --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--action",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Rule action"
+        },
+        {
+          "name": "--condition",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Rule condition; repeat to add multiple values or condition types"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "remove-rule"
+      ],
+      "command": "watchdog rules remove-rule",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a rule from a group",
+      "usage": "usage: watchdog rules remove-rule [-h] [--json] group rule_id",
+      "help_command": "watchdog rules remove-rule --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "set-priority"
+      ],
+      "command": "watchdog rules set-priority",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set a rule group's priority",
+      "usage": "usage: watchdog rules set-priority [-h] [--json] group priority",
+      "help_command": "watchdog rules set-priority --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "priority",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "enable-rule"
+      ],
+      "command": "watchdog rules enable-rule",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a single rule within a group",
+      "usage": "usage: watchdog rules enable-rule [-h] [--json] group rule_id",
+      "help_command": "watchdog rules enable-rule --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "disable-rule"
+      ],
+      "command": "watchdog rules disable-rule",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a single rule within a group",
+      "usage": "usage: watchdog rules disable-rule [-h] [--json] group rule_id",
+      "help_command": "watchdog rules disable-rule --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "import"
+      ],
+      "command": "watchdog rules import",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Import a rule group JSON file",
+      "usage": "usage: watchdog rules import [-h] [--name NAME] [--default-action DEFAULT_ACTION] [--allow-partial] [--dry-run] [--replace] [--json] file",
+      "help_command": "watchdog rules import --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "file",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--name",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Override imported group name"
+        },
+        {
+          "name": "--default-action",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Route action for simple lists and external rules without explicit action"
+        },
+        {
+          "name": "--allow-partial",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Import supported rules while reporting unsupported entries"
+        },
+        {
+          "name": "--dry-run",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Preview the import without writing rule files"
+        },
+        {
+          "name": "--replace",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Replace an existing group with the same name after writing a backup"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "rules",
+        "export"
+      ],
+      "command": "watchdog rules export",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Export a rule group",
+      "usage": "usage: watchdog rules export [-h] [--output OUTPUT] [--json] group",
+      "help_command": "watchdog rules export --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "group",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--output",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Write exported group JSON to this file"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "ruleset"
+      ],
+      "command": "watchdog ruleset",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Inspect and refresh trusted remote or built-in rule sets",
+      "usage": "usage: watchdog ruleset [-h] {status,refresh,add,remove} ...",
+      "help_command": "watchdog ruleset --help",
+      "children": [
+        "status",
+        "refresh",
+        "add",
+        "remove"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "ruleset",
+        "status"
+      ],
+      "command": "watchdog ruleset status",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show rule-set trust and cache status",
+      "usage": "usage: watchdog ruleset status [-h] [--json]",
+      "help_command": "watchdog ruleset status --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "ruleset",
+        "refresh"
+      ],
+      "command": "watchdog ruleset refresh",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Refresh trusted rule-set cache files",
+      "usage": "usage: watchdog ruleset refresh [-h] [--referenced-only] [--force] [--no-evict] [--json] [ids ...]",
+      "help_command": "watchdog ruleset refresh --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "ids",
+          "kind": "positional",
+          "required": false,
+          "cardinality": "zero-or-more",
+          "choices": [],
+          "description": "Rule-set IDs to refresh; defaults to all policies"
+        },
+        {
+          "name": "--referenced-only",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Refresh only rule sets referenced by enabled routing rules"
+        },
+        {
+          "name": "--force",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Refresh even when cache is not due"
+        },
+        {
+          "name": "--no-evict",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Do not remove unowned cache files"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "ruleset",
+        "add"
+      ],
+      "command": "watchdog ruleset add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Define a rule-set trust policy",
+      "usage": "usage: watchdog ruleset add [-h] --kind {remote,built-in} --source SOURCE [--sha256 SHA256] [--critical] [--no-critical] [--update-interval-seconds UPDATE_INTERVAL_SECONDS] [--max-stale-seconds MAX_STALE_SECONDS] [--failure-behavior {fail-closed,warn-and-skip}] [--json] id",
+      "help_command": "watchdog ruleset add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--kind",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "remote",
+            "built-in"
+          ],
+          "description": ""
+        },
+        {
+          "name": "--source",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Rule-set URL or built-in identifier"
+        },
+        {
+          "name": "--sha256",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Expected SHA-256 hex digest; required for --kind remote"
+        },
+        {
+          "name": "--critical",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Treat load failure as fail-closed (default)"
+        },
+        {
+          "name": "--no-critical",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Treat load failure as warn-and-skip"
+        },
+        {
+          "name": "--update-interval-seconds",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Refresh interval; default 86400"
+        },
+        {
+          "name": "--max-stale-seconds",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Maximum cache staleness; default 604800"
+        },
+        {
+          "name": "--failure-behavior",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "fail-closed",
+            "warn-and-skip"
+          ],
+          "description": "Override the failure-behavior derived from --critical"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "ruleset",
+        "remove"
+      ],
+      "command": "watchdog ruleset remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a rule-set trust policy",
+      "usage": "usage: watchdog ruleset remove [-h] [--json] id",
+      "help_command": "watchdog ruleset remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy"
+      ],
+      "command": "watchdog app-policy",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage minimal Linux app/process policy",
+      "usage": "usage: watchdog app-policy [-h] {status,enable,disable,mode,default-action,add,remove,enable-rule,disable-rule} ...",
+      "help_command": "watchdog app-policy --help",
+      "children": [
+        "status",
+        "enable",
+        "disable",
+        "mode",
+        "default-action",
+        "add",
+        "remove",
+        "enable-rule",
+        "disable-rule"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy",
+        "status"
+      ],
+      "command": "watchdog app-policy status",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show app policy",
+      "usage": "usage: watchdog app-policy status [-h] [--json]",
+      "help_command": "watchdog app-policy status --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy",
+        "enable"
+      ],
+      "command": "watchdog app-policy enable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable app policy",
+      "usage": "usage: watchdog app-policy enable [-h] [--json]",
+      "help_command": "watchdog app-policy enable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy",
+        "disable"
+      ],
+      "command": "watchdog app-policy disable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable app policy",
+      "usage": "usage: watchdog app-policy disable [-h] [--json]",
+      "help_command": "watchdog app-policy disable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy",
+        "mode"
+      ],
+      "command": "watchdog app-policy mode",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set app policy mode",
+      "usage": "usage: watchdog app-policy mode [-h] [--json] {whitelist,blacklist}",
+      "help_command": "watchdog app-policy mode --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "mode",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "whitelist",
+            "blacklist"
+          ],
+          "description": "App policy mode"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy",
+        "default-action"
+      ],
+      "command": "watchdog app-policy default-action",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set app policy default action",
+      "usage": "usage: watchdog app-policy default-action [-h] [--json] {current,direct,block}",
+      "help_command": "watchdog app-policy default-action --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "default_action",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "current",
+            "direct",
+            "block"
+          ],
+          "description": "Default route action"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy",
+        "add"
+      ],
+      "command": "watchdog app-policy add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add an app policy rule",
+      "usage": "usage: watchdog app-policy add [-h] (--process-name PROCESS_NAME | --process-path PROCESS_PATH | --process-path-regex PROCESS_PATH_REGEX | --user USER | --user-id USER_ID) --action ACTION [--id ID] [--json]",
+      "help_command": "watchdog app-policy add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--process-name",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Process executable name"
+        },
+        {
+          "name": "--process-path",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Exact process executable path"
+        },
+        {
+          "name": "--process-path-regex",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Regex matching a process executable path"
+        },
+        {
+          "name": "--user",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Unix username"
+        },
+        {
+          "name": "--user-id",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Unix numeric user ID"
+        },
+        {
+          "name": "--action",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Route action: current, direct, block, or group:<name>"
+        },
+        {
+          "name": "--id",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Rule ID; generated when omitted"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--process-name",
+            "--process-path",
+            "--process-path-regex",
+            "--user",
+            "--user-id"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "app-policy",
+        "remove"
+      ],
+      "command": "watchdog app-policy remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove an app policy rule",
+      "usage": "usage: watchdog app-policy remove [-h] [--json] rule_id",
+      "help_command": "watchdog app-policy remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy",
+        "enable-rule"
+      ],
+      "command": "watchdog app-policy enable-rule",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a single app policy rule",
+      "usage": "usage: watchdog app-policy enable-rule [-h] [--json] rule_id",
+      "help_command": "watchdog app-policy enable-rule --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "app-policy",
+        "disable-rule"
+      ],
+      "command": "watchdog app-policy disable-rule",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a single app policy rule",
+      "usage": "usage: watchdog app-policy disable-rule [-h] [--json] rule_id",
+      "help_command": "watchdog app-policy disable-rule --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain"
+      ],
+      "command": "watchdog chain",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage proxy route chains",
+      "usage": "usage: watchdog chain [-h] {list,show,create,add-hop,remove-hop,enable,disable,remove} ...",
+      "help_command": "watchdog chain --help",
+      "children": [
+        "list",
+        "show",
+        "create",
+        "add-hop",
+        "remove-hop",
+        "enable",
+        "disable",
+        "remove"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain",
+        "list"
+      ],
+      "command": "watchdog chain list",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "List route chains",
+      "usage": "usage: watchdog chain list [-h] [--json]",
+      "help_command": "watchdog chain list --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain",
+        "show"
+      ],
+      "command": "watchdog chain show",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show a route chain",
+      "usage": "usage: watchdog chain show [-h] [--json] id",
+      "help_command": "watchdog chain show --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain",
+        "create"
+      ],
+      "command": "watchdog chain create",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Create a route chain",
+      "usage": "usage: watchdog chain create [-h] --hop TYPE:TARGET [--description DESCRIPTION] [--json] id",
+      "help_command": "watchdog chain create --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--hop",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Chain hop, e.g. profile:my-node or group:my-group; repeat for multiple hops"
+        },
+        {
+          "name": "--description",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Free-form chain description"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain",
+        "add-hop"
+      ],
+      "command": "watchdog chain add-hop",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Append a hop to a route chain",
+      "usage": "usage: watchdog chain add-hop [-h] --type {profile,group} --target TARGET [--selection-policy {group_policy}] [--json] id",
+      "help_command": "watchdog chain add-hop --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--type",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "profile",
+            "group"
+          ],
+          "description": ""
+        },
+        {
+          "name": "--target",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Profile ID or node-group name"
+        },
+        {
+          "name": "--selection-policy",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [
+            "group_policy"
+          ],
+          "description": "Only valid for --type group"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain",
+        "remove-hop"
+      ],
+      "command": "watchdog chain remove-hop",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a hop from a route chain by position",
+      "usage": "usage: watchdog chain remove-hop [-h] --index INDEX [--json] id",
+      "help_command": "watchdog chain remove-hop --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--index",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "1-based hop position, see `chain show`"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain",
+        "enable"
+      ],
+      "command": "watchdog chain enable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a route chain",
+      "usage": "usage: watchdog chain enable [-h] [--json] id",
+      "help_command": "watchdog chain enable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain",
+        "disable"
+      ],
+      "command": "watchdog chain disable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a route chain",
+      "usage": "usage: watchdog chain disable [-h] [--json] id",
+      "help_command": "watchdog chain disable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "chain",
+        "remove"
+      ],
+      "command": "watchdog chain remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a route chain",
+      "usage": "usage: watchdog chain remove [-h] [--json] id",
+      "help_command": "watchdog chain remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    }
+  ]
+}

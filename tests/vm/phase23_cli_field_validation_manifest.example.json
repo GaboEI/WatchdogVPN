@@ -1,0 +1,101 @@
+{
+  "evidence_dir": "/tmp/watchdogvpn-phase23-field-evidence",
+  "external_vpn_states": ["absent", "present"],
+  "probe_domain": "example.com",
+  "profiles": [
+    {
+      "protocol": "vless",
+      "expected_id": "phase23-vless",
+      "expected_category": "resilient",
+      "fixture_path": "/operator/fixtures/phase23-vless.txt"
+    },
+    {
+      "protocol": "vmess",
+      "expected_id": "phase23-vmess",
+      "expected_category": "compatibility",
+      "fixture_path": "/operator/fixtures/phase23-vmess.txt"
+    },
+    {
+      "protocol": "trojan",
+      "expected_id": "phase23-trojan",
+      "expected_category": "resilient",
+      "fixture_path": "/operator/fixtures/phase23-trojan.txt"
+    },
+    {
+      "protocol": "hysteria2",
+      "expected_id": "phase23-hysteria2",
+      "expected_category": "resilient",
+      "fixture_path": "/operator/fixtures/phase23-hysteria2.txt"
+    },
+    {
+      "protocol": "tuic",
+      "expected_id": "phase23-tuic",
+      "expected_category": "compatibility",
+      "fixture_path": "/operator/fixtures/phase23-tuic.txt"
+    },
+    {
+      "protocol": "shadowsocks",
+      "expected_id": "phase23-shadowsocks",
+      "expected_category": "compatibility",
+      "fixture_path": "/operator/fixtures/phase23-shadowsocks.txt"
+    },
+    {
+      "protocol": "wireguard",
+      "expected_id": "phase23-wireguard",
+      "expected_category": "compatibility",
+      "fixture_path": "/operator/fixtures/phase23-wireguard.conf"
+    },
+    {
+      "protocol": "amneziawg",
+      "expected_id": "phase23-amneziawg",
+      "expected_category": "resilient",
+      "fixture_path": "/operator/fixtures/phase23-amneziawg.conf"
+    },
+    {
+      "protocol": "openvpn",
+      "expected_id": "phase23-openvpn",
+      "expected_category": "compatibility",
+      "fixture_path": "/operator/fixtures/phase23-openvpn.ovpn"
+    },
+    {
+      "protocol": "openvpn_cloak",
+      "expected_id": "phase23-openvpn-cloak",
+      "expected_category": "resilient",
+      "fixture_path": "/operator/fixtures/phase23-openvpn-cloak.txt"
+    },
+    {
+      "protocol": "socks",
+      "expected_id": "phase23-socks",
+      "expected_category": "compatibility",
+      "fixture_path": "/operator/fixtures/phase23-socks.json"
+    },
+    {
+      "protocol": "http",
+      "expected_id": "phase23-http",
+      "expected_category": "compatibility",
+      "fixture_path": "/operator/fixtures/phase23-http.json"
+    }
+  ],
+  "provider": {
+    "name": "phase23-provider",
+    "url_file": "/operator/fixtures/phase23-provider-url.txt",
+    "expected_provider_id": "phase23-provider",
+    "expected_node_id": "phase23-provider:node-1"
+  },
+  "app_policy": {
+    "direct_probe_path": "/tmp/phase23-direct-probe",
+    "vpn_probe_path": "/tmp/phase23-vpn-probe",
+    "block_probe_path": "/tmp/phase23-block-probe"
+  },
+  "rotation": {
+    "primary_profile_id": "phase23-vless",
+    "secondary_profile_id": "phase23-trojan",
+    "all_failed_profile_ids": [
+      "phase23-vless",
+      "phase23-trojan"
+    ]
+  },
+  "reboot": {
+    "connected_profile_id": "phase23-vless"
+  }
+}

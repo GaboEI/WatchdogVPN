@@ -76,6 +76,14 @@ These are planned phases, not current user-facing promises:
 Detailed sequencing lives in the local master plan used by the maintainer. The
 public roadmap summary is in [ROADMAP.md](ROADMAP.md).
 
+## Development Reproducibility
+
+The canonical interpreter for regenerating committed CLI inventory snapshots is
+Python 3.14.6, recorded in [`.python-version`](.python-version). The inventory
+derives public cardinality and mutually exclusive-group semantics itself, so
+supported Python releases do not depend on `argparse`'s private formatting or
+requiredness internals.
+
 Phase 17 keeps automatic remote backup sync deferred. The supported portable
 workflow is explicit ZIP export/import, preferably encrypted before moving the
 archive off the local machine.
@@ -161,8 +169,13 @@ VPN
 Run the product CLI:
 
 ```sh
-watchdogvpn --help
+watchdog --help
 ```
+
+`watchdog` is the canonical CLI. The installed `watchdogvpn` command is a
+deprecated compatibility alias that forwards to the same parser and writes a
+migration warning to stderr. Local report, log, update and current-TUI helpers
+are available under `watchdog maintenance --help`.
 
 `doctor.sh` is read-only. It checks whether the machine has the expected
 dependencies, runtime state and time/NTP health. It reports clock skew as a
@@ -177,7 +190,9 @@ git pull
 ```
 
 The updater validates the checkout, backs up managed files and preserves user
-configuration, logs, shared runtime state and DNS configuration.
+configuration, logs, shared runtime state and DNS configuration. If the daemon
+was already active, the updater restarts it after replacing the runtime and
+verifies that a new process generation is serving the post-update IPC smoke test.
 
 ## Uninstalling
 

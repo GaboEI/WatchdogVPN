@@ -22,6 +22,7 @@ class RotationResult:
     attempts: int
     category: str
     rolled_back: bool = False
+    cleanup_failed: bool = False
 
 
 @dataclass
@@ -40,6 +41,7 @@ class RotationEngine:
     _recent_profile_ids: list[str] = field(default_factory=list, init=False, repr=False)
     _last_good_profile_id: str | None = field(default=None, init=False, repr=False)
     _last_rotation_at: float | None = field(default=None, init=False, repr=False)
+    _cleanup_barrier_failed: bool = field(default=False, init=False, repr=False)
 
     @staticmethod
     def pool_size_category(pool_size: int) -> str:
@@ -89,7 +91,15 @@ class RotationEngine:
         health_check: HealthCheckFn,
         dns_policy: DNSPolicy | None = None,
     ) -> str:
-        driver.disconnect()
+        try:
+            disconnected = driver.disconnect()
+        except Exception:
+            disconnected = False
+            LOGGER.error("rotation_cleanup_barrier_exception profile_id=%s", profile.id, exc_info=True)
+        if not disconnected:
+            self._cleanup_barrier_failed = True
+            LOGGER.error("rotation_cleanup_barrier_failed profile_id=%s", profile.id)
+            return "cleanup_failed"
         connected = driver.connect(profile, dns_policy=dns_policy)
         if not connected:
             return "down"
@@ -130,6 +140,7 @@ class RotationEngine:
         LOGGER.info("rotation_single_node_check profile_id=%s", profile.id)
         status = self._try_profile(profile, driver, health_check, dns_policy=dns_policy)
         success = status == "ok"
+        cleanup_failed = status == "cleanup_failed"
         if success:
             self._remember(profile.id)
             self._last_good_profile_id = profile.id
@@ -141,6 +152,7 @@ class RotationEngine:
             success=success,
             attempts=1,
             category="single",
+            cleanup_failed=cleanup_failed,
         )
 
     def rotate(
@@ -151,6 +163,7 @@ class RotationEngine:
         force: bool = False,
         dns_policy: DNSPolicy | None = None,
     ) -> RotationResult:
+        self._cleanup_barrier_failed = False
         category = self.pool_size_category(len(pool))
 
         if category == "unavailable":
@@ -184,6 +197,16 @@ class RotationEngine:
 
             status = self._try_profile(profile, driver, health_check, dns_policy=dns_policy)
 
+            if status == "cleanup_failed":
+                self._last_rotation_at = self.clock()
+                return RotationResult(
+                    profile=None,
+                    success=False,
+                    attempts=attempts,
+                    category=category,
+                    cleanup_failed=True,
+                )
+
             if status == "ok":
                 LOGGER.info("rotation_try_ok profile_id=%s", profile.id)
                 self._remember(profile.id)
@@ -200,6 +223,15 @@ class RotationEngine:
             ):
                 rollback_attempted = True
                 rollback_target = self._rollback(pool, driver, health_check, dns_policy=dns_policy)
+                if self._cleanup_barrier_failed:
+                    self._last_rotation_at = self.clock()
+                    return RotationResult(
+                        profile=None,
+                        success=False,
+                        attempts=attempts,
+                        category=category,
+                        cleanup_failed=True,
+                    )
                 if rollback_target is not None:
                     self._last_rotation_at = self.clock()
                     return RotationResult(
@@ -215,6 +247,15 @@ class RotationEngine:
             final_rollback_target = self._rollback(pool, driver, health_check, dns_policy=dns_policy)
 
         self._last_rotation_at = self.clock()
+
+        if self._cleanup_barrier_failed:
+            return RotationResult(
+                profile=None,
+                success=False,
+                attempts=attempts,
+                category=category,
+                cleanup_failed=True,
+            )
 
         if final_rollback_target is not None:
             LOGGER.info("rotation_end_rollback profile_id=%s", final_rollback_target.id)

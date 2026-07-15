@@ -20,6 +20,10 @@ PROVIDER_FIELDS = {
 }
 
 
+def normalized_provider_url(url: str) -> str:
+    return str(url or "").strip()
+
+
 def _dt_to_iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 

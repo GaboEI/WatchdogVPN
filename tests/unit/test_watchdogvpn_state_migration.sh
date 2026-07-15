@@ -14,6 +14,10 @@ sudo() {
   "$@"
 }
 
+_watchdogvpn_migration_checkpoint() {
+  [[ "${MIGRATION_FAIL_AT:-}" != "$1" ]]
+}
+
 make_legacy_state() {
   local source_dir="$1"
   install -d -m 0755 "$source_dir/rules"
@@ -48,6 +52,7 @@ WATCHDOGVPN_SHARED_STATE_DIR="$target_dir" \
 [[ "$(cat "$target_dir/state.toml")" == "legacy-state" ]]
 [[ "$(cat "$target_dir/profiles.json")" == "legacy-profiles" ]]
 [[ "$(cat "$target_dir/rules/custom.json")" == "legacy-rules" ]]
+grep -Fxq 'watchdogvpn-shared-state-ready-v2' "$target_dir/.migrated"
 
 printf 'after-marker\n' >"$source_dir/providers.json"
 WATCHDOGVPN_LEGACY_CONFIG_DIR="$source_dir" \
@@ -60,12 +65,23 @@ non_clobber_target="$TMP_DIR/non-clobber-target"
 make_legacy_state "$non_clobber_source"
 install -d -m 0755 "$non_clobber_target"
 printf 'existing-state\n' >"$non_clobber_target/state.toml"
+# A marker-less conflicting target could be a truncated predecessor rather than
+# trusted shared state. Refuse it fail-closed instead of preserving it and
+# certifying the migration, then permit explicit recovery after resolution.
+if WATCHDOGVPN_LEGACY_CONFIG_DIR="$non_clobber_source" \
+  WATCHDOGVPN_SHARED_STATE_DIR="$non_clobber_target" \
+  migrate_watchdogvpn_shared_state >/dev/null 2>&1; then
+  printf 'FAIL: migration accepted an unmarked conflicting target\n' >&2
+  exit 1
+fi
+[[ ! -e "$non_clobber_target/.migrated" ]]
+[[ "$(cat "$non_clobber_target/state.toml")" == "existing-state" ]]
+rm "$non_clobber_target/state.toml"
 WATCHDOGVPN_LEGACY_CONFIG_DIR="$non_clobber_source" \
 WATCHDOGVPN_SHARED_STATE_DIR="$non_clobber_target" \
   migrate_watchdogvpn_shared_state
 [[ -f "$non_clobber_target/.migrated" ]]
-[[ "$(cat "$non_clobber_target/state.toml")" == "existing-state" ]]
-[[ "$(cat "$non_clobber_target/profiles.json")" == "legacy-profiles" ]]
+[[ "$(cat "$non_clobber_target/state.toml")" == "legacy-state" ]]
 
 empty_source="$TMP_DIR/empty-source"
 empty_source_target="$TMP_DIR/empty-source-target"
@@ -135,5 +151,89 @@ if WATCHDOGVPN_LEGACY_CONFIG_DIR="$bad_source" \
   exit 1
 fi
 [[ ! -e "$bad_target/.migrated" ]]
+
+invalid_journal_source="$TMP_DIR/invalid-journal-source"
+invalid_journal_target="$TMP_DIR/invalid-journal-target"
+make_legacy_state "$invalid_journal_source"
+install -d -m 0750 "$invalid_journal_target"
+printf 'untrusted-journal\n' >"$invalid_journal_target/.migration-in-progress"
+if WATCHDOGVPN_LEGACY_CONFIG_DIR="$invalid_journal_source" \
+  WATCHDOGVPN_SHARED_STATE_DIR="$invalid_journal_target" \
+  migrate_watchdogvpn_shared_state >/dev/null 2>&1; then
+  printf 'FAIL: migration accepted an invalid recovery journal\n' >&2
+  exit 1
+fi
+[[ ! -e "$invalid_journal_target/.migrated" ]]
+
+# Every staging, validation, journal, publication, and marker boundary must
+# leave the marker absent on interruption. A re-run sees the journal when one
+# exists, replaces any partial publication from the staged legacy source, and
+# certifies only a content-identical final target.
+for fail_at in \
+  'stage-copy:profiles.json' \
+  'stage-copy:rules' \
+  'stage-copy:state.toml' \
+  'stage-validate' \
+  'journal-publish' \
+  'publish:profiles.json' \
+  'publish:rules' \
+  'publish:state.toml' \
+  'target-validate' \
+  'target-content-validate' \
+  'marker-publish'; do
+  interruption_source="$TMP_DIR/interruption-source-${fail_at//:/-}"
+  interruption_target="$TMP_DIR/interruption-target-${fail_at//:/-}"
+  make_legacy_state "$interruption_source"
+  # A legacy marker must never be copied into the shared target as success.
+  printf 'legacy-marker\n' >"$interruption_source/.migrated"
+  install -d -m 0750 "$interruption_target"
+  export MIGRATION_FAIL_AT="$fail_at"
+  if WATCHDOGVPN_LEGACY_CONFIG_DIR="$interruption_source" \
+    WATCHDOGVPN_SHARED_STATE_DIR="$interruption_target" \
+    migrate_watchdogvpn_shared_state >/dev/null 2>&1; then
+    printf 'FAIL: migration unexpectedly completed at interruption point %s\n' "$fail_at" >&2
+    exit 1
+  fi
+  unset MIGRATION_FAIL_AT
+  [[ ! -e "$interruption_target/.migrated" ]]
+  WATCHDOGVPN_LEGACY_CONFIG_DIR="$interruption_source" \
+  WATCHDOGVPN_SHARED_STATE_DIR="$interruption_target" \
+    migrate_watchdogvpn_shared_state
+  [[ -f "$interruption_target/.migrated" ]]
+  [[ "$(cat "$interruption_target/state.toml")" == "legacy-state" ]]
+  [[ "$(cat "$interruption_target/profiles.json")" == "legacy-profiles" ]]
+  [[ "$(cat "$interruption_target/rules/custom.json")" == "legacy-rules" ]]
+  [[ ! -e "$interruption_target/.migration-in-progress" ]]
+done
+
+# A journal can recover an interrupted atomic publication, but it must not
+# overwrite a later divergent/truncated entry. That state remains unmarked and
+# is rejected until repaired with the known-good legacy content.
+divergent_source="$TMP_DIR/divergent-source"
+divergent_target="$TMP_DIR/divergent-target"
+make_legacy_state "$divergent_source"
+install -d -m 0750 "$divergent_target"
+export MIGRATION_FAIL_AT='publish:state.toml'
+if WATCHDOGVPN_LEGACY_CONFIG_DIR="$divergent_source" \
+  WATCHDOGVPN_SHARED_STATE_DIR="$divergent_target" \
+  migrate_watchdogvpn_shared_state >/dev/null 2>&1; then
+  printf 'FAIL: migration unexpectedly completed before divergent recovery test\n' >&2
+  exit 1
+fi
+unset MIGRATION_FAIL_AT
+printf 'truncated\n' >"$divergent_target/profiles.json"
+if WATCHDOGVPN_LEGACY_CONFIG_DIR="$divergent_source" \
+  WATCHDOGVPN_SHARED_STATE_DIR="$divergent_target" \
+  migrate_watchdogvpn_shared_state >/dev/null 2>&1; then
+  printf 'FAIL: migration accepted a divergent journaled target\n' >&2
+  exit 1
+fi
+[[ ! -e "$divergent_target/.migrated" ]]
+cp "$divergent_source/profiles.json" "$divergent_target/profiles.json"
+WATCHDOGVPN_LEGACY_CONFIG_DIR="$divergent_source" \
+WATCHDOGVPN_SHARED_STATE_DIR="$divergent_target" \
+  migrate_watchdogvpn_shared_state
+[[ -f "$divergent_target/.migrated" ]]
+[[ "$(cat "$divergent_target/state.toml")" == "legacy-state" ]]
 
 printf 'WatchdogVPN shared state migration checks passed\n'

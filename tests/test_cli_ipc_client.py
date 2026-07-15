@@ -30,7 +30,7 @@ from cli.ipc.errors import (
 )
 from config.profile_store import ProfileStore
 from daemon.ipc_server import IPCServer
-from daemon.protocol import EVENT_STATE_CHANGED, encode_event
+from daemon.protocol import COMMAND_CONNECT, EVENT_STATE_CHANGED, encode_event
 from daemon.protocol import encode_response
 from daemon.runtime_worker import RuntimeWorker
 from models.connection_state import ConnectionState
@@ -59,6 +59,9 @@ class FakeRuntime:
             status="connected" if self.connected_profile_id else "standby",
         )
 
+    def automatic_actions_enabled(self) -> bool:
+        return True
+
     def rotate_now(self, force: bool = False) -> ConnectionState:
         self.rotate_calls.append(force)
         self.connected_profile_id = "rotated"
@@ -79,6 +82,37 @@ class BlockingRuntime(FakeRuntime):
         self.connect_started.set()
         self.release_connect.wait(timeout=5.0)
         return super().connect(profile)
+
+
+class BlockingMutationRuntime(FakeRuntime):
+    def __init__(self, profile_store: ProfileStore) -> None:
+        super().__init__(profile_store)
+        self.block_operation = ""
+        self.mutation_started = threading.Event()
+        self.release_mutation = threading.Event()
+        self.disconnect_calls = 0
+
+    def _wait_if_blocked(self, operation: str) -> None:
+        if self.block_operation == operation:
+            self.mutation_started.set()
+            self.release_mutation.wait(timeout=5.0)
+
+    def connect(self, profile: Profile) -> bool:
+        self._wait_if_blocked("connect")
+        return super().connect(profile)
+
+    def disconnect(self) -> bool:
+        self.disconnect_calls += 1
+        self._wait_if_blocked("disconnect")
+        return super().disconnect()
+
+    def rotate_now(self, force: bool = False) -> ConnectionState:
+        self._wait_if_blocked("rotate")
+        return super().rotate_now(force=force)
+
+    def node_group_auto_test(self, group_name: str) -> dict:
+        self._wait_if_blocked("node_group_auto_test")
+        return super().node_group_auto_test(group_name)
 
 
 def make_profile(profile_id: str = "p1") -> Profile:
@@ -157,7 +191,7 @@ class WatchdogIPCClientIntegrationTests(unittest.TestCase):
         self.assertEqual(event.event, EVENT_STATE_CHANGED)
         self.assertEqual(event.payload["active_profile_id"], self.profile.id)
 
-    def test_server_returns_structured_timeout_when_runtime_command_hangs(self) -> None:
+    def test_server_reports_running_command_and_final_authoritative_outcome(self) -> None:
         self.server.stop()
         self.runtime = BlockingRuntime(self.profile_store)
         self.server = IPCServer(
@@ -171,13 +205,99 @@ class WatchdogIPCClientIntegrationTests(unittest.TestCase):
 
         connect_response = self.client.connect(self.profile.id)
         self.assertFalse(connect_response.ok)
-        self.assertEqual(connect_response.error, "daemon runtime command timed out")
+        self.assertEqual(connect_response.payload["error_kind"], "command_in_progress")
+        self.assertEqual(connect_response.payload["outcome"], "running")
+        command_id = connect_response.payload["command_id"]
         self.assertTrue(self.runtime.connect_started.is_set())
 
-        status_response = self.client.status()
-        self.assertFalse(status_response.ok)
-        self.assertEqual(status_response.error, "daemon runtime command timed out")
+        running_outcome = self.client.command_outcome(command_id)
+        self.assertFalse(running_outcome.ok)
+        self.assertEqual(running_outcome.payload["outcome"], "running")
         self.runtime.release_connect.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            completed_outcome = self.client.command_outcome(command_id)
+            if completed_outcome.ok:
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("running command never reported a final outcome")
+        self.assertTrue(completed_outcome.ok)
+        self.assertEqual(completed_outcome.payload["outcome"], "completed")
+        self.assertEqual(completed_outcome.payload["state"]["status"], "connected")
+
+    def test_timeout_cancels_queued_mutation_before_it_executes(self) -> None:
+        self.server.stop()
+        self.runtime = BlockingRuntime(self.profile_store)
+        self.server = IPCServer(
+            self.request_socket,
+            self.event_socket,
+            RuntimeWorker(self.runtime),
+            request_timeout_seconds=0.05,
+        )
+        self.server.start()
+        self.client = WatchdogIPCClient(self.request_socket, self.event_socket, timeout=1.0)
+
+        connect_response = self.client.connect(self.profile.id)
+        self.assertEqual(connect_response.payload["outcome"], "running")
+        disconnect_response = self.client.disconnect()
+        self.assertFalse(disconnect_response.ok)
+        self.assertEqual(disconnect_response.payload["error_kind"], "command_cancelled")
+        command_id = disconnect_response.payload["command_id"]
+
+        self.runtime.release_connect.set()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            connect_outcome = self.client.command_outcome(connect_response.payload["command_id"])
+            if connect_outcome.ok:
+                break
+            time.sleep(0.01)
+        self.assertTrue(connect_outcome.ok)
+        cancelled_outcome = self.client.command_outcome(command_id)
+        self.assertFalse(cancelled_outcome.ok)
+        self.assertEqual(cancelled_outcome.payload["outcome"], "cancelled")
+        self.assertEqual(self.runtime.status().status, "connected")
+
+    def test_every_delayed_mutation_is_observable_until_final_outcome(self) -> None:
+        self.server.stop()
+        runtime = BlockingMutationRuntime(self.profile_store)
+        self.runtime = runtime
+        self.server = IPCServer(
+            self.request_socket,
+            self.event_socket,
+            RuntimeWorker(runtime),
+            request_timeout_seconds=0.05,
+        )
+        self.server.start()
+        self.client = WatchdogIPCClient(self.request_socket, self.event_socket, timeout=1.0)
+        cases = (
+            ("connect", lambda: self.client.connect(self.profile.id)),
+            ("disconnect", self.client.disconnect),
+            ("rotate", lambda: self.client.rotate(force=True)),
+            ("node_group_auto_test", lambda: self.client.node_group_auto_test("paris")),
+        )
+
+        for operation, invoke in cases:
+            with self.subTest(operation=operation):
+                runtime.block_operation = operation
+                runtime.mutation_started.clear()
+                runtime.release_mutation.clear()
+                response = invoke()
+                self.assertFalse(response.ok)
+                self.assertEqual(response.payload["error_kind"], "command_in_progress")
+                command_id = response.payload["command_id"]
+                self.assertTrue(runtime.mutation_started.is_set())
+                self.assertEqual(self.client.command_outcome(command_id).payload["outcome"], "running")
+                runtime.release_mutation.set()
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    outcome = self.client.command_outcome(command_id)
+                    if outcome.ok:
+                        break
+                    time.sleep(0.01)
+                else:
+                    self.fail(f"{operation} did not report its final outcome")
+                self.assertEqual(outcome.payload["outcome"], "completed")
 
 
 class WatchdogIPCClientErrorTests(unittest.TestCase):
@@ -229,9 +349,10 @@ class WatchdogIPCClientErrorTests(unittest.TestCase):
             client = WatchdogIPCClient(socket_path, timeout=0.1)
 
             with self.assertRaises(DaemonTimeoutError) as cm:
-                client.status()
+                client.request(COMMAND_CONNECT, timeout=0.1)
 
-        self.assertEqual(str(cm.exception), DAEMON_TIMEOUT_MESSAGE)
+        self.assertTrue(str(cm.exception).startswith(DAEMON_TIMEOUT_MESSAGE))
+        self.assertIsNotNone(cm.exception.command_id)
 
     def test_node_group_auto_test_uses_extended_timeout(self) -> None:
         line = encode_response(True, {"group_name": "phase14-vm", "result": "unavailable"})
@@ -242,6 +363,16 @@ class WatchdogIPCClientErrorTests(unittest.TestCase):
 
         self.assertTrue(response.ok)
         self.assertEqual(response.payload["group_name"], "phase14-vm")
+
+    def test_connect_uses_extended_lifecycle_timeout(self) -> None:
+        line = encode_response(True, {"connected": True})
+        with delayed_one_line_unix_server(line, delay=0.2) as socket_path:
+            client = WatchdogIPCClient(socket_path, timeout=0.05)
+
+            response = client.connect("slow-profile")
+
+        self.assertTrue(response.ok)
+        self.assertTrue(response.payload["connected"])
 
     def test_malformed_response_maps_to_unexpected_response_error(self) -> None:
         with one_line_unix_server(b"not-json\n") as socket_path:

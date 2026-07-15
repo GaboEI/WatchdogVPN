@@ -13,7 +13,7 @@ from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
 from config.state_manager import StateManager
 from core.watchdog import WatchdogRuntime
-from drivers.base import BaseDriver
+from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
@@ -26,6 +26,7 @@ from rules.rule_store import RuleStore
 
 
 class FakeDriver(BaseDriver):
+    policy_capabilities = DRIVER_POLICY_CAPABILITIES
     def __init__(self, health: str = "ok") -> None:
         self.health = health
         self.connected_profile_id = ""
@@ -57,12 +58,18 @@ class FakeKillSwitch:
         self.active = False
         self.enable_calls = 0
         self.tunnel_interface = "wdvpn-tun0"
+        self.apply_atomic_calls = 0
         self.block_ipv6 = True
         self.allow_lan = True
         self.allowed_endpoints: tuple[str, ...] = ()
 
     def enable(self) -> bool:
         self.enable_calls += 1
+        self.active = True
+        return True
+
+    def apply_atomic(self) -> bool:
+        self.apply_atomic_calls += 1
         self.active = True
         return True
 
@@ -451,7 +458,7 @@ class NodeGroupRuntimeIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "kill_switch_active")
         self.assertTrue(kill_switch.active)
-        self.assertEqual(kill_switch.enable_calls, 1)
+        self.assertEqual(kill_switch.apply_atomic_calls, 1)
 
     def test_resilient_only_exhaustion_reaches_kill_switch_end_to_end(self) -> None:
         self.resilient.enabled = False

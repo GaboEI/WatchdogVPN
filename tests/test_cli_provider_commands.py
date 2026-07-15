@@ -4,7 +4,7 @@ import json
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -214,6 +214,51 @@ class CliProviderCommandTests(unittest.TestCase):
         data = json.loads(stdout.getvalue())
         self.assertEqual(data["provider"]["url"], "https://netz.tg/<redacted>")
 
+    def test_provider_add_keyboard_interrupt_is_clean_human_error(self) -> None:
+        with patch("cli.main.SubscriptionProvider") as provider_cls:
+            manager = provider_cls.return_value
+            manager.add.side_effect = KeyboardInterrupt
+
+            with redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr:
+                result = cli.main.main(["provider", "add", "https://netz.tg/private-token", "--name", "netz"])
+
+        self.assertEqual(result, 130)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("operation cancelled", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_provider_add_keyboard_interrupt_is_clean_json_error(self) -> None:
+        with patch("cli.main.SubscriptionProvider") as provider_cls:
+            manager = provider_cls.return_value
+            manager.add.side_effect = KeyboardInterrupt
+
+            with redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr:
+                result = cli.main.main(
+                    ["provider", "add", "https://netz.tg/private-token", "--name", "netz", "--json"]
+                )
+
+        self.assertEqual(result, 130)
+        self.assertEqual(stderr.getvalue(), "")
+        data = json.loads(stdout.getvalue())
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["error"], "operation cancelled")
+        self.assertNotIn("Traceback", stdout.getvalue())
+
+    def test_provider_add_duplicate_url_fails_without_token_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ProviderStore(Path(tmp) / "providers.json").add(_provider())
+
+            result = self.run_watchdog(
+                ["provider", "add", " https://netz.tg/private-token ", "--name", "another-name"],
+                tmp,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("provider already exists: netz.tg", result.stderr)
+            self.assertNotIn("private-token", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_provider_missing_id_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["provider", "stats", "missing"], tmp, check=False)
@@ -231,8 +276,20 @@ class CliProviderCommandTests(unittest.TestCase):
             )
 
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("invalid subscription URL: TU_URL_REAL_DEL_PROVIDER", result.stderr)
+            self.assertIn("invalid subscription URL", result.stderr)
+            self.assertIn("TU_URL_REAL_DEL_PROVIDER", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
+
+    def test_provider_add_rejects_non_https_scheme(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for url in ("http://provider.example/sub", "file:///etc/passwd", "ftp://provider.example/sub"):
+                with self.subTest(url=url):
+                    result = self.run_watchdog(
+                        ["provider", "add", url, "--name", "insecure"], tmp, check=False
+                    )
+
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("https required", result.stderr)
 
     def test_provider_edit_requires_name_or_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

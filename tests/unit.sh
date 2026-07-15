@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 "$ROOT_DIR/tests/unit/test_vpn_truth_check.sh"
+"$ROOT_DIR/tests/unit/test_vpnctl.sh"
 "$ROOT_DIR/tests/unit/test_vpn_backend.sh"
 "$ROOT_DIR/tests/unit/test_manual_off.sh"
 "$ROOT_DIR/tests/unit/test_distro_detection.sh"
@@ -21,7 +22,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT_DIR/tests/unit/test_python_runtime_packages.sh"
 "$ROOT_DIR/tests/unit/test_mixed_install_preflight.sh"
 "$ROOT_DIR/tests/unit/test_vpn_domain_bypass_safety.sh"
+"$ROOT_DIR/tests/unit/test_update_daemon_restart.sh"
+"$ROOT_DIR/tests/unit/test_runtime_update_transaction.sh"
+"$ROOT_DIR/tests/unit/test_uninstall_fail_closed.sh"
 "$ROOT_DIR/tests/unit/test_watchdog_panic.sh"
+"$ROOT_DIR/tests/unit/test_amneziawg_sysctl_defaults.sh"
+python3 "$ROOT_DIR/scripts/generate_cli_inventory.py" --check
 python3 "$ROOT_DIR/tests/unit/test_tui_modules.py"
+python3 "$ROOT_DIR/tests/test_tui_terminal_capabilities.py"
 
 echo "unit behavior checks passed"

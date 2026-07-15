@@ -67,9 +67,10 @@ class DNSHijackController:
         except Exception as exc:
             if self._kill_switch_active():
                 raise DNSHijackError(
-                    "dns hijack apply failed while kill switch is active; leaving traffic fail-closed"
+                    f"dns hijack apply failed while kill switch is active; leaving traffic "
+                    f"fail-closed: {exc}"
                 ) from exc
-            raise DNSHijackError("dns hijack apply failed") from exc
+            raise DNSHijackError(f"dns hijack apply failed: {exc}") from exc
         return DNSHijackApplyResult(applied=True, snapshot=saved)
 
     def restore(self, snapshot: DNSStateSnapshot | None) -> None:

@@ -11,6 +11,7 @@ set -euo pipefail
 # Background: docs/security.md "Domain bypass network safety".
 
 MODE="auto"
+STRICT=0
 VPN_LOOKUP_TABLE="${VPN_LOOKUP_TABLE:-880}"
 VPN_FALLBACK_PRIO="${VPN_FALLBACK_PRIO:-32000}"
 STATE_FILE="${STATE_FILE:-/run/vpn-domain-bypass.priorities}"
@@ -30,13 +31,16 @@ usage() {
 WatchdogVPN domain-bypass rescue
 
 Usage:
-  vpn_domain_bypass_rescue [auto|status]
+  vpn_domain_bypass_rescue [auto|status] [--strict]
 
 Modes:
   auto    Stop and disable vpn-domain-bypass automation, remove the ip rules
           and routing table it created, and flush the route cache. Does not
           touch any other VPN/proxy software.
   status  Show the current WatchdogVPN domain-bypass unit and ip rule state.
+
+Options:
+  --strict  Return an error if an installed cleanup command fails or rules remain.
 
 Use this if another VPN/proxy client on this machine fails to set its own
 routes (for example: "set routes: add route 0: File exists") after
@@ -48,6 +52,9 @@ while (($#)); do
   case "${1:-}" in
     auto|status)
       MODE="$1"
+      ;;
+    --strict)
+      STRICT=1
       ;;
     --help|-h)
       usage
@@ -127,8 +134,16 @@ status() {
 
 rescue() {
   echo "Stopping WatchdogVPN domain-bypass automation..."
-  run sudo systemctl disable --now vpn-domain-bypass.timer >/dev/null 2>&1 || true
-  run sudo systemctl stop vpn-domain-bypass.service >/dev/null 2>&1 || true
+  if ! run sudo systemctl disable --now vpn-domain-bypass.timer >/dev/null 2>&1; then
+    if ((STRICT == 1)); then
+      return 1
+    fi
+  fi
+  if ! run sudo systemctl stop vpn-domain-bypass.service >/dev/null 2>&1; then
+    if ((STRICT == 1)); then
+      return 1
+    fi
+  fi
   run sudo mkdir -p "$(dirname "$DISABLED_MARKER")"
   run sudo touch "$DISABLED_MARKER"
   echo "Recorded that domain-bypass was manually disabled; install.sh/update.sh"
@@ -159,9 +174,38 @@ rescue() {
   delete_ip_rule_repeatedly 4 "$VPN_FALLBACK_PRIO"
 
   echo "Flushing table $VPN_LOOKUP_TABLE and the route cache..."
-  run sudo ip route flush table "$VPN_LOOKUP_TABLE" >/dev/null 2>&1 || true
-  run sudo ip route flush cache >/dev/null 2>&1 || true
-  run sudo ip -6 route flush cache >/dev/null 2>&1 || true
+  if ! run sudo ip route flush table "$VPN_LOOKUP_TABLE" >/dev/null 2>&1; then
+    if ((STRICT == 1)); then
+      return 1
+    fi
+  fi
+  if ! run sudo ip route flush cache >/dev/null 2>&1; then
+    if ((STRICT == 1)); then
+      return 1
+    fi
+  fi
+  if ! run sudo ip -6 route flush cache >/dev/null 2>&1; then
+    if ((STRICT == 1)); then
+      return 1
+    fi
+  fi
+
+  if ((STRICT == 1)); then
+    command -v ip >/dev/null 2>&1 || return 1
+    if systemctl is-active --quiet vpn-domain-bypass.timer 2>/dev/null \
+      || systemctl is-active --quiet vpn-domain-bypass.service 2>/dev/null; then
+      return 1
+    fi
+    if ip rule show | awk -F: -v low="$BASE_PRIO" -v high="$((BASE_PRIO + MAX_RULES - 1))" -v fallback="$VPN_FALLBACK_PRIO" \
+      '$1 ~ /^[0-9]+$/ && ($1 + 0 >= low && $1 + 0 <= high || $1 + 0 == fallback) {found=1} END {exit !found}'; then
+      return 1
+    fi
+    if ip -6 rule show | awk -F: -v low="$BASE_PRIO" -v high="$((BASE_PRIO + MAX_RULES - 1))" \
+      '$1 ~ /^[0-9]+$/ && $1 + 0 >= low && $1 + 0 <= high {found=1} END {exit !found}'; then
+      return 1
+    fi
+    [[ -z "$(ip route show table "$VPN_LOOKUP_TABLE")" ]] || return 1
+  fi
 
   echo
   echo "Done. Domain-bypass rules will not return unless you re-enable"

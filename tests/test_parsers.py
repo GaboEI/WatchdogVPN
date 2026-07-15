@@ -2,21 +2,36 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
 import unittest
 from unittest.mock import patch
+from urllib.error import URLError
 from urllib.request import Request
 
 from parsers import (
     ParseError,
     detect_scheme,
     fetch_and_parse,
+    fetch_subscription,
     parse_clash_yaml,
+    parse_hysteria2_yaml,
     parse_openvpn_config,
     parse_singbox_json,
     parse_uri,
     parse_wg_config,
 )
+from parsers.subscription import (
+    DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
+    _parse_subscription_userinfo,
+)
 from models.profile import ProtocolType
+
+
+def _mock_subscription_response(urlopen_mock, payload: bytes, headers: list[tuple[str, str]] | None = None):
+    response = urlopen_mock.return_value.__enter__.return_value
+    response.read.side_effect = [payload, b""]
+    response.headers.items.return_value = headers or []
+    return response
 
 
 class UriParserTests(unittest.TestCase):
@@ -39,15 +54,14 @@ class UriParserTests(unittest.TestCase):
             parse_uri("vless://uuid@example.com:99999?encryption=none")
 
     def test_remote_uri_rejects_loopback_endpoint(self) -> None:
-        with self.assertRaisesRegex(ParseError, "local endpoint"):
+        with self.assertRaisesRegex(ParseError, "globally routable"):
             parse_uri("vless://uuid@127.0.0.1:443?encryption=none")
-        with self.assertRaisesRegex(ParseError, "local endpoint"):
+        with self.assertRaisesRegex(ParseError, "globally routable"):
             parse_uri("trojan://secret@localhost:443?security=tls")
 
-    def test_remote_uri_allows_explicit_local_testing(self) -> None:
-        profile = parse_uri("vless://uuid@127.0.0.1:443?encryption=none&allow_local=true")
-        self.assertEqual(profile.protocol, ProtocolType.VLESS)
-        self.assertEqual(profile.config["host"], "127.0.0.1")
+    def test_remote_uri_does_not_trust_untrusted_allow_local(self) -> None:
+        with self.assertRaisesRegex(ParseError, "globally routable"):
+            parse_uri("vless://uuid@127.0.0.1:443?encryption=none&allow_local=true")
 
     def test_parse_uri_decodes_fragment_name(self) -> None:
         profile = parse_uri("vless://uuid@example.com:443?encryption=none#Austria%2C%20Vienna%20%5B3GBIT%5D")
@@ -154,6 +168,14 @@ class UriParserTests(unittest.TestCase):
         with self.assertRaises(ParseError):
             parse_uri("ftp://example.com")
 
+    def test_uri_rejects_invalid_semantic_fields(self) -> None:
+        with self.assertRaisesRegex(ParseError, "between 1 and 65535"):
+            parse_uri("vless://uuid@example.com:0?encryption=none")
+        with self.assertRaisesRegex(ParseError, "non-empty uuid"):
+            parse_uri("vless://@example.com:443?encryption=none")
+        with self.assertRaisesRegex(ParseError, "non-empty password"):
+            parse_uri("trojan://@example.com:443?security=tls")
+
     def test_parse_wireguard_config(self) -> None:
         profile = parse_wg_config(
             """
@@ -214,6 +236,23 @@ class UriParserTests(unittest.TestCase):
                 Endpoint = wg.example.com:51820
                 """
             )
+        with self.assertRaisesRegex(ParseError, "endpoint must include a port"):
+            parse_wg_config(
+                """
+                [Interface]
+                PrivateKey = private-key
+
+                [Peer]
+                PublicKey = public-key
+                Endpoint = wg.example.com
+                """
+            )
+
+    def test_hysteria2_yaml_requires_a_valid_server_port(self) -> None:
+        with self.assertRaisesRegex(ParseError, "requires a port"):
+            parse_hysteria2_yaml("server: hy.example.com\nauth: secret\n")
+        with self.assertRaisesRegex(ParseError, "between 1 and 65535"):
+            parse_hysteria2_yaml("server: hy.example.com:70000\nauth: secret\n")
 
 
 class SingboxJsonParserTests(unittest.TestCase):
@@ -238,8 +277,8 @@ class SingboxJsonParserTests(unittest.TestCase):
             json.dumps(
                 {
                     "outbounds": [
-                        {"type": "vmess", "tag": "vm1", "server": "vmess.example.com", "server_port": 443},
-                        {"type": "trojan", "tag": "tr1", "server": "trojan.example.com", "server_port": 443},
+                        {"type": "vmess", "tag": "vm1", "server": "vmess.example.com", "server_port": 443, "uuid": "uuid-1"},
+                        {"type": "trojan", "tag": "tr1", "server": "trojan.example.com", "server_port": 443, "password": "secret"},
                         {"type": "direct", "tag": "bypass"},
                     ]
                 }
@@ -255,6 +294,16 @@ class SingboxJsonParserTests(unittest.TestCase):
             parse_singbox_json(json.dumps(["invalid", "shape"]))
         with self.assertRaisesRegex(ParseError, "no supported profiles"):
             parse_singbox_json(json.dumps({"outbounds": [{"type": "direct", "tag": "bypass"}]}))
+
+    def test_parse_singbox_json_rejects_invalid_port_and_missing_secret(self) -> None:
+        with self.assertRaisesRegex(ParseError, "between 1 and 65535"):
+            parse_singbox_json(
+                {"type": "vless", "tag": "primary", "server": "sb.example.com", "server_port": 70000, "uuid": "uuid-1"}
+            )
+        with self.assertRaisesRegex(ParseError, "non-empty password"):
+            parse_singbox_json(
+                {"type": "trojan", "tag": "primary", "server": "sb.example.com", "server_port": 443}
+            )
 
 
 class OpenVPNConfigParserTests(unittest.TestCase):
@@ -319,6 +368,10 @@ class ClashYamlParserTests(unittest.TestCase):
             parse_clash_yaml("proxies:\n  name: bad")
         with self.assertRaisesRegex(ParseError, "no supported profiles"):
             parse_clash_yaml("proxies:\n  - name: bypass\n    type: direct\n")
+        with self.assertRaisesRegex(ParseError, "non-empty password"):
+            parse_clash_yaml(
+                "proxies:\n  - name: trojan\n    type: trojan\n    server: trojan.example.com\n    port: 443\n"
+            )
 
 
 class SubscriptionParserTests(unittest.TestCase):
@@ -326,15 +379,23 @@ class SubscriptionParserTests(unittest.TestCase):
         with self.assertRaisesRegex(ParseError, "invalid subscription URL"):
             fetch_and_parse("TU_URL_REAL_DEL_PROVIDER")
 
+    def test_fetch_and_parse_rejects_non_https_schemes(self) -> None:
+        for url in ("http://example.com/sub", "file:///etc/passwd", "ftp://example.com/sub"):
+            with self.subTest(url=url), self.assertRaisesRegex(ParseError, "https required"):
+                fetch_and_parse(url)
+
     @patch("parsers.subscription.urlopen")
     def test_fetch_uses_subscription_user_agent(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
-            {
-                "outbounds": [
-                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
-                ]
-            }
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
+                    ]
+                }
+            ).encode("utf-8"),
+        )
 
         with patch.dict(
             "os.environ",
@@ -346,6 +407,50 @@ class SubscriptionParserTests(unittest.TestCase):
         request = urlopen_mock.call_args.args[0]
         self.assertIsInstance(request, Request)
         self.assertEqual(request.get_header("User-agent"), "watchdog-test-agent")
+        self.assertEqual(
+            urlopen_mock.call_args.kwargs["timeout"],
+            DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
+        )
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_rejects_oversized_response(self, urlopen_mock) -> None:
+        _mock_subscription_response(urlopen_mock, b"12345")
+
+        with patch.dict(
+            "os.environ",
+            {"WATCHDOGVPN_SUBSCRIPTION_MAX_RESPONSE_BYTES": "4"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ParseError, "exceeds maximum size"):
+                fetch_and_parse("https://example.com/sub")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_rejects_slow_response_after_total_timeout(self, urlopen_mock) -> None:
+        response = urlopen_mock.return_value.__enter__.return_value
+        response.read.return_value = b"x"
+
+        with patch.dict(
+            "os.environ",
+            {"WATCHDOGVPN_SUBSCRIPTION_TOTAL_TIMEOUT_SECONDS": "1"},
+            clear=False,
+        ):
+            with patch("parsers.subscription.time.monotonic", side_effect=[0.0, 0.0, 0.0, 2.0]):
+                with self.assertRaisesRegex(ParseError, "timed out after 1 seconds"):
+                    fetch_and_parse("https://example.com/sub")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_maps_socket_timeout_to_parse_error(self, urlopen_mock) -> None:
+        urlopen_mock.return_value.__enter__.return_value.read.side_effect = socket.timeout("timed out")
+
+        with self.assertRaisesRegex(ParseError, "timed out"):
+            fetch_and_parse("https://example.com/sub")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_maps_urlopen_timeout_to_parse_error(self, urlopen_mock) -> None:
+        urlopen_mock.side_effect = URLError(socket.timeout("timed out"))
+
+        with self.assertRaisesRegex(ParseError, "timed out"):
+            fetch_and_parse("https://example.com/sub")
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_base64_lines(self, urlopen_mock) -> None:
@@ -356,7 +461,7 @@ class SubscriptionParserTests(unittest.TestCase):
             ]
         ).encode("utf-8")
         encoded = base64.b64encode(payload).decode("utf-8")
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = encoded.encode("utf-8")
+        _mock_subscription_response(urlopen_mock, encoded.encode("utf-8"))
 
         profiles = fetch_and_parse("https://example.com/sub")
 
@@ -366,13 +471,16 @@ class SubscriptionParserTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_json(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = json.dumps(
-            {
-                "outbounds": [
-                    {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443}
-                ]
-            }
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
+                    ]
+                }
+            ).encode("utf-8"),
+        )
 
         profiles = fetch_and_parse("https://example.com/sub")
 
@@ -382,16 +490,19 @@ class SubscriptionParserTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_yaml(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = (
-            """
-            proxies:
-              - name: clash1
-                type: trojan
-                server: clash.example.com
-                port: 443
-                password: secret
-            """
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            (
+                """
+                proxies:
+                  - name: clash1
+                    type: trojan
+                    server: clash.example.com
+                    port: 443
+                    password: secret
+                """
+            ).encode("utf-8"),
+        )
 
         profiles = fetch_and_parse("https://example.com/sub")
 
@@ -401,9 +512,10 @@ class SubscriptionParserTests(unittest.TestCase):
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_rejects_html_response(self, urlopen_mock) -> None:
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = (
-            "<!doctype html><html><body>login required</body></html>"
-        ).encode("utf-8")
+        _mock_subscription_response(
+            urlopen_mock,
+            b"<!doctype html><html><body>login required</body></html>",
+        )
 
         with self.assertRaisesRegex(ParseError, "looks like HTML"):
             fetch_and_parse("https://example.com/sub")
@@ -411,7 +523,7 @@ class SubscriptionParserTests(unittest.TestCase):
     @patch("parsers.subscription.urlopen")
     def test_fetch_and_parse_base64_without_supported_profiles(self, urlopen_mock) -> None:
         encoded = base64.b64encode(b"ftp://example.com\nnot-a-profile").decode("utf-8")
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = encoded.encode("utf-8")
+        _mock_subscription_response(urlopen_mock, encoded.encode("utf-8"))
 
         with self.assertRaisesRegex(ParseError, "no supported profiles"):
             fetch_and_parse("https://example.com/sub")
@@ -425,13 +537,96 @@ class SubscriptionParserTests(unittest.TestCase):
             fetch_and_parse("https://example.com/sub")
 
         urlopen_mock.side_effect = None
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = b""
+        _mock_subscription_response(urlopen_mock, b"")
         with self.assertRaises(ParseError):
             fetch_and_parse("https://example.com/sub")
 
-        urlopen_mock.return_value.__enter__.return_value.read.return_value = b"@@@"
+        _mock_subscription_response(urlopen_mock, b"@@@")
         with self.assertRaises(ParseError):
             fetch_and_parse("https://example.com/sub")
+
+
+class SubscriptionUserinfoTests(unittest.TestCase):
+    def test_parse_subscription_userinfo_computes_used_and_limit(self) -> None:
+        metadata = _parse_subscription_userinfo(
+            "upload=805306368; download=268435456; total=10737418240; expire=1893456000"
+        )
+
+        self.assertEqual(metadata["traffic_used"], "1.0 GB")
+        self.assertEqual(metadata["traffic_limit"], "10.0 GB")
+        self.assertEqual(metadata["expires_at"], "2030-01-01")
+
+    def test_parse_subscription_userinfo_handles_missing_header(self) -> None:
+        self.assertEqual(_parse_subscription_userinfo(None), {})
+        self.assertEqual(_parse_subscription_userinfo(""), {})
+
+    def test_parse_subscription_userinfo_ignores_malformed_pairs(self) -> None:
+        metadata = _parse_subscription_userinfo("upload=notanumber; total=5000000000")
+
+        self.assertNotIn("traffic_used", metadata)
+        self.assertEqual(metadata["traffic_limit"], "4.7 GB")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_subscription_reads_userinfo_header(self, urlopen_mock) -> None:
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
+                    ]
+                }
+            ).encode("utf-8"),
+            [
+                ("Subscription-Userinfo", "upload=100; download=100; total=1000; expire=1893456000"),
+                ("Content-Type", "application/json"),
+            ],
+        )
+
+        result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(len(result.profiles), 1)
+        self.assertEqual(result.metadata["traffic_used"], "200.0 B")
+        self.assertEqual(result.metadata["traffic_limit"], "1000.0 B")
+        self.assertEqual(result.metadata["expires_at"], "2030-01-01")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_subscription_without_header_reports_no_metadata(self, urlopen_mock) -> None:
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
+                    ]
+                }
+            ).encode("utf-8"),
+        )
+
+        result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.metadata, {})
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_and_parse_is_unaffected_by_headers(self, urlopen_mock) -> None:
+        # fetch_and_parse's return shape/behavior must stay list[Profile],
+        # unchanged by the header-capturing refactor.
+        _mock_subscription_response(
+            urlopen_mock,
+            json.dumps(
+                {
+                    "outbounds": [
+                        {"type": "vless", "tag": "sb1", "server": "vless.example.com", "server_port": 443, "uuid": "uuid-1"}
+                    ]
+                }
+            ).encode("utf-8"),
+            [("Subscription-Userinfo", "upload=100; download=100; total=1000")],
+        )
+
+        profiles = fetch_and_parse("https://example.com/sub")
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].protocol, ProtocolType.VLESS)
 
 
 if __name__ == "__main__":

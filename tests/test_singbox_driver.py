@@ -7,8 +7,9 @@ from unittest.mock import patch
 
 from app_policy.models import AppPolicy, AppPolicyRule
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
-from dns.models import DNSChannel, DNSChannelName, DNSPolicy, Resolver
+from dns.models import DNSChannel, DNSChannelName, DNSPolicy, DNSRule, Resolver
 from drivers.singbox_driver import SingBoxDriver
+from drivers.runtime_paths import OwnedProcess, TCPListenerObservation
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.wg_config import parse_wg_config
 from route_chains.runtime import (
@@ -123,6 +124,62 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_uses_warning_log_level_by_default(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+
+        config = self.driver.generate_singbox_config(profile)
+
+        self.assertEqual(config["log"], {"level": "warning"})
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_LOG_LEVEL": "debug"})
+    def test_generate_singbox_config_accepts_bounded_debug_log_level(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+
+        config = self.driver.generate_singbox_config(profile)
+
+        self.assertEqual(config["log"], {"level": "debug"})
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_LOG_LEVEL": "verbose"})
+    def test_generate_singbox_config_rejects_unknown_log_level(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+
+        config = self.driver.generate_singbox_config(profile)
+
+        self.assertEqual(config["log"], {"level": "warning"})
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_lan_proxy_adds_authenticated_inbounds_and_preserves_loopback(
         self, bind_mock, write_mock
     ) -> None:
@@ -229,7 +286,16 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             (ProtocolType.HYSTERIA2, {"host": "h2.example.com", "port": 443, "password": "secret"}),
             (ProtocolType.TUIC, {"host": "tuic.example.com", "port": 443, "uuid": "u2", "password": "secret"}),
             (ProtocolType.SHADOWSOCKS, {"host": "ss.example.com", "port": 8388, "method": "aes-128-gcm", "password": "secret"}),
-            (ProtocolType.WIREGUARD, {"host": "wg.example.com", "port": 51820, "private_key": "priv", "public_key": "pub"}),
+            (
+                ProtocolType.WIREGUARD,
+                {
+                    "host": "wg.example.com",
+                    "port": 51820,
+                    "address": "10.0.0.2/32",
+                    "private_key": "priv",
+                    "public_key": "pub",
+                },
+            ),
             (ProtocolType.SOCKS, {"host": "socks.example.com", "port": 1080, "username": "user", "password": "pass"}),
             (ProtocolType.HTTP, {"host": "http.example.com", "port": 8080, "username": "user", "password": "pass"}),
         ]
@@ -237,7 +303,10 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             with self.subTest(protocol=protocol):
                 profile = self._profile(protocol, **cfg)
                 config = self.driver.generate_singbox_config(profile)
-                self.assertEqual(config["outbounds"][0]["type"], protocol.value if protocol is not ProtocolType.SHADOWSOCKS else "shadowsocks")
+                if protocol is ProtocolType.WIREGUARD:
+                    self.assertEqual(config["endpoints"][0]["type"], "wireguard")
+                else:
+                    self.assertEqual(config["outbounds"][0]["type"], protocol.value if protocol is not ProtocolType.SHADOWSOCKS else "shadowsocks")
                 self.assertEqual(config["inbounds"][1]["type"], "http")
         self.assertEqual(write_mock.call_count, len(cases))
 
@@ -246,6 +315,19 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         profile = self._profile(ProtocolType.AMNEZIAWG)
         with self.assertRaises(ValueError):
             self.driver.generate_singbox_config(profile)
+
+    @patch.object(SingBoxDriver, "_write_config")
+    def test_generation_never_uses_profile_identifier_as_a_secret(self, write_mock) -> None:
+        profile = self._profile(
+            ProtocolType.TROJAN,
+            id="display-id-is-not-a-password",
+            host="trojan.example.com",
+            port=443,
+        )
+
+        with self.assertRaisesRegex(ValueError, "non-empty password"):
+            self.driver.generate_singbox_config(profile)
+        write_mock.assert_not_called()
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
@@ -384,14 +466,16 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             """
         )
         config = self.driver.generate_singbox_config(profile)
-        outbound = config["outbounds"][0]
-        self.assertEqual(outbound["type"], "wireguard")
-        self.assertEqual(outbound["server"], "wg.example.com")
-        self.assertEqual(outbound["server_port"], 51820)
-        self.assertEqual(outbound["local_address"], ["10.0.0.2/32", "fd00::2/128"])
-        self.assertEqual(outbound["private_key"], "private-key")
-        self.assertEqual(outbound["peer_public_key"], "public-key")
-        self.assertEqual(outbound["mtu"], 1420)
+        endpoint = config["endpoints"][0]
+        self.assertEqual(endpoint["type"], "wireguard")
+        self.assertEqual(endpoint["address"], ["10.0.0.2/32", "fd00::2/128"])
+        self.assertEqual(endpoint["private_key"], "private-key")
+        self.assertEqual(endpoint["mtu"], 1420)
+        self.assertEqual(endpoint["peers"][0]["address"], "wg.example.com")
+        self.assertEqual(endpoint["peers"][0]["port"], 51820)
+        self.assertEqual(endpoint["peers"][0]["public_key"], "public-key")
+        self.assertEqual(endpoint["peers"][0]["allowed_ips"], ["0.0.0.0/0", "::/0"])
+        self.assertEqual(config["route"]["rules"], [{"action": "route", "outbound": endpoint["tag"]}])
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIND_INTERFACE": "enp4s0"})
@@ -446,6 +530,65 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(config["route"]["rules"], [{"action": "route", "outbound": "vless-demo"}])
         # SOCKS+HTTP inbound stays present alongside TUN.
         self.assertTrue(any(i["tag"] == "watchdogvpn-socks-in" for i in config["inbounds"]))
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="enp0s8")
+    def test_tun_config_routes_active_ssh_peers_direct_before_all_other_rules(self, bind_mock, write_mock) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        config = self.driver.generate_singbox_config(
+            profile, mode="tun", management_peers=("198.51.100.9", "2001:db8::9")
+        )
+        self.assertEqual(
+            config["route"]["rules"][:2],
+            [
+                {"ip_cidr": ["198.51.100.9/32"], "action": "route", "outbound": "direct"},
+                {"ip_cidr": ["2001:db8::9/128"], "action": "route", "outbound": "direct"},
+            ],
+        )
+        direct = next(outbound for outbound in config["outbounds"] if outbound["tag"] == "direct")
+        self.assertEqual(direct["bind_interface"], "enp0s8")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="must-not-be-used")
+    def test_native_transport_companion_uses_native_direct_and_separate_management_outbounds(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.AMNEZIAWG, raw="[Interface]\nAddress = 10.0.0.2/32")
+        config = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            capture_modes=("local_proxy", "tun"),
+            native_transport=True,
+            native_bypass_cidrs=("138.124.58.47/32",),
+            management_routes={"198.51.100.9": "enp0s8", "2001:db8::9": "eth0"},
+        )
+
+        self.assertEqual(
+            config["route"]["rules"][:3],
+            [
+                {
+                    "ip_cidr": ["138.124.58.47/32"],
+                    "network": "udp",
+                    "action": "bypass",
+                },
+                {
+                    "ip_cidr": ["198.51.100.9/32"],
+                    "action": "route",
+                    "outbound": "watchdogvpn-management-1",
+                },
+                {
+                    "ip_cidr": ["2001:db8::9/128"],
+                    "action": "route",
+                    "outbound": "watchdogvpn-management-2",
+                },
+            ],
+        )
+        outbounds = {outbound["tag"]: outbound for outbound in config["outbounds"]}
+        self.assertEqual(outbounds["direct"], {"type": "direct", "tag": "direct"})
+        self.assertEqual(outbounds["watchdogvpn-management-1"]["bind_interface"], "enp0s8")
+        self.assertEqual(outbounds["watchdogvpn-management-2"]["bind_interface"], "eth0")
+        self.assertNotIn("must-not-be-used", repr(config))
+        self.assertTrue(any(inbound["type"] == "tun" for inbound in config["inbounds"]))
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
@@ -865,6 +1008,64 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_routes_proxy_dns_diversion_to_fakeip(
+        self,
+        bind_mock,
+        write_mock,
+    ) -> None:
+        profile = self._profile(
+            ProtocolType.VLESS,
+            host="vless.example.com",
+            port=443,
+            uuid="uuid-1",
+        )
+        dns_policy = DNSPolicy(
+            rules_enabled=True,
+            rules=[
+                DNSRule(
+                    id="probe",
+                    pattern="domain:fakeip-probe.watchdogvpn-test",
+                    channel=DNSChannelName.PROXY,
+                )
+            ],
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="local")],
+                ),
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+            },
+        )
+
+        config = self.driver.generate_singbox_config(
+            profile,
+            dns_policy=dns_policy,
+            mode="tun",
+        )
+
+        self.assertEqual(config["dns"]["rules"], [
+            {
+                "domain": ["fakeip-probe.watchdogvpn-test"],
+                "server": "watchdogvpn-fakeip",
+            }
+        ])
+        self.assertEqual(config["route"]["rules"][:3], [
+            {"action": "sniff"},
+            {"protocol": ["dns"], "action": "hijack-dns"},
+            {
+                "inbound": [
+                    "watchdogvpn-dns-udp-in",
+                    "watchdogvpn-dns-tcp-in",
+                ],
+                "action": "hijack-dns",
+            },
+        ])
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_prepends_app_policy_dns_rules(
         self,
         bind_mock,
@@ -1032,6 +1233,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             profile,
             mode="rules",
             app_policy=policy,
+            capture_modes=("local_proxy", "tun"),
         )
 
         tun_inbounds = [i for i in config["inbounds"] if i["type"] == "tun"]
@@ -1039,13 +1241,41 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(tun_inbounds[0]["interface_name"], "wdvpn-tun0")
         self.assertTrue(tun_inbounds[0]["strict_route"])
         self.assertTrue(tun_inbounds[0]["auto_redirect"])
-        self.assertEqual(
-            config["route"]["rules"],
-            [
-                {"process_path": ["/usr/bin/curl"], "action": "reject"},
-                {"action": "route", "outbound": "vless-demo"},
-            ],
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_rules_mode_tun_follows_capture_modes_not_app_policy(
+        self, bind_mock, write_mock
+    ) -> None:
+        # Field regression (Phase 23 Task 23.3.3): TUN inclusion must be
+        # driven by the operator's explicit capture_modes setting, not by
+        # whether app policy happens to be enabled. A routine
+        # "watchdog app-policy disable" must never silently downgrade a
+        # rules-mode connection to proxy-only with no system traffic
+        # protection.
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        enabled_policy = AppPolicy(enabled=True, mode="blacklist", rules=[])
+        disabled_policy = AppPolicy(enabled=False, mode="blacklist", rules=[])
+
+        # app_policy enabled but capture_modes has no "tun": no TUN inbound.
+        config_no_tun = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            app_policy=enabled_policy,
+            capture_modes=("local_proxy",),
         )
+        self.assertEqual([i for i in config_no_tun["inbounds"] if i["type"] == "tun"], [])
+
+        # app_policy disabled but capture_modes includes "tun": TUN inbound
+        # still gets created - system traffic protection does not depend on
+        # app policy being on.
+        config_with_tun = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            app_policy=disabled_policy,
+            capture_modes=("local_proxy", "tun"),
+        )
+        self.assertEqual(len([i for i in config_with_tun["inbounds"] if i["type"] == "tun"]), 1)
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
@@ -1135,12 +1365,64 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             source=ProfileSource.MANUAL,
         )
 
+    def _status(
+        self,
+        *,
+        ports: tuple[int, ...] | None = None,
+        owned_processes: tuple[OwnedProcess, ...] = (),
+        nft_observation: tuple[bool, bool] | None = None,
+        residue: tuple[tuple[str, ...], tuple[str, ...]] = ((), ()),
+    ):
+        process = self.driver._process
+        alive = process is not None and process.poll() is None
+        effective_ports = (2080, 2081) if ports is None and alive else ports or ()
+        effective_nft = (
+            (self.driver._tun_expected, self.driver._tun_expected)
+            if nft_observation is None
+            else nft_observation
+        )
+        with (
+            patch.object(
+                self.driver,
+                "_owned_proxy_runtime_observation",
+                return_value=(
+                    owned_processes,
+                    TCPListenerObservation(True, effective_ports),
+                ),
+            ),
+            patch.object(
+                self.driver,
+                "_singbox_auto_redirect_observation",
+                return_value=effective_nft,
+            ),
+            patch.object(
+                self.driver,
+                "_discover_singbox_tun_residue",
+                return_value=residue,
+            ),
+        ):
+            return self.driver.status()
+
+    def test_direct_tun_connect_refuses_before_binary_or_process_mutation(self) -> None:
+        with (
+            patch.object(SingBoxDriver, "_active_ssh_management_peers", return_value=("198.51.100.9",)),
+            patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None),
+            patch.object(SingBoxDriver, "find_singbox_binary") as binary_mock,
+            patch.object(SingBoxDriver, "generate_singbox_config") as generate_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+
+        binary_mock.assert_not_called()
+        generate_mock.assert_not_called()
+        self.assertIn("TUN refused", self.driver.last_error)
+
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
     def test_connect_starts_process(self, popen_mock, generate_mock, binary_mock) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
 
         with patch.object(SingBoxDriver, "health_check", return_value="ok"):
             self.assertTrue(self.driver.connect(self.profile))
@@ -1154,6 +1436,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                 rule_set_tags=None,
                 rule_set_declarations=None,
                 chain_runtime_plans=None,
+                capture_modes=None,
             )
             popen_mock.assert_called_once()
             self.assertIs(self.driver._process, process)
@@ -1165,12 +1448,66 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.record_child_process")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_rejects_foreign_proxy_listener(
+        self, popen_mock, record_mock, generate_mock, binary_mock
+    ) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+        process.pid = 4242
+
+        with (
+            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
+            patch.object(
+                SingBoxDriver,
+                "_owned_proxy_runtime_observation",
+                return_value=((), TCPListenerObservation(True, ())),
+            ),
+            patch.object(SingBoxDriver, "_append_log"),
+            patch.object(self.driver, "disconnect") as disconnect_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile))
+
+        generate_mock.assert_called_once()
+        record_mock.assert_called_once()
+        disconnect_mock.assert_called_once_with()
+
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_disconnects_stale_process_before_starting_new_one(
+        self, popen_mock, generate_mock, binary_mock
+    ) -> None:
+        # Regression guard for WDCLI-001: reconnecting the same profile (or
+        # any profile using the same driver type) must not silently
+        # overwrite a still-running process, orphaning it.
+        stale_process = unittest.mock.Mock()
+        stale_process.poll.return_value = None
+        self.driver._process = stale_process
+        self.driver._active_profile = self.profile
+
+        new_process = unittest.mock.Mock()
+        new_process.poll.return_value = None
+        new_process.pid = 9999
+        popen_mock.return_value = new_process
+
+        with patch.object(SingBoxDriver, "health_check", return_value="ok"):
+            self.assertTrue(self.driver.connect(self.profile))
+
+        stale_process.terminate.assert_called_once()
+        self.assertIs(self.driver._process, new_process)
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
     def test_connect_forwards_dns_policy_to_generated_config(
         self, popen_mock, generate_mock, binary_mock
     ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
         policy = DNSPolicy(
             channels={
                 DNSChannelName.DIRECT: DNSChannel(
@@ -1192,6 +1529,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
                 rule_set_tags=None,
                 rule_set_declarations=None,
                 chain_runtime_plans=None,
+                capture_modes=None,
             )
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value=None)
@@ -1205,58 +1543,24 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
     @patch("drivers.singbox_driver.subprocess.Popen")
-    def test_connect_accepts_tun_readiness_without_proxy_http(self, popen_mock, generate_mock, binary_mock) -> None:
-        process = popen_mock.return_value
-        process.poll.return_value = None
-
-        with (
-            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
-            patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
-            patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
-            patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
-            patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
-            patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
-        ):
-            self.assertTrue(self.driver.connect(self.profile, mode="tun"))
-
-        self.assertEqual(self.driver._active_mode, "tun")
-        http_mock.assert_not_called()
-        ip_mock.assert_not_called()
-
-    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
-    @patch.object(SingBoxDriver, "generate_singbox_config")
-    @patch("drivers.singbox_driver.subprocess.Popen")
-    def test_connect_with_app_policy_requires_tun_readiness(
+    def test_connect_tun_defers_egress_authority_to_runtime(
         self, popen_mock, generate_mock, binary_mock
     ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
-        policy = AppPolicy(
-            enabled=True,
-            mode="blacklist",
-            rules=[
-                AppPolicyRule(
-                    id="curl",
-                    action="block",
-                    match={"process_path": ["/usr/bin/curl"]},
-                )
-            ],
-        )
+        process.pid = 4242
 
         with (
             patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
-            patch.object(SingBoxDriver, "_http_via_proxy") as http_mock,
-            patch.object(SingBoxDriver, "_public_ip_via_proxy") as ip_mock,
+            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
         ):
-            self.assertTrue(self.driver.connect(self.profile, mode="rules", app_policy=policy))
+            self.assertTrue(self.driver.connect(self.profile, mode="tun", management_peers=()))
 
-        self.assertEqual(self.driver._active_mode, "rules")
+        self.assertEqual(self.driver._active_mode, "tun")
         self.assertTrue(self.driver._tun_expected)
-        http_mock.assert_not_called()
-        ip_mock.assert_not_called()
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")
@@ -1266,6 +1570,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
+        process.pid = 4242
 
         def mark_child_dead() -> bool:
             process.poll.return_value = 1
@@ -1274,12 +1579,13 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         with (
             patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
+            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
             patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", side_effect=mark_child_dead),
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
             patch.object(self.driver, "_capture_tun_cleanup_state") as capture_mock,
             patch.object(self.driver, "_cleanup_tun_residue") as cleanup_mock,
         ):
-            self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+            self.assertFalse(self.driver.connect(self.profile, mode="tun", management_peers=()))
 
         self.assertIsNone(self.driver._active_profile)
         self.assertIsNone(self.driver._connected_at)
@@ -1665,9 +1971,33 @@ table inet sing-box {
         process.kill.assert_called_once()
         cleanup_mock.assert_called_once()
 
-    def test_status_returns_standby_without_process(self) -> None:
-        state = self.driver.status()
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=False)
+    def test_status_returns_standby_without_process(self, tun_mock) -> None:
+        state = self._status()
         self.assertEqual(state.status, "standby")
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
+    def test_status_reports_runtime_mismatch_when_tun_interface_orphaned(self, tun_mock) -> None:
+        state = self._status()
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertEqual(state.runtime_mismatch_severity, "critical")
+        self.assertIn("interface:wdvpn-tun0", state.runtime_artifacts)
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=False)
+    def test_status_reports_runtime_mismatch_when_recorded_child_alive(self, tun_mock) -> None:
+        state = self._status(
+            owned_processes=(OwnedProcess(pid=4242, executable="sing-box"),)
+        )
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertIn("owned_process:sing-box", state.runtime_artifacts)
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=False)
+    def test_status_reports_listener_only_orphan_as_critical_mismatch(self, tun_mock) -> None:
+        state = self._status(ports=(2080,))
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertTrue(state.proxy_active)
+        self.assertIn("owned_listener:tcp/2080", state.runtime_artifacts)
 
     def test_status_returns_connected_when_process_alive(self) -> None:
         process = unittest.mock.Mock()
@@ -1676,12 +2006,53 @@ table inet sing-box {
         self.driver._active_profile = self.profile
         self.driver._connected_at = unittest.mock.sentinel.connected_at
 
-        state = self.driver.status()
+        state = self._status()
         self.assertEqual(state.status, "connected")
         self.assertEqual(state.active_profile_id, "vless-1")
         self.assertIs(state.connected_at, unittest.mock.sentinel.connected_at)
         self.assertTrue(state.proxy_active)
         self.assertFalse(state.tun_active)
+
+    def test_status_reports_missing_proxy_listener_as_critical_mismatch(self) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        state = self._status(ports=(2080,))
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertFalse(state.proxy_active)
+        self.assertIn("missing_proxy_listener:tcp/2081", state.runtime_artifacts)
+
+    def test_status_rejects_foreign_proxy_listeners_for_live_process(self) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        state = self._status(ports=())
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertFalse(state.proxy_active)
+        self.assertIn("missing_proxy_listener:tcp/2080", state.runtime_artifacts)
+        self.assertIn("missing_proxy_listener:tcp/2081", state.runtime_artifacts)
+
+    @patch.object(SingBoxDriver, "_tun_interface_active", return_value=True)
+    def test_status_reports_unexpected_tun_routing_in_proxy_mode(self, tun_mock) -> None:
+        process = unittest.mock.Mock()
+        process.poll.return_value = None
+        self.driver._process = process
+        self.driver._active_profile = self.profile
+
+        state = self._status(
+            nft_observation=(True, True),
+            residue=(("9000",), ("2022",)),
+        )
+
+        self.assertEqual(state.status, "runtime_mismatch")
+        self.assertIn("unexpected_tun_interface:wdvpn-tun0", state.runtime_artifacts)
+        self.assertIn("unexpected_routing:nft/sing-box", state.runtime_artifacts)
 
     def test_status_reports_active_lan_gateway(self) -> None:
         process = unittest.mock.Mock()
@@ -1694,7 +2065,7 @@ table inet sing-box {
             dns_mode="manual",
         )
 
-        state = self.driver.status()
+        state = self._status()
 
         self.assertTrue(state.lan_gateway_active)
         self.assertEqual(state.lan_gateway_interface, "enp0s8")
@@ -1715,7 +2086,7 @@ table inet sing-box {
             dns_mode="manual",
         )
 
-        state = self.driver.status()
+        state = self._status()
 
         self.assertTrue(state.lan_gateway_active)
         self.assertEqual(state.lan_gateway_status, "applied")
@@ -1729,7 +2100,7 @@ table inet sing-box {
         self.driver._active_mode = "tun"
         self.driver._tun_expected = True
 
-        state = self.driver.status()
+        state = self._status()
 
         self.assertEqual(state.status, "connected")
         self.assertTrue(state.tun_active)
@@ -1744,7 +2115,7 @@ table inet sing-box {
         self.driver._active_mode = "rules"
         self.driver._tun_expected = True
 
-        state = self.driver.status()
+        state = self._status()
 
         self.assertEqual(state.status, "connected")
         self.assertTrue(state.tun_active)
@@ -1755,12 +2126,12 @@ table inet sing-box {
         process.poll.return_value = 1
         self.driver._process = process
 
-        state = self.driver.status()
+        state = self._status()
         self.assertEqual(state.status, "standby")
 
     @patch.object(SingBoxDriver, "_cleanup_tun_residue")
     @patch.object(SingBoxDriver, "_cleanup_runtime")
-    def test_status_cleans_tun_residue_when_child_crashed(
+    def test_status_reports_residue_without_cleanup_when_child_crashed(
         self, cleanup_mock, tun_cleanup_mock
     ) -> None:
         process = unittest.mock.Mock()
@@ -1771,16 +2142,16 @@ table inet sing-box {
         self.driver._active_mode = "tun"
         self.driver._tun_expected = True
 
-        state = self.driver.status()
+        state = self._status()
 
-        self.assertEqual(state.status, "standby")
-        tun_cleanup_mock.assert_called_once()
-        cleanup_mock.assert_called_once()
-        self.assertIsNone(self.driver._process)
-        self.assertIsNone(self.driver._active_profile)
-        self.assertIsNone(self.driver._connected_at)
-        self.assertEqual(self.driver._active_mode, "global")
-        self.assertFalse(self.driver._tun_expected)
+        self.assertEqual(state.status, "runtime_mismatch")
+        tun_cleanup_mock.assert_not_called()
+        cleanup_mock.assert_not_called()
+        self.assertIs(self.driver._process, process)
+        self.assertIs(self.driver._active_profile, self.profile)
+        self.assertIs(self.driver._connected_at, unittest.mock.sentinel.connected_at)
+        self.assertEqual(self.driver._active_mode, "tun")
+        self.assertTrue(self.driver._tun_expected)
 
 
 class SingBoxDriverHealthTests(unittest.TestCase):
@@ -1790,34 +2161,68 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.process.poll.return_value = None
         self.driver._process = self.process
 
-    @patch.object(SingBoxDriver, "_public_ip_via_proxy", return_value="203.0.113.10")
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_ok(self, port_mock, http_mock, ip_mock) -> None:
+    def test_health_check_ok_requires_owned_proxy_listeners(
+        self, port_mock, ownership_mock
+    ) -> None:
         self.assertEqual(self.driver.health_check(), "ok")
+        port_mock.assert_called_once_with()
+        ownership_mock.assert_called_once_with()
 
-    @patch.object(SingBoxDriver, "_public_ip_via_proxy")
-    @patch.object(SingBoxDriver, "_http_via_proxy")
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=False)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_degraded_for_proxy_mode_when_listener_is_foreign(
+        self, port_mock, ownership_mock
+    ) -> None:
+        self.assertEqual(self.driver.health_check(), "degraded")
+        port_mock.assert_called_once_with()
+        ownership_mock.assert_called_once_with()
+
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_ok_for_tun_mode_without_proxy_http(
-        self, port_mock, tun_mock, nft_mock, http_mock, ip_mock
+    def test_health_check_ok_for_tun_mode_requires_owned_runtime(
+        self, port_mock, tun_mock, nft_mock, ownership_mock
     ) -> None:
-        self.driver._active_mode = "tun"
         self.driver._tun_expected = True
-
         self.assertEqual(self.driver.health_check(), "ok")
+        ownership_mock.assert_called_once_with()
 
-        http_mock.assert_not_called()
-        ip_mock.assert_not_called()
+    @patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=False)
+    @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True)
+    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
+    def test_health_check_degraded_for_tun_when_listener_is_not_owned(
+        self, port_mock, tun_mock, nft_mock, ownership_mock
+    ) -> None:
+        self.driver._tun_expected = True
+        self.assertEqual(self.driver.health_check(), "degraded")
+        ownership_mock.assert_called_once_with()
+
+    @patch.object(
+        SingBoxDriver,
+        "_owned_proxy_runtime_observation",
+        return_value=((OwnedProcess(pid=42, executable="sing-box"),), TCPListenerObservation(True, (2080, 2081))),
+    )
+    def test_owned_proxy_egress_requires_observable_owned_listeners(self, observation_mock) -> None:
+        self.assertTrue(self.driver._owned_proxy_egress_ready())
+        observation_mock.assert_called_once_with()
+
+    @patch.object(
+        SingBoxDriver,
+        "_owned_proxy_runtime_observation",
+        return_value=((OwnedProcess(pid=42, executable="sing-box"),), TCPListenerObservation(False, (2080, 2081))),
+    )
+    def test_owned_proxy_egress_rejects_unobservable_listener_evidence(self, observation_mock) -> None:
+        self.assertFalse(self.driver._owned_proxy_egress_ready())
+        observation_mock.assert_called_once_with()
 
     @patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=False)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
     def test_health_check_degraded_when_tun_interface_missing(self, port_mock, tun_mock) -> None:
-        self.driver._active_mode = "tun"
         self.driver._tun_expected = True
-
         self.assertEqual(self.driver.health_check(), "degraded")
 
     @patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=False)
@@ -1826,25 +2231,11 @@ class SingBoxDriverHealthTests(unittest.TestCase):
     def test_health_check_degraded_when_tun_auto_redirect_not_ready(
         self, port_mock, tun_mock, nft_mock
     ) -> None:
-        self.driver._active_mode = "tun"
         self.driver._tun_expected = True
-
         self.assertEqual(self.driver.health_check(), "degraded")
 
-    @patch.object(SingBoxDriver, "_public_ip_via_proxy", return_value=None)
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=True)
-    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_degraded_when_public_ip_check_fails(self, port_mock, http_mock, ip_mock) -> None:
-        self.assertEqual(self.driver.health_check(), "degraded")
-
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
-    @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True)
-    def test_health_check_degraded_when_proxy_http_fails(self, port_mock, http_mock) -> None:
-        self.assertEqual(self.driver.health_check(), "degraded")
-
-    @patch.object(SingBoxDriver, "_http_via_proxy", return_value=False)
     @patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=False)
-    def test_health_check_degraded_when_ports_closed(self, port_mock, http_mock) -> None:
+    def test_health_check_degraded_when_ports_closed(self, port_mock) -> None:
         self.assertEqual(self.driver.health_check(), "degraded")
 
     def test_health_check_down_when_process_missing(self) -> None:
@@ -1855,26 +2246,6 @@ class SingBoxDriverHealthTests(unittest.TestCase):
         self.process.poll.return_value = 1
         self.assertEqual(self.driver.health_check(), "down")
 
-    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/curl")
-    @patch("drivers.singbox_driver.subprocess.run")
-    def test_http_via_proxy_uses_curl_socks(self, run_mock, which_mock) -> None:
-        run_mock.return_value.returncode = 0
-        self.assertTrue(self.driver._http_via_proxy("https://example.com"))
-        args = run_mock.call_args.args[0]
-        self.assertIn("--socks5-hostname", args)
-        self.assertIn("127.0.0.1:2080", args)
-
-    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/curl")
-    @patch("drivers.singbox_driver.subprocess.run")
-    def test_public_ip_via_proxy_logs_observed_ip(self, run_mock, which_mock) -> None:
-        run_mock.return_value.returncode = 0
-        run_mock.return_value.stdout = "203.0.113.10\n"
-        run_mock.return_value.stderr = ""
-        self.assertEqual(self.driver._public_ip_via_proxy(), "203.0.113.10")
-        args = run_mock.call_args.args[0]
-        self.assertIn("--socks5-hostname", args)
-        self.assertIn("127.0.0.1:2080", args)
-        self.assertIn("https://api.ipify.org", args)
 
 
 if __name__ == "__main__":

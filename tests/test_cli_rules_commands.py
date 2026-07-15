@@ -131,6 +131,66 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertEqual(removed_data["group"]["rules"], [])
         self.assertTrue(removed_backup_exists)
 
+    def test_set_priority_persists_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(tmp, RuleGroup(name="custom", priority=100))
+
+            result = self.run_watchdog(
+                ["rules", "set-priority", "custom", "25", "--json"], tmp
+            )
+            data = json.loads(result.stdout)
+
+            self.assertEqual(data["group"]["priority"], 25)
+            self.assertTrue(Path(data["backup_path"]).exists())
+
+    def test_set_priority_missing_group_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["rules", "set-priority", "missing", "25"], tmp, check=False
+            )
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("watchdog rules list", result.stderr)
+
+    def test_enable_disable_rule_toggles_single_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(
+                tmp,
+                RuleGroup(
+                    name="custom",
+                    rules=[
+                        Rule(id="r1", action="direct", conditions={"domain": ["a.com"]}),
+                        Rule(id="r2", action="block", conditions={"domain": ["b.com"]}),
+                    ],
+                ),
+            )
+
+            disabled = self.run_watchdog(
+                ["rules", "disable-rule", "custom", "r1", "--json"], tmp
+            )
+            disabled_data = json.loads(disabled.stdout)
+            rules_by_id = {rule["id"]: rule for rule in disabled_data["group"]["rules"]}
+
+            self.assertFalse(rules_by_id["r1"]["enabled"])
+            self.assertTrue(rules_by_id["r2"]["enabled"])
+            self.assertTrue(Path(disabled_data["backup_path"]).exists())
+
+            enabled = self.run_watchdog(
+                ["rules", "enable-rule", "custom", "r1", "--json"], tmp
+            )
+            enabled_data = json.loads(enabled.stdout)
+            rules_by_id = {rule["id"]: rule for rule in enabled_data["group"]["rules"]}
+            self.assertTrue(rules_by_id["r1"]["enabled"])
+
+    def test_enable_rule_missing_rule_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.add_group(tmp, RuleGroup(name="custom"))
+
+            result = self.run_watchdog(
+                ["rules", "enable-rule", "custom", "missing"], tmp, check=False
+            )
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("rule not found: missing", result.stderr)
+
     def test_add_rule_rejects_invalid_condition_without_mutating_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.add_group(tmp, RuleGroup(name="custom"))
@@ -914,6 +974,90 @@ class CliRulesCommandTests(unittest.TestCase):
             self.assertEqual(item["id"], "builtin-example")
             self.assertEqual(item["state"], "loaded")
             self.assertTrue(Path(item["cache_path"]).exists())
+
+    def test_ruleset_add_and_remove_persist_trust_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                [
+                    "ruleset",
+                    "add",
+                    "ads",
+                    "--kind",
+                    "remote",
+                    "--source",
+                    "https://rules.example/ads.srs",
+                    "--sha256",
+                    "a" * 64,
+                    "--json",
+                ],
+                tmp,
+            )
+            added_data = json.loads(added.stdout)
+
+            status = self.run_watchdog(["ruleset", "status", "--json"], tmp)
+            status_data = json.loads(status.stdout)
+
+            removed = self.run_watchdog(["ruleset", "remove", "ads", "--json"], tmp)
+            removed_data = json.loads(removed.stdout)
+
+            status_after = self.run_watchdog(["ruleset", "status", "--json"], tmp)
+            status_after_data = json.loads(status_after.stdout)
+
+        self.assertEqual(added_data["policy"]["kind"], "remote")
+        self.assertIsNone(added_data["backup_path"])
+        self.assertEqual(status_data["policies"]["ads"]["source"], "https://rules.example/ads.srs")
+        self.assertEqual(removed_data["removed"], "ads")
+        self.assertNotIn("ads", status_after_data["policies"])
+
+    def test_ruleset_add_remote_requires_sha256(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "ruleset",
+                    "add",
+                    "ads",
+                    "--kind",
+                    "remote",
+                    "--source",
+                    "https://rules.example/ads.srs",
+                ],
+                tmp,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("expected_sha256", result.stderr)
+
+    def test_ruleset_add_remote_rejects_non_https_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "ruleset",
+                    "add",
+                    "ads",
+                    "--kind",
+                    "remote",
+                    "--source",
+                    "http://rules.example/ads.srs",
+                    "--sha256",
+                    "a" * 64,
+                ],
+                tmp,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("must use https", result.stderr)
+
+            status = self.run_watchdog(["ruleset", "status", "--json"], tmp)
+            self.assertNotIn("ads", json.loads(status.stdout)["policies"])
+
+    def test_ruleset_remove_missing_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["ruleset", "remove", "missing"], tmp, check=False)
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("rule-set trust policy not found: missing", result.stderr)
 
     def test_unknown_text_asks_for_input_without_overstating_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

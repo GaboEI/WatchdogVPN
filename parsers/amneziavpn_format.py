@@ -25,13 +25,27 @@ from typing import Any
 
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
+from parsers.endpoint_policy import EndpointPolicyError, validate_profile_endpoint
+from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_config
+from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
+from parsers.wg_config import parse_wg_config
 
 _VPN_PREFIX = "vpn://"
 _DNS_PLACEHOLDER = re.compile(r"\$PRIMARY_DNS|\$SECONDARY_DNS")
 
 _CONTAINER_PARSERS: dict[str, str] = {
     "amnezia-openvpn-cloak": "openvpn_cloak",
+    "amnezia-awg2": "amneziawg",
 }
+
+
+def _validated_profile(profile: Profile) -> Profile:
+    try:
+        validate_profile_endpoint(profile)
+        validate_profile_semantics(profile)
+    except (EndpointPolicyError, ProfileSemanticValidationError) as exc:
+        raise ParseError(str(exc)) from exc
+    return profile
 
 
 def is_amneziavpn_format(text: str) -> bool:
@@ -112,6 +126,10 @@ def _parse_openvpn_cloak(
         raise ParseError("amneziavpn: empty openvpn config")
 
     raw_config = _substitute_dns(raw_config, dns1 or "1.1.1.1", dns2 or "1.0.0.1")
+    try:
+        validate_openvpn_config(raw_config)
+    except OpenVPNConfigValidationError as exc:
+        raise ParseError(f"amneziavpn: {exc}") from exc
 
     try:
         cloak_conf: dict[str, Any] = json.loads(cloak_section.get("last_config") or "{}")
@@ -126,7 +144,7 @@ def _parse_openvpn_cloak(
     profile_id = f"oc-{host}-{client_id[:8]}" if client_id else f"oc-{host}"
     name = description or f"openvpn-cloak-{host}"
 
-    return Profile(
+    return _validated_profile(Profile(
         id=profile_id,
         name=name,
         protocol=ProtocolType.OPENVPN_CLOAK,
@@ -138,7 +156,43 @@ def _parse_openvpn_cloak(
             "client_id": client_id,
         },
         source=ProfileSource.MANUAL,
-    )
+    ))
+
+
+def _parse_amneziawg(
+    container: dict[str, Any],
+    host: str,
+    description: str,
+) -> Profile:
+    awg_section = container.get("awg") or {}
+    try:
+        awg_config: dict[str, Any] = json.loads(awg_section.get("last_config") or "{}")
+    except json.JSONDecodeError as exc:
+        raise ParseError(f"amneziavpn: invalid awg.last_config JSON: {exc}") from exc
+
+    raw_config = awg_config.get("config") or ""
+    if not raw_config.strip():
+        raise ParseError("amneziavpn: empty amneziawg config")
+
+    parsed = parse_wg_config(raw_config)
+    if parsed.protocol is not ProtocolType.AMNEZIAWG:
+        raise ParseError("amneziavpn: awg config lacks AmneziaWG obfuscation settings")
+
+    client_id = awg_config.get("clientId") or ""
+    profile_id = f"awg-{host}-{client_id[:8]}" if client_id else f"awg-{host}"
+    name = description or f"amneziawg-{host}"
+
+    return _validated_profile(Profile(
+        id=profile_id,
+        name=name,
+        protocol=ProtocolType.AMNEZIAWG,
+        config={
+            **parsed.config,
+            "raw": raw_config,
+            "client_id": client_id,
+        },
+        source=ProfileSource.MANUAL,
+    ))
 
 
 def parse_amneziavpn(text: str) -> list[Profile]:
@@ -165,7 +219,9 @@ def parse_amneziavpn(text: str) -> list[Profile]:
                 profiles.append(profile)
             except ParseError:
                 raise
-        # Other container types (amneziawg, shadowsocks, etc.) are ignored for now.
+        elif container_type == "amnezia-awg2":
+            profiles.append(_parse_amneziawg(container, host, description))
+        # Other container types are ignored for now.
 
     if not profiles:
         raise ParseError(

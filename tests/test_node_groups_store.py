@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from node_groups.models import NodeGroup, NodeGroupSelectionMode
+from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
 from node_groups.store import NodeGroupStore, NodeGroupStoreError
 
 
@@ -140,6 +140,71 @@ class NodeGroupStoreMembershipMutationTests(unittest.TestCase):
         self.store.add_member_profile("paris", "p1")
 
         self.assertEqual(self.store.get("berlin").member_profile_ids, ["b1"])
+
+    def test_add_member_provider(self) -> None:
+        result = self.store.add_member_provider("paris", "prov1")
+
+        self.assertEqual(result.member_provider_ids, ["prov1"])
+        self.assertEqual(self.store.get("paris").member_provider_ids, ["prov1"])
+
+    def test_add_member_provider_is_idempotent(self) -> None:
+        self.store.add_member_provider("paris", "prov1")
+        result = self.store.add_member_provider("paris", "prov1")
+
+        self.assertEqual(result.member_provider_ids, ["prov1"])
+
+    def test_remove_member_provider(self) -> None:
+        self.store.add_member_provider("paris", "prov1")
+        result = self.store.remove_member_provider("paris", "prov1")
+
+        self.assertEqual(result.member_provider_ids, [])
+
+    def test_add_member_provider_raises_on_missing_group(self) -> None:
+        with self.assertRaises(NodeGroupStoreError):
+            self.store.add_member_provider("missing", "prov1")
+
+    def test_add_exclude_profile(self) -> None:
+        result = self.store.add_exclude_profile("paris", "p1")
+
+        self.assertEqual(result.exclude_profile_ids, ["p1"])
+        self.assertEqual(self.store.get("paris").exclude_profile_ids, ["p1"])
+
+    def test_add_exclude_profile_is_idempotent(self) -> None:
+        self.store.add_exclude_profile("paris", "p1")
+        result = self.store.add_exclude_profile("paris", "p1")
+
+        self.assertEqual(result.exclude_profile_ids, ["p1"])
+
+    def test_remove_exclude_profile(self) -> None:
+        self.store.add_exclude_profile("paris", "p1")
+        result = self.store.remove_exclude_profile("paris", "p1")
+
+        self.assertEqual(result.exclude_profile_ids, [])
+
+    def test_set_resilience_policy(self) -> None:
+        result = self.store.set_resilience_policy(
+            "paris", NodeGroupResiliencePolicy.RESILIENT_ONLY
+        )
+
+        self.assertEqual(result.resilience_policy, NodeGroupResiliencePolicy.RESILIENT_ONLY)
+        self.assertEqual(
+            self.store.get("paris").resilience_policy,
+            NodeGroupResiliencePolicy.RESILIENT_ONLY,
+        )
+
+    def test_set_resilience_policy_raises_on_missing_group(self) -> None:
+        with self.assertRaises(NodeGroupStoreError):
+            self.store.set_resilience_policy("missing", NodeGroupResiliencePolicy.PREFERRED)
+
+    def test_set_enabled(self) -> None:
+        result = self.store.set_enabled("paris", False)
+
+        self.assertFalse(result.enabled)
+        self.assertFalse(self.store.get("paris").enabled)
+
+    def test_set_enabled_raises_on_missing_group(self) -> None:
+        with self.assertRaises(NodeGroupStoreError):
+            self.store.set_enabled("missing", False)
 
 
 class NodeGroupStoreOnDiskShapeTests(unittest.TestCase):

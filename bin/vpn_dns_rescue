@@ -3,18 +3,23 @@ set -euo pipefail
 
 MODE="auto"
 RECONNECT=1
+STRICT=0
 
 usage() {
   cat <<'USAGE'
 WatchdogVPN DNS rescue
 
 Usage:
-  vpn_dns_rescue [auto|fallback|status] [--no-reconnect]
+  vpn_dns_rescue [auto|fallback|status] [--no-reconnect] [--strict]
 
 Modes:
   auto      Restore NetworkManager DNS to automatic/DHCP and systemd-resolved.
   fallback  Set public fallback DNS on active NetworkManager connections.
   status    Show resolver and NetworkManager DNS state.
+
+Options:
+  --no-reconnect  Do not cycle active NetworkManager connections.
+  --strict        Return an error when an installed cleanup command fails.
 
 Use this when DNS was left pointing at a local resolver that is no longer
 running.
@@ -28,6 +33,9 @@ while (($#)); do
       ;;
     --no-reconnect)
       RECONNECT=0
+      ;;
+    --strict)
+      STRICT=1
       ;;
     --help|-h)
       usage
@@ -97,8 +105,16 @@ status() {
 }
 
 restore_resolved() {
+  local load_state
   if have systemctl; then
-    run sudo systemctl enable --now systemd-resolved >/dev/null 2>&1 || true
+    load_state="$(systemctl show systemd-resolved --property LoadState --value 2>/dev/null || true)"
+    if [[ -n "$load_state" && "$load_state" != "not-found" ]]; then
+      if ! run sudo systemctl enable --now systemd-resolved >/dev/null 2>&1; then
+        if ((STRICT == 1)); then
+          return 1
+        fi
+      fi
+    fi
   fi
 
   if [[ -e /run/systemd/resolve/stub-resolv.conf || "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
@@ -123,8 +139,16 @@ reset_nm_dns_auto() {
 
   while IFS= read -r conn; do
     [[ -n "$conn" ]] || continue
-    run sudo nmcli con mod "$conn" ipv4.ignore-auto-dns no ipv4.dns "" ipv4.dns-search "" || true
-    run sudo nmcli con mod "$conn" ipv6.ignore-auto-dns no ipv6.dns "" ipv6.dns-search "" || true
+    if ! run sudo nmcli con mod "$conn" ipv4.ignore-auto-dns no ipv4.dns "" ipv4.dns-search ""; then
+      if ((STRICT == 1)); then
+        return 1
+      fi
+    fi
+    if ! run sudo nmcli con mod "$conn" ipv6.ignore-auto-dns no ipv6.dns "" ipv6.dns-search ""; then
+      if ((STRICT == 1)); then
+        return 1
+      fi
+    fi
     if ((RECONNECT == 1)); then
       run sudo nmcli con down "$conn" >/dev/null 2>&1 || true
       run sudo nmcli con up "$conn" >/dev/null 2>&1 || true
@@ -138,8 +162,16 @@ set_nm_fallback_dns() {
 
   while IFS= read -r conn; do
     [[ -n "$conn" ]] || continue
-    run sudo nmcli con mod "$conn" ipv4.ignore-auto-dns yes ipv4.dns "1.1.1.1 8.8.8.8" || true
-    run sudo nmcli con mod "$conn" ipv6.ignore-auto-dns yes ipv6.dns "2606:4700:4700::1111 2001:4860:4860::8888" || true
+    if ! run sudo nmcli con mod "$conn" ipv4.ignore-auto-dns yes ipv4.dns "1.1.1.1 8.8.8.8"; then
+      if ((STRICT == 1)); then
+        return 1
+      fi
+    fi
+    if ! run sudo nmcli con mod "$conn" ipv6.ignore-auto-dns yes ipv6.dns "2606:4700:4700::1111 2001:4860:4860::8888"; then
+      if ((STRICT == 1)); then
+        return 1
+      fi
+    fi
     if ((RECONNECT == 1)); then
       run sudo nmcli con down "$conn" >/dev/null 2>&1 || true
       run sudo nmcli con up "$conn" >/dev/null 2>&1 || true

@@ -9,6 +9,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 
@@ -21,10 +22,26 @@ from dns.singbox import (
     build_singbox_dns_config,
 )
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
-from drivers.base import BaseDriver
-from drivers.runtime_paths import cleanup_stale_runtime_dirs, make_runtime_dir, write_private_file
+from drivers.base import (
+    DRIVER_POLICY_CAPABILITIES,
+    BaseDriver,
+    ReentrantConnectGuard,
+    ManagementPathSafetyError,
+)
+from drivers.runtime_paths import (
+    OwnedProcess,
+    TCPListenerObservation,
+    cleanup_stale_runtime_dirs,
+    kill_all_recorded_children,
+    make_runtime_dir,
+    observe_tcp_listener_ports,
+    owned_processes,
+    record_child_process,
+    write_private_file,
+)
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
+from parsers.profile_schema import validate_profile_semantics
 from route_chains.models import chain_target
 from route_chains.runtime import ChainRuntimePlan
 from rules.models import SIMPLE_RULE_ACTIONS, RuleGroup
@@ -34,10 +51,20 @@ from rules.singbox import build_singbox_route_rules
 RUNTIME_PREFIX = "watchdogvpn-singbox-"
 CONFIG_NAME = "singbox.json"
 LOG_NAME = "singbox.log"
-PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
 DISABLE_BIND_VALUES = {"", "0", "false", "no", "off", "none"}
 DEFAULT_RULE_TABLES = {"local", "main", "default"}
 SING_BOX_AUTO_REDIRECT_MARKS = {"0x2023", "0x2024"}
+EXPECTED_PROXY_PORTS = frozenset({2080, 2081})
+SING_BOX_LOG_LEVELS = {
+    "trace",
+    "debug",
+    "info",
+    "warn",
+    "warning",
+    "error",
+    "fatal",
+    "panic",
+}
 LAN_GATEWAY_NFT_TABLE = "watchdogvpn_lan_gateway"
 LAN_GATEWAY_FORWARD_CHAIN = "forward"
 LAN_GATEWAY_POSTROUTING_CHAIN = "postrouting"
@@ -133,16 +160,24 @@ class _BinaryPaths:
     )
 
 
-class SingBoxDriver(BaseDriver):
+class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
     """sing-box integration entry point.
 
     Handles binary/version checks, per-run config generation, process lifecycle,
     and proxy readiness validation for sing-box backed profiles.
     """
 
+    policy_capabilities = DRIVER_POLICY_CAPABILITIES
+
+    requires_profile_egress_check = True
+
+    def _has_existing_connection(self) -> bool:
+        return self._process is not None
+
     def __init__(self, binaries: _BinaryPaths | None = None) -> None:
         self.binaries = binaries or _BinaryPaths()
         self._process: subprocess.Popen[str] | None = None
+        self.last_error = ""
         self._active_profile: Profile | None = None
         self._connected_at: datetime | None = None
         self._active_mode: str = "global"
@@ -238,8 +273,33 @@ class SingBoxDriver(BaseDriver):
             "stack": "system",
         }
 
-    def _mode_requires_tun(self, mode: str, app_policy: AppPolicy | None = None) -> bool:
-        return mode == "tun" or (mode == "rules" and app_policy is not None and app_policy.enabled)
+    def _singbox_log_level(self) -> str:
+        level = os.environ.get("WATCHDOGVPN_SINGBOX_LOG_LEVEL", "warning").strip().lower()
+        if level in SING_BOX_LOG_LEVELS:
+            return level
+        return "warning"
+
+    def _mode_requires_tun(
+        self,
+        mode: str,
+        capture_modes: tuple[str, ...] | None = None,
+    ) -> bool:
+        # TUN inclusion must follow the operator's explicit capture_modes
+        # setting (watchdog config set capture-modes), not whether app
+        # policy happens to be enabled. app_policy is a per-app *routing*
+        # override within whatever capture is already active; it must never
+        # be the thing deciding whether system-wide traffic is captured at
+        # all. The old "rules mode + app_policy.enabled" shortcut let a
+        # routine "watchdog app-policy disable" silently downgrade a
+        # supposedly-connected session to local-proxy-only with no system
+        # traffic protection and no signal that this happened - reproduced
+        # live in Phase 23 field validation (Task 23.3.3) and flagged
+        # earlier as unfinished Phase 19 work in
+        # docs/phase-19-task-19-1-routing-capture-contract-audit.md's
+        # "one-dimensional shortcut" finding.
+        if capture_modes is not None:
+            return "tun" in capture_modes
+        return mode == "tun"
 
     def _ensure_direct_outbound(
         self,
@@ -262,6 +322,20 @@ class SingBoxDriver(BaseDriver):
         config["outbounds"].append(direct_outbound)
         return direct_outbound
 
+    def _ensure_management_outbound(
+        self, config: dict[str, Any], *, tag: str, bind_interface: str
+    ) -> dict[str, Any]:
+        for outbound in config["outbounds"]:
+            if outbound.get("tag") == tag:
+                return outbound
+        outbound: dict[str, Any] = {
+            "type": "direct",
+            "tag": tag,
+            "bind_interface": bind_interface,
+        }
+        config["outbounds"].append(outbound)
+        return outbound
+
     def _append_chain_outbounds(
         self,
         config: dict[str, Any],
@@ -274,12 +348,9 @@ class SingBoxDriver(BaseDriver):
             for hop in plan.hops:
                 if hop.resolved_profile is None or hop.outbound_tag is None:
                     continue
-                outbound = self._protocol_to_outbound(hop.resolved_profile)
-                outbound["tag"] = hop.outbound_tag
-                self._apply_dialer_options(outbound, hop.resolved_profile)
+                outbound = self._profile_to_route_target(hop.resolved_profile, config, tag=hop.outbound_tag)
                 if previous_tag is not None:
                     outbound["detour"] = previous_tag
-                config["outbounds"].append(outbound)
                 previous_tag = hop.outbound_tag
 
     def _normalize_port(self, value: Any, default: int | None = None) -> int | None:
@@ -429,6 +500,52 @@ class SingBoxDriver(BaseDriver):
             outbound["bind_interface"] = bind_interface
         return outbound
 
+    def _wireguard_to_endpoint(self, profile: Profile, *, tag: str | None = None) -> dict[str, Any]:
+        cfg = profile.config
+        endpoint_host, endpoint_port = self._split_endpoint(cfg.get("endpoint"))
+        peer: dict[str, Any] = {
+            "address": cfg.get("host") or cfg.get("server") or endpoint_host,
+            "port": self._normalize_port(cfg.get("port") or cfg.get("server_port")) or endpoint_port,
+            "public_key": cfg.get("peer_public_key") or cfg.get("public_key"),
+            "allowed_ips": self._normalize_list(cfg.get("allowed_ips") or "0.0.0.0/0,::/0"),
+        }
+        reserved = self._normalize_list(cfg.get("reserved"))
+        if reserved:
+            peer["reserved"] = reserved
+
+        endpoint: dict[str, Any] = {
+            "type": "wireguard",
+            "tag": tag or profile.name,
+            "system": False,
+            "address": self._normalize_list(cfg.get("local_address") or cfg.get("address")),
+            "private_key": cfg.get("private_key"),
+            "peers": [peer],
+        }
+        mtu = self._normalize_port(cfg.get("mtu"))
+        if mtu is not None:
+            endpoint["mtu"] = mtu
+        self._apply_dialer_options(endpoint, profile)
+        return endpoint
+
+    def _profile_to_route_target(
+        self,
+        profile: Profile,
+        config: dict[str, Any],
+        *,
+        tag: str | None = None,
+    ) -> dict[str, Any]:
+        validate_profile_semantics(profile)
+        if profile.protocol is ProtocolType.WIREGUARD:
+            endpoint = self._wireguard_to_endpoint(profile, tag=tag)
+            config.setdefault("endpoints", []).append(endpoint)
+            return endpoint
+        outbound = self._protocol_to_outbound(profile)
+        if tag is not None:
+            outbound["tag"] = tag
+        self._apply_dialer_options(outbound, profile)
+        config.setdefault("outbounds", []).append(outbound)
+        return outbound
+
     def _protocol_to_outbound(self, profile: Profile) -> dict[str, Any]:
         cfg = profile.config
         if profile.protocol is ProtocolType.VLESS:
@@ -437,7 +554,7 @@ class SingBoxDriver(BaseDriver):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "uuid": cfg.get("uuid") or profile.id,
+                "uuid": cfg.get("uuid"),
                 "flow": cfg.get("flow"),
                 "network": cfg.get("network") or cfg.get("type") or "tcp",
             }
@@ -468,7 +585,7 @@ class SingBoxDriver(BaseDriver):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "uuid": cfg.get("uuid") or profile.id,
+                "uuid": cfg.get("uuid"),
                 "alter_id": self._normalize_port(self._first_config_value(cfg, "alter_id", "alterId", "aid"), 0) or 0,
                 "security": self._first_config_value(cfg, "security", "scy") or "auto",
             }
@@ -485,7 +602,7 @@ class SingBoxDriver(BaseDriver):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "password": cfg.get("password") or profile.id,
+                "password": cfg.get("password"),
                 "tls": tls_options,
             }
         if profile.protocol is ProtocolType.HYSTERIA2:
@@ -503,7 +620,7 @@ class SingBoxDriver(BaseDriver):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "password": cfg.get("password") or profile.id,
+                "password": cfg.get("password"),
                 "tls": tls_options,
             }
             up_mbps = self._normalize_port(cfg.get("up_mbps") or cfg.get("upload_mbps") or cfg.get("uploadMbps"))
@@ -524,8 +641,8 @@ class SingBoxDriver(BaseDriver):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "uuid": cfg.get("uuid") or profile.id,
-                "password": cfg.get("password") or profile.id,
+                "uuid": cfg.get("uuid"),
+                "password": cfg.get("password"),
                 "congestion_control": cfg.get("congestion_control", "bbr"),
                 "tls": self._build_standard_tls_options(cfg, cfg.get("host") or cfg.get("server")),
             }
@@ -539,25 +656,9 @@ class SingBoxDriver(BaseDriver):
                 "tag": profile.name,
                 "server": cfg.get("host") or cfg.get("server"),
                 "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")),
-                "method": cfg.get("method", "chacha20-ietf-poly1305"),
-                "password": cfg.get("password") or profile.id,
+                "method": cfg.get("method"),
+                "password": cfg.get("password"),
             }
-        if profile.protocol is ProtocolType.WIREGUARD:
-            endpoint_host, endpoint_port = self._split_endpoint(cfg.get("endpoint"))
-            outbound = {
-                "type": "wireguard",
-                "tag": profile.name,
-                "server": cfg.get("host") or cfg.get("server") or endpoint_host,
-                "server_port": self._normalize_port(cfg.get("port") or cfg.get("server_port")) or endpoint_port,
-                "local_address": self._normalize_list(cfg.get("local_address") or cfg.get("address")),
-                "private_key": cfg.get("private_key"),
-                "peer_public_key": cfg.get("peer_public_key") or cfg.get("public_key"),
-                "reserved": self._normalize_list(cfg.get("reserved")),
-            }
-            mtu = self._normalize_port(cfg.get("mtu"))
-            if mtu is not None:
-                outbound["mtu"] = mtu
-            return outbound
         if profile.protocol is ProtocolType.SOCKS:
             outbound = {
                 "type": "socks",
@@ -994,17 +1095,20 @@ class SingBoxDriver(BaseDriver):
         return False
 
     def _singbox_auto_redirect_ready(self) -> bool:
+        return self._singbox_auto_redirect_observation()[1]
+
+    def _singbox_auto_redirect_observation(self) -> tuple[bool, bool]:
         if not shutil.which("nft"):
-            return False
+            return False, False
         result = self._run_capture_command(["nft", "list", "table", "inet", "sing-box"])
         if result.returncode != 0:
-            return False
+            return False, False
         output = result.stdout
         if "table inet sing-box" not in output:
-            return False
+            return True, False
         chain_count = len(re.findall(r"\bchain\s+\S+", output))
         has_base_hook = "hook output" in output or "hook prerouting" in output
-        return chain_count >= 2 and has_base_hook
+        return True, chain_count >= 2 and has_base_hook
 
     def _wait_for_tun_auto_redirect_ready(self, timeout: float = 3.0) -> bool:
         deadline = time.monotonic() + timeout
@@ -1018,66 +1122,94 @@ class SingBoxDriver(BaseDriver):
             time.sleep(0.1)
         return False
 
-    def _http_via_proxy(self, target_url: str, timeout: int = 5) -> bool:
-        if not shutil.which("curl"):
-            self._append_log("health_check: curl not found\n")
-            return False
-        result = subprocess.run(
-            [
-                "curl",
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--max-time",
-                str(timeout),
-                "--socks5-hostname",
-                "127.0.0.1:2080",
-                target_url,
-            ],
-            text=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if result.returncode != 0:
-            error = (result.stderr or "").strip()
-            message = f"health_check: curl exited {result.returncode}"
-            if error:
-                message += f": {error}"
-            self._append_log(f"{message}\n")
-        return result.returncode == 0
+    # Egress health is deliberately owned by rotation.health_checker. It is
+    # invoked by WatchdogRuntime after connect, during every daemon iteration,
+    # and for each rotation candidate, so this driver cannot create a second
+    # single-target authority.
 
-    def _public_ip_via_proxy(self, timeout: int = 5) -> str | None:
-        if not shutil.which("curl"):
-            self._append_log("health_check: curl not found for public IP check\n")
+    def _active_ssh_management_peers(self) -> tuple[str, ...] | None:
+        """Return established remote SSH peers, or None when unobservable."""
+        if not shutil.which("ss"):
             return None
         result = subprocess.run(
-            [
-                "curl",
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--max-time",
-                str(timeout),
-                "--socks5-hostname",
-                "127.0.0.1:2080",
-                PUBLIC_IP_ENDPOINT,
-            ],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
+            ["ss", "-H", "-tn", "state", "established", "sport", "=", ":22"],
+            text=True, capture_output=True, check=False,
         )
-        output = (result.stdout or "").strip()
-        error = (result.stderr or "").strip()
-        if result.returncode == 0 and output:
-            self._append_log(f"health_check: public_ip_via_proxy={output}\n")
-            return output
-        message = f"health_check: public IP check exited {result.returncode}"
-        if error:
-            message += f": {error}"
-        self._append_log(f"{message}\n")
-        return None
+        if result.returncode != 0:
+            return None
+        peers: set[str] = set()
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if not fields:
+                continue
+            endpoint = fields[-1]
+            if endpoint.startswith("[") and "]" in endpoint:
+                host = endpoint[1:].split("]", 1)[0]
+            elif ":" in endpoint:
+                host = endpoint.rsplit(":", 1)[0]
+            else:
+                continue
+            try:
+                peers.add(str(ip_address(host)))
+            except ValueError:
+                continue
+        return tuple(sorted(peers))
+
+    def preflight_native_management_routes(
+        self, *, mode: str, capture_modes: tuple[str, ...] | None
+    ) -> dict[str, str]:
+        if not self._mode_requires_tun(mode, capture_modes):
+            return {}
+        peers = self._active_ssh_management_peers()
+        if peers is None or not shutil.which("ip"):
+            raise ManagementPathSafetyError(
+                "native policy TUN refused: SSH peers or physical routes cannot be inspected"
+            )
+        routes: dict[str, str] = {}
+        for peer in peers:
+            result = subprocess.run(
+                ["ip", "route", "get", peer], text=True, capture_output=True, check=False
+            )
+            match = re.search(r"\bdev\s+(\S+)", result.stdout)
+            if result.returncode != 0 or match is None or not self._is_physical_interface(match.group(1)):
+                raise ManagementPathSafetyError(
+                    "native policy TUN refused: SSH peer lacks a physical management route"
+                )
+            routes[peer] = match.group(1)
+        return routes
+
+    def preflight_management_path(
+        self,
+        profile: Profile,
+        *,
+        mode: str,
+        capture_modes: tuple[str, ...] | None,
+    ) -> tuple[str, ...]:
+        """Prove that every current SSH control peer bypasses TUN capture.
+
+        The proof is intentionally ephemeral: only established peers at
+        activation time become direct routes, and nothing is persisted in a
+        profile. A remote operator must never lose their sole control path
+        because an auto-redirect TUN changed the routing policy underneath
+        an existing SSH transport.
+        """
+        tun_expected = self._mode_requires_tun(mode, capture_modes)
+        if not tun_expected:
+            return ()
+        peers = self._active_ssh_management_peers()
+        if peers is None:
+            self.last_error = (
+                "TUN refused: active SSH control paths cannot be inspected; "
+                "use a local console or restore ss/iproute2"
+            )
+            raise ManagementPathSafetyError(self.last_error)
+        if peers and not self._outbound_bind_interface(profile):
+            self.last_error = (
+                "TUN refused: active SSH control path cannot be bound to a "
+                "physical interface; remove bind_interface=off or use a local console"
+            )
+            raise ManagementPathSafetyError(self.last_error)
+        return peers
 
     def generate_singbox_config(
         self,
@@ -1092,21 +1224,28 @@ class SingBoxDriver(BaseDriver):
         rule_set_declarations: list[dict[str, str]] | None = None,
         chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy: LANProxyRuntimeConfig | None = None,
+        capture_modes: tuple[str, ...] | None = None,
+        management_peers: tuple[str, ...] = (),
+        native_transport: bool = False,
+        native_bypass_cidrs: tuple[str, ...] = (),
+        management_routes: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
             raise ValueError(f"unsupported connection mode: {mode!r}")
         if final_policy not in SIMPLE_RULE_ACTIONS and chain_target(final_policy) is None:
             raise ValueError(f"unsupported final_policy: {final_policy!r}")
 
-        outbound = self._protocol_to_outbound(profile)
-        self._apply_dialer_options(outbound, profile)
         config: dict[str, Any] = {
-            "log": {"level": "warning"},
+            "log": {"level": self._singbox_log_level()},
             "inbounds": self._build_inbounds(lan_proxy),
-            "outbounds": [outbound],
+            "outbounds": [],
         }
+        if native_transport:
+            outbound = self._ensure_direct_outbound(config)
+        else:
+            outbound = self._profile_to_route_target(profile, config)
         self._append_chain_outbounds(config, chain_runtime_plans or {})
-        if self._mode_requires_tun(mode, app_policy):
+        if self._mode_requires_tun(mode, capture_modes):
             config["inbounds"].append(self._build_tun_inbound())
         if dns_policy is not None:
             dns_config = build_singbox_dns_config(
@@ -1162,7 +1301,9 @@ class SingBoxDriver(BaseDriver):
                     self._ensure_direct_outbound(
                         config,
                         dns_config.direct_domain_resolver,
-                        bind_interface=self._outbound_bind_interface(profile),
+                        bind_interface=(
+                            None if native_transport else self._outbound_bind_interface(profile)
+                        ),
                     )
 
         # "rules" mode evaluates the loaded rule groups; every other mode
@@ -1178,9 +1319,12 @@ class SingBoxDriver(BaseDriver):
         else:
             effective_groups = []
             effective_final_policy = "direct" if mode == "direct" else final_policy
-        if mode in {"rules", "direct"}:
+        if mode in {"rules", "direct"} or management_peers:
             self._ensure_direct_outbound(
-                config, bind_interface=self._outbound_bind_interface(profile)
+                config,
+                bind_interface=(
+                    None if native_transport else self._outbound_bind_interface(profile)
+                ),
             )
         mode_route_rules = build_singbox_route_rules(
             effective_groups,
@@ -1190,11 +1334,61 @@ class SingBoxDriver(BaseDriver):
             rule_set_tags=rule_set_tags if mode == "rules" else None,
             chain_runtime_plans=chain_runtime_plans,
         )
+        management_rules = [
+            {
+                "ip_cidr": [f"{peer}/128" if ":" in peer else f"{peer}/32"],
+                "action": "route",
+                "outbound": "direct",
+            }
+            for peer in management_peers
+        ]
+        native_bypass_rules = [
+            {
+                "ip_cidr": [cidr],
+                "network": "udp",
+                "action": "bypass",
+            }
+            for cidr in native_bypass_cidrs
+        ]
         route_config: dict[str, Any] = {"rules": mode_route_rules}
         if mode == "rules" and rule_set_declarations:
             route_config["rule_set"] = list(rule_set_declarations)
         _merge_route_config(config, route_config)
-
+        if management_routes:
+            native_management_rules: list[dict[str, Any]] = []
+            for index, (peer, interface) in enumerate(
+                sorted(management_routes.items()), start=1
+            ):
+                tag = f"watchdogvpn-management-{index}"
+                self._ensure_management_outbound(
+                    config, tag=tag, bind_interface=interface
+                )
+                native_management_rules.append(
+                    {
+                        "ip_cidr": [f"{peer}/128" if ":" in peer else f"{peer}/32"],
+                        "action": "route",
+                        "outbound": tag,
+                    }
+                )
+            config["route"]["rules"] = [
+                *native_bypass_rules,
+                *native_management_rules,
+                *config["route"]["rules"],
+            ]
+        elif management_rules:
+            # Must precede every ordinary route (including DNS diversion),
+            # not merely the mode catch-all: the SSH session is the control
+            # plane that can recover a failed activation.
+            config["route"]["rules"] = [
+                *native_bypass_rules,
+                *management_rules,
+                *config["route"]["rules"],
+            ]
+        elif native_bypass_rules:
+            config["route"]["rules"] = [
+                *native_bypass_rules,
+                *config["route"]["rules"],
+            ]
         self._write_config(config)
         return config
 
@@ -1212,11 +1406,29 @@ class SingBoxDriver(BaseDriver):
         chain_runtime_plans: dict[str, ChainRuntimePlan] | None = None,
         lan_proxy: LANProxyRuntimeConfig | None = None,
         lan_gateway: LANGatewayRuntimeConfig | None = None,
+        capture_modes: tuple[str, ...] | None = None,
+        management_peers: tuple[str, ...] | None = None,
+        native_transport: bool = False,
+        native_bypass_cidrs: tuple[str, ...] = (),
+        management_routes: dict[str, str] | None = None,
     ) -> bool:
+        self.last_error = ""
+        tun_expected = self._mode_requires_tun(mode, capture_modes)
+        if management_peers is None:
+            try:
+                management_peers = self.preflight_management_path(
+                    profile,
+                    mode=mode,
+                    capture_modes=capture_modes,
+                )
+            except ManagementPathSafetyError:
+                return False
+        if not self._ensure_disconnected_before_connect():
+            self.last_error = "existing sing-box runtime teardown failed"
+            return False
         binary = self.find_singbox_binary()
         if not binary:
             return False
-        tun_expected = self._mode_requires_tun(mode, app_policy)
         self._clear_tun_cleanup_state()
         if tun_expected:
             self._tun_rule_baseline = self._ip_rule_lines()
@@ -1229,7 +1441,16 @@ class SingBoxDriver(BaseDriver):
             "rule_set_tags": rule_set_tags,
             "rule_set_declarations": rule_set_declarations,
             "chain_runtime_plans": chain_runtime_plans,
+            "capture_modes": capture_modes,
         }
+        if native_transport:
+            config_kwargs["native_transport"] = True
+        if native_bypass_cidrs:
+            config_kwargs["native_bypass_cidrs"] = native_bypass_cidrs
+        if management_routes:
+            config_kwargs["management_routes"] = management_routes
+        if management_peers:
+            config_kwargs["management_peers"] = management_peers
         if lan_proxy is not None:
             config_kwargs["lan_proxy"] = lan_proxy
         self.generate_singbox_config(profile, **config_kwargs)
@@ -1242,6 +1463,7 @@ class SingBoxDriver(BaseDriver):
             stderr=subprocess.STDOUT,
         )
         log_file.close()
+        record_child_process(self._runtime_dir, "process", self._process.pid, Path(binary).name)
         self._active_profile = profile
         self._active_mode = mode
         self._tun_expected = tun_expected
@@ -1290,8 +1512,32 @@ class SingBoxDriver(BaseDriver):
             process_stopped = process is None or process.poll() is not None
             if cleanup_tun_residue and process_stopped:
                 self._cleanup_tun_residue()
+            # Best-effort sweep of every child this driver type has ever
+            # recorded, not just the one this instance held a reference to -
+            # catches anything orphaned by a past bug or crash too.
+            kill_all_recorded_children(RUNTIME_PREFIX)
             self._cleanup_runtime()
         return stopped
+
+    def _owned_proxy_egress_ready(self) -> bool:
+        """Require the active sing-box process to own both proxy listeners.
+
+        A TUN interface, nftables table, or TCP port can survive a crashed
+        runtime or belong to another process. The health probe below is
+        attributable to the selected profile only when its SOCKS listener is
+        observable and owned by this driver runtime.
+        """
+        processes, observation = self._owned_proxy_runtime_observation()
+        if not processes or not observation.observable:
+            self._append_log("health_check: owned proxy listener evidence is unavailable\n")
+            return False
+        listener_ports = set(observation.ports)
+        missing = EXPECTED_PROXY_PORTS - listener_ports
+        if missing:
+            rendered = ",".join(str(port) for port in sorted(missing))
+            self._append_log(f"health_check: owned proxy listeners missing ports={rendered}\n")
+            return False
+        return True
 
     def health_check(self) -> str:
         process = self._process
@@ -1303,34 +1549,79 @@ class SingBoxDriver(BaseDriver):
             self._append_log("health_check: local proxy ports are not responding\n")
             return "degraded"
 
+        if not self._owned_proxy_egress_ready():
+            return "degraded"
+
         if self._tun_expected:
             if not self._wait_for_tun_interface():
                 self._append_log("health_check: TUN interface is not active\n")
                 return "degraded"
-            if self._wait_for_tun_auto_redirect_ready():
-                return "ok"
-            self._append_log("health_check: TUN auto_redirect nftables state is not ready\n")
-            return "degraded"
+            if not self._wait_for_tun_auto_redirect_ready():
+                self._append_log("health_check: TUN auto_redirect nftables state is not ready\n")
+                return "degraded"
 
-        proxy_ok = self._http_via_proxy("https://example.com")
-        public_ip = self._public_ip_via_proxy() if proxy_ok else None
-        if proxy_ok and public_ip:
-            return "ok"
-        return "degraded"
+        return "ok"
 
     def status(self) -> ConnectionState:
         process = self._process
+        owned_runtime_processes, listener_observation = (
+            self._owned_proxy_runtime_observation()
+        )
+        listener_ports = set(listener_observation.ports)
+        tun_active = self._tun_interface_active()
+        nft_present, nft_ready = self._singbox_auto_redirect_observation()
+        rule_prefs, route_tables = self._discover_singbox_tun_residue()
+        artifacts = self._runtime_artifact_labels(
+            listener_ports=listener_ports,
+            tun_active=tun_active,
+            nft_present=nft_present,
+            rule_prefs=rule_prefs,
+            route_tables=route_tables,
+            owned_runtime_processes=owned_runtime_processes,
+        )
         if process is None:
+            # No in-memory reference does not mean nothing is running: a
+            # past reconnect bug, a crash between spawn and this call, or a
+            # daemon restart could all leave a real process/interface
+            # behind. Report the mismatch honestly instead of confidently
+            # lying "standby" - status() never takes action on it, that is
+            # disconnect()'s job.
+            if artifacts:
+                return ConnectionState(
+                    mode="sing-box",
+                    tun_active=tun_active,
+                    proxy_active=bool(listener_ports),
+                    status="runtime_mismatch",
+                    runtime_mismatch_severity="critical",
+                    runtime_artifacts=artifacts,
+                )
             return ConnectionState(status="standby")
         if process.poll() is None:
             profile_id = self._active_profile.id if self._active_profile else ""
-            tun_active = self._tun_expected and self._tun_interface_active()
+            missing: list[str] = []
+            if not listener_observation.observable:
+                missing.append("proxy_listener_observation_unavailable")
+            for port in sorted(EXPECTED_PROXY_PORTS - listener_ports):
+                missing.append(f"missing_proxy_listener:tcp/{port}")
+            if self._tun_expected and not tun_active:
+                missing.append("missing_tun_interface:wdvpn-tun0")
+            if self._tun_expected and not nft_ready:
+                missing.append("missing_or_partial_routing:nft/sing-box")
+            if not self._tun_expected and tun_active:
+                missing.append("unexpected_tun_interface:wdvpn-tun0")
+            if not self._tun_expected and nft_present:
+                missing.append("unexpected_routing:nft/sing-box")
+            if not self._tun_expected and rule_prefs:
+                missing.append("unexpected_routing:ip-rule/sing-box")
+            if not self._tun_expected and route_tables:
+                missing.append("unexpected_routing:route-table/sing-box")
+            runtime_artifacts = tuple(sorted(set((*artifacts, *missing))))
             return ConnectionState(
                 active_profile_id=profile_id,
                 connected_at=self._connected_at,
                 mode="sing-box",
-                tun_active=tun_active,
-                proxy_active=True,
+                tun_active=self._tun_expected and tun_active,
+                proxy_active=EXPECTED_PROXY_PORTS.issubset(listener_ports),
                 lan_gateway_active=self._lan_gateway_active is not None,
                 lan_gateway_interface=(
                     self._lan_gateway_active.lan_interface if self._lan_gateway_active else ""
@@ -1346,15 +1637,61 @@ class SingBoxDriver(BaseDriver):
                     if self._lan_gateway_active is not None and tun_active
                     else "degraded" if self._lan_gateway_active is not None else "disabled"
                 ),
-                status="connected",
+                status="runtime_mismatch" if missing else "connected",
+                runtime_mismatch_severity="critical" if missing else "",
+                runtime_artifacts=runtime_artifacts,
             )
-        if self._tun_expected:
-            self._capture_tun_cleanup_state()
-            self._cleanup_tun_residue()
-        self._process = None
-        self._active_profile = None
-        self._connected_at = None
-        self._active_mode = "global"
-        self._tun_expected = False
-        self._cleanup_runtime()
+        # A status read must never mutate networking or erase the durable
+        # evidence required by disconnect(). If the dead child left anything
+        # behind, report it; explicit lifecycle cleanup owns reconciliation.
+        if artifacts:
+            return ConnectionState(
+                mode="sing-box",
+                tun_active=tun_active,
+                proxy_active=bool(listener_ports),
+                status="runtime_mismatch",
+                runtime_mismatch_severity="critical",
+                runtime_artifacts=artifacts,
+            )
         return ConnectionState(status="standby")
+
+    def _owned_proxy_runtime_observation(
+        self,
+    ) -> tuple[tuple[OwnedProcess, ...], TCPListenerObservation]:
+        processes = list(
+            owned_processes(
+                RUNTIME_PREFIX,
+                executable_names=("sing-box",),
+            )
+        )
+        process = self._process
+        pid = getattr(process, "pid", None) if process is not None else None
+        if isinstance(pid, int) and all(candidate.pid != pid for candidate in processes):
+            processes.append(OwnedProcess(pid=pid, executable="sing-box"))
+        process_tuple = tuple(processes)
+        return process_tuple, observe_tcp_listener_ports(process_tuple)
+
+    def _runtime_artifact_labels(
+        self,
+        *,
+        listener_ports: set[int],
+        tun_active: bool,
+        nft_present: bool,
+        rule_prefs: tuple[str, ...],
+        route_tables: tuple[str, ...],
+        owned_runtime_processes: tuple[OwnedProcess, ...],
+    ) -> tuple[str, ...]:
+        artifacts = [
+            f"owned_listener:tcp/{port}" for port in sorted(listener_ports)
+        ]
+        if owned_runtime_processes:
+            artifacts.append("owned_process:sing-box")
+        if tun_active:
+            artifacts.append("interface:wdvpn-tun0")
+        if nft_present:
+            artifacts.append("routing:nft/sing-box")
+        if rule_prefs:
+            artifacts.append("routing:ip-rule/sing-box")
+        if route_tables:
+            artifacts.append("routing:route-table/sing-box")
+        return tuple(sorted(set(artifacts)))

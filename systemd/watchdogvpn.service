@@ -11,7 +11,14 @@ User=watchdogvpn
 Group=watchdogvpn
 WorkingDirectory=/var/lib/watchdogvpn
 
-RuntimeDirectory=watchdogvpn
+# "amneziawg" is a second name, not a typo: amneziawg-go hardcodes its
+# userspace configuration socket at /var/run/amneziawg/<iface>.sock and
+# mkdirs that path itself (confirmed via its own "UAPI listen error: mkdir
+# /var/run/amneziawg: permission denied" when the path is missing). Under
+# ProtectSystem=strict the rest of /run is read-only, so without this the
+# socket is never created even though the userspace TUN interface itself
+# comes up via the same fallback.
+RuntimeDirectory=watchdogvpn amneziawg
 RuntimeDirectoryMode=0750
 StateDirectory=watchdogvpn
 StateDirectoryMode=2770

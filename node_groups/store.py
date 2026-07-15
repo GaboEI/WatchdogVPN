@@ -5,7 +5,7 @@ from pathlib import Path
 
 from config.paths import resolve_config_dir
 from config.persistence import dump_json, file_lock, load_json, require_list
-from node_groups.models import NodeGroup, NodeGroupSelectionMode
+from node_groups.models import NodeGroup, NodeGroupResiliencePolicy, NodeGroupSelectionMode
 
 
 def _node_groups_path() -> Path:
@@ -101,6 +101,56 @@ class NodeGroupStore:
             group = self._require_group_unlocked(items, group_name)
             group.selection_mode = mode
             group.manual_profile_id = profile_id
+            return self._replace_unlocked(items, group)
+
+    def add_member_provider(self, group_name: str, provider_id: str) -> NodeGroup:
+        with file_lock(self.path):
+            items = self._load_raw()
+            group = self._require_group_unlocked(items, group_name)
+            if provider_id not in group.member_provider_ids:
+                group.member_provider_ids.append(provider_id)
+            return self._replace_unlocked(items, group)
+
+    def remove_member_provider(self, group_name: str, provider_id: str) -> NodeGroup:
+        with file_lock(self.path):
+            items = self._load_raw()
+            group = self._require_group_unlocked(items, group_name)
+            group.member_provider_ids = [
+                pid for pid in group.member_provider_ids if pid != provider_id
+            ]
+            return self._replace_unlocked(items, group)
+
+    def add_exclude_profile(self, group_name: str, profile_id: str) -> NodeGroup:
+        with file_lock(self.path):
+            items = self._load_raw()
+            group = self._require_group_unlocked(items, group_name)
+            if profile_id not in group.exclude_profile_ids:
+                group.exclude_profile_ids.append(profile_id)
+            return self._replace_unlocked(items, group)
+
+    def remove_exclude_profile(self, group_name: str, profile_id: str) -> NodeGroup:
+        with file_lock(self.path):
+            items = self._load_raw()
+            group = self._require_group_unlocked(items, group_name)
+            group.exclude_profile_ids = [
+                pid for pid in group.exclude_profile_ids if pid != profile_id
+            ]
+            return self._replace_unlocked(items, group)
+
+    def set_resilience_policy(
+        self, group_name: str, policy: NodeGroupResiliencePolicy
+    ) -> NodeGroup:
+        with file_lock(self.path):
+            items = self._load_raw()
+            group = self._require_group_unlocked(items, group_name)
+            group.resilience_policy = policy
+            return self._replace_unlocked(items, group)
+
+    def set_enabled(self, group_name: str, enabled: bool) -> NodeGroup:
+        with file_lock(self.path):
+            items = self._load_raw()
+            group = self._require_group_unlocked(items, group_name)
+            group.enabled = enabled
             return self._replace_unlocked(items, group)
 
     def _require_group_unlocked(self, items: list[dict], name: str) -> NodeGroup:

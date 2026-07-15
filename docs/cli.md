@@ -1,36 +1,97 @@
 # WatchdogVPN CLI
 
-`watchdogvpn` is the product command for diagnostics, configuration and common
-runtime entry points.
+`watchdog` is the single canonical product CLI. It owns the root help, version,
+daemon-backed runtime state, profiles, providers, policy, backup/recovery and
+local maintenance namespaces.
 
-The legacy `VPN` command remains the direct TUI launcher. New automation and
-documentation should prefer `watchdogvpn`.
+`watchdogvpn` is a deprecated compatibility alias. It forwards every invocation
+to `watchdog`, writes one migration warning to stderr and never owns an
+independent status, version or help contract. Alias stdout is left unchanged so
+JSON consumers can migrate without parsing a second payload. The alias remains
+available throughout the v2 major release line; its earliest possible removal
+is v3.0 with advance release-note notice. Set
+`WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING=1` only as a temporary automation aid
+while replacing the command name.
 
-## Command Summary
+The routing and removal policy is recorded in
+[Phase 23 CLI Entrypoint Consolidation](phase-23-task-23-3-6-cli-entrypoint-consolidation.md).
 
-Read-only commands:
+The existing Bash-only support functions are preserved under
+`watchdog maintenance`. The `VPN` command remains a direct TUI launcher until
+the planned TUI replacement.
+
+## Generated Inventory And Parity Gate
+
+The complete public route and argument inventory is generated directly from
+the canonical argparse tree:
+
+- [human-readable command inventory](generated/cli-command-inventory.md);
+- [machine-readable JSON inventory](generated/cli-command-inventory.json).
+
+The generated inventory includes the canonical root, every nested argparse
+route and each documented maintenance passthrough choice. Suppressed internal
+test/recovery path overrides are intentionally excluded from public docs.
+
+Regenerate snapshots after an intentional parser change:
 
 ```sh
-watchdogvpn status
-watchdogvpn backend status
-watchdogvpn doctor
-watchdogvpn report
-watchdogvpn logs [events|dispatcher] [lines]
-watchdogvpn update-check
-watchdogvpn update-plan
-watchdogvpn runtime-update --preflight
-watchdogvpn config get [section.key]
-watchdog config routing-contract [--json]
-watchdogvpn version
-watchdogvpn help
-watchdogvpn --help
+python3 scripts/generate_cli_inventory.py
 ```
 
-Configuration commands:
+Verify parity without modifying files:
 
 ```sh
-watchdogvpn config set section.key value
-watchdogvpn config reset [language|tui|reporting|all] --yes
+python3 scripts/generate_cli_inventory.py --check
+```
+
+The parity check is part of the test gate. A route, summary, usage or public
+argument change fails until both generated snapshots are reviewed and updated.
+This prevents the hand-maintained examples below from becoming the only command
+inventory.
+
+## Curated Command Summary
+
+The examples below highlight common workflows and reviewed safety contracts.
+They are not a second exhaustive inventory; use the generated references above
+for every current route and public parser argument.
+
+Canonical root and runtime commands:
+
+```sh
+watchdog --help
+watchdog version [--json]
+watchdog status [--json]
+watchdog doctor [--json]
+watchdog config routing-contract [--json]
+```
+
+Local maintenance and compatibility commands:
+
+```sh
+watchdog maintenance backend status
+watchdog maintenance report
+watchdog maintenance logs [events|dispatcher] [lines]
+watchdog maintenance update-check
+watchdog maintenance update-plan
+watchdog maintenance runtime-update --preflight
+watchdog maintenance config get [section.key]
+watchdog maintenance config set section.key value
+watchdog maintenance config reset [language|tui|reporting|all] --yes
+watchdog maintenance tui
+```
+
+Deprecated forms route to the same parser and implementation:
+
+```sh
+watchdogvpn status                  # watchdog status
+watchdogvpn backend status         # watchdog maintenance backend status
+watchdogvpn report                 # watchdog maintenance report
+watchdogvpn profile list --json    # watchdog profile list --json
+```
+
+Python configuration commands:
+
+```sh
 watchdog config set routing-policy <rule|global>
 watchdog config set capture-modes <local_proxy|local_proxy,tun|local_proxy,system_proxy|local_proxy,tun,system_proxy>
 watchdog config set default-route-action <current|direct|block>
@@ -47,13 +108,13 @@ watchdog config lan-sharing-credentials [--show-secret] [--json]
 Preflight-only state-changing commands:
 
 ```sh
-watchdogvpn runtime-update --preflight
+watchdog maintenance runtime-update --preflight
 ```
 
 State-changing runtime commands:
 
 ```sh
-watchdogvpn runtime-update
+watchdog maintenance runtime-update
 ```
 
 `runtime-update` validates whether a runtime update is safe, prints the exact
@@ -64,16 +125,18 @@ source checkout or installed runtime. Its full safety contract is documented in
 Interactive commands:
 
 ```sh
-watchdogvpn tui
+watchdog maintenance tui
 ```
 
-Python runtime commands:
+Additional canonical commands:
 
 ```sh
 watchdog connect <profile_id> [--json]
 watchdog disconnect [--json]
 watchdog status [--json]
 watchdog rotate [--force] [--json]
+watchdog command outcome <command-uuid> [--json]
+watchdog command cancel <command-uuid> [--json]
 watchdog version [--json]
 watchdog panic sleep|wake|status
 watchdog doctor [--json]
@@ -126,6 +189,19 @@ watchdog CLI -> daemon IPC socket -> RuntimeWorker -> WatchdogRuntime/driver
 They do not directly mutate DNS, routes, firewall, interfaces or driver
 processes from the CLI process.
 
+Every daemon-backed request has a command UUID. If a mutation reaches its
+server deadline before it finishes, the daemon never reports an ambiguous
+success or a generic timeout: it either acknowledges cancellation before the
+mutation starts, or returns `command_in_progress` with that UUID. Inspect the
+authoritative final result with `watchdog command outcome <command-uuid>`.
+`watchdog command cancel <command-uuid>` only acknowledges cancellation while
+the command is still queued; it never claims to interrupt a running network
+operation.
+
+The IPC protocol also has an exact payload schema per command. Unsupported
+payload keys are rejected at the daemon boundary with a structured
+`unsupported_payload_fields` response; they are never silently ignored.
+
 ### `watchdog connect`
 
 Requests a daemon-managed connection to a saved profile.
@@ -171,6 +247,25 @@ watchdog status --json
 The command distinguishes daemon reachability, desired state, actual runtime
 state, active runtime state, clean disconnect state and failure/degraded state.
 
+Status is reconciled against read-only operating-system evidence rather than
+trusting driver memory alone. The daemon attributes processes by durable
+runtime records, private runtime paths, or the exact `watchdogvpn.service`
+cgroup; maps those processes to their TCP listeners through `/proc`; and
+checks exact WatchdogVPN interfaces, routing artifacts, and managed firewall
+state. An unrelated process with the same executable name is not sufficient
+ownership evidence.
+
+`runtime_mismatch` is a critical status. It means owned effective state and
+the expected lifecycle disagree, including missing `127.0.0.1:2080` or
+`:2081` sing-box listeners, orphaned listeners/interfaces/routes, unexpected
+TUN routing in proxy-only mode, or a partial/inconsistent kill-switch ruleset.
+Human output lists the effective evidence. JSON exposes
+`runtime_mismatch_severity`, `runtime_artifacts`, `kill_switch_status`,
+`kill_switch_method`, and `kill_switch_consistent`. A complete kill switch
+without a live tunnel is reported as `kill_switch_active`, never `standby`.
+`watchdog status` remains read-only; explicit disconnect owns reconciliation
+and cleanup.
+
 ### `watchdog rotate`
 
 Requests a daemon-managed manual rotation.
@@ -200,6 +295,10 @@ Lifecycle JSON remains a daemon response envelope with an added
       "daemon_reachable": true,
       "desired_state": "off",
       "actual_runtime_state": "standby",
+      "runtime_active": false,
+      "runtime_artifacts": [],
+      "kill_switch_status": "inactive",
+      "kill_switch_consistent": true,
       "disconnected_cleanly": true,
       "failure_or_degraded": false
     }
@@ -226,7 +325,11 @@ watchdog profile add --clipboard [--json]
 watchdog profile add --uri URI [--json]
 watchdog profile add --file PATH [--json]
 watchdog profile add --text [--json]
-watchdog profile list [--json] [--pool]
+watchdog profile list [--json] [--pool] [--wide]
+watchdog profile list [--source manual|provider] [--protocol PROTOCOL]
+                      [--health ok|unknown|down|degraded]
+                      [--provider PROVIDER_ID]
+                      [--enabled-only|--disabled-only]
 watchdog profile remove <id> [--json]
 watchdog profile enable <id> [--json]
 watchdog profile disable <id> [--json]
@@ -247,6 +350,19 @@ compatibility
 
 It must not be read as a guarantee of censorship resistance, availability or
 successful connection through any specific network.
+
+Normal human list output follows the detected terminal width. At narrow widths
+it uses a stacked profile view; medium widths use a compact table; wider
+terminals retain separate enabled and rotation columns. Names, IDs, provider
+labels, summaries and warnings are constrained so normal output has no visible
+overflow at 40, 80 or 120 columns. Untrusted control characters in stored
+display values are neutralized before terminal output.
+
+Use the filters above to reduce large provider inventories. Filters compose and
+also apply to `--json`, whose profile values remain complete. `--wide` is the
+explicit opt-in to an untruncated human table and may exceed the terminal
+width. Use `--json` when automation needs complete structured values without a
+human table.
 
 Profile JSON uses redacted summary objects. It includes stable fields such as
 `id`, `name`, `protocol`, `resilience_category`, `source`, `provider_id`,
@@ -304,8 +420,8 @@ removes without writing secret-bearing backup documents.
 
 ### `watchdog version`
 
-Prints the Python CLI version using the same release marker as
-`watchdogvpn version`.
+Prints the canonical CLI version. The deprecated `watchdogvpn version` alias
+delegates here and therefore cannot report a different version.
 
 ```sh
 watchdog version
@@ -355,34 +471,47 @@ Supported setup fields:
 - `--autostart enable|disable`: stores app autostart intent;
 - `--autoconnect enable|disable`: stores VPN autoconnect intent;
 - `--profile-uri URI`: imports one local profile URI without printing raw config;
-- `--provider-url URL`: stores one provider definition without fetching nodes;
+- `--provider-url URL`: stores one HTTPS provider definition without fetching nodes;
 - `--kill-switch enable|disable`: sets local kill-switch policy;
 - `--dns-mode auto|off|custom|advanced`: sets DNS policy mode;
 - `--app-policy enable|disable`: sets app-policy enabled state;
 - `--app-policy-mode blacklist|whitelist`: sets app-policy mode;
 - `--app-policy-default-action current|direct|block`: sets app-policy default.
 
-`setup --dry-run` validates the plan and does not write local state. Real setup
-writes require both `--yes` and `--acknowledge-backup-warning`. A pre-setup
-backup is created before writes. Setup does not connect, disconnect, rotate,
-apply DNS, change routes, edit firewall rules, mutate system proxy settings,
-start services or refresh providers.
+`setup --dry-run` validates the plan and does not write local state. Setup first
+compares every requested value and imported definition with effective local
+state. An exact repeat returns `has_changes=false`, `outcome=no_changes`, an
+empty `operations`/`sections` diff and `backup_path=null`; it does not require
+write confirmation, create a backup or rewrite any store. Partial repeats back
+up and write only sections with effective changes. Existing matching profiles
+are recognized by their secret-safe semantic fingerprint, while matching
+provider definitions preserve refreshed profiles, metadata and rotation state.
 
-JSON output includes `operations`, `sections`, `backup_path`,
+Real setup writes require both `--yes` and
+`--acknowledge-backup-warning`. A pre-setup backup is created before effective
+writes. Setup does not connect, disconnect, rotate, apply DNS, change routes,
+edit firewall rules, mutate system proxy settings, start services or refresh
+providers.
+
+JSON output includes `has_changes`, `outcome` (`applied`, `dry_run` or
+`no_changes`), `operations`, `sections`, `backup_path`,
 `network_fetch_performed=false` and `runtime_action_executed=false`.
 
 ### `watchdog doctor`
 
-Runs the repository `doctor.sh` through argv-list subprocess execution.
+Runs the installed or checkout `doctor.sh` through argv-list subprocess
+execution.
 
 ```sh
 watchdog doctor
 watchdog doctor --json
 ```
 
-The Python wrapper does not reimplement doctor logic. JSON mode captures
-doctor stdout/stderr and exit code in one JSON document. The command is
-read-only and does not use `sudo`.
+The Python wrapper does not reimplement doctor logic. It resolves explicit
+`--doctor-script` / `WATCHDOGVPN_DOCTOR_SCRIPT` first, then
+`WATCHDOGVPN_REPO_DIR`, then the installed runtime support tree. JSON mode
+captures doctor stdout/stderr and exit code in one JSON document. The command
+is read-only and does not use `sudo`.
 
 ## Uninstall Flow
 
@@ -391,8 +520,10 @@ read-only and does not use `sudo`.
 Runs the safe uninstall flow by wrapping `uninstall.sh` with explicit user-data
 choices.
 
-Run it from the WatchdogVPN checkout, or set `WATCHDOGVPN_REPO_DIR` to the
-checkout path if launching from another directory.
+Installed systems resolve `uninstall.sh` from the installed runtime support
+tree, independent of the current working directory. Source checkouts can still
+set `WATCHDOGVPN_REPO_DIR` or use the hidden test/lab `--uninstall-script`
+override.
 
 ```sh
 watchdog uninstall --keep-data --yes
@@ -478,46 +609,46 @@ returns `pre_restore_backup` in JSON.
 
 ## Runtime Commands
 
-### `watchdogvpn status`
+### `watchdog status`
 
-Shows VPN runtime status through `vpnctl`.
+Shows daemon-backed WatchdogVPN runtime status through the canonical IPC
+contract.
 
 ```sh
-watchdogvpn status
+watchdog status
 ```
 
 Use this for a quick operational view after install, update, reboot or recovery.
 
-### `watchdogvpn backend status`
+### `watchdog maintenance backend status`
 
 Shows the active backend contract without changing runtime state.
 
 ```sh
-watchdogvpn backend status
+watchdog maintenance backend status
 ```
 
 The legacy bash backend contract is custom-vps-only. It controls a local
 systemd service configured by the user and fails closed if required
 configuration, such as `custom_vps.service_name`, is missing.
 
-### `watchdogvpn doctor`
+### `watchdog doctor`
 
-Runs the repository doctor when the command can find it from the current
-checkout.
+Runs the installed or checkout doctor script when available.
 
 ```sh
-watchdogvpn doctor
+watchdog doctor
 ```
 
-For installed systems, `./doctor.sh` from the repository root remains the most
-complete validation path.
+Installed systems do not need to run this from the repository root; the
+installed runtime support tree is used when present.
 
-### `watchdogvpn tui`
+### `watchdog maintenance tui`
 
 Opens the WatchdogVPN terminal UI.
 
 ```sh
-watchdogvpn tui
+watchdog maintenance tui
 ```
 
 This is equivalent to launching:
@@ -543,6 +674,38 @@ watchdog dns apply --dry-run [--json]
 watchdog dns apply --yes [--json]
 watchdog dns reset --yes [--json]
 ```
+
+DNS policy CRUD is available without touching the active system resolver:
+
+```sh
+watchdog dns channel add <channel> [--json]
+watchdog dns channel remove <channel> [--json]
+watchdog dns resolver add <channel> <uri> [--label LABEL] [--disabled] [--json]
+watchdog dns resolver remove <channel> <uri> [--json]
+watchdog dns resolver enable <channel> <uri> [--json]
+watchdog dns resolver disable <channel> <uri> [--json]
+watchdog dns rule add <id> --pattern TYPE:VALUE --action use_channel --channel <channel> [--priority N] [--disabled] [--json]
+watchdog dns rule add <id> --pattern TYPE:VALUE --action reject [--priority N] [--disabled] [--json]
+watchdog dns rule remove <id> [--json]
+watchdog dns rule enable <id> [--json]
+watchdog dns rule disable <id> [--json]
+watchdog dns static-ip add <domain> <ip> [--disabled] [--json]
+watchdog dns static-ip remove <domain> [--ip IP] [--json]
+```
+
+These commands mutate only the stored DNS policy. They validate and
+round-trip the complete policy before writing, create a restorable backup,
+and return `backup_path` plus `rollback_point` in JSON. These
+commands do not activate the policy; activation remains the separately
+confirmed `watchdog dns apply --yes` operation.
+
+Resolver URIs are validated when added, channels accept at most four
+resolvers, and duplicate resolver URIs are rejected. Removing a channel is
+refused while a DNS rule references it. A `use_channel` rule requires an
+existing channel, while a `reject` rule refuses `--channel`. Static mappings
+require a valid domain and IP address. The per-entry `--disabled` flags are
+independent from the top-level `dns.rules_enabled` and
+`dns.static_ip_enabled` policy switches.
 
 `dns status`, `dns test` and `dns diagnose` are read-only. `dns apply --dry-run`
 returns the apply plan without creating a DNS snapshot or mutating resolver
@@ -634,6 +797,9 @@ watchdog rules enable <group> [--json]
 watchdog rules disable <group> [--json]
 watchdog rules add-rule <group> <rule_id> --action ACTION --condition KEY=VALUE [--json]
 watchdog rules remove-rule <group> <rule_id> [--json]
+watchdog rules set-priority <group> <priority> [--json]
+watchdog rules enable-rule <group> <rule_id> [--json]
+watchdog rules disable-rule <group> <rule_id> [--json]
 watchdog rules import <file> [--replace] [--dry-run] [--json]
 watchdog rules export <group> (--output PATH|--json)
 ```
@@ -646,9 +812,10 @@ rules backup. Dry-run imports do not write policy or backups and return
 `rollback_point.kind = "preview-only"`.
 
 Every real `rules` mutation validates the target group/rule before writing.
-Group enable/disable, add-rule, remove-rule and replace import create a backup
-before the active group changes. New imports create a section backup and report
-that rollback is deleting the imported group.
+Group enable/disable, per-rule enable/disable, priority changes, add-rule,
+remove-rule and replace import create a backup before the active group changes.
+New imports create a section backup and report that rollback is deleting the
+imported group.
 
 ### `watchdog app-policy`
 
@@ -662,6 +829,11 @@ watchdog app-policy mode <blacklist|whitelist> [--json]
 watchdog app-policy default-action <current|direct|block> [--json]
 watchdog app-policy add --process-name NAME --action ACTION [--id ID] [--json]
 watchdog app-policy add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog app-policy add --process-path-regex REGEX --action ACTION [--id ID] [--json]
+watchdog app-policy add --user NAME --action ACTION [--id ID] [--json]
+watchdog app-policy add --user-id UID --action ACTION [--id ID] [--json]
+watchdog app-policy enable-rule <id> [--json]
+watchdog app-policy disable-rule <id> [--json]
 watchdog app-policy remove <id> [--json]
 ```
 
@@ -673,7 +845,12 @@ Mutation JSON adds `backup_path` and a `rollback_point` with
 Every app-policy mutation validates the resulting policy before writing and
 creates a restorable app-policy backup first. Missing or duplicate rule IDs
 include recovery wording pointing operators back to
-`watchdog app-policy status`.
+`watchdog app-policy status`. Exactly one matcher is accepted per `add` call.
+Path regular expressions are compiled and rejected if invalid; user IDs must
+be non-negative integers. Process paths and numeric user IDs have high match
+confidence, path regular expressions and user names have medium confidence,
+and process names have low confidence. Inspect `match_confidence` before
+depending on a broad matcher for a censorship-sensitive routing decision.
 
 ### `watchdog node-group`
 
@@ -684,6 +861,13 @@ watchdog node-group list [--json]
 watchdog node-group create <name> [--json]
 watchdog node-group add-profile <group> <profile> [--json]
 watchdog node-group select <group> <profile|auto> [--json]
+watchdog node-group add-provider <group> <provider> [--json]
+watchdog node-group remove-provider <group> <provider> [--json]
+watchdog node-group exclude <group> <profile> [--json]
+watchdog node-group unexclude <group> <profile> [--json]
+watchdog node-group resilience <group> <resilient_only|preferred|compatibility_allowed> [--json]
+watchdog node-group enable <group> [--json]
+watchdog node-group disable <group> [--json]
 watchdog node-group auto-test <group> [--json]
 ```
 
@@ -694,11 +878,43 @@ returns `added_profile_id`; manual `select` returns `selected_profile_id`.
 
 Every node-group mutation validates the target group and profile references
 before writing and creates a restorable node-groups backup first. Missing
-profiles point operators to `watchdog profile list`; duplicate or missing
-groups point operators to `watchdog node-group list`.
+profiles point operators to `watchdog profile list`; provider membership
+validates against `watchdog provider list`; duplicate or missing groups point
+operators to `watchdog node-group list`. Explicit exclusions take precedence
+over profiles discovered through provider membership.
+
+`resilient_only` fails closed when no resilient candidate is healthy and
+never silently falls back to a compatibility profile. `preferred` allows a
+compatibility fallback after resilient candidates; `compatibility_allowed`
+opts out of resilience-category preference. Manual selection is a hard pin:
+if the selected profile becomes unavailable, it does not silently change to
+automatic selection.
 
 `watchdog node-group auto-test` is a daemon IPC command. It asks the daemon to
 evaluate the configured group and does not mutate local policy by itself.
+
+### `watchdog chain`
+
+Manages ordered, persistent multi-hop route chains.
+
+```sh
+watchdog chain list [--json]
+watchdog chain show <id> [--json]
+watchdog chain create <id> --hop profile:<profile> --hop group:<group> [--description TEXT] [--json]
+watchdog chain add-hop <id> --type <profile|group> --target <id> [--selection-policy group_policy] [--json]
+watchdog chain remove-hop <id> --index <one-based-index> [--json]
+watchdog chain enable <id> [--json]
+watchdog chain disable <id> [--json]
+watchdog chain remove <id> [--json]
+```
+
+Chain creation and hop insertion validate every referenced profile or node
+group before writing. New chains start disabled. Enabling revalidates every
+hop, so a stale or missing reference cannot become active. Removing the last
+hop is refused; remove the chain explicitly instead. Every mutation creates a
+restorable `route-chains` section backup and returns its rollback metadata in
+JSON. These commands change only the local route-chain store and do not
+connect, disconnect or alter live network state.
 
 ### `watchdog rules explain`
 
@@ -871,12 +1087,33 @@ Remote downloads require HTTPS and a matching `expected_sha256` pin. Built-in
 rule sets load from explicit local source paths. Runtime uses verified local
 cache files in sing-box rather than sing-box remote rule-set downloads.
 
-### `watchdogvpn version`
+### `watchdog ruleset add` / `watchdog ruleset remove`
 
-Prints the installed CLI version.
+Mutates the local rule-set trust registry without downloading or activating a
+rule set.
 
 ```sh
-watchdogvpn version
+watchdog ruleset add <id> --kind remote --source https://example.invalid/rules.srs --sha256 <64-hex-digest> [--critical|--no-critical] [--failure-behavior fail-closed|warn-and-skip] [--json]
+watchdog ruleset add <id> --kind built-in --source <local-path> [--json]
+watchdog ruleset remove <id> [--json]
+```
+
+Remote policies are rejected unless the source uses HTTPS and an exact SHA-256
+pin is supplied. Update and maximum-stale intervals must be positive, and the
+maximum-stale interval cannot be shorter than the update interval. Policies
+are critical by default: their default failure behavior is `fail-closed`;
+non-critical policies default to `warn-and-skip`. An existing trust registry
+is backed up before add or remove. Use `watchdog ruleset refresh` separately to
+fetch and verify a remote policy after reviewing the stored trust contract.
+
+### Canonical version and compatibility alias
+
+`watchdog version` prints the installed CLI version. `watchdogvpn version` and
+`watchdogvpn --version` are compatibility forms that delegate to the same
+canonical command and add only the deprecation warning on stderr.
+
+```sh
+watchdog version
 ```
 
 Expected output for the current release:
@@ -885,33 +1122,37 @@ Expected output for the current release:
 WatchdogVPN v0.3.1
 ```
 
-### `watchdogvpn help`
+### Canonical root help
 
-Prints grouped command help.
+`watchdog --help` is the only root help. Compatibility help delegates to it and
+therefore has identical stdout.
 
 ```sh
-watchdogvpn help
-watchdogvpn --help
-watchdogvpn help logs
-watchdogvpn help update-check
-watchdogvpn help update-plan
-watchdogvpn help runtime-update
-watchdogvpn help config
-watchdogvpn help backend
+watchdog --help
+watchdog maintenance --help
+watchdog maintenance logs --help
+watchdog maintenance update-check --help
+watchdog maintenance update-plan --help
+watchdog maintenance runtime-update --help
+watchdog maintenance config --help
+watchdog maintenance backend --help
 ```
 
-The help output separates read-only commands, configuration-write commands and
-interactive commands. The Python `watchdog` CLI owns daemon-backed connect,
-disconnect, status and rotate commands for the v2 runtime.
+The root help owns all daemon-backed lifecycle, configuration and policy
+commands and links the maintenance namespace. The deprecated alias does not
+maintain a second command inventory. Root help and generated argparse route
+help wrap dynamically to the detected terminal width. Root and profile-list
+help are regression-tested at 40, 80 and 120 columns; every argparse-owned help
+route is additionally checked at 40 columns.
 
 ## Diagnostic Reports
 
-### `watchdogvpn report`
+### `watchdog maintenance report`
 
 Generates a local diagnostic report.
 
 ```sh
-watchdogvpn report
+watchdog maintenance report
 ```
 
 Rules:
@@ -933,14 +1174,14 @@ guidance.
 
 ## Local Logs
 
-### `watchdogvpn logs`
+### `watchdog maintenance logs`
 
 Reads recent local WatchdogVPN logs without using `sudo`.
 
 ```sh
-watchdogvpn logs
-watchdogvpn logs events 80
-watchdogvpn logs dispatcher 80
+watchdog maintenance logs
+watchdog maintenance logs events 80
+watchdog maintenance logs dispatcher 80
 ```
 
 Supported targets:
@@ -961,12 +1202,12 @@ Rules:
 
 ## Update State
 
-### `watchdogvpn update-check`
+### `watchdog maintenance update-check`
 
 Shows local source checkout status without contacting the network.
 
 ```sh
-watchdogvpn update-check
+watchdog maintenance update-check
 ```
 
 Reported fields include:
@@ -991,15 +1232,16 @@ Rules:
 - Does not use `sudo`.
 - Uses only local Git metadata already present in the checkout.
 
-### `watchdogvpn update-plan`
+### `watchdog maintenance update-plan`
 
 Prints a safe manual update plan for the current checkout state.
 
 ```sh
-watchdogvpn update-plan
+watchdog maintenance update-plan
 ```
 
-The command uses the same local Git metadata as `watchdogvpn update-check`.
+The command uses the same local Git metadata as
+`watchdog maintenance update-check`.
 It prints commands and guidance only.
 
 Rules:
@@ -1022,15 +1264,14 @@ hash -r
 ./doctor.sh
 ```
 
-### `watchdogvpn runtime-update`
+### `watchdog maintenance runtime-update`
 
 Runs the confirmed runtime update flow.
 
 ```sh
-watchdogvpn runtime-update
-watchdogvpn runtime-update --preflight
-watchdogvpn runtime-update --help
-watchdogvpn help runtime-update
+watchdog maintenance runtime-update
+watchdog maintenance runtime-update --preflight
+watchdog maintenance runtime-update --help
 ```
 
 Current `v0.3.1` behavior:
@@ -1069,7 +1310,7 @@ hash -r
 ./doctor.sh
 ```
 
-Use `watchdogvpn runtime-update --preflight` to run only the safety checks. In
+Use `watchdog maintenance runtime-update --preflight` to run only the safety checks. In
 preflight mode, the command does not fetch, pull, run `update.sh`, run
 `doctor.sh` or use `sudo`.
 
@@ -1089,29 +1330,29 @@ The default schema is installed from:
 
 See [Configuration](configuration.md) for the full contract.
 
-### `watchdogvpn config get`
+### `watchdog maintenance config get`
 
 Prints the sanitized configuration.
 
 ```sh
-watchdogvpn config get
+watchdog maintenance config get
 ```
 
 Print one key:
 
 ```sh
-watchdogvpn config get language.current
+watchdog maintenance config get language.current
 ```
 
-### `watchdogvpn config set`
+### `watchdog maintenance config set`
 
 Updates a supported safe key after validation.
 
 ```sh
-watchdogvpn config set language.current es
-watchdogvpn config set tui.theme high_contrast
-watchdogvpn config set tui.color false
-watchdogvpn config set reporting.sanitize_ipv4 true
+watchdog maintenance config set language.current es
+watchdog maintenance config set tui.theme high_contrast
+watchdog maintenance config set tui.color false
+watchdog maintenance config set reporting.sanitize_ipv4 true
 ```
 
 Each successful write creates a backup before modifying the active config.
@@ -1147,15 +1388,15 @@ reporting.sanitize_home: true, false
 Timer and DNS keys are intentionally read-only until they are wired to runtime
 application logic.
 
-### `watchdogvpn config reset`
+### `watchdog maintenance config reset`
 
 Resets safe sections to default values from `config.toml.example`.
 
 ```sh
-watchdogvpn config reset language --yes
-watchdogvpn config reset tui --yes
-watchdogvpn config reset reporting --yes
-watchdogvpn config reset all --yes
+watchdog maintenance config reset language --yes
+watchdog maintenance config reset tui --yes
+watchdog maintenance config reset reporting --yes
+watchdog maintenance config reset all --yes
 ```
 
 Rules:
@@ -1171,12 +1412,36 @@ The CLI uses non-zero exit codes for invalid commands, invalid config keys,
 invalid values and unavailable files. Scripts should check command exit status
 instead of parsing user-facing text.
 
+Common root and nested command typos provide one bounded suggestion, for
+example `statu` -> `watchdog status`, `profile lst` ->
+`watchdog profile list`, and `dns statsu` -> `watchdog dns status`. Suggestions
+are informational only: the invalid command is never executed and the process
+still exits with argparse code `2`. Distant or ambiguous input receives no
+guess and points to the relevant `--help`. JSON parse errors keep the standard
+stdout envelope and include the same suggestion in `error`.
+
+Signal and pipeline handling is centralized for every Python CLI command:
+
+- Ctrl+C exits with `130` (`128 + SIGINT`). Human mode writes one brief
+  `error: operation cancelled` diagnostic to stderr. JSON mode writes one error
+  envelope to stdout. Neither mode emits a traceback.
+- A broken output pipe exits with `141` (`128 + SIGPIPE`) without a diagnostic
+  or traceback because the downstream consumer has already closed the stream.
+  With `set -o pipefail`, an intentionally truncated pipeline such as
+  `watchdog doctor | head -n 5` can therefore return `141`; without `pipefail`,
+  the pipeline normally reports the downstream command's status.
+- Support subprocesses terminated by a signal use the same shell-compatible
+  `128 + signal` convention. JSON wrapper fields such as
+  `doctor_exit_code` and `uninstall_exit_code` contain that normalized code,
+  never Python's negative `subprocess` representation.
+
 ## Safety Notes
 
 - Do not share diagnostic reports before reviewing them.
 - Do not edit `/etc/watchdogvpn/config.toml` while another update or config
   command is running.
-- Prefer `watchdogvpn config set` over manual edits for supported keys.
+- Prefer `watchdog maintenance config set` over manual edits for the legacy
+  language/TUI/reporting preference keys it supports.
 - Use `./update.sh --skip-doctor` from a clean, current checkout when updating
   installed runtime files.
 - If you need to put WatchdogVPN completely to sleep (daemon, kill switch,

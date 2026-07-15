@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -37,9 +39,12 @@ class CommandResult:
 @dataclass(slots=True)
 class KillSwitchStatus:
     available: bool
+    artifacts_present: bool
     active: bool
     method: str | None
     rules_applied: bool
+    consistent: bool
+    mismatch_reasons: tuple[str, ...]
     tunnel_interface: str
     block_ipv6: bool
     allow_lan: bool
@@ -48,9 +53,12 @@ class KillSwitchStatus:
     def to_dict(self) -> dict[str, object]:
         return {
             "available": self.available,
+            "artifacts_present": self.artifacts_present,
             "active": self.active,
             "method": self.method,
             "rules_applied": self.rules_applied,
+            "consistent": self.consistent,
+            "mismatch_reasons": list(self.mismatch_reasons),
             "tunnel_interface": self.tunnel_interface,
             "block_ipv6": self.block_ipv6,
             "allow_lan": self.allow_lan,
@@ -59,10 +67,35 @@ class KillSwitchStatus:
 
 
 RunCommand = Callable[[list[str]], CommandResult]
+RunNftBatch = Callable[[str], CommandResult]
+
+
+@dataclass(frozen=True, slots=True)
+class _FirewallState:
+    method: str
+    artifacts_present: bool = False
+    active: bool = False
+    consistent: bool = True
+    mismatch_reasons: tuple[str, ...] = ()
 
 
 def _default_run(command: list[str]) -> CommandResult:
     result = subprocess.run(command, text=True, capture_output=True, check=False)
+    return CommandResult(
+        returncode=result.returncode,
+        stdout=result.stdout or "",
+        stderr=result.stderr or "",
+    )
+
+
+def _default_run_nft_batch(script: str) -> CommandResult:
+    result = subprocess.run(
+        ["nft", "-f", "-"],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
     return CommandResult(
         returncode=result.returncode,
         stdout=result.stdout or "",
@@ -80,6 +113,7 @@ class KillSwitch:
     allowed_endpoints: tuple[str, ...] = ()
     lan_cidrs: tuple[str, ...] = DEFAULT_LAN_CIDRS
     runner: RunCommand = _default_run
+    nft_batch_runner: RunNftBatch = _default_run_nft_batch
     which: Callable[[str], str | None] = shutil.which
     method: str | None = field(default=None)
 
@@ -97,39 +131,400 @@ class KillSwitch:
             return False
         self.method = method
         if method == "nftables":
+            if self.which("iptables"):
+                self._disable_iptables()
             return self._enable_nftables()
+        if self.which("nft"):
+            self._disable_nftables()
+        if self.block_ipv6 and not self.which("ip6tables"):
+            LOGGER.error("kill_switch_enable_failed reason=ip6tables_unavailable")
+            self._disable_iptables()
+            return False
         return self._enable_iptables()
 
-    def disable(self) -> bool:
+    def apply_atomic(self) -> bool:
+        """Replace the nftables policy without a transient permit window.
+
+        The imperative iptables fallback remains available for legacy manual
+        use, but it is not an acceptable connection-security boundary because
+        it cannot replace an active policy atomically.
+        """
+
         method = self.method or self.detect_method()
-        if method is None:
-            return True
+        if method != "nftables":
+            LOGGER.error("kill_switch_atomic_apply_failed reason=nftables_required")
+            return False
         self.method = method
-        if method == "nftables":
-            return self._disable_nftables()
-        return self._disable_iptables()
+        existing = self._inspect_nftables().artifacts_present
+        commands: list[list[str]] = []
+        if existing:
+            commands.append(["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE])
+        commands.extend(self._nft_enable_commands())
+        result = self.nft_batch_runner(self._nft_batch_script(commands))
+        if result.returncode != 0:
+            LOGGER.error("kill_switch_atomic_apply_failed stderr=%s", result.stderr.strip())
+            return False
+        status = self.status()
+        if bool(status.get("active")) and bool(status.get("consistent", True)):
+            LOGGER.warning("kill_switch_atomic_apply_succeeded")
+            return True
+        LOGGER.error("kill_switch_atomic_apply_failed reason=post_apply_verification")
+        return False
+
+    def disable(self) -> bool:
+        if self.which("nft"):
+            self._disable_nftables()
+        if self.which("iptables"):
+            self._disable_iptables()
+        self.method = None
+        return True
 
     def is_active(self) -> bool:
-        method = self.method or self.detect_method()
-        if method is None:
-            return False
-        if method == "nftables":
-            return self.runner(["nft", "list", "table", "inet", WATCHDOGVPN_TABLE]).returncode == 0
-        return self.runner(["iptables", "-S", WATCHDOGVPN_IPTABLES_CHAIN]).returncode == 0
+        return bool(self.status()["active"])
 
     def status(self) -> dict[str, object]:
-        method = self.method or self.detect_method()
-        active = self.is_active() if method is not None else False
+        states: list[_FirewallState] = []
+        if self.which("nft"):
+            states.append(self._inspect_nftables())
+        if self.which("iptables"):
+            states.append(self._inspect_iptables())
+        artifacts = [state for state in states if state.artifacts_present]
+        reasons = [reason for state in artifacts for reason in state.mismatch_reasons]
+        if len(artifacts) > 1:
+            reasons.append("multiple_firewall_backends_present")
+        active = any(state.active for state in artifacts)
+        consistent = len(artifacts) <= 1 and all(state.consistent for state in artifacts)
+        rules_applied = bool(artifacts) and active and consistent
+        method = (
+            artifacts[0].method
+            if len(artifacts) == 1
+            else "+".join(state.method for state in artifacts)
+            if artifacts
+            else self.method or self.detect_method()
+        )
         return KillSwitchStatus(
-            available=method is not None,
+            available=bool(states),
+            artifacts_present=bool(artifacts),
             active=active,
             method=method,
-            rules_applied=active,
+            rules_applied=rules_applied,
+            consistent=consistent,
+            mismatch_reasons=tuple(sorted(set(reasons))),
             tunnel_interface=self.tunnel_interface,
             block_ipv6=self.block_ipv6,
             allow_lan=self.allow_lan,
             allowed_endpoints=tuple(self.allowed_endpoints),
         ).to_dict()
+
+    def _inspect_nftables(self) -> "_FirewallState":
+        result = self.runner(["nft", "list", "table", "inet", WATCHDOGVPN_TABLE])
+        if result.returncode != 0:
+            return _FirewallState(method="nftables")
+        output = result.stdout
+        chain_match = re.search(
+            rf"\bchain\s+{re.escape(WATCHDOGVPN_CHAIN)}\s*\{{(?P<body>.*?)^\s*\}}",
+            output,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        chain = chain_match.group("body") if chain_match else ""
+        has_output_hook = bool(re.search(r"\bhook\s+output\b", chain))
+        has_drop_policy = bool(re.search(r"\bpolicy\s+drop\b", chain))
+        active = has_output_hook and has_drop_policy
+        managed_lines = self._managed_nft_rule_lines(chain)
+        managed_rule_count = len(managed_lines)
+        expected_rule_count = self._expected_nft_rule_count()
+        checks = {
+            "missing_output_hook": has_output_hook,
+            "missing_drop_policy": has_drop_policy,
+            "missing_loopback_allow": self._nft_rule_present(
+                managed_lines, ("oifname", "lo"), "accept"
+            ),
+            "missing_loopback_ipv4_allow": self._nft_rule_present(
+                managed_lines, ("ip", "daddr", "127.0.0.0/8"), "accept"
+            ),
+            "missing_loopback_ipv6_allow": self._nft_rule_present(
+                managed_lines, ("ip6", "daddr", "::1"), "accept"
+            ),
+            "missing_tunnel_allow": self._nft_rule_present(
+                managed_lines, ("oifname", self.tunnel_interface), "accept"
+            ),
+            "missing_established_allow": self._nft_rule_present(
+                managed_lines, ("ct", "state", "established,related"), "accept"
+            ),
+            "missing_terminal_drop": any(
+                line.startswith("counter ") and " drop comment " in f" {line} "
+                for line in managed_lines
+            ),
+        }
+        for endpoint in self.allowed_endpoints:
+            try:
+                parsed = ip_address(endpoint)
+            except ValueError:
+                continue
+            family = "ip6" if parsed.version == 6 else "ip"
+            checks[f"missing_endpoint_allow:{parsed}"] = self._nft_rule_present(
+                managed_lines, (family, "daddr", str(parsed)), "accept"
+            )
+        for mark in SING_BOX_AUTO_REDIRECT_MARKS:
+            checks[f"missing_meta_mark_allow:{mark}"] = self._nft_rule_present(
+                managed_lines, ("meta", "mark", mark), "accept"
+            )
+            checks[f"missing_ct_mark_allow:{mark}"] = self._nft_rule_present(
+                managed_lines, ("ct", "mark", mark), "accept"
+            )
+        for endpoint in SING_BOX_TUN_DNS_ENDPOINTS:
+            for protocol in ("udp", "tcp"):
+                checks[f"missing_internal_dns_allow:{endpoint}/{protocol}"] = (
+                    self._nft_rule_present(
+                        managed_lines,
+                        ("ip", "daddr", endpoint, protocol, "dport", "53"),
+                        "accept",
+                    )
+                )
+        for protocol in ("udp", "tcp"):
+            for port in ("53", "853"):
+                checks[f"missing_dns_reject:{protocol}/{port}"] = self._nft_rule_present(
+                    managed_lines, (protocol, "dport", port), "reject"
+                )
+        if self.allow_lan:
+            for cidr in self.lan_cidrs:
+                checks[f"missing_lan_allow:{cidr}"] = self._nft_rule_present(
+                    managed_lines, ("ip", "daddr", cidr), "accept"
+                )
+        if not self.block_ipv6:
+            checks["missing_ipv6_allow"] = self._nft_rule_present(
+                managed_lines, ("ip6", "daddr", "::/0"), "accept"
+            )
+        for protocol in ("tcp", "udp", "icmp", "ipv6-icmp"):
+            checks[f"missing_terminal_drop:{protocol}"] = self._nft_rule_present(
+                managed_lines, ("meta", "l4proto", protocol), "drop"
+            )
+        reasons = [reason for reason, passed in checks.items() if not passed]
+        if managed_rule_count != expected_rule_count:
+            reasons.append(
+                f"managed_rule_count:{managed_rule_count}/{expected_rule_count}"
+            )
+        return _FirewallState(
+            method="nftables",
+            artifacts_present=True,
+            active=active,
+            consistent=active and not reasons,
+            mismatch_reasons=tuple(reasons),
+        )
+
+    def _inspect_iptables(self) -> "_FirewallState":
+        ipv4 = self._inspect_iptables_family("iptables")
+        ipv6 = (
+            self._inspect_iptables_family("ip6tables")
+            if self.block_ipv6 and self.which("ip6tables")
+            else _FirewallState(method="ip6tables")
+        )
+        artifacts_present = ipv4.artifacts_present or ipv6.artifacts_present
+        reasons = list(ipv4.mismatch_reasons)
+        if self.block_ipv6 and self.which("ip6tables"):
+            reasons.extend(f"ipv6:{reason}" for reason in ipv6.mismatch_reasons)
+        if self.block_ipv6 and not self.which("ip6tables"):
+            reasons.append("ipv6_backend_unavailable")
+        active = ipv4.active and (
+            not self.block_ipv6 or not self.which("ip6tables") or ipv6.active
+        )
+        consistent = artifacts_present and active and not reasons
+        return _FirewallState(
+            method="iptables",
+            artifacts_present=artifacts_present,
+            active=active,
+            consistent=consistent,
+            mismatch_reasons=tuple(reasons),
+        )
+
+    def _inspect_iptables_family(self, binary: str) -> "_FirewallState":
+        chain_result = self.runner([binary, "-S", WATCHDOGVPN_IPTABLES_CHAIN])
+        jump_result = self.runner(
+            [binary, "-C", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN]
+        )
+        artifacts_present = chain_result.returncode == 0 or jump_result.returncode == 0
+        if not artifacts_present:
+            return _FirewallState(method=binary)
+        output = chain_result.stdout if chain_result.returncode == 0 else ""
+        has_chain = chain_result.returncode == 0
+        has_jump = jump_result.returncode == 0
+        actual_rules = self._iptables_chain_rules(output)
+        expected_rules = self._expected_iptables_rules(binary)
+        missing_rules = [
+            label
+            for label, expected in expected_rules
+            if not any(self._iptables_rule_matches_expected(rule, expected) for rule in actual_rules)
+        ]
+        terminal_rule = (
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "REJECT",
+        )
+        has_terminal_reject = any(
+            rule[: len(terminal_rule)] == terminal_rule
+            for rule in actual_rules
+        )
+        active = has_chain and has_jump and has_terminal_reject
+        checks = {
+            "missing_managed_chain": has_chain,
+            "missing_output_jump": has_jump,
+            "missing_terminal_reject": has_terminal_reject,
+        }
+        reasons = [reason for reason, passed in checks.items() if not passed]
+        reasons.extend(missing_rules)
+        if len(actual_rules) != len(expected_rules):
+            reasons.append(f"managed_rule_count:{len(actual_rules)}/{len(expected_rules)}")
+        return _FirewallState(
+            method=binary,
+            artifacts_present=artifacts_present,
+            active=active,
+            consistent=active and not reasons,
+            mismatch_reasons=tuple(reasons),
+        )
+
+    def _expected_nft_rule_count(self) -> int:
+        endpoint_count = 0
+        for endpoint in self.allowed_endpoints:
+            try:
+                ip_address(endpoint)
+            except ValueError:
+                continue
+            endpoint_count += 1
+        return (
+            20
+            + endpoint_count
+            + (len(self.lan_cidrs) if self.allow_lan else 0)
+            + (1 if not self.block_ipv6 else 0)
+        )
+
+    @staticmethod
+    def _managed_nft_rule_lines(chain: str) -> tuple[str, ...]:
+        values: list[str] = []
+        for line in chain.splitlines():
+            normalized = " ".join(line.replace('"', "").split())
+            normalized = re.sub(
+                r"\b0x0*([0-9a-fA-F]+)\b",
+                lambda match: f"0x{int(match.group(1), 16):x}",
+                normalized,
+            )
+            if f"comment {WATCHDOGVPN_COMMENT}" in normalized:
+                values.append(normalized)
+        return tuple(values)
+
+    @staticmethod
+    def _nft_rule_present(
+        lines: tuple[str, ...],
+        match_tokens: tuple[str, ...],
+        verdict: str,
+    ) -> bool:
+        match = " ".join(match_tokens)
+        return any(match in line and f" {verdict} comment " in f" {line} " for line in lines)
+
+    def _expected_iptables_rules(
+        self,
+        binary: str,
+    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        loopback = "::1/128" if binary == "ip6tables" else "127.0.0.0/8"
+        commands = [
+            self._iptables_rule_command(binary, "-o", "lo", "-j", "ACCEPT"),
+            self._iptables_rule_command(binary, "-d", loopback, "-j", "ACCEPT"),
+            self._iptables_rule_command(
+                binary, "-o", self.tunnel_interface, "-j", "ACCEPT"
+            ),
+        ]
+        commands.extend(
+            self._ip6tables_endpoint_rules()
+            if binary == "ip6tables"
+            else self._iptables_endpoint_rules()
+        )
+        commands.extend(self._iptables_singbox_mark_rules(binary))
+        commands.extend(self._iptables_internal_dns_rules(binary))
+        commands.extend(self._iptables_dns_leak_block_rules(binary))
+        commands.append(
+            self._iptables_rule_command(
+                binary,
+                "-m",
+                "conntrack",
+                "--ctstate",
+                "ESTABLISHED,RELATED",
+                "-j",
+                "ACCEPT",
+            )
+        )
+        if binary == "iptables" and self.allow_lan:
+            commands.extend(self._iptables_lan_rules(binary))
+        commands.append(self._iptables_rule_command(binary, "-j", "REJECT"))
+        expected: list[tuple[str, tuple[str, ...]]] = []
+        for index, command in enumerate(commands):
+            rule = tuple(command[3:])
+            expected.append((f"missing_managed_rule:{binary}/{index}", rule))
+        return tuple(expected)
+
+    @staticmethod
+    def _iptables_rule_command(binary: str, *tokens: str) -> list[str]:
+        verdict_index = tokens.index("-j")
+        return [
+            binary,
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            *tokens[:verdict_index],
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            *tokens[verdict_index:],
+        ]
+
+    @classmethod
+    def _iptables_chain_rules(cls, output: str) -> tuple[tuple[str, ...], ...]:
+        rules: list[tuple[str, ...]] = []
+        for line in output.splitlines():
+            try:
+                tokens = shlex.split(line)
+            except ValueError:
+                continue
+            if tokens[:2] != ["-A", WATCHDOGVPN_IPTABLES_CHAIN]:
+                continue
+            rules.append(tuple(cls._canonicalize_iptables_tokens(tokens[2:])))
+        return tuple(rules)
+
+    @classmethod
+    def _iptables_rule_contains(
+        cls,
+        actual: tuple[str, ...],
+        expected: tuple[str, ...],
+    ) -> bool:
+        canonical_expected = tuple(cls._canonicalize_iptables_tokens(list(expected)))
+        iterator = iter(actual)
+        return all(any(token == candidate for candidate in iterator) for token in canonical_expected)
+
+    @classmethod
+    def _iptables_rule_matches_expected(
+        cls,
+        actual: tuple[str, ...],
+        expected: tuple[str, ...],
+    ) -> bool:
+        canonical_expected = tuple(cls._canonicalize_iptables_tokens(list(expected)))
+        if canonical_expected[:2] == ("-m", "comment"):
+            return actual[: len(canonical_expected)] == canonical_expected
+        return cls._iptables_rule_contains(actual, canonical_expected)
+
+    @staticmethod
+    def _canonicalize_iptables_tokens(tokens: list[str]) -> list[str]:
+        values = list(tokens)
+        for index, token in enumerate(values[:-1]):
+            if token != "-d":
+                continue
+            try:
+                parsed = ip_address(values[index + 1])
+            except ValueError:
+                continue
+            suffix = 32 if parsed.version == 4 else 128
+            values[index + 1] = f"{parsed}/{suffix}"
+        return values
 
     def _run_required(self, command: list[str]) -> bool:
         result = self.runner(command)
@@ -148,6 +543,20 @@ class KillSwitch:
 
     def _enable_nftables(self) -> bool:
         self._disable_nftables()
+        commands = self._nft_enable_commands()
+        for command in commands:
+            if not self._run_required(command):
+                self._disable_nftables()
+                return False
+        LOGGER.warning(
+            "kill_switch_enabled method=nftables tunnel_interface=%s block_ipv6=%s allow_lan=%s",
+            self.tunnel_interface,
+            self.block_ipv6,
+            self.allow_lan,
+        )
+        return True
+
+    def _nft_enable_commands(self) -> list[list[str]]:
         commands = [
             ["nft", "add", "table", "inet", WATCHDOGVPN_TABLE],
             [
@@ -182,18 +591,23 @@ class KillSwitch:
         if not self.block_ipv6:
             commands.append(self._nft_rule("ip6", "daddr", "::/0", "accept"))
         commands.extend(self._nft_terminal_drop_rules())
+        return commands
 
-        for command in commands:
-            if not self._run_required(command):
-                self._disable_nftables()
-                return False
-        LOGGER.warning(
-            "kill_switch_enabled method=nftables tunnel_interface=%s block_ipv6=%s allow_lan=%s",
-            self.tunnel_interface,
-            self.block_ipv6,
-            self.allow_lan,
-        )
-        return True
+    @staticmethod
+    def _nft_batch_script(commands: list[list[str]]) -> str:
+        return "\n".join(KillSwitch._nft_batch_line(command) for command in commands) + "\n"
+
+    @staticmethod
+    def _nft_batch_line(command: list[str]) -> str:
+        rendered: list[str] = []
+        for token in command[1:]:
+            if token in {"{", "}"} or token.endswith(";") or token == WATCHDOGVPN_NFT_COMMENT:
+                rendered.append(token)
+            elif re.fullmatch(r"[A-Za-z0-9_./:@,+-]+", token):
+                rendered.append(token)
+            else:
+                rendered.append('"' + token.replace("\\", "\\\\").replace('"', '\\"') + '"')
+        return " ".join(rendered)
 
     def _disable_nftables(self) -> bool:
         self._run_optional(["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE])

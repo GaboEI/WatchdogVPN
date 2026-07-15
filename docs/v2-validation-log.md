@@ -65,13 +65,19 @@
   - Validation depended on WireGuard/AmneziaWG interface state, handshake state,
     and ping through the interface.
 - **Runtime dependencies observed:**
-  - `awg-quick` and `awg` are the real binary names.
-  - `amneziawg-dkms` is required for the kernel module.
-  - `amneziawg-tools` is required for userspace tools.
+  - `awg` is the AmneziaWG configuration tool used by the daemon.
+  - `amneziawg-dkms` provides the kernel module when it builds for the running
+    kernel.
+  - `amneziawg-go` is the userspace runtime fallback when the kernel module is
+    unavailable.
+  - `amneziawg-tools` is required for AmneziaWG userspace tools.
   - On Ubuntu these were installed from `ppa:amnezia/ppa`.
 - **Issues found and fixed during validation:**
-  - Driver detection was corrected to prefer `awg-quick`, then
-    `amneziawg-quick`, then `wg-quick`.
+  - Driver detection was corrected during earlier validation. Phase 23 field
+    validation later removed quick-script runtime dependency from the daemon
+    path because quick scripts attempt internal `sudo` outside root, and
+    removed the old `wg-quick` fallback because plain WireGuard tooling cannot
+    run real AmneziaWG exports with obfuscation keys.
   - Empty exported keys such as `I2 = ` and `I3 = ` are stripped before writing
     the runtime config because `awg setconf` rejects them.
   - Parser detection was expanded for real profile keys including `S3`, `S4`,

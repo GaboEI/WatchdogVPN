@@ -44,6 +44,9 @@ class FakeRuntime:
             status="connected" if self.connected_profile_id else "standby",
         )
 
+    def automatic_actions_enabled(self) -> bool:
+        return True
+
     def rotate_now(self, force: bool = False) -> ConnectionState:
         self.connected_profile_id = "rotated"
         return ConnectionState(active_profile_id="rotated", mode="rules", status="recovered")
@@ -126,6 +129,27 @@ class DaemonIPCServerTests(unittest.TestCase):
 
         self.assertFalse(response.ok)
         self.assertIn("invalid JSON message", response.error or "")
+
+    def test_request_socket_rejects_unsupported_payload_fields_before_worker_execution(self) -> None:
+        raw_request = json.dumps(
+            {
+                "version": 1,
+                "type": "request",
+                "command": COMMAND_STATUS,
+                "payload": {"unexpected": True},
+            },
+            separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(str(self.request_socket))
+            sock.sendall(raw_request)
+            response = decode_response_line(read_line(sock))
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.payload["error_kind"], "unsupported_payload_fields")
+        self.assertEqual(response.payload["command"], COMMAND_STATUS)
+        self.assertEqual(response.payload["unsupported_fields"], ["unexpected"])
+        self.assertIn("unsupported fields", response.error or "")
 
     def test_request_socket_handles_multiple_requests_on_one_connection(self) -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:

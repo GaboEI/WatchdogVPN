@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
+import subprocess
+from dataclasses import asdict
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from dns.models import DNSPolicy
 from drivers.base import BaseDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 from rotation import health_checker
+from rotation.health_targets import HealthProbeResult, HealthTargetResult, probe_targets
 
 
 def make_profile(profile_id: str = "p1") -> Profile:
@@ -17,6 +21,31 @@ def make_profile(profile_id: str = "p1") -> Profile:
         protocol=ProtocolType.VLESS,
         config={},
         source=ProfileSource.MANUAL,
+    )
+
+
+def probe(
+    *,
+    successes: int,
+    classification: str = "healthy",
+    latency_ms: float | None = 42.0,
+) -> HealthProbeResult:
+    results = tuple(
+        HealthTargetResult(
+            target=f"https://target-{index}.example/",
+            reachable=index < successes,
+            classification="ok" if index < successes else classification,
+            curl_exit_code=0 if index < successes else 28,
+            latency_ms=latency_ms if index < successes else None,
+        )
+        for index in range(3)
+    )
+    return HealthProbeResult(
+        targets=results,
+        success_count=successes,
+        required_successes=2,
+        classification="healthy" if successes >= 2 else classification,
+        latency_ms=latency_ms if successes else None,
     )
 
 
@@ -53,277 +82,325 @@ class StubDriver(BaseDriver):
 
 
 class HealthCheckerTests(unittest.TestCase):
-    def test_returns_down_immediately_when_driver_reports_down(self) -> None:
+    def test_returns_down_without_probe_when_driver_reports_tunnel_failure(self) -> None:
         driver = StubDriver("down", ConnectionState(status="standby"))
-        verify_calls: list[bool] = []
+        verify = Mock(return_value=probe(successes=3))
 
-        def verify(via_proxy: bool):
-            verify_calls.append(via_proxy)
-            return True, "1.2.3.4", 42.0
+        result = health_checker.check_with_latency(make_profile(), driver, verify=verify)
 
-        result = health_checker.check(make_profile(), driver, verify=verify)
+        self.assertEqual(result.status, "down")
+        self.assertEqual(result.classification, "tunnel_failure")
+        verify.assert_not_called()
 
-        self.assertEqual(result, "down")
-        self.assertEqual(verify_calls, [])
-
-    def test_returns_down_when_no_active_route(self) -> None:
-        driver = StubDriver("ok", ConnectionState(status="connected", proxy_active=False, tun_active=False))
-
-        result = health_checker.check(
-            make_profile(),
-            driver,
-            verify=lambda via_proxy: (True, "1.2.3.4", 42.0),
-        )
-
-        self.assertEqual(result, "down")
-
-    def test_ok_when_proxy_active_and_reachable(self) -> None:
+    def test_proxy_path_uses_quorum_probe(self) -> None:
         driver = StubDriver(
             "ok",
             ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
         )
-        verify_calls: list[bool] = []
+        verify = Mock(return_value=probe(successes=2))
 
-        def verify(via_proxy: bool):
-            verify_calls.append(via_proxy)
-            return True, "1.2.3.4", 42.0
+        result = health_checker.check_with_latency(make_profile(), driver, verify=verify)
 
-        result = health_checker.check(make_profile(), driver, verify=verify)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.latency_ms, 42.0)
+        verify.assert_called_once_with(True)
 
-        self.assertEqual(result, "ok")
-        self.assertEqual(verify_calls, [True])
-
-    def test_ok_when_tun_active_without_proxy(self) -> None:
+    def test_tun_path_uses_direct_probe(self) -> None:
         driver = StubDriver(
             "ok",
-            ConnectionState(status="connected", mode="amneziawg", proxy_active=False, tun_active=True),
+            ConnectionState(status="connected", mode="openvpn", proxy_active=False, tun_active=True),
         )
-        verify_calls: list[bool] = []
+        verify = Mock(return_value=probe(successes=2))
 
-        def verify(via_proxy: bool):
-            verify_calls.append(via_proxy)
-            return True, "5.6.7.8", 42.0
+        self.assertEqual(health_checker.check(make_profile(), driver, verify=verify), "ok")
+        verify.assert_called_once_with(False)
 
-        result = health_checker.check(make_profile(), driver, verify=verify)
-
-        self.assertEqual(result, "ok")
-        self.assertEqual(verify_calls, [False])
-
-    def test_uses_direct_verification_for_non_singbox_mode_even_if_proxy_active_flag_is_set(self) -> None:
-        # Regression: a non-sing-box driver could in principle set
-        # proxy_active=True to mean "VPN is up" rather than "a local SOCKS
-        # proxy is listening" - only mode == "sing-box" should trigger
-        # proxy-based verification.
-        driver = StubDriver(
-            "ok",
-            ConnectionState(status="connected", mode="openvpn", proxy_active=True, tun_active=True),
-        )
-        verify_calls: list[bool] = []
-
-        def verify(via_proxy: bool):
-            verify_calls.append(via_proxy)
-            return True, "9.9.9.9", 42.0
-
-        result = health_checker.check(make_profile(), driver, verify=verify)
-
-        self.assertEqual(result, "ok")
-        self.assertEqual(verify_calls, [False])
-
-    def test_falls_back_to_direct_when_proxy_mode_driver_has_proxy_inactive(self) -> None:
-        # Regression: a driver whose mode IS in PROXY_BASED_MODES but is
-        # currently running without the local proxy up (proxy_active=False)
-        # - e.g. a future sing-box TUN connection mode (Phase 11) - must
-        # still fall through to direct/TUN verification instead of being
-        # short-circuited to "down".
-        driver = StubDriver(
-            "ok",
-            ConnectionState(status="connected", mode="sing-box", proxy_active=False, tun_active=True),
-        )
-        verify_calls: list[bool] = []
-
-        def verify(via_proxy: bool):
-            verify_calls.append(via_proxy)
-            return True, "8.8.4.4", 42.0
-
-        result = health_checker.check(make_profile(), driver, verify=verify)
-
-        self.assertEqual(result, "ok")
-        self.assertEqual(verify_calls, [False])
-
-    def test_degraded_when_external_endpoint_unreachable(self) -> None:
-        driver = StubDriver(
-            "ok",
-            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
-        )
-
-        result = health_checker.check(
-            make_profile(),
-            driver,
-            verify=lambda via_proxy: (False, None, None),
-        )
-
-        self.assertEqual(result, "degraded")
-
-    def test_degraded_is_sticky_even_if_reachable(self) -> None:
-        driver = StubDriver(
-            "degraded",
-            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
-        )
-
-        result = health_checker.check(
-            make_profile(),
-            driver,
-            verify=lambda via_proxy: (True, "1.2.3.4", 42.0),
-        )
-
-        self.assertEqual(result, "degraded")
-
-    def test_ok_even_when_public_ip_lookup_fails(self) -> None:
-        driver = StubDriver(
-            "ok",
-            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
-        )
-
-        result = health_checker.check(
-            make_profile(),
-            driver,
-            verify=lambda via_proxy: (True, None, 42.0),
-        )
-
-        self.assertEqual(result, "ok")
-
-
-class CheckWithLatencyTests(unittest.TestCase):
-    """check_with_latency() reuses check()'s exact logic (_check_full) -
-    these pin that the richer HealthCheckResult is available without
-    changing check()'s own str-returning contract (RotationEngine's
-    HealthCheckFn depends on that contract and must never see this type)."""
-
-    def test_ok_result_carries_latency(self) -> None:
+    def test_single_blocked_target_with_quorum_is_healthy(self) -> None:
         driver = StubDriver(
             "ok",
             ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
         )
 
         result = health_checker.check_with_latency(
-            make_profile(),
-            driver,
-            verify=lambda via_proxy: (True, "1.2.3.4", 123.456),
+            make_profile(), driver, verify=lambda _via_proxy: probe(successes=2)
         )
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.latency_ms, 123.456)
+        self.assertEqual(result.classification, "healthy")
 
-    def test_down_result_has_no_latency(self) -> None:
-        driver = StubDriver("down", ConnectionState(status="standby"))
-
-        result = health_checker.check_with_latency(
-            make_profile(), driver, verify=lambda via_proxy: (True, "1.2.3.4", 42.0)
-        )
-
-        self.assertEqual(result.status, "down")
-        self.assertIsNone(result.latency_ms)
-
-    def test_unreachable_result_has_no_latency(self) -> None:
+    def test_all_target_failure_is_degraded_not_false_success(self) -> None:
         driver = StubDriver(
             "ok",
             ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
         )
 
         result = health_checker.check_with_latency(
-            make_profile(), driver, verify=lambda via_proxy: (False, None, None)
+            make_profile(),
+            driver,
+            verify=lambda _via_proxy: probe(
+                successes=0,
+                classification="endpoint_censorship_or_network_interference_suspected",
+                latency_ms=None,
+            ),
         )
 
         self.assertEqual(result.status, "degraded")
-        self.assertIsNone(result.latency_ms)
+        self.assertEqual(result.classification, "endpoint_censorship_or_network_interference_suspected")
 
-    def test_degraded_driver_status_still_carries_latency(self) -> None:
+    def test_dns_interference_is_classified_separately(self) -> None:
+        driver = StubDriver(
+            "ok",
+            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
+        )
+
+        result = health_checker.check_with_latency(
+            make_profile(),
+            driver,
+            verify=lambda _via_proxy: probe(
+                successes=0,
+                classification="dns_interference_suspected",
+                latency_ms=None,
+            ),
+        )
+
+        self.assertEqual(result.status, "degraded")
+        self.assertEqual(result.classification, "dns_interference_suspected")
+
+    def test_third_party_outage_is_classified_separately(self) -> None:
+        driver = StubDriver(
+            "ok",
+            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
+        )
+
+        result = health_checker.check_with_latency(
+            make_profile(),
+            driver,
+            verify=lambda _via_proxy: probe(
+                successes=0,
+                classification="third_party_outage",
+                latency_ms=None,
+            ),
+        )
+
+        self.assertEqual(result.status, "degraded")
+        self.assertEqual(result.classification, "third_party_outage")
+
+    def test_degraded_driver_remains_degraded_after_healthy_probe(self) -> None:
         driver = StubDriver(
             "degraded",
             ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
         )
 
         result = health_checker.check_with_latency(
-            make_profile(), driver, verify=lambda via_proxy: (True, "1.2.3.4", 77.0)
+            make_profile(), driver, verify=lambda _via_proxy: probe(successes=3)
         )
 
         self.assertEqual(result.status, "degraded")
-        self.assertEqual(result.latency_ms, 77.0)
+        self.assertEqual(result.classification, "driver_degraded")
 
-    def test_check_and_check_with_latency_agree_on_status(self) -> None:
+    def test_no_active_route_is_down_without_probe(self) -> None:
+        driver = StubDriver("ok", ConnectionState(status="connected", proxy_active=False, tun_active=False))
+        verify = Mock(return_value=probe(successes=3))
+
+        result = health_checker.check_with_latency(make_profile(), driver, verify=verify)
+
+        self.assertEqual(result.status, "down")
+        self.assertEqual(result.classification, "no_active_route")
+        verify.assert_not_called()
+
+
+def curl_result(returncode: int) -> Mock:
+    result = Mock()
+    result.returncode = returncode
+    return result
+
+
+class TargetProbeTests(unittest.TestCase):
+    TARGETS = (
+        "https://one.example/",
+        "https://two.example/",
+        "https://three.example/",
+    )
+
+    @patch("rotation.health_targets.shutil.which", return_value=None)
+    def test_missing_curl_is_not_healthy(self, _which) -> None:
+        result = probe_targets(via_proxy=False, targets=self.TARGETS, timeout=5, success_quorum=2)
+
+        self.assertFalse(result.reachable)
+        self.assertEqual(result.classification, "probe_unavailable")
+
+    @patch("rotation.health_targets.subprocess.run")
+    @patch("rotation.health_targets.shutil.which", return_value="/usr/bin/curl")
+    def test_uses_remote_dns_through_socks_proxy(self, _which, run_mock) -> None:
+        run_mock.side_effect = [curl_result(0), curl_result(0), curl_result(28)]
+
+        result = probe_targets(via_proxy=True, targets=self.TARGETS, timeout=5, success_quorum=2)
+
+        self.assertTrue(result.reachable)
+        self.assertEqual(result.success_count, 2)
+        first = run_mock.call_args_list[0].args[0]
+        self.assertIn("--socks5-hostname", first)
+        self.assertIn("127.0.0.1:2080", first)
+
+    @patch("rotation.health_targets.subprocess.run")
+    @patch("rotation.health_targets.shutil.which", return_value="/usr/bin/curl")
+    def test_single_blocked_target_does_not_fail_healthy_quorum(self, _which, run_mock) -> None:
+        run_mock.side_effect = [curl_result(0), curl_result(28), curl_result(0)]
+
+        result = probe_targets(via_proxy=False, targets=self.TARGETS, timeout=5, success_quorum=2)
+
+        self.assertTrue(result.reachable)
+        self.assertEqual(result.classification, "healthy")
+        self.assertEqual(result.targets[1].classification, "endpoint_censorship_or_network_interference_suspected")
+
+    @patch("rotation.health_targets.subprocess.run")
+    @patch("rotation.health_targets.shutil.which", return_value="/usr/bin/curl")
+    def test_all_dns_failures_are_classified_without_false_success(self, _which, run_mock) -> None:
+        run_mock.side_effect = [curl_result(6), curl_result(6), curl_result(6)]
+
+        result = probe_targets(via_proxy=True, targets=self.TARGETS, timeout=5, success_quorum=2)
+
+        self.assertFalse(result.reachable)
+        self.assertEqual(result.classification, "dns_interference_suspected")
+
+    @patch("rotation.health_targets.subprocess.run")
+    @patch("rotation.health_targets.shutil.which", return_value="/usr/bin/curl")
+    def test_all_service_failures_are_classified_without_false_success(self, _which, run_mock) -> None:
+        run_mock.side_effect = [curl_result(22), curl_result(22), curl_result(22)]
+
+        result = probe_targets(via_proxy=False, targets=self.TARGETS, timeout=5, success_quorum=2)
+
+        self.assertFalse(result.reachable)
+        self.assertEqual(result.classification, "third_party_outage")
+
+
+
+class AutomaticHealthPrivacyTests(unittest.TestCase):
+    CANARY_PUBLIC_IP = "203.0.113.77"
+    TARGETS = (
+        "https://one.example/",
+        "https://two.example/",
+        "https://three.example/",
+    )
+
+    def _curl_result_with_canary(self, returncode: int) -> Mock:
+        result = curl_result(returncode)
+        result.stdout = f"ip={self.CANARY_PUBLIC_IP}"
+        result.stderr = f"diagnostic={self.CANARY_PUBLIC_IP}"
+        return result
+
+    @patch("rotation.health_targets.subprocess.run")
+    @patch("rotation.health_targets.shutil.which", return_value="/usr/bin/curl")
+    def test_automatic_health_discards_raw_curl_payloads_from_results_and_logs(
+        self, _which, run_mock
+    ) -> None:
+        run_mock.side_effect = [
+            self._curl_result_with_canary(0),
+            self._curl_result_with_canary(0),
+            self._curl_result_with_canary(28),
+            self._curl_result_with_canary(28),
+            self._curl_result_with_canary(28),
+            self._curl_result_with_canary(28),
+        ]
+
+        healthy = probe_targets(via_proxy=True, targets=self.TARGETS, timeout=5, success_quorum=2)
+        failed = probe_targets(via_proxy=True, targets=self.TARGETS, timeout=5, success_quorum=2)
         driver = StubDriver(
             "ok",
             ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
         )
-        verify = lambda via_proxy: (True, "1.2.3.4", 10.0)
+        with self.assertLogs("rotation.health_checker", level="INFO") as captured:
+            health_checker.check_with_latency(make_profile(), driver, verify=lambda _via_proxy: healthy)
+            health_checker.check_with_latency(make_profile(), driver, verify=lambda _via_proxy: failed)
 
-        self.assertEqual(
-            health_checker.check(make_profile(), driver, verify=verify),
-            health_checker.check_with_latency(make_profile(), driver, verify=verify).status,
+        retained = json.dumps({"healthy": asdict(healthy), "failed": asdict(failed)}, sort_keys=True)
+        self.assertNotIn(self.CANARY_PUBLIC_IP, retained)
+        self.assertNotIn(self.CANARY_PUBLIC_IP, "\n".join(captured.output))
+        self.assertTrue(
+            all(call.kwargs["stderr"] is subprocess.DEVNULL for call in run_mock.call_args_list)
+        )
+        self.assertTrue(
+            all(
+                call.args[0][call.args[0].index("--output") + 1] == "/dev/null"
+                for call in run_mock.call_args_list
+            )
         )
 
 
-class ReachableAndPublicIpTests(unittest.TestCase):
-    @patch("rotation.health_checker.shutil.which", return_value=None)
-    def test_returns_false_when_curl_not_found(self, _which) -> None:
-        reachable, public_ip, latency_ms = health_checker.reachable_and_public_ip(via_proxy=False)
+class TargetPolicyValidationTests(unittest.TestCase):
+    TARGETS = [
+        "https://one.example/",
+        "https://two.example/",
+        "https://three.example/",
+    ]
 
-        self.assertFalse(reachable)
-        self.assertIsNone(public_ip)
-        self.assertIsNone(latency_ms)
+    def test_accepts_multiple_unique_https_targets(self) -> None:
+        from rotation.health_targets import validate_targets
 
-    @patch("rotation.health_checker.subprocess.run")
-    @patch("rotation.health_checker.shutil.which", return_value="/usr/bin/curl")
-    def test_uses_socks_proxy_args_when_via_proxy(self, _which, run_mock) -> None:
-        run_mock.return_value.returncode = 0
-        run_mock.return_value.stdout = "203.0.113.5"
+        self.assertEqual(validate_targets(self.TARGETS), tuple(self.TARGETS))
 
-        reachable, public_ip, latency_ms = health_checker.reachable_and_public_ip(via_proxy=True)
+    def test_rejects_a_single_target(self) -> None:
+        from rotation.health_targets import validate_targets
 
-        self.assertTrue(reachable)
-        self.assertEqual(public_ip, "203.0.113.5")
-        self.assertIsInstance(latency_ms, float)
-        self.assertGreaterEqual(latency_ms, 0.0)
-        first_call_args = run_mock.call_args_list[0].args[0]
-        self.assertIn("--socks5-hostname", first_call_args)
-        self.assertIn(health_checker.LOCAL_SOCKS_PROXY, first_call_args)
+        with self.assertRaises(ValueError):
+            validate_targets(self.TARGETS[:1])
 
-    @patch("rotation.health_checker.subprocess.run")
-    @patch("rotation.health_checker.shutil.which", return_value="/usr/bin/curl")
-    def test_no_proxy_args_when_direct(self, _which, run_mock) -> None:
-        run_mock.return_value.returncode = 0
-        run_mock.return_value.stdout = "203.0.113.5"
+    def test_rejects_credentials_and_fragments(self) -> None:
+        from rotation.health_targets import validate_targets
 
-        health_checker.reachable_and_public_ip(via_proxy=False)
+        for unsafe in ("https://user:secret@one.example/", "https://one.example/#fragment"):
+            with self.subTest(unsafe=unsafe):
+                with self.assertRaises(ValueError):
+                    validate_targets([unsafe, *self.TARGETS[1:]])
 
-        first_call_args = run_mock.call_args_list[0].args[0]
-        self.assertNotIn("--socks5-hostname", first_call_args)
+    def test_rejects_duplicate_targets(self) -> None:
+        from rotation.health_targets import validate_targets
 
-    @patch("rotation.health_checker.subprocess.run")
-    @patch("rotation.health_checker.shutil.which", return_value="/usr/bin/curl")
-    def test_reachable_false_when_external_check_fails(self, _which, run_mock) -> None:
-        run_mock.return_value.returncode = 1
-        run_mock.return_value.stdout = ""
+        with self.assertRaises(ValueError):
+            validate_targets([self.TARGETS[0], self.TARGETS[0], self.TARGETS[2]])
 
-        reachable, public_ip, latency_ms = health_checker.reachable_and_public_ip(via_proxy=False)
+    def test_rejects_boolean_or_out_of_range_quorum(self) -> None:
+        from rotation.health_targets import validate_success_quorum
 
-        self.assertFalse(reachable)
-        self.assertIsNone(public_ip)
-        self.assertIsNone(latency_ms)
-        run_mock.assert_called_once()
+        for invalid in (True, 0, 4):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    validate_success_quorum(invalid, self.TARGETS)
 
-    @patch("rotation.health_checker.subprocess.run")
-    @patch("rotation.health_checker.shutil.which", return_value="/usr/bin/curl")
-    def test_uses_the_configured_test_url_not_the_module_default(self, _which, run_mock) -> None:
-        run_mock.return_value.returncode = 0
-        run_mock.return_value.stdout = "203.0.113.5"
+    @patch("rotation.health_targets.subprocess.run")
+    @patch("rotation.health_targets.shutil.which", return_value="/usr/bin/curl")
+    def test_one_success_is_insufficient_for_two_target_quorum(self, _which, run_mock) -> None:
+        run_mock.side_effect = [curl_result(0), curl_result(28), curl_result(28)]
 
-        health_checker.reachable_and_public_ip(via_proxy=False, test_url="https://custom.example/test")
+        result = probe_targets(
+            via_proxy=True,
+            targets=tuple(self.TARGETS),
+            timeout=5,
+            success_quorum=2,
+        )
 
-        first_call_args = run_mock.call_args_list[0].args[0]
-        self.assertIn("https://custom.example/test", first_call_args)
-        self.assertNotIn(health_checker.EXTERNAL_CHECK_URL, first_call_args)
+        self.assertFalse(result.reachable)
+        self.assertEqual(result.classification, "insufficient_target_quorum")
 
+    @patch("rotation.health_targets.subprocess.run")
+    @patch("rotation.health_targets.shutil.which", return_value="/usr/bin/curl")
+    def test_mixed_all_target_failures_are_not_misattributed_to_one_cause(self, _which, run_mock) -> None:
+        run_mock.side_effect = [curl_result(6), curl_result(22), curl_result(28)]
+
+        result = probe_targets(
+            via_proxy=True,
+            targets=tuple(self.TARGETS),
+            timeout=5,
+            success_quorum=2,
+        )
+
+        self.assertFalse(result.reachable)
+        self.assertEqual(result.classification, "all_targets_unreachable")
+
+    def test_health_result_carries_no_public_ip_field(self) -> None:
+        result = probe(successes=2)
+
+        self.assertFalse(hasattr(result, "public_ip"))
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from config.paths import resolve_config_dir
 from config.persistence import dump_json, file_lock, load_json, require_list
-from models.provider import Provider
+from models.provider import Provider, normalized_provider_url
 
 
 def _providers_path() -> Path:
@@ -16,6 +16,10 @@ def _providers_path() -> Path:
 
 
 class ProviderLimitError(ValueError):
+    pass
+
+
+class DuplicateProviderError(ValueError):
     pass
 
 
@@ -33,8 +37,17 @@ class ProviderStore:
     def add(self, provider: Provider) -> None:
         with file_lock(self.path):
             items = self._load_raw()
+            provider_url = normalized_provider_url(provider.url)
+            for item in items:
+                if item.get("id") == provider.id:
+                    continue
+                if normalized_provider_url(str(item.get("url", ""))) == provider_url:
+                    raise DuplicateProviderError(
+                        f"provider already exists: {item.get('id')}"
+                    )
             if provider.id not in {item.get("id") for item in items} and len(items) >= 2:
                 raise ProviderLimitError("maximum 2 external providers allowed")
+            provider.url = provider_url
             items = [item for item in items if item.get("id") != provider.id]
             items.append(provider.to_dict())
             self._save_raw(items)

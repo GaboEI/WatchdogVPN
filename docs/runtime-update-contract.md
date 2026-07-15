@@ -1,6 +1,6 @@
 # Runtime Update Contract
 
-This document defines the contract for the `watchdogvpn runtime-update`
+This document defines the contract for the `watchdog maintenance runtime-update`
 command.
 
 The command is implemented for the `v0.3.1` release line.
@@ -22,14 +22,13 @@ sudo ./update.sh
 Command:
 
 ```sh
-watchdogvpn runtime-update
+watchdog maintenance runtime-update
 ```
 
 Help:
 
 ```sh
-watchdogvpn help runtime-update
-watchdogvpn runtime-update --help
+watchdog maintenance runtime-update --help
 ```
 
 ## Safety Class

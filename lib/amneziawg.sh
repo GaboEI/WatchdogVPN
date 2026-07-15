@@ -16,18 +16,22 @@ AMNEZIAWG_TOOLS_UPSTREAM="https://github.com/amnezia-vpn/amneziawg-tools"
 AMNEZIAWG_KERNEL_MODULE_UPSTREAM="https://github.com/amnezia-vpn/amneziawg-linux-kernel-module"
 
 amneziawg_userspace_available() {
-  have_cmd awg-quick || have_cmd amneziawg-quick || have_cmd wg-quick \
-    || [[ -x /usr/local/bin/awg-quick ]] || [[ -x /usr/local/bin/amneziawg-quick ]] \
-    || [[ -x /usr/bin/awg-quick ]] || [[ -x /usr/bin/amneziawg-quick ]]
+  have_cmd awg || [[ -x /usr/local/bin/awg ]] || [[ -x /usr/bin/awg ]]
 }
 
 amneziawg_kernel_module_available() {
-  # The AmneziaWG kernel module registers itself as "amneziawg"; the vanilla
-  # WireGuard module ("wireguard") is accepted as a compatible fallback,
-  # matching drivers/amneziawg_driver.py's own awg-quick-preferred /
-  # wg-quick-fallback tolerance.
-  [[ -d /sys/module/amneziawg ]] || [[ -d /sys/module/wireguard ]] \
-    || modinfo amneziawg >/dev/null 2>&1 || modinfo wireguard >/dev/null 2>&1
+  # The AmneziaWG kernel module registers itself as "amneziawg". Plain
+  # WireGuard is a different compatibility protocol and is not sufficient for
+  # real AmneziaWG exports with obfuscation keys.
+  [[ -d /sys/module/amneziawg ]] || modinfo amneziawg >/dev/null 2>&1
+}
+
+amneziawg_userspace_fallback_available() {
+  have_cmd amneziawg-go || [[ -x /usr/local/bin/amneziawg-go ]] || [[ -x /usr/bin/amneziawg-go ]]
+}
+
+amneziawg_runtime_available() {
+  amneziawg_userspace_available && (amneziawg_kernel_module_available || amneziawg_userspace_fallback_available)
 }
 
 print_amneziawg_dependency_notice() {
@@ -42,16 +46,19 @@ AmneziaWG runtime check:
   If you plan to use AmneziaWG profiles, install manually before connecting:
     Tools:         $AMNEZIAWG_TOOLS_UPSTREAM
     Kernel module: $AMNEZIAWG_KERNEL_MODULE_UPSTREAM
+    Userspace fallback: https://github.com/amnezia-vpn/amneziawg-go
 
-  Standard WireGuard tooling (wg-quick/wg, wireguard kernel module) is
-  accepted as a compatible fallback if AmneziaWG-specific packages are not
-  available for your distro.
+  Standard WireGuard tooling (wg-quick/wg, wireguard kernel module) is not a
+  substitute for AmneziaWG-specific profiles. WatchdogVPN uses awg directly
+  and can use amneziawg-go when the kernel module is not available. Use
+  standard WireGuard profiles separately when you only have plain WireGuard
+  tooling.
 EOF
 }
 
 check_amneziawg_dependency() {
-  if amneziawg_userspace_available && amneziawg_kernel_module_available; then
-    ok "AmneziaWG (or compatible WireGuard) tooling detected"
+  if amneziawg_runtime_available; then
+    ok "AmneziaWG tooling detected"
     return 0
   fi
 
@@ -87,6 +94,7 @@ amneziawg_setup_commands_arch() {
 sudo pacman -S --needed --noconfirm base-devel git linux-headers
 git clone https://aur.archlinux.org/amneziawg-dkms.git /tmp/amneziawg-dkms && (cd /tmp/amneziawg-dkms && makepkg -si --noconfirm)
 git clone https://aur.archlinux.org/amneziawg-tools.git /tmp/amneziawg-tools && (cd /tmp/amneziawg-tools && makepkg -si --noconfirm)
+git clone https://aur.archlinux.org/amneziawg-go.git /tmp/amneziawg-go && (cd /tmp/amneziawg-go && makepkg -si --noconfirm)
 EOF
 }
 
@@ -108,8 +116,8 @@ amneziawg_setup_commands() {
 guide_amneziawg_setup() {
   local attempt max_attempts=3 answer commands
 
-  if amneziawg_userspace_available && amneziawg_kernel_module_available; then
-    ok "AmneziaWG (or compatible WireGuard) tooling detected"
+  if amneziawg_runtime_available; then
+    ok "AmneziaWG tooling detected"
     return 0
   fi
 
@@ -144,14 +152,16 @@ guide_amneziawg_setup() {
       return 0
     fi
 
-    if amneziawg_userspace_available && amneziawg_kernel_module_available; then
+    if amneziawg_runtime_available; then
       ok "AmneziaWG detected - setup complete"
       return 0
     fi
 
     warn "AmneziaWG still not detected after attempt $attempt/$max_attempts"
-    amneziawg_userspace_available || printf '  still missing: awg-quick/amneziawg-quick (or wg-quick) userspace tools\n'
-    amneziawg_kernel_module_available || printf '  still missing: amneziawg (or wireguard) kernel module - a reboot may be required after a kernel/header update\n'
+    amneziawg_userspace_available || printf '  still missing: awg userspace tools\n'
+    if ! amneziawg_kernel_module_available && ! amneziawg_userspace_fallback_available; then
+      printf '  still missing: amneziawg kernel module or amneziawg-go userspace fallback\n'
+    fi
   done
 
   warn "AmneziaWG setup did not complete after $max_attempts attempts"

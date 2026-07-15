@@ -68,4 +68,54 @@ if [[ -n "$missing" ]]; then
   exit 1
 fi
 
+runtime_items="$({
+  printf '%s\n' "${PYTHON_RUNTIME_PACKAGES[@]}"
+  printf '%s\n' "${PYTHON_RUNTIME_SUPPORT_FILES[@]}"
+  printf '%s\n' "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"
+} | sort -u)"
+runtime_executables="$(printf '%s\n' "${PYTHON_RUNTIME_SUPPORT_EXECUTABLES[@]}" | sort -u)"
+
+missing_doctor_runtime="$(python3 - "$ROOT_DIR/doctor.sh" "$runtime_items" "$runtime_executables" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+doctor_path = Path(sys.argv[1])
+declared_items = set(sys.argv[2].splitlines())
+declared_executables = set(sys.argv[3].splitlines())
+source = doctor_path.read_text(encoding="utf-8")
+
+required_items = set()
+required_executables = set()
+for match in re.finditer(
+    r'check_repo_file\s+"([^"]+)"(?:\s+(?:"exec"|exec))?',
+    source,
+):
+    path = match.group(1)
+    required_items.add(path.split("/", 1)[0])
+    if match.group(0).endswith("exec"):
+        required_executables.add(path)
+
+for match in re.finditer(r'\$ROOT_DIR/([A-Za-z0-9_.-]+)(?:/|\")', source):
+    required_items.add(match.group(1))
+if 'distro_adapter_path "$ROOT_DIR"' in source:
+    required_items.add("distros")
+
+errors = [
+    f"missing installed runtime item: {item}"
+    for item in sorted(required_items - declared_items)
+]
+for path in sorted(required_executables):
+    top_level = path.split("/", 1)[0]
+    if top_level not in {"bin", "sbin"} and path not in declared_executables:
+        errors.append(f"missing executable-mode preservation: {path}")
+print("\n".join(errors))
+PY
+)"
+
+if [[ -n "$missing_doctor_runtime" ]]; then
+  printf 'FAIL: installed doctor runtime manifest is incomplete:\n%s\n' "$missing_doctor_runtime" >&2
+  exit 1
+fi
+
 printf 'python runtime packages checks passed\n'

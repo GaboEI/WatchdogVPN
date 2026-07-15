@@ -137,6 +137,18 @@ class AppPolicyRuleModelTests(unittest.TestCase):
         with self.assertRaises(PersistentValidationError):
             AppPolicyRule(id="uid", action="block", match={"user_id": [-1]})
 
+    def test_rejects_invalid_process_path_regex(self) -> None:
+        with self.assertRaises(PersistentValidationError):
+            AppPolicyRule(id="bad-regex", action="block", match={"process_path_regex": ["["]})
+
+    def test_accepts_valid_process_path_regex(self) -> None:
+        rule = AppPolicyRule(
+            id="good-regex",
+            action="block",
+            match={"process_path_regex": [r"^/usr/bin/(curl|wget)$"]},
+        )
+        self.assertEqual(rule.match["process_path_regex"], [r"^/usr/bin/(curl|wget)$"])
+
     def test_rejects_missing_required_rule_fields_as_validation_error(self) -> None:
         with self.assertRaises(PersistentValidationError):
             AppPolicyRule.from_dict({"id": "missing-action", "match": {"user_id": [1000]}})

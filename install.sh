@@ -11,6 +11,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/packages.sh"
 # shellcheck source=lib/install_files.sh
 . "$ROOT_DIR/lib/install_files.sh"
+# shellcheck source=lib/runtime_transaction.sh
+. "$ROOT_DIR/lib/runtime_transaction.sh"
 # shellcheck source=lib/config.sh
 . "$ROOT_DIR/lib/config.sh"
 # shellcheck source=lib/version_marker.sh
@@ -47,7 +49,7 @@ PRESERVE_BACKEND_CONFIG=0
 EXISTING_BACKEND_ACTIVE=""
 EXISTING_BACKEND_MODE=""
 
-trap 'install_failure_trap "install.sh"' ERR
+trap 'runtime_transaction_failure_trap "install.sh"' ERR
 
 usage() {
   cat <<'USAGE'
@@ -350,7 +352,7 @@ final_report() {
   print_field "TUI command" "VPN"
   print_field "Diagnostics" "./doctor.sh"
   print_field "Runtime status" "vpnctl status"
-  print_field "Backend status" "watchdogvpn backend status"
+  print_field "Backend status" "watchdog maintenance backend status"
 
   print_section "Next steps"
   printf '1. Open the TUI with: VPN\n'
@@ -417,6 +419,8 @@ fi
 
 print_section "Runtime validation"
 validate_repo_runtime
+capture_watchdogvpn_service_state
+runtime_transaction_begin
 print_section "Install runtime"
 install_runtime_files
 apply_backend_install_selection
@@ -427,7 +431,10 @@ enable_systemd_units
 wait_for_services
 print_section "Daemon smoke test"
 smoke_test_watchdogvpn_daemon
+print_section "Publish installed runtime"
+runtime_transaction_publish_installed_version
 ensure_user_local_bin_path
 settle_vpn_after_install
 post_install_validation
 final_report
+runtime_transaction_commit

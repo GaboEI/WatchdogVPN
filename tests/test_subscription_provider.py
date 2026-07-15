@@ -2,20 +2,34 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
+from unittest.mock import patch
 
 from config.profile_store import ProfileStore
-from config.provider_store import ProviderLimitError, ProviderStore
+from config.provider_store import DuplicateProviderError, ProviderLimitError, ProviderStore
 from models.profile import Profile, ProfileSource, ProtocolType
+from models.provider import Provider
+from parsers import ParseError
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 
 
 def _profile(profile_id: str, name: str, host: str, protocol: ProtocolType = ProtocolType.VLESS) -> Profile:
+    config = {"host": host, "port": 443}
+    if protocol in {ProtocolType.VLESS, ProtocolType.VMESS}:
+        config["uuid"] = "test-uuid"
+    elif protocol in {ProtocolType.TROJAN, ProtocolType.HYSTERIA2}:
+        config["password"] = "test-password"
+    elif protocol is ProtocolType.TUIC:
+        config.update({"uuid": "test-uuid", "password": "test-password"})
+    elif protocol is ProtocolType.SHADOWSOCKS:
+        config.update({"method": "chacha20-ietf-poly1305", "password": "test-password"})
     return Profile(
         id=profile_id,
         name=name,
         protocol=protocol,
-        config={"host": host, "port": 443},
+        config=config,
         source=ProfileSource.MANUAL,
     )
 
@@ -56,6 +70,17 @@ class SubscriptionProviderTests(unittest.TestCase):
             with self.assertRaises(ProviderLimitError):
                 provider.add("https://c.example/sub", "C")
 
+    def test_add_rejects_duplicate_subscription_url_without_leaking_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+            provider.add(" https://provider.example/private-token ", "First")
+
+            with self.assertRaises(DuplicateProviderError) as captured:
+                provider.add("https://provider.example/private-token", "Second")
+
+            self.assertEqual(str(captured.exception), "provider already exists: first")
+            self.assertNotIn("private-token", str(captured.exception))
+
     def test_add_without_name_does_not_leak_subscription_token_to_provider_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
@@ -64,6 +89,45 @@ class SubscriptionProviderTests(unittest.TestCase):
 
             self.assertEqual(stored_provider.id, "netz.tg")
             self.assertNotIn("private-token-value", stored_provider.id)
+
+    def test_add_provider_write_failure_leaves_no_orphan_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+
+            with patch.object(provider.provider_store, "_save_raw", side_effect=OSError("provider disk full")):
+                with self.assertRaisesRegex(OSError, "provider disk full"):
+                    provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(ProviderStore(Path(tmp) / "providers.json").list(), [])
+            self.assertEqual(ProfileStore(Path(tmp) / "profiles.json").list(), [])
+
+    def test_add_profile_write_failure_restores_provider_and_profile_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+            profile_path = Path(tmp) / "profiles.json"
+            manual = _profile("manual", "Manual", "manual.example.com")
+            ProfileStore(profile_path).add(manual)
+            profile_before = profile_path.read_bytes()
+
+            with patch.object(provider.profile_store, "_save_raw", side_effect=OSError("profile disk full")):
+                with self.assertRaisesRegex(OSError, "profile disk full"):
+                    provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(ProviderStore(Path(tmp) / "providers.json").list(), [])
+            self.assertEqual(profile_path.read_bytes(), profile_before)
+
+    def test_parser_failure_mutates_neither_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(
+                tmp,
+                lambda _url: (_ for _ in ()).throw(ParseError("invalid subscription payload")),
+            )
+
+            with self.assertRaisesRegex(ParseError, "invalid subscription payload"):
+                provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(ProviderStore(Path(tmp) / "providers.json").list(), [])
+            self.assertEqual(ProfileStore(Path(tmp) / "profiles.json").list(), [])
 
     def test_update_adds_removes_and_updates_profiles(self) -> None:
         calls = {"count": 0}
@@ -115,6 +179,133 @@ class SubscriptionProviderTests(unittest.TestCase):
 
             self.assertEqual(provider.update(stored_provider.id), 0)
 
+    def test_update_profile_write_failure_restores_both_documents(self) -> None:
+        calls = {"count": 0}
+
+        def fetcher(_url: str) -> list[Profile]:
+            calls["count"] += 1
+            host = "before.example.com" if calls["count"] == 1 else "after.example.com"
+            return [_profile("node", "Node", host)]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, fetcher)
+            stored = provider.add("https://provider.example/sub", "Provider")
+            provider_path = Path(tmp) / "providers.json"
+            profile_path = Path(tmp) / "profiles.json"
+            provider_before = provider_path.read_bytes()
+            profile_before = profile_path.read_bytes()
+
+            with patch.object(provider.profile_store, "_save_raw", side_effect=OSError("profile disk full")):
+                with self.assertRaisesRegex(OSError, "profile disk full"):
+                    provider.update(stored.id)
+
+            self.assertEqual(provider_path.read_bytes(), provider_before)
+            self.assertEqual(profile_path.read_bytes(), profile_before)
+
+    def test_update_matches_existing_nodes_by_fingerprint_not_new_id(self) -> None:
+        calls = {"count": 0}
+
+        def fetcher(_url: str) -> list[Profile]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return [_profile("old-node", "Old Name", "node.example.com")]
+            return [_profile("new-node", "New Name", "node.example.com")]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, fetcher)
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            changes = provider.update(stored_provider.id)
+
+            profiles = ProfileStore(Path(tmp) / "profiles.json").list()
+            updated_provider = ProviderStore(Path(tmp) / "providers.json").get(stored_provider.id)
+            self.assertEqual(changes, 1)
+            self.assertEqual([profile.id for profile in profiles], ["provider:old-node"])
+            self.assertEqual(profiles[0].name, "New Name")
+            self.assertIsNotNone(updated_provider)
+            assert updated_provider is not None
+            self.assertEqual(updated_provider.profiles, ["provider:old-node"])
+
+    def test_update_replaces_membership_exactly_and_canonicalizes_reference_order(self) -> None:
+        calls = {"count": 0}
+
+        def fetcher(_url: str) -> list[Profile]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return [
+                    _profile("first", "First", "first.example.com"),
+                    _profile("second", "Second", "second.example.com"),
+                    _profile("stale", "Stale", "stale.example.com"),
+                ]
+            return [
+                _profile("second", "Second", "second.example.com"),
+                _profile("first", "First", "first.example.com"),
+                _profile("fresh", "Fresh", "fresh.example.com"),
+            ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, fetcher)
+            stored = provider.add("https://provider.example/sub", "Provider")
+            provider_store = ProviderStore(Path(tmp) / "providers.json")
+            historical = provider_store.get(stored.id)
+            assert historical is not None
+            historical.profiles.reverse()
+            provider_store.update(historical)
+
+            changes = provider.update(stored.id)
+
+            updated = provider_store.get(stored.id)
+            assert updated is not None
+            self.assertEqual(changes, 2)
+            self.assertEqual(
+                updated.profiles,
+                ["provider:second", "provider:first", "provider:fresh"],
+            )
+            self.assertEqual(
+                {profile.id for profile in ProfileStore(Path(tmp) / "profiles.json").list()},
+                {"provider:second", "provider:first", "provider:fresh"},
+            )
+
+    def test_historical_manual_owned_profile_does_not_block_other_provider_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+            provider_store = ProviderStore(Path(tmp) / "providers.json")
+            profile_store = ProfileStore(Path(tmp) / "profiles.json")
+            legacy = _profile("legacy:node", "Legacy node", "legacy.example.com")
+            legacy.provider_id = "legacy-provider"
+            profile_store.add(legacy)
+            provider_store.add(
+                Provider(
+                    id="legacy-provider",
+                    name="Legacy provider",
+                    url="https://legacy.example/sub",
+                    profiles=[legacy.id],
+                )
+            )
+            stored = provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(provider.update(stored.id), 0)
+            preserved = profile_store.get(legacy.id)
+            assert preserved is not None
+            self.assertEqual(preserved.source, ProfileSource.MANUAL)
+            self.assertEqual(preserved.provider_id, "legacy-provider")
+
+    def test_add_skips_duplicate_nodes_in_same_provider_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(
+                tmp,
+                lambda _url: [
+                    _profile("node-a", "Node A", "node.example.com"),
+                    _profile("node-b", "Node B", "node.example.com"),
+                ],
+            )
+
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            profiles = ProfileStore(Path(tmp) / "profiles.json").list()
+            self.assertEqual(stored_provider.profiles, ["provider:node-a"])
+            self.assertEqual([profile.id for profile in profiles], ["provider:node-a"])
+
     def test_update_missing_provider_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
@@ -131,6 +322,40 @@ class SubscriptionProviderTests(unittest.TestCase):
             result = provider.update_all()
 
             self.assertEqual(result, {first.id: 0, second.id: 0})
+
+    def test_concurrent_provider_limit_race_leaves_no_orphan_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            initial = self._provider(tmp, lambda _url: [_profile("initial", "Initial", "initial.example.com")])
+            initial.add("https://initial.example/sub", "Initial")
+            barrier = Barrier(2)
+
+            def fetcher(_url: str) -> list[Profile]:
+                barrier.wait(timeout=5)
+                return [_profile("node", "Node", "node.example.com")]
+
+            first = self._provider(tmp, fetcher)
+            second = self._provider(tmp, fetcher)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(first.add, "https://one.example/sub", "One"),
+                    executor.submit(second.add, "https://two.example/sub", "Two"),
+                ]
+                outcomes = []
+                for future in futures:
+                    try:
+                        outcomes.append(future.result())
+                    except ProviderLimitError as exc:
+                        outcomes.append(exc)
+
+            self.assertEqual(sum(isinstance(item, ProviderLimitError) for item in outcomes), 1)
+            providers = ProviderStore(Path(tmp) / "providers.json").list()
+            profiles = ProfileStore(Path(tmp) / "profiles.json").list()
+            provider_ids = {provider.id for provider in providers}
+            self.assertEqual(len(providers), 2)
+            self.assertTrue(all(profile.provider_id in provider_ids for profile in profiles))
+            for stored_provider in providers:
+                owned = [profile.id for profile in profiles if profile.provider_id == stored_provider.id]
+                self.assertEqual(stored_provider.profiles, owned)
 
     def test_remove_deletes_provider_and_owned_profiles_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -173,6 +398,75 @@ class SubscriptionProviderTests(unittest.TestCase):
             self.assertIsNotNone(restored)
             assert restored is not None
             self.assertEqual(restored.metadata["traffic_used"], "51.6 GB")
+
+    def test_add_with_only_profile_fetcher_injected_reports_no_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(stored_provider.metadata, {})
+
+    def test_add_populates_metadata_from_injected_metadata_fetcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+                fetcher=lambda _url: [_profile("node", "Node", "node.example.com")],
+                metadata_fetcher=lambda _url: {
+                    "traffic_used": "12.0 GB",
+                    "traffic_limit": "100.0 GB",
+                    "expires_at": "2026-12-01",
+                },
+            )
+
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(stored_provider.metadata["traffic_used"], "12.0 GB")
+            self.assertEqual(stored_provider.metadata["expires_at"], "2026-12-01")
+
+    def test_update_populates_metadata_from_injected_metadata_fetcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+                fetcher=lambda _url: [_profile("node", "Node", "node.example.com")],
+                metadata_fetcher=lambda _url: {"traffic_used": "1.0 GB"},
+            )
+            stored_provider = provider.add("https://provider.example/sub", "Provider")
+            self.assertEqual(stored_provider.metadata, {"traffic_used": "1.0 GB"})
+
+            provider.metadata_fetcher = lambda _url: {"traffic_used": "2.0 GB"}
+            provider.update(stored_provider.id)
+
+            updated = ProviderStore(Path(tmp) / "providers.json").get(stored_provider.id)
+            assert updated is not None
+            self.assertEqual(updated.metadata, {"traffic_used": "2.0 GB"})
+
+    def test_default_fetcher_uses_fetch_subscription_for_single_network_call(self) -> None:
+        # Regression guard: the default (non-overridden) fetch path must go
+        # through parsers.fetch_subscription exactly once per add()/update(),
+        # not one call for profiles and a second for metadata headers.
+        from unittest.mock import patch
+
+        from parsers.subscription import SubscriptionFetchResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = SubscriptionProvider(
+                provider_store=ProviderStore(Path(tmp) / "providers.json"),
+                profile_store=ProfileStore(Path(tmp) / "profiles.json"),
+            )
+            result = SubscriptionFetchResult(
+                profiles=[_profile("node", "Node", "node.example.com")],
+                metadata={"traffic_used": "5.0 GB"},
+            )
+            with patch(
+                "providers.subscription_provider.fetch_subscription", return_value=result
+            ) as fetch_mock:
+                stored_provider = provider.add("https://provider.example/sub", "Provider")
+
+            fetch_mock.assert_called_once_with("https://provider.example/sub")
+            self.assertEqual(stored_provider.metadata, {"traffic_used": "5.0 GB"})
 
 
 if __name__ == "__main__":

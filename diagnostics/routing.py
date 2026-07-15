@@ -15,7 +15,7 @@ from rules.ruleset_trust import RuleSetTrustRegistry
 DEFAULT_ROUTING_STATE = {
     "routing_state_version": "1",
     "routing_policy": "rule",
-    "capture_modes": "local_proxy",
+    "capture_modes": "local_proxy,tun",
     "default_route_action": "current",
     "active_mode": "rules",
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -116,6 +117,16 @@ def _user_id_list(value: Any, field_name: str) -> list[int]:
     return entries
 
 
+def _validate_regex_list(value: Any, field_name: str) -> list[str]:
+    entries = _string_list(value, field_name)
+    for pattern in entries:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise PersistentValidationError(f"{field_name} contains an invalid regex: {pattern!r}") from exc
+    return entries
+
+
 def _validate_match(match: Any) -> dict[str, list[str] | list[int]]:
     if not isinstance(match, dict):
         raise PersistentValidationError("app policy rule match must be an object")
@@ -125,6 +136,8 @@ def _validate_match(match: Any) -> dict[str, list[str] | list[int]]:
         field_name = f"app_policy.rule.match.{key}"
         if key == "user_id":
             validated[key] = _user_id_list(value, field_name)
+        elif key == "process_path_regex":
+            validated[key] = _validate_regex_list(value, field_name)
         else:
             validated[key] = _string_list(value, field_name)
     if not validated:

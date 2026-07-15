@@ -68,7 +68,7 @@ class MetricsStoreTests(unittest.TestCase):
                     MetricsBucket(
                         bucket_start="2026-07-06T00:00:00+00:00",
                         bucket_end="2026-07-06T01:00:00+00:00",
-                        counters={"route.current": 2},
+                        counters={"command.connect.success": 2},
                     ),
                 ),
             )
@@ -78,7 +78,7 @@ class MetricsStoreTests(unittest.TestCase):
 
         self.assertTrue(restored.enabled)
         self.assertEqual(restored.retention_days, 3)
-        self.assertEqual(restored.buckets[0].counters["route.current"], 2)
+        self.assertEqual(restored.buckets[0].counters["command.connect.success"], 2)
         self.assertIsNotNone(restored.updated_at)
 
     def test_increment_noops_when_metrics_file_is_missing(self) -> None:
@@ -141,13 +141,13 @@ class MetricsStoreTests(unittest.TestCase):
             )
 
             store.increment(
-                {"new": 1},
+                {"command.connect.failure": 1},
                 now=datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc),
             )
             restored = store.load()
 
         self.assertEqual(len(restored.buckets), 1)
-        self.assertEqual(restored.buckets[0].counters, {"new": 1})
+        self.assertEqual(restored.buckets[0].counters, {"command.connect.failure": 1})
 
     def test_save_rejects_document_above_size_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -155,12 +155,13 @@ class MetricsStoreTests(unittest.TestCase):
             store = MetricsStore(path)
             document = MetricsDocument(
                 max_bytes=1024,
-                buckets=(
+                buckets=tuple(
                     MetricsBucket(
                         bucket_start="2026-07-06T00:00:00+00:00",
                         bucket_end="2026-07-06T01:00:00+00:00",
-                        counters={f"counter.{index}": index for index in range(100)},
-                    ),
+                        counters={"command.connect.success": index},
+                    )
+                    for index in range(100)
                 ),
             )
 
@@ -180,12 +181,12 @@ class MetricsStoreTests(unittest.TestCase):
                         MetricsBucket(
                             bucket_start="2026-07-04T00:00:00+00:00",
                             bucket_end="2026-07-04T01:00:00+00:00",
-                            counters={"route.direct": 1},
+                            counters={"command.disconnect.success": 1},
                         ),
                         MetricsBucket(
                             bucket_start="2026-07-06T00:00:00+00:00",
                             bucket_end="2026-07-06T01:00:00+00:00",
-                            counters={"route.current": 1},
+                            counters={"command.connect.success": 1},
                         ),
                     ),
                 )
@@ -194,7 +195,7 @@ class MetricsStoreTests(unittest.TestCase):
             pruned = store.prune(datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc))
 
         self.assertEqual(len(pruned.buckets), 1)
-        self.assertEqual(pruned.buckets[0].counters, {"route.current": 1})
+        self.assertEqual(pruned.buckets[0].counters, {"command.connect.success": 1})
 
     def test_purge_removes_metrics_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -219,6 +220,77 @@ class MetricsStoreTests(unittest.TestCase):
 
             with self.assertRaises(PersistentValidationError):
                 MetricsStore(path).load()
+
+    def test_store_removes_identifier_dimensions_before_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metrics.json"
+            store = MetricsStore(path)
+            canaries = (
+                "alice@example.com",
+                "198.51.100.7",
+                "https://secret.example.test/token",
+                "group-personal",
+            )
+            store.save(
+                MetricsDocument(
+                    enabled=True,
+                    buckets=(
+                        MetricsBucket(
+                            bucket_start="2026-07-06T00:00:00+00:00",
+                            bucket_end="2026-07-06T01:00:00+00:00",
+                            counters={
+                                "command.connect.success": 1,
+                                f"profile.{canaries[0]}.connect.success": 1,
+                                f"node_group.{canaries[1]}.auto_test.unavailable": 1,
+                                f"route_action.{canaries[2]}": 1,
+                                f"rule_group.{canaries[3]}": 1,
+                            },
+                        ),
+                    ),
+                )
+            )
+            raw = path.read_text(encoding="utf-8")
+            restored = store.load()
+
+        self.assertEqual(
+            restored.buckets[0].counters, {"command.connect.success": 1}
+        )
+        for canary in canaries:
+            self.assertNotIn(canary, raw)
+
+    def test_load_migrates_legacy_identifier_dimensions_on_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metrics.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "enabled": True,
+                        "retention_days": 7,
+                        "redaction_mode": "aggregate",
+                        "max_bytes": 1024 * 1024,
+                        "buckets": [
+                            {
+                                "bucket_start": "2026-07-06T00:00:00+00:00",
+                                "bucket_end": "2026-07-06T01:00:00+00:00",
+                                "counters": {
+                                    "command.connect.success": 1,
+                                    "profile.alice_example.com_198.51.100.7.connect.success": 2,
+                                },
+                            }
+                        ],
+                        "updated_at": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            restored = MetricsStore(path).load()
+            raw = path.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            restored.buckets[0].counters, {"command.connect.success": 1}
+        )
+        self.assertNotIn("alice_example.com_198.51.100.7", raw)
 
     def test_atomic_save_does_not_leave_temp_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -254,10 +326,12 @@ class MetricsRecorderTests(unittest.TestCase):
         counters = restored.buckets[0].counters
         self.assertEqual(counters["command.connect.attempt"], 1)
         self.assertEqual(counters["command.connect.success"], 1)
-        self.assertEqual(counters["profile.profile_one.connect.success"], 1)
         self.assertEqual(counters["rotation.manual.status.recovered"], 1)
-        self.assertEqual(counters["route_action.group:secure"], 1)
-        self.assertEqual(counters["rule_group.custom_group"], 1)
+        self.assertEqual(counters["route_action.recorded"], 1)
+        self.assertEqual(counters["rule_group.recorded"], 1)
+        self.assertNotIn("profile.profile_one.connect.success", counters)
+        self.assertNotIn("group:secure", " ".join(counters))
+        self.assertNotIn("custom_group", " ".join(counters))
 
 
 if __name__ == "__main__":

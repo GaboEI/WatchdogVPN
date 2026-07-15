@@ -2,11 +2,90 @@
 set -euo pipefail
 
 VERSION="v0.3.1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+canonical_cli_path() {
+  if [[ -n "${WATCHDOGVPN_CANONICAL_CLI:-}" ]]; then
+    if [[ ! -x "$WATCHDOGVPN_CANONICAL_CLI" ]]; then
+      printf 'watchdog compatibility alias: canonical CLI is not executable: %s\n' "$WATCHDOGVPN_CANONICAL_CLI" >&2
+      return 69
+    fi
+    printf '%s\n' "$WATCHDOGVPN_CANONICAL_CLI"
+    return 0
+  fi
+  if [[ -x "$SCRIPT_DIR/watchdog" ]]; then
+    printf '%s/watchdog\n' "$SCRIPT_DIR"
+    return 0
+  fi
+  if command -v watchdog >/dev/null 2>&1; then
+    command -v watchdog
+    return 0
+  fi
+  printf 'watchdog compatibility alias: canonical watchdog CLI is unavailable\n' >&2
+  return 69
+}
+
+compatibility_warning() {
+  if [[ "${WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING:-0}" != "1" ]]; then
+    printf 'warning: watchdogvpn is deprecated; use watchdog (the canonical CLI)\n' >&2
+  fi
+}
+
+route_compatibility_alias() {
+  local canonical_cli topic
+  canonical_cli="$(canonical_cli_path)" || return $?
+  compatibility_warning
+
+  case "${1:-}" in
+    ""|--help|-h)
+      exec "$canonical_cli" --help
+      ;;
+    --version)
+      exec "$canonical_cli" version
+      ;;
+    help)
+      shift
+      topic="${1:-}"
+      if [[ -z "$topic" || "$topic" == "help" || "$topic" == "--help" || "$topic" == "-h" ]]; then
+        exec "$canonical_cli" --help
+      fi
+      shift || true
+      case "$topic" in
+        backend|config|logs|report|runtime-update|tui|update-check|update-plan)
+          exec "$canonical_cli" maintenance "$topic" --help "$@"
+          ;;
+        *)
+          exec "$canonical_cli" "$topic" --help "$@"
+          ;;
+      esac
+      ;;
+    backend|config|logs|report|runtime-update|tui|update-check|update-plan)
+      exec "$canonical_cli" maintenance "$@"
+      ;;
+    *)
+      exec "$canonical_cli" "$@"
+      ;;
+  esac
+}
+
+if [[ "${WATCHDOGVPN_MAINTENANCE_INTERNAL:-0}" != "1" ]]; then
+  route_compatibility_alias "$@"
+  exit $?
+fi
+
+case "${1:-}" in
+  backend|config|logs|report|runtime-update|tui|update-check|update-plan)
+    ;;
+  *)
+    printf 'watchdog maintenance backend: unsupported internal command: %s\n' "${1:-<empty>}" >&2
+    exit 64
+    ;;
+esac
+
 REPORT_DIR="${WATCHDOGVPN_REPORT_DIR:-$HOME}"
 TRUTH_BIN="${WATCHDOGVPN_TRUTH_BIN:-/usr/local/bin/vpn_truth_check}"
 VPNCTL_BIN="${WATCHDOGVPN_VPNCTL_BIN:-/usr/local/bin/vpnctl}"
 BACKEND_BIN="${WATCHDOGVPN_BACKEND_BIN:-/usr/local/bin/vpn_backend}"
-DOCTOR_BIN="${WATCHDOGVPN_DOCTOR_BIN:-./doctor.sh}"
 TUI_BIN="${WATCHDOGVPN_TUI_BIN:-$HOME/.local/bin/VPN}"
 CONFIG_FILE="${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}"
 LOG_DIR="${WATCHDOGVPN_LOG_DIR:-/var/log/myvpn}"
@@ -15,17 +94,16 @@ REPO_DIR="${WATCHDOGVPN_REPO_DIR:-$(pwd)}"
 
 usage() {
   cat <<'USAGE'
-WatchdogVPN command line
+WatchdogVPN maintenance commands
 
-Primary command for WatchdogVPN diagnostics, configuration and TUI access.
+These commands are exposed by the canonical watchdog CLI. The standalone
+watchdogvpn name is a deprecated compatibility alias.
 
 Usage:
-  watchdogvpn <command> [options]
+  watchdog maintenance <command> [options]
 
 Read-only commands:
-  status        Show VPN runtime status through vpnctl.
   backend       Show active backend capability summary.
-  doctor        Run repository doctor when available.
   report        Generate a local sanitized diagnostic report.
   logs          Read recent WatchdogVPN logs without sudo.
   update-check  Show local repository update status without network access.
@@ -33,8 +111,6 @@ Read-only commands:
   runtime-update
                 Run a confirmed safe runtime update.
   config get    Read persistent WatchdogVPN configuration.
-  version       Print command version.
-  help          Show this help.
 
 Configuration commands:
   config set    Update a validated safe configuration key.
@@ -44,18 +120,17 @@ Interactive commands:
   tui           Open the WatchdogVPN terminal UI.
 
 Common examples:
-  watchdogvpn status
-  watchdogvpn backend status
-  watchdogvpn report
-  watchdogvpn logs
-  watchdogvpn update-check
-  watchdogvpn update-plan
-  watchdogvpn runtime-update --preflight
-  watchdogvpn logs watchdog 120
-  watchdogvpn config get language.current
-  watchdogvpn config set tui.theme high_contrast
-  watchdogvpn config reset tui --yes
-  watchdogvpn tui
+  watchdog maintenance backend status
+  watchdog maintenance report
+  watchdog maintenance logs
+  watchdog maintenance update-check
+  watchdog maintenance update-plan
+  watchdog maintenance runtime-update --preflight
+  watchdog maintenance logs events 120
+  watchdog maintenance config get language.current
+  watchdog maintenance config set tui.theme high_contrast
+  watchdog maintenance config reset tui --yes
+  watchdog maintenance tui
 
 Safety:
   report writes a local file only. Nothing is uploaded automatically.
@@ -64,8 +139,8 @@ Safety:
   update-plan prints commands only; it does not execute them.
   runtime-update requires explicit confirmation before executing updates.
   config set/reset creates a backup before modifying configuration.
-  daemon-backed connect, disconnect, status and rotate live in the Python
-  watchdog CLI.
+  Daemon-backed connect, disconnect, status and rotate are top-level watchdog
+  commands and never use this maintenance backend.
 USAGE
 }
 
@@ -80,18 +155,18 @@ log_path() {
 logs_usage() {
   cat <<'USAGE'
 Usage:
-  watchdogvpn logs [events|dispatcher] [lines]
+  watchdog maintenance logs [events|dispatcher] [lines]
 
 Reads recent local WatchdogVPN logs without sudo and sanitizes obvious
 sensitive values. Defaults to:
-  watchdogvpn logs events 80
+  watchdog maintenance logs events 80
 USAGE
 }
 
 update_check_usage() {
   cat <<'USAGE'
 Usage:
-  watchdogvpn update-check
+  watchdog maintenance update-check
 
 Shows local source checkout status without network access. It does not run
 git fetch, git pull, git push, update.sh or sudo.
@@ -101,7 +176,7 @@ USAGE
 update_plan_usage() {
   cat <<'USAGE'
 Usage:
-  watchdogvpn update-plan
+  watchdog maintenance update-plan
 
 Prints safe manual update steps for the current checkout state. It prints
 commands only and does not execute them.
@@ -111,9 +186,9 @@ USAGE
 runtime_update_usage() {
   cat <<'USAGE'
 Usage:
-  watchdogvpn runtime-update
-  watchdogvpn runtime-update --preflight
-  watchdogvpn runtime-update --help
+  watchdog maintenance runtime-update
+  watchdog maintenance runtime-update --preflight
+  watchdog maintenance runtime-update --help
 
 Runs the safe runtime update flow for the current source checkout.
 
@@ -137,9 +212,9 @@ USAGE
 config_usage() {
   cat <<'USAGE'
 Usage:
-  watchdogvpn config get [section.key]
-  watchdogvpn config set section.key value
-  watchdogvpn config reset [language|tui|reporting|all] --yes
+  watchdog maintenance config get [section.key]
+  watchdog maintenance config set section.key value
+  watchdog maintenance config reset [language|tui|reporting|all] --yes
 
 Readable:
   config get                  Print sanitized config.
@@ -167,8 +242,8 @@ USAGE
 backend_usage() {
   cat <<'USAGE'
 Usage:
-  watchdogvpn backend status
-  watchdogvpn backend help
+  watchdog maintenance backend status
+  watchdog maintenance backend help
 
 Shows the active WatchdogVPN backend contract without changing runtime state.
 In this phase only the "custom-vps" backend is implemented.
@@ -217,6 +292,11 @@ sanitize_stream() {
     -e "s#${HOME}#<home>#g" \
     -e 's#(https?://)[^/@[:space:]]+@#\1<redacted>@#g' \
     -e 's#https?://[^[:space:]]*device_code[^[:space:]]*#<redacted-device-code-url>#g' \
+    -e 's#([?&](access_)?token=)[^&[:space:]]+#\1<redacted>#Ig' \
+    -e 's#([?&](refresh_token|api_key|password|passwd|secret|private_key|client_secret)=)[^&[:space:]]+#\1<redacted>#Ig' \
+    -e 's#\b(authorization:[[:space:]]*)(bearer|basic)[[:space:]]+[^[:space:]]+#\1\2 <redacted>#Ig' \
+    -e 's#\b(cookie|set-cookie):[[:space:]]*[^[:space:]]+#\1: <redacted>#Ig' \
+    -e 's#\b(token|access_token|refresh_token|api_key|password|passwd|secret|private_key|client_secret|authorization|cookie|set-cookie)=([^[:space:];,&]+)#\1=<redacted>#Ig' \
     -e 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/<redacted-email>/g' \
     -e 's/(^|[^[:alnum:]:])(::([0-9A-Fa-f]{1,4})?)([^[:alnum:]:]|$)/\1<redacted-ipv6>\4/g' \
     -e 's/(^|[^[:alnum:]:])(([0-9A-Fa-f]{1,4}:){1,7}:([0-9A-Fa-f]{1,4})?)([^[:alnum:]:]|$)/\1<redacted-ipv6>\5/g' \
@@ -225,7 +305,7 @@ sanitize_stream() {
 }
 
 sanitize_remote_url() {
-  sed -E -e 's#(https?://)[^/@[:space:]]+@#\1<redacted>@#g'
+  sanitize_stream
 }
 
 git_repo_command() {
@@ -703,7 +783,8 @@ git_commit() {
 generate_report() {
   local stamp report commit
   stamp="$(date +%Y%m%d-%H%M%S)"
-  report="$REPORT_DIR/watchdogvpn-report-$stamp.txt"
+  report="$(mktemp "$REPORT_DIR/watchdogvpn-report-$stamp.XXXXXX.txt")"
+  chmod 600 "$report"
   commit="$(git_commit)"
 
   {
@@ -889,7 +970,7 @@ config_set() {
   name="${key#*.}"
 
   [[ -n "$key" && -n "$value" && "$section" != "$key" ]] || {
-    printf 'usage: watchdogvpn config set section.key value\n' >&2
+    printf 'usage: watchdog maintenance config set section.key value\n' >&2
     return 64
   }
   [[ -r "$CONFIG_FILE" && -w "$CONFIG_FILE" ]] || {
@@ -1032,45 +1113,14 @@ backend_command() {
 help_command() {
   local topic="${1:-}"
   case "$topic" in
-    ""|help|--help|-h)
-      usage
-      ;;
-    logs)
-      logs_usage
-      ;;
-    update-check)
-      update_check_usage
-      ;;
-    update-plan)
-      update_plan_usage
-      ;;
-    runtime-update)
-      runtime_update_usage
-      ;;
-    config)
-      config_usage
-      ;;
-    backend)
-      backend_usage
-      ;;
-    status)
-      printf 'Usage:\n  watchdogvpn status\n\nShows VPN runtime status through vpnctl.\n'
-      ;;
-    doctor)
-      printf 'Usage:\n  watchdogvpn doctor\n\nRuns the repository doctor when available.\n'
-      ;;
     report)
-      printf 'Usage:\n  watchdogvpn report\n\nGenerates a local sanitized diagnostic report. Nothing is uploaded.\n'
+      printf 'Usage:\n  watchdog maintenance report\n\nGenerates a local sanitized diagnostic report. Nothing is uploaded.\n'
       ;;
     tui)
-      printf 'Usage:\n  watchdogvpn tui\n\nOpens the WatchdogVPN terminal UI.\n'
-      ;;
-    version)
-      printf 'Usage:\n  watchdogvpn version\n\nPrints the WatchdogVPN CLI version.\n'
+      printf 'Usage:\n  watchdog maintenance tui\n\nOpens the WatchdogVPN terminal UI.\n'
       ;;
     *)
-      printf 'unknown help topic: %s\n\n' "$topic" >&2
-      usage >&2
+      printf 'unknown maintenance help topic: %s\n' "$topic" >&2
       return 64
       ;;
   esac
@@ -1080,21 +1130,29 @@ cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
-  status)
-    exec "$VPNCTL_BIN" status "$@"
-    ;;
-  doctor)
-    if [[ -x "$DOCTOR_BIN" ]]; then
-      exec "$DOCTOR_BIN" "$@"
-    fi
-    printf 'doctor unavailable from this directory. Run from the WatchdogVPN repository root.\n' >&2
-    exit 1
-    ;;
   tui)
+    case "${1:-}" in
+      help|--help|-h)
+        help_command tui
+        exit 0
+        ;;
+    esac
     exec "$TUI_BIN" "$@"
     ;;
   report)
-    generate_report
+    case "${1:-}" in
+      help|--help|-h)
+        help_command report
+        ;;
+      "")
+        generate_report
+        ;;
+      *)
+        printf 'unknown report argument: %s\n\n' "$1" >&2
+        help_command report >&2
+        exit 64
+        ;;
+    esac
     ;;
   logs)
     logs_command "$@"
@@ -1153,15 +1211,8 @@ case "$cmd" in
   backend)
     backend_command "$@"
     ;;
-  version)
-    printf 'WatchdogVPN %s\n' "$VERSION"
-    ;;
-  help|--help|-h)
-    help_command "$@"
-    ;;
   *)
-    printf 'unknown command: %s\n\n' "$cmd" >&2
-    usage >&2
+    printf 'unknown maintenance command: %s\n' "$cmd" >&2
     exit 64
     ;;
 esac

@@ -68,13 +68,28 @@ assert_contains() {
   fi
 }
 
+assert_exit() {
+  local name="$1" mode="$2" expected="$3" actual="$4"
+  if (( actual != expected )); then
+    printf '%s (%s): expected exit %s, got %s\n' "$name" "$mode" "$expected" "$actual" >&2
+    exit 1
+  fi
+}
+
 run_case() {
   local name="$1" tun="$2" route="$3" public_ip="$4" expected_status="$5" expected_exit="$6"
   local output rc json
 
   write_fake_commands "$tun" "$route" "$public_ip"
 
+  # WDCLI-008: every mode's real process exit code must now agree with
+  # status_code($STATUS), not just --quiet - captured with set +e around
+  # each call since these can legitimately exit nonzero (DEGRADED/DOWN).
+  set +e
   output="$(PATH="$tmpdir:$PATH" VPN_TRUTH_BACKEND_BIN="$tmpdir/vpn_backend" "$SCRIPT" --shell)"
+  rc=$?
+  set -e
+  assert_exit "$name" "--shell" "$expected_exit" "$rc"
   assert_contains "$output" "BACKEND=custom-vps"
   assert_contains "$output" "INTERFACE=tun0"
   assert_contains "$output" "STATUS=$expected_status"
@@ -83,12 +98,13 @@ run_case() {
   PATH="$tmpdir:$PATH" VPN_TRUTH_BACKEND_BIN="$tmpdir/vpn_backend" "$SCRIPT" --quiet >/dev/null
   rc=$?
   set -e
-  if (( rc != expected_exit )); then
-    printf '%s: expected quiet exit %s, got %s\\n' "$name" "$expected_exit" "$rc" >&2
-    exit 1
-  fi
+  assert_exit "$name" "--quiet" "$expected_exit" "$rc"
 
+  set +e
   json="$(PATH="$tmpdir:$PATH" VPN_TRUTH_BACKEND_BIN="$tmpdir/vpn_backend" "$SCRIPT" --json)"
+  rc=$?
+  set -e
+  assert_exit "$name" "--json" "$expected_exit" "$rc"
   assert_contains "$json" "\"backend\":\"custom-vps\""
   assert_contains "$json" "\"interface\":\"tun0\""
   assert_contains "$json" "\"status\":\"$expected_status\""

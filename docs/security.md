@@ -57,6 +57,12 @@ Product-managed runtime files include:
 - product units under `/etc/systemd/system/`
 - product dispatcher hook under `/etc/NetworkManager/dispatcher.d/`
 - product logrotate policy under `/etc/logrotate.d/myvpn`
+- product kernel tunable defaults under `/etc/sysctl.d/99-watchdogvpn.conf`
+  (`net.ipv4.conf.all.src_valid_mark` and
+  `net.ipv4.conf.default.src_valid_mark`, required for AmneziaWG/WireGuard
+  fwmark default-route policy routing; the daemon itself cannot set kernel
+  tunables under `ProtectKernelTunables=true`, so this is applied once at
+  install/update time and reapplied by `systemd-sysctl.service` on boot)
 - TUI launcher under `~/.local/bin/VPN`
 
 User configuration and state that must be preserved by default:
@@ -85,6 +91,23 @@ will own resolver selection and custom DNS behavior without depending on an
 external DNS service. `vpn_dns_rescue` remains as a fallback helper to recover
 name resolution when local DNS services are removed or broken during
 uninstall/recovery work.
+
+## Kill Switch Scope
+
+The kill switch is a system-wide fail-closed firewall guard for WatchdogVPN's
+own protected route. When it is genuinely active after a WatchdogVPN connection
+failure, outbound traffic that is not allowed through the active WatchdogVPN TUN
+path is blocked.
+
+This includes other VPN or proxy clients that were already connected before the
+WatchdogVPN failure. Phase 23 field validation proved this behavior with a real
+external VPN active: after a controlled WatchdogVPN runtime failure triggered
+the kill switch, that external VPN's egress was also blocked. This is expected
+by design, not a separate external-client allowlist failure. Users who run
+another VPN client alongside WatchdogVPN should treat an active WatchdogVPN kill
+switch as taking precedence over the host's normal outbound networking until
+WatchdogVPN recovers, disconnects cleanly or the panic button removes the
+firewall rules.
 
 ## WatchdogVPN Panic Button
 
@@ -266,7 +289,7 @@ The uninstall contract is:
 
 ## Local Diagnostic Reports
 
-`watchdogvpn report` generates a local text report for support and debugging. It
+`watchdog maintenance report` generates a local text report for support and debugging. It
 does not upload anything automatically. The report applies basic sanitization for
 common sensitive values such as IPv4/IPv6 addresses, email addresses,
 device-code URLs and the user's home directory path, but users should still

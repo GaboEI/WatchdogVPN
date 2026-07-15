@@ -4,7 +4,11 @@ import re
 import shutil
 import sys
 
-from watchdogvpn.formatting import strip_ansi
+from watchdogvpn.formatting import (
+    clip_to_width,
+    terminal_safe_text,
+    truncate_to_width,
+)
 from watchdogvpn.styles import BG, BOLD, CSI, FG, RESET
 
 
@@ -22,6 +26,19 @@ def move(y: int, x: int):
 
 
 def write(y: int, x: int, text: str, style: str = ""):
+    """Write only inside the current terminal viewport.
+
+    Layout callers intentionally stay simple, so this final primitive enforces
+    the invariant that a resize can never produce a cursor address beyond the
+    current rows or columns.
+    """
+    rows, cols = get_size()
+    if y < 1 or x < 1 or y > rows or x > cols:
+        return
+    available = cols - x + 1
+    text = clip_to_width(text, available)
+    if not text:
+        return
     move(y, x)
     sys.stdout.write(style + text + RESET)
 
@@ -43,8 +60,7 @@ def box(y: int, x: int, h: int, w: int, title: str = ""):
 
 
 def fit(text: str, width: int) -> str:
-    text = strip_ansi(str(text)).replace("\n", " ").strip()
-    return text if len(text) <= width else text[: max(0, width - 1)] + "…"
+    return truncate_to_width(text, width, ellipsis="…")
 
 
 def flag_from_iso(iso: str) -> str:
@@ -56,7 +72,7 @@ def flag_from_iso(iso: str) -> str:
 
 
 def semantic_style(key: str, value: str) -> str:
-    v = value.strip().lower()
+    v = terminal_safe_text(value).lower()
 
     if key in ("VPN", "Tun"):
         if "activo" in v or v in ("active", "up"):

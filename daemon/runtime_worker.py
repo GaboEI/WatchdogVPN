@@ -3,10 +3,14 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
+import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from daemon.event_bus import EventBus
+from drivers.base import ManagementPathSafetyError, TeardownBarrierError, UnsupportedDriverPolicyError
 from daemon.protocol import (
     COMMAND_CONNECT,
     COMMAND_DISCONNECT,
@@ -18,11 +22,12 @@ from daemon.protocol import (
     EVENT_STATE_CHANGED,
     ALLOWED_COMMANDS,
     Event,
+    MUTATING_COMMANDS,
     Response,
     UnknownCommandError,
 )
 from metrics.recorder import MetricsRecorder
-from models.connection_state import ConnectionState
+from models.connection_state import FAILURE_STATUSES, ConnectionState
 from models.profile import Profile
 
 
@@ -39,6 +44,9 @@ class RuntimeLike(Protocol):
         ...
 
     def status(self) -> ConnectionState:
+        ...
+
+    def automatic_actions_enabled(self) -> bool:
         ...
 
     def rotate_now(self, force: bool = False) -> ConnectionState:
@@ -63,10 +71,23 @@ _SCHEDULED_ROTATE = object()
 class WorkerRequest:
     command: str
     payload: dict[str, Any] = field(default_factory=dict)
+    command_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    deadline_monotonic: float | None = None
     response_queue: "queue.Queue[Response]" = field(default_factory=queue.Queue)
+    cancellation_requested: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass(slots=True)
+class _CommandRecord:
+    command: str
+    state: str = "queued"
+    response: Response | None = None
+    request: WorkerRequest | None = None
 
 
 class RuntimeWorker:
+    _MAX_RETAINED_FINAL_OUTCOMES = 512
+
     def __init__(
         self,
         runtime: RuntimeLike,
@@ -81,6 +102,9 @@ class RuntimeWorker:
         self._started = threading.Event()
         self._stopped = threading.Event()
         self._last_tick_status: str | None = None
+        self._command_lock = threading.Lock()
+        self._command_records: dict[str, _CommandRecord] = {}
+        self._final_command_ids: deque[str] = deque()
 
     def start(self) -> None:
         if self._thread.is_alive():
@@ -88,26 +112,109 @@ class RuntimeWorker:
         self._thread.start()
         self._started.wait(timeout=5.0)
 
-    def stop(self, timeout: float | None = 5.0) -> None:
+    def stop(self, timeout: float | None = 5.0) -> bool:
         if not self._thread.is_alive():
-            return
+            return True
         self._queue.put(_STOP)
         self._thread.join(timeout=timeout)
+        return not self._thread.is_alive()
 
     def submit(
         self,
         command: str,
         payload: dict[str, Any] | None = None,
         timeout: float | None = 30.0,
+        *,
+        command_id: str | None = None,
+        deadline_seconds: float | None = None,
     ) -> Response:
-        request = WorkerRequest(command=command, payload=dict(payload or {}))
+        request = WorkerRequest(
+            command=command,
+            payload=dict(payload or {}),
+            command_id=command_id or str(uuid.uuid4()),
+            deadline_monotonic=(time.monotonic() + deadline_seconds)
+            if deadline_seconds
+            else None,
+        )
         self.submit_request(request)
         return request.response_queue.get(timeout=timeout)
 
     def submit_request(self, request: WorkerRequest) -> None:
         if not self._thread.is_alive():
             raise RuntimeError("runtime worker is not running")
+        if request.command not in MUTATING_COMMANDS:
+            self._queue.put(request)
+            return
+        with self._command_lock:
+            if request.command_id in self._command_records:
+                raise RuntimeError(f"duplicate command id: {request.command_id}")
+            self._command_records[request.command_id] = _CommandRecord(
+                command=request.command,
+                request=request,
+            )
         self._queue.put(request)
+
+    def command_outcome(self, command_id: str) -> Response:
+        """Return the authoritative state or final response for one IPC command.
+
+        This bypasses the serialized runtime queue deliberately: status lookup
+        must remain available while a network mutation is still executing.
+        """
+        with self._command_lock:
+            record = self._command_records.get(command_id)
+            if record is None:
+                return Response(
+                    ok=False,
+                    payload={"command_id": command_id, "error_kind": "command_not_found"},
+                    error="command outcome not found",
+                )
+            if record.response is not None:
+                return record.response
+            return Response(
+                ok=False,
+                payload={
+                    "command_id": command_id,
+                    "command": record.command,
+                    "outcome": record.state,
+                    "error_kind": "command_in_progress",
+                },
+                error="command is still running",
+            )
+
+    def cancel_command(self, command_id: str) -> Response:
+        """Cancel only a command that has not started executing.
+
+        Runtime network operations are not safely interruptible in this worker.
+        A running command is therefore never reported as cancelled; callers get
+        its ID and must query the final authoritative outcome instead.
+        """
+        with self._command_lock:
+            record = self._command_records.get(command_id)
+            if record is None:
+                return Response(
+                    ok=False,
+                    payload={"command_id": command_id, "error_kind": "command_not_found"},
+                    error="command outcome not found",
+                )
+            if record.response is not None:
+                return record.response
+            if record.state == "queued" and record.request is not None:
+                record.request.cancellation_requested.set()
+                response = _cancelled_response(command_id, record.command)
+                record.state = "cancelled"
+                record.response = response
+                self._retain_final_command_locked(command_id)
+                return response
+            return Response(
+                ok=False,
+                payload={
+                    "command_id": command_id,
+                    "command": record.command,
+                    "outcome": "running",
+                    "error_kind": "command_in_progress",
+                },
+                error="command is already running; query command outcome for its final result",
+            )
 
     def submit_tick(self) -> None:
         """Enqueue an autonomous health-check tick (see daemon.watchdog_loop).
@@ -151,9 +258,57 @@ class RuntimeWorker:
                     continue
                 if not isinstance(item, WorkerRequest):
                     continue
-                item.response_queue.put(self._handle_request(item))
+                self._execute_request(item)
         finally:
             self._stopped.set()
+
+    def _execute_request(self, request: WorkerRequest) -> None:
+        if request.command not in MUTATING_COMMANDS:
+            request.response_queue.put(self._handle_request(request))
+            return
+        if request.cancellation_requested.is_set() or _deadline_expired(request):
+            response = _cancelled_response(request.command_id, request.command)
+            self._record_final_response(request, response, state="cancelled")
+            request.response_queue.put(response)
+            return
+        with self._command_lock:
+            record = self._command_records.get(request.command_id)
+            if record is None or record.response is not None:
+                response = _cancelled_response(request.command_id, request.command)
+                request.response_queue.put(response)
+                return
+            record.state = "running"
+        response = _with_command_metadata(
+            self._handle_request(request), request.command_id, request.command
+        )
+        self._record_final_response(request, response, state="completed")
+        request.response_queue.put(response)
+
+    def _record_final_response(
+        self,
+        request: WorkerRequest,
+        response: Response,
+        *,
+        state: str,
+    ) -> None:
+        with self._command_lock:
+            record = self._command_records.get(request.command_id)
+            if record is None:
+                return
+            # A queued cancellation is final before the queued item reaches
+            # the worker. Never overwrite that acknowledged cancellation.
+            if record.response is None:
+                record.state = state
+                record.response = response
+                self._retain_final_command_locked(request.command_id)
+
+    def _retain_final_command_locked(self, command_id: str) -> None:
+        self._final_command_ids.append(command_id)
+        while len(self._final_command_ids) > self._MAX_RETAINED_FINAL_OUTCOMES:
+            expired_id = self._final_command_ids.popleft()
+            record = self._command_records.get(expired_id)
+            if record is not None and record.response is not None:
+                self._command_records.pop(expired_id, None)
 
     def _handle_tick(self) -> None:
         # A tick has no caller waiting on a response - an unexpected
@@ -210,11 +365,69 @@ class RuntimeWorker:
             return Response(ok=False, error=str(exc))
 
     def _handle_connect(self, payload: dict[str, Any]) -> Response:
-        profile_id = _require_string(payload.get("profile_id"), "profile_id")
+        try:
+            profile_id = _require_string(payload.get("profile_id"), "profile_id")
+        except ValueError as exc:
+            return Response(ok=False, payload={"error_kind": "invalid_input"}, error=str(exc))
         profile = self.runtime.profile_store.get(profile_id)
         if profile is None:
-            return Response(ok=False, error=f"profile not found: {profile_id}")
-        connected = self.runtime.connect(profile)
+            return Response(
+                ok=False,
+                payload={"error_kind": "profile_not_found"},
+                error=f"profile not found: {profile_id}",
+            )
+        try:
+            connected = self.runtime.connect(profile)
+        except UnsupportedDriverPolicyError as exc:
+            state_payload = _state_payload(self.runtime.status())
+            self.metrics_recorder.record_connection_result(
+                profile_id=profile.id,
+                connected=False,
+            )
+            return Response(
+                ok=False,
+                payload={
+                    "error_kind": "unsupported_policy",
+                    "profile_id": profile.id,
+                    "state": state_payload,
+                    "unsupported_capabilities": list(exc.unsupported_capabilities),
+                    "driver": exc.driver_name,
+                },
+                error=str(exc),
+            )
+        except ManagementPathSafetyError as exc:
+            state_payload = _state_payload(self.runtime.status())
+            self.metrics_recorder.record_connection_result(
+                profile_id=profile.id,
+                connected=False,
+            )
+            return Response(
+                ok=False,
+                payload={
+                    "error_kind": "management_path_unprotected",
+                    "profile_id": profile.id,
+                    "state": state_payload,
+                    "error_detail": str(exc),
+                },
+                error=str(exc),
+            )
+        except TeardownBarrierError as exc:
+            state_payload = _state_payload(self.runtime.status())
+            self.metrics_recorder.record_connection_result(
+                profile_id=profile.id,
+                connected=False,
+            )
+            self._broadcast_state(state_payload)
+            return Response(
+                ok=False,
+                payload={
+                    "error_kind": "cleanup_failed",
+                    "profile_id": profile.id,
+                    "state": state_payload,
+                    "error_detail": str(exc),
+                },
+                error=str(exc),
+            )
         state = self.runtime.status()
         state_payload = _state_payload(state)
         self.metrics_recorder.record_connection_result(
@@ -222,13 +435,19 @@ class RuntimeWorker:
             connected=connected,
         )
         self._broadcast_state(state_payload)
+        response_payload = {
+            "connected": connected,
+            "profile_id": profile.id,
+            "state": state_payload,
+        }
+        if not connected:
+            response_payload["error_kind"] = "connect_failed"
+            error_detail = str(getattr(self.runtime, "last_error", "") or "").strip()
+            if error_detail:
+                response_payload["error_detail"] = error_detail
         return Response(
             ok=connected,
-            payload={
-                "connected": connected,
-                "profile_id": profile.id,
-                "state": state_payload,
-            },
+            payload=response_payload,
             error=None if connected else "connect failed",
         )
 
@@ -254,12 +473,23 @@ class RuntimeWorker:
         force = payload.get("force", False)
         if not isinstance(force, bool):
             return Response(ok=False, error="force must be a boolean")
+        performed = self.runtime.automatic_actions_enabled()
         state = self.runtime.rotate_now(force=force)
         state_payload = _state_payload(state)
+        # A no-op because the VPN is intentionally off (performed=False) is
+        # not a failure - the command correctly determined there was
+        # nothing to rotate. ok only goes False when a rotation was
+        # actually attempted and did not land in a healthy status
+        # (WDCLI-002): that's the one case that must not look like success.
+        ok = (not performed) or state.status not in FAILURE_STATUSES
         self.metrics_recorder.record_manual_rotation(state)
         self.event_bus.broadcast(Event(EVENT_ROTATION, state_payload))
         self._broadcast_state(state_payload)
-        return Response(ok=True, payload={"state": state_payload})
+        return Response(
+            ok=ok,
+            payload={"state": state_payload, "performed": performed},
+            error=None if ok else _rotate_outcome_reason(state.status),
+        )
 
     def _handle_node_group_auto_test(self, payload: dict[str, Any]) -> Response:
         group_name = _require_string(payload.get("group_name"), "group_name")
@@ -276,6 +506,39 @@ class RuntimeWorker:
 
 def _state_payload(state: ConnectionState) -> dict[str, Any]:
     return state.to_dict()
+
+
+def _rotate_outcome_reason(status: str) -> str:
+    return f"rotation did not recover a healthy connection: status={status}"
+
+
+def _deadline_expired(request: WorkerRequest) -> bool:
+    return request.deadline_monotonic is not None and time.monotonic() >= request.deadline_monotonic
+
+
+def _cancelled_response(command_id: str, command: str) -> Response:
+    return Response(
+        ok=False,
+        payload={
+            "command_id": command_id,
+            "command": command,
+            "outcome": "cancelled",
+            "error_kind": "command_cancelled",
+        },
+        error="command cancelled before execution",
+    )
+
+
+def _with_command_metadata(response: Response, command_id: str, command: str) -> Response:
+    payload = dict(response.payload)
+    payload.update(
+        {
+            "command_id": command_id,
+            "command": command,
+            "outcome": "completed",
+        }
+    )
+    return Response(ok=response.ok, payload=payload, error=response.error)
 
 
 def _require_string(value: Any, field_name: str) -> str:

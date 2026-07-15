@@ -1,0 +1,374 @@
+# Phase 23 Task 23.2 - CLI Field Validation Execution
+
+Date: 2026-07-10
+Branch: `phase-23-cli-field-validation`
+Status: closed after Task 23.2.1 M4 addendum, 2026-07-12
+
+## Scope
+
+Task 23.2 executes the approved Task 23.1 field validation plan through the CLI
+only. The TUI is not valid evidence for this phase.
+
+This document and its runner do not prove the matrix by themselves. They define
+the operator-run execution path and evidence format. Real validation must be
+run by the operator in a disposable VM, lab host or explicitly approved field
+machine.
+
+## Runner
+
+The primary operator-run wrapper is:
+
+```text
+tests/vm/phase23_run_cli_field_section.sh
+```
+
+It validates the private manifest, regenerates the runbook, checks the repo
+state and then delegates to the Python runner for one matrix section.
+
+The lower-level operator-run helper is:
+
+```text
+tests/vm/phase23_cli_field_validation_runner.py
+```
+
+It reads the same local no-secrets manifest as the Task 23.1 runbook generator,
+executes one matrix section at a time, and writes command evidence under the
+manifest's `evidence_dir`.
+
+The runner:
+
+- refuses to run unless `WATCHDOGVPN_FIELD_VALIDATION=1` is set, except in
+  `--dry-run`;
+- refreshes sudo through the wrapper before real operator-run sections and uses
+  non-interactive sudo for nftables snapshots, so expired sudo credentials do
+  not turn a firewall snapshot into a hanging command;
+- restarts `watchdogvpn.service` after the installed runtime update in
+  preflight, because replacing installed Python files does not make an already
+  running daemon reload imported modules;
+- executes commands with Python subprocess argv lists, never `shell=True`;
+- captures command, redacted stdout/stderr, return code and timestamps as JSON;
+- redacts the provider URL loaded from `provider.url_file`;
+- records the real imported profile IDs under
+  `<evidence_dir>/phase23-profile-id-map.json` and uses them for protocol
+  connection checks instead of assuming fixture filenames become profile IDs;
+- fails profile import evidence when an imported protocol does not match the
+  matrix protocol requested for that fixture;
+- skips egress probes after a failed `connect`, because probes without a
+  connected profile are not valid protocol evidence;
+- uses connected status to decide whether normal TUN egress and local
+  SOCKS/HTTP proxy egress are applicable, so protocol drivers without local
+  proxy listeners are not failed for missing proxy probes;
+- snapshots routes, policy rules, resolver hash, nftables, listeners and
+  relevant processes around mutating sections;
+- writes a reboot/manual-off runbook instead of auto-rebooting the machine.
+
+It still performs real runtime actions when not in `--dry-run`. Do not run it
+from a session that can be cut by VPN, DNS, route, firewall, daemon or reboot
+changes.
+
+## Manifest
+
+Do not edit the JSON by hand unless you are comfortable doing so. The safer
+operator path is to put the private fixtures in one local directory and let the
+manifest helper write the JSON.
+
+If the profiles are currently only copied strings rather than files, use the
+local collector. It writes private files with mode `0600` and never prints their
+contents:
+
+```bash
+python3 tests/vm/phase23_collect_private_fixtures.py
+```
+
+For single-line profile URLs, choose `p` and paste into the hidden prompt. For
+multi-line WireGuard/OpenVPN/JSON configs, choose `e` and paste into the local
+editor. Do not paste profile contents or provider URLs into chat.
+
+If only part of the protocol set is currently provisioned, generate a staged
+manifest and run only the ready protocols:
+
+```bash
+python3 tests/vm/phase23_collect_private_fixtures.py --allow-missing
+export WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak
+```
+
+This is partial evidence only. Task 23.2 remains open until the missing
+protocols are provisioned and provider URL import/update/connect coverage is
+executed, or a concrete unavailable reason and owner is recorded in the
+evidence findings. Use `--skip-provider` only when the provider URL is not
+available yet.
+
+Expected private fixture layout:
+
+```bash
+python3 tests/vm/phase23_prepare_private_manifest.py \
+  --print-layout
+```
+
+Default paths:
+
+```text
+/tmp/watchdogvpn-phase23-fixtures/phase23-vless.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-vmess.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-trojan.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-hysteria2.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-tuic.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-shadowsocks.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-wireguard.conf
+/tmp/watchdogvpn-phase23-fixtures/phase23-amneziawg.conf
+/tmp/watchdogvpn-phase23-fixtures/phase23-openvpn.ovpn
+/tmp/watchdogvpn-phase23-fixtures/phase23-openvpn-cloak.txt
+/tmp/watchdogvpn-phase23-fixtures/phase23-socks.json
+/tmp/watchdogvpn-phase23-fixtures/phase23-http.json
+/tmp/watchdogvpn-phase23-provider-url.txt
+```
+
+After placing the files locally, generate the private manifest:
+
+```bash
+python3 tests/vm/phase23_prepare_private_manifest.py
+```
+
+The helper writes:
+
+```text
+/tmp/watchdogvpn-phase23-field-manifest.json
+```
+
+It validates file presence, writes the manifest with mode `0600`, and does not
+print profile contents or the provider URL.
+
+The low-level template remains available at:
+
+```text
+tests/vm/phase23_cli_field_validation_manifest.example.json
+```
+
+Create a private local copy outside the repo, for example:
+
+```text
+/tmp/watchdogvpn-phase23-field-manifest.json
+```
+
+The manifest must reference local fixture files only. Do not paste provider
+URLs, private keys, passwords or profile payloads into chat. Do not commit the
+local manifest.
+
+Validate the manifest and generate a readable runbook:
+
+```bash
+python3 tests/vm/phase23_cli_field_validation_plan.py \
+  --manifest /tmp/watchdogvpn-phase23-field-manifest.json \
+  --output /tmp/watchdogvpn-phase23-cli-runbook.md
+```
+
+Dry-run the runner without executing commands:
+
+```bash
+WATCHDOGVPN_PHASE23_MANIFEST=/tmp/watchdogvpn-phase23-field-manifest.json \
+WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak \
+tests/vm/phase23_run_cli_field_section.sh --dry-run all
+```
+
+## Operator Sequence
+
+Run the real sections deliberately. Do not run `--section all` first.
+
+### External VPN Absent
+
+Lower any external VPN that could mask WatchdogVPN behavior, then run:
+
+```bash
+export WATCHDOGVPN_FIELD_VALIDATION=1
+export WATCHDOGVPN_PHASE23_MANIFEST=/tmp/watchdogvpn-phase23-field-manifest.json
+export WATCHDOGVPN_EXTERNAL_VPN_STATE=absent
+# Optional only for staged partial protocol execution:
+# export WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak
+
+tests/vm/phase23_run_cli_field_section.sh preflight
+tests/vm/phase23_run_cli_field_section.sh imports
+tests/vm/phase23_run_cli_field_section.sh protocols
+tests/vm/phase23_run_cli_field_section.sh provider
+tests/vm/phase23_run_cli_field_section.sh app-policy
+tests/vm/phase23_run_cli_field_section.sh dns
+tests/vm/phase23_run_cli_field_section.sh kill-switch
+tests/vm/phase23_run_cli_field_section.sh rotation
+tests/vm/phase23_run_cli_field_section.sh manual-off
+tests/vm/phase23_run_cli_field_section.sh cleanup
+```
+
+### External VPN Present
+
+Raise the external VPN deliberately. Confirm the session is recoverable from
+the VM console or snapshot before continuing.
+
+Run the same sections with:
+
+```bash
+export WATCHDOGVPN_EXTERNAL_VPN_STATE=present
+```
+
+DNS apply/reset while an external VPN is present may be marked unavailable only
+if the operator determines it would cut the management session. Record the
+reason and owner in `12-findings.md`.
+
+## Reboot Coverage
+
+The runner's `manual-off` section writes:
+
+```text
+<evidence_dir>/10-reboot-manual-off/reboot-operator-steps.md
+```
+
+Run those reboot steps manually from the VM console/snapshot context. Capture
+the outputs under the same evidence directory. Do not ask Codex to run reboot
+steps from this chat session.
+
+## Findings
+
+Create or update:
+
+```text
+<evidence_dir>/12-findings.md
+```
+
+Use the Task 23.1 finding template. Every HIGH or MEDIUM finding must become a
+Phase 23 fix subtask before Phase 23 can close.
+
+## Task 23.2.1 Addendum - M4 App Policy Direct, Current And Block
+
+Task 23.2 remained open after the original field-validation run because M4 was
+in the approved Task 23.1 matrix but had never been executed. The missing
+coverage was run manually by the operator on 2026-07-12 with an operator-run
+script stored outside the repository at:
+
+```text
+~/phase23-m8-scripts/phase23_m4_app_policy_validation.sh
+```
+
+Evidence directory:
+
+```text
+/home/gabodev/phase23-m4-evidence/20260712T104451Z
+```
+
+The script backed up and restored `app-policy.json` and `state.toml`, configured
+a clean app-policy matrix through the CLI, connected a real enabled VLESS
+profile with `routing_policy=rule`, `capture_modes=local_proxy,tun` and
+`default_route_action=current`, then ran three copied `curl` probe binaries with
+distinct `process_path` matches:
+
+- M4.1 direct: direct egress before WatchdogVPN and direct-probe egress after
+  connect both returned `178.66.159.107`.
+- M4.2 current/VPN: the current-probe egress after connect returned
+  `138.124.58.47`, matching the active WatchdogVPN path rather than direct
+  fallback.
+- M4.3 block: HTTP and HTTPS probes against an IP literal failed at the
+  TCP/HTTP layer (`curl` return codes `56` and `35`, HTTP status `000`), so the
+  block was not a DNS-only false positive.
+- M4.4 cleanup: `cleanup_verification.txt` recorded
+  `cleanup_exit_input_rc=0`, `app_policy_restored_rc=0` and
+  `state_restored_rc=0`; post-cleanup daemon status was standby with no active
+  proxy, TUN or kill-switch firewall.
+
+The normal runtime/probe command outputs did not emit raw process-path history.
+Administrative inspection commands that explicitly take or display policy
+inputs (`app-policy add --json`, `app-policy status`, `rules explain --json`)
+echoed the configured probe paths as expected and were retained as evidence,
+not treated as runtime leakage.
+
+Task 23.2.1 is closed with real evidence. With M4 now executed, Task 23.2's
+field-validation matrix is closed.
+
+## Field Hardening Notes
+
+The first full 12-protocol `imports` section passed after adding support for
+the real Phase 23 private fixture formats, including WatchdogVPN serialized
+profile JSON and AmneziaVPN `vpn://` exports.
+
+The first full `protocols` section then exposed runtime-facing import
+normalization gaps:
+
+- VMess WatchdogVPN JSON fixtures stored the VMess UUID in `config.id`, while
+  the sing-box driver consumes `config.uuid`. The server-side VMess fixture had
+  already been validated independently with real sing-box client traffic, so
+  the field failure was treated as a WatchdogVPN import-normalization bug, not
+  as bad VPS material.
+- WireGuard WatchdogVPN JSON fixtures stored a full WireGuard config in
+  `config.raw_config`, while the sing-box driver consumes structured runtime
+  keys such as `private_key`, `public_key` and `endpoint`.
+- Standard WireGuard also exposed a sing-box 1.13 compatibility bug: the driver
+  still generated the legacy WireGuard outbound shape (`local_address`), while
+  sing-box 1.13 validates WireGuard through top-level `endpoints`. The driver
+  now emits modern WireGuard endpoints and keeps the same route target tag.
+- AmneziaWG first exposed a native `*-quick` interface-name mismatch. The
+  driver expected to verify and clean up `watchdogvpn_awg`, but wrote the
+  temporary config as `awg.conf`; quick scripts derive the created interface
+  name from the config filename, so a successful lower-level bring-up could
+  still be reported as a WatchdogVPN connect failure. The runtime config now
+  uses `watchdogvpn_awg.conf`, matching the interface that status, health
+  checks and cleanup already target.
+- The follow-up AmneziaWG rerun still returned `connect rc=70`, but the daemon
+  response only exposed generic `connect failed` and the driver removed its
+  private runtime directory immediately after failure. Native driver failures
+  now retain a redacted `last_error` and IPC connect failures include
+  `payload.error_detail`, so operator evidence can distinguish tool permission,
+  kernel module, resolver helper, config and interface failures without
+  printing profile secrets.
+- Later reruns showed that quick scripts are not a valid daemon runtime
+  dependency: they attempt internal `sudo` when the caller is not root, which
+  cannot work under the daemon unit's `NoNewPrivileges=true`. The driver now
+  brings AmneziaWG up natively with `ip` and `awg`, and falls back to the
+  official `amneziawg-go` userspace implementation when the `amneziawg` kernel
+  module is unavailable. Plain WireGuard tooling still cannot run real
+  AmneziaWG exports with obfuscation keys; standard WireGuard remains a
+  separate compatibility protocol.
+
+Manual provider import now normalizes those serialized profile JSON variants
+before saving them. The generated WireGuard config passes `sing-box check`
+against the real Phase 23 fixture without starting a connection. Re-run
+`imports` before re-running `protocols` so the saved profiles contain the
+corrected runtime fields.
+
+## Local Validation For This Runner
+
+These checks are local-only and do not execute real field validation:
+
+```bash
+python3 tests/vm/phase23_cli_field_validation_plan.py \
+  --manifest tests/vm/phase23_cli_field_validation_manifest.example.json \
+  --output /tmp/watchdogvpn-phase23-example-runbook.md
+
+python3 tests/vm/phase23_cli_field_validation_runner.py \
+  --manifest tests/vm/phase23_cli_field_validation_manifest.example.json \
+  --section all \
+  --dry-run
+
+tests/vm/phase23_run_cli_field_section.sh \
+  --dry-run imports
+
+WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak \
+tests/vm/phase23_run_cli_field_section.sh \
+  --dry-run protocols
+
+python3 tests/vm/phase23_collect_private_fixtures.py \
+  --help
+
+python3 tests/vm/phase23_prepare_private_manifest.py \
+  --allow-missing \
+  --output /tmp/watchdogvpn-phase23-generated-manifest.json
+
+WATCHDOGVPN_PHASE23_MANIFEST=/tmp/watchdogvpn-phase23-generated-manifest.json \
+WATCHDOGVPN_PHASE23_PROTOCOLS=vless,hysteria2,wireguard,trojan,openvpn_cloak \
+tests/vm/phase23_run_cli_field_section.sh \
+  --dry-run all
+
+python3 -m py_compile \
+  tests/vm/phase23_collect_private_fixtures.py \
+  tests/vm/phase23_prepare_private_manifest.py \
+  tests/vm/phase23_cli_field_validation_plan.py \
+  tests/vm/phase23_cli_field_validation_runner.py
+
+bash tests/syntax.sh
+git diff --check
+```

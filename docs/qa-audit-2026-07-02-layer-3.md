@@ -81,7 +81,7 @@ Resolution:
 
 Evidence:
 - `config/app_config.py` declares `rotation.max_backoff_interval_seconds`.
-- `Recovery.backoff_interval()` itself handles a lower max cap gracefully by returning `min(interval, max_interval_seconds)`.
+- R-14 (2026-07-14) supersedes the earlier lower-cap behavior: persistent configuration now rejects non-positive, inverted, and over-large bounds; direct in-memory values are normalized to a positive bounded interval and logged explicitly.
 - No runtime code maps `config["rotation"]["max_backoff_interval_seconds"]` into `Recovery.max_interval_seconds`.
 - Existing recovery tests instantiate `Recovery` directly and do not verify app-config wiring.
 
@@ -108,7 +108,7 @@ Inside the Python rotation engine, `_try_profile()` blocks synchronously during 
 
 ### Same monotonic timestamp for consecutive recovery failures
 
-`Recovery.record_failure()` sets `_next_retry_at` to `clock() + interval`; `can_retry_now()` remains false until the clock reaches that value. If two failures are recorded at the same clock value, the second failure extends the retry target by the second attempt's interval from that same timestamp. This is coherent and does not create an immediate retry loop.
+`Recovery.record_failure()` stores the monotonic failure timestamp and the bounded interval separately; `can_retry_now()` compares their elapsed difference, avoiding an overflow-prone deadline addition. If two failures are recorded at the same clock value, the second failure replaces the retry interval from that same timestamp. Exact-boundary retries are allowed, clock rollback remains blocked, and invalid in-memory bounds are normalized to a positive bounded interval with an explicit log.
 
 ### Rotated active profile survives reboot startup path
 

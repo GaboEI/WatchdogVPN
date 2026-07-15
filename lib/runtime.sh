@@ -20,6 +20,26 @@ PYTHON_RUNTIME_PACKAGES=(
   route_chains
   rotation
   rules
+  terminal_safety
+)
+PYTHON_RUNTIME_SUPPORT_FILES=(
+  doctor.sh
+  uninstall.sh
+)
+PYTHON_RUNTIME_SUPPORT_DIRS=(
+  lib
+  bin
+  sbin
+  systemd
+  etc
+  examples
+  distros
+  tui
+)
+PYTHON_RUNTIME_SUPPORT_EXECUTABLES=(
+  doctor.sh
+  uninstall.sh
+  tui/VPN
 )
 
 # Historical WatchdogVPN-owned files removed from the shipped set before this
@@ -37,12 +57,18 @@ remove_legacy_runtime_files() {
 }
 
 install_runtime_files() {
+  local runtime_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_prepare_candidate "$ROOT_DIR"
+    runtime_root="$WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT"
+  fi
   create_system_user_no_home watchdogvpn
   add_installing_user_to_watchdogvpn_group
   create_root_dir /var/log/myvpn 0755
 
-  create_config_if_missing "$ROOT_DIR/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
+  create_config_if_missing "$runtime_root/examples/vpn-domain-bypass.conf.example" /etc/vpn-domain-bypass.conf 0644
   install_config_defaults
+  install_sysctl_defaults
   migrate_watchdogvpn_shared_state
   repair_watchdogvpn_shared_state_permissions
   install_python_package_tree
@@ -53,26 +79,42 @@ install_runtime_files() {
   remove_legacy_systemd_units
   remove_legacy_runtime_files
 
-  install_root_file "$ROOT_DIR/bin/no_vpn" /usr/local/bin/no_vpn 0755
-  install_root_file "$ROOT_DIR/bin/vpn_dns_rescue" /usr/local/bin/vpn_dns_rescue 0755
-  install_root_file "$ROOT_DIR/bin/vpn_domain_bypass_rescue" /usr/local/bin/vpn_domain_bypass_rescue 0755
-  install_root_file "$ROOT_DIR/bin/watchdog_panic" /usr/local/bin/watchdog_panic 0755
-  install_root_file "$ROOT_DIR/bin/vpn_backend" /usr/local/bin/vpn_backend 0755
-  install_root_file "$ROOT_DIR/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755
-  install_root_file "$ROOT_DIR/bin/vpn_notify" /usr/local/bin/vpn_notify 0755
-  install_root_file "$ROOT_DIR/bin/vpn_truth_check" /usr/local/bin/vpn_truth_check 0755
-  install_root_file "$ROOT_DIR/bin/vpnctl" /usr/local/bin/vpnctl 0755
+  install_root_file "$runtime_root/bin/no_vpn" /usr/local/bin/no_vpn 0755
+  install_root_file "$runtime_root/bin/vpn_dns_rescue" /usr/local/bin/vpn_dns_rescue 0755
+  install_root_file "$runtime_root/bin/vpn_domain_bypass_rescue" /usr/local/bin/vpn_domain_bypass_rescue 0755
+  install_root_file "$runtime_root/bin/watchdog_panic" /usr/local/bin/watchdog_panic 0755
+  install_root_file "$runtime_root/bin/vpn_backend" /usr/local/bin/vpn_backend 0755
+  install_root_file "$runtime_root/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755
+  install_root_file "$runtime_root/bin/vpn_notify" /usr/local/bin/vpn_notify 0755
+  install_root_file "$runtime_root/bin/vpn_truth_check" /usr/local/bin/vpn_truth_check 0755
+  install_root_file "$runtime_root/bin/vpnctl" /usr/local/bin/vpnctl 0755
   install_python_module_wrapper /usr/local/bin/watchdog cli.main
-  install_root_file "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
+  install_root_file "$runtime_root/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
   install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main
 
-  install_root_file "$ROOT_DIR/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
+  install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
 
-  install_user_file "$ROOT_DIR/tui/VPN" "$HOME/.local/bin/VPN" 0755
+  install_user_file "$runtime_root/tui/VPN" "$HOME/.local/bin/VPN" 0755
   remove_user_path "$HOME/.local/bin/watchdogvpn"
-  install_user_dir "$ROOT_DIR/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"
-  install_root_file "$ROOT_DIR/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
+  install_user_dir "$runtime_root/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"
+  install_user_dir "$runtime_root/terminal_safety" "$HOME/.local/share/watchdogvpn/terminal_safety"
+  install_root_file "$runtime_root/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
   install_systemd_units
+}
+
+# net.ipv4.conf.all.src_valid_mark must be 1 for AmneziaWG/WireGuard-style
+# fwmark default-route policy routing to pass return traffic. The daemon
+# runs under ProtectKernelTunables=true and cannot set this itself at
+# connect time (see drivers/amneziawg_driver.py), so it is applied once
+# here, at install/update time, as root, outside the daemon's sandbox.
+install_sysctl_defaults() {
+  local runtime_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
+  install_root_file "$runtime_root/etc/sysctl.d/99-watchdogvpn.conf" /etc/sysctl.d/99-watchdogvpn.conf 0644
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] sudo sysctl -p /etc/sysctl.d/99-watchdogvpn.conf\n'
+    return 0
+  fi
+  run_step sudo sysctl -q -p /etc/sysctl.d/99-watchdogvpn.conf
 }
 
 install_python_module_wrapper() {
@@ -91,28 +133,83 @@ install_python_module_wrapper() {
 }
 
 install_python_package_tree() {
-  local dest="${1:-$PYTHON_PACKAGE_DIR}" package
+  local dest="${1:-$PYTHON_PACKAGE_DIR}" package item stage source_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] install Python runtime packages to %s\n' "$dest"
-    record_installed_version
+    return 0
+  fi
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint disk
+    stage="$(sudo mktemp -d "$(dirname "$dest")/.${dest##*/}.candidate.XXXXXX")" || return 1
+    runtime_transaction_register_cleanup_path "$stage"
+    for package in "${PYTHON_RUNTIME_PACKAGES[@]}"; do
+      runtime_transaction_checkpoint copy
+      run_step sudo cp -a "$source_root/$package" "$stage/"
+    done
+    for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}"; do
+      runtime_transaction_checkpoint copy
+      run_step sudo cp -a "$source_root/$item" "$stage/"
+    done
+    for item in "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"; do
+      runtime_transaction_checkpoint copy
+      run_step sudo cp -a "$source_root/$item" "$stage/"
+    done
+    runtime_transaction_checkpoint permission
+    run_step sudo chown -R root:root "$stage"
+    run_step sudo find "$stage" -type d -exec chmod 0755 {} +
+    run_step sudo find "$stage" -type f -exec chmod 0644 {} +
+    for item in "${PYTHON_RUNTIME_SUPPORT_EXECUTABLES[@]}"; do
+      run_step sudo chmod 0755 "$stage/$item"
+    done
+    run_step sudo find "$stage/bin" "$stage/sbin" -type f -exec chmod 0755 {} +
+    _validate_staged_python_runtime "$stage"
+    runtime_transaction_replace_directory_from_stage "$stage" "$dest"
     return 0
   fi
   backup_path "$dest"
   run_step sudo rm -rf -- "$dest"
   run_step sudo install -d -m 0755 -o root -g root "$dest"
   for package in "${PYTHON_RUNTIME_PACKAGES[@]}"; do
-    run_step sudo cp -a "$ROOT_DIR/$package" "$dest/"
+    run_step sudo cp -a "$source_root/$package" "$dest/"
+  done
+  for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}"; do
+    run_step sudo cp -a "$source_root/$item" "$dest/"
+  done
+  for item in "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"; do
+    run_step sudo cp -a "$source_root/$item" "$dest/"
   done
   run_step sudo chown -R root:root "$dest"
   run_step sudo find "$dest" -type d -exec chmod 0755 {} +
   run_step sudo find "$dest" -type f -exec chmod 0644 {} +
-  record_installed_version
+  for item in "${PYTHON_RUNTIME_SUPPORT_EXECUTABLES[@]}"; do
+    run_step sudo chmod 0755 "$dest/$item"
+  done
+  run_step sudo find "$dest/bin" "$dest/sbin" -type f -exec chmod 0755 {} +
+}
+
+_validate_staged_python_runtime() {
+  local stage="$1" package item
+  for package in "${PYTHON_RUNTIME_PACKAGES[@]}"; do
+    [[ -d "$stage/$package" ]] || {
+      printf 'ERROR: staged Python runtime is missing package: %s\n' "$package" >&2
+      return 1
+    }
+  done
+  for item in "${PYTHON_RUNTIME_SUPPORT_FILES[@]}" "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"; do
+    [[ -e "$stage/$item" ]] || {
+      printf 'ERROR: staged Python runtime is missing support path: %s\n' "$item" >&2
+      return 1
+    }
+  done
+  python3 -m compileall -q "$stage"
 }
 
 migrate_watchdogvpn_shared_state() {
   local source_dir="${WATCHDOGVPN_LEGACY_CONFIG_DIR:-$HOME/.config/watchdogvpn}"
   local target_dir="${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}"
   local marker="$target_dir/.migrated"
+  local journal="$target_dir/.migration-in-progress"
+  local stage_dir marker_tmp journal_tmp entry_name
   local has_legacy_data=0
 
   # NOTE: the marker means "the shared state directory is ready for the CLI
@@ -124,8 +221,18 @@ migrate_watchdogvpn_shared_state() {
   # state on any install that never had legacy per-user config. Found during
   # the Phase 18 Task 18.4 shared-state permissions audit.
   if [[ -e "$marker" ]]; then
+    # A crash after marker publication but before journal cleanup is already a
+    # completed migration: marker publication only follows target validation.
+    if [[ -e "$journal" ]]; then
+      run_step sudo rm -f -- "$journal"
+    fi
     printf '[KEEP] WatchdogVPN shared state already migrated: %s\n' "$target_dir"
     return 0
+  fi
+  if [[ -e "$journal" ]] \
+    && { [[ ! -f "$journal" ]] || ! sudo grep -Fxq 'watchdogvpn-state-migration-v1' "$journal"; }; then
+    printf 'ERROR: WatchdogVPN migration recovery journal is invalid: %s\n' "$journal" >&2
+    return 1
   fi
   if [[ -e "$target_dir" && ! -d "$target_dir" ]]; then
     printf 'ERROR: WatchdogVPN shared state target is not a directory: %s\n' "$target_dir" >&2
@@ -155,14 +262,150 @@ migrate_watchdogvpn_shared_state() {
     return 0
   fi
 
-  if ((has_legacy_data == 1)); then
-    run_step sudo cp -a --update=none "$source_dir/." "$target_dir/"
-    printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
-  else
+  if ((has_legacy_data == 0)); then
     printf '[SKIP] no legacy WatchdogVPN user state to migrate; marking shared state ready: %s\n' "$target_dir"
+    _publish_watchdogvpn_migration_marker "$marker" || return 1
+    repair_watchdogvpn_shared_state_permissions "$target_dir"
+    return 0
   fi
-  run_step sudo touch "$marker"
+
+  stage_dir="$(sudo mktemp -d "$target_dir/.migration-stage.XXXXXX")" || {
+    printf 'ERROR: unable to create WatchdogVPN migration staging directory in %s\n' "$target_dir" >&2
+    return 1
+  }
+  if ! _stage_watchdogvpn_legacy_state "$source_dir" "$stage_dir"; then
+    run_step sudo rm -rf -- "$stage_dir"
+    return 1
+  fi
+  if ! _validate_watchdogvpn_migration_tree "$source_dir" "$stage_dir" stage-validate; then
+    printf 'ERROR: staged WatchdogVPN legacy state failed content validation\n' >&2
+    run_step sudo rm -rf -- "$stage_dir"
+    return 1
+  fi
+
+  if [[ ! -e "$journal" ]] && ! _watchdogvpn_migration_target_is_publishable "$stage_dir" "$target_dir"; then
+    printf 'ERROR: WatchdogVPN shared state has unmarked conflicting entries; refusing to certify migration\n' >&2
+    run_step sudo rm -rf -- "$stage_dir"
+    return 1
+  fi
+  if [[ ! -e "$journal" ]]; then
+    journal_tmp="$(sudo mktemp "$target_dir/.migration-journal.XXXXXX")" || {
+      run_step sudo rm -rf -- "$stage_dir"
+      return 1
+    }
+    if ! printf 'watchdogvpn-state-migration-v1\n' | sudo tee "$journal_tmp" >/dev/null \
+      || ! _watchdogvpn_migration_checkpoint journal-publish \
+      || ! run_step sudo mv -f -- "$journal_tmp" "$journal"; then
+      printf 'ERROR: unable to publish WatchdogVPN migration recovery journal\n' >&2
+      run_step sudo rm -f -- "$journal_tmp"
+      run_step sudo rm -rf -- "$stage_dir"
+      return 1
+    fi
+  fi
+
+  while IFS= read -r -d '' entry_name; do
+    if ! _watchdogvpn_migration_checkpoint "publish:$entry_name"; then
+      printf 'ERROR: WatchdogVPN migration interrupted before publishing %s\n' "$entry_name" >&2
+      run_step sudo rm -rf -- "$stage_dir"
+      return 1
+    fi
+    # Each staged top-level entry is published with one same-filesystem rename.
+    # A recovery rerun leaves an already-published identical entry untouched;
+    # any divergent entry is rejected rather than deleted and falsely repaired.
+    if [[ -e "$target_dir/$entry_name" || -L "$target_dir/$entry_name" ]]; then
+      if ! run_step sudo diff -r --no-dereference -- \
+        "$stage_dir/$entry_name" "$target_dir/$entry_name" >/dev/null; then
+        printf 'ERROR: journaled WatchdogVPN migration entry diverged: %s\n' "$entry_name" >&2
+        run_step sudo rm -rf -- "$stage_dir"
+        return 1
+      fi
+      continue
+    fi
+    if ! run_step sudo mv -- "$stage_dir/$entry_name" "$target_dir/$entry_name"; then
+      printf 'ERROR: unable to atomically publish WatchdogVPN state entry: %s\n' "$entry_name" >&2
+      run_step sudo rm -rf -- "$stage_dir"
+      return 1
+    fi
+  done < <(_watchdogvpn_migration_entries "$stage_dir")
+  run_step sudo rm -rf -- "$stage_dir"
+
+  if ! _watchdogvpn_migration_checkpoint target-validate \
+    || ! _validate_watchdogvpn_migration_tree "$source_dir" "$target_dir" target-content-validate; then
+    printf 'ERROR: published WatchdogVPN legacy state failed content validation; recovery journal retained\n' >&2
+    return 1
+  fi
+  if ! _watchdogvpn_migration_checkpoint marker-publish \
+    || ! _publish_watchdogvpn_migration_marker "$marker"; then
+    printf 'ERROR: WatchdogVPN shared state is complete but not certified; recovery journal retained\n' >&2
+    return 1
+  fi
+  run_step sudo rm -f -- "$journal"
+  printf '[MIGRATE] WatchdogVPN shared state: %s -> %s\n' "$source_dir" "$target_dir"
   repair_watchdogvpn_shared_state_permissions "$target_dir"
+}
+
+
+_watchdogvpn_migration_entries() {
+  local directory="$1"
+  find "$directory" -mindepth 1 -maxdepth 1 \
+    ! -name .migrated \
+    ! -name .migration-in-progress \
+    -printf '%f\0' | sort -z
+}
+
+
+_stage_watchdogvpn_legacy_state() {
+  local source_dir="$1" stage_dir="$2" entry_name
+  while IFS= read -r -d '' entry_name; do
+    if ! _watchdogvpn_migration_checkpoint "stage-copy:$entry_name" \
+      || ! run_step sudo cp -a -- "$source_dir/$entry_name" "$stage_dir/$entry_name"; then
+      printf 'ERROR: unable to stage WatchdogVPN legacy state entry: %s\n' "$entry_name" >&2
+      return 1
+    fi
+  done < <(_watchdogvpn_migration_entries "$source_dir")
+}
+
+
+_validate_watchdogvpn_migration_tree() {
+  local source_dir="$1" candidate_dir="$2" checkpoint="$3" entry_name
+  if ! _watchdogvpn_migration_checkpoint "$checkpoint"; then
+    return 1
+  fi
+  while IFS= read -r -d '' entry_name; do
+    if ! run_step sudo diff -r --no-dereference -- \
+      "$source_dir/$entry_name" "$candidate_dir/$entry_name" >/dev/null; then
+      return 1
+    fi
+  done < <(_watchdogvpn_migration_entries "$source_dir")
+}
+
+
+_watchdogvpn_migration_target_is_publishable() {
+  local stage_dir="$1" target_dir="$2" entry_name
+  while IFS= read -r -d '' entry_name; do
+    if [[ -e "$target_dir/$entry_name" || -L "$target_dir/$entry_name" ]]; then
+      return 1
+    fi
+  done < <(_watchdogvpn_migration_entries "$stage_dir")
+  return 0
+}
+
+
+_publish_watchdogvpn_migration_marker() {
+  local marker="$1" marker_tmp
+  marker_tmp="$(sudo mktemp "${marker}.tmp.XXXXXX")" || return 1
+  if ! printf 'watchdogvpn-shared-state-ready-v2\n' | sudo tee "$marker_tmp" >/dev/null \
+    || ! run_step sudo mv -f -- "$marker_tmp" "$marker"; then
+    run_step sudo rm -f -- "$marker_tmp"
+    return 1
+  fi
+}
+
+
+_watchdogvpn_migration_checkpoint() {
+  # Test seam: unit coverage replaces this function to inject interruptions at
+  # every staging, validation, publication, and marker boundary.
+  return 0
 }
 
 prepare_watchdogvpn_state_directory() {
@@ -227,6 +470,10 @@ smoke_test_watchdogvpn_daemon() {
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] smoke test watchdogvpn.service and daemon IPC status\n'
     return 0
+  fi
+
+  if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
+    runtime_transaction_checkpoint smoke
   fi
 
   if [[ "${ENABLE_VPN_AUTOMATION:-1}" != "1" ]]; then

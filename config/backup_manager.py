@@ -4,11 +4,12 @@ import base64
 import io
 import json
 import os
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
-from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile, ZipInfo
 
 from app_policy.models import AppPolicy
 from app_policy.store import AppPolicyStore
@@ -20,8 +21,13 @@ from config.persistence import (
     PersistentValidationError,
     atomic_write_bytes,
     atomic_write_text,
+    clear_restore_transaction_journal,
     dump_json,
     file_lock,
+    fsync_parent_directory,
+    recover_pending_restore_transaction,
+    restore_transaction_journal_path,
+    write_restore_transaction_journal,
 )
 from config.profile_store import ProfileStore
 from config.provider_store import ProviderStore
@@ -30,6 +36,7 @@ from dns.models import DNSPolicy
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
 from models.profile import Profile
+from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvpn_profile
 from models.provider import Provider
 from node_groups.models import NodeGroup
 from node_groups.store import NodeGroupStore
@@ -92,6 +99,12 @@ BACKUP_ENTRIES = ("manifest.json",) + tuple(
 )
 SUPPORTED_BACKUP_ENTRIES = ("manifest.json",) + tuple(SECTION_FILE_BY_NAME.values())
 MERGE_SECTION_NAMES = ("routing-rules", "app-policy", "node-groups", "route-chains")
+# These sections are captured in every backup for reference, but restore_backup()
+# never writes them back (see _apply_sections/_merge_sections) - backup-policy is
+# always the current build's hardcoded defaults, not persisted user state, and
+# metadata is describing the backup itself. Restore output must not claim they
+# were restored.
+INFORMATIONAL_SECTION_NAMES = ("backup-policy", "metadata")
 RESTORE_REPLACE_CONFIRMATION = "RESTORE-WATCHDOGVPN-BACKUP"
 AUTO_BACKUP_REASONS = (
     "pre-restore",
@@ -100,6 +113,12 @@ AUTO_BACKUP_REASONS = (
     "pre-uninstall-delete",
 )
 DEFAULT_AUTO_BACKUP_MAX_BACKUPS = 10
+MAX_BACKUP_ARCHIVE_MEMBERS = 32
+MAX_BACKUP_COMPRESSED_BYTES = 16 * 1024 * 1024
+MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES = 2 * 1024 * 1024
+MAX_BACKUP_TOTAL_UNCOMPRESSED_BYTES = 8 * 1024 * 1024
+MAX_BACKUP_COMPRESSION_RATIO = 100
+ARCHIVE_READ_CHUNK_BYTES = 64 * 1024
 
 
 class BackupError(PersistentStoreError):
@@ -159,6 +178,13 @@ class BackupManager:
         )
         manifest = self._manifest(created_at, reason, section_payloads)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Backups can contain private keys, passwords and subscription
+        # tokens (BACKUP_SENSITIVE_WARNING) - build the archive in memory
+        # and write it with atomic_write_bytes() (mkstemp + os.replace)
+        # instead of ZipFile(output_path, "w", ...) directly, which opens
+        # output_path with the plain `open()` builtin: mode 0644 under a
+        # typical umask, and it follows an existing symlink at that path,
+        # silently overwriting whatever the symlink points at.
         if encrypt:
             plaintext = _plaintext_archive_bytes(manifest, section_payloads, selected_sections)
             encrypted_payload, encryption_metadata = _encrypt_backup_payload(
@@ -166,17 +192,12 @@ class BackupManager:
                 password,
             )
             encrypted_manifest = self._encrypted_manifest(manifest, encryption_metadata)
-            with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as archive:
-                archive.writestr("manifest.json", _json_text(encrypted_manifest))
-                archive.writestr(ENCRYPTED_PAYLOAD_ENTRY, encrypted_payload)
+            atomic_write_bytes(output_path, _encrypted_archive_bytes(encrypted_manifest, encrypted_payload))
             return BackupResult(path=output_path, manifest=encrypted_manifest)
-        with ZipFile(output_path, "w", compression=ZIP_DEFLATED) as archive:
-            _write_plaintext_archive(
-                archive,
-                manifest,
-                section_payloads,
-                selected_sections,
-            )
+        atomic_write_bytes(
+            output_path,
+            _plaintext_archive_bytes(manifest, section_payloads, selected_sections),
+        )
         return BackupResult(path=output_path, manifest=manifest)
 
     def create_auto_backup(
@@ -226,6 +247,7 @@ class BackupManager:
         replace_confirmation: str | None = None,
         password: str | None = None,
     ) -> RestoreResult:
+        recover_pending_restore_transaction(self.config_dir)
         parsed = self.inspect_backup(backup_path, password=password)
         selected_sections = _normalize_sections(
             sections,
@@ -246,21 +268,15 @@ class BackupManager:
             encrypt=parsed.encrypted,
             password=password if parsed.encrypted else None,
         )
-        snapshot = self._snapshot_targets()
-        try:
-            section_payloads = {
-                SECTION_FILE_BY_NAME[section]: parsed.sections[
-                    SECTION_FILE_BY_NAME[section]
-                ]
-                for section in selected_sections
-            }
-            if restore_mode == "replace":
-                self._apply_sections(section_payloads)
-            else:
-                self._merge_sections(section_payloads)
-        except Exception:
-            self._restore_snapshot(snapshot)
-            raise
+        section_payloads = {
+            SECTION_FILE_BY_NAME[section]: parsed.sections[SECTION_FILE_BY_NAME[section]]
+            for section in selected_sections
+        }
+        self._apply_restore_transaction(
+            self._snapshot_targets(),
+            section_payloads,
+            restore_mode,
+        )
         return RestoreResult(
             path=backup_path,
             manifest=parsed.manifest,
@@ -274,30 +290,19 @@ class BackupManager:
         password: str | None = None,
     ) -> "_ParsedBackup":
         try:
+            if backup_path.stat().st_size > MAX_BACKUP_COMPRESSED_BYTES:
+                raise BackupValidationError("backup compressed size exceeds limit")
             with ZipFile(backup_path) as archive:
-                names = [info.filename for info in archive.infolist()]
+                infos = archive.infolist()
+                _validate_archive_limits(infos)
+                names = [info.filename for info in infos]
                 if _looks_like_encrypted_backup(names):
                     return self._inspect_encrypted_backup(archive, names, password=password)
-                self._validate_entry_names(names)
-                raw_manifest = _load_archive_json(archive, "manifest.json")
-                manifest = _require_object(raw_manifest, "manifest.json")
-                self._validate_manifest(manifest, names)
-                try:
-                    section_payloads = {
-                        entry: self._validate_section(
-                            entry,
-                            _load_archive_json(archive, entry),
-                        )
-                        for entry in names
-                        if entry != "manifest.json"
-                    }
-                except BackupValidationError:
-                    raise
-                except (KeyError, TypeError, ValueError, PersistentStoreError) as exc:
-                    raise BackupValidationError(f"invalid backup section: {exc}") from exc
+                return self._inspect_plaintext_archive(archive, infos=infos)
         except BadZipFile as exc:
             raise BackupValidationError(f"invalid backup zip: {backup_path}") from exc
-        return _ParsedBackup(manifest=manifest, sections=section_payloads)
+        except OSError as exc:
+            raise BackupValidationError(f"cannot inspect backup zip: {backup_path}") from exc
 
     def _inspect_encrypted_backup(
         self,
@@ -307,14 +312,19 @@ class BackupManager:
         password: str | None,
     ) -> "_ParsedBackup":
         self._validate_encrypted_entry_names(names)
-        raw_manifest = _load_archive_json(archive, "manifest.json")
+        budget = _ArchiveReadBudget()
+        raw_manifest = _load_archive_json(archive, "manifest.json", budget)
         manifest = _require_object(raw_manifest, "manifest.json")
         self._validate_encrypted_manifest(manifest)
         plaintext = _decrypt_backup_payload(
-            archive.read(ENCRYPTED_PAYLOAD_ENTRY),
+            _read_archive_entry(archive, ENCRYPTED_PAYLOAD_ENTRY, budget),
             _require_object(manifest["encryption"], "manifest.encryption"),
             password,
         )
+        if len(plaintext) > MAX_BACKUP_COMPRESSED_BYTES:
+            raise BackupValidationError(
+                "encrypted backup plaintext exceeds compressed-byte limit"
+            )
         try:
             with ZipFile(io.BytesIO(plaintext)) as inner_archive:
                 parsed = self._inspect_plaintext_archive(inner_archive)
@@ -326,17 +336,25 @@ class BackupManager:
         except BadZipFile as exc:
             raise BackupValidationError("encrypted backup payload is not a valid zip") from exc
 
-    def _inspect_plaintext_archive(self, archive: ZipFile) -> "_ParsedBackup":
-        names = [info.filename for info in archive.infolist()]
+    def _inspect_plaintext_archive(
+        self,
+        archive: ZipFile,
+        *,
+        infos: list[ZipInfo] | None = None,
+    ) -> "_ParsedBackup":
+        infos = archive.infolist() if infos is None else infos
+        _validate_archive_limits(infos)
+        names = [info.filename for info in infos]
         self._validate_entry_names(names)
-        raw_manifest = _load_archive_json(archive, "manifest.json")
+        budget = _ArchiveReadBudget()
+        raw_manifest = _load_archive_json(archive, "manifest.json", budget)
         manifest = _require_object(raw_manifest, "manifest.json")
         self._validate_manifest(manifest, names)
         try:
             section_payloads = {
                 entry: self._validate_section(
                     entry,
-                    _load_archive_json(archive, entry),
+                    _load_archive_json(archive, entry, budget),
                 )
                 for entry in names
                 if entry != "manifest.json"
@@ -623,7 +641,13 @@ class BackupManager:
             return data
         if entry == "profiles.json":
             for item in _require_list(data.get("items"), "profiles.items"):
-                Profile.from_dict(_require_object(item, "profile"))
+                profile = Profile.from_dict(_require_object(item, "profile"))
+                try:
+                    validate_openvpn_profile(profile)
+                except OpenVPNConfigValidationError as exc:
+                    raise BackupValidationError(
+                        f"profiles.json contains unsafe OpenVPN profile: {exc}"
+                    ) from exc
             return data
         if entry == "providers.json":
             for item in _require_list(data.get("items"), "providers.items"):
@@ -710,6 +734,38 @@ class BackupManager:
             },
         )
 
+    def _apply_restore_transaction(
+        self,
+        snapshot: _RestoreSnapshot,
+        sections: dict[str, dict[str, Any]],
+        restore_mode: str,
+    ) -> None:
+        journal = restore_transaction_journal_path(self.config_dir)
+        with ExitStack() as stack:
+            for path in sorted(
+                [journal, *snapshot.files],
+                key=lambda item: str(item.resolve(strict=False)),
+            ):
+                stack.enter_context(file_lock(path))
+            write_restore_transaction_journal(
+                self.config_dir,
+                snapshot.files,
+                prune_unlisted_rule_files=True,
+            )
+            try:
+                if restore_mode == "replace":
+                    self._apply_sections(sections)
+                else:
+                    self._merge_sections(sections)
+            except BaseException:
+                try:
+                    self._restore_snapshot(snapshot)
+                except BaseException:
+                    raise
+                clear_restore_transaction_journal(self.config_dir)
+                raise
+            clear_restore_transaction_journal(self.config_dir)
+
     def _restore_snapshot(self, snapshot: _RestoreSnapshot) -> None:
         rules_dir = self.config_dir / "rules"
         if rules_dir.exists():
@@ -720,6 +776,8 @@ class BackupManager:
                             path.unlink()
                         except FileNotFoundError:
                             pass
+                        else:
+                            fsync_parent_directory(path)
         for path, content in snapshot.files.items():
             with file_lock(path):
                 if content is None:
@@ -727,6 +785,8 @@ class BackupManager:
                         path.unlink()
                     except FileNotFoundError:
                         pass
+                    else:
+                        fsync_parent_directory(path)
                 else:
                     atomic_write_bytes(path, content)
 
@@ -893,6 +953,18 @@ class BackupManager:
         store.save(RouteChainDocument(chains=merged))
 
 
+@dataclass(slots=True)
+class _ArchiveReadBudget:
+    total_uncompressed_bytes: int = 0
+
+    def consume(self, entry: str, size: int) -> None:
+        self.total_uncompressed_bytes += size
+        if self.total_uncompressed_bytes > MAX_BACKUP_TOTAL_UNCOMPRESSED_BYTES:
+            raise BackupValidationError(
+                "backup aggregate uncompressed size exceeds limit"
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class _ParsedBackup:
     manifest: dict[str, Any]
@@ -928,6 +1000,14 @@ def _plaintext_archive_bytes(
     buffer = io.BytesIO()
     with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
         _write_plaintext_archive(archive, manifest, section_payloads, selected_sections)
+    return buffer.getvalue()
+
+
+def _encrypted_archive_bytes(encrypted_manifest: dict[str, Any], encrypted_payload: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", _json_text(encrypted_manifest))
+        archive.writestr(ENCRYPTED_PAYLOAD_ENTRY, encrypted_payload)
     return buffer.getvalue()
 
 
@@ -1050,11 +1130,70 @@ def _looks_like_encrypted_backup(names: list[str]) -> bool:
     return ENCRYPTED_PAYLOAD_ENTRY in names
 
 
-def _load_archive_json(archive: ZipFile, entry: str) -> object:
+def _validate_archive_limits(infos: list[ZipInfo]) -> None:
+    if len(infos) > MAX_BACKUP_ARCHIVE_MEMBERS:
+        raise BackupValidationError("backup archive member count exceeds limit")
+    compressed_bytes = sum(info.compress_size for info in infos)
+    if compressed_bytes > MAX_BACKUP_COMPRESSED_BYTES:
+        raise BackupValidationError("backup compressed size exceeds limit")
+    uncompressed_bytes = sum(info.file_size for info in infos)
+    if uncompressed_bytes > MAX_BACKUP_TOTAL_UNCOMPRESSED_BYTES:
+        raise BackupValidationError("backup aggregate uncompressed size exceeds limit")
+    for info in infos:
+        if info.file_size > MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES:
+            raise BackupValidationError(
+                f"backup member uncompressed size exceeds limit: {info.filename}"
+            )
+        if info.compress_size > MAX_BACKUP_COMPRESSED_BYTES:
+            raise BackupValidationError(
+                f"backup member compressed size exceeds limit: {info.filename}"
+            )
+        if (
+            info.file_size
+            and info.file_size / max(info.compress_size, 1) > MAX_BACKUP_COMPRESSION_RATIO
+        ):
+            raise BackupValidationError(
+                f"backup member compression ratio exceeds limit: {info.filename}"
+            )
+
+
+def _read_archive_entry(
+    archive: ZipFile,
+    entry: str,
+    budget: _ArchiveReadBudget,
+) -> bytes:
     try:
-        return json.loads(archive.read(entry).decode("utf-8"))
+        info = archive.getinfo(entry)
     except KeyError as exc:
         raise BackupValidationError(f"backup missing {entry}") from exc
+    if info.file_size > MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES:
+        raise BackupValidationError(
+            f"backup member uncompressed size exceeds limit: {entry}"
+        )
+    data = bytearray()
+    try:
+        with archive.open(info) as handle:
+            while chunk := handle.read(ARCHIVE_READ_CHUNK_BYTES):
+                if len(data) + len(chunk) > MAX_BACKUP_MEMBER_UNCOMPRESSED_BYTES:
+                    raise BackupValidationError(
+                        f"backup member uncompressed size exceeds limit: {entry}"
+                    )
+                data.extend(chunk)
+    except BackupValidationError:
+        raise
+    except (BadZipFile, EOFError, OSError, RuntimeError, ValueError) as exc:
+        raise BackupValidationError(f"cannot read backup member {entry}") from exc
+    budget.consume(entry, len(data))
+    return bytes(data)
+
+
+def _load_archive_json(
+    archive: ZipFile,
+    entry: str,
+    budget: _ArchiveReadBudget,
+) -> object:
+    try:
+        return json.loads(_read_archive_entry(archive, entry, budget).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise BackupValidationError(f"{entry} is not valid JSON") from exc
 

@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+VPN_DOMAIN_BYPASS_DISABLED_MARKER="$TMP_DIR/default-domain-bypass-disabled"
+
 # Regression coverage for a real incident (2026-07-07): running ./update.sh
 # unconditionally restarted vpn-domain-bypass.timer via
 # `systemctl enable --now`, even though it was already active. Because the

@@ -38,6 +38,8 @@ class ScriptedDriver(BaseDriver):
         self.connect_calls: list[str] = []
         self.connect_dns_policies: list[DNSPolicy | None] = []
         self.disconnect_calls = 0
+        self.disconnect_result = True
+        self.disconnect_exception: Exception | None = None
         self.connected_profile_id: str | None = None
 
     def connect(
@@ -58,8 +60,11 @@ class ScriptedDriver(BaseDriver):
 
     def disconnect(self) -> bool:
         self.disconnect_calls += 1
-        self.connected_profile_id = None
-        return True
+        if self.disconnect_exception is not None:
+            raise self.disconnect_exception
+        if self.disconnect_result:
+            self.connected_profile_id = None
+        return self.disconnect_result
 
     def health_check(self) -> str:
         return "ok"
@@ -197,6 +202,36 @@ class RotationEngineSelectionTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(result.attempts, 3)
+
+
+class RotationEngineCleanupBarrierTests(unittest.TestCase):
+    def test_failed_disconnect_blocks_rotation_before_any_connect(self) -> None:
+        engine = make_engine()
+        driver = ScriptedDriver()
+        driver.disconnect_result = False
+        pool = [make_profile("a"), make_profile("b")]
+
+        result = engine.rotate(pool, driver, health_check_from({}), force=True)
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.cleanup_failed)
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(driver.disconnect_calls, 1)
+        self.assertEqual(driver.connect_calls, [])
+
+    def test_disconnect_exception_blocks_rotation_before_any_connect(self) -> None:
+        engine = make_engine()
+        driver = ScriptedDriver()
+        driver.disconnect_exception = RuntimeError("teardown transport failed")
+        pool = [make_profile("a"), make_profile("b")]
+
+        result = engine.rotate(pool, driver, health_check_from({}), force=True)
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.cleanup_failed)
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(driver.disconnect_calls, 1)
+        self.assertEqual(driver.connect_calls, [])
 
 
 class RotationEngineAntiLoopTests(unittest.TestCase):

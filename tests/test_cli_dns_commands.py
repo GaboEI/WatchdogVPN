@@ -113,6 +113,116 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertEqual(data["channels"]["configured"], 1)
             self.assertTrue(data["features"]["rules_enabled"])
 
+    def test_dns_status_reports_fakeip_inactive_without_proxy_channel(self) -> None:
+        # proxy_resolution_channel="fakeip" alone does not activate fakeip:
+        # dns/singbox.py's build_singbox_dns_config only wires it in when a
+        # "proxy" channel is also configured. A direct-only policy with the
+        # setting still set to "fakeip" must not claim it is active.
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = DNSPolicy(
+                channels={
+                    DNSChannelName.DIRECT: DNSChannel(
+                        name=DNSChannelName.DIRECT,
+                        resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                    )
+                },
+                proxy_resolution_channel="fakeip",
+            )
+            policy_path = Path(tmp) / "dns-policy.json"
+            policy_path.write_text(json.dumps(policy.to_dict()), encoding="utf-8")
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 203.0.113.53\n", encoding="utf-8")
+
+            json_result = self.run_watchdog(
+                ["dns", "status", "--json", "--resolv-conf-path", str(resolv_conf)],
+                tmp,
+            )
+            data = json.loads(json_result.stdout)
+            self.assertEqual(data["features"]["proxy_resolution_channel"], "fakeip")
+            self.assertFalse(data["features"]["proxy_resolution_channel_active"])
+
+            human_result = self.run_watchdog(
+                ["dns", "status", "--resolv-conf-path", str(resolv_conf)],
+                tmp,
+            )
+            self.assertIn("FakeIP: off", human_result.stdout)
+            self.assertIn("requires a configured proxy DNS channel", human_result.stdout)
+
+    def test_dns_status_reports_fakeip_active_with_proxy_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = DNSPolicy(
+                channels={
+                    DNSChannelName.DIRECT: DNSChannel(
+                        name=DNSChannelName.DIRECT,
+                        resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                    ),
+                    DNSChannelName.PROXY: DNSChannel(
+                        name=DNSChannelName.PROXY,
+                        resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                    ),
+                },
+                proxy_resolution_channel="fakeip",
+            )
+            policy_path = Path(tmp) / "dns-policy.json"
+            policy_path.write_text(json.dumps(policy.to_dict()), encoding="utf-8")
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 203.0.113.53\n", encoding="utf-8")
+
+            json_result = self.run_watchdog(
+                ["dns", "status", "--json", "--resolv-conf-path", str(resolv_conf)],
+                tmp,
+            )
+            data = json.loads(json_result.stdout)
+            self.assertTrue(data["features"]["proxy_resolution_channel_active"])
+
+            human_result = self.run_watchdog(
+                ["dns", "status", "--resolv-conf-path", str(resolv_conf)],
+                tmp,
+            )
+            self.assertIn("FakeIP: on", human_result.stdout)
+
+    def test_dns_status_reports_fakeip_inactive_without_enabled_proxy_resolver(self) -> None:
+        for resolvers in ([], [Resolver(uri="udp://1.1.1.1", enabled=False)]):
+            with self.subTest(resolvers=resolvers), tempfile.TemporaryDirectory() as tmp:
+                policy = DNSPolicy(
+                    channels={
+                        DNSChannelName.PROXY: DNSChannel(
+                            name=DNSChannelName.PROXY,
+                            resolvers=resolvers,
+                        )
+                    },
+                    proxy_resolution_channel="fakeip",
+                )
+                DNSPolicyStore(Path(tmp) / "dns-policy.json").save(policy)
+
+                result = self.run_watchdog(["dns", "status", "--json"], tmp)
+
+                data = json.loads(result.stdout)
+                self.assertFalse(data["features"]["proxy_resolution_channel_active"])
+                human = self.run_watchdog(["dns", "status"], tmp)
+                self.assertIn("requires an enabled resolver", human.stdout)
+
+    def test_dns_status_reports_fakeip_inactive_when_dns_mode_is_off(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = DNSPolicy(
+                mode="off",
+                channels={
+                    DNSChannelName.PROXY: DNSChannel(
+                        name=DNSChannelName.PROXY,
+                        resolvers=[Resolver(uri="udp://1.1.1.1")],
+                    )
+                },
+            )
+            DNSPolicyStore(Path(tmp) / "dns-policy.json").save(policy)
+
+            result = self.run_watchdog(["dns", "status", "--json"], tmp)
+
+            self.assertFalse(
+                json.loads(result.stdout)["features"]["proxy_resolution_channel_active"]
+            )
+            human = self.run_watchdog(["dns", "status"], tmp)
+            self.assertIn("DNS mode is off", human.stdout)
+
     def test_dns_diagnose_json_reports_route_and_dns_channel(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             RuleStore(Path(tmp) / "rules").add_group(
@@ -461,6 +571,60 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertFalse(snapshot_path.exists())
             manager_cls.return_value.restore_state.assert_called_once()
 
+    def test_dns_reset_without_snapshot_is_a_clean_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "dns-state.json"
+            resolv_conf = Path(tmp) / "resolv.conf"
+            self.assertFalse(snapshot_path.exists())
+
+            with patch("cli.main.SystemDNSStateManager") as manager_cls:
+                stdout = StringIO()
+                with redirect_stdout(stdout):
+                    result = cli.main.main(
+                        [
+                            "dns",
+                            "reset",
+                            "--yes",
+                            "--json",
+                            "--snapshot-file",
+                            str(snapshot_path),
+                            "--resolv-conf-path",
+                            str(resolv_conf),
+                        ]
+                    )
+
+            self.assertEqual(result, 0)
+            manager_cls.return_value.restore_state.assert_not_called()
+            data = json.loads(stdout.getvalue())
+            self.assertEqual(data["status"], "nothing-to-restore")
+            self.assertFalse(data["rollback_snapshot"]["restored"])
+
+    def test_dns_reset_missing_yes_reports_json_error_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "dns-state.json"
+            resolv_conf = Path(tmp) / "resolv.conf"
+
+            # WDCLI-009: --json errors are now a single envelope on stdout,
+            # not stderr - one channel regardless of which code path raised.
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                result = cli.main.main(
+                    [
+                        "dns",
+                        "reset",
+                        "--json",
+                        "--snapshot-file",
+                        str(snapshot_path),
+                        "--resolv-conf-path",
+                        str(resolv_conf),
+                    ]
+                )
+
+            self.assertEqual(result, 65)
+            error_document = json.loads(stdout.getvalue())
+            self.assertEqual(error_document["ok"], False)
+            self.assertIn("--yes", error_document["error"])
+
     def test_dns_test_uses_configured_channels(self) -> None:
         policy = DNSPolicy(
             channels={
@@ -486,6 +650,380 @@ class CliDNSCommandTests(unittest.TestCase):
         data = json.loads(stdout.getvalue())
         self.assertIn("proxy", data["channel_results"])
         tester_cls.return_value.test_channel.assert_called_once()
+
+    def test_channel_add_and_remove(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(["dns", "channel", "add", "proxy", "--json"], tmp)
+            added_data = json.loads(added.stdout)
+            self.assertIn("proxy", added_data["policy"]["channels"])
+            self.assertTrue(Path(added_data["backup_path"]).exists())
+
+            result = self.run_watchdog(["dns", "channel", "add", "proxy"], tmp, check=False)
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("dns channel already exists: proxy", result.stderr)
+
+            removed = self.run_watchdog(["dns", "channel", "remove", "proxy", "--json"], tmp)
+            self.assertNotIn("proxy", json.loads(removed.stdout)["policy"]["channels"])
+
+    def test_channel_remove_missing_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(["dns", "channel", "remove", "direct"], tmp, check=False)
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("dns channel not found: direct", result.stderr)
+
+    def test_resolver_add_implicitly_creates_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                ["dns", "resolver", "add", "direct", "udp://1.1.1.1", "--label", "cloudflare", "--json"],
+                tmp,
+            )
+
+            data = json.loads(added.stdout)
+            resolvers = data["policy"]["channels"]["direct"]["resolvers"]
+            self.assertEqual(len(resolvers), 1)
+            self.assertEqual(resolvers[0]["uri"], "udp://1.1.1.1")
+            self.assertEqual(resolvers[0]["label"], "cloudflare")
+            self.assertTrue(resolvers[0]["enabled"])
+
+    def test_resolver_add_rejects_duplicate_uri(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://1.1.1.1"], tmp)
+
+            result = self.run_watchdog(
+                ["dns", "resolver", "add", "direct", "udp://1.1.1.1"], tmp, check=False
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("resolver already exists", result.stderr)
+
+    def test_resolver_add_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                ["dns", "resolver", "add", "direct", "udp://1.1.1.1", "--disabled", "--json"], tmp
+            )
+
+            resolvers = json.loads(added.stdout)["policy"]["channels"]["direct"]["resolvers"]
+            self.assertFalse(resolvers[0]["enabled"])
+
+    def test_resolver_add_accepts_auto_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                [
+                    "dns",
+                    "resolver",
+                    "add",
+                    "direct",
+                    "udp://1.1.1.1",
+                    "--strategy",
+                    "auto",
+                    "--json",
+                ],
+                tmp,
+            )
+
+            channel = json.loads(added.stdout)["policy"]["channels"]["direct"]
+            self.assertEqual(channel["strategy"], "auto")
+
+    def test_resolver_add_enforces_max_four_per_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for octet in range(1, 5):
+                self.run_watchdog(["dns", "resolver", "add", "direct", f"udp://1.1.1.{octet}"], tmp)
+
+            result = self.run_watchdog(
+                ["dns", "resolver", "add", "direct", "udp://1.1.1.5"], tmp, check=False
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_resolver_remove_and_enable_disable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://1.1.1.1"], tmp)
+
+            disabled = self.run_watchdog(
+                ["dns", "resolver", "disable", "direct", "udp://1.1.1.1", "--json"], tmp
+            )
+            resolvers = json.loads(disabled.stdout)["policy"]["channels"]["direct"]["resolvers"]
+            self.assertFalse(resolvers[0]["enabled"])
+
+            enabled = self.run_watchdog(
+                ["dns", "resolver", "enable", "direct", "udp://1.1.1.1", "--json"], tmp
+            )
+            resolvers = json.loads(enabled.stdout)["policy"]["channels"]["direct"]["resolvers"]
+            self.assertTrue(resolvers[0]["enabled"])
+
+            removed = self.run_watchdog(
+                ["dns", "resolver", "remove", "direct", "udp://1.1.1.1", "--json"], tmp
+            )
+            direct = json.loads(removed.stdout)["policy"]["channels"]["direct"]
+            self.assertEqual(direct["resolvers"], [])
+
+    def test_resolver_remove_missing_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["dns", "resolver", "remove", "direct", "udp://1.1.1.1"], tmp, check=False
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("resolver not found", result.stderr)
+
+    def test_rule_add_remove_and_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://1.1.1.1"], tmp)
+
+            added = self.run_watchdog(
+                [
+                    "dns",
+                    "rule",
+                    "add",
+                    "phase-test",
+                    "--pattern",
+                    "suffix:example.test",
+                    "--action",
+                    "use_channel",
+                    "--channel",
+                    "direct",
+                    "--priority",
+                    "50",
+                    "--json",
+                ],
+                tmp,
+            )
+            rules = json.loads(added.stdout)["policy"]["rules"]
+            self.assertEqual(rules[0]["id"], "phase-test")
+            self.assertEqual(rules[0]["priority"], 50)
+
+            disabled = self.run_watchdog(["dns", "rule", "disable", "phase-test", "--json"], tmp)
+            self.assertFalse(json.loads(disabled.stdout)["policy"]["rules"][0]["enabled"])
+
+            enabled = self.run_watchdog(["dns", "rule", "enable", "phase-test", "--json"], tmp)
+            self.assertTrue(json.loads(enabled.stdout)["policy"]["rules"][0]["enabled"])
+
+            removed = self.run_watchdog(["dns", "rule", "remove", "phase-test", "--json"], tmp)
+            self.assertEqual(json.loads(removed.stdout)["policy"]["rules"], [])
+
+    def test_rule_add_use_channel_requires_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "dns",
+                    "rule",
+                    "add",
+                    "phase-test",
+                    "--pattern",
+                    "domain:example.test",
+                    "--action",
+                    "use_channel",
+                ],
+                tmp,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_rule_add_rejects_missing_configured_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "dns",
+                    "rule",
+                    "add",
+                    "missing-channel",
+                    "--pattern",
+                    "domain:example.test",
+                    "--action",
+                    "use_channel",
+                    "--channel",
+                    "direct",
+                ],
+                tmp,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("dns channel not found: direct", result.stderr)
+
+    def test_channel_remove_rejects_referenced_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["dns", "channel", "add", "direct"], tmp)
+            self.run_watchdog(
+                [
+                    "dns",
+                    "rule",
+                    "add",
+                    "direct-rule",
+                    "--pattern",
+                    "domain:example.test",
+                    "--action",
+                    "use_channel",
+                    "--channel",
+                    "direct",
+                ],
+                tmp,
+            )
+
+            result = self.run_watchdog(
+                ["dns", "channel", "remove", "direct"], tmp, check=False
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("is referenced by rule(s): direct-rule", result.stderr)
+
+    def test_rule_add_reject_action_needs_no_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                [
+                    "dns",
+                    "rule",
+                    "add",
+                    "blocked",
+                    "--pattern",
+                    "domain:ads.example",
+                    "--action",
+                    "reject",
+                    "--json",
+                ],
+                tmp,
+            )
+
+            rule = json.loads(added.stdout)["policy"]["rules"][0]
+            self.assertEqual(rule["action"], "reject")
+            self.assertIsNone(rule["channel"])
+
+    def test_rule_add_rejects_channel_for_reject_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                [
+                    "dns",
+                    "rule",
+                    "add",
+                    "blocked",
+                    "--pattern",
+                    "domain:ads.example",
+                    "--action",
+                    "reject",
+                    "--channel",
+                    "direct",
+                ],
+                tmp,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("--channel is incompatible", result.stderr)
+
+    def test_static_ip_add_and_remove(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                ["dns", "static-ip", "add", "phase18.example", "203.0.113.10", "--json"], tmp
+            )
+            entries = json.loads(added.stdout)["policy"]["static_ips"]
+            self.assertEqual(entries, [{"domain": "phase18.example", "ip": "203.0.113.10", "enabled": True}])
+
+            removed = self.run_watchdog(
+                ["dns", "static-ip", "remove", "phase18.example", "--json"], tmp
+            )
+            self.assertEqual(json.loads(removed.stdout)["policy"]["static_ips"], [])
+
+    def test_static_ip_remove_missing_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["dns", "static-ip", "remove", "missing.example"], tmp, check=False
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("static IP mapping not found", result.stderr)
+
+    def test_config_set_dns_scalars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "dns.fakeip_inet4_range", "10.0.0.0/8", "--json"], tmp
+            )
+            data = json.loads(result.stdout)
+            self.assertEqual(data["key"], "dns.fakeip_inet4_range")
+            self.assertEqual(data["value"], "10.0.0.0/8")
+            self.assertTrue(Path(data["backup_path"]).exists())
+            self.assertEqual(data["rollback_point"]["kind"], "section-backup")
+
+            result = self.run_watchdog(
+                ["config", "set", "dns.tun_hijack", "false", "--json"], tmp
+            )
+            self.assertFalse(json.loads(result.stdout)["value"])
+
+            result = self.run_watchdog(
+                ["config", "set", "dns.ecs_direct_subnet", "none", "--json"], tmp
+            )
+            self.assertIsNone(json.loads(result.stdout)["value"])
+
+            for key in ("dns.rules_enabled", "dns.static_ip_enabled"):
+                enabled = self.run_watchdog(
+                    ["config", "set", key, "true", "--json"], tmp
+                )
+                self.assertTrue(json.loads(enabled.stdout)["value"])
+
+    def test_config_set_dns_rejects_invalid_ttl_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "dns.ttl", "-1", "--json"], tmp, check=False
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("dns ttl must be a positive duration", result.stdout)
+            self.assertEqual(DNSPolicyStore(Path(tmp) / "dns-policy.json").load().ttl, "12h")
+
+    def test_dns_mutation_backs_up_explicit_custom_policy_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            policy_path = Path(tmp) / "operator-policy.json"
+            original = DNSPolicy(test_domain="before.example")
+            DNSPolicyStore(policy_path).save(original)
+
+            result = self.run_watchdog(
+                [
+                    "dns",
+                    "channel",
+                    "add",
+                    "direct",
+                    "--policy-file",
+                    str(policy_path),
+                    "--json",
+                ],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            backup_path = Path(data["backup_path"])
+            self.assertEqual(data["rollback_point"]["kind"], "file-backup")
+            self.assertEqual(data["rollback_point"]["target"], str(policy_path))
+            self.assertEqual(
+                DNSPolicy.from_dict(json.loads(backup_path.read_text(encoding="utf-8"))),
+                original,
+            )
+
+    def test_config_set_dns_rejects_unknown_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_watchdog(
+                ["config", "set", "dns.bogus", "x"], tmp, check=False
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unsupported dns config key", result.stderr)
+
+    def test_fakeip_activates_end_to_end_via_cli_only(self) -> None:
+        # Regression guard for the finding that started this whole audit:
+        # `dns status` reported FakeIP: off with no CLI path to fix it.
+        # This proves the full fix using only watchdog commands, no
+        # hand-edited JSON.
+        with tempfile.TemporaryDirectory() as tmp:
+            before = json.loads(self.run_watchdog(["dns", "status", "--json"], tmp).stdout)
+            self.assertFalse(before["features"]["proxy_resolution_channel_active"])
+
+            self.run_watchdog(["dns", "resolver", "add", "proxy", "udp://1.1.1.1"], tmp)
+
+            after = json.loads(self.run_watchdog(["dns", "status", "--json"], tmp).stdout)
+            self.assertTrue(after["features"]["proxy_resolution_channel_active"])
+
+            human = self.run_watchdog(["dns", "status"], tmp)
+            self.assertIn("FakeIP: on", human.stdout)
 
 
 if __name__ == "__main__":
