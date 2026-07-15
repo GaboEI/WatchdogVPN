@@ -285,8 +285,11 @@ class SubscriptionProvider(BaseProvider):
                     raise ValueError("subscription profile has no matching provider")
                 owned_profile_ids[profile.provider_id].append(profile.id)
         for provider in providers:
-            if provider.profiles != owned_profile_ids[provider.id]:
-                raise ValueError("provider profile list does not match owned profiles")
+            if (
+                len(provider.profiles) != len(set(provider.profiles))
+                or set(provider.profiles) != set(owned_profile_ids[provider.id])
+            ):
+                raise ValueError("provider profile membership does not match owned profiles")
 
     def _snapshot_bytes(self, path: Path) -> bytes | None:
         return path.read_bytes() if path.exists() else None
