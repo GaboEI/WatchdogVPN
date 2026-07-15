@@ -4,7 +4,7 @@ import json
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -303,6 +303,25 @@ class CliProfileCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         provider.from_clipboard.assert_called_once_with()
+
+    def test_profile_add_clipboard_unavailable_is_actionable_without_traceback(self) -> None:
+        for as_json in (False, True):
+            stdout = StringIO()
+            stderr = StringIO()
+            args = ["profile", "add", "--clipboard"]
+            if as_json:
+                args.append("--json")
+            with self.subTest(json=as_json), patch(
+                "providers.manual_provider.shutil.which",
+                return_value=None,
+            ), redirect_stdout(stdout), redirect_stderr(stderr):
+                result = cli.main.main(args)
+
+            self.assertEqual(result, 65)
+            combined = stdout.getvalue() + stderr.getvalue()
+            self.assertIn("clipboard unavailable", combined)
+            self.assertIn("--file/--text", combined)
+            self.assertNotIn("Traceback", combined)
 
 
 if __name__ == "__main__":

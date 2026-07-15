@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import shutil
 import subprocess
 import sys
 import textwrap
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -27,6 +30,25 @@ from parsers.openvpn_safety import OpenVPNConfigValidationError, validate_openvp
 from parsers.profile_schema import ProfileSemanticValidationError, validate_profile_semantics
 
 RotationPrompt = Callable[[Profile], bool]
+
+CLIPBOARD_HELPERS = (
+    ("wl-paste", ["wl-paste", "-n"]),
+    ("xclip", ["xclip", "-selection", "clipboard", "-o"]),
+    ("xsel", ["xsel", "--clipboard", "--output"]),
+    ("pbpaste", ["pbpaste"]),
+)
+CLIPBOARD_TIMEOUT_SECONDS = 2.0
+CLIPBOARD_TERMINATION_GRACE_SECONDS = 0.25
+CLIPBOARD_KILL_GRACE_SECONDS = 0.5
+CLIPBOARD_GROUP_POLL_SECONDS = 0.01
+
+
+class ClipboardHelperTimeout(RuntimeError):
+    """A clipboard helper exceeded its bounded execution window."""
+
+
+class ClipboardHelperCleanupError(RuntimeError):
+    """A clipboard helper process group could not be proven terminated."""
 
 
 class ManualProvider(BaseProvider):
@@ -245,19 +267,147 @@ class ManualProvider(BaseProvider):
         return profiles
 
     def _read_clipboard_text(self) -> str | None:
-        commands = (
-            ("wl-paste", ["wl-paste", "-n"]),
-            ("xclip", ["xclip", "-selection", "clipboard", "-o"]),
-            ("xsel", ["xsel", "--clipboard", "--output"]),
-            ("pbpaste", ["pbpaste"]),
-        )
-        for binary, command in commands:
+        found_helpers: list[str] = []
+        failed_helpers: list[str] = []
+        timed_out_helpers: list[str] = []
+        for binary, command in CLIPBOARD_HELPERS:
             if shutil.which(binary) is None:
                 continue
-            result = subprocess.run(command, text=True, capture_output=True, check=False)
+            found_helpers.append(binary)
+            try:
+                result = self._run_clipboard_helper(command)
+            except ClipboardHelperTimeout:
+                timed_out_helpers.append(binary)
+                continue
+            except ClipboardHelperCleanupError as exc:
+                raise ParseError(
+                    f"clipboard unavailable: {binary} cleanup could not be verified; "
+                    "inspect local processes, then use --file or --text"
+                ) from exc
+            except OSError:
+                failed_helpers.append(f"{binary}=launch-error")
+                continue
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
+            if result.returncode == 0:
+                return None
+            failed_helpers.append(f"{binary}=exit-{result.returncode}")
+
+        if timed_out_helpers:
+            helpers = ", ".join(timed_out_helpers)
+            raise ParseError(
+                "clipboard unavailable: helper timeout after "
+                f"{CLIPBOARD_TIMEOUT_SECONDS:g}s ({helpers}); process groups were "
+                "terminated; use --file or --text"
+            )
+        if failed_helpers:
+            raise ParseError(
+                "clipboard unavailable: helpers failed ("
+                + ", ".join(failed_helpers)
+                + "); verify the desktop clipboard service or use --file/--text"
+            )
+        if not found_helpers:
+            raise ParseError(
+                "clipboard unavailable: no supported helper found "
+                "(wl-paste, xclip, xsel, pbpaste); install one or use --file/--text"
+            )
         return None
+
+    def _run_clipboard_helper(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        process = subprocess.Popen(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=CLIPBOARD_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as exc:
+            self._terminate_clipboard_process_group(process)
+            stdout, stderr = process.communicate()
+            raise ClipboardHelperTimeout(command[0]) from exc
+
+        # A helper can exit after spawning a child that no longer holds its
+        # pipes. Never return clipboard data until its private process group is
+        # also gone.
+        self._terminate_clipboard_process_group(process)
+        return subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout,
+            stderr,
+        )
+
+    def _terminate_clipboard_process_group(self, process: subprocess.Popen[str]) -> None:
+        process_group = process.pid
+        if not self._signal_clipboard_process_group(process_group, signal.SIGTERM):
+            self._reap_clipboard_helper(process)
+            return
+
+        self._wait_for_clipboard_helper(process, CLIPBOARD_TERMINATION_GRACE_SECONDS)
+        if self._wait_for_process_group_exit(
+            process_group,
+            CLIPBOARD_TERMINATION_GRACE_SECONDS,
+        ):
+            return
+
+        self._signal_clipboard_process_group(process_group, signal.SIGKILL)
+        self._wait_for_clipboard_helper(process, CLIPBOARD_KILL_GRACE_SECONDS)
+        if not self._wait_for_process_group_exit(
+            process_group,
+            CLIPBOARD_KILL_GRACE_SECONDS,
+        ):
+            raise ClipboardHelperCleanupError(
+                f"clipboard helper process group {process_group} survived SIGKILL"
+            )
+
+    def _reap_clipboard_helper(self, process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        self._wait_for_clipboard_helper(process, CLIPBOARD_TERMINATION_GRACE_SECONDS)
+
+    def _wait_for_clipboard_helper(
+        self,
+        process: subprocess.Popen[str],
+        timeout: float,
+    ) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return
+
+    def _wait_for_process_group_exit(self, process_group: int, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self._process_group_exists(process_group):
+                return True
+            time.sleep(CLIPBOARD_GROUP_POLL_SECONDS)
+        return not self._process_group_exists(process_group)
+
+    def _process_group_exists(self, process_group: int) -> bool:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError as exc:
+            raise ClipboardHelperCleanupError(
+                f"cannot inspect clipboard helper process group {process_group}"
+            ) from exc
+        return True
+
+    def _signal_clipboard_process_group(self, process_group: int, sig: signal.Signals) -> bool:
+        try:
+            os.killpg(process_group, sig)
+        except ProcessLookupError:
+            return False
+        except PermissionError as exc:
+            raise ClipboardHelperCleanupError(
+                f"cannot signal clipboard helper process group {process_group}"
+            ) from exc
+        return True
 
     def _prompt_rotation_pool(self, profile: Profile) -> bool:
         if not sys.stdin.isatty():

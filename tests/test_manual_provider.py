@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -11,7 +16,12 @@ from unittest.mock import patch
 from config.profile_store import ProfileStore
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.uri import ParseError
-from providers.manual_provider import ManualProvider
+from providers.manual_provider import (
+    CLIPBOARD_HELPERS,
+    ClipboardHelperCleanupError,
+    ClipboardHelperTimeout,
+    ManualProvider,
+)
 
 
 class ManualProviderTests(unittest.TestCase):
@@ -390,6 +400,167 @@ class ManualProviderTests(unittest.TestCase):
 
             self.assertIsNotNone(profile)
             self.assertEqual(profile.protocol, ProtocolType.HYSTERIA2)
+
+    def test_every_clipboard_helper_success_and_nonzero_exit_are_handled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(Path(tmp) / "profiles.json")
+            for binary, command in CLIPBOARD_HELPERS:
+                which = lambda candidate, selected=binary: (
+                    f"/test/{selected}" if candidate == selected else None
+                )
+                with self.subTest(helper=binary, outcome="success"), \
+                     patch("providers.manual_provider.shutil.which", side_effect=which), \
+                     patch.object(
+                         provider,
+                         "_run_clipboard_helper",
+                         return_value=subprocess.CompletedProcess(
+                             command,
+                             0,
+                             " vless://uuid@example.com:443 ",
+                             "",
+                         ),
+                     ) as runner:
+                    self.assertEqual(
+                        provider._read_clipboard_text(),
+                        "vless://uuid@example.com:443",
+                    )
+                    runner.assert_called_once_with(command)
+
+                with self.subTest(helper=binary, outcome="nonzero"), \
+                     patch("providers.manual_provider.shutil.which", side_effect=which), \
+                     patch.object(
+                         provider,
+                         "_run_clipboard_helper",
+                         return_value=subprocess.CompletedProcess(command, 9, "", "secret"),
+                     ), self.assertRaises(ParseError) as captured:
+                    provider._read_clipboard_text()
+                self.assertIn(f"{binary}=exit-9", str(captured.exception))
+                self.assertNotIn("secret", str(captured.exception))
+
+    def test_every_clipboard_helper_timeout_is_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(Path(tmp) / "profiles.json")
+            for binary, _command in CLIPBOARD_HELPERS:
+                which = lambda candidate, selected=binary: (
+                    f"/test/{selected}" if candidate == selected else None
+                )
+                with self.subTest(helper=binary), \
+                     patch("providers.manual_provider.shutil.which", side_effect=which), \
+                     patch.object(
+                         provider,
+                         "_run_clipboard_helper",
+                         side_effect=ClipboardHelperTimeout(binary),
+                     ), self.assertRaises(ParseError) as captured:
+                    provider._read_clipboard_text()
+                message = str(captured.exception)
+                self.assertIn(binary, message)
+                self.assertIn("timeout", message)
+                self.assertIn("process groups were terminated", message)
+                self.assertIn("--file or --text", message)
+
+    def test_every_clipboard_helper_timeout_reaps_its_child_process_group(self) -> None:
+        child_code = (
+            "import signal,time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "time.sleep(60)"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            provider = self._provider(tmp_path / "profiles.json")
+            for binary, _command in CLIPBOARD_HELPERS:
+                helper = tmp_path / binary
+                pid_file = tmp_path / f"{binary}.child.pid"
+                helper.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import os, signal, subprocess, sys, time\n"
+                    f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+                    "with open(os.environ['WDVPN_CLIPBOARD_CHILD_PID'], 'w', encoding='utf-8') as handle:\n"
+                    "    handle.write(str(child.pid))\n"
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                    "time.sleep(60)\n",
+                    encoding="utf-8",
+                )
+                helper.chmod(0o755)
+                which = lambda candidate, selected=binary, path=helper: (
+                    str(path) if candidate == selected else None
+                )
+                child_pid = 0
+                started_at = time.monotonic()
+                try:
+                    with self.subTest(helper=binary), \
+                         patch.dict(
+                             os.environ,
+                             {
+                                 "PATH": f"{tmp}{os.pathsep}{os.environ.get('PATH', '')}",
+                                 "WDVPN_CLIPBOARD_CHILD_PID": str(pid_file),
+                             },
+                         ), patch(
+                             "providers.manual_provider.shutil.which",
+                             side_effect=which,
+                         ), patch(
+                             "providers.manual_provider.CLIPBOARD_TIMEOUT_SECONDS",
+                             0.15,
+                         ), patch(
+                             "providers.manual_provider.CLIPBOARD_TERMINATION_GRACE_SECONDS",
+                             0.1,
+                         ), patch(
+                             "providers.manual_provider.CLIPBOARD_KILL_GRACE_SECONDS",
+                             1.0,
+                         ), self.assertRaises(ParseError) as captured:
+                        provider._read_clipboard_text()
+
+                    self.assertIn("process groups were terminated", str(captured.exception))
+                    self.assertTrue(pid_file.is_file(), f"{binary} did not publish child PID")
+                    child_pid = int(pid_file.read_text(encoding="utf-8"))
+                    deadline = time.monotonic() + 2.0
+                    while self._process_exists(child_pid) and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertFalse(
+                        self._process_exists(child_pid),
+                        f"{binary} child survived clipboard timeout cleanup",
+                    )
+                    self.assertLess(
+                        time.monotonic() - started_at,
+                        2.0,
+                        f"{binary} timeout path was not bounded",
+                    )
+                finally:
+                    if child_pid and self._process_exists(child_pid):
+                        os.kill(child_pid, signal.SIGKILL)
+
+    def test_clipboard_cleanup_uncertainty_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(Path(tmp) / "profiles.json")
+            with patch(
+                "providers.manual_provider.shutil.which",
+                side_effect=lambda binary: "/test/wl-paste" if binary == "wl-paste" else None,
+            ), patch.object(
+                provider,
+                "_run_clipboard_helper",
+                side_effect=ClipboardHelperCleanupError("still alive"),
+            ), self.assertRaises(ParseError) as captured:
+                provider._read_clipboard_text()
+
+            message = str(captured.exception)
+            self.assertIn("cleanup could not be verified", message)
+            self.assertIn("inspect local processes", message)
+
+    def test_missing_clipboard_helpers_returns_actionable_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(Path(tmp) / "profiles.json")
+            with patch("providers.manual_provider.shutil.which", return_value=None), \
+                 self.assertRaises(ParseError) as captured:
+                provider._read_clipboard_text()
+
+            self.assertIn("no supported helper found", str(captured.exception))
+            self.assertIn("--file/--text", str(captured.exception))
+
+    def _process_exists(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
 
     def test_duplicate_profile_import_is_rejected_without_secret_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
