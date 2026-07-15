@@ -218,9 +218,9 @@ The installed state and IPC permission contract was correct during inspection:
 - Description: The TUI assumes a wide ANSI-capable terminal and does not rerender blocked views on resize.
 - Scenario: The TUI runs at 40 columns, under TERM=dumb, or is resized while waiting indefinitely for input.
 - Impact: Cursor writes exceed the terminal width, footer controls are unreachable, ANSI/mouse modes are emitted to incapable terminals, and the view remains stale until user input.
-- Status: OPEN
-- Evidence: tui/VPN:877-887 fixes a 24-column left pane and right pane origin; tui/VPN:1037-1046 writes footer elements through column 61. A 40-column render emitted 14 cursor moves beyond column 40. tui/VPN:851-871 unconditionally enables alternate-screen/mouse modes, and main only checks isatty at 2384-2392. No SIGWINCH handling exists.
-- Recommendation: Add minimum-width fallback rendering, terminal-capability detection, and resize-triggered redraw independent of input.
+- Status: CLOSED by R-25 on 2026-07-15; independent R-28 re-audit remains mandatory.
+- Evidence: capability detection now separates redirected, non-ANSI, too-small, compact, and wide terminals before raw/alternate-screen setup. Forty-column dashboards and action selectors use one-column layouts with visible controls; every cursor-addressed write rechecks and clips to the live viewport. A real SIGWINCH wakes blocked input and redraws without keyboard input. Six regressions cover 40/120 columns, `TERM=dumb`, redirected streams, too-small terminals, live SIGWINCH, compact controls, and stale post-resize coordinates; an installed real PTY `TERM=dumb` run emitted no escape bytes.
+- Recommendation: Closed. Preserve capability gating, viewport-bounded writes, compact controls, and signal-driven redraw. AUD-013 remains separate for hostile control-string sanitization and Unicode cell-width accounting.
 
 ### AUD-20260713-013
 
