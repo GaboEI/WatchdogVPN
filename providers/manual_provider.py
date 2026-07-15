@@ -41,6 +41,7 @@ CLIPBOARD_TIMEOUT_SECONDS = 2.0
 CLIPBOARD_TERMINATION_GRACE_SECONDS = 0.25
 CLIPBOARD_KILL_GRACE_SECONDS = 0.5
 CLIPBOARD_GROUP_POLL_SECONDS = 0.01
+PROC_ROOT = Path("/proc")
 
 
 class ClipboardHelperTimeout(RuntimeError):
@@ -382,12 +383,12 @@ class ManualProvider(BaseProvider):
     def _wait_for_process_group_exit(self, process_group: int, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if not self._process_group_exists(process_group):
+            if not self._process_group_has_live_members(process_group):
                 return True
             time.sleep(CLIPBOARD_GROUP_POLL_SECONDS)
-        return not self._process_group_exists(process_group)
+        return not self._process_group_has_live_members(process_group)
 
-    def _process_group_exists(self, process_group: int) -> bool:
+    def _process_group_has_live_members(self, process_group: int) -> bool:
         try:
             os.killpg(process_group, 0)
         except ProcessLookupError:
@@ -396,6 +397,63 @@ class ManualProvider(BaseProvider):
             raise ClipboardHelperCleanupError(
                 f"cannot inspect clipboard helper process group {process_group}"
             ) from exc
+
+        linux_observation = self._linux_process_group_has_live_members(process_group)
+        if linux_observation is not None:
+            return linux_observation
+        # Without a complete Linux /proc observation, retain the conservative
+        # signal-based result. A cleanup is never certified from uncertainty.
+        return True
+
+    def _linux_process_group_has_live_members(self, process_group: int) -> bool | None:
+        """Distinguish executable survivors from already-dead zombie entries.
+
+        killpg(pgid, 0) continues to succeed while an orphaned descendant is a
+        zombie awaiting collection by PID 1. Zombies have released code, file
+        descriptors, sockets, and network influence; treating them as running
+        makes cleanup depend on the host's PID-1 reaping latency. Any unreadable
+        or malformed observation remains fail-closed via ``None``.
+        """
+
+        if not PROC_ROOT.is_dir():
+            return None
+        observed_member = False
+        uncertain = False
+        try:
+            entries = list(PROC_ROOT.iterdir())
+        except OSError:
+            return None
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat_line = (entry / "stat").read_text(encoding="utf-8")
+                closing_parenthesis = stat_line.rfind(")")
+                if closing_parenthesis < 0:
+                    uncertain = True
+                    continue
+                fields = stat_line[closing_parenthesis + 2 :].split()
+                if len(fields) < 3:
+                    uncertain = True
+                    continue
+                state = fields[0]
+                member_group = int(fields[2])
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError):
+                uncertain = True
+                continue
+            if member_group != process_group:
+                continue
+            observed_member = True
+            if state not in {"Z", "X", "x"}:
+                return True
+        if uncertain:
+            return None
+        if observed_member:
+            return False
+        # killpg observed the group but /proc saw no member. Treat the racing
+        # observation as live and let the bounded poll retry it.
         return True
 
     def _signal_clipboard_process_group(self, process_group: int, sig: signal.Signals) -> bool:

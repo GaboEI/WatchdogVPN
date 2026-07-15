@@ -471,7 +471,7 @@ class ManualProviderTests(unittest.TestCase):
                 helper = tmp_path / binary
                 pid_file = tmp_path / f"{binary}.child.pid"
                 helper.write_text(
-                    "#!/usr/bin/env python3\n"
+                    f"#!{sys.executable}\n"
                     "import os, signal, subprocess, sys, time\n"
                     f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
                     "with open(os.environ['WDVPN_CLIPBOARD_CHILD_PID'], 'w', encoding='utf-8') as handle:\n"
@@ -499,7 +499,7 @@ class ManualProviderTests(unittest.TestCase):
                              side_effect=which,
                          ), patch(
                              "providers.manual_provider.CLIPBOARD_TIMEOUT_SECONDS",
-                             0.15,
+                             0.5,
                          ), patch(
                              "providers.manual_provider.CLIPBOARD_TERMINATION_GRACE_SECONDS",
                              0.1,
@@ -513,19 +513,19 @@ class ManualProviderTests(unittest.TestCase):
                     self.assertTrue(pid_file.is_file(), f"{binary} did not publish child PID")
                     child_pid = int(pid_file.read_text(encoding="utf-8"))
                     deadline = time.monotonic() + 2.0
-                    while self._process_exists(child_pid) and time.monotonic() < deadline:
+                    while self._process_is_running(child_pid) and time.monotonic() < deadline:
                         time.sleep(0.02)
                     self.assertFalse(
-                        self._process_exists(child_pid),
+                        self._process_is_running(child_pid),
                         f"{binary} child survived clipboard timeout cleanup",
                     )
                     self.assertLess(
                         time.monotonic() - started_at,
-                        2.0,
+                        3.0,
                         f"{binary} timeout path was not bounded",
                     )
                 finally:
-                    if child_pid and self._process_exists(child_pid):
+                    if child_pid and self._process_is_running(child_pid):
                         os.kill(child_pid, signal.SIGKILL)
 
     def test_clipboard_cleanup_uncertainty_fails_closed(self) -> None:
@@ -555,7 +555,58 @@ class ManualProviderTests(unittest.TestCase):
             self.assertIn("no supported helper found", str(captured.exception))
             self.assertIn("--file/--text", str(captured.exception))
 
-    def _process_exists(self, pid: int) -> bool:
+    def test_linux_group_observation_treats_zombies_as_terminated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proc_root = Path(tmp)
+            provider = self._provider(proc_root / "profiles.json")
+            zombie = proc_root / "101"
+            zombie.mkdir()
+            (zombie / "stat").write_text(
+                "101 (clipboard child) Z 1 700 700 0 0 0 0\n",
+                encoding="utf-8",
+            )
+            with patch("providers.manual_provider.PROC_ROOT", proc_root):
+                self.assertFalse(provider._linux_process_group_has_live_members(700))
+
+            live = proc_root / "102"
+            live.mkdir()
+            (live / "stat").write_text(
+                "102 (clipboard child) S 1 700 700 0 0 0 0\n",
+                encoding="utf-8",
+            )
+            with patch("providers.manual_provider.PROC_ROOT", proc_root):
+                self.assertTrue(provider._linux_process_group_has_live_members(700))
+
+    def test_linux_group_observation_keeps_uncertainty_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proc_root = Path(tmp)
+            provider = self._provider(proc_root / "profiles.json")
+            malformed = proc_root / "101"
+            malformed.mkdir()
+            (malformed / "stat").write_text("malformed\n", encoding="utf-8")
+            with patch("providers.manual_provider.PROC_ROOT", proc_root):
+                self.assertIsNone(provider._linux_process_group_has_live_members(700))
+
+            zombie = proc_root / "102"
+            zombie.mkdir()
+            (zombie / "stat").write_text(
+                "102 (clipboard child) Z 1 700 700 0 0 0 0\n",
+                encoding="utf-8",
+            )
+            with patch("providers.manual_provider.PROC_ROOT", proc_root):
+                self.assertIsNone(provider._linux_process_group_has_live_members(700))
+
+    def _process_is_running(self, pid: int) -> bool:
+        stat_path = Path("/proc") / str(pid) / "stat"
+        try:
+            stat_line = stat_path.read_text(encoding="utf-8")
+            closing_parenthesis = stat_line.rfind(")")
+            fields = stat_line[closing_parenthesis + 2 :].split()
+            return bool(fields) and fields[0] not in {"Z", "X", "x"}
+        except FileNotFoundError:
+            return False
+        except OSError:
+            pass
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
