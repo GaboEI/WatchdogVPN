@@ -93,8 +93,12 @@ class SubscriptionProvider(BaseProvider):
                 metadata=metadata,
             )
             normalized = self._normalize_profiles(provider, profiles)
-            provider.profiles = [profile.id for profile in normalized]
-            return [*current_providers, provider], [*current_profiles, *normalized], provider
+            replacement_providers = [*current_providers, provider]
+            replacement_profiles = [*current_profiles, *normalized]
+            provider.profiles = self._owned_profile_ids_by_provider(
+                replacement_providers, replacement_profiles
+            )[provider.id]
+            return replacement_providers, replacement_profiles, provider
 
         return self._commit_provider_profile_transaction(commit)
 
@@ -149,10 +153,16 @@ class SubscriptionProvider(BaseProvider):
                 merged_owned_profiles.append(merged)
             changes += len(set(existing) - {profile.id for profile in normalized})
 
+            replacement_profiles = [*unowned_profiles, *merged_owned_profiles]
             current_provider.last_updated = datetime.now(timezone.utc)
-            current_provider.profiles = [profile.id for profile in normalized]
+            # A refresh is an exact replacement of this provider's current
+            # subscription payload. Derive its references from the same final
+            # profile list that will be transactionally published.
+            current_provider.profiles = self._owned_profile_ids_by_provider(
+                current_providers, replacement_profiles
+            )[current_provider.id]
             current_provider.metadata = metadata
-            return current_providers, [*unowned_profiles, *merged_owned_profiles], changes
+            return current_providers, replacement_profiles, changes
 
         return self._commit_provider_profile_transaction(commit)
 
@@ -277,19 +287,37 @@ class SubscriptionProvider(BaseProvider):
         profile_ids = [profile.id for profile in profiles]
         if len(profile_ids) != len(set(profile_ids)):
             raise ValueError("provider transaction contains duplicate profile identifiers")
-        owned_profile_ids: dict[str, list[str]] = {provider_id: [] for provider_id in provider_ids}
         for profile in profiles:
             validate_openvpn_profile(profile)
-            if profile.source is ProfileSource.SUBSCRIPTION:
-                if not profile.provider_id or profile.provider_id not in owned_profile_ids:
-                    raise ValueError("subscription profile has no matching provider")
-                owned_profile_ids[profile.provider_id].append(profile.id)
+        owned_profile_ids = self._owned_profile_ids_by_provider(providers, profiles)
         for provider in providers:
             if (
                 len(provider.profiles) != len(set(provider.profiles))
                 or set(provider.profiles) != set(owned_profile_ids[provider.id])
             ):
                 raise ValueError("provider profile membership does not match owned profiles")
+
+    def _owned_profile_ids_by_provider(
+        self, providers: list[Provider], profiles: list[Profile]
+    ) -> dict[str, list[str]]:
+        """Derive provider ownership from the final profile replacement.
+
+        provider_id is the persisted ownership edge. New subscription profiles
+        always have source=subscription, but older installations can contain
+        provider-owned profiles created before that source marker was enforced.
+        Treating only the marker as ownership lets such a historical record
+        block unrelated provider refreshes.
+        """
+        owned_profile_ids: dict[str, list[str]] = {provider.id: [] for provider in providers}
+        for profile in profiles:
+            if profile.source is ProfileSource.SUBSCRIPTION and not profile.provider_id:
+                raise ValueError("subscription profile has no matching provider")
+            if not profile.provider_id:
+                continue
+            if profile.provider_id not in owned_profile_ids:
+                raise ValueError("profile has no matching provider")
+            owned_profile_ids[profile.provider_id].append(profile.id)
+        return owned_profile_ids
 
     def _snapshot_bytes(self, path: Path) -> bytes | None:
         return path.read_bytes() if path.exists() else None

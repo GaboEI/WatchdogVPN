@@ -10,6 +10,7 @@ from unittest.mock import patch
 from config.profile_store import ProfileStore
 from config.provider_store import DuplicateProviderError, ProviderLimitError, ProviderStore
 from models.profile import Profile, ProfileSource, ProtocolType
+from models.provider import Provider
 from parsers import ParseError
 from providers.subscription_provider import ProviderNotFoundError, SubscriptionProvider
 
@@ -224,6 +225,70 @@ class SubscriptionProviderTests(unittest.TestCase):
             self.assertIsNotNone(updated_provider)
             assert updated_provider is not None
             self.assertEqual(updated_provider.profiles, ["provider:old-node"])
+
+    def test_update_replaces_membership_exactly_and_canonicalizes_reference_order(self) -> None:
+        calls = {"count": 0}
+
+        def fetcher(_url: str) -> list[Profile]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return [
+                    _profile("first", "First", "first.example.com"),
+                    _profile("second", "Second", "second.example.com"),
+                    _profile("stale", "Stale", "stale.example.com"),
+                ]
+            return [
+                _profile("second", "Second", "second.example.com"),
+                _profile("first", "First", "first.example.com"),
+                _profile("fresh", "Fresh", "fresh.example.com"),
+            ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, fetcher)
+            stored = provider.add("https://provider.example/sub", "Provider")
+            provider_store = ProviderStore(Path(tmp) / "providers.json")
+            historical = provider_store.get(stored.id)
+            assert historical is not None
+            historical.profiles.reverse()
+            provider_store.update(historical)
+
+            changes = provider.update(stored.id)
+
+            updated = provider_store.get(stored.id)
+            assert updated is not None
+            self.assertEqual(changes, 2)
+            self.assertEqual(
+                updated.profiles,
+                ["provider:second", "provider:first", "provider:fresh"],
+            )
+            self.assertEqual(
+                {profile.id for profile in ProfileStore(Path(tmp) / "profiles.json").list()},
+                {"provider:second", "provider:first", "provider:fresh"},
+            )
+
+    def test_historical_manual_owned_profile_does_not_block_other_provider_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, lambda _url: [_profile("node", "Node", "node.example.com")])
+            provider_store = ProviderStore(Path(tmp) / "providers.json")
+            profile_store = ProfileStore(Path(tmp) / "profiles.json")
+            legacy = _profile("legacy:node", "Legacy node", "legacy.example.com")
+            legacy.provider_id = "legacy-provider"
+            profile_store.add(legacy)
+            provider_store.add(
+                Provider(
+                    id="legacy-provider",
+                    name="Legacy provider",
+                    url="https://legacy.example/sub",
+                    profiles=[legacy.id],
+                )
+            )
+            stored = provider.add("https://provider.example/sub", "Provider")
+
+            self.assertEqual(provider.update(stored.id), 0)
+            preserved = profile_store.get(legacy.id)
+            assert preserved is not None
+            self.assertEqual(preserved.source, ProfileSource.MANUAL)
+            self.assertEqual(preserved.provider_id, "legacy-provider")
 
     def test_add_skips_duplicate_nodes_in_same_provider_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
