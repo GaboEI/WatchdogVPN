@@ -670,8 +670,12 @@ class WatchdogRuntime:
 
     def _candidate_driver_for_profile(self, profile: Profile) -> BaseDriver:
         if self.driver_selector is ORIGINAL_SELECT_DRIVER:
-            driver_type = driver_type_for_profile(profile)
-            return self.driver if driver_type is type(self.driver) else select_driver(profile)
+            candidate = select_driver(profile)
+            if type(candidate) is not type(self.driver):
+                return candidate
+            if isinstance(candidate, NativePolicyDriver) and isinstance(self.driver, NativePolicyDriver):
+                return self.driver if type(candidate.native) is type(self.driver.native) else candidate
+            return self.driver
         selected_driver = self.driver_selector(profile)
         return self.driver if type(selected_driver) is type(self.driver) else selected_driver
 
