@@ -230,9 +230,9 @@ The installed state and IPC permission contract was correct during inspection:
 - Description: TUI fitting strips only a limited ANSI subset, counts code points instead of display cells, and writes remaining control sequences verbatim.
 - Scenario: A status/event/log value contains wide Unicode or an OSC terminal sequence.
 - Impact: Text overwrites panel boundaries and untrusted operational text can issue terminal control actions.
-- Status: OPEN
-- Evidence: tui/watchdogvpn/render.py:45-47 uses len and strip_ansi, then write emits raw text. Twenty CJK characters fitted to width 20 still occupied 40 cells, and an OSC 52 sequence survived fit unchanged. Event/status values reach the dashboard through tui/watchdogvpn/state.py and tui/VPN:939-943.
-- Recommendation: Reuse the CLI terminal-safe text and display-width primitives for every TUI write and strip all C0/C1, OSC, DCS, and unsupported escape sequences.
+- Status: CLOSED by R-26 on 2026-07-15; independent R-28 re-audit remains mandatory.
+- Evidence: CLI and TUI now use the shared `terminal_safety` package. The final TUI `write()` boundary strips C0/C1 and complete CSI/OSC/DCS/SOS/PM/APC/unsupported escape sequences, then clips only at complete Unicode display clusters within the live cell budget. Focused regressions pass CJK, combining, flags, emoji modifiers, ZWJ emoji, OSC 52, DCS, CSI and 8-bit C1 payloads through dashboard/event, log, profile, provider, fit and final-write paths. Installed root-runtime and user-TUI imports independently repeated the hostile-string and cell-width assertions.
+- Recommendation: Closed. Preserve the shared sanitizer as the final boundary for every untrusted terminal payload and retain cluster-aware geometry for all clipping, padding and centering.
 
 ### AUD-20260713-014
 
@@ -474,3 +474,33 @@ The live-run cleanup was explicitly verified after the SSH interruption:
 Task 23.4 remains OPEN and failed its release-candidate gate.
 
 No HIGH or MEDIUM finding may be accepted silently. Each finding requires a separate, authorized remediation task with focused regression coverage, the four mandatory repository gates, installed-runtime validation where applicable, and then a complete rerun of this audit protocol. No PR or merge to main is authorized by this report.
+
+## R-26 / AUD-013 closure (2026-07-15)
+
+Commit `63c1425b40aade084af407907dcf6b8088575f99`
+(`fix: harden terminal output rendering`) closes AUD-013 with no accepted
+technical debt. A shared, dependency-free `terminal_safety` package now owns
+terminal-sequence removal and display-cell geometry for CLI and TUI. It removes
+C0/C1 plus complete CSI, OSC, DCS, SOS, PM, APC, and generic unsupported escape
+sequences. Its cluster iterator accounts for combining marks, CJK, paired
+regional indicators, variation selectors, emoji modifiers, keycaps, and ZWJ
+emoji, and no clipping operation splits a display cluster.
+
+The TUI final `write()` primitive sanitizes every text value and clips it to
+the current viewport's remaining cells; `fit()`, cell padding, centering and
+selection rows use the same contract. Trusted internal style sequences remain
+separate from untrusted text. Provider-table sizing in the CLI now also derives
+width from sanitized display cells. The package ships in both
+`/usr/local/lib/watchdogvpn` and the per-user TUI support directory.
+
+Adversarial tests drive C0/C1, CSI, OSC 52, DCS, CJK, combining, flag, emoji-
+modifier and family-ZWJ data through dashboard/event, log, profile, provider,
+fit and final-write paths. Mandatory gates passed 1,641 Python tests in 247.611
+seconds plus unit, syntax, inventory parity 124/124, and diff. The pushed
+functional commit was installed, refreshing daemon PID `18769 -> 32737`;
+source, origin and marker aligned at `63c1425`. Installed root and user layouts
+both passed direct sanitizer/geometry imports. Doctor returned nested exit zero
+with `OK=110 WARN=2 FAIL=0`; status is desired-off clean standby and the bypass
+timer remains disabled/inactive. One MEDIUM finding remains (AUD-014). R-27
+requires explicit authorization and the independent R-28 gate remains
+mandatory; Task 23.4 and Phase 23 remain OPEN and unmergeable.
