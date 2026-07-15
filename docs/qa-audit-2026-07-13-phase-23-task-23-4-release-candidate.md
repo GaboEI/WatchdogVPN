@@ -242,9 +242,9 @@ The installed state and IPC permission contract was correct during inspection:
 - Description: Clipboard import helpers launch external clipboard tools without a timeout.
 - Scenario: wl-paste, xclip, xsel, or pbpaste exists but hangs.
 - Impact: watchdog profile add --clipboard blocks indefinitely with no bounded recovery.
-- Status: OPEN
-- Evidence: providers/manual_provider.py:220-232 calls subprocess.run without timeout. A mock call inspection confirmed the selected wl-paste invocation had no timeout keyword.
-- Recommendation: Add a short timeout, terminate the helper process group, and return an actionable clipboard-unavailable error.
+- Status: CLOSED by R-27 on 2026-07-15; independent R-28 re-audit remains mandatory.
+- Evidence: each supported helper now runs through `Popen(start_new_session=True)` with a two-second communication deadline, group-wide SIGTERM, bounded SIGKILL escalation, and verified process-group absence before any result is accepted. `wl-paste`, `xclip`, `xsel`, and `pbpaste` each have success, nonzero, timeout and real resistant-child cleanup coverage. Missing/unavailable/timeout/cleanup-uncertain paths return actionable human or JSON errors without traceback or helper stderr disclosure. The installed runtime repeated a real timeout against a child that ignored SIGTERM and removed the child in 2.513 seconds.
+- Recommendation: Closed. Preserve the private-process-group boundary, bounded escalation, cleanup verification and non-disclosure of helper stderr.
 
 ### AUD-20260713-015
 
@@ -504,3 +504,29 @@ with `OK=110 WARN=2 FAIL=0`; status is desired-off clean standby and the bypass
 timer remains disabled/inactive. One MEDIUM finding remains (AUD-014). R-27
 requires explicit authorization and the independent R-28 gate remains
 mandatory; Task 23.4 and Phase 23 remain OPEN and unmergeable.
+
+## R-27 / AUD-014 closure (2026-07-15)
+
+Commit `9b4bd715524d767580eac40f4c673608911bd4a7`
+(`fix: bound clipboard helper execution`) closes AUD-014 with no accepted
+technical debt. Clipboard readers use a private session/process group and a
+two-second communication deadline. Timeout or a leader that leaves descendants
+triggers group-wide SIGTERM, a bounded grace period, group-wide SIGKILL, and
+verification that the group is absent before any output is accepted. Cleanup
+uncertainty fails closed. Helper stderr is retained only internally and never
+included in operator errors.
+
+All four supported helpers (`wl-paste`, `xclip`, `xsel`, and `pbpaste`) have
+success, empty, nonzero, timeout and actionable-error coverage. In the real
+cleanup matrix each helper spawns a child that ignores SIGTERM; every child is
+removed by the bounded escalation and the CLI remains responsive. Human and
+JSON paths return 65 without traceback for unavailable clipboard services.
+Mandatory gates passed 1,647 Python tests in 206.477 seconds plus unit, syntax,
+inventory parity 124/124 and diff. The pushed commit was installed, refreshing
+daemon PID `34789 -> 47271`; source/origin/marker aligned at `9b4bd71`. The
+installed package repeated a resistant-child timeout in 2.513 seconds with no
+survivor, and its human/JSON errors passed. Doctor returned nested exit zero
+with `OK=110 WARN=2 FAIL=0`; status is desired-off clean standby and the bypass
+timer is disabled/inactive. All 28 original findings are remediated. Task 23.4
+and Phase 23 remain OPEN and unmergeable until the mandatory independent R-28
+re-audit is explicitly authorized, completed, documented and approved.
