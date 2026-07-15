@@ -274,6 +274,27 @@ class WatchdogCoreTests(unittest.TestCase):
         driver = select_driver(profile)
         self.assertIsInstance(driver, NativePolicyDriver)
 
+    def test_native_policy_candidate_does_not_reuse_a_different_native_transport(self) -> None:
+        openvpn_profile = Profile(
+            id="ovpn-native",
+            name="OVPN",
+            protocol=ProtocolType.OPENVPN,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        cloak_profile = Profile(
+            id="cloak-native",
+            name="Cloak",
+            protocol=ProtocolType.OPENVPN_CLOAK,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        runtime = WatchdogRuntime(driver=select_driver(openvpn_profile))
+        candidate = runtime._candidate_driver_for_profile(cloak_profile)
+        self.assertIsInstance(candidate, NativePolicyDriver)
+        self.assertIsInstance(candidate.native, OpenVPNCloakDriver)
+        self.assertIsNot(candidate, runtime.driver)
+
     def test_select_driver_routes_to_singbox_by_default(self) -> None:
         profile = Profile(
             id="vless1",
