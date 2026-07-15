@@ -35,3 +35,40 @@ Do not weaken the default or silently ignore policy. Required design: support co
 The temporary test profile was removed; the original count returned to 132. Final status is desired-off clean standby with no active profile, TUN, proxy, runtime artifact, or kill switch. Rules, IPv4/IPv6 routes, resolver checksum, and owned processes matched baseline. nftables matched after counter normalization; no WatchdogVPN rule remained. A new loopback listener belonged to independent warp, not WatchdogVPN, and was not touched.
 
 R28-001 through R28-005 remain closed. R28-006 is open and blocks release. No product behavior was changed by this re-audit.
+
+## Remediation revalidation - 2026-07-15
+
+Candidate 520fe32 was installed before this pass. The official installed
+preflight completed with zero failures in both external-VPN-absent and
+external-VPN-present states. The external VPN was independently connected on
+tun0; its routes remained present while WatchdogVPN ran each protocol and after
+WatchdogVPN returned to standby.
+
+The twelve real stored fixtures were exercised without re-importing them:
+
+- VLESS, VMess, Trojan, Hysteria2, TUIC, AmneziaWG, OpenVPN and OpenVPN+Cloak
+  connected, completed applicable normal/SOCKS/HTTP egress checks, disconnected
+  and produced post-state snapshots in both external states.
+- SOCKS and HTTP connected and their local proxy egress passed. Their normal
+  TUN egress timed out in both states, matching proxy-only compatibility
+  behavior.
+- Shadowsocks connected but normal, SOCKS and HTTP egress all failed in both
+  states. This row is not approved.
+- WireGuard returned connect rc=70 with clean fail-closed rollback in both
+  states. This row is not approved.
+
+Provider validation is complete: refresh returned zero changes, a real owned
+Trojan node connected, normal, SOCKS and HTTP egress passed, and disconnect
+restored clean standby. Provider-node rotation was exercised and restored to
+its original enabled state.
+
+DNS apply/reset under an active tunnel, kill-switch enable/connect/egress/
+disable, app-policy direct/current/block probes, forced rotation and
+all-candidates-failed handling, and daemon manual-off plus panic sleep/wake all
+passed. The runner writes, but intentionally does not execute, reboot steps.
+
+The final cleanup returned desired-off standby with no WatchdogVPN TUN, proxy,
+kill switch, or owned runtime artifacts; the independent external tun0
+remained UP. This is not a release closure: Shadowsocks and WireGuard require
+diagnosis or explicit compatibility classification before the installed exit
+gate can be declared green.
