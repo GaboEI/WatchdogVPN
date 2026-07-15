@@ -105,6 +105,107 @@ class NetworkContextMonitorTests(unittest.TestCase):
             "<not-observed-gateway>",
         )
 
+    def test_malformed_nmcli_output_fails_closed_even_when_route_observation_works(self) -> None:
+        def runner(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if args[0] == "nmcli":
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            if args[0] == "ip":
+                return completed(args, '[{"dst":"default","dev":"eth0"}]')
+            raise AssertionError(f"unexpected command: {args}")
+
+        observation = NetworkContextMonitor(runner=runner, which=which_all).observe()
+
+        self.assertEqual(observation.status, MonitorStatus.ERROR)
+        self.assertEqual(
+            observation.diagnostics,
+            ("NetworkManager monitor returned undecodable output",),
+        )
+        self.assertNotIn("ff", " ".join(observation.diagnostics))
+        decision = evaluate_network_context(NetworkContextPolicy(enabled=True), observation)
+        self.assertEqual(decision.status, ProfileMatchStatus.UNSUPPORTED)
+        self.assertEqual(decision.action.value, "manual")
+
+    def test_malformed_ip_output_fails_closed_even_when_nmcli_observation_works(self) -> None:
+        outputs = {
+            ("nmcli", "-t", "-f", "CONNECTIVITY", "general"): completed(["nmcli"], "full\n"),
+            (
+                "nmcli",
+                "-t",
+                "-f",
+                "NAME,TYPE,DEVICE,STATE",
+                "connection",
+                "show",
+                "--active",
+            ): completed(["nmcli"], "Office:802-3-ethernet:eth0:activated\n"),
+            (
+                "nmcli",
+                "-t",
+                "-f",
+                "ACTIVE,SSID,BSSID,DEVICE",
+                "dev",
+                "wifi",
+            ): completed(["nmcli"], ""),
+        }
+
+        def runner(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if args[0] == "ip":
+                raise UnicodeDecodeError("utf-8", b"\xfe", 0, 1, "invalid start byte")
+            return outputs[tuple(args)]
+
+        observation = NetworkContextMonitor(runner=runner, which=which_all).observe()
+
+        self.assertEqual(observation.status, MonitorStatus.ERROR)
+        self.assertEqual(
+            observation.diagnostics,
+            ("default route monitor returned undecodable output",),
+        )
+        decision = evaluate_network_context(NetworkContextPolicy(enabled=True), observation)
+        self.assertEqual(decision.action.value, "manual")
+
+    def test_monitor_timeout_and_nonzero_remain_controlled_observations(self) -> None:
+        def timeout_runner(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if args[0] == "nmcli":
+                raise subprocess.TimeoutExpired(args, 2)
+            return completed(args, '[{"dst":"default","dev":"eth0"}]')
+
+        timed_out = NetworkContextMonitor(runner=timeout_runner, which=which_all).observe()
+        self.assertEqual(timed_out.status, MonitorStatus.ERROR)
+        self.assertEqual(
+            evaluate_network_context(NetworkContextPolicy(enabled=True), timed_out).action.value,
+            "manual",
+        )
+
+        runner = FakeRunner(
+            {
+                ("nmcli", "-t", "-f", "CONNECTIVITY", "general"): completed(
+                    ["nmcli"], "", returncode=1
+                ),
+                (
+                    "nmcli",
+                    "-t",
+                    "-f",
+                    "NAME,TYPE,DEVICE,STATE",
+                    "connection",
+                    "show",
+                    "--active",
+                ): completed(["nmcli"], "", returncode=1),
+                (
+                    "nmcli",
+                    "-t",
+                    "-f",
+                    "ACTIVE,SSID,BSSID,DEVICE",
+                    "dev",
+                    "wifi",
+                ): completed(["nmcli"], "", returncode=1),
+                ("ip", "-j", "route", "show", "default"): completed(
+                    ["ip"], '[{"dst":"default","dev":"eth0"}]'
+                ),
+            }
+        )
+        nonzero = NetworkContextMonitor(runner=runner, which=which_all).observe()
+        self.assertEqual(nonzero.status, MonitorStatus.PARTIAL)
+        self.assertIn("NetworkManager connectivity state unavailable", nonzero.diagnostics)
+
     def test_redacted_observation_distinguishes_absent_from_redacted_values(self) -> None:
         observation = NetworkObservation(
             status=MonitorStatus.OBSERVED,

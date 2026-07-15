@@ -207,7 +207,9 @@ class NetworkContextMonitor:
             networks.extend(nm_observation.active_networks)
             connectivity = nm_observation.connectivity
             diagnostics.extend(nm_observation.diagnostics)
-            if nm_observation.status != MonitorStatus.OBSERVED:
+            if nm_observation.status == MonitorStatus.ERROR:
+                status = MonitorStatus.ERROR
+            elif nm_observation.status != MonitorStatus.OBSERVED and status != MonitorStatus.ERROR:
                 status = MonitorStatus.PARTIAL
 
         default_routes: tuple[str, ...] = ()
@@ -218,7 +220,9 @@ class NetworkContextMonitor:
             route_observation = self._observe_default_routes()
             default_routes = route_observation.default_route_interfaces
             diagnostics.extend(route_observation.diagnostics)
-            if route_observation.status != MonitorStatus.OBSERVED:
+            if route_observation.status == MonitorStatus.ERROR:
+                status = MonitorStatus.ERROR
+            elif route_observation.status != MonitorStatus.OBSERVED and status != MonitorStatus.ERROR:
                 status = MonitorStatus.PARTIAL
 
         interface_changed = False
@@ -271,6 +275,11 @@ class NetworkContextMonitor:
                 check=False,
                 timeout=2,
             )
+        except UnicodeDecodeError:
+            return NetworkObservation(
+                status=MonitorStatus.ERROR,
+                diagnostics=("NetworkManager monitor returned undecodable output",),
+            )
         except (OSError, subprocess.SubprocessError) as exc:
             return NetworkObservation(
                 status=MonitorStatus.ERROR,
@@ -310,6 +319,11 @@ class NetworkContextMonitor:
                 capture_output=True,
                 check=False,
                 timeout=2,
+            )
+        except UnicodeDecodeError:
+            return NetworkObservation(
+                status=MonitorStatus.ERROR,
+                diagnostics=("default route monitor returned undecodable output",),
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return NetworkObservation(
