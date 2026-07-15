@@ -462,13 +462,33 @@ class WatchdogRuntime:
             dns_policy=self.dns_policy_store.load(),
             **options,
         )
-        if connected:
-            if not getattr(self.driver, "requires_profile_egress_check", False) or self._checked_and_recorded(profile, self.driver) == "ok":
-                self._clear_last_failure()
-            else:
-                self._teardown_active_driver()
-                return False
-        return connected
+        if not connected:
+            return self._fail_manual_connect()
+        if (
+            getattr(self.driver, "requires_profile_egress_check", False)
+            and self._checked_and_recorded(profile, self.driver) != "ok"
+        ):
+            return self._fail_manual_connect()
+        self._clear_last_failure()
+        return True
+
+    def _fail_manual_connect(self) -> bool:
+        """Return a failed manual connect to an explicit clean standby state.
+
+        A manual request is not permission to keep retrying indefinitely.  If
+        teardown is provably complete, disable temporary protection and clear
+        the requested profile so a failed handshake or egress gate cannot turn
+        into a background reconnect loop.  A failed teardown remains
+        fail-closed and is recorded by the teardown barrier.
+        """
+        if not self._teardown_active_driver():
+            return False
+        self._handle_manual_disconnect_kill_switch()
+        self._restore_dns_snapshot_if_present()
+        self.state_manager.set("vpn_desired_state", "off")
+        self.state_manager.set("active_profile_id", "")
+        self._record_last_failure("connect_failed")
+        return False
 
     @property
     def last_error(self) -> str:

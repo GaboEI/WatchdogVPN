@@ -347,6 +347,9 @@ class WatchdogCoreTests(unittest.TestCase):
 
         check.assert_called_once_with(profile, driver)
         self.assertGreaterEqual(driver.disconnect.call_count, 1)
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(self.state_manager.get("active_profile_id"), "")
+        self.assertEqual(self.state_manager.get("last_failure_reason"), "connect_failed")
 
 
     def test_connect_rejects_singbox_when_policy_quorum_is_not_met(self) -> None:
@@ -1354,14 +1357,14 @@ class WatchdogCoreTests(unittest.TestCase):
         rebooted_state_manager = StateManager(self.state_manager.path)
         self.assertEqual(rebooted_state_manager.get("vpn_desired_state"), "on")
 
-    def test_connect_persists_desired_state_on_even_if_driver_connect_fails(self) -> None:
+    def test_connect_clears_desired_state_when_driver_connect_fails(self) -> None:
         self.set_desired_state("off")
         driver = FakeDriver()
         driver.connect_mock.return_value = False
         runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
 
         self.assertFalse(runtime.connect(self.profile))
-        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
 
     def test_connect_persists_active_profile_id(self) -> None:
         self.set_desired_state("off")
@@ -1373,14 +1376,14 @@ class WatchdogCoreTests(unittest.TestCase):
         rebooted_state_manager = StateManager(self.state_manager.path)
         self.assertEqual(rebooted_state_manager.get("active_profile_id"), self.profile.id)
 
-    def test_connect_persists_active_profile_id_even_if_driver_connect_fails(self) -> None:
+    def test_connect_clears_active_profile_id_when_driver_connect_fails(self) -> None:
         self.set_desired_state("off")
         driver = FakeDriver()
         driver.connect_mock.return_value = False
         runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
 
         self.assertFalse(runtime.connect(self.profile))
-        self.assertEqual(self.state_manager.get("active_profile_id"), self.profile.id)
+        self.assertEqual(self.state_manager.get("active_profile_id"), "")
 
     def test_connect_then_startup_reconnects_after_simulated_reboot(self) -> None:
         self.profile_store.add(self.profile)
