@@ -131,7 +131,12 @@ assert_order "$ROOT_DIR/update.sh" "restart_watchdogvpn_service_after_runtime_up
 assert_install_order "$ROOT_DIR/install.sh" "settle_vpn_after_install" "post_install_validation" "installer must settle VPN before final validation"
 assert_contains "$ROOT_DIR/install.sh" "If the dashboard stays degraded, reboot once" "installer must provide degraded-state recovery guidance"
 
-assert_runtime_order "$ROOT_DIR/uninstall.sh" "rescue_system_dns" "remove_runtime_files" "uninstall must run DNS rescue before removing runtime files"
+dns_rescue_line="$(grep -nF 'if ! rescue_system_dns; then' "$ROOT_DIR/uninstall.sh" | head -n1 | cut -d: -f1)"
+remove_product_line="$(grep -nF 'print_section "Remove product files"' "$ROOT_DIR/uninstall.sh" | head -n1 | cut -d: -f1)"
+if [[ -z "$dns_rescue_line" || -z "$remove_product_line" || "$dns_rescue_line" -ge "$remove_product_line" ]]; then
+  printf 'FAIL: uninstall must run DNS rescue before removing runtime files\n' >&2
+  exit 1
+fi
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''/etc/watchdogvpn/\n'\''' "uninstall preservation contract must mention WatchdogVPN config directory"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$WATCHDOGVPN_ETC_CONFIG_DIR"' "purge-config must remove WatchdogVPN config directory"
 assert_contains "$ROOT_DIR/uninstall.sh" 'printf '\''[KEEP] config: %s\n'\'' "$WATCHDOGVPN_ETC_CONFIG_DIR"' "uninstall must preserve WatchdogVPN config by default"

@@ -11,6 +11,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/config.sh"
 # shellcheck source=lib/systemd.sh
 . "$ROOT_DIR/lib/systemd.sh"
+# shellcheck source=lib/uninstall_safety.sh
+. "$ROOT_DIR/lib/uninstall_safety.sh"
 # shellcheck source=lib/runtime.sh
 . "$ROOT_DIR/lib/runtime.sh"
 
@@ -18,7 +20,6 @@ ASSUME_YES=0
 PURGE_CONFIG=0
 PURGE_LOGS=0
 PURGE_STATE=0
-RUN_DNS_RESCUE=1
 CONFIRM_DELETE=""
 
 usage() {
@@ -26,7 +27,7 @@ usage() {
 WatchdogVPN uninstaller
 
 Usage:
-  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--confirm-delete DELETE] [--skip-dns-rescue]
+  ./uninstall.sh [--dry-run] [--yes] [--purge-config] [--purge-logs] [--purge-state] [--confirm-delete DELETE]
 
 Options:
   --dry-run       Show what would be removed without changing the system.
@@ -36,8 +37,6 @@ Options:
   --purge-state   Also remove WatchdogVPN rotation state.
   --confirm-delete DELETE
                   Required literal confirmation before purging WatchdogVPN data.
-  --skip-dns-rescue
-                  Do not reset system DNS before removing product files.
   --help          Show this help.
 USAGE
 }
@@ -65,7 +64,8 @@ while (($#)); do
       CONFIRM_DELETE="$1"
       ;;
     --skip-dns-rescue)
-      RUN_DNS_RESCUE=0
+      fail "--skip-dns-rescue is unsafe and no longer supported"
+      exit 64
       ;;
     --help|-h)
       usage
@@ -212,50 +212,47 @@ rescue_domain_bypass_routing() {
   # documented in docs/security.md's "Domain bypass network safety".
   if [[ -x "$ROOT_DIR/bin/vpn_domain_bypass_rescue" ]]; then
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-      INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_domain_bypass_rescue" auto || true
+      INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_domain_bypass_rescue" auto --strict
     else
-      "$ROOT_DIR/bin/vpn_domain_bypass_rescue" auto || true
+      "$ROOT_DIR/bin/vpn_domain_bypass_rescue" auto --strict
     fi
     return 0
   fi
 
   if [[ -x /usr/local/bin/vpn_domain_bypass_rescue ]]; then
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-      INSTALL_DRY_RUN=1 /usr/local/bin/vpn_domain_bypass_rescue auto || true
+      INSTALL_DRY_RUN=1 /usr/local/bin/vpn_domain_bypass_rescue auto --strict
     else
-      /usr/local/bin/vpn_domain_bypass_rescue auto || true
+      /usr/local/bin/vpn_domain_bypass_rescue auto --strict
     fi
     return 0
   fi
 
-  printf '[WARN] domain-bypass rescue tool not found; if another VPN client cannot set routes, check: ip rule show\n'
+  printf 'ERROR: domain-bypass rescue tool is not available\n' >&2
+  return 1
 }
 
 rescue_system_dns() {
-  if ((RUN_DNS_RESCUE == 0)); then
-    printf '[SKIP] DNS rescue disabled\n'
-    return 0
-  fi
-
   if [[ -x "$ROOT_DIR/bin/vpn_dns_rescue" ]]; then
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-      INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect || true
+      INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect --strict
     else
-      "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect || true
+      "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect --strict
     fi
     return 0
   fi
 
   if [[ -x /usr/local/bin/vpn_dns_rescue ]]; then
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-      INSTALL_DRY_RUN=1 /usr/local/bin/vpn_dns_rescue auto --no-reconnect || true
+      INSTALL_DRY_RUN=1 /usr/local/bin/vpn_dns_rescue auto --no-reconnect --strict
     else
-      /usr/local/bin/vpn_dns_rescue auto --no-reconnect || true
+      /usr/local/bin/vpn_dns_rescue auto --no-reconnect --strict
     fi
     return 0
   fi
 
-  printf '[WARN] DNS rescue tool not found; if DNS breaks, restore DHCP DNS manually.\n'
+  printf 'ERROR: DNS rescue tool is not available\n' >&2
+  return 1
 }
 
 final_report() {
@@ -266,15 +263,15 @@ final_report() {
 
   print_section "Recovery"
   printf 'To reinstall, run: ./install.sh\n'
-  printf 'If DNS looks wrong, run: vpn_dns_rescue auto --no-reconnect\n'
-  printf 'If another VPN client cannot set routes, run: vpn_domain_bypass_rescue auto\n'
+  printf 'If DNS looks wrong, run: vpn_dns_rescue auto --no-reconnect --strict\n'
+  printf 'If another VPN client cannot set routes, run: vpn_domain_bypass_rescue auto --strict\n'
 }
 
 print_uninstall_plan() {
   print_title "WatchdogVPN uninstall plan"
   print_field "Product files" "remove"
   print_field "Systemd units" "disable and remove"
-  print_field "DNS rescue" "$(yes_no_word "$RUN_DNS_RESCUE")"
+  print_field "DNS rescue" "required and verified"
   print_field "Purge config" "$(yes_no_word "$PURGE_CONFIG")"
   print_field "Purge logs" "$(yes_no_word "$PURGE_LOGS")"
   print_field "Purge state" "$(yes_no_word "$PURGE_STATE")"
@@ -316,14 +313,28 @@ fi
 require_delete_confirmation
 
 print_uninstall_plan
-print_section "Disable services"
-disable_systemd_units
-print_section "Remove kill switch firewall rules"
-remove_kill_switch_rules
+print_section "Stop and verify daemon inactivity"
+if ! stop_watchdogvpn_for_uninstall; then
+  uninstall_abort_with_recovery "watchdogvpn daemon inactivity"
+  exit 1
+fi
+print_section "Remove and verify kill switch firewall rules"
+if ! remove_kill_switch_rules_strict; then
+  uninstall_abort_with_recovery "kill-switch firewall cleanup"
+  exit 1
+fi
 print_section "Domain-bypass routing rescue"
-rescue_domain_bypass_routing
+if ! rescue_domain_bypass_routing; then
+  uninstall_abort_with_recovery "domain-bypass route cleanup"
+  exit 1
+fi
 print_section "DNS rescue"
-rescue_system_dns
+if ! rescue_system_dns; then
+  uninstall_abort_with_recovery "DNS cleanup"
+  exit 1
+fi
+print_section "Disable remaining product services"
+disable_systemd_units
 print_section "Remove systemd units"
 remove_systemd_units
 print_section "Remove legacy AdGuard-era units"
