@@ -45,7 +45,11 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
         if not self.native.connect(profile):
             self.last_error = getattr(self.native, "last_error", "") or "native transport failed"
             return False
-        if self.native.health_check() != "ok":
+        # Native drivers can expose their owned interface before the first
+        # authenticated handshake/ping completes. Require truthful ownership
+        # before starting policy, then let the normal continuous health gate
+        # require the stronger handshake/egress proof.
+        if self.native.status().status != "connected":
             self.last_error = "native transport readiness is incomplete"
             self.native.disconnect()
             return False
