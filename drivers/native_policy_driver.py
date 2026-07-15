@@ -51,6 +51,9 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
             return False
         companion_options = dict(options)
         companion_options["native_transport"] = True
+        # Native preflight above already installed the only safe SSH plan; do not
+        # invoke the ordinary profile-bound preflight a second time.
+        companion_options["management_peers"] = ()
         if management_routes:
             companion_options["management_routes"] = management_routes
         if not self.companion.connect(profile, dns_policy=dns_policy, **companion_options):

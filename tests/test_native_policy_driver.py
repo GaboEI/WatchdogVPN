@@ -34,7 +34,7 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.assertFalse(self.driver.connect(self.profile, mode="rules"))
         self.native.connect.assert_called_once_with(self.profile)
         self.companion.connect.assert_called_once_with(
-            self.profile, dns_policy=None, mode="rules", native_transport=True
+            self.profile, dns_policy=None, mode="rules", native_transport=True, management_peers=()
         )
         self.companion.disconnect.assert_called_once_with()
         self.native.disconnect.assert_called_once_with()
