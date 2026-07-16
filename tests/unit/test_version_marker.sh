@@ -27,6 +27,16 @@ assert_contains "$ROOT_DIR/doctor.sh" 'Installed/Source Version Skew' "doctor mu
 assert_contains "$ROOT_DIR/doctor.sh" 'installed_version_commit' "doctor must read the installed version marker"
 assert_contains "$ROOT_DIR/doctor.sh" 'source_checkout_commit' "doctor must compare against the source checkout commit"
 
+# Regression guard: this defensive parent-dir creation used to hardcode 0755,
+# silently clobbering /etc/watchdogvpn back from the 0750 that
+# install_config_defaults() (lib/config.sh) sets it to earlier in the same
+# install/update run - install -d re-applies the mode on an already-existing
+# directory, so this ran later and always won, reproducing the exact
+# ConfigurationDirectoryMode=0750 mismatch warning on every single install.
+# Found only by watching a real install with inotifywait in a disposable VM;
+# a static read of lib/config.sh alone could not have caught it.
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'install -d -m 0750' "version marker's parent-dir creation must not reintroduce the /etc/watchdogvpn mode drift"
+
 # --- behavioral: record/read/compare actually works, isolated from the real
 #     system (no sudo, a throwaway marker path) ---
 

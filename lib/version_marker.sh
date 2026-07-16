@@ -29,7 +29,15 @@ record_installed_version() {
     printf 'commit=%s\n' "$commit"
     printf 'installed_at=%s\n' "$timestamp"
   } >"$tmp"
-  run_step sudo install -d -m 0755 -o root -g root "$(dirname "$WATCHDOGVPN_VERSION_MARKER")"
+  # 0750, not 0755: WATCHDOGVPN_VERSION_MARKER defaults to a file directly
+  # inside /etc/watchdogvpn (lib/config.sh's WATCHDOGVPN_ETC_CONFIG_DIR),
+  # which install_config_defaults() already creates at 0750 to match
+  # systemd/watchdogvpn.service's ConfigurationDirectoryMode=0750. This
+  # defensive parent-dir creation ran later in every install and silently
+  # clobbered that back to 0755 every time (install -d re-applies the mode
+  # on an already-existing directory), reproducing the exact mode-mismatch
+  # warning that fix was supposed to close for good.
+  run_step sudo install -d -m 0750 -o root -g root "$(dirname "$WATCHDOGVPN_VERSION_MARKER")"
   run_step sudo install -m 0644 -o root -g root "$tmp" "$WATCHDOGVPN_VERSION_MARKER"
   rm -f "$tmp"
 }
