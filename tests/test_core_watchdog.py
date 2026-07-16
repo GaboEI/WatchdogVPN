@@ -2594,6 +2594,144 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(runtime.recovery.max_interval_seconds, 8.0)
         self.assertEqual(runtime.recovery.backoff_interval(2), 8.0)
 
+    def test_recover_from_failure_records_transient_reason_during_backoff_window(self) -> None:
+        # Regression guard: watchdog status must not keep reporting a stale
+        # "connected, failure_or_degraded: false" while a background tick has
+        # already detected a failed egress probe and is sitting in its
+        # backoff window. Previously last_failure_reason was only ever set
+        # once every retry_attempts was exhausted (via _attempt_rotation),
+        # leaving up to one full reconnect cycle where a fresh watchdog
+        # status call had no way to know anything was wrong.
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1, "reconnect_backoff_seconds": 7},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": False, "max_backoff_interval_seconds": 8},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+        )
+
+        # First iteration exhausts the single reconnect attempt and escalates
+        # to _attempt_rotation, which records a backoff window (recovery
+        # .record_failure()). The clock does not advance, so the second
+        # iteration's can_retry_now() is false and _recover_from_failure()
+        # must hit the top-of-function "waiting_retry" branch directly.
+        runtime.run_iteration()
+        runtime.run_iteration()
+
+        driver.status_mock.side_effect = lambda: ConnectionState(status="standby", mode="standby")
+        status_after = runtime.status()
+        self.assertEqual(status_after.last_failure_reason, "waiting_retry")
+        self.assertIsNotNone(status_after.last_failure_at)
+
+    @patch("core.watchdog.health_checker.check_with_latency")
+    def test_recover_from_failure_records_transient_reason_while_reconnecting(self, mock_hc) -> None:
+        # Same class of regression guard as the backoff-window test above,
+        # but for the "reconnecting" branch: reconnect_attempts > 1 means no
+        # backoff window is ever recorded (record_failure() only runs once
+        # _attempt_rotation is reached), so before this fix status() had
+        # zero signal at all while a same-profile reconnect attempt was
+        # actively failing and retrying.
+        mock_hc.return_value = HealthCheckResult(status="down")
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 2},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": False},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+        )
+
+        runtime.run_iteration()
+
+        driver.status_mock.side_effect = lambda: ConnectionState(status="standby", mode="standby")
+        status_after = runtime.status()
+        self.assertEqual(status_after.last_failure_reason, "reconnecting")
+        self.assertIsNotNone(status_after.last_failure_at)
+
+    @patch("core.watchdog.health_checker.check_with_latency")
+    def test_recover_from_failure_clears_transient_reason_on_in_place_recovery(self, mock_hc) -> None:
+        # This in-place recovery path never escalates to _attempt_rotation
+        # (whose own success path already clears last_failure), so without
+        # explicitly clearing here too, a profile that self-heals within the
+        # same backoff/reconnect window would be left showing a permanently
+        # stale failure_or_degraded: true after having actually recovered.
+        mock_hc.side_effect = [
+            HealthCheckResult(status="down"),
+            HealthCheckResult(status="ok"),
+        ]
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 2},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": False},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+        )
+
+        first = runtime.run_iteration()
+        self.assertEqual(first.status, "reconnecting")
+
+        second = runtime.run_iteration()
+        self.assertEqual(second.status, "recovered")
+
+        status_after = runtime.status()
+        self.assertEqual(status_after.last_failure_reason, "")
+        self.assertIsNone(status_after.last_failure_at)
+
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_enables_kill_switch_when_configured_and_all_fail(self, _hc, _pool) -> None:

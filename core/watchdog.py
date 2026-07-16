@@ -1032,12 +1032,27 @@ class WatchdogRuntime:
         self._configure_recovery(config)
         if not self.recovery.can_retry_now():
             LOGGER.info("watchdog_recovery_skip reason=backoff_window")
+            # watchdog status must not keep reporting a stale "connected,
+            # failure_or_degraded: false" while a background tick has
+            # already detected a failed egress probe and is sitting in its
+            # backoff window - previously last_failure_reason was only ever
+            # set once every retry was exhausted, leaving up to one full
+            # reconnect_attempts cycle where status() had no way to know
+            # anything was wrong.
+            self._record_last_failure("waiting_retry")
             return ConnectionState(status="waiting_retry", mode=self.driver.status().mode)
 
         current_profile = self._active_profile()
         if current_profile is not None and self._try_reconnect(current_profile):
             self._reconnect_failures = 0
             self.recovery.record_success()
+            # The transient "waiting_retry"/"reconnecting" markers recorded
+            # below must be cleared here too: this in-place recovery path
+            # never escalates to _attempt_rotation() (whose own success path
+            # already clears last_failure), so without this a machine that
+            # self-heals within the same backoff window would be left
+            # showing a permanently stale failure_or_degraded: true.
+            self._clear_last_failure()
             return self._recovered_state_after_stable_connection(config)
         if self._cleanup_barrier_failed:
             return self._cleanup_failure_state()
@@ -1050,6 +1065,7 @@ class WatchdogRuntime:
                 self._reconnect_failures,
                 reconnect_attempts,
             )
+            self._record_last_failure("reconnecting")
             return ConnectionState(status="reconnecting", mode=self.driver.status().mode)
 
         self._reconnect_failures = 0
