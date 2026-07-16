@@ -14,6 +14,24 @@ sudo() {
   "$@"
 }
 
+# Regression guard for a real-host installer failure: the sudo() shadow above
+# is a no-op passthrough for every other assertion in this file, so it can
+# never reproduce the real privilege boundary between the invoking user and a
+# directory created by genuine `sudo mktemp -d` (root-owned, mode 0700). That
+# gap let a missing `sudo` on _watchdogvpn_migration_entries' find call
+# silently return zero entries against the staging directory instead of
+# failing, which made both the publishability check and the publish loop
+# treat an unreadable staging directory as empty rather than erroring -
+# install.sh then failed later at target-content-validate with the staged
+# legacy state already discarded. This mocked-sudo suite cannot exercise the
+# real permission boundary, so assert the fix statically; the actual
+# privilege behavior was confirmed by reproducing and fixing the failure on a
+# real installed host.
+if ! declare -f _watchdogvpn_migration_entries | grep -Fq 'sudo find'; then
+  printf 'FAIL: _watchdogvpn_migration_entries must list entries via sudo find; it is called against the root-owned staging directory created by `sudo mktemp -d`, which the invoking user cannot read directly\n' >&2
+  exit 1
+fi
+
 _watchdogvpn_migration_checkpoint() {
   [[ "${MIGRATION_FAIL_AT:-}" != "$1" ]]
 }

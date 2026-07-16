@@ -347,7 +347,15 @@ migrate_watchdogvpn_shared_state() {
 
 _watchdogvpn_migration_entries() {
   local directory="$1"
-  find "$directory" -mindepth 1 -maxdepth 1 \
+  # sudo is required here: this is also called against the staging directory,
+  # which is created with `sudo mktemp -d` and is therefore root-owned and
+  # unreadable to the invoking user. A plain `find` silently returns zero
+  # entries instead of failing, which made both the publishability check and
+  # the publish loop above no-op instead of erroring - the publish loop then
+  # left the target directory empty, and target-content-validate correctly
+  # caught the resulting divergence, but only after silently discarding the
+  # staged legacy state.
+  sudo find "$directory" -mindepth 1 -maxdepth 1 \
     ! -name .migrated \
     ! -name .migration-in-progress \
     -printf '%f\0' | sort -z
