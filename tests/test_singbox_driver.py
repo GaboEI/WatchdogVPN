@@ -565,6 +565,20 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         inbound = self.driver._build_tun_inbound()
         self.assertNotIn("route_exclude_address", inbound)
 
+    def test_build_tun_inbound_sets_a_conservative_mtu(self) -> None:
+        # Regression guard: sing-box's own TUN default is effectively no
+        # limit (observed live: reported MTU 65535 on wdvpn-tun0), which let
+        # applications build packets larger than the real underlying path -
+        # a native transport's own tunnel plus this companion's own
+        # encapsulation on top of it - could actually carry. A 1571-byte TLS
+        # ClientHello to a real site vanished with zero response, while
+        # smaller responses worked fine, which read as intermittent/
+        # site-specific rather than the plain MTU bug it was.
+        from drivers.singbox_driver import TUN_MTU
+        inbound = self.driver._build_tun_inbound()
+        self.assertEqual(inbound["mtu"], TUN_MTU)
+        self.assertLessEqual(TUN_MTU, 1420)
+
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="must-not-be-used")
     def test_native_transport_companion_uses_native_direct_and_separate_management_outbounds(

@@ -65,6 +65,22 @@ SING_BOX_LOG_LEVELS = {
     "fatal",
     "panic",
 }
+# sing-box's own TUN default reported 65535 (effectively "no limit") on the
+# wdvpn-tun0 interface, while the real path underneath - especially for a
+# native transport's own tunnel (e.g. AmneziaWG at MTU 1420) plus this
+# companion's own encapsulation on top of it - could only actually carry far
+# less. Applications building packets against a 65535 MTU sent oversized TLS
+# ClientHellos (observed live: a 1571-byte ClientHello to a site with a
+# larger extension set than average) that silently vanished instead of
+# being fragmented - IP fragmentation and PMTUD both routinely fail across
+# obfuscated UDP tunnels, so a packet that's simply too big for the real
+# path gets dropped with no feedback at all. Smaller responses (a bare
+# redirect, a minimal homepage) fit under any MTU and worked fine, which is
+# what made this look intermittent/site-specific rather than a plain MTU
+# bug. 1280 is the standard conservative choice (also the IPv6 minimum MTU)
+# used by most VPN tunnel software specifically to sidestep PMTUD entirely
+# rather than trying to keep it working across every native transport.
+TUN_MTU = 1280
 LAN_GATEWAY_NFT_TABLE = "watchdogvpn_lan_gateway"
 LAN_GATEWAY_FORWARD_CHAIN = "forward"
 LAN_GATEWAY_POSTROUTING_CHAIN = "postrouting"
@@ -270,6 +286,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             "tag": "watchdogvpn-tun-in",
             "interface_name": "wdvpn-tun0",
             "address": ["172.19.0.1/30"],
+            "mtu": TUN_MTU,
             "auto_route": True,
             "strict_route": True,
             "auto_redirect": True,
