@@ -262,8 +262,10 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             )
         return inbounds
 
-    def _build_tun_inbound(self) -> dict[str, Any]:
-        return {
+    def _build_tun_inbound(
+        self, route_exclude_address: tuple[str, ...] = ()
+    ) -> dict[str, Any]:
+        inbound: dict[str, Any] = {
             "type": "tun",
             "tag": "watchdogvpn-tun-in",
             "interface_name": "wdvpn-tun0",
@@ -273,6 +275,23 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             "auto_redirect": True,
             "stack": "system",
         }
+        if route_exclude_address:
+            # native_bypass_cidrs (the native transport's own resolved
+            # server endpoint) was already excluded from sing-box's own
+            # route.rules outbound selection via native_bypass_rules below,
+            # but that only affects traffic sing-box itself proxies. It did
+            # nothing to stop auto_route/strict_route's kernel-level policy
+            # routing from also capturing the native AmneziaWG/OpenVPN
+            # kernel module's own raw outbound UDP packets to that same
+            # server - creating a routing loop where the tunnel's own
+            # control traffic gets sent back into itself and silently
+            # black-holed. route_exclude_address is sing-box's actual
+            # kernel-level exclusion for auto_route; without it, a native
+            # transport under this companion could establish its interface
+            # successfully and then lose all real connectivity a few
+            # seconds later once the TUN capture rules finish applying.
+            inbound["route_exclude_address"] = list(route_exclude_address)
+        return inbound
 
     def _singbox_log_level(self) -> str:
         level = os.environ.get("WATCHDOGVPN_SINGBOX_LOG_LEVEL", "warning").strip().lower()
@@ -1254,7 +1273,9 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             outbound = self._profile_to_route_target(profile, config)
         self._append_chain_outbounds(config, chain_runtime_plans or {})
         if self._mode_requires_tun(mode, capture_modes):
-            config["inbounds"].append(self._build_tun_inbound())
+            config["inbounds"].append(
+                self._build_tun_inbound(route_exclude_address=native_bypass_cidrs)
+            )
         if dns_policy is not None:
             dns_config = build_singbox_dns_config(
                 dns_policy,

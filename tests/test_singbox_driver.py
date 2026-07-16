@@ -549,6 +549,22 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         direct = next(outbound for outbound in config["outbounds"] if outbound["tag"] == "direct")
         self.assertEqual(direct["bind_interface"], "enp0s8")
 
+    def test_build_tun_inbound_excludes_native_bypass_cidrs_from_kernel_route(self) -> None:
+        inbound = self.driver._build_tun_inbound(
+            route_exclude_address=("138.124.58.47/32", "2001:db8::1/128")
+        )
+        self.assertEqual(
+            inbound["route_exclude_address"], ["138.124.58.47/32", "2001:db8::1/128"]
+        )
+        # auto_route/strict_route themselves must stay on - the fix is an
+        # exclusion, not disabling kernel-level capture entirely.
+        self.assertTrue(inbound["auto_route"])
+        self.assertTrue(inbound["strict_route"])
+
+    def test_build_tun_inbound_omits_route_exclude_address_when_not_native(self) -> None:
+        inbound = self.driver._build_tun_inbound()
+        self.assertNotIn("route_exclude_address", inbound)
+
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value="must-not-be-used")
     def test_native_transport_companion_uses_native_direct_and_separate_management_outbounds(
@@ -589,7 +605,21 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(outbounds["watchdogvpn-management-1"]["bind_interface"], "enp0s8")
         self.assertEqual(outbounds["watchdogvpn-management-2"]["bind_interface"], "eth0")
         self.assertNotIn("must-not-be-used", repr(config))
-        self.assertTrue(any(inbound["type"] == "tun" for inbound in config["inbounds"]))
+        tun_inbound = next(inbound for inbound in config["inbounds"] if inbound["type"] == "tun")
+        # Regression guard: a TUN inbound existing was already asserted above
+        # and passed even with the real bug present. native_bypass_cidrs was
+        # excluded from sing-box's own route.rules (asserted above) but never
+        # threaded into the TUN inbound's route_exclude_address - sing-box's
+        # actual kernel-level auto_route/strict_route exclusion - so the
+        # native transport's own raw UDP packets to its server still got
+        # captured by the kernel-level TUN policy routing once it came up,
+        # routing the tunnel's own control traffic back into itself. Found
+        # live in a disposable VM: `ip route get <server-ip>` correctly
+        # showed the physical interface for the first ~1-2s after connect,
+        # then flipped to `dev watchdogvpn_awg` once the companion's TUN
+        # capture rules finished applying - a self-referential routing loop
+        # that silently black-holed all real egress.
+        self.assertEqual(tun_inbound["route_exclude_address"], ["138.124.58.47/32"])
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
