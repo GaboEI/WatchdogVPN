@@ -66,7 +66,7 @@ validate_config_example() {
 
 install_config_defaults() {
   validate_config_example "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE"
-  create_root_dir "$WATCHDOGVPN_ETC_CONFIG_DIR" 0755
+  create_root_dir "$WATCHDOGVPN_ETC_CONFIG_DIR" 0750
   create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_EXAMPLE" 0644
   create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_FILE" 0644
   migrate_config_missing_keys

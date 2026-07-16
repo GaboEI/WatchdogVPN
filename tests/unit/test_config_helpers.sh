@@ -18,7 +18,11 @@ create_root_dir() {
 create_config_if_missing() {
   local src="$1" dest="$2" mode="${3:-0644}"
   [[ -e "$dest" ]] && return 0
-  install -d -m 0755 "$(dirname "$dest")"
+  # No parent-dir creation here: the real lib/install_files.sh implementation
+  # doesn't create it either (it relies on create_root_dir having already
+  # run). Doing so here previously clobbered the config dir's mode back to
+  # 0755 after create_root_dir had already set it to 0750, masking that
+  # regression in this test.
   install -m "$mode" "$src" "$dest"
 }
 
@@ -48,6 +52,19 @@ install_config_defaults
 [[ -d "$WATCHDOGVPN_ETC_CONFIG_DIR" ]]
 [[ -f "$WATCHDOGVPN_CONFIG_FILE" ]]
 [[ -f "$WATCHDOGVPN_CONFIG_EXAMPLE" ]]
+
+# Regression guard: install_config_defaults() used to create this directory
+# at 0755, while systemd/watchdogvpn.service declares
+# ConfigurationDirectoryMode=0750 for it, so the daemon logged a mode-mismatch
+# warning on every single start, on every install, including a fully clean
+# one. install -d re-applies the mode on every run, so this must stay pinned
+# to 0750 or the drift silently comes back.
+config_dir_mode="$(stat -c %a "$WATCHDOGVPN_ETC_CONFIG_DIR")"
+if [[ "$config_dir_mode" != "750" ]]; then
+  printf 'FAIL: %s has mode %s, expected 750 to match ConfigurationDirectoryMode\n' \
+    "$WATCHDOGVPN_ETC_CONFIG_DIR" "$config_dir_mode" >&2
+  exit 1
+fi
 
 config_has_key language.current "$WATCHDOGVPN_CONFIG_FILE"
 config_has_key backend.mode "$WATCHDOGVPN_CONFIG_FILE"
