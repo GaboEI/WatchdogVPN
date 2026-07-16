@@ -30,6 +30,14 @@ contains "$yes_output" "Active backend:"
 contains "$yes_output" "custom-vps"
 contains "$yes_output" "[DRY-RUN] smoke test watchdogvpn.service and daemon IPC status"
 not_contains "$yes_output" "select vpn backend"
+# Regression test for a real fresh-install finding: install.sh used to hardcode
+# ENABLE_VPN_AUTOMATION=0 for every custom-vps install with no code path ever
+# setting it back to 1, so watchdogvpn.service was never enabled/started (and
+# its own smoke test silently skipped itself, masked here by --dry-run's
+# earlier own short-circuit). A fresh install must enable and start the
+# daemon without asking - an installed app that never starts is not usable
+# software.
+contains "$yes_output" "[DRY-RUN] sudo systemctl enable --now watchdogvpn.service"
 
 mkdir -p "$TMP_DIR/home"
 fresh_custom_dir="$TMP_DIR/fresh-custom/etc/watchdogvpn"
