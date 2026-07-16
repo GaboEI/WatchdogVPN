@@ -551,10 +551,10 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     def test_build_tun_inbound_excludes_native_bypass_cidrs_from_kernel_route(self) -> None:
         inbound = self.driver._build_tun_inbound(
-            route_exclude_address=("138.124.58.47/32", "2001:db8::1/128")
+            route_exclude_address=("198.51.100.7/32", "2001:db8::1/128")
         )
         self.assertEqual(
-            inbound["route_exclude_address"], ["138.124.58.47/32", "2001:db8::1/128"]
+            inbound["route_exclude_address"], ["198.51.100.7/32", "2001:db8::1/128"]
         )
         # auto_route/strict_route themselves must stay on - the fix is an
         # exclusion, not disabling kernel-level capture entirely.
