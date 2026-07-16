@@ -19,6 +19,23 @@ COMPANION_TUN_INTERFACE = "wdvpn-tun0"
 KNOWN_OWNED_INTERFACES = (AMNEZIAWG_INTERFACE_NAME, COMPANION_TUN_INTERFACE)
 
 
+def _strip_endpoint_port(raw: Any) -> str | None:
+    """Strip the trailing :port from a WireGuard-style endpoint string.
+
+    Mirrors the bracket-aware parsing already used for peer endpoints in
+    drivers/singbox_driver.py's _active_ssh_management_peers(), so both
+    places agree on how "[ipv6]:port" and "host:port" are split.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    value = raw.strip()
+    if value.startswith("[") and "]" in value:
+        return value[1:].split("]", 1)[0]
+    if ":" in value:
+        return value.rsplit(":", 1)[0]
+    return value
+
+
 class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
     """Compose a native tunnel transport with the sing-box policy runtime.
 
@@ -50,6 +67,18 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
         export takes the fast deterministic path.
         """
         raw_host = profile.config.get("host") or profile.config.get("server")
+        if not isinstance(raw_host, str) or not raw_host.strip():
+            # WireGuard/AmneziaWG profiles (parsers/wg_config.py,
+            # parsers/amneziavpn_format.py) store the peer address under
+            # "endpoint" as host:port, not "host"/"server" - this bypass
+            # mechanism silently produced zero CIDRs for every such profile,
+            # so nothing ever excluded the native transport's own raw UDP
+            # packets from the companion's kernel-level TUN capture. Found
+            # live: the AmneziaWG interface came up and stayed up, but the
+            # server's own route flipped into the tunnel a couple of seconds
+            # later once the companion's auto_route rules finished applying,
+            # black-holing the tunnel's own control traffic.
+            raw_host = _strip_endpoint_port(profile.config.get("endpoint"))
         if not isinstance(raw_host, str) or not raw_host.strip():
             return ()
         host = raw_host.strip().strip("[]")

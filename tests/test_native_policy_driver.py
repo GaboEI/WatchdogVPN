@@ -67,5 +67,64 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.assertEqual(calls[-2:], ["companion", "native"])
 
 
+class NativeEndpointBypassCidrsTests(unittest.TestCase):
+    """Regression coverage for a real-VM finding: every profile actually
+    produced by parsers/wg_config.py and parsers/amneziavpn_format.py stores
+    the peer address under config["endpoint"] as "host:port" (WireGuard's
+    own Endpoint= syntax), never under "host"/"server". This function only
+    ever checked "host"/"server", so it silently returned an empty tuple for
+    every real WireGuard/AmneziaWG profile - the companion's TUN then had
+    nothing to exclude from auto_route, and the native transport's own raw
+    UDP packets to its own server got captured into the tunnel it belonged
+    to, a few seconds after the interface came up."""
+
+    def _profile(self, config: dict) -> Profile:
+        return Profile("native", "native", ProtocolType.AMNEZIAWG, config, ProfileSource.MANUAL)
+
+    def test_falls_back_to_endpoint_key_stripping_the_port(self) -> None:
+        profile = self._profile({"endpoint": "198.51.100.7:51820"})
+        cidrs = NativePolicyDriver._native_endpoint_bypass_cidrs(profile)
+        self.assertEqual(cidrs, ("198.51.100.7/32",))
+
+    def test_endpoint_key_handles_bracketed_ipv6_with_port(self) -> None:
+        profile = self._profile({"endpoint": "[2001:db8::1]:51820"})
+        cidrs = NativePolicyDriver._native_endpoint_bypass_cidrs(profile)
+        self.assertEqual(cidrs, ("2001:db8::1/128",))
+
+    def test_host_key_still_takes_priority_over_endpoint(self) -> None:
+        profile = self._profile(
+            {"host": "198.51.100.9", "endpoint": "198.51.100.7:51820"}
+        )
+        cidrs = NativePolicyDriver._native_endpoint_bypass_cidrs(profile)
+        self.assertEqual(cidrs, ("198.51.100.9/32",))
+
+    def test_returns_empty_when_neither_key_is_present(self) -> None:
+        profile = self._profile({})
+        cidrs = NativePolicyDriver._native_endpoint_bypass_cidrs(profile)
+        self.assertEqual(cidrs, ())
+
+    def test_connect_threads_endpoint_derived_cidrs_into_companion(self) -> None:
+        # End-to-end: the realistic profile shape (endpoint, not host) must
+        # actually reach preflight_native_management_routes's
+        # known_owned_interfaces sibling parameter on companion.connect().
+        native = Mock()
+        native.connect.return_value = True
+        native.status.return_value = ConnectionState(active_profile_id="native", status="connected")
+        companion = Mock(spec=SingBoxDriver)
+        companion.connect.return_value = True
+        companion.preflight_native_management_routes.return_value = {}
+        companion.health_check.return_value = "ok"
+        driver = NativePolicyDriver(native, companion)
+        profile = self._profile({"endpoint": "198.51.100.7:51820"})
+
+        self.assertTrue(driver.connect(profile, mode="rules"))
+
+        companion.connect.assert_called_once()
+        self.assertEqual(
+            companion.connect.call_args.kwargs["native_bypass_cidrs"],
+            ("198.51.100.7/32",),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
