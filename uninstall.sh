@@ -144,11 +144,23 @@ remove_runtime_files() {
 
   remove_root_path /usr/local/sbin/vpn_domain_bypass_apply.sh
 
+  remove_root_path "$PYTHON_PACKAGE_DIR"
+
   remove_user_path "$HOME/.local/bin/VPN"
   remove_user_path "$HOME/.local/bin/watchdogvpn"
   remove_user_path "$HOME/.local/share/watchdogvpn"
   remove_user_path "$HOME/.local/share/applications/watchdogvpn.desktop"
   remove_user_path "$HOME/.local/share/applications/vpn-control-center.desktop"
+  # install.sh/update.sh are documented to run via sudo, which resets HOME to
+  # /root for that invocation (lib/runtime.sh's install_user_file/
+  # install_user_dir calls then write under /root/.local). uninstall.sh is
+  # not required to run via sudo itself - when it doesn't, $HOME above is the
+  # invoking user's, so root's own copies are otherwise never reached. Safe
+  # to also target them unconditionally: remove_root_path is a no-op
+  # ([KEEP] absent) when uninstall.sh itself ran as root and already removed
+  # them via $HOME above.
+  remove_root_path /root/.local/bin/VPN
+  remove_root_path /root/.local/share/watchdogvpn
   desktop_dir="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
   [[ -n "$desktop_dir" ]] || desktop_dir="$HOME/Desktop"
   remove_user_path "$desktop_dir/watchdogvpn.desktop"

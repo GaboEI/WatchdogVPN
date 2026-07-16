@@ -29,5 +29,9 @@ vpn-stress-runs/
 .cache/
 tmp/
 
+# Vagrant's own auto-generated state (includes an unencrypted SSH private key
+# per VM, e.g. tests/vm/vagrant/.vagrant/machines/*/virtualbox/private_key)
+.vagrant/
+
 # IDE/editor tool configs that may land in project root
 /config.json

@@ -1,0 +1,31 @@
+# Disposable VM for Phase 23.5 clean-install validation and live diagnosis.
+# Never used for anything on the real host - see docs/phase-23-branch-gate.md
+# and the Phase 23.5 plan in WatchdogVPN_v2_MASTER_PLAN.md for why this
+# exists instead of testing directly on a maintainer's own machine.
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.hostname = "wdvpn-ubuntu-2404"
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "wdvpn-ubuntu-2404"
+    vb.cpus = 2
+    vb.memory = 4096
+  end
+
+  # Default VirtualBox NAT networking (no config.vm.network call needed).
+  # A bridged "public_network" was used for one diagnostic session to rule
+  # out the VM's own NAT engine mangling AmneziaWG's obfuscated UDP traffic
+  # as a confound - that turned out not to be the cause (see the fwmark
+  # collision fix in drivers/amneziawg_driver.py), and Gabo only authorized
+  # bridging for that one session, not as this VM's default.
+
+  if Vagrant.has_plugin?("vagrant-vbguest")
+    config.vbguest.auto_update = true
+  end
+
+  # Nothing is auto-installed here on purpose: install.sh itself is what's
+  # being validated, so it must be run manually inside the VM, not folded
+  # into provisioning where a failure would be easy to miss.
+  config.vm.synced_folder "../../..", "/home/vagrant/WatchdogVPN"
+end

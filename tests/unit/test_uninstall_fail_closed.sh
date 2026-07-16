@@ -98,6 +98,15 @@ assert_order 'if ! stop_watchdogvpn_for_uninstall; then' 'print_section "Remove 
 assert_order 'if ! remove_kill_switch_rules_strict; then' 'print_section "Remove product files"' "firewall verification must precede product removal"
 assert_order 'if ! rescue_system_dns; then' 'print_section "Remove product files"' "DNS verification must precede product removal"
 
+# Regression: uninstall.sh never removed the installed Python runtime
+# directory, nor root's own TUI launcher copy left behind when install.sh/
+# update.sh are run via sudo (the documented invocation, which resets HOME
+# to /root for that process) - a reinstall or a stale-code investigation
+# could silently keep running the old runtime from /usr/local/lib/watchdogvpn.
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$PYTHON_PACKAGE_DIR"' "uninstall must remove the installed Python runtime directory"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /root/.local/bin/VPN' "uninstall must remove root's own TUI launcher copy left by a sudo install/update"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /root/.local/share/watchdogvpn' "uninstall must remove root's own TUI package copy left by a sudo install/update"
+
 set +e
 "$ROOT_DIR/uninstall.sh" --skip-dns-rescue >/dev/null 2>&1
 skip_status=$?
