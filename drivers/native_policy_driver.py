@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from ipaddress import ip_address
 import socket
@@ -10,6 +11,8 @@ from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver, ReentrantConnec
 from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile
+
+LOGGER = logging.getLogger(__name__)
 
 COMPANION_TUN_INTERFACE = "wdvpn-tun0"
 
@@ -73,6 +76,7 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
         self.last_error = ""
         if not self._ensure_disconnected_before_connect():
             self.last_error = "existing native policy runtime teardown failed"
+            LOGGER.warning("native_policy_teardown_before_connect_failed")
             return False
         try:
             management_routes = self.companion.preflight_native_management_routes(
@@ -81,10 +85,18 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
                 known_owned_interfaces=KNOWN_OWNED_INTERFACES,
             )
         except Exception as exc:
+            # ManagementPathSafetyError (the expected case here) only ever
+            # carries a static, non-interpolated message - safe to log with
+            # its traceback. This used to be a silent swallow: nothing in
+            # this file had a logger at all, so a genuinely unexpected bug
+            # here (not just the expected safety refusal) was invisible in
+            # every log at any verbosity.
+            LOGGER.exception("native_policy_preflight_failed")
             self.last_error = str(exc)
             return False
         if not self.native.connect(profile):
             self.last_error = getattr(self.native, "last_error", "") or "native transport failed"
+            LOGGER.warning("native_policy_connect_native_transport_failed")
             return False
         # Native drivers can expose their owned interface before the first
         # authenticated handshake/ping completes. Require truthful ownership
@@ -92,6 +104,7 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
         # require the stronger handshake/egress proof.
         if self.native.status().status != "connected":
             self.last_error = "native transport readiness is incomplete"
+            LOGGER.warning("native_policy_connect_native_readiness_incomplete")
             self.native.disconnect()
             return False
         companion_options = dict(options)
@@ -104,6 +117,7 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
             companion_options["management_routes"] = management_routes
         if not self.companion.connect(profile, dns_policy=dns_policy, **companion_options):
             self.last_error = self.companion.last_error or "policy companion failed"
+            LOGGER.warning("native_policy_connect_companion_failed")
             companion_stopped = self.companion.disconnect()
             native_stopped = self.native.disconnect()
             if not companion_stopped or not native_stopped:
@@ -111,6 +125,7 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
             return False
         if self.companion.health_check() != "ok":
             self.last_error = "policy companion readiness is incomplete"
+            LOGGER.warning("native_policy_connect_companion_health_incomplete")
             self.disconnect()
             return False
         self._active_profile = profile

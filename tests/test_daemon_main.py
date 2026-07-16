@@ -12,11 +12,15 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from cli.ipc.client import WatchdogIPCClient
+import logging
+
 from daemon.main import (
     CAP_NET_ADMIN,
     CAP_NET_BIND_SERVICE,
     CAPABILITY_WARNING,
+    LOG_LEVEL_ENV,
     _has_required_capabilities,
+    _resolve_log_level,
     main,
     _parse_cap_eff,
 )
@@ -181,6 +185,37 @@ class DaemonCapabilityTests(unittest.TestCase):
                 _warn_if_standalone_lacks_capabilities()
 
         stderr.write.assert_any_call(CAPABILITY_WARNING)
+
+
+class DaemonLoggingConfigTests(unittest.TestCase):
+    """Regression coverage for a real-host finding: the daemon had no
+    logging configuration at all in production (no logging.basicConfig
+    anywhere), so every LOGGER.info() call was silently dropped and the two
+    swallow points that only did logger.exception()/.warning() were
+    invisible at any verbosity. These tests exercise the resolver in
+    isolation, without ever starting the real daemon (main()), since that
+    would touch real kill-switch/TUN/DNS state."""
+
+    def test_resolve_log_level_defaults_to_info(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(LOG_LEVEL_ENV, None)
+            self.assertEqual(_resolve_log_level(), logging.INFO)
+
+    def test_resolve_log_level_accepts_valid_values_case_insensitively(self) -> None:
+        with patch.dict(os.environ, {LOG_LEVEL_ENV: "debug"}):
+            self.assertEqual(_resolve_log_level(), logging.DEBUG)
+        with patch.dict(os.environ, {LOG_LEVEL_ENV: "ERROR"}):
+            self.assertEqual(_resolve_log_level(), logging.ERROR)
+
+    def test_resolve_log_level_falls_back_to_info_on_invalid_value(self) -> None:
+        with patch.dict(os.environ, {LOG_LEVEL_ENV: "NOPE"}):
+            with patch("sys.stderr") as stderr:
+                level = _resolve_log_level()
+
+        self.assertEqual(level, logging.INFO)
+        stderr.write.assert_any_call(
+            f"Warning: invalid {LOG_LEVEL_ENV}='NOPE', falling back to INFO"
+        )
 
 
 class SystemdHelperTests(unittest.TestCase):

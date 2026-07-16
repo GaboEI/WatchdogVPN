@@ -362,6 +362,15 @@ class RuntimeWorker:
                 return self._handle_node_group_auto_test(request.payload)
             raise UnknownCommandError(f"unknown command: {request.command}")
         except Exception as exc:
+            # request.command is a fixed enum-like string (COMMAND_CONNECT
+            # etc.), never user-controlled free text, so safe to interpolate
+            # directly. Deliberately not logging request.payload (may carry
+            # profile_id/config data) or the full exception text beyond what
+            # the traceback itself captures. This was previously a silent
+            # swallow at the top-level IPC dispatcher: no logger call here
+            # meant any unexpected daemon bug surfaced only as a generic
+            # "connect failed" to the CLI, with zero trace anywhere.
+            LOGGER.exception("watchdog_ipc_command_failed command=%s", request.command)
             return Response(ok=False, error=str(exc))
 
     def _handle_connect(self, payload: dict[str, Any]) -> Response:

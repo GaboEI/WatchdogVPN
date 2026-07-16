@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import sys
@@ -25,10 +26,13 @@ CAPABILITY_WARNING = (
 DEFAULT_SOCKET_PATH = Path("/run/watchdogvpn/control.sock")
 SOCKET_PATH_ENV = "WATCHDOGVPN_SOCKET_PATH"
 EVENT_SOCKET_PATH_ENV = "WATCHDOGVPN_EVENT_SOCKET_PATH"
+LOG_LEVEL_ENV = "WATCHDOGVPN_LOG_LEVEL"
+LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    _configure_logging()
     if args.standalone:
         _warn_if_standalone_lacks_capabilities()
 
@@ -71,6 +75,30 @@ def main(argv: list[str] | None = None) -> int:
         if not shutdown_ok:
             systemd_helper.notify("STATUS=runtime cleanup failed during shutdown")
     return 0 if shutdown_ok else 1
+
+
+def _configure_logging() -> None:
+    # No handler existed anywhere in the daemon before this: every module's
+    # `LOGGER = logging.getLogger(__name__)` fell back to Python's
+    # logging.lastResort (stderr, fixed at WARNING), so every .info() call
+    # was silently dropped and no exception path that only did
+    # `logger.exception(...)`/`.warning(...)` was ever actually visible.
+    # journald already timestamps each entry (StandardOutput=journal and
+    # StandardError=journal in systemd/watchdogvpn.service), so the format
+    # here deliberately carries no timestamp of its own.
+    level = _resolve_log_level()
+    logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+
+
+def _resolve_log_level() -> int:
+    raw = os.environ.get(LOG_LEVEL_ENV, "INFO").strip().upper()
+    if raw not in LOG_LEVELS:
+        print(
+            f"Warning: invalid {LOG_LEVEL_ENV}={raw!r}, falling back to INFO",
+            file=sys.stderr,
+        )
+        return logging.INFO
+    return getattr(logging, raw)
 
 
 def _build_parser() -> argparse.ArgumentParser:
