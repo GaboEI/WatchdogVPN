@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from core.kill_switch import SING_BOX_AUTO_REDIRECT_MARKS
 from drivers.amneziawg_driver import (
     CONFIG_NAME,
     HANDSHAKE_TIMEOUT_SECONDS,
@@ -15,6 +16,21 @@ from drivers.amneziawg_driver import (
     AmneziaWGDriver,
 )
 from models.profile import Profile, ProfileSource, ProtocolType
+
+
+class NativeRoutingMarkTests(unittest.TestCase):
+    """Regression coverage for a real-VM traffic leak: a prior revision set
+    NATIVE_ROUTING_MARK to 0x2024, reusing one of sing-box's own reserved
+    auto_redirect marks (SING_BOX_AUTO_REDIRECT_MARKS). sing-box marks its
+    own "route to a plain outbound" connections 0x2024 too, so this driver's
+    "not fwmark NATIVE_ROUTING_MARK -> table ROUTE_TABLE" rule started
+    matching that traffic as well, not just this driver's own raw tunnel
+    packets - every general connection then skipped the tunnel table
+    entirely and left via the physical interface unencrypted, while every
+    status surface still reported a healthy, fully connected tunnel."""
+
+    def test_native_routing_mark_does_not_collide_with_singbox_reserved_marks(self) -> None:
+        self.assertNotIn(NATIVE_ROUTING_MARK, SING_BOX_AUTO_REDIRECT_MARKS)
 
 
 AWG_RAW_CONFIG = """\

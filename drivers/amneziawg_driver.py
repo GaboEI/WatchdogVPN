@@ -46,9 +46,22 @@ USERSPACE_LOG_TAIL_LINES = 20
 USERSPACE_LOG_TAIL_MAX_CHARS = 300
 SECRET_LINE_RE = re.compile(r"^\s*(?:PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
 ROUTE_TABLE = "51820"
-# sing-box auto_redirect returns packets carrying this mark before its UDP
-# capture chain. Native tunnel encapsulation must use it to avoid self-loops.
-NATIVE_ROUTING_MARK = "0x2024"
+# Must never collide with sing-box's own reserved auto_redirect marks
+# (0x2023/0x2024 - see SING_BOX_AUTO_REDIRECT_MARKS in core/kill_switch.py
+# and drivers/singbox_driver.py). A prior revision reused 0x2024 here on the
+# theory that sing-box already exempts that mark from its own capture chain,
+# but the exemption is blind to *why* a packet carries it: sing-box marks
+# its own "route to a plain outbound" traffic 0x2024 too, so this table's
+# "not fwmark NATIVE_ROUTING_MARK" exclusion started matching that traffic
+# as well - not just this driver's own raw tunnel packets. Confirmed live:
+# every general connection sing-box routed to a "direct" outbound skipped
+# this table entirely and left via the physical interface unencrypted,
+# while every status surface still reported a healthy, fully connected
+# tunnel. The self-loop this mark exists to prevent (this driver's own raw
+# UDP to its server getting recaptured by the companion's TUN) is now
+# handled by destination, not by mark - see
+# NativePolicyDriver._native_endpoint_bypass_cidrs.
+NATIVE_ROUTING_MARK = ROUTE_TABLE
 INTERFACE_CONFIG_KEYS = {
     "address",
     "dns",
