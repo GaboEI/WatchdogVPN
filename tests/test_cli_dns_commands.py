@@ -666,32 +666,37 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertNotIn("proxy", json.loads(removed.stdout)["policy"]["channels"])
 
     def test_channel_remove_missing_fails(self) -> None:
+        # "direct" now exists by default; "proxy" is still genuinely absent.
         with tempfile.TemporaryDirectory() as tmp:
-            result = self.run_watchdog(["dns", "channel", "remove", "direct"], tmp, check=False)
+            result = self.run_watchdog(["dns", "channel", "remove", "proxy"], tmp, check=False)
 
             self.assertEqual(result.returncode, 65)
-            self.assertIn("dns channel not found: direct", result.stderr)
+            self.assertIn("dns channel not found: proxy", result.stderr)
 
     def test_resolver_add_implicitly_creates_channel(self) -> None:
+        # "direct" already exists with two default resolvers (dns/models.py's
+        # _default_dns_channels, fixed 2026-07-16 so a fresh install can
+        # resolve real hostnames without manual dns setup) - use a URI
+        # outside that default set so this stays a clean "add" test.
         with tempfile.TemporaryDirectory() as tmp:
             added = self.run_watchdog(
-                ["dns", "resolver", "add", "direct", "udp://1.1.1.1", "--label", "cloudflare", "--json"],
+                ["dns", "resolver", "add", "direct", "udp://8.8.8.8", "--label", "google", "--json"],
                 tmp,
             )
 
             data = json.loads(added.stdout)
             resolvers = data["policy"]["channels"]["direct"]["resolvers"]
-            self.assertEqual(len(resolvers), 1)
-            self.assertEqual(resolvers[0]["uri"], "udp://1.1.1.1")
-            self.assertEqual(resolvers[0]["label"], "cloudflare")
-            self.assertTrue(resolvers[0]["enabled"])
+            self.assertEqual(len(resolvers), 3)
+            added_resolver = next(r for r in resolvers if r["uri"] == "udp://8.8.8.8")
+            self.assertEqual(added_resolver["label"], "google")
+            self.assertTrue(added_resolver["enabled"])
 
     def test_resolver_add_rejects_duplicate_uri(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://1.1.1.1"], tmp)
+            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://8.8.8.8"], tmp)
 
             result = self.run_watchdog(
-                ["dns", "resolver", "add", "direct", "udp://1.1.1.1"], tmp, check=False
+                ["dns", "resolver", "add", "direct", "udp://8.8.8.8"], tmp, check=False
             )
 
             self.assertEqual(result.returncode, 65)
@@ -700,11 +705,12 @@ class CliDNSCommandTests(unittest.TestCase):
     def test_resolver_add_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             added = self.run_watchdog(
-                ["dns", "resolver", "add", "direct", "udp://1.1.1.1", "--disabled", "--json"], tmp
+                ["dns", "resolver", "add", "direct", "udp://8.8.8.8", "--disabled", "--json"], tmp
             )
 
             resolvers = json.loads(added.stdout)["policy"]["channels"]["direct"]["resolvers"]
-            self.assertFalse(resolvers[0]["enabled"])
+            added_resolver = next(r for r in resolvers if r["uri"] == "udp://8.8.8.8")
+            self.assertFalse(added_resolver["enabled"])
 
     def test_resolver_add_accepts_auto_strategy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -714,7 +720,7 @@ class CliDNSCommandTests(unittest.TestCase):
                     "resolver",
                     "add",
                     "direct",
-                    "udp://1.1.1.1",
+                    "udp://8.8.8.8",
                     "--strategy",
                     "auto",
                     "--json",
@@ -726,42 +732,46 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertEqual(channel["strategy"], "auto")
 
     def test_resolver_add_enforces_max_four_per_channel(self) -> None:
+        # "direct" starts with 2 default resolvers (1.1.1.1, 9.9.9.9); the
+        # 4-per-channel cap leaves room for exactly 2 more before rejection.
         with tempfile.TemporaryDirectory() as tmp:
-            for octet in range(1, 5):
-                self.run_watchdog(["dns", "resolver", "add", "direct", f"udp://1.1.1.{octet}"], tmp)
+            for octet in range(1, 3):
+                self.run_watchdog(["dns", "resolver", "add", "direct", f"udp://10.10.10.{octet}"], tmp)
 
             result = self.run_watchdog(
-                ["dns", "resolver", "add", "direct", "udp://1.1.1.5"], tmp, check=False
+                ["dns", "resolver", "add", "direct", "udp://10.10.10.3"], tmp, check=False
             )
 
             self.assertNotEqual(result.returncode, 0)
 
     def test_resolver_remove_and_enable_disable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://1.1.1.1"], tmp)
+            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://8.8.8.8"], tmp)
 
             disabled = self.run_watchdog(
-                ["dns", "resolver", "disable", "direct", "udp://1.1.1.1", "--json"], tmp
+                ["dns", "resolver", "disable", "direct", "udp://8.8.8.8", "--json"], tmp
             )
             resolvers = json.loads(disabled.stdout)["policy"]["channels"]["direct"]["resolvers"]
-            self.assertFalse(resolvers[0]["enabled"])
+            added_resolver = next(r for r in resolvers if r["uri"] == "udp://8.8.8.8")
+            self.assertFalse(added_resolver["enabled"])
 
             enabled = self.run_watchdog(
-                ["dns", "resolver", "enable", "direct", "udp://1.1.1.1", "--json"], tmp
+                ["dns", "resolver", "enable", "direct", "udp://8.8.8.8", "--json"], tmp
             )
             resolvers = json.loads(enabled.stdout)["policy"]["channels"]["direct"]["resolvers"]
-            self.assertTrue(resolvers[0]["enabled"])
+            added_resolver = next(r for r in resolvers if r["uri"] == "udp://8.8.8.8")
+            self.assertTrue(added_resolver["enabled"])
 
             removed = self.run_watchdog(
-                ["dns", "resolver", "remove", "direct", "udp://1.1.1.1", "--json"], tmp
+                ["dns", "resolver", "remove", "direct", "udp://8.8.8.8", "--json"], tmp
             )
             direct = json.loads(removed.stdout)["policy"]["channels"]["direct"]
-            self.assertEqual(direct["resolvers"], [])
+            self.assertNotIn("udp://8.8.8.8", [r["uri"] for r in direct["resolvers"]])
 
     def test_resolver_remove_missing_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(
-                ["dns", "resolver", "remove", "direct", "udp://1.1.1.1"], tmp, check=False
+                ["dns", "resolver", "remove", "direct", "udp://8.8.8.8"], tmp, check=False
             )
 
             self.assertEqual(result.returncode, 65)
@@ -769,7 +779,7 @@ class CliDNSCommandTests(unittest.TestCase):
 
     def test_rule_add_remove_and_toggle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://1.1.1.1"], tmp)
+            self.run_watchdog(["dns", "resolver", "add", "direct", "udp://8.8.8.8"], tmp)
 
             added = self.run_watchdog(
                 [
@@ -822,6 +832,9 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
 
     def test_rule_add_rejects_missing_configured_channel(self) -> None:
+        # "direct" now exists by default (dns/models.py's
+        # _default_dns_channels); "proxy" is still genuinely absent until
+        # explicitly configured, so it still exercises this rejection path.
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(
                 [
@@ -834,40 +847,42 @@ class CliDNSCommandTests(unittest.TestCase):
                     "--action",
                     "use_channel",
                     "--channel",
-                    "direct",
+                    "proxy",
                 ],
                 tmp,
                 check=False,
             )
 
             self.assertEqual(result.returncode, 65)
-            self.assertIn("dns channel not found: direct", result.stderr)
+            self.assertIn("dns channel not found: proxy", result.stderr)
 
     def test_channel_remove_rejects_referenced_channel(self) -> None:
+        # "direct" now exists by default; use "proxy" so the initial
+        # `channel add` in this test still exercises channel creation.
         with tempfile.TemporaryDirectory() as tmp:
-            self.run_watchdog(["dns", "channel", "add", "direct"], tmp)
+            self.run_watchdog(["dns", "channel", "add", "proxy"], tmp)
             self.run_watchdog(
                 [
                     "dns",
                     "rule",
                     "add",
-                    "direct-rule",
+                    "proxy-rule",
                     "--pattern",
                     "domain:example.test",
                     "--action",
                     "use_channel",
                     "--channel",
-                    "direct",
+                    "proxy",
                 ],
                 tmp,
             )
 
             result = self.run_watchdog(
-                ["dns", "channel", "remove", "direct"], tmp, check=False
+                ["dns", "channel", "remove", "proxy"], tmp, check=False
             )
 
             self.assertEqual(result.returncode, 65)
-            self.assertIn("is referenced by rule(s): direct-rule", result.stderr)
+            self.assertIn("is referenced by rule(s): proxy-rule", result.stderr)
 
     def test_rule_add_reject_action_needs_no_channel(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -972,6 +987,9 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertEqual(DNSPolicyStore(Path(tmp) / "dns-policy.json").load().ttl, "12h")
 
     def test_dns_mutation_backs_up_explicit_custom_policy_file(self) -> None:
+        # DNSPolicy(...)'s "direct" default channel means this explicit
+        # policy already has it too; use "proxy" so `channel add` still
+        # exercises fresh-channel creation against the custom policy file.
         with tempfile.TemporaryDirectory() as tmp:
             policy_path = Path(tmp) / "operator-policy.json"
             original = DNSPolicy(test_domain="before.example")
@@ -982,7 +1000,7 @@ class CliDNSCommandTests(unittest.TestCase):
                     "dns",
                     "channel",
                     "add",
-                    "direct",
+                    "proxy",
                     "--policy-file",
                     str(policy_path),
                     "--json",

@@ -222,10 +222,35 @@ class DNSRule:
         )
 
 
+def _default_dns_channels() -> dict[DNSChannelName, DNSChannel]:
+    """A freshly installed WatchdogVPN, or any profile connected before
+    `watchdog dns channel`/`resolver` is ever run by hand, must still
+    resolve real hostnames - not just route raw IPs. An empty channel map
+    made dns/singbox.py's build_singbox_dns_config() return None (no
+    server has any resolver, so there is nothing to build), which silently
+    omits sing-box's entire "dns" block while the kill switch's own nftables
+    rules unconditionally DNAT port 53 to the companion's DNS listener
+    regardless of DNS policy - so every hostname lookup timed out with
+    nothing on the other end, while raw-IP traffic (ping, a direct IP
+    target) worked fine. Confirmed live 2026-07-16 on a fresh install: real
+    WireGuard handshake, real routed ping to 1.1.1.1, zero working hostname
+    lookups. Two well-known public resolvers, not one, so a single
+    resolver's own outage doesn't repeat this failure mode."""
+    return {
+        DNSChannelName.DIRECT: DNSChannel(
+            name=DNSChannelName.DIRECT,
+            resolvers=[
+                Resolver(uri="udp://1.1.1.1", label="Cloudflare"),
+                Resolver(uri="udp://9.9.9.9", label="Quad9"),
+            ],
+        ),
+    }
+
+
 @dataclass(slots=True)
 class DNSPolicy:
     mode: DNSMode = DNSMode.AUTO
-    channels: dict[DNSChannelName, DNSChannel] = field(default_factory=dict)
+    channels: dict[DNSChannelName, DNSChannel] = field(default_factory=_default_dns_channels)
     static_ips: list[StaticIPEntry] = field(default_factory=list)
     rules: list[DNSRule] = field(default_factory=list)
     test_domain: str = "gstatic.com"

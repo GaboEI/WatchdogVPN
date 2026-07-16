@@ -197,6 +197,31 @@ class SingBoxDNSConfigTests(unittest.TestCase):
 
         self.assertIsNone(build_singbox_dns_config(policy, proxy_outbound_tag="proxy"))
 
+    def test_default_policy_resolves_real_hostnames_out_of_the_box(self) -> None:
+        """Regression: a bare DNSPolicy() - what DNSPolicyStore.load() returns
+        for a fresh install/profile that never ran `watchdog dns channel`/
+        `resolver` by hand - used to have an empty channel map, so this
+        function returned None and generate_singbox_config() never added a
+        "dns" block. The kill switch's own nftables rules unconditionally
+        DNAT port 53 to the companion's DNS listener regardless of DNS
+        policy, so every hostname lookup silently timed out into a listener
+        that was never started - while raw-IP traffic worked fine. Confirmed
+        live 2026-07-16: real WireGuard handshake, real routed ping,
+        zero working hostname lookups on a fresh install."""
+        policy = DNSPolicy()
+
+        result = build_singbox_dns_config(policy, proxy_outbound_tag="proxy")
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result.config["servers"])
+
+    def test_explicitly_empty_channels_still_returns_none(self) -> None:
+        # The fix is a better default, not a floor: a caller that explicitly
+        # configures zero resolvers still gets no DNS block, same as today.
+        policy = DNSPolicy(channels={})
+
+        self.assertIsNone(build_singbox_dns_config(policy, proxy_outbound_tag="proxy"))
+
     def test_disabled_resolvers_are_ignored(self) -> None:
         policy = DNSPolicy(
             channels={
