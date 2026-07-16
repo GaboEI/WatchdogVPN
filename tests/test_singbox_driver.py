@@ -8,6 +8,7 @@ from unittest.mock import patch
 from app_policy.models import AppPolicy, AppPolicyRule
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
 from dns.models import DNSChannel, DNSChannelName, DNSPolicy, DNSRule, Resolver
+from drivers.base import ManagementPathSafetyError
 from drivers.singbox_driver import SingBoxDriver
 from drivers.runtime_paths import OwnedProcess, TCPListenerObservation
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -2152,6 +2153,110 @@ table inet sing-box {
         self.assertIs(self.driver._connected_at, unittest.mock.sentinel.connected_at)
         self.assertEqual(self.driver._active_mode, "tun")
         self.assertTrue(self.driver._tun_expected)
+
+
+class SingBoxDriverManagementRouteInterfaceTests(unittest.TestCase):
+    """Regression coverage for the R28-006 post-merge finding: WatchdogVPN's
+    own native-driver interface names must never be classified as a physical
+    management route by the SSH-preservation preflight."""
+
+    def setUp(self) -> None:
+        self.driver = SingBoxDriver()
+
+    def test_is_physical_interface_rejects_wd_prefixed_owned_names(self) -> None:
+        # These three follow the "wd"-prefix convention, so the prefix rule
+        # alone must reject them. watchdogvpn_awg does not (it starts with
+        # "wa", not "wd") and is deliberately covered separately by the
+        # known_owned_interfaces exact-match layer, tested below.
+        owned_names = (
+            "wdtun7f3a2b1c9d",
+            "wdtap7f3a2b1c9d",
+            "wdvpn-tun0",
+        )
+        for name in owned_names:
+            with self.subTest(name=name):
+                self.assertFalse(self.driver._is_physical_interface(name))
+
+    def test_is_physical_interface_does_not_recognize_amneziawg_name_by_prefix(
+        self,
+    ) -> None:
+        # Documents why the exact-match known_owned_interfaces layer is
+        # required in addition to the prefix rule: watchdogvpn_awg's naming
+        # convention does not share the "wd" prefix used elsewhere.
+        self.assertTrue(self.driver._is_physical_interface("watchdogvpn_awg"))
+
+    def test_is_physical_interface_accepts_real_hardware_names(self) -> None:
+        for name in ("enp0s8", "eth0", "wlan0"):
+            with self.subTest(name=name):
+                self.assertTrue(self.driver._is_physical_interface(name))
+
+    def test_preflight_native_management_routes_refuses_owned_interface_by_prefix(
+        self,
+    ) -> None:
+        # wdtun<token>/wdtap<token> are OpenVPN/OpenVPN+Cloak's per-connection
+        # interface names generated after this preflight runs, so they can
+        # never be listed in known_owned_interfaces ahead of time; the "wd"
+        # prefix rule is what has to catch them.
+        with (
+            patch.object(
+                SingBoxDriver,
+                "_active_ssh_management_peers",
+                return_value=("198.51.100.9",),
+            ),
+            patch(
+                "drivers.singbox_driver.subprocess.run",
+                return_value=unittest.mock.Mock(
+                    returncode=0, stdout="198.51.100.9 dev wdtun7f3a2b1c9d src 10.0.2.15\n"
+                ),
+            ),
+        ):
+            with self.assertRaises(ManagementPathSafetyError):
+                self.driver.preflight_native_management_routes(
+                    mode="tun", capture_modes=("tun",)
+                )
+
+    def test_preflight_native_management_routes_refuses_known_owned_interface(self) -> None:
+        with (
+            patch.object(
+                SingBoxDriver,
+                "_active_ssh_management_peers",
+                return_value=("198.51.100.9",),
+            ),
+            patch(
+                "drivers.singbox_driver.subprocess.run",
+                return_value=unittest.mock.Mock(
+                    returncode=0, stdout="198.51.100.9 dev watchdogvpn_awg src 10.0.2.15\n"
+                ),
+            ),
+        ):
+            with self.assertRaises(ManagementPathSafetyError):
+                self.driver.preflight_native_management_routes(
+                    mode="tun",
+                    capture_modes=("tun",),
+                    known_owned_interfaces=("watchdogvpn_awg", "wdvpn-tun0"),
+                )
+
+    def test_preflight_native_management_routes_accepts_physical_interface(self) -> None:
+        with (
+            patch.object(
+                SingBoxDriver,
+                "_active_ssh_management_peers",
+                return_value=("198.51.100.9",),
+            ),
+            patch(
+                "drivers.singbox_driver.subprocess.run",
+                return_value=unittest.mock.Mock(
+                    returncode=0, stdout="198.51.100.9 dev enp0s8 src 192.168.0.103\n"
+                ),
+            ),
+        ):
+            routes = self.driver.preflight_native_management_routes(
+                mode="tun",
+                capture_modes=("tun",),
+                known_owned_interfaces=("watchdogvpn_awg", "wdvpn-tun0"),
+            )
+
+        self.assertEqual(routes, {"198.51.100.9": "enp0s8"})
 
 
 class SingBoxDriverHealthTests(unittest.TestCase):

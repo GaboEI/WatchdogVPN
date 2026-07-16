@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock
 
-from drivers.native_policy_driver import NativePolicyDriver
+from drivers.native_policy_driver import KNOWN_OWNED_INTERFACES, NativePolicyDriver
 from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
@@ -43,6 +43,13 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.companion.disconnect.assert_called_once_with()
         self.native.disconnect.assert_called_once_with()
         self.assertEqual(self.driver.status().status, "standby")
+
+    def test_connect_passes_known_owned_interfaces_to_preflight(self) -> None:
+        self.assertTrue(self.driver.connect(self.profile, mode="tun", capture_modes=("tun",)))
+
+        self.companion.preflight_native_management_routes.assert_called_once_with(
+            mode="tun", capture_modes=("tun",), known_owned_interfaces=KNOWN_OWNED_INTERFACES,
+        )
 
     def test_connected_status_requires_both_owners(self) -> None:
         self.assertTrue(self.driver.connect(self.profile, mode="rules"))

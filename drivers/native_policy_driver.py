@@ -5,10 +5,15 @@ from ipaddress import ip_address
 import socket
 from typing import Any
 
+from drivers.amneziawg_driver import INTERFACE_NAME as AMNEZIAWG_INTERFACE_NAME
 from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver, ReentrantConnectGuard
 from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile
+
+COMPANION_TUN_INTERFACE = "wdvpn-tun0"
+
+KNOWN_OWNED_INTERFACES = (AMNEZIAWG_INTERFACE_NAME, COMPANION_TUN_INTERFACE)
 
 
 class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
@@ -73,6 +78,7 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
             management_routes = self.companion.preflight_native_management_routes(
                 mode=str(options.get("mode", "global")),
                 capture_modes=options.get("capture_modes"),
+                known_owned_interfaces=KNOWN_OWNED_INTERFACES,
             )
         except Exception as exc:
             self.last_error = str(exc)

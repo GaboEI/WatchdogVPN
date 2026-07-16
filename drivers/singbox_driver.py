@@ -74,6 +74,7 @@ VIRTUAL_INTERFACE_PREFIXES = (
     "tun",
     "tap",
     "wg",
+    "wd",
     "ppp",
     "tailscale",
     "zt",
@@ -1156,7 +1157,11 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         return tuple(sorted(peers))
 
     def preflight_native_management_routes(
-        self, *, mode: str, capture_modes: tuple[str, ...] | None
+        self,
+        *,
+        mode: str,
+        capture_modes: tuple[str, ...] | None,
+        known_owned_interfaces: tuple[str, ...] = (),
     ) -> dict[str, str]:
         if not self._mode_requires_tun(mode, capture_modes):
             return {}
@@ -1171,11 +1176,14 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 ["ip", "route", "get", peer], text=True, capture_output=True, check=False
             )
             match = re.search(r"\bdev\s+(\S+)", result.stdout)
-            if result.returncode != 0 or match is None or not self._is_physical_interface(match.group(1)):
+            interface = match.group(1) if match else None
+            owned = interface is not None and interface in known_owned_interfaces
+            physical = interface is not None and self._is_physical_interface(interface)
+            if result.returncode != 0 or interface is None or owned or not physical:
                 raise ManagementPathSafetyError(
                     "native policy TUN refused: SSH peer lacks a physical management route"
                 )
-            routes[peer] = match.group(1)
+            routes[peer] = interface
         return routes
 
     def preflight_management_path(
