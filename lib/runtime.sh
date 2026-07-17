@@ -494,6 +494,10 @@ prepare_watchdogvpn_private_state() {
   fi
 
   run_step sudo install -d -m 0700 -o watchdogvpn -g watchdogvpn "$private_dir"
+  # The shared parent is setgid (2770), so mkdir/install can inherit its
+  # setgid bit even when passed -m 0700. Clear it explicitly: this subtree is
+  # intentionally service-only, not group-shared state.
+  run_step sudo chmod 0700 "$private_dir"
   # The first FakeIP implementation stored this file at the shared-state
   # root. Preserve it only when it is a regular file owned by the dedicated
   # service account; a group-writable legacy path is never trusted as an
