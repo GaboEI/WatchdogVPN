@@ -92,10 +92,12 @@ class HealthCheckerTests(unittest.TestCase):
         self.assertEqual(result.classification, "tunnel_failure")
         verify.assert_not_called()
 
-    def test_proxy_path_uses_quorum_probe(self) -> None:
+    def test_proxy_only_path_uses_quorum_probe(self) -> None:
+        # No TUN interface at all (e.g. SOCKS-only capture) - the internal
+        # sing-box listener is the only egress there is to verify.
         driver = StubDriver(
             "ok",
-            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
+            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=False),
         )
         verify = Mock(return_value=probe(successes=2))
 
@@ -113,6 +115,28 @@ class HealthCheckerTests(unittest.TestCase):
         verify = Mock(return_value=probe(successes=2))
 
         self.assertEqual(health_checker.check(make_profile(), driver, verify=verify), "ok")
+        verify.assert_called_once_with(False)
+
+    def test_singbox_tun_mode_verifies_the_tun_path_not_just_its_internal_socks_listener(
+        self,
+    ) -> None:
+        # sing-box exposes internal SOCKS/HTTP listeners even in TUN mode
+        # (app-policy routing and DNS diversion use them), so a normal
+        # TUN-mode connection reports both tun_active=True and
+        # proxy_active=True at once. Health must verify the TUN path real
+        # system traffic uses, not silently settle for the internal
+        # listener - confirmed live 2026-07-17 that TUN-only breakage
+        # (FakeIP/domain-preservation regressions) would otherwise go
+        # completely undetected by "watchdog status".
+        driver = StubDriver(
+            "ok",
+            ConnectionState(status="connected", mode="sing-box", proxy_active=True, tun_active=True),
+        )
+        verify = Mock(return_value=probe(successes=2))
+
+        result = health_checker.check_with_latency(make_profile(), driver, verify=verify)
+
+        self.assertEqual(result.status, "ok")
         verify.assert_called_once_with(False)
 
     def test_single_blocked_target_with_quorum_is_healthy(self) -> None:

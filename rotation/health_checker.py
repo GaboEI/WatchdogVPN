@@ -19,8 +19,15 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 5.0
 
 # Drivers whose ConnectionState.mode CAN mean "traffic exits through the
-# local SOCKS proxy when proxy_active is also True. Every other driver/state
-# is treated as a full system tunnel and verified directly.
+# local SOCKS proxy when proxy_active is also True and no TUN interface is
+# active. sing-box exposes its internal SOCKS/HTTP listeners even in TUN
+# mode (app-policy routing and DNS diversion use them internally), so a
+# normal TUN-mode connection reports both tun_active=True and
+# proxy_active=True at once - checking proxy_active first would silently
+# verify only the internal listener and never the TUN path real system
+# traffic (browsers, apps) actually uses. tun_active is therefore checked
+# first in _check_full below; PROXY_BASED_MODES only decides the fallback
+# for sessions with no TUN interface at all (e.g. SOCKS-only capture).
 PROXY_BASED_MODES = frozenset({"sing-box"})
 
 # Health is selected-egress reachability through a policy-controlled target
@@ -62,10 +69,10 @@ def _check_full(
         return HealthCheckResult(status="down", classification="tunnel_failure")
 
     state = driver.status()
-    if state.mode in PROXY_BASED_MODES and state.proxy_active:
-        probe = verify(True)
-    elif state.tun_active:
+    if state.tun_active:
         probe = verify(False)
+    elif state.mode in PROXY_BASED_MODES and state.proxy_active:
+        probe = verify(True)
     else:
         LOGGER.warning("health_check_down profile_id=%s reason=no_active_route", profile.id)
         return HealthCheckResult(status="down", classification="no_active_route")
