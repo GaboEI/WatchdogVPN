@@ -91,8 +91,12 @@ command output and metadata for:
 - source commit and installed-runtime alignment;
 - fresh install and `doctor.sh` (`FAIL=0`);
 - all 12 protocol attempts with mode-appropriate real egress proof;
-- DNS apply/reset, kill-switch controlled-failure/disable, rotation where
-  applicable, and clean disconnect;
+- AmneziaWG's actual backend on that target - the distro-default kernel
+  module if present, otherwise the `amneziawg-go` userspace fallback - with
+  the backend the daemon actually used recorded explicitly, not assumed
+  from the distro's usual case;
+- DNS apply/reset, kill-switch enable/controlled-failure/disable, rotation
+  where applicable, and clean disconnect;
 - clean uninstall and post-uninstall baseline comparison.
 
 For a session with TUN and local proxy capabilities, normal egress, SOCKS
