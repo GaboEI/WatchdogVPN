@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app_policy.models import AppPolicy
+from config.paths import resolve_config_dir
 from config.state_manager import ALLOWED_ACTIVE_MODES
 from dns.models import DNSChannelName, DNSPolicy
 from dns.singbox import (
@@ -1113,6 +1114,18 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         with log_path.open("a", encoding="utf-8") as log_file:
             log_file.write(message)
 
+    @staticmethod
+    def _persistent_fakeip_cache_path() -> Path:
+        """Return the managed state file shared by consecutive FakeIP runs.
+
+        FakeIP addresses can remain cached by the operating-system resolver
+        after a sing-box process stops.  The matching domain mapping must
+        therefore outlive the process too; a per-runtime cache disappears
+        during normal disconnect cleanup and makes a reconnect reject that
+        otherwise valid cached answer as ``missing fakeip record``.
+        """
+        return resolve_config_dir() / "singbox-fakeip-cache.db"
+
     def _port_open(self, host: str, port: int, timeout: float = 1.0) -> bool:
         try:
             with socket.create_connection((host, port), timeout=timeout):
@@ -1353,15 +1366,16 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                     # this on-disk cache; without it a TUN-redirected
                     # connection to a FakeIP address fails immediately with
                     # "missing fakeip record" the moment its own in-memory
-                    # allocation record is no longer fresh - confirmed live
-                    # 2026-07-16 (Hysteria2: instant connection reset,
-                    # sing-box's own debug log named this exact error).
-                    config_path, _ = self._ensure_runtime_paths()
+                    # allocation record is no longer fresh. This cache must
+                    # live in managed persistent state rather than this
+                    # driver's disposable runtime directory: the OS resolver
+                    # can retain a FakeIP answer after disconnect, and the
+                    # next sing-box process must retain the matching record.
                     config["experimental"] = {
                         "cache_file": {
                             "enabled": True,
                             "store_fakeip": True,
-                            "path": str(config_path.parent / "fakeip-cache.db"),
+                            "path": str(self._persistent_fakeip_cache_path()),
                         }
                     }
                 hijack_route = build_dns_hijack_route(dns_policy)
@@ -1570,28 +1584,6 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._active_mode = mode
         self._tun_expected = tun_expected
         if self._process.poll() is None and self.health_check() == "ok":
-            if "experimental" in singbox_config:
-                # FakeIP allocations live in this connection's own ephemeral
-                # cache_file (drivers/singbox_driver.py's
-                # generate_singbox_config), created fresh per connect. The
-                # OS resolver's own cache does not know that, and can hand
-                # a later query a FakeIP address this brand-new sing-box
-                # process never allocated - sing-box then has no reverse
-                # record for it and immediately resets the connection.
-                # Confirmed live 2026-07-16 on Hysteria2: a stale FakeIP
-                # answer from an earlier, already-torn-down session caused
-                # "missing fakeip record" on every real request until the
-                # system resolver cache was flushed. Best-effort: not every
-                # system runs systemd-resolved, so "resolvectl" may not
-                # exist at all.
-                try:
-                    subprocess.run(
-                        ["resolvectl", "flush-caches"],
-                        capture_output=True,
-                        check=False,
-                    )
-                except OSError:
-                    pass
             if self._tun_expected:
                 self._capture_tun_cleanup_state()
             if lan_gateway is not None and not self._apply_lan_gateway(lan_gateway):

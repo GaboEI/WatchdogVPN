@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from app_policy.models import AppPolicy, AppPolicyRule
@@ -727,10 +728,11 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         for rule in config["route"]["rules"]:
             self.assertNotEqual(rule.get("action"), "resolve")
 
+    @patch("drivers.singbox_driver.resolve_config_dir", return_value=Path("/var/lib/watchdogvpn"))
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
-    def test_domain_preservation_enables_fakeip_cache_file(
-        self, bind_mock, write_mock
+    def test_domain_preservation_enables_persistent_fakeip_cache_file(
+        self, bind_mock, write_mock, config_dir_mock
     ) -> None:
         # Regression: confirmed live 2026-07-16 on Hysteria2 - without
         # experimental.cache_file's store_fakeip, sing-box immediately
@@ -748,7 +750,8 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         cache_file = config["experimental"]["cache_file"]
         self.assertTrue(cache_file["enabled"])
         self.assertTrue(cache_file["store_fakeip"])
-        self.assertTrue(cache_file["path"])
+        self.assertEqual(cache_file["path"], "/var/lib/watchdogvpn/singbox-fakeip-cache.db")
+        config_dir_mock.assert_called_once_with()
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
