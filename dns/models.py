@@ -46,6 +46,7 @@ DNS_POLICY_FIELDS = {
     "proxy_resolution_channel",
     "fakeip_inet4_range",
     "fakeip_inet6_range",
+    "tun_domain_preservation",
 }
 
 
@@ -244,6 +245,19 @@ def _default_dns_channels() -> dict[DNSChannelName, DNSChannel]:
                 Resolver(uri="udp://9.9.9.9", label="Quad9"),
             ],
         ),
+        # A populated PROXY channel is what fakeip_policy_ready() requires
+        # for FakeIP to be *available* (see dns/singbox.py) - without it,
+        # tun_domain_preservation below has nothing to turn on by default.
+        # These resolvers get detoured through the connecting profile's own
+        # outbound when actually queried (_resolver_to_singbox_server), so
+        # a fresh install never needs to configure this by hand either.
+        DNSChannelName.PROXY: DNSChannel(
+            name=DNSChannelName.PROXY,
+            resolvers=[
+                Resolver(uri="udp://1.1.1.1", label="Cloudflare"),
+                Resolver(uri="udp://9.9.9.9", label="Quad9"),
+            ],
+        ),
     }
 
 
@@ -264,6 +278,19 @@ class DNSPolicy:
     proxy_resolution_channel: str = "fakeip"
     fakeip_inet4_range: str = DEFAULT_FAKEIP_INET4_RANGE
     fakeip_inet6_range: str = DEFAULT_FAKEIP_INET6_RANGE
+    # Distinct from fakeip_policy_ready() ("is FakeIP available/configured
+    # at all"): this is the explicit opt-out for actually *applying* it to
+    # TUN traffic on sing-box-backed connections. drivers/singbox_driver.py
+    # additionally requires TUN active, a non-native transport, and a
+    # sing-box-supported protocol before this has any effect - this field
+    # alone does not activate anything. Defaults on: confirmed live
+    # 2026-07-16 that sing-box-backed TUN traffic silently fails for
+    # protocols whose relay does not accept a raw destination IP (a real
+    # Trojan server accepted the TCP/relay handshake but never answered
+    # once dialed by IP instead of domain; SOCKS traffic through the same
+    # outbound, which passes the domain, worked normally) - defaulting off
+    # would leave every fresh install exposed to that failure mode again.
+    tun_domain_preservation: bool = True
 
     def __post_init__(self) -> None:
         self.mode = DNSMode(self.mode)
@@ -324,6 +351,7 @@ class DNSPolicy:
             "proxy_resolution_channel": self.proxy_resolution_channel,
             "fakeip_inet4_range": self.fakeip_inet4_range,
             "fakeip_inet6_range": self.fakeip_inet6_range,
+            "tun_domain_preservation": self.tun_domain_preservation,
         }
 
     @classmethod
@@ -374,6 +402,10 @@ class DNSPolicy:
             ),
             fakeip_inet6_range=str(
                 data.get("fakeip_inet6_range", DEFAULT_FAKEIP_INET6_RANGE)
+            ),
+            tun_domain_preservation=strict_bool(
+                data.get("tun_domain_preservation", True),
+                "dns_policy.tun_domain_preservation",
             ),
         )
 

@@ -20,6 +20,7 @@ from dns.singbox import (
     build_dns_hijack_inbounds,
     build_dns_hijack_route,
     build_singbox_dns_config,
+    build_tun_domain_preservation_route,
     fakeip_policy_ready,
 )
 
@@ -51,13 +52,17 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             },
         )
 
-        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+        result = build_singbox_dns_config(
+            policy, proxy_outbound_tag="vless-demo", allow_fakeip=True
+        )
 
         self.assertIsNotNone(result)
         assert result is not None
         config = result.config
         self.assertEqual(config["final"], "watchdogvpn-final-1")
-        self.assertEqual(config["rules"], [])
+        self.assertEqual(config["rules"], [
+            {"query_type": ["A", "AAAA"], "server": FAKEIP_SERVER_TAG},
+        ])
         self.assertEqual(result.direct_domain_resolver, "watchdogvpn-direct-1")
         self.assertEqual(result.proxy_domain_resolver, FAKEIP_SERVER_TAG)
         self.assertEqual(result.channel_servers[DNSChannelName.DIRECT], (
@@ -259,7 +264,9 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             fakeip_inet6_range="fc00::/18",
         )
 
-        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+        result = build_singbox_dns_config(
+            policy, proxy_outbound_tag="vless-demo", allow_fakeip=True
+        )
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -271,6 +278,34 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             "inet6_range": "fc00::/18",
         })
         self.assertEqual(result.proxy_domain_resolver, FAKEIP_SERVER_TAG)
+
+    def test_fakeip_server_omitted_when_caller_gate_disallows_it(self) -> None:
+        # Regression: allow_fakeip is the driver-level gate (TUN active,
+        # non-native transport) - a policy with FakeIP fully configured and
+        # ready must still not get a fakeip server without it, e.g. for a
+        # native-transport companion's own DNS config.
+        policy = DNSPolicy(
+            channels={
+                DNSChannelName.PROXY: DNSChannel(
+                    name=DNSChannelName.PROXY,
+                    resolvers=[Resolver(uri="https://1.1.1.1/dns-query")],
+                ),
+                DNSChannelName.FINAL: DNSChannel(
+                    name=DNSChannelName.FINAL,
+                    resolvers=[Resolver(uri="udp://9.9.9.9")],
+                ),
+            },
+        )
+
+        result = build_singbox_dns_config(
+            policy, proxy_outbound_tag="vless-demo", allow_fakeip=False
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        servers = {server["tag"]: server for server in result.config["servers"]}
+        self.assertNotIn(FAKEIP_SERVER_TAG, servers)
+        self.assertNotEqual(result.proxy_domain_resolver, FAKEIP_SERVER_TAG)
 
     def test_fakeip_policy_ready_requires_an_enabled_proxy_resolver(self) -> None:
         empty = DNSPolicy(
@@ -340,11 +375,15 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             },
         )
 
-        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+        result = build_singbox_dns_config(
+            policy, proxy_outbound_tag="vless-demo", allow_fakeip=True
+        )
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.config["rules"], [])
+        self.assertEqual(result.config["rules"], [
+            {"query_type": ["A", "AAAA"], "server": FAKEIP_SERVER_TAG},
+        ])
         self.assertEqual(result.direct_domain_resolver, {
             "server": "watchdogvpn-direct-1",
             "client_subnet": "203.0.113.0/24",
@@ -503,7 +542,9 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             },
         )
 
-        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+        result = build_singbox_dns_config(
+            policy, proxy_outbound_tag="vless-demo", allow_fakeip=True
+        )
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -576,7 +617,9 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             },
         )
 
-        result = build_singbox_dns_config(policy, proxy_outbound_tag="vless-demo")
+        result = build_singbox_dns_config(
+            policy, proxy_outbound_tag="vless-demo", allow_fakeip=True
+        )
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -587,6 +630,12 @@ class SingBoxDNSConfigTests(unittest.TestCase):
             },
             {
                 "domain_keyword": ["proxy"],
+                "server": FAKEIP_SERVER_TAG,
+            },
+            # FakeIP catch-all, always last: explicit exceptions above
+            # (static IP map, user diversion rules) are checked first.
+            {
+                "query_type": ["A", "AAAA"],
                 "server": FAKEIP_SERVER_TAG,
             },
         ])
@@ -685,6 +734,75 @@ class SingBoxDNSConfigTests(unittest.TestCase):
     def test_dns_hijack_route_is_disabled_for_off_or_non_hijack_policy(self) -> None:
         self.assertIsNone(build_dns_hijack_route(DNSPolicy(mode=DNSMode.OFF)))
         self.assertIsNone(build_dns_hijack_route(DNSPolicy(tun_hijack=False)))
+
+
+class TunDomainPreservationRouteTests(unittest.TestCase):
+    """Live-verified 2026-07-16 in a disposable VM (both route-options and
+    this FakeIP+resolve mechanism): a sing-box outbound receiving a raw IP
+    destination reached some real relays' TCP layer fine but got no
+    application response at all, while the same traffic carrying a domain
+    name (as SOCKS naturally does) worked normally. This rule restores the
+    domain for FakeIP-range TUN destinations before sniff/hijack-dns run."""
+
+    def test_returns_the_resolve_rule_when_allowed_and_ready(self) -> None:
+        policy = DNSPolicy(
+            fakeip_inet4_range="198.18.0.0/15",
+            fakeip_inet6_range="fc00::/18",
+        )
+
+        route = build_tun_domain_preservation_route(
+            policy, tun_inbound_tag="watchdogvpn-tun-in", allow_fakeip=True
+        )
+
+        self.assertEqual(route, {
+            "rules": [
+                {
+                    "action": "resolve",
+                    "inbound": ["watchdogvpn-tun-in"],
+                    "ip_cidr": ["198.18.0.0/15", "fc00::/18"],
+                }
+            ]
+        })
+
+    def test_none_when_caller_gate_disallows_it(self) -> None:
+        # allow_fakeip=False is the driver-level gate (native transport or
+        # no TUN) - must win even with a fully-ready, opted-in policy.
+        policy = DNSPolicy()
+        self.assertTrue(policy.tun_domain_preservation)
+        self.assertTrue(fakeip_policy_ready(policy))
+
+        route = build_tun_domain_preservation_route(
+            policy, tun_inbound_tag="watchdogvpn-tun-in", allow_fakeip=False
+        )
+
+        self.assertIsNone(route)
+
+    def test_none_when_policy_opts_out(self) -> None:
+        policy = DNSPolicy(tun_domain_preservation=False)
+        self.assertTrue(fakeip_policy_ready(policy))
+
+        route = build_tun_domain_preservation_route(
+            policy, tun_inbound_tag="watchdogvpn-tun-in", allow_fakeip=True
+        )
+
+        self.assertIsNone(route)
+
+    def test_none_when_fakeip_not_ready(self) -> None:
+        policy = DNSPolicy(
+            channels={
+                DNSChannelName.DIRECT: DNSChannel(
+                    name=DNSChannelName.DIRECT,
+                    resolvers=[Resolver(uri="udp://1.1.1.1")],
+                ),
+            }
+        )
+        self.assertFalse(fakeip_policy_ready(policy))
+
+        route = build_tun_domain_preservation_route(
+            policy, tun_inbound_tag="watchdogvpn-tun-in", allow_fakeip=True
+        )
+
+        self.assertIsNone(route)
 
 
 if __name__ == "__main__":

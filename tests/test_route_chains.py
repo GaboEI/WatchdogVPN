@@ -482,7 +482,15 @@ class ChainRuntimeResolverTests(unittest.TestCase):
 
             plan = stores["resolver"].resolve_action(
                 "chain:work-safe",
-                dns_policy=DNSPolicy(),
+                # DNSPolicy()'s default proxy channel now ships a working
+                # resolver (dns/models.py's _default_dns_channels) -
+                # construct one explicitly empty to still simulate DNS
+                # being unavailable.
+                dns_policy=DNSPolicy(
+                    channels={
+                        DNSChannelName.PROXY: DNSChannel(name=DNSChannelName.PROXY, resolvers=[])
+                    }
+                ),
                 config={},
             )
 

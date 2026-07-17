@@ -652,26 +652,29 @@ class CliDNSCommandTests(unittest.TestCase):
         tester_cls.return_value.test_channel.assert_called_once()
 
     def test_channel_add_and_remove(self) -> None:
+        # "direct" and "proxy" both exist by default now; "final" is still
+        # genuinely absent (dns/models.py's _default_dns_channels).
         with tempfile.TemporaryDirectory() as tmp:
-            added = self.run_watchdog(["dns", "channel", "add", "proxy", "--json"], tmp)
+            added = self.run_watchdog(["dns", "channel", "add", "final", "--json"], tmp)
             added_data = json.loads(added.stdout)
-            self.assertIn("proxy", added_data["policy"]["channels"])
+            self.assertIn("final", added_data["policy"]["channels"])
             self.assertTrue(Path(added_data["backup_path"]).exists())
 
-            result = self.run_watchdog(["dns", "channel", "add", "proxy"], tmp, check=False)
+            result = self.run_watchdog(["dns", "channel", "add", "final"], tmp, check=False)
             self.assertEqual(result.returncode, 65)
-            self.assertIn("dns channel already exists: proxy", result.stderr)
+            self.assertIn("dns channel already exists: final", result.stderr)
 
-            removed = self.run_watchdog(["dns", "channel", "remove", "proxy", "--json"], tmp)
-            self.assertNotIn("proxy", json.loads(removed.stdout)["policy"]["channels"])
+            removed = self.run_watchdog(["dns", "channel", "remove", "final", "--json"], tmp)
+            self.assertNotIn("final", json.loads(removed.stdout)["policy"]["channels"])
 
     def test_channel_remove_missing_fails(self) -> None:
-        # "direct" now exists by default; "proxy" is still genuinely absent.
+        # "direct" and "proxy" both exist by default now; "final" is still
+        # genuinely absent.
         with tempfile.TemporaryDirectory() as tmp:
-            result = self.run_watchdog(["dns", "channel", "remove", "proxy"], tmp, check=False)
+            result = self.run_watchdog(["dns", "channel", "remove", "final"], tmp, check=False)
 
             self.assertEqual(result.returncode, 65)
-            self.assertIn("dns channel not found: proxy", result.stderr)
+            self.assertIn("dns channel not found: final", result.stderr)
 
     def test_resolver_add_implicitly_creates_channel(self) -> None:
         # "direct" already exists with two default resolvers (dns/models.py's
@@ -832,9 +835,9 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
 
     def test_rule_add_rejects_missing_configured_channel(self) -> None:
-        # "direct" now exists by default (dns/models.py's
-        # _default_dns_channels); "proxy" is still genuinely absent until
-        # explicitly configured, so it still exercises this rejection path.
+        # "direct" and "proxy" both exist by default now; "final" is still
+        # genuinely absent until explicitly configured, so it still
+        # exercises this rejection path.
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(
                 [
@@ -847,42 +850,42 @@ class CliDNSCommandTests(unittest.TestCase):
                     "--action",
                     "use_channel",
                     "--channel",
-                    "proxy",
+                    "final",
                 ],
                 tmp,
                 check=False,
             )
 
             self.assertEqual(result.returncode, 65)
-            self.assertIn("dns channel not found: proxy", result.stderr)
+            self.assertIn("dns channel not found: final", result.stderr)
 
     def test_channel_remove_rejects_referenced_channel(self) -> None:
-        # "direct" now exists by default; use "proxy" so the initial
-        # `channel add` in this test still exercises channel creation.
+        # "direct" and "proxy" both exist by default now; use "final" so the
+        # initial `channel add` in this test still exercises creation.
         with tempfile.TemporaryDirectory() as tmp:
-            self.run_watchdog(["dns", "channel", "add", "proxy"], tmp)
+            self.run_watchdog(["dns", "channel", "add", "final"], tmp)
             self.run_watchdog(
                 [
                     "dns",
                     "rule",
                     "add",
-                    "proxy-rule",
+                    "final-rule",
                     "--pattern",
                     "domain:example.test",
                     "--action",
                     "use_channel",
                     "--channel",
-                    "proxy",
+                    "final",
                 ],
                 tmp,
             )
 
             result = self.run_watchdog(
-                ["dns", "channel", "remove", "proxy"], tmp, check=False
+                ["dns", "channel", "remove", "final"], tmp, check=False
             )
 
             self.assertEqual(result.returncode, 65)
-            self.assertIn("is referenced by rule(s): proxy-rule", result.stderr)
+            self.assertIn("is referenced by rule(s): final-rule", result.stderr)
 
     def test_rule_add_reject_action_needs_no_channel(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -987,9 +990,10 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertEqual(DNSPolicyStore(Path(tmp) / "dns-policy.json").load().ttl, "12h")
 
     def test_dns_mutation_backs_up_explicit_custom_policy_file(self) -> None:
-        # DNSPolicy(...)'s "direct" default channel means this explicit
-        # policy already has it too; use "proxy" so `channel add` still
-        # exercises fresh-channel creation against the custom policy file.
+        # DNSPolicy(...)'s "direct"/"proxy" default channels mean this
+        # explicit policy already has both; use "final" so `channel add`
+        # still exercises fresh-channel creation against the custom policy
+        # file.
         with tempfile.TemporaryDirectory() as tmp:
             policy_path = Path(tmp) / "operator-policy.json"
             original = DNSPolicy(test_domain="before.example")
@@ -1000,7 +1004,7 @@ class CliDNSCommandTests(unittest.TestCase):
                     "dns",
                     "channel",
                     "add",
-                    "proxy",
+                    "final",
                     "--policy-file",
                     str(policy_path),
                     "--json",
@@ -1026,22 +1030,30 @@ class CliDNSCommandTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unsupported dns config key", result.stderr)
 
-    def test_fakeip_activates_end_to_end_via_cli_only(self) -> None:
+    def test_fakeip_is_on_by_default_and_fully_controllable_via_cli(self) -> None:
         # Regression guard for the finding that started this whole audit:
-        # `dns status` reported FakeIP: off with no CLI path to fix it.
-        # This proves the full fix using only watchdog commands, no
-        # hand-edited JSON.
+        # `dns status` reported FakeIP: off with no CLI path to fix it. A
+        # fresh policy now ships FakeIP on out of the box (dns/models.py's
+        # _default_dns_channels populates "proxy" too) - this proves it
+        # starts on, and that the CLI can still fully disable and re-enable
+        # it by managing the proxy channel's resolvers directly, no
+        # hand-edited JSON required either way.
         with tempfile.TemporaryDirectory() as tmp:
             before = json.loads(self.run_watchdog(["dns", "status", "--json"], tmp).stdout)
-            self.assertFalse(before["features"]["proxy_resolution_channel_active"])
+            self.assertTrue(before["features"]["proxy_resolution_channel_active"])
+            human = self.run_watchdog(["dns", "status"], tmp)
+            self.assertIn("FakeIP: on", human.stdout)
+
+            self.run_watchdog(["dns", "resolver", "remove", "proxy", "udp://1.1.1.1"], tmp)
+            self.run_watchdog(["dns", "resolver", "remove", "proxy", "udp://9.9.9.9"], tmp)
+
+            disabled = json.loads(self.run_watchdog(["dns", "status", "--json"], tmp).stdout)
+            self.assertFalse(disabled["features"]["proxy_resolution_channel_active"])
 
             self.run_watchdog(["dns", "resolver", "add", "proxy", "udp://1.1.1.1"], tmp)
 
             after = json.loads(self.run_watchdog(["dns", "status", "--json"], tmp).stdout)
             self.assertTrue(after["features"]["proxy_resolution_channel_active"])
-
-            human = self.run_watchdog(["dns", "status"], tmp)
-            self.assertIn("FakeIP: on", human.stdout)
 
 
 if __name__ == "__main__":

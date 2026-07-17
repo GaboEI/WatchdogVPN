@@ -177,6 +177,7 @@ DNS_POLICY_SET_KEYS = frozenset(
         "dns.ttl",
         "dns.test_domain",
         "dns.tun_hijack",
+        "dns.tun_domain_preservation",
     }
 )
 DNS_POLICY_BOOL_SET_KEYS = frozenset(
@@ -186,6 +187,7 @@ DNS_POLICY_BOOL_SET_KEYS = frozenset(
         "dns.static_ip_enabled",
         "dns.rules_enabled",
         "dns.tun_hijack",
+        "dns.tun_domain_preservation",
     }
 )
 VISIBLE_STATS_COUNTER_PREFIXES = (
@@ -4877,6 +4879,12 @@ def _dns_status(args: argparse.Namespace) -> int:
         f"FakeIP: {_on_off(bool(fakeip_active), no_color=no_color)} "
         f"({policy.fakeip_inet4_range}, {policy.fakeip_inet6_range})"
         + fakeip_suffix
+    )
+    print(
+        "TUN domain preservation: "
+        f"{_on_off(policy.tun_domain_preservation, no_color=no_color)} "
+        "(sing-box TUN sessions only; also requires FakeIP above and a "
+        "non-native transport)"
     )
     print(f"ECS direct: {_on_off(policy.ecs_direct_enabled, no_color=no_color)}")
     print(f"Snapshot: {data['snapshot']['path']} ({_semantic(data['snapshot']['status'], no_color=no_color)})")

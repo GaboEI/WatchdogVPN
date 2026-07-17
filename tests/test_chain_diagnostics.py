@@ -169,7 +169,15 @@ class ChainDiagnosticsTests(unittest.TestCase):
             dns_down = diagnose_chain_route_action(
                 "chain:dns-down",
                 chain_document=document,
-                dns_policy=DNSPolicy(),
+                # DNSPolicy()'s default proxy channel now ships a working
+                # resolver (dns/models.py's _default_dns_channels) -
+                # construct one explicitly empty to still simulate DNS
+                # being unavailable.
+                dns_policy=DNSPolicy(
+                    channels={
+                        DNSChannelName.PROXY: DNSChannel(name=DNSChannelName.PROXY, resolvers=[])
+                    }
+                ),
                 resolver=stores.resolver,
                 config={},
             ).to_dict()

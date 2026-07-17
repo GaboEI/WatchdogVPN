@@ -20,6 +20,7 @@ from dns.singbox import (
     build_dns_hijack_inbounds,
     build_dns_hijack_route,
     build_singbox_dns_config,
+    build_tun_domain_preservation_route,
 )
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
 from drivers.base import (
@@ -81,6 +82,7 @@ SING_BOX_LOG_LEVELS = {
 # used by most VPN tunnel software specifically to sidestep PMTUD entirely
 # rather than trying to keep it working across every native transport.
 TUN_MTU = 1280
+TUN_INBOUND_TAG = "watchdogvpn-tun-in"
 LAN_GATEWAY_NFT_TABLE = "watchdogvpn_lan_gateway"
 LAN_GATEWAY_FORWARD_CHAIN = "forward"
 LAN_GATEWAY_POSTROUTING_CHAIN = "postrouting"
@@ -283,7 +285,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
     ) -> dict[str, Any]:
         inbound: dict[str, Any] = {
             "type": "tun",
-            "tag": "watchdogvpn-tun-in",
+            "tag": TUN_INBOUND_TAG,
             "interface_name": "wdvpn-tun0",
             "address": ["172.19.0.1/30"],
             "mtu": TUN_MTU,
@@ -1289,14 +1291,28 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         else:
             outbound = self._profile_to_route_target(profile, config)
         self._append_chain_outbounds(config, chain_runtime_plans or {})
-        if self._mode_requires_tun(mode, capture_modes):
+        tun_active = self._mode_requires_tun(mode, capture_modes)
+        if tun_active:
             config["inbounds"].append(
                 self._build_tun_inbound(route_exclude_address=native_bypass_cidrs)
             )
+        # A native transport's own kernel tunnel (AmneziaWG/OpenVPN) has no
+        # relationship to this companion's DNS beyond kill-switch/hijack
+        # duties - it must never receive FakeIP answers, since there is no
+        # tunnel here for a FakeIP-range destination to mean anything. Only
+        # a genuine sing-box-backed TUN session (this driver *is* the
+        # tunnel) qualifies. See dns/singbox.py's
+        # build_tun_domain_preservation_route docstring for why this exists
+        # at all: confirmed live 2026-07-16 that some real-world relays
+        # accept a raw-IP-addressed CONNECT at the transport layer but never
+        # answer at the application layer, while the same traffic carrying
+        # a domain name (as SOCKS naturally provides) works normally.
+        enable_tun_domain_preservation = tun_active and not native_transport
         if dns_policy is not None:
             dns_config = build_singbox_dns_config(
                 dns_policy,
                 _dns_proxy_outbound_tag(outbound["tag"], mode, final_policy, chain_runtime_plans),
+                allow_fakeip=enable_tun_domain_preservation,
             )
             if dns_config is not None:
                 dns_config.config["rules"] = [
@@ -1308,6 +1324,17 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 ]
                 config["dns"] = dns_config.config
                 config["inbounds"].extend(build_dns_hijack_inbounds(dns_policy))
+                # Must be merged before the DNS hijack route below: pre-match
+                # "resolve" has to run before sniff/hijack-dns, or a FakeIP
+                # destination is not restored to its domain in time for the
+                # sniff-based routing decision that follows it.
+                domain_preservation_route = build_tun_domain_preservation_route(
+                    dns_policy,
+                    tun_inbound_tag=TUN_INBOUND_TAG,
+                    allow_fakeip=enable_tun_domain_preservation,
+                )
+                if domain_preservation_route is not None:
+                    _merge_route_config(config, domain_preservation_route)
                 hijack_route = build_dns_hijack_route(dns_policy)
                 if hijack_route is not None:
                     _merge_route_config(config, hijack_route)

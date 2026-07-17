@@ -8,6 +8,7 @@ from unittest.mock import patch
 from app_policy.models import AppPolicy, AppPolicyRule
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
 from dns.models import DNSChannel, DNSChannelName, DNSPolicy, DNSRule, Resolver
+from dns.singbox import fakeip_policy_ready
 from drivers.base import ManagementPathSafetyError
 from drivers.singbox_driver import SingBoxDriver
 from drivers.runtime_paths import OwnedProcess, TCPListenerObservation
@@ -637,6 +638,65 @@ class SingBoxDriverConfigTests(unittest.TestCase):
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_native_transport_never_gets_fakeip_or_resolve_even_with_proxy_channel(
+        self, bind_mock, write_mock
+    ) -> None:
+        # Critical safety regression: dns/models.py's default DNSPolicy now
+        # ships a populated "proxy" channel (2026-07-16, for TUN domain
+        # preservation) - fakeip_policy_ready() alone would therefore be
+        # True for every connection, including a native-transport
+        # companion's own DNS config, unless generate_singbox_config's own
+        # gate (tun_active AND NOT native_transport) explicitly overrides
+        # it. A native tunnel (AmneziaWG/OpenVPN) has no relationship to
+        # this companion's DNS resolution beyond kill-switch/hijack duties;
+        # FakeIP answers here would be meaningless and the "resolve"
+        # pre-match rule would reference a FakeIP range nothing produced.
+        profile = self._profile(ProtocolType.AMNEZIAWG, raw="[Interface]\nAddress = 10.0.0.2/32")
+        dns_policy = DNSPolicy()
+        self.assertTrue(fakeip_policy_ready(dns_policy))
+
+        config = self.driver.generate_singbox_config(
+            profile,
+            mode="rules",
+            capture_modes=("local_proxy", "tun"),
+            native_transport=True,
+            dns_policy=dns_policy,
+        )
+
+        dns_server_types = {server.get("type") for server in config["dns"]["servers"]}
+        self.assertNotIn("fakeip", dns_server_types)
+        for rule in config["route"]["rules"]:
+            self.assertNotEqual(rule.get("action"), "resolve")
+        for rule in config["dns"].get("rules", []):
+            self.assertNotEqual(rule.get("server"), "watchdogvpn-fakeip")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_singbox_session_without_tun_never_gets_fakeip_or_resolve(
+        self, bind_mock, write_mock
+    ) -> None:
+        # Same gate, other half: a non-native sing-box connection that
+        # never captures system-wide traffic (pure proxy/SOCKS mode) has no
+        # TUN inbound for a "resolve" pre-match rule to attach to, and
+        # nothing would ever dial a FakeIP-range address in the first
+        # place - the gate's tun_active requirement must hold even though
+        # native_transport=False here.
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        dns_policy = DNSPolicy()
+        self.assertTrue(fakeip_policy_ready(dns_policy))
+
+        config = self.driver.generate_singbox_config(
+            profile, mode="proxy", dns_policy=dns_policy
+        )
+
+        self.assertFalse(any(i["type"] == "tun" for i in config["inbounds"]))
+        dns_server_types = {server.get("type") for server in config["dns"]["servers"]}
+        self.assertNotIn("fakeip", dns_server_types)
+        for rule in config["route"]["rules"]:
+            self.assertNotEqual(rule.get("action"), "resolve")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
     def test_generate_singbox_config_proxy_mode_routes_global_no_extra_inbound(
         self, bind_mock, write_mock
     ) -> None:
@@ -999,7 +1059,9 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             }
         )
 
-        config = self.driver.generate_singbox_config(profile, dns_policy=dns_policy)
+        config = self.driver.generate_singbox_config(
+            profile, dns_policy=dns_policy, mode="tun"
+        )
 
         self.assertEqual(config["outbounds"][0]["type"], "vless")
         self.assertEqual(config["outbounds"][0]["tag"], "vless-demo")
@@ -1021,7 +1083,9 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(direct_outbound["domain_resolver"], "watchdogvpn-direct-1")
         self.assertEqual(config["dns"]["final"], "watchdogvpn-final-1")
         self.assertEqual(config["route"]["default_domain_resolver"], "watchdogvpn-direct-1")
-        self.assertEqual(config["dns"]["rules"], [])
+        self.assertEqual(config["dns"]["rules"], [
+            {"query_type": ["A", "AAAA"], "server": "watchdogvpn-fakeip"},
+        ])
         dns_inbounds = {
             inbound["tag"]: inbound
             for inbound in config["inbounds"]
@@ -1034,6 +1098,11 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(dns_inbounds["watchdogvpn-dns-udp-in"]["network"], "udp")
         self.assertEqual(dns_inbounds["watchdogvpn-dns-tcp-in"]["network"], "tcp")
         self.assertEqual(config["route"]["rules"], [
+            {
+                "action": "resolve",
+                "inbound": ["watchdogvpn-tun-in"],
+                "ip_cidr": ["198.18.0.0/15", "fc00::/18"],
+            },
             {"action": "sniff"},
             {"protocol": ["dns"], "action": "hijack-dns"},
             {
@@ -1095,9 +1164,15 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             {
                 "domain": ["fakeip-probe.watchdogvpn-test"],
                 "server": "watchdogvpn-fakeip",
-            }
+            },
+            {"query_type": ["A", "AAAA"], "server": "watchdogvpn-fakeip"},
         ])
-        self.assertEqual(config["route"]["rules"][:3], [
+        self.assertEqual(config["route"]["rules"][:4], [
+            {
+                "action": "resolve",
+                "inbound": ["watchdogvpn-tun-in"],
+                "ip_cidr": ["198.18.0.0/15", "fc00::/18"],
+            },
             {"action": "sniff"},
             {"protocol": ["dns"], "action": "hijack-dns"},
             {
@@ -1167,10 +1242,13 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             app_policy=app_policy,
         )
 
+        # mode="rules" with no TUN capture: tun_domain_preservation's gate
+        # requires TUN active, so the "current" app-policy rule resolves to
+        # the proxy channel's own resolver, not FakeIP.
         self.assertEqual(config["dns"]["rules"][:3], [
             {"process_name": ["curl"], "server": "watchdogvpn-direct-1"},
             {"process_path": ["/usr/bin/blocked"], "action": "reject"},
-            {"user": ["gabodev"], "server": "watchdogvpn-fakeip"},
+            {"user": ["gabodev"], "server": "watchdogvpn-proxy-1"},
         ])
         self.assertIn(
             {"process_name": ["curl"], "action": "route", "outbound": "direct"},

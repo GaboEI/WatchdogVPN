@@ -94,10 +94,17 @@ class RouteDNSDiagnosticTests(unittest.TestCase):
         self.assertIn("secure-proxy-dns", result.dns_reason)
 
     def test_selected_channel_without_resolver_is_reported_unavailable(self) -> None:
+        # DNSPolicy()'s default proxy channel now ships a working resolver
+        # (dns/models.py's _default_dns_channels) - construct one explicitly
+        # empty to still exercise the "no configured resolver" path.
         result = diagnose_route_dns(
             traffic=TrafficInfo(domain="example.com"),
             rule_groups=[],
-            dns_policy=DNSPolicy(),
+            dns_policy=DNSPolicy(
+                channels={
+                    DNSChannelName.PROXY: DNSChannel(name=DNSChannelName.PROXY, resolvers=[])
+                }
+            ),
         )
 
         self.assertEqual(result.dns_channel, "proxy")

@@ -42,7 +42,18 @@ class SingBoxDNSConfig:
 def build_singbox_dns_config(
     policy: DNSPolicy,
     proxy_outbound_tag: str,
+    *,
+    allow_fakeip: bool = False,
 ) -> SingBoxDNSConfig | None:
+    """allow_fakeip is the caller's own gate decision (driver-level: TUN
+    active, non-native transport - see drivers/singbox_driver.py), not a
+    policy field. policy.tun_domain_preservation only says the *policy*
+    permits it; this function must never guess whether the current
+    connection qualifies, so it defaults closed. The one production caller
+    (drivers/singbox_driver.py's generate_singbox_config) always passes
+    this explicitly - a native-transport companion (AmneziaWG/OpenVPN)
+    must never receive FakeIP answers, since its own DNS is unrelated to
+    the tunnel it companions."""
     if policy.mode == DNSMode.OFF:
         return None
 
@@ -72,7 +83,7 @@ def build_singbox_dns_config(
 
     if _static_ip_enabled(policy):
         servers.insert(0, _static_ip_server(policy))
-    if _fakeip_enabled(policy, channel_servers):
+    if _fakeip_enabled(policy, channel_servers, allow_fakeip=allow_fakeip):
         servers.append(_fakeip_server(policy))
 
     _validate_domain_resolver_graph(servers)
@@ -88,14 +99,16 @@ def build_singbox_dns_config(
             direct_dr = direct_server
 
     proxy_dr: str | None = None
-    if _fakeip_enabled(policy, channel_servers):
+    if _fakeip_enabled(policy, channel_servers, allow_fakeip=allow_fakeip):
         proxy_dr = FAKEIP_SERVER_TAG
     elif proxy_server:
         proxy_dr = proxy_server
 
     dns_config: dict[str, Any] = {
         "servers": servers,
-        "rules": _build_channel_rules(policy, channel_servers),
+        "rules": _build_channel_rules(
+            policy, channel_servers, allow_fakeip=allow_fakeip
+        ),
         "final": _final_server(channel_servers),
     }
     return SingBoxDNSConfig(
@@ -129,6 +142,47 @@ def build_dns_hijack_inbounds(policy: DNSPolicy) -> list[dict[str, Any]]:
             "override_port": 53,
         },
     ]
+
+
+def build_tun_domain_preservation_route(
+    policy: DNSPolicy,
+    *,
+    tun_inbound_tag: str,
+    allow_fakeip: bool,
+) -> dict[str, Any] | None:
+    """Pre-match "resolve" rule that restores the real domain for TUN
+    connections dialed against a FakeIP address, before sniff/hijack-dns or
+    any route rule runs. Confirmed live 2026-07-16: a sing-box outbound
+    that received a FakeIP-range or otherwise raw IP destination (no
+    domain attached) reached some real-world relays' TCP/handshake layer
+    fine but then received no application-layer response at all - the same
+    traffic passing a domain name (as SOCKS traffic naturally does) worked
+    normally. Without this rule, sing-box also outright rejects dialing a
+    FakeIP destination in current versions ("connections will be
+    rejected").
+
+    allow_fakeip is the caller's own gate decision (TUN active, non-native
+    transport - see drivers/singbox_driver.py); this function only adds
+    the policy-level check (tun_domain_preservation, FakeIP availability)
+    on top of it. Must be positioned before sniff/hijack-dns and before any
+    user/final route rule - callers achieve this by merging this function's
+    result first, same pattern as build_dns_hijack_route below.
+    """
+    if not allow_fakeip:
+        return None
+    if not policy.tun_domain_preservation:
+        return None
+    if not fakeip_policy_ready(policy):
+        return None
+    return {
+        "rules": [
+            {
+                "action": "resolve",
+                "inbound": [tun_inbound_tag],
+                "ip_cidr": [policy.fakeip_inet4_range, policy.fakeip_inet6_range],
+            }
+        ]
+    }
 
 
 def build_dns_hijack_route(policy: DNSPolicy) -> dict[str, Any] | None:
@@ -239,8 +293,14 @@ def _network_server(
 def _fakeip_enabled(
     policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
+    *,
+    allow_fakeip: bool = False,
 ) -> bool:
-    return fakeip_policy_ready(policy) and DNSChannelName.PROXY in channel_servers
+    return (
+        allow_fakeip
+        and fakeip_policy_ready(policy)
+        and DNSChannelName.PROXY in channel_servers
+    )
 
 
 def fakeip_policy_ready(policy: DNSPolicy) -> bool:
@@ -347,11 +407,22 @@ def _validate_domain_resolver_graph(servers: list[dict[str, Any]]) -> None:
 def _build_channel_rules(
     policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
+    *,
+    allow_fakeip: bool = False,
 ) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
     if _static_ip_enabled(policy):
         rules.append(_static_ip_rule(policy))
-    rules.extend(_dns_diversion_rules(policy, channel_servers))
+    rules.extend(
+        _dns_diversion_rules(policy, channel_servers, allow_fakeip=allow_fakeip)
+    )
+    # FakeIP catch-all, placed last so it only ever applies to queries that
+    # explicit exceptions above (static IP map, user diversion rules) did
+    # not already claim. sing-box rejects fakeip as the DNS "final"
+    # (default) server outright, so this rule - not final - is the only
+    # place FakeIP can be wired in.
+    if _fakeip_enabled(policy, channel_servers, allow_fakeip=allow_fakeip):
+        rules.append({"query_type": ["A", "AAAA"], "server": FAKEIP_SERVER_TAG})
     return rules
 
 
@@ -372,6 +443,8 @@ def _static_ip_rule(policy: DNSPolicy) -> dict[str, Any]:
 def _dns_diversion_rules(
     policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
+    *,
+    allow_fakeip: bool = False,
 ) -> list[dict[str, Any]]:
     if policy.mode == DNSMode.OFF or not policy.rules_enabled:
         return []
@@ -380,7 +453,11 @@ def _dns_diversion_rules(
     for _, rule in sorted(indexed_rules, key=lambda item: (item[1].priority, item[0])):
         if not rule.enabled:
             continue
-        rules.append(_dns_diversion_rule(rule, channel_servers, policy=policy))
+        rules.append(
+            _dns_diversion_rule(
+                rule, channel_servers, policy=policy, allow_fakeip=allow_fakeip
+            )
+        )
     return rules
 
 
@@ -389,6 +466,7 @@ def _dns_diversion_rule(
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
     *,
     policy: DNSPolicy,
+    allow_fakeip: bool,
 ) -> dict[str, Any]:
     singbox_rule = _dns_rule_match_fields(rule.pattern)
     if rule.action == DNSRuleAction.REJECT:
@@ -396,7 +474,9 @@ def _dns_diversion_rule(
         return singbox_rule
     if rule.channel is None:
         raise ValueError("dns diversion rule channel is required")
-    server = _dns_rule_channel_server(policy, channel_servers, rule.channel)
+    server = _dns_rule_channel_server(
+        policy, channel_servers, rule.channel, allow_fakeip=allow_fakeip
+    )
     if server is None:
         raise ValueError(
             f"dns diversion rule channel has no server: {rule.channel.value}"
@@ -409,8 +489,12 @@ def _dns_rule_channel_server(
     policy: DNSPolicy,
     channel_servers: dict[DNSChannelName, tuple[str, ...]],
     channel: DNSChannelName,
+    *,
+    allow_fakeip: bool,
 ) -> str | None:
-    if channel == DNSChannelName.PROXY and _fakeip_enabled(policy, channel_servers):
+    if channel == DNSChannelName.PROXY and _fakeip_enabled(
+        policy, channel_servers, allow_fakeip=allow_fakeip
+    ):
         return FAKEIP_SERVER_TAG
     return _first_tag(channel_servers, channel)
 
