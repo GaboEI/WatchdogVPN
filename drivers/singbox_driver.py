@@ -1124,7 +1124,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         during normal disconnect cleanup and makes a reconnect reject that
         otherwise valid cached answer as ``missing fakeip record``.
         """
-        return resolve_config_dir() / "singbox-fakeip-cache.db"
+        return resolve_config_dir() / "private" / "singbox-fakeip-cache.db"
 
     def _port_open(self, host: str, port: int, timeout: float = 1.0) -> bool:
         try:

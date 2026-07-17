@@ -71,6 +71,7 @@ install_runtime_files() {
   install_sysctl_defaults
   migrate_watchdogvpn_shared_state
   repair_watchdogvpn_shared_state_permissions
+  prepare_watchdogvpn_private_state
   install_python_package_tree
 
   # Clean up pre-Phase-2.6 (AdGuard-era) contamination on every install and
@@ -458,6 +459,7 @@ add_installing_user_to_watchdogvpn_group() {
 
 repair_watchdogvpn_shared_state_permissions() {
   local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}}"
+  local private_dir="$target_dir/private"
   if [[ "$target_dir" != "/var/lib/watchdogvpn" ]]; then
     printf '[SKIP] non-default WatchdogVPN shared state permissions are caller-managed: %s\n' "$target_dir"
     return 0
@@ -467,8 +469,47 @@ repair_watchdogvpn_shared_state_permissions() {
     return 0
   fi
   run_step sudo chown -R watchdogvpn:watchdogvpn "$target_dir"
-  run_step sudo find "$target_dir" -type d -exec chmod 2770 {} +
-  run_step sudo find "$target_dir" -type f -exec chmod 0660 {} +
+  # The normal state is intentionally shared with the desktop user's
+  # watchdogvpn group. DNS/FakeIP mappings are browsing metadata, however,
+  # and belong in the service-only subtree rather than being widened by this
+  # generic shared-state repair.
+  run_step sudo find "$target_dir" -path "$private_dir" -prune -o -type d -exec chmod 2770 {} +
+  run_step sudo find "$target_dir" -path "$private_dir" -prune -o -type f -exec chmod 0660 {} +
+}
+
+prepare_watchdogvpn_private_state() {
+  local target_dir="${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}"
+  local private_dir="$target_dir/private"
+  local cache_path="$private_dir/singbox-fakeip-cache.db"
+  local legacy_cache="$target_dir/singbox-fakeip-cache.db"
+  local legacy_owner
+
+  if [[ "$target_dir" != "/var/lib/watchdogvpn" ]]; then
+    printf '[SKIP] non-default WatchdogVPN private state is caller-managed: %s\n' "$target_dir"
+    return 0
+  fi
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] prepare private WatchdogVPN DNS state: %s\n' "$private_dir"
+    return 0
+  fi
+
+  run_step sudo install -d -m 0700 -o watchdogvpn -g watchdogvpn "$private_dir"
+  # The first FakeIP implementation stored this file at the shared-state
+  # root. Preserve it only when it is a regular file owned by the dedicated
+  # service account; a group-writable legacy path is never trusted as an
+  # input to the service-only directory.
+  if [[ ! -e "$cache_path" && -f "$legacy_cache" && ! -L "$legacy_cache" ]]; then
+    legacy_owner="$(sudo stat -c '%U:%G' "$legacy_cache" 2>/dev/null || true)"
+    if [[ "$legacy_owner" == "watchdogvpn:watchdogvpn" ]]; then
+      run_step sudo mv -- "$legacy_cache" "$cache_path"
+    else
+      warn "ignored untrusted legacy FakeIP cache: $legacy_cache"
+    fi
+  fi
+  if [[ -f "$cache_path" && ! -L "$cache_path" ]]; then
+    run_step sudo chown watchdogvpn:watchdogvpn "$cache_path"
+    run_step sudo chmod 0600 "$cache_path"
+  fi
 }
 
 smoke_test_watchdogvpn_daemon() {

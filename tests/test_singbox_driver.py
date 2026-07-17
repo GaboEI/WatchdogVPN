@@ -750,7 +750,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         cache_file = config["experimental"]["cache_file"]
         self.assertTrue(cache_file["enabled"])
         self.assertTrue(cache_file["store_fakeip"])
-        self.assertEqual(cache_file["path"], "/var/lib/watchdogvpn/singbox-fakeip-cache.db")
+        self.assertEqual(cache_file["path"], "/var/lib/watchdogvpn/private/singbox-fakeip-cache.db")
         config_dir_mock.assert_called_once_with()
 
     @patch.object(SingBoxDriver, "_write_config")
