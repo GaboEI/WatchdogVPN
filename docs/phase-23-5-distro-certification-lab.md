@@ -15,7 +15,7 @@ claims to support:
 
 | Certification target | Adapter path | Phase | Status before certification |
 | --- | --- | --- | --- |
-| Arch Linux | `arch` | 23.5 | Supported in code, un-certified on a clean VM |
+| Arch Linux | `arch` | 23.5 | Field matrix completed on the clean candidate; uninstall/baseline closure still pending |
 | CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | Supported fallback, un-certified on a clean VM |
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
@@ -199,3 +199,52 @@ remaining Arch 12-protocol matrix or Task 23.5.2.
   source checkout stayed clean, and temporary import/AUR build directories
   were removed. Private profile contents, identifiers, endpoints, and keys are
   excluded from repository evidence.
+
+## Task 23.5.2 partial evidence — Arch field matrix and fail-closed correction
+
+On 2026-07-18, the same Arch candidate completed the 12-protocol field matrix,
+provider lifecycle, live DNS apply/reset, rotation, and the kill-switch
+controlled-failure cell. The VM used adapter 2 only, bridged to the explicitly
+authorized host interface; NAT adapter 1 was disabled. This remains partial
+Task 23.5.2 evidence because clean uninstall and comparison with an accepted
+pre-install baseline have not yet closed.
+
+- VLESS, Trojan, Hysteria2, OpenVPN+Cloak, and AmneziaWG passed their expected
+  real runtime path. AmneziaWG and OpenVPN+Cloak were given a longer bounded
+  readiness window because their native/compound startup is slower; neither
+  was accepted from a transient local listener alone.
+- VMess, TUIC, and SOCKS passed. HTTP proxy operation was demonstrated; one
+  destination-specific Instagram timeout was retained as provider/path
+  evidence rather than represented as a product-wide failure.
+- WireGuard and Shadowsocks were classified unavailable on this network after
+  the maintainer's ISP confirmed those traffic types are blocked. Plain
+  OpenVPN completed its protocol handshake but did not produce real egress.
+  Those compatibility rows remain assigned to the isolated external-provider
+  lab; they are not false product passes or distro failures.
+- Provider add/update/node-connect/remove passed without deleting or mutating
+  the 12 manual profiles. Real provider-node egress passed before removal.
+- DNS apply/reset passed on the connected runtime after the CLI was corrected
+  to require privilege before any mutation. Rotation passed actual profile
+  change, long-command completion, concurrent status availability, and real
+  TUN/SOCKS/HTTP egress.
+- The first valid kill-switch crash test exposed a real universal defect:
+  firewall rules trusted sing-box auto-redirect marks globally, so marked
+  physical ICMP could bypass the terminal DROP after the sing-box child died.
+  Commit `245a05b` removed mark-based firewall trust from both nftables and
+  iptables without removing the marks from bounded residue/collision logic.
+  The complete unit suite passed before deployment.
+- At `245a05b`, healthy kill-switch operation retained HTTP 200 on the required
+  normal-TUN, SOCKS, and HTTP-proxy observations. During an attributed failure
+  (daemon frozen and its sole verified sing-box child killed), forced physical
+  HTTPS returned no HTTP response, forced physical ICMP failed, and the
+  nftables DROP counter increased. The daemon then resumed, disconnect removed
+  the firewall table, standby was honest, and direct baseline reachability was
+  restored.
+- `tests/vm/phase23_kill_switch_controlled_failure.py` now encodes that proof
+  for future distro runs. It records the physical interface before connection,
+  verifies parent/cgroup ownership across all daemon worker threads, selects a
+  public probe address distinct from endpoint allowances, always resumes the
+  daemon, and refuses to run without the explicit field-validation guard.
+
+All endpoint addresses, generated profile/provider identifiers, subscription
+material, and private fixture contents remain outside repository evidence.

@@ -6,6 +6,24 @@
 
 ---
 
+## 2026-07-18 superseding field erratum
+
+The Phase 23.5 clean-Arch controlled-failure test disproved one bounded claim
+in this historical audit: sing-box auto-redirect marks are not safe firewall
+trust signals. Auto-redirect can place those marks on arbitrary physical
+egress, so accepting `meta mark`/`ct mark` (or iptables mark/connmark) globally
+allowed marked traffic to bypass the kill switch after the sing-box child was
+destroyed.
+
+The defect was fixed universally in commit `245a05b`: nftables and iptables no
+longer accept traffic solely because it carries a sing-box mark. The constants
+remain available only for bounded residue discovery and collision avoidance.
+Regression tests cover both firewall backends, and live validation proved
+normal TUN/SOCKS/HTTP operation plus blocked forced-physical HTTPS and ICMP
+with an increasing firewall DROP counter. Therefore, every reference below to
+"sing-box auto-redirect mark allowances" is superseded by this erratum; it is
+historical audit text, not the current security contract.
+
 ## 1. Scope
 
 Task 12.6 runs the QA audit protocol over the completed Phase 12 split

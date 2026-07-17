@@ -206,8 +206,8 @@ matrix, "VPN" means `current`.
 
 | ID | Case | CLI commands | Required proof |
 | --- | --- | --- | --- |
-| M6.1 | enable | `watchdog setup --yes --acknowledge-backup-warning --kill-switch enable --json`; `watchdog connect <profile_id> --json`; controlled drop/failure; blocked egress probe; `watchdog status --json` | Kill switch is active when expected and prevents direct leak during controlled failure. |
-| M6.2 | disable | `watchdog disconnect --json`; `watchdog setup --yes --acknowledge-backup-warning --kill-switch disable --json`; `watchdog status --json`; direct egress probe | Kill switch disables cleanly and no stale firewall rules remain. |
+| M6.1 | enable | Record the physical default interface before connecting; `watchdog setup --yes --acknowledge-backup-warning --kill-switch enable --json`; `watchdog connect <profile_id> --json`; run `tests/vm/phase23_kill_switch_controlled_failure.py` with the explicit field-validation guard; `watchdog status --json` | The helper attributes exactly one sing-box child to `watchdogvpn.service`, freezes the daemon, kills only that child, forces HTTPS and ICMP through the pre-connect physical interface to a public address distinct from VPN endpoint allowances, requires both probes to fail and the firewall DROP counter to increase, then always resumes the daemon. |
+| M6.2 | disable | `watchdog disconnect --json`; `watchdog setup --yes --acknowledge-backup-warning --kill-switch disable --json`; `watchdog status --json`; direct GitHub baseline probe | Kill switch disables cleanly, no stale firewall rules remain, and baseline Internet returns without using a Meta destination before VPN connection. |
 | M6.3 | cleanup | Repeat M0.3 snapshots | No unexpected firewall, route, DNS or listener residue remains. |
 
 ### M7 - Rotation And All-Failed Behavior

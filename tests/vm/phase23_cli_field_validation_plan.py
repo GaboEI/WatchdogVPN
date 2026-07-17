@@ -328,12 +328,26 @@ def build_runbook(plan: dict[str, Any]) -> str:
         lines,
         "M6 Kill Switch Enable Disable",
         [
+            ["ip", "-j", "route", "show", "default"],
             ["watchdog", "setup", "--yes", "--acknowledge-backup-warning", "--kill-switch", "enable", "--json"],
             ["watchdog", "connect", rotation["primary_profile_id"], "--json"],
             ["watchdog", "status", "--json"],
+            [
+                "env",
+                "WATCHDOGVPN_FIELD_VALIDATION=1",
+                "python3",
+                "tests/vm/phase23_kill_switch_controlled_failure.py",
+                "--physical-interface",
+                "<pre-connect-default-interface>",
+                "--probe-domain",
+                probe_domain,
+                "--evidence-dir",
+                "<private-evidence-dir>/kill-switch-controlled-failure",
+            ],
             ["watchdog", "disconnect", "--json"],
             ["watchdog", "setup", "--yes", "--acknowledge-backup-warning", "--kill-switch", "disable", "--json"],
             ["watchdog", "status", "--json"],
+            ["curl", "--fail", "--show-error", "--max-time", "20", "https://github.com/"],
         ],
     )
 

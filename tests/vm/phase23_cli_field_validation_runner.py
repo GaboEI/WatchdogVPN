@@ -514,13 +514,111 @@ class Runner:
     def kill_switch(self) -> None:
         profile_id = self.resolved_profile_id(self.plan["rotation"]["primary_profile_id"])
         section = "kill-switch"
+        physical_interface = "phase23-physical-interface"
+        route_rc = self.run(
+            section,
+            "physical-route-before-connect",
+            ["ip", "-j", "route", "show", "default"],
+            timeout=30,
+        )
+        if not self.dry_run and route_rc == 0:
+            try:
+                routes = json.loads(self.last_stdout)
+                physical_interface = next(
+                    route["dev"]
+                    for route in routes
+                    if isinstance(route, dict) and isinstance(route.get("dev"), str)
+                )
+            except (json.JSONDecodeError, KeyError, StopIteration, TypeError):
+                self.failures.append(
+                    "kill-switch:physical-route-before-connect: missing default interface"
+                )
+                return
         self.run(section, "enable", ["watchdog", "setup", "--yes", "--acknowledge-backup-warning", "--kill-switch", "enable", "--json"])
-        self.run(section, "connect", ["watchdog", "connect", profile_id, "--json"], timeout=180)
-        self.run(section, "status-enabled", ["watchdog", "status", "--json"])
-        self.egress_probes(section)
-        self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
-        self.run(section, "disable", ["watchdog", "setup", "--yes", "--acknowledge-backup-warning", "--kill-switch", "disable", "--json"])
-        self.run(section, "status-disabled", ["watchdog", "status", "--json"], ok_codes={0, 69})
+        try:
+            connect_rc = self.run(
+                section,
+                "connect",
+                ["watchdog", "connect", profile_id, "--json"],
+                timeout=180,
+            )
+            if connect_rc == 0:
+                self.run(section, "status-enabled", ["watchdog", "status", "--json"])
+                self.egress_probes(section)
+                helper = Path(__file__).with_name(
+                    "phase23_kill_switch_controlled_failure.py"
+                )
+                self.run(
+                    section,
+                    "controlled-runtime-failure",
+                    [
+                        sys.executable,
+                        str(helper),
+                        "--physical-interface",
+                        physical_interface,
+                        "--probe-domain",
+                        str(self.plan["probe_domain"]),
+                        "--evidence-dir",
+                        str(self.section_dir(section) / "controlled-failure-private"),
+                    ],
+                    timeout=120,
+                )
+        finally:
+            self.run(
+                section,
+                "disconnect",
+                ["watchdog", "disconnect", "--json"],
+                timeout=180,
+                ok_codes={0, 70},
+            )
+            self.run(
+                section,
+                "disable",
+                [
+                    "watchdog",
+                    "setup",
+                    "--yes",
+                    "--acknowledge-backup-warning",
+                    "--kill-switch",
+                    "disable",
+                    "--json",
+                ],
+            )
+        self.run(
+            section,
+            "status-disabled",
+            ["watchdog", "status", "--json"],
+            ok_codes={0, 69},
+        )
+        self.run(
+            section,
+            "direct-egress-after-disable",
+            [
+                "curl",
+                "--fail",
+                "--show-error",
+                "--max-time",
+                "20",
+                "https://github.com/",
+            ],
+            timeout=45,
+        )
+        if shutil.which("nft"):
+            self.run(
+                section,
+                "nft-artifacts-absent",
+                ["sudo", "-n", "nft", "list", "table", "inet", "watchdogvpn"],
+                timeout=30,
+                ok_codes={1},
+            )
+        if shutil.which("iptables"):
+            self.run(
+                section,
+                "iptables-artifacts-absent",
+                ["sudo", "-n", "iptables", "-S", "WATCHDOGVPN-OUTPUT"],
+                timeout=30,
+                ok_codes={1},
+            )
         self.snapshot(f"post-kill-switch-{self.external_vpn_state}")
 
     def rotation(self) -> None:
