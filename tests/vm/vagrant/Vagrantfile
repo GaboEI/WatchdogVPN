@@ -19,6 +19,13 @@ Vagrant.configure("2") do |config|
   # as a confound - that turned out not to be the cause (see the fwmark
   # collision fix in drivers/amneziawg_driver.py), and Gabo only authorized
   # bridging for that one session, not as this VM's default.
+  #
+  # 2026-07-17: bridged again, one more diagnostic session, explicitly
+  # authorized by Gabo - to give this VM its own LAN-assigned IP (like
+  # archvm's enp0s8/192.168.0.228) instead of sharing the host's NAT'd
+  # address, while chasing why OpenVPN+Cloak reaches the real server from
+  # archvm but not from the host or this VM under default NAT.
+  config.vm.network "public_network", bridge: "enp4s0"
 
   if Vagrant.has_plugin?("vagrant-vbguest")
     config.vbguest.auto_update = true
