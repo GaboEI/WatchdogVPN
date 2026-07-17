@@ -128,11 +128,7 @@ install_official_cloak() {
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' RETURN
   info "downloading Cloak client $CLOAK_VERSION"
-  run_step curl --fail --show-error --location \
-    --connect-timeout 15 \
-    --max-time "$CLOAK_DOWNLOAD_TIMEOUT" \
-    "$url" \
-    -o "$tmpdir/$asset"
+  download_release_asset "$url" "$tmpdir/$asset" "$CLOAK_DOWNLOAD_TIMEOUT" "Cloak client"
   if ! verify_sha256 "$tmpdir/$asset" "$expected_sha256"; then
     fail "Cloak client download checksum mismatch: $asset"
     printf 'expected sha256: %s\n' "$expected_sha256"

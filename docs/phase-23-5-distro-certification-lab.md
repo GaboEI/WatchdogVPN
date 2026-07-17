@@ -53,6 +53,13 @@ WatchdogVPN state may be baked into an image. Real private fixtures are
 injected only at execution time under the existing Phase 23 private-fixture
 workflow and are never committed as evidence.
 
+If the selected base image has pending distribution updates, apply the
+distribution's normal full update and reboot before installing WatchdogVPN.
+Record both the image's initial kernel and the post-update running kernel;
+the post-update system, still with no WatchdogVPN state, is the certification
+baseline. This is essential for rolling targets such as Arch and CachyOS, and
+prevents an old box image from being represented as current distro support.
+
 The existing `tests/vm/vagrant` Ubuntu machine is a diagnostic VM with
 retained profiles. It must not be reused as the fresh-install certification
 candidate.
@@ -73,14 +80,52 @@ From `tests/vm/distro-certification`:
 
 ```bash
 WDVPN_VM_BOX=<verified-box> \
+WDVPN_VM_BOX_VERSION=<verified-version> \
 WDVPN_VM_NAME=wdvpn-<target> \
 vagrant up --provider=virtualbox
 ```
 
-The caller must record the exact box name, box version/checksum if available,
-provider version, VirtualBox version, guest `/etc/os-release`, and `uname -r`
-in the evidence directory. The Vagrantfile performs no package installation
-or WatchdogVPN provisioning: `install.sh` is itself the subject under test.
+The default topology is NAT-only. For a maintainer-authorized run that needs
+the independently routed path used for real protocol validation, request a
+second bridged adapter explicitly:
+
+```bash
+WDVPN_VM_BOX=<verified-box> \
+WDVPN_VM_BOX_VERSION=<verified-version> \
+WDVPN_VM_NAME=wdvpn-<target> \
+WDVPN_VM_BRIDGE=<verified-host-interface> \
+vagrant up --provider=virtualbox
+```
+
+The evidence for that run must state the explicit authorization, host bridge
+interface, and both guest interfaces. This opt-in does not change the NAT-only
+baseline or authorize bridged networking for later distro runs.
+
+When the authorization requires bridge-only validation, disable adapter 1 and
+attach only adapter 2 to the selected host interface:
+
+```bash
+WDVPN_VM_BOX=<verified-box> \
+WDVPN_VM_BOX_VERSION=<verified-version> \
+WDVPN_VM_NAME=wdvpn-<target> \
+WDVPN_VM_BRIDGE=<verified-host-interface> \
+WDVPN_VM_BRIDGE_ONLY=1 \
+vagrant up --provider=virtualbox
+```
+
+Bridge-only mode deliberately disables Vagrant's NAT SSH communicator and
+shared-folder mount. After the guest receives its bridged DHCP address, use a
+direct SSH channel to inject the private fixtures and the exact source tree;
+record that address only in private evidence, never in the repository or
+redacted evidence. Record that adapter 1 was disabled and adapter 2 was the
+only active network path. This mode is per-run and requires its own explicit
+maintainer authorization.
+
+The caller must pin and record the exact box name and version, its checksum if
+available, provider version, VirtualBox version, guest `/etc/os-release`, and
+`uname -r` in the evidence directory. The Vagrantfile performs no package
+installation or WatchdogVPN provisioning: `install.sh` is itself the subject
+under test.
 
 ## Per-target certification evidence
 
@@ -102,6 +147,14 @@ command output and metadata for:
 For a session with TUN and local proxy capabilities, normal egress, SOCKS
 egress, and HTTP-proxy egress are separate required observations. A SOCKS
 success alone is never evidence that system/TUN traffic works.
+
+Before WatchdogVPN is installed and connected, use GitHub only for baseline
+Internet reachability. After a real WatchdogVPN connection is active,
+real-egress observations must use censorship-relevant public destinations:
+Facebook, Instagram, and YouTube are the required primary targets. Do not
+count GitHub, Cloudflare-hosted endpoints, or Wikipedia as proof of VPN
+egress, because they can remain reachable through paths that do not represent
+ordinary censored-network traffic.
 
 ## Kernel and security posture
 

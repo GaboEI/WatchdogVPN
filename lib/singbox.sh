@@ -112,11 +112,7 @@ install_official_singbox() {
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "$tmpdir"' RETURN
   info "downloading sing-box $SINGBOX_VERSION"
-  run_step curl --fail --show-error --location \
-    --connect-timeout 15 \
-    --max-time "$SINGBOX_DOWNLOAD_TIMEOUT" \
-    "$url" \
-    -o "$tmpdir/$asset"
+  download_release_asset "$url" "$tmpdir/$asset" "$SINGBOX_DOWNLOAD_TIMEOUT" "sing-box"
   if ! verify_sha256 "$tmpdir/$asset" "$expected_sha256"; then
     fail "sing-box download checksum mismatch: $asset"
     printf 'expected sha256: %s\n' "$expected_sha256"

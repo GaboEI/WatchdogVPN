@@ -12,6 +12,29 @@ run_step() {
   "$@"
 }
 
+download_release_asset() {
+  local url="$1" destination="$2" timeout="$3" label="$4"
+
+  if run_step curl --fail --show-error --location \
+    --connect-timeout 15 \
+    --max-time "$timeout" \
+    "$url" \
+    -o "$destination"; then
+    return 0
+  fi
+
+  # Some bridged IPv4-only networks accept the GitHub release redirect but
+  # blackhole the CDN connection selected by curl's normal address-family
+  # choice. Retry once over IPv4 before failing; the caller still verifies the
+  # pinned archive checksum before installing anything.
+  warn "$label download failed on the default network path; retrying once over IPv4"
+  run_step curl --ipv4 --fail --show-error --location \
+    --connect-timeout 15 \
+    --max-time "$timeout" \
+    "$url" \
+    -o "$destination"
+}
+
 backup_path() {
   local path="$1" stamp backup
   [[ -e "$path" ]] || return 0

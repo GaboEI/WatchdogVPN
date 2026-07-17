@@ -43,12 +43,41 @@ assert_sha256_shape() {
 assert_contains "$ROOT_DIR/lib/singbox.sh" 'SINGBOX_SHA256_LINUX_AMD64' "sing-box lib must pin an amd64 checksum"
 assert_contains "$ROOT_DIR/lib/singbox.sh" 'SINGBOX_SHA256_LINUX_ARM64' "sing-box lib must pin an arm64 checksum"
 assert_contains "$ROOT_DIR/lib/singbox.sh" 'verify_sha256' "sing-box install must verify the download checksum"
+assert_contains "$ROOT_DIR/lib/singbox.sh" 'download_release_asset' "sing-box install must use the shared resilient downloader"
 assert_not_contains "$ROOT_DIR/lib/singbox.sh" 'does not currently pin the archive by checksum' "sing-box notice must not claim checksums are unpinned anymore"
 
 assert_contains "$ROOT_DIR/lib/cloak.sh" 'CLOAK_SHA256_LINUX_AMD64' "Cloak lib must pin an amd64 checksum"
 assert_contains "$ROOT_DIR/lib/cloak.sh" 'CLOAK_SHA256_LINUX_ARM64' "Cloak lib must pin an arm64 checksum"
 assert_contains "$ROOT_DIR/lib/cloak.sh" 'verify_sha256' "Cloak install must verify the download checksum"
+assert_contains "$ROOT_DIR/lib/cloak.sh" 'download_release_asset' "Cloak install must use the shared resilient downloader"
 assert_contains "$ROOT_DIR/lib/cloak.sh" '"${INSTALL_DRY_RUN:-0}" == "1"' "Cloak install must skip prompting under --dry-run"
+
+# --- release downloads: default path first, bounded IPv4 fallback ---
+
+download_fallback_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/install_files.sh
+attempts=()
+curl() {
+  attempts+=("$*")
+  [[ " $* " == *" --ipv4 "* ]]
+}
+download_release_asset "https://example.invalid/release" "/tmp/watchdogvpn-download-test" 120 "test asset"
+printf "%s\n" "${#attempts[@]}" "${attempts[0]}" "${attempts[1]}"
+' 2>&1)"
+grep -Fqx '2' <<<"$download_fallback_output" || {
+  printf 'FAIL: release download must retry exactly once after a default-path failure\n' >&2
+  exit 1
+}
+grep -Fq -- '--ipv4' <<<"$download_fallback_output" || {
+  printf 'FAIL: release download fallback must force IPv4\n' >&2
+  exit 1
+}
+grep -Fq 'retrying once over IPv4' <<<"$download_fallback_output" || {
+  printf 'FAIL: release download fallback must explain the retry\n' >&2
+  exit 1
+}
 
 # --- shared verify_sha256 utility actually works ---
 
