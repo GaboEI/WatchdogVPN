@@ -17,6 +17,10 @@ WATCHDOGVPN_CHAIN = "output"
 WATCHDOGVPN_IPTABLES_CHAIN = "WATCHDOGVPN-OUTPUT"
 WATCHDOGVPN_COMMENT = "WatchdogVPN kill switch"
 WATCHDOGVPN_NFT_COMMENT = f'"{WATCHDOGVPN_COMMENT}"'
+# Reserved sing-box routing marks remain useful for bounded residue discovery
+# and collision avoidance in other drivers. They are intentionally *not*
+# firewall trust signals: auto_redirect can apply them to arbitrary physical
+# egress, so accepting a mark alone would bypass the kill switch.
 SING_BOX_AUTO_REDIRECT_MARKS = ("0x2023", "0x2024")
 SING_BOX_TUN_DNS_ENDPOINTS = ("172.19.0.2",)
 
@@ -265,13 +269,6 @@ class KillSwitch:
             checks[f"missing_endpoint_allow:{parsed}"] = self._nft_rule_present(
                 managed_lines, (family, "daddr", str(parsed)), "accept"
             )
-        for mark in SING_BOX_AUTO_REDIRECT_MARKS:
-            checks[f"missing_meta_mark_allow:{mark}"] = self._nft_rule_present(
-                managed_lines, ("meta", "mark", mark), "accept"
-            )
-            checks[f"missing_ct_mark_allow:{mark}"] = self._nft_rule_present(
-                managed_lines, ("ct", "mark", mark), "accept"
-            )
         for endpoint in SING_BOX_TUN_DNS_ENDPOINTS:
             for protocol in ("udp", "tcp"):
                 checks[f"missing_internal_dns_allow:{endpoint}/{protocol}"] = (
@@ -394,7 +391,7 @@ class KillSwitch:
                 continue
             endpoint_count += 1
         return (
-            20
+            16
             + endpoint_count
             + (len(self.lan_cidrs) if self.allow_lan else 0)
             + (1 if not self.block_ipv6 else 0)
@@ -440,7 +437,6 @@ class KillSwitch:
             if binary == "ip6tables"
             else self._iptables_endpoint_rules()
         )
-        commands.extend(self._iptables_singbox_mark_rules(binary))
         commands.extend(self._iptables_internal_dns_rules(binary))
         commands.extend(self._iptables_dns_leak_block_rules(binary))
         commands.append(
@@ -581,7 +577,6 @@ class KillSwitch:
             *self._nft_loopback_destination_rules(),
             self._nft_rule("oifname", self.tunnel_interface, "accept"),
             *self._nft_endpoint_rules(),
-            *self._nft_singbox_mark_rules(),
             *self._nft_internal_dns_rules(),
             *self._nft_dns_leak_block_rules(),
             self._nft_rule("ct", "state", "established,related", "accept"),
@@ -651,13 +646,6 @@ class KillSwitch:
             rules.append(self._nft_rule(family, "daddr", str(parsed), "accept"))
         return rules
 
-    def _nft_singbox_mark_rules(self) -> list[list[str]]:
-        rules: list[list[str]] = []
-        for mark in SING_BOX_AUTO_REDIRECT_MARKS:
-            rules.append(self._nft_rule("meta", "mark", mark, "accept"))
-            rules.append(self._nft_rule("ct", "mark", mark, "accept"))
-        return rules
-
     def _nft_internal_dns_rules(self) -> list[list[str]]:
         rules: list[list[str]] = []
         for endpoint in SING_BOX_TUN_DNS_ENDPOINTS:
@@ -725,7 +713,6 @@ class KillSwitch:
             ],
         ]
         commands.extend(self._iptables_endpoint_rules())
-        commands.extend(self._iptables_singbox_mark_rules("iptables"))
         commands.extend(self._iptables_internal_dns_rules("iptables"))
         commands.extend(self._iptables_dns_leak_block_rules("iptables"))
         commands.append(
@@ -822,45 +809,6 @@ class KillSwitch:
                     WATCHDOGVPN_IPTABLES_CHAIN,
                     "-d",
                     str(parsed),
-                    "-m",
-                    "comment",
-                    "--comment",
-                    WATCHDOGVPN_COMMENT,
-                    "-j",
-                    "ACCEPT",
-                ]
-            )
-        return commands
-
-    def _iptables_singbox_mark_rules(self, binary: str) -> list[list[str]]:
-        commands: list[list[str]] = []
-        for mark in SING_BOX_AUTO_REDIRECT_MARKS:
-            commands.append(
-                [
-                    binary,
-                    "-A",
-                    WATCHDOGVPN_IPTABLES_CHAIN,
-                    "-m",
-                    "mark",
-                    "--mark",
-                    mark,
-                    "-m",
-                    "comment",
-                    "--comment",
-                    WATCHDOGVPN_COMMENT,
-                    "-j",
-                    "ACCEPT",
-                ]
-            )
-            commands.append(
-                [
-                    binary,
-                    "-A",
-                    WATCHDOGVPN_IPTABLES_CHAIN,
-                    "-m",
-                    "connmark",
-                    "--mark",
-                    mark,
                     "-m",
                     "comment",
                     "--comment",
@@ -971,7 +919,6 @@ class KillSwitch:
             ],
         ]
         commands.extend(self._ip6tables_endpoint_rules())
-        commands.extend(self._iptables_singbox_mark_rules("ip6tables"))
         commands.extend(self._iptables_internal_dns_rules("ip6tables"))
         commands.extend(self._iptables_dns_leak_block_rules("ip6tables"))
         commands.append(

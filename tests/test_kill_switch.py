@@ -265,7 +265,7 @@ class NftablesKillSwitchTests(unittest.TestCase):
         self.assertLess(recorder.commands.index(tunnel_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(established_rule))
 
-    def test_nftables_allows_vpn_endpoint_and_singbox_marks_before_dns_and_established_rules(self) -> None:
+    def test_nftables_allows_vpn_endpoint_but_not_singbox_marks(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(
             allowed_endpoints=("203.0.113.10", "not-a-literal"),
@@ -281,12 +281,10 @@ class NftablesKillSwitchTests(unittest.TestCase):
         mark_rule = nft_rule("meta", "mark", SING_BOX_AUTO_REDIRECT_MARKS[0], "accept")
         ct_mark_rule = nft_rule("ct", "mark", SING_BOX_AUTO_REDIRECT_MARKS[0], "accept")
         self.assertIn(endpoint_rule, recorder.commands)
-        self.assertIn(mark_rule, recorder.commands)
-        self.assertIn(ct_mark_rule, recorder.commands)
+        self.assertNotIn(mark_rule, recorder.commands)
+        self.assertNotIn(ct_mark_rule, recorder.commands)
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(established_rule))
-        self.assertLess(recorder.commands.index(mark_rule), recorder.commands.index(dns_rule))
-        self.assertLess(recorder.commands.index(ct_mark_rule), recorder.commands.index(dns_rule))
 
     def test_nftables_allows_internal_tun_dns_before_dns_leak_blocks(self) -> None:
         recorder = CommandRecorder()
@@ -545,7 +543,7 @@ class IptablesKillSwitchTests(unittest.TestCase):
         self.assertLess(recorder.commands.index(tunnel_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(established_rule))
 
-    def test_iptables_allows_vpn_endpoint_and_singbox_marks_before_dns_and_established_rules(self) -> None:
+    def test_iptables_allows_vpn_endpoint_but_not_singbox_marks(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(
             allowed_endpoints=("203.0.113.10", "2001:db8::10", "not-a-literal"),
@@ -643,12 +641,10 @@ class IptablesKillSwitchTests(unittest.TestCase):
         ]
         self.assertIn(endpoint_rule, recorder.commands)
         self.assertIn(ipv6_endpoint_rule, recorder.commands)
-        self.assertIn(mark_rule, recorder.commands)
-        self.assertIn(connmark_rule, recorder.commands)
+        self.assertNotIn(mark_rule, recorder.commands)
+        self.assertNotIn(connmark_rule, recorder.commands)
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(established_rule))
-        self.assertLess(recorder.commands.index(mark_rule), recorder.commands.index(dns_rule))
-        self.assertLess(recorder.commands.index(connmark_rule), recorder.commands.index(dns_rule))
 
     def test_iptables_allows_internal_tun_dns_before_dns_leak_blocks(self) -> None:
         recorder = CommandRecorder()
