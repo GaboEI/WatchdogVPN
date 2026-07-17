@@ -158,9 +158,13 @@ rescue() {
     prio="${entry#*:}"
     [[ "$prio" =~ ^[0-9]+$ ]] || continue
     delete_ip_rule_repeatedly "$fam" "$prio"
-  done < <(cat "$STATE_FILE" 2>/dev/null || true)
-  if [[ "${INSTALL_DRY_RUN:-0}" != "1" ]]; then
-    : > "$STATE_FILE" 2>/dev/null || true
+  # The service owns this /run file as root. This helper is intentionally
+  # callable by an ordinary user, so both access operations must retain the
+  # same elevation as the ip/systemd cleanup below. Otherwise a real
+  # uninstall emits Permission denied and silently skips the recorded rules.
+  done < <(run sudo cat "$STATE_FILE" 2>/dev/null || true)
+  if run sudo test -e "$STATE_FILE"; then
+    run sudo truncate -s 0 "$STATE_FILE"
   fi
 
   echo "Sweeping the full known priority range ($BASE_PRIO-$((BASE_PRIO + MAX_RULES - 1))) for any rule the state file missed..."

@@ -85,6 +85,15 @@ assert_not_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'while run sudo ip'
 assert_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'delete_ip_rule_repeatedly' \
   "repeated ip rule deletion must go through delete_ip_rule_repeatedly (dry-run safe)"
 
+# The rescue command runs as the invoking user but the runtime state under
+# /run is owned by root. Both reading recorded priorities and clearing the
+# file must go through sudo; a bare cat/redirection silently skipped that
+# state during a real clean uninstall.
+assert_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'run sudo cat "$STATE_FILE"' \
+  "route rescue must read root-owned priority state with sudo"
+assert_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" 'run sudo truncate -s 0 "$STATE_FILE"' \
+  "route rescue must clear root-owned priority state with sudo"
+
 # Regression (empirical): dry-run mode must terminate promptly instead of
 # looping forever. This is the actual bug repro from the 2026-07-07 session,
 # guarded by `timeout` so a regression here fails the test suite instead of
