@@ -10,13 +10,13 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 # shellcheck source=../../lib/install_files.sh
 . "$ROOT_DIR/lib/install_files.sh"
 
-create_root_dir() {
-  local path="$1" mode="${2:-0755}"
+create_owned_dir() {
+  local path="$1" owner="$2" group="$3" mode="${4:-0755}"
   install -d -m "$mode" "$path"
 }
 
 create_config_if_missing() {
-  local src="$1" dest="$2" mode="${3:-0644}"
+  local src="$1" dest="$2" mode="${3:-0644}" group="${4:-root}"
   [[ -e "$dest" ]] && return 0
   # No parent-dir creation here: the real lib/install_files.sh implementation
   # doesn't create it either (it relies on create_root_dir having already
@@ -33,6 +33,18 @@ backup_path() {
   backup="$BACKUP_ROOT$path.$stamp"
   install -d -m 0755 "$(dirname "$backup")"
   cp -a "$path" "$backup"
+}
+
+run_step() {
+  if [[ "$1" == "sudo" ]]; then
+    shift
+  fi
+  case "$1" in
+    chown|chmod)
+      return 0
+      ;;
+  esac
+  "$@"
 }
 
 WATCHDOGVPN_ETC_CONFIG_DIR="$TMP_DIR/etc/watchdogvpn"

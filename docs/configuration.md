@@ -26,7 +26,7 @@ Primary configuration directory:
 /etc/watchdogvpn/
 ```
 
-Primary user-editable configuration:
+Primary administrator-editable configuration:
 
 ```text
 /etc/watchdogvpn/config.toml
@@ -43,6 +43,19 @@ Repository source for that example:
 ```text
 examples/watchdogvpn-config.toml.example
 ```
+
+## Access and Permissions
+
+`/etc/watchdogvpn/` is owned by `root:watchdogvpn` with mode `0750`; its
+managed TOML files are `root:watchdogvpn` with mode `0640`. This keeps product
+configuration unavailable to unrelated local users while allowing the
+WatchdogVPN service and the installing user (which the installer adds to the
+`watchdogvpn` group) to read it. Start a new login session after the first
+install before using group-based read commands or the TUI.
+
+Configuration changes are administrative operations. Use `sudo` for manual
+edits and for `watchdogvpn config set` or `watchdogvpn config reset`; do not
+put credentials, tokens, account data or private keys in this file.
 
 Backups created during migration or update should use the existing WatchdogVPN
 backup root:
@@ -225,12 +238,12 @@ Planned command forms:
 ```sh
 watchdog maintenance config get
 watchdog maintenance config get language.current
-watchdog maintenance config set language.current es
-watchdog maintenance config set tui.theme high_contrast
-watchdog maintenance config set tui.color false
-watchdog maintenance config reset language --yes
-watchdog maintenance config reset tui --yes
-watchdog maintenance config reset reporting --yes
+sudo watchdogvpn config set language.current es
+sudo watchdogvpn config set tui.theme high_contrast
+sudo watchdogvpn config set tui.color false
+sudo watchdogvpn config reset language --yes
+sudo watchdogvpn config reset tui --yes
+sudo watchdogvpn config reset reporting --yes
 ```
 
 Behavior:

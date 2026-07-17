@@ -117,12 +117,12 @@ create_owned_dir() {
 }
 
 create_config_if_missing() {
-  local src="$1" dest="$2" mode="${3:-0644}"
-  if [[ -e "$dest" ]]; then
+  local src="$1" dest="$2" mode="${3:-0644}" group="${4:-root}"
+  if [[ -e "$dest" ]] || { [[ "$INSTALL_DRY_RUN" != "1" ]] && sudo test -e "$dest"; }; then
     printf '[KEEP] existing config: %s\n' "$dest"
     return 0
   fi
-  run_step sudo install -m "$mode" -o root -g root "$src" "$dest"
+  run_step sudo install -m "$mode" -o root -g "$group" "$src" "$dest"
 }
 
 create_system_user_no_home() {

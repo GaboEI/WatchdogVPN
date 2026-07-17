@@ -1349,10 +1349,10 @@ watchdog maintenance config get language.current
 Updates a supported safe key after validation.
 
 ```sh
-watchdog maintenance config set language.current es
-watchdog maintenance config set tui.theme high_contrast
-watchdog maintenance config set tui.color false
-watchdog maintenance config set reporting.sanitize_ipv4 true
+sudo watchdogvpn config set language.current es
+sudo watchdogvpn config set tui.theme high_contrast
+sudo watchdogvpn config set tui.color false
+sudo watchdogvpn config set reporting.sanitize_ipv4 true
 ```
 
 Each successful write creates a backup before modifying the active config.
@@ -1440,7 +1440,7 @@ Signal and pipeline handling is centralized for every Python CLI command:
 - Do not share diagnostic reports before reviewing them.
 - Do not edit `/etc/watchdogvpn/config.toml` while another update or config
   command is running.
-- Prefer `watchdog maintenance config set` over manual edits for the legacy
+- Prefer `sudo watchdogvpn config set` over manual edits for the legacy
   language/TUI/reporting preference keys it supports.
 - Use `./update.sh --skip-doctor` from a clean, current checkout when updating
   installed runtime files.

@@ -164,7 +164,7 @@ preflight_detect_unsupported_paths() {
 preflight_detect_unsupported_backend_config() {
   local config_file active mode
   config_file="$(preflight_path "${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}")"
-  [[ -r "$config_file" ]] || return 0
+  config_file_exists "$config_file" || return 0
   if ! declare -F config_value >/dev/null 2>&1; then
     return 0
   fi

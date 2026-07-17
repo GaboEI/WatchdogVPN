@@ -123,7 +123,7 @@ prompt_yes_no() {
 }
 
 detect_existing_backend_config() {
-  [[ -f "$WATCHDOGVPN_CONFIG_FILE" ]] || return 0
+  config_file_exists "$WATCHDOGVPN_CONFIG_FILE" || return 0
 
   EXISTING_BACKEND_ACTIVE="$(config_value backend.active "$WATCHDOGVPN_CONFIG_FILE" 2>/dev/null || true)"
   EXISTING_BACKEND_MODE="$(config_value backend.mode "$WATCHDOGVPN_CONFIG_FILE" 2>/dev/null || true)"
@@ -214,7 +214,8 @@ config_write_installed_key() {
   fi
 
   tmp="$(mktemp)"
-  awk -v section="$section" -v name="$name" -v value="$formatted" '
+  if [[ -r "$WATCHDOGVPN_CONFIG_FILE" ]]; then
+    awk -v section="$section" -v name="$name" -v value="$formatted" '
     $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; print; next}
     $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
     in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
@@ -225,6 +226,19 @@ config_write_installed_key() {
     {print}
     END {exit changed ? 0 : 1}
   ' "$WATCHDOGVPN_CONFIG_FILE" >"$tmp"
+  else
+    sudo awk -v section="$section" -v name="$name" -v value="$formatted" '
+    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; print; next}
+    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
+    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+      print name " = " value
+      changed=1
+      next
+    }
+    {print}
+    END {exit changed ? 0 : 1}
+  ' "$WATCHDOGVPN_CONFIG_FILE" >"$tmp"
+  fi
   run_step sudo install -m 0644 -o root -g root "$tmp" "$WATCHDOGVPN_CONFIG_FILE"
   rm -f "$tmp"
 }
@@ -390,6 +404,11 @@ if ((RUN_DOCTOR == 1)); then
   "$ROOT_DIR/doctor.sh" || warn "preflight reported issues; continuing with guided installer checks"
 fi
 
+if [[ "${INSTALL_DRY_RUN:-0}" != "1" ]]; then
+  print_section "Privilege check"
+  sudo -v
+fi
+
 print_section "Mixed-install preflight"
 run_mixed_install_preflight install
 
@@ -410,9 +429,6 @@ print_install_plan
 
 if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
   warn "dry-run mode: no system changes will be made"
-else
-  print_section "Privilege check"
-  sudo -v
 fi
 
 print_section "Runtime validation"

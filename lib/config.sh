@@ -6,7 +6,7 @@ set -euo pipefail
 # ~/.config/watchdogvpn) on purpose: this is the installer-managed
 # /etc/watchdogvpn product config directory (backend/custom_vps/language/
 # dns/tui/reporting sections), a different directory with different
-# permissions (0755/0644, not 2770/0660). Using the same name in both
+# permissions (0750/0640, root:watchdogvpn, not 2770/0660). Using the same name in both
 # contexts was a real latent bug risk found during the Phase 18 Task 18.4
 # shared-state audit: exporting WATCHDOGVPN_CONFIG_DIR in a shell before
 # running a Python CLI command would have silently redirected shared daemon
@@ -66,10 +66,34 @@ validate_config_example() {
 
 install_config_defaults() {
   validate_config_example "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE"
-  create_root_dir "$WATCHDOGVPN_ETC_CONFIG_DIR" 0750
-  create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_EXAMPLE" 0644
-  create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_FILE" 0644
+  create_owned_dir "$WATCHDOGVPN_ETC_CONFIG_DIR" root watchdogvpn 0750
+  create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_EXAMPLE" 0640 watchdogvpn
+  create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_FILE" 0640 watchdogvpn
+  ensure_config_permissions
   migrate_config_missing_keys
+}
+
+ensure_config_permissions() {
+  local file
+  for file in "$WATCHDOGVPN_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_FILE"; do
+    config_file_exists "$file" || continue
+    run_step sudo chown root:watchdogvpn "$file"
+    run_step sudo chmod 0640 "$file"
+  done
+}
+
+config_file_exists() {
+  local file="${1:-$WATCHDOGVPN_CONFIG_FILE}"
+  [[ -f "$file" ]] || sudo test -f "$file"
+}
+
+config_read_to_stdout() {
+  local file="${1:-$WATCHDOGVPN_CONFIG_FILE}"
+  if [[ -r "$file" ]]; then
+    cat "$file"
+  else
+    sudo cat "$file"
+  fi
 }
 
 backup_config_file() {
@@ -82,9 +106,11 @@ config_value() {
   name="${key#*.}"
 
   [[ "$section" != "$key" && -n "$section" && -n "$name" ]] || return 2
-  [[ -r "$file" ]] || return 1
+  config_file_exists "$file" || return 1
 
-  awk -v section="$section" -v name="$name" '
+  local -a reader=(awk)
+  [[ -r "$file" ]] || reader=(sudo awk)
+  "${reader[@]}" -v section="$section" -v name="$name" '
     $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; next}
     $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
     in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
@@ -158,10 +184,10 @@ migrate_config_missing_keys() {
   local section line key work changed=0
 
   validate_config_example "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE"
-  [[ -f "$WATCHDOGVPN_CONFIG_FILE" ]] || return 0
+  config_file_exists "$WATCHDOGVPN_CONFIG_FILE" || return 0
 
   work="$(mktemp)"
-  cp -a "$WATCHDOGVPN_CONFIG_FILE" "$work"
+  config_read_to_stdout "$WATCHDOGVPN_CONFIG_FILE" >"$work"
 
   for section in $(config_required_sections); do
     if ! config_section_exists "$section" "$work"; then

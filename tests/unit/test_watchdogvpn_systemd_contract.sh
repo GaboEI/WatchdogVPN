@@ -42,7 +42,8 @@ assert_contains "$SERVICE" "ConfigurationDirectoryMode=0750" "daemon configurati
 # while this unit declared ConfigurationDirectoryMode=0750, so the daemon
 # warned about a mode mismatch on every single start. Pin both literals here
 # so the two files can never silently re-drift from each other again.
-assert_contains "$ROOT_DIR/lib/config.sh" 'create_root_dir "$WATCHDOGVPN_ETC_CONFIG_DIR" 0750' "installer must create /etc/watchdogvpn at the same mode systemd expects"
+assert_contains "$ROOT_DIR/lib/config.sh" 'create_owned_dir "$WATCHDOGVPN_ETC_CONFIG_DIR" root watchdogvpn 0750' "installer must create /etc/watchdogvpn as the private watchdogvpn-group directory systemd expects"
+assert_contains "$ROOT_DIR/lib/config.sh" '0640 watchdogvpn' "installer must make product config readable by the watchdogvpn group, not other users"
 assert_contains "$SERVICE" "Environment=WATCHDOGVPN_RUNTIME_DIR=/run/watchdogvpn" "daemon unit must place driver scratch files in /run/watchdogvpn"
 assert_contains "$SERVICE" "ExecStart=/usr/local/bin/watchdogvpn-daemon" "daemon unit must use the installed daemon wrapper"
 assert_contains "$SERVICE" "NoNewPrivileges=true" "daemon unit must include hardening"

@@ -19,6 +19,11 @@ not_contains() {
   fi
 }
 
+grep -Fq 'sudo awk -v section="$section" -v name="$name" -v value="$formatted"' "$ROOT_DIR/install.sh" || {
+  printf 'FAIL: installer must read a private root-owned config through sudo before updating it\n' >&2
+  exit 1
+}
+
 # Every invocation below points WATCHDOGVPN_ETC_CONFIG_DIR/FILE at an isolated
 # temp path so this test never reads or depends on the real
 # /etc/watchdogvpn/config.toml on the machine running it.
