@@ -27,8 +27,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/singbox.sh"
 # shellcheck source=lib/cloak.sh
 . "$ROOT_DIR/lib/cloak.sh"
-# shellcheck source=lib/amneziawg.sh
-. "$ROOT_DIR/lib/amneziawg.sh"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
@@ -212,7 +210,6 @@ print_section "Runtime dependencies"
 validate_python_runtime_dependencies
 install_official_singbox
 install_official_cloak
-guide_amneziawg_setup
 
 if ((RUN_DOCTOR == 1)); then
   print_section "Read-only preflight"

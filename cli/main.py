@@ -82,6 +82,7 @@ from daemon.protocol import Response
 from diagnostics.route_dns import RouteDNSDiagnostic, diagnose_route_dns
 from diagnostics.chain_routes import ChainRouteDiagnostic, diagnose_chain_route_action
 from diagnostics.routing import RouteDiagnostic, diagnose_route
+from diagnostics.amneziawg_guidance import dependency_guidance
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
 from models.connection_state import FAILURE_STATUSES
@@ -713,7 +714,9 @@ def _build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--language", help="Set selected language, for example en or es")
     setup_parser.add_argument("--autostart", choices=["enable", "disable"], help="Set app autostart intent")
     setup_parser.add_argument("--autoconnect", choices=["enable", "disable"], help="Set VPN autoconnect intent")
-    setup_parser.add_argument("--profile-uri", help="Import one local profile URI")
+    setup_profile_source = setup_parser.add_mutually_exclusive_group()
+    setup_profile_source.add_argument("--profile-uri", help="Import one local profile URI")
+    setup_profile_source.add_argument("--profile-file", help="Import one local profile file")
     setup_parser.add_argument("--provider-url", help="Store one provider subscription URL without refreshing it")
     setup_parser.add_argument("--provider-name", help="Provider label for --provider-url")
     setup_parser.add_argument("--kill-switch", choices=["enable", "disable"], help="Set kill switch policy")
@@ -1899,6 +1902,7 @@ def _setup(args: argparse.Namespace) -> int:
 
 def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
     operations: list[dict[str, object]] = []
+    amneziawg_guidance: dict[str, object] | None = None
     if args.language or args.autostart or args.autoconnect:
         state = StateManager().load()
         if args.language:
@@ -1932,8 +1936,25 @@ def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
                 current=state["vpn_autoconnect_enabled"],
                 requested=args.autoconnect == "enable",
             )
-    if args.profile_uri:
-        profile = parse_uri(args.profile_uri)
+    if args.profile_uri or args.profile_file:
+        if args.profile_uri:
+            profile = parse_uri(args.profile_uri)
+            import_action = "import-profile-uri"
+        else:
+            parsed_profiles = ManualProvider(
+                rotation_prompt=lambda _profile: False
+            ).preview_file(args.profile_file)
+            if len(parsed_profiles) != 1:
+                raise ParseError(
+                    "setup --profile-file accepts exactly one profile; "
+                    "use `watchdog profile add --file` for a multi-profile file"
+                )
+            profile = parsed_profiles[0]
+            import_action = "import-profile-file"
+        if profile.protocol is ProtocolType.AMNEZIAWG:
+            guidance = dependency_guidance()
+            if not bool(guidance["available"]):
+                amneziawg_guidance = guidance
         fingerprint = profile_fingerprint(profile)
         duplicate = next(
             (
@@ -1948,7 +1969,7 @@ def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
             operations.append(
                 {
                     "target": "profiles",
-                    "action": "import-profile-uri",
+                    "action": import_action,
                     "profile": _profile_summary(profile),
                 }
             )
@@ -2040,6 +2061,7 @@ def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
         "backup_warning": BACKUP_SENSITIVE_WARNING,
         "network_fetch_performed": False,
         "runtime_action_executed": False,
+        "amneziawg_dependency": amneziawg_guidance,
     }
 
 
@@ -2090,7 +2112,11 @@ def _apply_setup(args: argparse.Namespace, plan: dict[str, object]) -> None:
             app_policy.default_action = AppPolicyAction(args.app_policy_default_action)
         app_policy_store.save(AppPolicy.from_dict(app_policy.to_dict()))
     if "profiles" in sections:
-        ManualProvider(rotation_prompt=lambda _profile: False).from_uri(args.profile_uri)
+        manual_provider = ManualProvider(rotation_prompt=lambda _profile: False)
+        if args.profile_uri:
+            manual_provider.from_uri(args.profile_uri)
+        else:
+            manual_provider.from_file(args.profile_file)
     if "providers" in sections:
         ProviderStore().add(_setup_provider_document(args.provider_url, args.provider_name))
 
@@ -2143,13 +2169,16 @@ def _print_setup_plan(data: dict[str, object]) -> None:
     if not operations:
         print("Operations: none")
         print("Requested setup configuration is already effective or no changes were requested.")
-        return
-    print("Operations:")
-    if isinstance(operations, list):
-        for item in operations:
-            if isinstance(item, dict):
-                label = item.get("key") or item.get("action") or item.get("target")
-                print(f"  {item.get('target')}: {label}")
+    else:
+        print("Operations:")
+        if isinstance(operations, list):
+            for item in operations:
+                if isinstance(item, dict):
+                    label = item.get("key") or item.get("action") or item.get("target")
+                    print(f"  {item.get('target')}: {label}")
+    guidance = data.get("amneziawg_dependency")
+    if isinstance(guidance, dict):
+        _print_amneziawg_dependency_guidance(guidance)
 
 
 def _uninstall(args: argparse.Namespace) -> int:
@@ -2836,6 +2865,9 @@ def _profile_add(args: argparse.Namespace) -> int:
         "imported_count": len(imported),
         "profiles": [_profile_summary(item) for item in imported],
     }
+    amneziawg_guidance = _imported_amneziawg_guidance(imported)
+    if amneziawg_guidance is not None:
+        data["amneziawg_dependency"] = amneziawg_guidance
     if args.json:
         _print_json(data)
         return 0
@@ -2846,7 +2878,27 @@ def _profile_add(args: argparse.Namespace) -> int:
             f"{item.id}\t{item.protocol.value}\t{summary['resilience_category']}\t"
             f"{item.name}\trotation={_on_off(item.in_rotation_pool)}"
         )
+    if amneziawg_guidance is not None:
+        _print_amneziawg_dependency_guidance(amneziawg_guidance)
     return 0
+
+
+def _imported_amneziawg_guidance(profiles: list[Profile]) -> dict[str, object] | None:
+    if not any(profile.protocol is ProtocolType.AMNEZIAWG for profile in profiles):
+        return None
+    guidance = dependency_guidance()
+    return None if bool(guidance["available"]) else guidance
+
+
+def _print_amneziawg_dependency_guidance(guidance: dict[str, object]) -> None:
+    """Print the shared shell guidance only after its profile was imported."""
+
+    message = guidance.get("message")
+    if isinstance(message, str) and message:
+        print(f"\n{message}")
+    else:
+        print("\nAmneziaWG profile saved, but runtime guidance is unavailable.")
+        print("Run watchdog doctor before connecting.")
 
 
 def _profile_list(args: argparse.Namespace) -> int:
@@ -2977,12 +3029,17 @@ def _provider_add(args: argparse.Namespace) -> int:
     name = args.name if args.name is not None else _prompt_optional("Provider name")
     provider = SubscriptionProvider().add(url, name)
     data = {"provider": _provider_summary(provider)}
+    amneziawg_guidance = _provider_amneziawg_guidance(provider)
+    if amneziawg_guidance is not None:
+        data["amneziawg_dependency"] = amneziawg_guidance
     if args.json:
         _print_json(data)
         return 0
     print(f"Added provider: {provider.id}")
     print(f"Name: {provider.name}")
     print(f"Profiles: {len(provider.profiles)}")
+    if amneziawg_guidance is not None:
+        _print_amneziawg_dependency_guidance(amneziawg_guidance)
     return 0
 
 
@@ -3071,18 +3128,58 @@ def _provider_update(args: argparse.Namespace) -> int:
     provider = SubscriptionProvider()
     if args.all:
         results = provider.update_all()
+        amneziawg_guidance = _providers_amneziawg_guidance(results)
         if args.json:
-            _print_json({"updated": results})
+            data: dict[str, object] = {"updated": results}
+            if amneziawg_guidance is not None:
+                data["amneziawg_dependency"] = amneziawg_guidance
+            _print_json(data)
             return 0
         for provider_id, result in results.items():
             print(f"{provider_id}\t{result}")
+        if amneziawg_guidance is not None:
+            _print_amneziawg_dependency_guidance(amneziawg_guidance)
         return 0
     changes = provider.update(args.provider_id)
+    stored_provider = ProviderStore().get(args.provider_id)
+    amneziawg_guidance = (
+        _provider_amneziawg_guidance(stored_provider)
+        if stored_provider is not None
+        else None
+    )
     if args.json:
-        _print_json({"provider_id": args.provider_id, "changes": changes})
+        data = {"provider_id": args.provider_id, "changes": changes}
+        if amneziawg_guidance is not None:
+            data["amneziawg_dependency"] = amneziawg_guidance
+        _print_json(data)
         return 0
     print(f"Provider updated: {args.provider_id} changes={changes}")
+    if amneziawg_guidance is not None:
+        _print_amneziawg_dependency_guidance(amneziawg_guidance)
     return 0
+
+
+def _provider_amneziawg_guidance(provider: Provider) -> dict[str, object] | None:
+    profiles = [
+        profile
+        for profile in ProfileStore().list()
+        if profile.id in provider.profiles
+    ]
+    return _imported_amneziawg_guidance(profiles)
+
+
+def _providers_amneziawg_guidance(
+    results: dict[str, object],
+) -> dict[str, object] | None:
+    providers = ProviderStore()
+    for provider_id in results:
+        stored_provider = providers.get(provider_id)
+        if stored_provider is None:
+            continue
+        guidance = _provider_amneziawg_guidance(stored_provider)
+        if guidance is not None:
+            return guidance
+    return None
 
 
 def _provider_remove(args: argparse.Namespace) -> int:

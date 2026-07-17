@@ -167,7 +167,9 @@ class CliProviderCommandTests(unittest.TestCase):
 
     def test_provider_add_uses_subscription_provider(self) -> None:
         provider = _provider()
-        with patch("cli.main.SubscriptionProvider") as provider_cls:
+        with patch("cli.main.SubscriptionProvider") as provider_cls, patch(
+            "cli.main._provider_amneziawg_guidance", return_value=None
+        ):
             manager = provider_cls.return_value
             manager.add.return_value = provider
 
@@ -178,7 +180,9 @@ class CliProviderCommandTests(unittest.TestCase):
         manager.add.assert_called_once_with("https://netz.tg/private-token", "netz")
 
     def test_provider_update_all_uses_subscription_provider(self) -> None:
-        with patch("cli.main.SubscriptionProvider") as provider_cls:
+        with patch("cli.main.SubscriptionProvider") as provider_cls, patch(
+            "cli.main._providers_amneziawg_guidance", return_value=None
+        ):
             manager = provider_cls.return_value
             manager.update_all.return_value = {"netz.tg": 2}
 
@@ -202,7 +206,9 @@ class CliProviderCommandTests(unittest.TestCase):
 
     def test_provider_add_json_redacts_subscription_url(self) -> None:
         provider = _provider()
-        with patch("cli.main.SubscriptionProvider") as provider_cls:
+        with patch("cli.main.SubscriptionProvider") as provider_cls, patch(
+            "cli.main._provider_amneziawg_guidance", return_value=None
+        ):
             manager = provider_cls.return_value
             manager.add.return_value = provider
 
@@ -213,6 +219,31 @@ class CliProviderCommandTests(unittest.TestCase):
         self.assertNotIn("private-token", stdout.getvalue())
         data = json.loads(stdout.getvalue())
         self.assertEqual(data["provider"]["url"], "https://netz.tg/<redacted>")
+
+    def test_provider_imported_amneziawg_reports_missing_runtime(self) -> None:
+        provider = _provider()
+        profile = Profile(
+            id="netz.tg:austria",
+            name="AWG node",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={"raw": "private-test-only"},
+            source=ProfileSource.SUBSCRIPTION,
+            provider_id=provider.id,
+        )
+        guidance = {"available": False, "distro": "arch", "commands": ["safe-command"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {
+                "WATCHDOGVPN_CONFIG_DIR": tmp,
+                "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
+            }
+            with patch.dict("os.environ", env, clear=False), patch(
+                "cli.main.dependency_guidance", return_value=guidance
+            ) as dependency_check:
+                ProfileStore(Path(tmp) / "profiles.json").add(profile)
+                result = cli.main._provider_amneziawg_guidance(provider)
+
+        self.assertEqual(result, guidance)
+        dependency_check.assert_called_once_with()
 
     def test_provider_add_keyboard_interrupt_is_clean_human_error(self) -> None:
         with patch("cli.main.SubscriptionProvider") as provider_cls:

@@ -108,64 +108,21 @@ assert_sha256_shape "$SINGBOX_SHA256_LINUX_ARM64" "SINGBOX_SHA256_LINUX_ARM64 mu
 assert_sha256_shape "$CLOAK_SHA256_LINUX_AMD64" "CLOAK_SHA256_LINUX_AMD64 must be a 64-char hex sha256"
 assert_sha256_shape "$CLOAK_SHA256_LINUX_ARM64" "CLOAK_SHA256_LINUX_ARM64 must be a 64-char hex sha256"
 
-# --- AmneziaWG: guided manual install, never executed by WatchdogVPN itself ---
+# --- AmneziaWG: doctor-only runtime detection; import guidance is Python ---
 
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_userspace_available' "amneziawg lib must define a userspace tooling check"
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_kernel_module_available' "amneziawg lib must define a kernel module check"
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_userspace_fallback_available' "amneziawg lib must define a userspace fallback check"
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_runtime_available' "amneziawg lib must combine native module and userspace fallback checks"
-assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'guide_amneziawg_setup()' "amneziawg lib must define a guided setup wizard"
-assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_setup_commands_ubuntu' "amneziawg lib must provide exact Ubuntu setup commands"
-assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_setup_commands_debian' "amneziawg lib must provide exact Debian setup commands"
-assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_setup_commands_arch' "amneziawg lib must provide exact Arch setup commands"
-assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'read -r -p' "guided setup must wait for the user to run the printed commands themselves"
-assert_contains "$ROOT_DIR/lib/amneziawg.sh" '"${INSTALL_DRY_RUN:-0}" == "1"' "guided setup must skip prompting under --dry-run"
-# The setup command blocks are only ever printed (via `cat <<'EOF' ... EOF`
-# heredocs), never executed by the library itself - WatchdogVPN must not
-# silently add a third-party repository or build an AUR package on its own.
-assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'run_step sudo apt' "amneziawg lib must not execute apt commands itself, only print them"
-assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'run_step sudo pacman' "amneziawg lib must not execute pacman commands itself, only print them"
-assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'run_step git clone' "amneziawg lib must not clone/build AUR packages itself, only print the commands"
-assert_not_contains "$ROOT_DIR/lib/amneziawg.sh" 'run_step makepkg' "amneziawg lib must not run makepkg itself, only print the command"
-
-# --- guided setup actually behaves correctly end to end (stubbed detection) ---
-
-guided_setup_test_output="$(cd "$ROOT_DIR" && bash -c '
-set -euo pipefail
-source lib/common.sh
-source lib/distro.sh
-detect_distro
-source lib/amneziawg.sh
-amneziawg_userspace_available() { return 1; }
-amneziawg_kernel_module_available() { return 1; }
-prompt_yes_no() { return 0; }
-INSTALL_DRY_RUN=0
-printf "skip\n" | guide_amneziawg_setup
-' 2>&1)"
-grep -Fq "Run the following commands" <<<"$guided_setup_test_output" || {
-  printf 'FAIL: guided setup must print copy-pasteable commands, not just a link\n' >&2
-  exit 1
-}
-grep -Fq "AmneziaWG guided setup stopped" <<<"$guided_setup_test_output" || {
-  printf 'FAIL: guided setup must honor a skip answer without looping forever\n' >&2
-  exit 1
-}
-
-dry_run_output="$(cd "$ROOT_DIR" && bash -c '
-set -euo pipefail
-source lib/common.sh
-source lib/distro.sh
-detect_distro
-source lib/amneziawg.sh
-amneziawg_userspace_available() { return 1; }
-amneziawg_kernel_module_available() { return 1; }
-INSTALL_DRY_RUN=1
-guide_amneziawg_setup
-' 2>&1)"
-grep -Fq "[DRY-RUN] skip interactive AmneziaWG setup guide" <<<"$dry_run_output" || {
-  printf 'FAIL: guided setup must skip without prompting under --dry-run\n' >&2
-  exit 1
-}
+assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS' "amneziawg commands must come from a distro adapter"
+assert_contains "$ROOT_DIR/diagnostics/amneziawg_guidance.py" 'distro_adapter_path' "CLI guidance must reuse the shared distro adapter resolver"
+assert_contains "$ROOT_DIR/distros/arch.sh" 'DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS' "Arch adapter must own its AmneziaWG guidance"
+assert_contains "$ROOT_DIR/distros/ubuntu.sh" 'DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS' "Ubuntu adapter must own its AmneziaWG guidance"
+assert_contains "$ROOT_DIR/distros/debian.sh" 'DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS' "Debian adapter must own its AmneziaWG guidance"
+assert_not_contains "$ROOT_DIR/install.sh" 'guide_amneziawg_setup' "blank installation must not show AmneziaWG instructions"
+assert_not_contains "$ROOT_DIR/update.sh" 'guide_amneziawg_setup' "routine update must not show AmneziaWG instructions"
+assert_not_contains "$ROOT_DIR/install.sh" 'lib/amneziawg.sh' "installer must not load unused AmneziaWG guidance"
+assert_not_contains "$ROOT_DIR/update.sh" 'lib/amneziawg.sh' "updater must not load unused AmneziaWG guidance"
 
 # --- Python cryptography dependency (encrypted backups, Phase 17) ---
 
@@ -194,7 +151,7 @@ assert_order "$ROOT_DIR/install.sh" "install_official_singbox" "install_official
 # the whole time without that ever being treated as a real problem.
 assert_contains "$ROOT_DIR/lib/cloak.sh" 'prompt_yes_no "Download and install the official Cloak client now?" yes' "Cloak client install prompt must default to yes, matching install_official_singbox"
 
-# --- update.sh wiring: full parity with install.sh, not a weaker subset ---
+# --- update.sh wiring: required dependencies have parity with install.sh ---
 # (feedback from the maintainer: update.sh must not leave a returning user
 # with a worse experience than a fresh install just because it is "only" an
 # update)
@@ -202,11 +159,9 @@ assert_contains "$ROOT_DIR/lib/cloak.sh" 'prompt_yes_no "Download and install th
 assert_contains "$ROOT_DIR/update.sh" 'validate_python_runtime_dependencies' "updater must backfill missing python runtime dependencies"
 assert_contains "$ROOT_DIR/update.sh" 'install_official_singbox' "updater must ensure sing-box is present, not only a fresh install"
 assert_contains "$ROOT_DIR/update.sh" 'install_official_cloak' "updater must offer the Cloak client, not only a fresh install"
-assert_contains "$ROOT_DIR/update.sh" 'guide_amneziawg_setup' "updater must offer the AmneziaWG guided setup, not only a fresh install"
 assert_contains "$ROOT_DIR/update.sh" 'prompt_yes_no()' "updater must define the prompt helper required by optional dependency installers"
 assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/singbox.sh"' "updater must source lib/singbox.sh to use install_official_singbox"
 assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/cloak.sh"' "updater must source lib/cloak.sh to use install_official_cloak"
-assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/amneziawg.sh"' "updater must source lib/amneziawg.sh to use guide_amneziawg_setup"
 
 # --- uninstall.sh also sources lib/runtime.sh now that legacy file cleanup
 #     moved there to be shared with install/update ---

@@ -251,6 +251,63 @@ class CliProfileCommandTests(unittest.TestCase):
             self.assertEqual(payload["profiles"][0]["id"], "json-demo")
             self.assertFalse(payload["profiles"][0]["in_rotation_pool"])
 
+    def test_amneziawg_import_reports_missing_runtime_without_profile_secret(self) -> None:
+        raw_profile = """[Interface]
+PrivateKey = test-private-key
+Address = 10.8.1.5/32
+Jc = 4
+Jmin = 10
+Jmax = 20
+
+[Peer]
+PublicKey = test-public-key
+Endpoint = awg.example.com:51820
+AllowedIPs = 0.0.0.0/0
+"""
+        guidance = {
+            "available": False,
+            "distro": "arch",
+            "commands": ["safe-command"],
+            "tools_url": "https://example.invalid/tools",
+            "kernel_url": "https://example.invalid/kernel",
+            "userspace_fallback_url": "https://example.invalid/go",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_file = Path(tmp) / "amneziawg.conf"
+            profile_file.write_text(raw_profile, encoding="utf-8")
+            env = {
+                "WATCHDOGVPN_CONFIG_DIR": tmp,
+                "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
+            }
+            with patch.dict("os.environ", env, clear=False), patch(
+                "cli.main.dependency_guidance", return_value=guidance
+            ) as dependency_check, redirect_stdout(StringIO()) as stdout:
+                rc = cli.main.main(["profile", "add", "--file", str(profile_file), "--json"])
+
+        self.assertEqual(rc, 0)
+        dependency_check.assert_called_once_with()
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["profiles"][0]["protocol"], "amneziawg")
+        self.assertEqual(payload["amneziawg_dependency"]["commands"], ["safe-command"])
+        self.assertNotIn("test-private-key", stdout.getvalue())
+        self.assertNotIn("test-public-key", stdout.getvalue())
+
+    def test_non_amneziawg_import_does_not_check_amneziawg_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {
+                "WATCHDOGVPN_CONFIG_DIR": tmp,
+                "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
+            }
+            with patch.dict("os.environ", env, clear=False), patch(
+                "cli.main.dependency_guidance",
+                side_effect=AssertionError("must not run for a non-AmneziaWG profile"),
+            ), redirect_stdout(StringIO()):
+                rc = cli.main.main(
+                    ["profile", "add", "--uri", "vless://uuid@example.com:443?encryption=none#plain", "--json"]
+                )
+
+        self.assertEqual(rc, 0)
+
     def test_profile_missing_id_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(["profile", "enable", "missing"], tmp, check=False)

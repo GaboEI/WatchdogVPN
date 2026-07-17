@@ -86,6 +86,73 @@ class CliSetupDoctorCommandTests(unittest.TestCase):
             self.assertFalse((Path(tmp) / "profiles.json").exists())
             self.assertFalse((Path(tmp) / "providers.json").exists())
 
+    def test_setup_profile_file_imports_one_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_file = Path(tmp) / "profile.conf"
+            profile_file.write_text(
+                "[Interface]\nPrivateKey = test-private-key\nAddress = 10.8.1.5/32\n"
+                "\n[Peer]\nPublicKey = test-public-key\nEndpoint = wg.example.com:51820\n"
+                "AllowedIPs = 0.0.0.0/0\n",
+                encoding="utf-8",
+            )
+            result = self.run_watchdog(
+                [
+                    "setup",
+                    "--yes",
+                    "--acknowledge-backup-warning",
+                    "--profile-file",
+                    str(profile_file),
+                    "--json",
+                ],
+                tmp,
+            )
+
+            data = json.loads(result.stdout)
+            self.assertEqual(data["operations"][0]["action"], "import-profile-file")
+            self.assertEqual(len(ProfileStore(Path(tmp) / "profiles.json").list()), 1)
+            self.assertNotIn("test-private-key", result.stdout)
+
+    def test_setup_amneziawg_file_reports_missing_runtime_in_dry_run(self) -> None:
+        raw_profile = """[Interface]
+PrivateKey = test-private-key
+Address = 10.8.1.5/32
+Jc = 4
+Jmin = 10
+Jmax = 20
+
+[Peer]
+PublicKey = test-public-key
+Endpoint = awg.example.com:51820
+AllowedIPs = 0.0.0.0/0
+"""
+        guidance = {
+            "available": False,
+            "distro": "arch",
+            "commands": ["safe-command"],
+            "tools_url": "https://example.invalid/tools",
+            "kernel_url": "https://example.invalid/kernel",
+            "userspace_fallback_url": "https://example.invalid/go",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_file = Path(tmp) / "amneziawg.conf"
+            profile_file.write_text(raw_profile, encoding="utf-8")
+            env = {
+                "WATCHDOGVPN_CONFIG_DIR": tmp,
+                "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
+            }
+            with patch.dict(os.environ, env, clear=False), patch(
+                "cli.main.dependency_guidance", return_value=guidance
+            ) as dependency_check, redirect_stdout(StringIO()) as stdout:
+                rc = cli.main.main(
+                    ["setup", "--dry-run", "--profile-file", str(profile_file), "--json"]
+                )
+
+        self.assertEqual(rc, 0)
+        dependency_check.assert_called_once_with()
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["amneziawg_dependency"]["commands"], ["safe-command"])
+        self.assertNotIn("test-private-key", stdout.getvalue())
+
     def test_setup_apply_writes_local_state_and_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_watchdog(

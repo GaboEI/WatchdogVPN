@@ -27,8 +27,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/singbox.sh"
 # shellcheck source=lib/cloak.sh
 . "$ROOT_DIR/lib/cloak.sh"
-# shellcheck source=lib/amneziawg.sh
-. "$ROOT_DIR/lib/amneziawg.sh"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
@@ -326,7 +324,6 @@ validate_required_commands() {
 
 validate_protocol_runtime_dependencies() {
   validate_python_runtime_dependencies
-  guide_amneziawg_setup
 }
 
 validate_repo_runtime() {

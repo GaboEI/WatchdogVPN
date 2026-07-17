@@ -83,8 +83,13 @@ class ManualProvider(BaseProvider):
         return self._save_profiles(profiles)
 
     def from_file(self, path: str) -> Profile:
+        return self._save_profiles(self.preview_file(path))
+
+    def preview_file(self, path: str) -> list[Profile]:
+        """Parse a local profile file without writing profile state."""
+
         content = Path(path).read_text(encoding="utf-8")
-        return self.from_text(content)
+        return self._parse_text(content)
 
     def load_profiles(self) -> list[Profile]:
         return [profile for profile in self.profile_store.list() if profile.source == ProfileSource.MANUAL]

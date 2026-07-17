@@ -272,3 +272,18 @@ Task 18.3 closes when:
   whitespace) passes;
 - [x] a clean-machine VM proof of the "missing dependency" install paths
   remains explicitly owed to Task 18.6, not claimed as done here.
+
+## Phase 23.5 addendum — import-scoped AmneziaWG guidance (2026-07-17)
+
+The generic guided wizard described above was removed from `install.sh` and
+`update.sh`. It gave every user a long AmneziaWG prompt even when no
+AmneziaWG profile had been imported, which was both misleading and noisy.
+
+The product now checks this optional runtime only after an AmneziaWG profile
+is imported through `watchdog profile add`, setup, or a subscription provider
+refresh. If `awg` plus either the kernel module or `amneziawg-go` is absent,
+the import still succeeds and the CLI returns a redacted dependency object
+and human-readable steps. The commands are printed, never executed by
+WatchdogVPN; unsupported or unverified distributions receive official source
+links instead of guessed package-manager commands. `doctor.sh` keeps the
+same read-only availability check.

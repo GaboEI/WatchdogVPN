@@ -21,10 +21,8 @@ This document defines how the product scripts should behave.
 - Download and install the official sing-box binary now? (only if not already
   detected; required for most Custom VPS protocols)
 - Download and install the official Cloak client (`ck-client`) now? (only if
-  not already detected; defaults to no, since it is only needed for
+  not already detected; defaults to yes, since it is needed for
   OpenVPN+Cloak profiles)
-- Walk through installing AmneziaWG step by step now? (only if not already
-  detected; defaults to no; see "Dependency Contract" below)
 
 `install.sh` should not ask:
 
@@ -83,21 +81,23 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   not publish release checksums), and refuses to install on mismatch.
 - **Cloak client (`ck-client`)**: only needed for OpenVPN+Cloak profiles.
   `install.sh` offers to download and checksum-verify it the same way as
-  sing-box, but defaults to no and is skipped without prompting under
+  sing-box, defaults to yes, and is skipped without prompting under
   `--dry-run`, since most installs never use this protocol combination.
 - **AmneziaWG tooling (`amneziawg-tools`/`awg`, plus `amneziawg-dkms` or
   `amneziawg-go`)**:
   never installed unattended by WatchdogVPN itself - the official install
   path adds a third-party APT repository (Ubuntu/Debian) or builds an AUR
   package (Arch), which WatchdogVPN treats as the user's own trust decision
-  to make knowingly, not something to do silently on their behalf. Instead,
-  if not detected, `install.sh` offers a **guided setup**: it prints the
-  exact, distro-specific, official commands (so the user never has to
-  research or guess them), waits for the user to run them in their own
-  terminal, then re-checks and reports success or exactly what is still
-  missing, repeating up to a few attempts. `doctor.sh` only reports detection
-  state (`WARN` if missing) and points back to `install.sh` for the guided
-  setup, keeping its own read-only contract. A valid runtime has
+  to make knowingly, not something to do silently on their behalf. A blank
+  install or routine update does not show an AmneziaWG prompt. Instead, after
+  an AmneziaWG profile is imported with `watchdog profile add`,
+  `watchdog setup --profile-file`, or a provider update, the
+  CLI checks the runtime and, if it is missing, prints prevalidated,
+  distro-specific commands where available plus the official source links.
+  The commands live in the selected `distros/` adapter, so adding a future
+  distribution does not require a second detector or a CLI change.
+  `doctor.sh` only reports read-only detection state (`WARN` if missing).
+  A valid runtime has
   AmneziaWG-specific `awg` tooling plus either the `amneziawg` kernel module or
   the `amneziawg-go` userspace fallback used directly by the native driver.
   Standard
@@ -200,8 +200,8 @@ Known-dead WatchdogVPN-owned legacy artifacts are the only automatic repair
 path, and user data is preserved by default. Existing product config that names
 an unsupported backend is also blocked rather than preserved silently.
 
-It runs the same dependency checks as `install.sh` (sing-box, Cloak,
-AmneziaWG guided setup, Python `cryptography`) and, on every run, sweeps
+It runs the same dependency checks as `install.sh` (sing-box, Cloak and
+Python `cryptography`) and, on every run, sweeps
 orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts if a
 legacy-contaminated machine still has them - not only on a full uninstall.
 It also records the installed-vs-source version marker used by

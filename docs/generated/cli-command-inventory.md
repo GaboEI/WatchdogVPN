@@ -356,11 +356,13 @@ usage: watchdog doctor [-h] [--json] [--no-color]
 - Source: `argparse`
 - Summary: Configure local WatchdogVPN defaults
 - Help: `watchdog setup --help`
+- Mutually exclusive argument groups:
+  - optional: `--profile-uri`, `--profile-file`
 
 Usage:
 
 ```text
-usage: watchdog setup [-h] [--dry-run] [--yes] [--json] [--language LANGUAGE] [--autostart {enable,disable}] [--autoconnect {enable,disable}] [--profile-uri PROFILE_URI] [--provider-url PROVIDER_URL] [--provider-name PROVIDER_NAME] [--kill-switch {enable,disable}] [--dns-mode {auto,off,custom,advanced}] [--app-policy {enable,disable}] [--app-policy-mode {whitelist,blacklist}] [--app-policy-default-action {current,direct,block}] [--acknowledge-backup-warning]
+usage: watchdog setup [-h] [--dry-run] [--yes] [--json] [--language LANGUAGE] [--autostart {enable,disable}] [--autoconnect {enable,disable}] [--profile-uri PROFILE_URI | --profile-file PROFILE_FILE] [--provider-url PROVIDER_URL] [--provider-name PROVIDER_NAME] [--kill-switch {enable,disable}] [--dns-mode {auto,off,custom,advanced}] [--app-policy {enable,disable}] [--app-policy-mode {whitelist,blacklist}] [--app-policy-default-action {current,direct,block}] [--acknowledge-backup-warning]
 ```
 
 | Argument | Kind | Required | Cardinality | Choices | Description |
@@ -372,6 +374,7 @@ usage: watchdog setup [-h] [--dry-run] [--yes] [--json] [--language LANGUAGE] [-
 | `--autostart` | option | no | one | enable, disable | Set app autostart intent |
 | `--autoconnect` | option | no | one | enable, disable | Set VPN autoconnect intent |
 | `--profile-uri` | option | no | one | — | Import one local profile URI |
+| `--profile-file` | option | no | one | — | Import one local profile file |
 | `--provider-url` | option | no | one | — | Store one provider subscription URL without refreshing it |
 | `--provider-name` | option | no | one | — | Provider label for --provider-url |
 | `--kill-switch` | option | no | one | enable, disable | Set kill switch policy |

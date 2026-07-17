@@ -462,6 +462,7 @@ runtime services or contacting provider URLs.
 watchdog setup --dry-run --json --language es --dns-mode auto
 watchdog setup --yes --acknowledge-backup-warning --language es --autoconnect enable
 watchdog setup --yes --acknowledge-backup-warning --profile-uri URI
+watchdog setup --yes --acknowledge-backup-warning --profile-file PROFILE.conf
 watchdog setup --yes --acknowledge-backup-warning --provider-url URL --provider-name NAME
 ```
 
@@ -471,6 +472,7 @@ Supported setup fields:
 - `--autostart enable|disable`: stores app autostart intent;
 - `--autoconnect enable|disable`: stores VPN autoconnect intent;
 - `--profile-uri URI`: imports one local profile URI without printing raw config;
+- `--profile-file FILE`: imports exactly one local profile file without printing raw config;
 - `--provider-url URL`: stores one HTTPS provider definition without fetching nodes;
 - `--kill-switch enable|disable`: sets local kill-switch policy;
 - `--dns-mode auto|off|custom|advanced`: sets DNS policy mode;

@@ -329,7 +329,7 @@
       "kind": "command",
       "source": "argparse",
       "summary": "Configure local WatchdogVPN defaults",
-      "usage": "usage: watchdog setup [-h] [--dry-run] [--yes] [--json] [--language LANGUAGE] [--autostart {enable,disable}] [--autoconnect {enable,disable}] [--profile-uri PROFILE_URI] [--provider-url PROVIDER_URL] [--provider-name PROVIDER_NAME] [--kill-switch {enable,disable}] [--dns-mode {auto,off,custom,advanced}] [--app-policy {enable,disable}] [--app-policy-mode {whitelist,blacklist}] [--app-policy-default-action {current,direct,block}] [--acknowledge-backup-warning]",
+      "usage": "usage: watchdog setup [-h] [--dry-run] [--yes] [--json] [--language LANGUAGE] [--autostart {enable,disable}] [--autoconnect {enable,disable}] [--profile-uri PROFILE_URI | --profile-file PROFILE_FILE] [--provider-url PROVIDER_URL] [--provider-name PROVIDER_NAME] [--kill-switch {enable,disable}] [--dns-mode {auto,off,custom,advanced}] [--app-policy {enable,disable}] [--app-policy-mode {whitelist,blacklist}] [--app-policy-default-action {current,direct,block}] [--acknowledge-backup-warning]",
       "help_command": "watchdog setup --help",
       "children": [],
       "arguments": [
@@ -394,6 +394,14 @@
           "cardinality": "one",
           "choices": [],
           "description": "Import one local profile URI"
+        },
+        {
+          "name": "--profile-file",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Import one local profile file"
         },
         {
           "name": "--provider-url",
@@ -478,7 +486,15 @@
           "description": "Acknowledge that local setup changes should be backed up"
         }
       ],
-      "mutually_exclusive_groups": []
+      "mutually_exclusive_groups": [
+        {
+          "required": false,
+          "members": [
+            "--profile-uri",
+            "--profile-file"
+          ]
+        }
+      ]
     },
     {
       "path": [
