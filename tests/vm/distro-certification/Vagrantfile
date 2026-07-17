@@ -1,0 +1,34 @@
+# Generic disposable guest for the Phase 23.5/23.6 distro-certification lab.
+#
+# Usage (from this directory):
+#   WDVPN_VM_BOX=<verified-box> WDVPN_VM_NAME=wdvpn-<target> \
+#     vagrant up --provider=virtualbox
+#
+# The box is intentionally an explicit maintainer input. The inventory records
+# distro identity and phase ownership, but does not bless an arbitrary Vagrant
+# Cloud image as a certification image. No provisioner is configured because
+# install.sh itself is under test.
+
+box = ENV.fetch("WDVPN_VM_BOX", "").strip
+abort "WDVPN_VM_BOX must name a verified Vagrant box" if box.empty?
+
+machine_name = ENV.fetch("WDVPN_VM_NAME", "wdvpn-certification").strip
+abort "WDVPN_VM_NAME must not be empty" if machine_name.empty?
+
+cpus = Integer(ENV.fetch("WDVPN_VM_CPUS", "2"), 10)
+memory = Integer(ENV.fetch("WDVPN_VM_MEMORY_MB", "4096"), 10)
+
+Vagrant.configure("2") do |config|
+  config.vm.box = box
+  config.vm.hostname = machine_name
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = machine_name
+    vb.cpus = cpus
+    vb.memory = memory
+  end
+
+  # NAT-only is intentional. Any bridged diagnosis requires a separate,
+  # explicit maintainer authorization and must not modify this baseline.
+  config.vm.synced_folder "../../..", "/home/vagrant/WatchdogVPN"
+end

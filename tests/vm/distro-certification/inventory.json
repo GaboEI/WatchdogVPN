@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "provider": "virtualbox",
+  "network": "nat-only",
+  "execution": "sequential-one-host",
+  "targets": [
+    {
+      "id": "arch",
+      "phase": "23.5",
+      "adapter": "arch",
+      "support_state": "implemented_uncertified",
+      "identity": {"id": "arch"},
+      "kernel_policy": "distribution_default_at_certification_time"
+    },
+    {
+      "id": "cachyos",
+      "phase": "23.5",
+      "adapter": "arch",
+      "support_state": "implemented_fallback_uncertified",
+      "identity": {"id_like_contains": "arch"},
+      "kernel_policy": "distribution_default_at_certification_time",
+      "image_requirement": "maintainer-verified CachyOS VirtualBox image or locally built Vagrant box",
+      "physical_validation": {
+        "available": true,
+        "purpose": "separate controlled validation of a maintainer-owned CachyOS PC",
+        "does_not_replace": "fresh_install_vm_certification",
+        "requires_explicit_task_authorization": true
+      }
+    },
+    {
+      "id": "debian",
+      "phase": "23.5",
+      "adapter": "debian",
+      "support_state": "implemented_uncertified",
+      "identity": {"id": "debian"},
+      "kernel_policy": "distribution_default_at_certification_time"
+    },
+    {
+      "id": "ubuntu",
+      "phase": "23.5",
+      "adapter": "ubuntu",
+      "support_state": "implemented_uncertified",
+      "identity": {"id": "ubuntu"},
+      "kernel_policy": "distribution_default_at_certification_time"
+    },
+    {
+      "id": "fedora",
+      "phase": "23.6",
+      "adapter": "fedora",
+      "support_state": "blocked_adapter_and_selinux_audit",
+      "identity": {"id": "fedora"},
+      "kernel_policy": "distribution_default_at_certification_time"
+    },
+    {
+      "id": "opensuse",
+      "phase": "23.6",
+      "adapter": "opensuse",
+      "support_state": "blocked_adapter_and_apparmor_audit",
+      "identity": {"id_like_contains": "suse"},
+      "kernel_policy": "distribution_default_at_certification_time"
+    },
+    {
+      "id": "debian-derivative",
+      "phase": "23.6",
+      "adapter": "debian_or_ubuntu_id_like_fallback",
+      "support_state": "blocked_id_like_fallback",
+      "identity": {"id_like_contains_any": ["debian", "ubuntu"]},
+      "kernel_policy": "distribution_default_at_certification_time",
+      "recommended_representative": "linux-mint"
+    }
+  ]
+}
