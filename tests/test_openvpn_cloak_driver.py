@@ -266,12 +266,21 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value=None)
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
     def test_connect_returns_false_when_openvpn_missing(self, _ck, _ovpn) -> None:
+        # Regression: confirmed live 2026-07-17 - this branch returned
+        # False with last_error left unset (empty), so every layer above it
+        # (NativePolicyDriver, watchdog status, journalctl) had nothing to
+        # show beyond a generic "connect failed" - install.sh's own Cloak
+        # client install prompt defaulting to "no" silently skipped it on
+        # every non-interactive `install.sh --yes` install, and this was
+        # the only place that could have explained why.
         self.assertFalse(self.driver.connect(self.profile))
+        self.assertIn("openvpn", self.driver.last_error)
 
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value=None)
     def test_connect_returns_false_when_ck_missing(self, _ck, _ovpn) -> None:
         self.assertFalse(self.driver.connect(self.profile))
+        self.assertIn("ck-client", self.driver.last_error)
 
     @patch("drivers.openvpn_cloak_driver.time.sleep")
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")

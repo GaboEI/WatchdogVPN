@@ -153,6 +153,18 @@ assert_contains "$ROOT_DIR/install.sh" 'install_official_cloak' "installer must 
 assert_order "$ROOT_DIR/install.sh" "validate_required_commands" "validate_protocol_runtime_dependencies" "installer must check protocol dependencies after required commands"
 assert_order "$ROOT_DIR/install.sh" "install_official_singbox" "install_official_cloak" "installer must offer sing-box before the optional Cloak client"
 
+# Regression: confirmed live 2026-07-17 - this prompt defaulted to "no"
+# while install_official_singbox's equivalent prompt (lib/singbox.sh)
+# defaults to "yes". Under a non-interactive `install.sh --yes` (the
+# documented ordinary way to run this installer, used throughout Phase
+# 23.5's own VM validation), a "no" default means prompt_yes_no's own
+# ASSUME_YES branch always declines - OpenVPN+Cloak (a resilient-tier
+# protocol, same tier as AmneziaWG/VLESS/Trojan/Hysteria2, all of which
+# install their own dependencies automatically) silently lost ck-client
+# on every such install, while doctor.sh correctly reported it missing
+# the whole time without that ever being treated as a real problem.
+assert_contains "$ROOT_DIR/lib/cloak.sh" 'prompt_yes_no "Download and install the official Cloak client now?" yes' "Cloak client install prompt must default to yes, matching install_official_singbox"
+
 # --- update.sh wiring: full parity with install.sh, not a weaker subset ---
 # (feedback from the maintainer: update.sh must not leave a returning user
 # with a worse experience than a fresh install just because it is "only" an

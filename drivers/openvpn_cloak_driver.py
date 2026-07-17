@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import ipaddress
+import logging
 import os
 import os.path
 import re
@@ -27,6 +28,8 @@ from drivers.runtime_paths import (
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 from parsers.openvpn_safety import validate_openvpn_profile
+
+LOGGER = logging.getLogger(__name__)
 
 
 RUNTIME_PREFIX = "watchdogvpn-openvpn-cloak-"
@@ -474,6 +477,15 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         openvpn_bin = self.find_openvpn_binary()
         ck_bin = self.find_ck_client_binary()
         if not openvpn_bin or not ck_bin:
+            missing = [
+                name
+                for name, path in (("openvpn", openvpn_bin), ("ck-client", ck_bin))
+                if not path
+            ]
+            self.last_error = f"required binary not found: {', '.join(missing)}"
+            LOGGER.warning(
+                "openvpn_cloak_connect_missing_binary missing=%s", ",".join(missing)
+            )
             return False
 
         try:

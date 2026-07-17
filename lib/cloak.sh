@@ -105,7 +105,20 @@ install_official_cloak() {
   printf '\nThe Cloak client (ck-client) is only needed for OpenVPN+Cloak profiles.\n'
   print_cloak_external_notice
 
-  if ! prompt_yes_no "Download and install the official Cloak client now?" no; then
+  # Default "yes", matching install_official_singbox's own prompt
+  # (lib/singbox.sh): OpenVPN+Cloak is a resilient-tier protocol like every
+  # other one sing-box backs, not an optional extra - defaulting this one
+  # dependency to "no" meant every non-interactive `install.sh --yes` (the
+  # documented, ordinary way to run this installer, used throughout Phase
+  # 23.5's own VM validation) silently skipped it while every other
+  # resilient protocol's dependency installed automatically. Confirmed
+  # live 2026-07-17 on a fresh Ubuntu VM: OpenVPN+Cloak connect failed
+  # instantly and silently (the driver's own find_ck_client_binary() early
+  # return didn't even set last_error) because ck-client was never
+  # installed - doctor.sh already correctly reported it missing the whole
+  # time, but nothing surfaced that as a real problem for a resilient
+  # protocol.
+  if ! prompt_yes_no "Download and install the official Cloak client now?" yes; then
     printf '[SKIP] Cloak client not installed; OpenVPN+Cloak profiles will fail until it is installed.\n'
     return 0
   fi
