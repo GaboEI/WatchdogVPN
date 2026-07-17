@@ -11,10 +11,20 @@ from typing import Iterable
 from urllib.parse import urlsplit
 
 
-DEFAULT_HEALTH_TARGETS = (
+LEGACY_UNRELIABLE_HEALTH_TARGETS = (
     "https://www.cloudflare.com/cdn-cgi/trace",
     "https://www.ietf.org/",
     "https://www.wikipedia.org/",
+)
+
+# These domains are deliberately chosen as real egress evidence for the
+# supported field-validation environments. The legacy endpoints above can
+# appear reachable through captive portals, partial walled gardens, or local
+# interception even when ordinary user traffic is not actually usable.
+DEFAULT_HEALTH_TARGETS = (
+    "https://www.facebook.com/",
+    "https://www.instagram.com/",
+    "https://www.youtube.com/",
 )
 DEFAULT_SUCCESS_QUORUM = 2
 MIN_HEALTH_TARGETS = 2

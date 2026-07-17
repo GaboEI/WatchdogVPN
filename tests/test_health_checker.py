@@ -11,7 +11,12 @@ from drivers.base import BaseDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
 from rotation import health_checker
-from rotation.health_targets import HealthProbeResult, HealthTargetResult, probe_targets
+from rotation.health_targets import (
+    DEFAULT_HEALTH_TARGETS,
+    HealthProbeResult,
+    HealthTargetResult,
+    probe_targets,
+)
 
 
 def make_profile(profile_id: str = "p1") -> Profile:
@@ -357,6 +362,16 @@ class TargetPolicyValidationTests(unittest.TestCase):
         "https://two.example/",
         "https://three.example/",
     ]
+
+    def test_default_targets_are_real_egress_probes(self) -> None:
+        self.assertEqual(
+            DEFAULT_HEALTH_TARGETS,
+            (
+                "https://www.facebook.com/",
+                "https://www.instagram.com/",
+                "https://www.youtube.com/",
+            ),
+        )
 
     def test_accepts_multiple_unique_https_targets(self) -> None:
         from rotation.health_targets import validate_targets

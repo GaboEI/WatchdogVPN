@@ -28,6 +28,7 @@ from config.persistence import (
 from rotation.health_targets import (
     DEFAULT_HEALTH_TARGETS,
     DEFAULT_SUCCESS_QUORUM,
+    LEGACY_UNRELIABLE_HEALTH_TARGETS,
     validate_success_quorum,
     validate_targets,
 )
@@ -147,6 +148,15 @@ class AppConfig:
                     legacy_test_url,
                     *[target for target in DEFAULT_CONFIG["rotation"]["health_targets"] if target != legacy_test_url],
                 ]
+        if (
+            isinstance(rotation, dict)
+            and rotation.get("health_targets") == list(LEGACY_UNRELIABLE_HEALTH_TARGETS)
+        ):
+            # Upgrade exactly the historical product default while leaving
+            # every genuinely customized health policy untouched. The legacy
+            # targets are not reliable proof that normal user traffic has a
+            # usable egress path.
+            rotation["health_targets"] = list(DEFAULT_HEALTH_TARGETS)
         merged = deepcopy(DEFAULT_CONFIG)
         for section, values in data.items():
             if isinstance(values, dict):

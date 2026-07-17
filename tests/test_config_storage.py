@@ -437,9 +437,9 @@ class ConfigStorageTests(unittest.TestCase):
             self.assertEqual(
                 loaded["rotation"]["health_targets"],
                 [
-                    "https://www.cloudflare.com/cdn-cgi/trace",
-                    "https://www.ietf.org/",
-                    "https://www.wikipedia.org/",
+                    "https://www.facebook.com/",
+                    "https://www.instagram.com/",
+                    "https://www.youtube.com/",
                 ],
             )
             self.assertEqual(loaded["rotation"]["health_success_quorum"], 2)
@@ -475,6 +475,39 @@ class ConfigStorageTests(unittest.TestCase):
 
             self.assertEqual(loaded["rotation"]["health_targets"][0], "https://custom.example/probe")
             self.assertEqual(loaded["rotation"]["health_success_quorum"], 2)
+
+    def test_app_config_upgrades_exact_legacy_health_target_default_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            path.write_text(
+                "[rotation]\n"
+                'health_targets = ["https://www.cloudflare.com/cdn-cgi/trace", "https://www.ietf.org/", "https://www.wikipedia.org/"]\n',
+                encoding="utf-8",
+            )
+
+            loaded = AppConfig(path).load()
+
+            self.assertEqual(
+                loaded["rotation"]["health_targets"],
+                [
+                    "https://www.facebook.com/",
+                    "https://www.instagram.com/",
+                    "https://www.youtube.com/",
+                ],
+            )
+
+    def test_app_config_preserves_custom_health_target_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            custom = ["https://one.example/", "https://two.example/", "https://three.example/"]
+            path.write_text(
+                "[rotation]\nhealth_targets = [\"https://one.example/\", \"https://two.example/\", \"https://three.example/\"]\n",
+                encoding="utf-8",
+            )
+
+            loaded = AppConfig(path).load()
+
+            self.assertEqual(loaded["rotation"]["health_targets"], custom)
 
     def test_app_config_rejects_non_https_or_single_target_health_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
