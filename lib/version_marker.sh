@@ -6,8 +6,13 @@ set -euo pipefail
 # the current source checkout instead of only trusting the hand-edited
 # VERSION string in the bin/watchdogvpn compatibility alias, which does not change when the
 # installed copy falls behind. Written by install.sh and update.sh every
-# time install_python_package_tree() runs; read by doctor.sh.
-WATCHDOGVPN_VERSION_MARKER="${WATCHDOGVPN_VERSION_MARKER:-${WATCHDOGVPN_ETC_CONFIG_DIR:-/etc/watchdogvpn}/installed-version}"
+# time install_python_package_tree() runs; read by doctor.sh. It intentionally
+# lives in the public runtime tree: the marker contains only a commit and an
+# install timestamp, while the 0750 configuration directory must remain
+# unreadable to normal users. A normal `./doctor.sh` must still be able to
+# report installed/source skew without sudo.
+WATCHDOGVPN_VERSION_MARKER="${WATCHDOGVPN_VERSION_MARKER:-/usr/local/lib/watchdogvpn/installed-version}"
+WATCHDOGVPN_LEGACY_VERSION_MARKER="${WATCHDOGVPN_LEGACY_VERSION_MARKER:-${WATCHDOGVPN_ETC_CONFIG_DIR:-/etc/watchdogvpn}/installed-version}"
 
 record_installed_version() {
   local commit timestamp tmp
@@ -29,27 +34,31 @@ record_installed_version() {
     printf 'commit=%s\n' "$commit"
     printf 'installed_at=%s\n' "$timestamp"
   } >"$tmp"
-  # 0750, not 0755: WATCHDOGVPN_VERSION_MARKER defaults to a file directly
-  # inside /etc/watchdogvpn (lib/config.sh's WATCHDOGVPN_ETC_CONFIG_DIR),
-  # which install_config_defaults() already creates at 0750 to match
-  # systemd/watchdogvpn.service's ConfigurationDirectoryMode=0750. This
-  # defensive parent-dir creation ran later in every install and silently
-  # clobbered that back to 0755 every time (install -d re-applies the mode
-  # on an already-existing directory), reproducing the exact mode-mismatch
-  # warning that fix was supposed to close for good.
-  run_step sudo install -d -m 0750 -o root -g root "$(dirname "$WATCHDOGVPN_VERSION_MARKER")"
+  run_step sudo install -d -m 0755 -o root -g root "$(dirname "$WATCHDOGVPN_VERSION_MARKER")"
   run_step sudo install -m 0644 -o root -g root "$tmp" "$WATCHDOGVPN_VERSION_MARKER"
   rm -f "$tmp"
 }
 
+installed_version_marker_path() {
+  if [[ -r "$WATCHDOGVPN_VERSION_MARKER" ]]; then
+    printf '%s\n' "$WATCHDOGVPN_VERSION_MARKER"
+  elif [[ -r "$WATCHDOGVPN_LEGACY_VERSION_MARKER" ]]; then
+    printf '%s\n' "$WATCHDOGVPN_LEGACY_VERSION_MARKER"
+  else
+    return 1
+  fi
+}
+
 installed_version_commit() {
-  [[ -r "$WATCHDOGVPN_VERSION_MARKER" ]] || return 1
-  awk -F= '$1 == "commit" {print $2; exit}' "$WATCHDOGVPN_VERSION_MARKER"
+  local marker
+  marker="$(installed_version_marker_path)" || return 1
+  awk -F= '$1 == "commit" {print $2; exit}' "$marker"
 }
 
 installed_version_timestamp() {
-  [[ -r "$WATCHDOGVPN_VERSION_MARKER" ]] || return 1
-  awk -F= '$1 == "installed_at" {print $2; exit}' "$WATCHDOGVPN_VERSION_MARKER"
+  local marker
+  marker="$(installed_version_marker_path)" || return 1
+  awk -F= '$1 == "installed_at" {print $2; exit}' "$marker"
 }
 
 source_checkout_commit() {

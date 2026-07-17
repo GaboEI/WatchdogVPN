@@ -27,15 +27,12 @@ assert_contains "$ROOT_DIR/doctor.sh" 'Installed/Source Version Skew' "doctor mu
 assert_contains "$ROOT_DIR/doctor.sh" 'installed_version_commit' "doctor must read the installed version marker"
 assert_contains "$ROOT_DIR/doctor.sh" 'source_checkout_commit' "doctor must compare against the source checkout commit"
 
-# Regression guard: this defensive parent-dir creation used to hardcode 0755,
-# silently clobbering /etc/watchdogvpn back from the 0750 that
-# install_config_defaults() (lib/config.sh) sets it to earlier in the same
-# install/update run - install -d re-applies the mode on an already-existing
-# directory, so this ran later and always won, reproducing the exact
-# ConfigurationDirectoryMode=0750 mismatch warning on every single install.
-# Found only by watching a real install with inotifywait in a disposable VM;
-# a static read of lib/config.sh alone could not have caught it.
-assert_contains "$ROOT_DIR/lib/version_marker.sh" 'install -d -m 0750' "version marker's parent-dir creation must not reintroduce the /etc/watchdogvpn mode drift"
+# The marker is deliberately public metadata in the installed runtime tree so
+# a normal user can run doctor without gaining access to the private 0750
+# configuration directory.
+assert_contains "$ROOT_DIR/lib/version_marker.sh" '/usr/local/lib/watchdogvpn/installed-version' "version marker must live in the readable installed runtime tree"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'WATCHDOGVPN_LEGACY_VERSION_MARKER' "version marker reader must retain legacy-path compatibility"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'install -d -m 0755' "version marker parent must remain readable to normal doctor runs"
 
 # --- behavioral: record/read/compare actually works, isolated from the real
 #     system (no sudo, a throwaway marker path) ---
@@ -100,5 +97,42 @@ grep -Fq "MISMATCH_DETECTED" <<<"$mismatch_output" || {
 }
 
 rm -f "$tmp_marker"
+
+# A pre-migration install kept its marker in /etc/watchdogvpn. Readers must
+# continue to report it until a later update publishes the new runtime marker.
+primary_marker="$(mktemp -u)"
+legacy_marker="$(mktemp)"
+trap 'rm -f "$primary_marker" "$legacy_marker"' EXIT
+printf 'commit=legacy-marker\ninstalled_at=2026-07-07T00:00:00Z\n' >"$legacy_marker"
+legacy_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+ROOT_DIR="'"$ROOT_DIR"'"
+source lib/common.sh
+WATCHDOGVPN_VERSION_MARKER="'"$primary_marker"'"
+WATCHDOGVPN_LEGACY_VERSION_MARKER="'"$legacy_marker"'"
+source lib/version_marker.sh
+printf "%s %s\n" "$(installed_version_commit)" "$(installed_version_timestamp)"
+' 2>&1)"
+grep -Fq 'legacy-marker 2026-07-07T00:00:00Z' <<<"$legacy_output" || {
+  printf 'FAIL: version marker reader must fall back to the legacy private location\n' >&2
+  exit 1
+}
+
+# Once an update has published the public marker, it is authoritative even
+# when the legacy marker remains from an older install.
+printf 'commit=public-marker\ninstalled_at=2026-07-17T00:00:00Z\n' >"$primary_marker"
+primary_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+ROOT_DIR="'"$ROOT_DIR"'"
+source lib/common.sh
+WATCHDOGVPN_VERSION_MARKER="'"$primary_marker"'"
+WATCHDOGVPN_LEGACY_VERSION_MARKER="'"$legacy_marker"'"
+source lib/version_marker.sh
+printf "%s %s\n" "$(installed_version_commit)" "$(installed_version_timestamp)"
+' 2>&1)"
+grep -Fq 'public-marker 2026-07-17T00:00:00Z' <<<"$primary_output" || {
+  printf 'FAIL: public version marker must take precedence over a legacy marker\n' >&2
+  exit 1
+}
 
 echo "version marker checks passed"
