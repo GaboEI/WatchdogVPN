@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from ipaddress import ip_address
@@ -74,6 +75,12 @@ MANAGED_DRIVER_TYPES = (
 # WatchdogRuntime._record_health_result for why conflating the two would
 # silently erase a real measurement.
 _LATENCY_NOT_MEASURED = object()
+
+# A native transport can report its interface and policy companion ready just
+# before the first real packets traverse the newly installed routes. Retrying
+# one failed startup probe avoids treating that short convergence window as a
+# proven outage; the second probe still uses the full configured target quorum.
+NATIVE_EGRESS_STARTUP_RETRY_DELAY_SECONDS = 1.0
 
 
 def driver_type_for_profile(profile: Profile | None = None) -> type[BaseDriver]:
@@ -236,7 +243,13 @@ class WatchdogRuntime:
             via_proxy, timeout=timeout, targets=targets, success_quorum=success_quorum
         )
 
-    def _checked_and_recorded(self, profile: Profile, driver: BaseDriver) -> str:
+    def _checked_and_recorded(
+        self,
+        profile: Profile,
+        driver: BaseDriver,
+        *,
+        retry_startup_failure: bool = False,
+    ) -> str:
         """HealthCheckFn-compatible wrapper: real check, then persist.
 
         Passed as the health_check callable into RotationEngine.rotate()
@@ -252,6 +265,19 @@ class WatchdogRuntime:
         config = self.app_config.load()
         verify = self._configured_verify(config)
         result = health_checker.check_with_latency(profile, driver, verify=verify)
+        if (
+            retry_startup_failure
+            and getattr(driver, "requires_profile_egress_check", False)
+            and result.status != "ok"
+        ):
+            LOGGER.info(
+                "egress_startup_check_retry profile_id=%s status=%s classification=%s",
+                profile.id,
+                result.status,
+                result.classification,
+            )
+            time.sleep(NATIVE_EGRESS_STARTUP_RETRY_DELAY_SECONDS)
+            result = health_checker.check_with_latency(profile, driver, verify=verify)
         self._record_health_result(profile, result.status, latency_ms=result.latency_ms)
         if result.status == "ok":
             self._health_error_detail = ""
@@ -366,7 +392,11 @@ class WatchdogRuntime:
             try:
                 if self.rotation_engine.warmup_seconds > 0:
                     self.rotation_engine.sleep(self.rotation_engine.warmup_seconds)
-                status = self._checked_and_recorded(profile, driver)
+                status = self._checked_and_recorded(
+                    profile,
+                    driver,
+                    retry_startup_failure=True,
+                )
                 if status == "ok":
                     ok_profile_ids.add(profile.id)
                 refreshed = self.profile_store.get(profile.id) or profile
@@ -459,7 +489,11 @@ class WatchdogRuntime:
             **options,
         )
         if connected:
-            if not getattr(self.driver, "requires_profile_egress_check", False) or self._checked_and_recorded(profile, self.driver) == "ok":
+            if not getattr(self.driver, "requires_profile_egress_check", False) or self._checked_and_recorded(
+                profile,
+                self.driver,
+                retry_startup_failure=True,
+            ) == "ok":
                 self._clear_last_failure()
             else:
                 if not self._teardown_active_driver():
@@ -483,7 +517,12 @@ class WatchdogRuntime:
             return self._fail_manual_connect()
         if (
             getattr(self.driver, "requires_profile_egress_check", False)
-            and self._checked_and_recorded(profile, self.driver) != "ok"
+            and self._checked_and_recorded(
+                profile,
+                self.driver,
+                retry_startup_failure=True,
+            )
+            != "ok"
         ):
             return self._fail_manual_connect()
         self._clear_last_failure()
@@ -1039,7 +1078,7 @@ class WatchdogRuntime:
             **options,
         ):
             return False
-        if self._checked_and_recorded(profile, driver) == "ok":
+        if self._checked_and_recorded(profile, driver, retry_startup_failure=True) == "ok":
             return True
         self._teardown_active_driver()
         return False
@@ -1120,7 +1159,11 @@ class WatchdogRuntime:
         result = self.rotation_engine.rotate(
             pool,
             rotation_driver,
-            self._checked_and_recorded,
+            lambda checked_profile, checked_driver: self._checked_and_recorded(
+                checked_profile,
+                checked_driver,
+                retry_startup_failure=True,
+            ),
             force=force,
             dns_policy=self.dns_policy_store.load(),
         )

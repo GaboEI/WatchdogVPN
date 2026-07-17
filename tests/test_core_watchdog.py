@@ -345,7 +345,7 @@ class WatchdogCoreTests(unittest.TestCase):
         with patch.object(runtime, "_checked_and_recorded", return_value="down") as check:
             self.assertFalse(runtime.connect(profile))
 
-        check.assert_called_once_with(profile, driver)
+        check.assert_called_once_with(profile, driver, retry_startup_failure=True)
         self.assertGreaterEqual(driver.disconnect.call_count, 1)
         self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
         self.assertEqual(self.state_manager.get("active_profile_id"), "")
@@ -386,6 +386,43 @@ class WatchdogCoreTests(unittest.TestCase):
         ):
             self.assertEqual(runtime._checked_and_recorded(self.profile, driver), "ok")
 
+        self.assertEqual(runtime.last_error, "")
+
+    def test_checked_and_recorded_retries_only_native_startup_failure(self) -> None:
+        driver = FakeDriver()
+        driver.requires_profile_egress_check = True
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+        self.profile_store.add(self.profile)
+        with (
+            patch.object(runtime.app_config, "load", return_value={}),
+            patch(
+                "core.watchdog.health_checker.check_with_latency",
+                side_effect=[
+                    HealthCheckResult(
+                        status="degraded",
+                        classification="endpoint_censorship_or_network_interference_suspected",
+                    ),
+                    HealthCheckResult(status="ok", classification="healthy"),
+                ],
+            ) as check,
+            patch("core.watchdog.time.sleep") as sleep,
+        ):
+            self.assertEqual(
+                runtime._checked_and_recorded(
+                    self.profile,
+                    driver,
+                    retry_startup_failure=True,
+                ),
+                "ok",
+            )
+
+        self.assertEqual(check.call_count, 2)
+        sleep.assert_called_once_with(1.0)
+        self.assertEqual(self.profile_store.get(self.profile.id).health_status, "ok")
         self.assertEqual(runtime.last_error, "")
 
 
