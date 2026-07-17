@@ -94,6 +94,7 @@ class OpenVPNDriverTests(unittest.TestCase):
         process = popen_mock.return_value
         process.poll.return_value = None
         process.pid = 4242
+        self.driver.last_error = "old OpenVPN failure"
 
         self.assertTrue(self.driver.connect(self.profile))
         generate_mock.assert_called_once_with(self.profile)
@@ -120,6 +121,7 @@ class OpenVPNDriverTests(unittest.TestCase):
         self.assertIs(self.driver._process, process)
         self.assertIs(self.driver._active_profile, self.profile)
         self.assertIsNotNone(self.driver._connected_at)
+        self.assertEqual(self.driver.last_error, "")
 
     @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNDriver, "_wait_for_ready", return_value=True)
@@ -162,6 +164,7 @@ class OpenVPNDriverTests(unittest.TestCase):
     def test_connect_returns_false_when_binary_missing(self, popen_mock, binary_mock) -> None:
         self.assertFalse(self.driver.connect(self.profile))
         popen_mock.assert_not_called()
+        self.assertEqual(self.driver.last_error, "required binary not found: openvpn")
 
     @patch.object(OpenVPNDriver, "_cleanup_runtime")
     def test_disconnect_terminates_and_cleans_runtime(self, cleanup_mock) -> None:

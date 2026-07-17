@@ -351,6 +351,43 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertEqual(self.state_manager.get("active_profile_id"), "")
         self.assertEqual(self.state_manager.get("last_failure_reason"), "connect_failed")
 
+    def test_checked_and_recorded_reports_safe_egress_failure_detail(self) -> None:
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+        self.profile_store.add(self.profile)
+        with (
+            patch.object(runtime.app_config, "load", return_value={}),
+            patch(
+                "core.watchdog.health_checker.check_with_latency",
+                return_value=HealthCheckResult(
+                    status="degraded",
+                    classification="endpoint_censorship_or_network_interference_suspected",
+                ),
+            ),
+        ):
+            self.assertEqual(runtime._checked_and_recorded(self.profile, driver), "degraded")
+
+        self.assertEqual(
+            runtime.last_error,
+            "selected egress health check failed: "
+            "endpoint_censorship_or_network_interference_suspected",
+        )
+
+        with (
+            patch.object(runtime.app_config, "load", return_value={}),
+            patch(
+                "core.watchdog.health_checker.check_with_latency",
+                return_value=HealthCheckResult(status="ok", classification="healthy"),
+            ),
+        ):
+            self.assertEqual(runtime._checked_and_recorded(self.profile, driver), "ok")
+
+        self.assertEqual(runtime.last_error, "")
+
 
     def test_connect_rejects_singbox_when_policy_quorum_is_not_met(self) -> None:
         self.set_desired_state("on")

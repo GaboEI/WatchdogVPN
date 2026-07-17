@@ -30,6 +30,7 @@ from metrics.recorder import MetricsRecorder
 from metrics.store import MetricsStore
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
+from rotation.health_checker import HealthCheckResult
 
 
 class FakeWorkerDriver(BaseDriver):
@@ -448,6 +449,39 @@ class RuntimeWorkerTests(unittest.TestCase):
 
         self.assertFalse(response.ok)
         self.assertEqual(response.payload.get("error_kind"), "connect_failed")
+
+    def test_worker_connect_egress_failure_reports_safe_classification(self) -> None:
+        driver = FakeWorkerDriver()
+        driver.requires_profile_egress_check = True
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=StateManager(Path(self.tmpdir.name) / "state.toml"),
+            profile_store=self.profile_store,
+        )
+        worker = RuntimeWorker(runtime)
+        worker.start()
+        try:
+            with (
+                patch.object(runtime.app_config, "load", return_value={}),
+                patch(
+                    "core.watchdog.health_checker.check_with_latency",
+                    return_value=HealthCheckResult(
+                        status="degraded",
+                        classification="endpoint_censorship_or_network_interference_suspected",
+                    ),
+                ),
+            ):
+                response = worker.submit(COMMAND_CONNECT, {"profile_id": self.profile.id}, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertFalse(response.ok)
+        self.assertEqual(response.payload.get("error_kind"), "connect_failed")
+        self.assertEqual(
+            response.payload.get("error_detail"),
+            "selected egress health check failed: "
+            "endpoint_censorship_or_network_interference_suspected",
+        )
 
     def test_worker_node_group_auto_test_returns_payload_without_state_event(self) -> None:
         bus = EventBus()

@@ -185,12 +185,14 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         ovpn_process.poll.return_value = None
         ovpn_process.pid = 2222
         popen_mock.side_effect = [ck_process, ovpn_process]
+        self.driver.last_error = "old OpenVPN+Cloak failure"
 
         self.assertTrue(self.driver.connect(self.profile))
         self.assertIs(self.driver._ck_process, ck_process)
         self.assertIs(self.driver._openvpn_process, ovpn_process)
         self.assertIs(self.driver._active_profile, self.profile)
         self.assertIsNotNone(self.driver._connected_at)
+        self.assertEqual(self.driver.last_error, "")
         self.assertEqual(popen_mock.call_count, 2)
         ck_call_args = popen_mock.call_args_list[0].args[0]
         self.assertEqual(ck_call_args[0], "/usr/bin/ck-client")

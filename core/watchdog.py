@@ -124,6 +124,13 @@ class WatchdogRuntime:
 
     _cleanup_barrier_failed: bool = field(default=False, init=False, repr=False)
 
+    # Deep egress checks deliberately return a small, safe classification
+    # instead of a target URL, profile field, or subprocess output. Keep that
+    # diagnosis at the runtime layer: a failed gate is not a driver startup
+    # error, and assigning it to a driver would make it leak into the next
+    # unrelated connection attempt.
+    _health_error_detail: str = field(default="", init=False, repr=False)
+
     def __post_init__(self) -> None:
         if self.driver_selector is ORIGINAL_SELECT_DRIVER and type(self.driver) not in MANAGED_DRIVER_TYPES:
             self.driver_selector = lambda _profile=None: self.driver
@@ -246,6 +253,15 @@ class WatchdogRuntime:
         verify = self._configured_verify(config)
         result = health_checker.check_with_latency(profile, driver, verify=verify)
         self._record_health_result(profile, result.status, latency_ms=result.latency_ms)
+        if result.status == "ok":
+            self._health_error_detail = ""
+        else:
+            classification = result.classification
+            if not isinstance(classification, str) or not classification.replace("_", "").isalpha():
+                classification = "unknown"
+            self._health_error_detail = (
+                f"selected egress health check failed: {classification}"
+            )
         return result.status
 
     def rotate_now(self, force: bool = False) -> ConnectionState:
@@ -451,6 +467,7 @@ class WatchdogRuntime:
         return self.driver.status()
 
     def connect(self, profile: Profile) -> bool:
+        self._health_error_detail = ""
         driver, options = self._prepare_driver_for_connection(profile)
         active_driver = self._activate_driver(driver)
         if not self._protect_connection_attempt(profile):
@@ -492,7 +509,7 @@ class WatchdogRuntime:
 
     @property
     def last_error(self) -> str:
-        return str(getattr(self.driver, "last_error", "") or "")
+        return self._health_error_detail or str(getattr(self.driver, "last_error", "") or "")
 
     def disconnect(self) -> bool:
         if not self._teardown_active_driver():
@@ -501,6 +518,7 @@ class WatchdogRuntime:
         self._handle_manual_disconnect_kill_switch()
         self._restore_dns_snapshot_if_present()
         self.state_manager.set("vpn_desired_state", "off")
+        self._health_error_detail = ""
         self._clear_last_failure()
         LOGGER.info("VPN manually disabled. Will not auto-reconnect.")
         return True

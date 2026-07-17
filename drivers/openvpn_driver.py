@@ -64,6 +64,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         self._status_path: Path | None = None
         self._expected_interface = ""
         self._expected_device_type = ""
+        self.last_error = ""
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def find_openvpn_binary(self) -> str | None:
@@ -196,11 +197,13 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         lan_gateway=None,
         capture_modes=None,
     ) -> bool:
+        self.last_error = ""
         if not self._ensure_disconnected_before_connect():
             self.last_error = "existing OpenVPN runtime teardown failed"
             return False
         binary = self.find_openvpn_binary()
         if not binary:
+            self.last_error = "required binary not found: openvpn"
             return False
         self.generate_openvpn_config(profile)
         config_path, log_path = self._ensure_runtime_paths()
@@ -224,6 +227,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return True
         self._connected_at = None
         self._active_profile = None
+        self.last_error = "OpenVPN readiness timed out or process exited"
         self.disconnect()
         return False
 

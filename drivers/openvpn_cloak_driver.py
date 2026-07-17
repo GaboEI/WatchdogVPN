@@ -95,6 +95,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         self._route_snapshot_captured = False
         self._expected_interface = ""
         self._expected_device_type = ""
+        self.last_error = ""
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def _find_binary(self, candidates: tuple[str, ...], which_name: str) -> str | None:
@@ -479,6 +480,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         lan_gateway=None,
         capture_modes=None,
     ) -> bool:
+        self.last_error = ""
         if not self._ensure_disconnected_before_connect():
             self.last_error = "existing OpenVPN+Cloak runtime teardown failed"
             return False
@@ -499,6 +501,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
         try:
             self._write_configs(profile)
             if not self._reset_logs():
+                self.last_error = "OpenVPN+Cloak runtime log setup failed"
                 return self._startup_failure()
             (
                 ovpn_config_path,
@@ -508,6 +511,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             ) = self._ensure_runtime_paths()
             readiness_options = self._configure_readiness(profile)
             if not self._capture_route_snapshot():
+                self.last_error = "OpenVPN+Cloak route snapshot failed"
                 return self._startup_failure()
 
             with cloak_log_path.open("w", encoding="utf-8") as ck_log:
@@ -526,6 +530,7 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
 
             time.sleep(_CLOAK_STARTUP_WAIT)
             if self._ck_process.poll() is not None:
+                self.last_error = "Cloak client exited during startup"
                 return self._startup_failure()
 
             with ovpn_log_path.open("w", encoding="utf-8") as ovpn_log:
@@ -554,8 +559,10 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             # Every post-binary startup stage is transactional. The teardown
             # itself stays fail-closed: if it cannot prove cleanup, R-10 keeps
             # ownership and durable evidence for a later explicit recovery.
+            self.last_error = "OpenVPN+Cloak startup failed"
             return self._startup_failure()
 
+        self.last_error = "OpenVPN+Cloak readiness timed out or child exited"
         return self._startup_failure()
 
     def _wait_for_ready(self) -> bool:
