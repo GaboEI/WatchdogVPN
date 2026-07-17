@@ -84,6 +84,14 @@ class RotationEngine:
         items = [profile_id] + [pid for pid in self._recent_profile_ids if pid != profile_id]
         self._recent_profile_ids = items[: self.recent_keep]
 
+    def record_successful_profile(self, profile_id: str) -> None:
+        """Seed rotation history from a successful non-rotation connection."""
+
+        if not profile_id:
+            return
+        self._remember(profile_id)
+        self._last_good_profile_id = profile_id
+
     def _try_profile(
         self,
         profile: Profile,
@@ -91,6 +99,20 @@ class RotationEngine:
         health_check: HealthCheckFn,
         dns_policy: DNSPolicy | None = None,
     ) -> str:
+        preflight = getattr(driver, "preflight_profile", None)
+        if callable(preflight):
+            try:
+                preflight_ok = bool(preflight(profile))
+            except Exception:
+                preflight_ok = False
+                LOGGER.error(
+                    "rotation_preflight_exception profile_id=%s",
+                    profile.id,
+                    exc_info=True,
+                )
+            if not preflight_ok:
+                LOGGER.warning("rotation_preflight_failed profile_id=%s", profile.id)
+                return "preflight_failed"
         try:
             disconnected = driver.disconnect()
         except Exception:

@@ -35,6 +35,7 @@ from drivers.native_policy_driver import NativePolicyDriver
 from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProfileSource, ProtocolType
+from parsers.endpoint_policy import EndpointPolicyError
 from rotation import pool_builder
 from rotation.health_checker import HealthCheckResult
 from route_chains.models import ChainHop, RouteChain, RouteChainDocument
@@ -996,6 +997,17 @@ class WatchdogCoreTests(unittest.TestCase):
         driver.connect_mock.assert_called_once_with(self.profile)
         self.assertEqual(events, ["barrier", "connect"])
         self.assertTrue(runtime._desired_on_kill_switch_forced)
+        alternative = Profile(
+            id="alternative",
+            name="Alternative",
+            protocol=ProtocolType.VLESS,
+            config={},
+            source=ProfileSource.MANUAL,
+        )
+        self.assertEqual(
+            [item.id for item in runtime.rotation_engine.candidates([self.profile, alternative])],
+            [alternative.id],
+        )
 
     def test_connect_fails_closed_before_driver_spawn_when_atomic_kill_switch_fails(self) -> None:
         self.set_desired_state("off")
@@ -3106,6 +3118,76 @@ class WatchdogIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "recovered")
         self.assertEqual(self.state_manager.get("active_profile_id"), alt_profile.id)
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
+    def test_rotation_prevalidates_hostname_before_verified_teardown(
+        self, _hc, mock_pool, mock_sel_driver
+    ) -> None:
+        alt_profile = Profile(
+            id="hostname-alt",
+            name="Hostname alt",
+            protocol=ProtocolType.VLESS,
+            config={"server": "vpn.example.com", "server_port": 443},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        driver = FakeDriver()
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+        runtime = self._make_runtime(driver)
+
+        with patch("core.watchdog.validate_profile_endpoint") as validate:
+            result = runtime.rotate_now(force=True)
+
+        self.assertEqual(result.status, "recovered")
+        validate.assert_called_once_with(alt_profile, require_resolution=True)
+        driver.disconnect_mock.assert_called_once_with()
+        driver.connect_mock.assert_called_once_with(alt_profile)
+
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
+    def test_rotation_endpoint_preflight_failure_skips_candidate_without_teardown(
+        self, _hc, mock_pool
+    ) -> None:
+        unresolved = Profile(
+            id="unresolved-alt",
+            name="Unresolved alt",
+            protocol=ProtocolType.VLESS,
+            config={"server": "unresolved.example", "server_port": 443},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        resolved = Profile(
+            id="resolved-alt",
+            name="Resolved alt",
+            protocol=ProtocolType.VLESS,
+            config={"server": "resolved.example", "server_port": 443},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        driver = FakeDriver()
+        mock_pool.return_value = [unresolved, resolved]
+        runtime = self._make_runtime(driver)
+
+        def endpoint_preflight(profile: Profile, *, require_resolution: bool) -> None:
+            self.assertTrue(require_resolution)
+            if profile.id == unresolved.id:
+                raise EndpointPolicyError("resolution failed")
+
+        with patch(
+            "core.watchdog.validate_profile_endpoint",
+            side_effect=endpoint_preflight,
+        ):
+            result = runtime.rotate_now(force=True)
+
+        self.assertEqual(result.status, "recovered")
+        driver.disconnect_mock.assert_called_once_with()
+        driver.connect_mock.assert_called_once_with(resolved)
 
     @patch("core.watchdog.select_driver")
     @patch("core.watchdog.pool_builder.build_pool")

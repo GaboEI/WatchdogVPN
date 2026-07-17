@@ -495,6 +495,7 @@ class WatchdogRuntime:
                 retry_startup_failure=True,
             ) == "ok":
                 self._clear_last_failure()
+                self.rotation_engine.record_successful_profile(profile.id)
             else:
                 if not self._teardown_active_driver():
                     return self._cleanup_failure_state()
@@ -526,6 +527,7 @@ class WatchdogRuntime:
         ):
             return self._fail_manual_connect()
         self._clear_last_failure()
+        self.rotation_engine.record_successful_profile(profile.id)
         return True
 
     def _fail_manual_connect(self) -> bool:
@@ -786,7 +788,8 @@ class WatchdogRuntime:
         return self.driver
 
     def _prepare_driver_for_connection(
-        self, profile: Profile
+        self,
+        profile: Profile,
     ) -> tuple[BaseDriver, dict[str, object]]:
         driver_name, policy_capabilities = self._driver_policy_contract_for_profile(profile)
         unsupported = self._requested_policy_capabilities() - policy_capabilities
@@ -1079,6 +1082,7 @@ class WatchdogRuntime:
         ):
             return False
         if self._checked_and_recorded(profile, driver, retry_startup_failure=True) == "ok":
+            self.rotation_engine.record_successful_profile(profile.id)
             return True
         self._teardown_active_driver()
         return False
@@ -1508,6 +1512,29 @@ class _RuntimeDriverRouter(BaseDriver):
     def __init__(self, runtime: WatchdogRuntime) -> None:
         self.runtime = runtime
         self._teardown_verified = False
+        self._prepared_profile_id: str | None = None
+        self._prepared_connection: tuple[BaseDriver, dict[str, object]] | None = None
+
+    def preflight_profile(self, profile: Profile) -> bool:
+        """Prepare a candidate completely before tearing down the healthy path."""
+
+        self._prepared_profile_id = None
+        self._prepared_connection = None
+        try:
+            prepared = self.runtime._prepare_driver_for_connection(profile)
+        except (
+            EndpointPolicyConnectionError,
+            ManagementPathSafetyError,
+            UnsupportedDriverPolicyError,
+        ):
+            LOGGER.warning(
+                "watchdog_rotation_candidate_prepare_failed profile_id=%s",
+                profile.id,
+            )
+            return False
+        self._prepared_profile_id = profile.id
+        self._prepared_connection = prepared
+        return True
 
     def connect(
         self,
@@ -1527,7 +1554,23 @@ class _RuntimeDriverRouter(BaseDriver):
             self.runtime._record_last_failure("cleanup_failed")
             LOGGER.error("watchdog_rotation_connect_blocked reason=unverified_teardown")
             return False
-        driver, options = self.runtime._prepare_driver_for_connection(profile)
+        if self._prepared_profile_id == profile.id and self._prepared_connection is not None:
+            driver, options = self._prepared_connection
+        else:
+            try:
+                driver, options = self.runtime._prepare_driver_for_connection(profile)
+            except (
+                EndpointPolicyConnectionError,
+                ManagementPathSafetyError,
+                UnsupportedDriverPolicyError,
+            ):
+                LOGGER.warning(
+                    "watchdog_rotation_candidate_prepare_failed profile_id=%s",
+                    profile.id,
+                )
+                return False
+        self._prepared_profile_id = None
+        self._prepared_connection = None
         driver = self.runtime._activate_driver(driver, disconnect_current=False)
         if not self.runtime._protect_connection_attempt(profile):
             return False

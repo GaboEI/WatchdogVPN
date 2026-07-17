@@ -158,6 +158,38 @@ class RotationEngineSingleNodeTests(unittest.TestCase):
 
 
 class RotationEngineSelectionTests(unittest.TestCase):
+    def test_successful_manual_profile_is_not_reselected_when_alternative_exists(self) -> None:
+        engine = make_engine()
+        driver = ScriptedDriver()
+        pool = [make_profile("a"), make_profile("b")]
+        engine.record_successful_profile("a")
+
+        result = engine.rotate(pool, driver, health_check_from({"b": "ok"}), force=True)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.profile.id, "b")
+        self.assertEqual(driver.connect_calls, ["b"])
+
+    def test_candidate_preflight_failure_does_not_teardown_healthy_runtime(self) -> None:
+        engine = make_engine()
+        driver = ScriptedDriver()
+        preflight_calls: list[str] = []
+
+        def preflight(profile: Profile) -> bool:
+            preflight_calls.append(profile.id)
+            return profile.id != "a"
+
+        driver.preflight_profile = preflight  # type: ignore[attr-defined]
+        pool = [make_profile("a"), make_profile("b")]
+
+        result = engine.rotate(pool, driver, health_check_from({"b": "ok"}), force=True)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.profile.id, "b")
+        self.assertEqual(preflight_calls, ["a", "b"])
+        self.assertEqual(driver.disconnect_calls, 1)
+        self.assertEqual(driver.connect_calls, ["b"])
+
     def test_picks_first_healthy_candidate_in_full_pool(self) -> None:
         engine = make_engine()
         driver = ScriptedDriver()
