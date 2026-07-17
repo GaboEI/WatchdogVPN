@@ -690,8 +690,15 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
     def _ping_through_interface(self, target: str = "1.1.1.1", timeout: int = 3) -> bool:
         if not shutil.which("ping"):
             return False
+        # A single probe packet is too fragile: the first packet right after
+        # a fresh handshake commonly drops during NAT/route warmup even on a
+        # healthy tunnel. Confirmed live - a "-c 1" probe reported the tunnel
+        # degraded while a follow-up "-c 5" on the same live interface got
+        # 4/5 replies at normal latency. ping's own exit code already treats
+        # any reply among -c N as success, so raising the count alone fixes
+        # this without extra retry logic.
         result = subprocess.run(
-            ["ping", "-I", INTERFACE_NAME, "-c", "1", "-W", str(timeout), target],
+            ["ping", "-I", INTERFACE_NAME, "-c", "3", "-W", str(timeout), target],
             text=True,
             capture_output=True,
             check=False,
