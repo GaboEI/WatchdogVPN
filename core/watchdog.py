@@ -1515,6 +1515,14 @@ class _RuntimeDriverRouter(BaseDriver):
         self._prepared_profile_id: str | None = None
         self._prepared_connection: tuple[BaseDriver, dict[str, object]] | None = None
 
+    @property
+    def requires_profile_egress_check(self) -> bool:
+        """Expose the active driver's startup-egress contract to rotation."""
+
+        return bool(
+            getattr(self.runtime.driver, "requires_profile_egress_check", False)
+        )
+
     def preflight_profile(self, profile: Profile) -> bool:
         """Prepare a candidate completely before tearing down the healthy path."""
 

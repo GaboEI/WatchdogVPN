@@ -2480,6 +2480,87 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertIn("awg:connect:awg-alt", events)
         self.assertLess(events.index("singbox:disconnect"), events.index("awg:connect:awg-alt"))
 
+    @patch("core.watchdog.pool_builder.build_pool")
+    def test_rotation_retries_native_egress_check_through_driver_router(self, mock_pool) -> None:
+        alt_profile = Profile(
+            id="awg-startup-retry",
+            name="AWG startup retry",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        current_driver = FakeSingBoxDriver()
+        current_driver.health_check_mock.return_value = "down"
+        next_driver = FakeAWGDriver()
+        next_driver.requires_profile_egress_check = True
+        mock_pool.return_value = [alt_profile]
+
+        self.state_manager.set("active_profile_id", self.profile.id)
+        self.profile_store.add(self.profile)
+
+        from config.app_config import AppConfig
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        from unittest.mock import MagicMock
+
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": False},
+            "rotation": {"enabled": True},
+        }
+        clock = lambda: 0.0
+
+        def selector(profile: Profile | None = None) -> BaseDriver:
+            return next_driver if profile and profile.id == alt_profile.id else current_driver
+
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(
+                clock=clock,
+                sleep=lambda _seconds: None,
+                warmup_seconds=0.0,
+                max_fails_before_rollback=99,
+            ),
+            recovery=Recovery(clock=clock),
+            kill_switch=FakeKillSwitch(),
+            driver_selector=selector,
+        )
+        native_checks = 0
+
+        def health_check_by_profile(
+            profile: Profile, _driver: BaseDriver, **_kwargs
+        ) -> HealthCheckResult:
+            nonlocal native_checks
+            if profile.id != alt_profile.id:
+                return HealthCheckResult(status="down")
+            native_checks += 1
+            if native_checks == 1:
+                return HealthCheckResult(
+                    status="degraded",
+                    classification="endpoint_censorship_or_network_interference_suspected",
+                )
+            return HealthCheckResult(status="ok", classification="healthy")
+
+        with (
+            patch(
+                "core.watchdog.health_checker.check_with_latency",
+                side_effect=health_check_by_profile,
+            ),
+            patch("core.watchdog.time.sleep") as startup_sleep,
+        ):
+            result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "recovered")
+        self.assertEqual(self.state_manager.get("active_profile_id"), alt_profile.id)
+        self.assertEqual(native_checks, 2)
+        startup_sleep.assert_called_once_with(1.0)
+
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
     def test_run_iteration_reports_rotation_unavailable_when_pool_empty(self, _hc, _pool) -> None:
