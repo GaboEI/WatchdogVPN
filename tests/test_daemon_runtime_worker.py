@@ -96,6 +96,7 @@ class FakeRuntime:
         self.disconnect_calls = 0
         self.rotate_calls: list[bool] = []
         self.auto_test_calls: list[str] = []
+        self.run_iteration_calls = 0
         self.run_iteration_queue: list[ConnectionState] = []
         self.scheduled_rotate_calls = 0
         self.scheduled_rotate_result: ConnectionState | None = None
@@ -129,6 +130,7 @@ class FakeRuntime:
         return ConnectionState(active_profile_id="rotated", mode="rules", status="recovered")
 
     def run_iteration(self) -> ConnectionState:
+        self.run_iteration_calls += 1
         if self.run_iteration_queue:
             return self.run_iteration_queue.pop(0)
         return self.status()
@@ -189,6 +191,18 @@ class BlockingStatusRuntime(FakeRuntime):
         self.status_entered.set()
         self.release_status.wait(timeout=2.0)
         return super().status()
+
+
+class BlockingRotateRuntime(FakeRuntime):
+    def __init__(self, profile_store: ProfileStore) -> None:
+        super().__init__(profile_store)
+        self.rotate_entered = threading.Event()
+        self.release_rotate = threading.Event()
+
+    def rotate_now(self, force: bool = False) -> ConnectionState:
+        self.rotate_entered.set()
+        self.release_rotate.wait(timeout=2.0)
+        return super().rotate_now(force=force)
 
 
 def make_profile(profile_id: str = "p1") -> Profile:
@@ -647,7 +661,9 @@ class RuntimeWorkerTests(unittest.TestCase):
         worker.start()
         try:
             worker.submit_tick()
+            worker.submit(COMMAND_STATUS, timeout=2.0)  # drain this tick
             worker.submit_tick()
+            worker.submit(COMMAND_STATUS, timeout=2.0)  # drain this tick
             worker.submit_tick()
             worker.submit(COMMAND_STATUS, timeout=2.0)  # drain queue in order
 
@@ -670,6 +686,25 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.assertEqual(fourth.event, EVENT_HEALTH_CHECK)
         self.assertEqual(fifth.event, EVENT_STATE_CHANGED)
         self.assertEqual(fifth.payload["status"], "recovered")
+
+    def test_health_ticks_do_not_accumulate_behind_running_command(self) -> None:
+        runtime = BlockingRotateRuntime(self.profile_store)
+        worker = RuntimeWorker(runtime)
+        request = WorkerRequest(command=COMMAND_ROTATE, payload={"force": True})
+        worker.start()
+        try:
+            worker.submit_request(request)
+            self.assertTrue(runtime.rotate_entered.wait(timeout=1.0))
+            worker.submit_tick()
+            worker.submit_tick()
+            runtime.release_rotate.set()
+            self.assertTrue(request.response_queue.get(timeout=2.0).ok)
+            self.assertTrue(worker.submit(COMMAND_STATUS, timeout=2.0).ok)
+        finally:
+            runtime.release_rotate.set()
+            worker.stop()
+
+        self.assertEqual(runtime.run_iteration_calls, 0)
 
     def test_tick_survives_run_iteration_exception_and_worker_keeps_serving(self) -> None:
         runtime = RaisingTickRuntime(self.profile_store)

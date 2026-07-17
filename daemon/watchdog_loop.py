@@ -24,7 +24,8 @@ class WatchdogLoop:
     RuntimeWorker queue (see RuntimeWorker.submit_tick) so every tick is
     serialized with IPC-triggered connect/disconnect/rotate commands on the
     same single worker thread - this loop never calls into WatchdogRuntime
-    directly.
+    directly. RuntimeWorker coalesces ticks while other work is active so a
+    long connection command cannot build a stale health-check backlog.
     """
 
     def __init__(

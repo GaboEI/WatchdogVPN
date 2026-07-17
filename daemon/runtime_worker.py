@@ -102,6 +102,9 @@ class RuntimeWorker:
         self._started = threading.Event()
         self._stopped = threading.Event()
         self._last_tick_status: str | None = None
+        self._autonomous_lock = threading.Lock()
+        self._runtime_busy = False
+        self._tick_pending = False
         self._command_lock = threading.Lock()
         self._command_records: dict[str, _CommandRecord] = {}
         self._final_command_ids: deque[str] = deque()
@@ -217,15 +220,20 @@ class RuntimeWorker:
             )
 
     def submit_tick(self) -> None:
-        """Enqueue an autonomous health-check tick (see daemon.watchdog_loop).
+        """Enqueue one autonomous health-check tick when the worker is idle.
 
         Fire-and-forget: goes through the same queue as IPC requests so it
         never runs concurrently with a connect/disconnect/rotate command,
-        but nothing waits on a response.
+        but nothing waits on a response. Ticks that overlap active or queued
+        work are coalesced instead of accumulating behind a long command.
         """
         if not self._thread.is_alive():
             raise RuntimeError("runtime worker is not running")
-        self._queue.put(_TICK)
+        with self._autonomous_lock:
+            if self._runtime_busy or self._tick_pending or not self._queue.empty():
+                return
+            self._tick_pending = True
+            self._queue.put(_TICK)
 
     def submit_scheduled_rotation(self) -> None:
         """Enqueue a proactive scheduled rotation (see daemon.scheduled_rotation_loop).
@@ -250,15 +258,23 @@ class RuntimeWorker:
                 item = self._queue.get()
                 if item is _STOP:
                     return
-                if item is _TICK:
-                    self._handle_tick()
-                    continue
-                if item is _SCHEDULED_ROTATE:
-                    self._handle_scheduled_rotation()
-                    continue
-                if not isinstance(item, WorkerRequest):
-                    continue
-                self._execute_request(item)
+                with self._autonomous_lock:
+                    self._runtime_busy = True
+                try:
+                    if item is _TICK:
+                        self._handle_tick()
+                        continue
+                    if item is _SCHEDULED_ROTATE:
+                        self._handle_scheduled_rotation()
+                        continue
+                    if not isinstance(item, WorkerRequest):
+                        continue
+                    self._execute_request(item)
+                finally:
+                    with self._autonomous_lock:
+                        self._runtime_busy = False
+                        if item is _TICK:
+                            self._tick_pending = False
         finally:
             self._stopped.set()
 
