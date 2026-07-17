@@ -169,3 +169,33 @@ evidence. The guest's default security posture is part of certification:
 Any failure to create a TUN device, apply nftables, run the daemon sandbox, or
 obtain protocol egress is a field finding, not a reason to weaken
 `strict_route`, `auto_redirect`, the kill switch, or cleanup requirements.
+
+## Task 23.5.2 partial evidence — Arch AmneziaWG user journey
+
+On 2026-07-18, the clean Arch candidate at installed commit `cb3a0a9` passed a
+maintainer-driven AmneziaWG journey from profile import through real egress.
+This is accepted evidence for the AmneziaWG row only; it does not close the
+remaining Arch 12-protocol matrix or Task 23.5.2.
+
+- A real interactive `watchdog profile add --file` saved the profile before
+  checking optional runtime readiness, preserved the rotation choice, detected
+  the Arch adapter, and printed the adapter-owned installation commands and
+  official upstream links. No dependency was installed silently.
+- The maintainer executed the displayed commands manually. Arch installed the
+  build prerequisites, the AUR source validations passed, the DKMS module
+  built for the running `7.1.3-arch2-1` kernel, and both `awg` and the
+  `amneziawg-go` fallback became available.
+- `watchdog connect` reached honest `connected` state in `native-policy` mode
+  with TUN, local proxies, and the nftables kill switch active. A recent
+  AmneziaWG handshake and bidirectional transfer counters were observed.
+- Real egress returned HTTP 200 with exit code 0 for Facebook over the normal
+  TUN path, Instagram through SOCKS on the product's configured port `2080`,
+  and YouTube through HTTP proxy on port `2081`.
+- The first proxy probes used incorrect ad-hoc ports `1080`/`8080`; those
+  immediate localhost connection failures were operator-instruction error,
+  not product failure. Listener inspection identified the configured ports
+  before the accepted rerun.
+- Explicit disconnect restored standby, the service remained active, the
+  source checkout stayed clean, and temporary import/AUR build directories
+  were removed. Private profile contents, identifiers, endpoints, and keys are
+  excluded from repository evidence.
