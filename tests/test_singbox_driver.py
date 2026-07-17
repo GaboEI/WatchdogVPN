@@ -478,6 +478,38 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertEqual(endpoint["peers"][0]["public_key"], "public-key")
         self.assertEqual(endpoint["peers"][0]["allowed_ips"], ["0.0.0.0/0", "::/0"])
         self.assertEqual(config["route"]["rules"], [{"action": "route", "outbound": endpoint["tag"]}])
+        self.assertNotIn("domain_strategy", endpoint)
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_generate_singbox_config_wireguard_ipv4_only_forces_ipv4_domain_strategy(
+        self, bind_mock, write_mock
+    ) -> None:
+        # Regression: confirmed live 2026-07-17 - a real WireGuard profile
+        # whose server never provisioned an IPv6 address for this client
+        # (local address is IPv4-only) still had allowed_ips including
+        # "::/0" (this module's own unconditional default when a profile
+        # doesn't specify allowed_ips - it says nothing about whether the
+        # server actually gave this client an IPv6 identity). sing-box then
+        # failed outright the moment any destination happened to resolve an
+        # AAAA record first, with "missing IPv6 local address" - real-world
+        # DNS/CDN answer ordering, not something the client controls.
+        profile = parse_wg_config(
+            """
+            [Interface]
+            PrivateKey = private-key
+            Address = 10.9.0.2/32
+
+            [Peer]
+            PublicKey = public-key
+            Endpoint = wg.example.com:51820
+            AllowedIPs = 0.0.0.0/0, ::/0
+            """
+        )
+        config = self.driver.generate_singbox_config(profile)
+        endpoint = config["endpoints"][0]
+        self.assertEqual(endpoint["address"], ["10.9.0.2/32"])
+        self.assertEqual(endpoint["domain_strategy"], "ipv4_only")
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIND_INTERFACE": "enp4s0"})
@@ -694,6 +726,43 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         self.assertNotIn("fakeip", dns_server_types)
         for rule in config["route"]["rules"]:
             self.assertNotEqual(rule.get("action"), "resolve")
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_domain_preservation_enables_fakeip_cache_file(
+        self, bind_mock, write_mock
+    ) -> None:
+        # Regression: confirmed live 2026-07-16 on Hysteria2 - without
+        # experimental.cache_file's store_fakeip, sing-box immediately
+        # resets a TUN-redirected connection to a FakeIP address with
+        # "missing fakeip record" the moment its own in-memory allocation
+        # record is no longer fresh (Trojan happened to still hit a fresh
+        # in-memory record and did not surface this until Hysteria2 did).
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        dns_policy = DNSPolicy()
+
+        config = self.driver.generate_singbox_config(
+            profile, mode="tun", dns_policy=dns_policy
+        )
+
+        cache_file = config["experimental"]["cache_file"]
+        self.assertTrue(cache_file["enabled"])
+        self.assertTrue(cache_file["store_fakeip"])
+        self.assertTrue(cache_file["path"])
+
+    @patch.object(SingBoxDriver, "_write_config")
+    @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
+    def test_no_domain_preservation_means_no_cache_file(
+        self, bind_mock, write_mock
+    ) -> None:
+        profile = self._profile(ProtocolType.VLESS, host="vless.example.com", port=443, uuid="uuid-1")
+        dns_policy = DNSPolicy()
+
+        config = self.driver.generate_singbox_config(
+            profile, mode="proxy", dns_policy=dns_policy
+        )
+
+        self.assertNotIn("experimental", config)
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)

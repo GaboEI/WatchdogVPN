@@ -552,14 +552,28 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         if reserved:
             peer["reserved"] = reserved
 
+        local_addresses = self._normalize_list(cfg.get("local_address") or cfg.get("address"))
         endpoint: dict[str, Any] = {
             "type": "wireguard",
             "tag": tag or profile.name,
             "system": False,
-            "address": self._normalize_list(cfg.get("local_address") or cfg.get("address")),
+            "address": local_addresses,
             "private_key": cfg.get("private_key"),
             "peers": [peer],
         }
+        # A profile whose own local address is IPv4-only (no server-assigned
+        # IPv6) cannot originate IPv6 traffic through this endpoint at all,
+        # regardless of what allowed_ips claims - "0.0.0.0/0,::/0" is this
+        # module's own unconditional default (line ~549) when a profile
+        # doesn't specify allowed_ips, so it says nothing about whether the
+        # server actually provisioned an IPv6 identity for this client.
+        # Without this, any destination that happens to resolve AAAA first
+        # (real-world DNS load-balancing/CDN behavior, not a client choice)
+        # fails outright with sing-box's own "missing IPv6 local address" -
+        # confirmed live 2026-07-17 on a real WireGuard profile whose config
+        # only ever had an IPv4 local address.
+        if local_addresses and not any(":" in address for address in local_addresses):
+            endpoint["domain_strategy"] = "ipv4_only"
         mtu = self._normalize_port(cfg.get("mtu"))
         if mtu is not None:
             endpoint["mtu"] = mtu
@@ -1335,6 +1349,21 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 )
                 if domain_preservation_route is not None:
                     _merge_route_config(config, domain_preservation_route)
+                    # sing-box only tracks a FakeIP address's real domain in
+                    # this on-disk cache; without it a TUN-redirected
+                    # connection to a FakeIP address fails immediately with
+                    # "missing fakeip record" the moment its own in-memory
+                    # allocation record is no longer fresh - confirmed live
+                    # 2026-07-16 (Hysteria2: instant connection reset,
+                    # sing-box's own debug log named this exact error).
+                    config_path, _ = self._ensure_runtime_paths()
+                    config["experimental"] = {
+                        "cache_file": {
+                            "enabled": True,
+                            "store_fakeip": True,
+                            "path": str(config_path.parent / "fakeip-cache.db"),
+                        }
+                    }
                 hijack_route = build_dns_hijack_route(dns_policy)
                 if hijack_route is not None:
                     _merge_route_config(config, hijack_route)
@@ -1526,7 +1555,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             config_kwargs["management_peers"] = management_peers
         if lan_proxy is not None:
             config_kwargs["lan_proxy"] = lan_proxy
-        self.generate_singbox_config(profile, **config_kwargs)
+        singbox_config = self.generate_singbox_config(profile, **config_kwargs)
         config_path, log_path = self._ensure_runtime_paths()
         log_file = log_path.open("w", encoding="utf-8")
         self._process = subprocess.Popen(
@@ -1541,6 +1570,28 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._active_mode = mode
         self._tun_expected = tun_expected
         if self._process.poll() is None and self.health_check() == "ok":
+            if "experimental" in singbox_config:
+                # FakeIP allocations live in this connection's own ephemeral
+                # cache_file (drivers/singbox_driver.py's
+                # generate_singbox_config), created fresh per connect. The
+                # OS resolver's own cache does not know that, and can hand
+                # a later query a FakeIP address this brand-new sing-box
+                # process never allocated - sing-box then has no reverse
+                # record for it and immediately resets the connection.
+                # Confirmed live 2026-07-16 on Hysteria2: a stale FakeIP
+                # answer from an earlier, already-torn-down session caused
+                # "missing fakeip record" on every real request until the
+                # system resolver cache was flushed. Best-effort: not every
+                # system runs systemd-resolved, so "resolvectl" may not
+                # exist at all.
+                try:
+                    subprocess.run(
+                        ["resolvectl", "flush-caches"],
+                        capture_output=True,
+                        check=False,
+                    )
+                except OSError:
+                    pass
             if self._tun_expected:
                 self._capture_tun_cleanup_state()
             if lan_gateway is not None and not self._apply_lan_gateway(lan_gateway):
