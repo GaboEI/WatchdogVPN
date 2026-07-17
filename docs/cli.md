@@ -673,8 +673,8 @@ watchdog dns status [--json]
 watchdog dns test [--json]
 watchdog dns diagnose [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
 watchdog dns apply --dry-run [--json]
-watchdog dns apply --yes [--json]
-watchdog dns reset --yes [--json]
+sudo watchdog dns apply --yes [--json]
+sudo watchdog dns reset --yes [--json]
 ```
 
 DNS policy CRUD is available without touching the active system resolver:
@@ -711,11 +711,14 @@ independent from the top-level `dns.rules_enabled` and
 
 `dns status`, `dns test` and `dns diagnose` are read-only. `dns apply --dry-run`
 returns the apply plan without creating a DNS snapshot or mutating resolver
-state. Real apply requires `--yes`, refuses non-standard system resolver ports,
-saves or reuses rollback snapshot metadata and returns `rollback_snapshot` plus
-`snapshot_saved` in JSON. `dns reset` requires `--yes`, restores from the saved
+state. Real apply requires `--yes` and root privileges, refuses non-standard
+system resolver ports, saves or reuses rollback snapshot metadata and returns
+`rollback_snapshot` plus `snapshot_saved` in JSON. The privilege check occurs
+before snapshot creation or resolver mutation. `dns reset` requires `--yes`
+and, when a snapshot exists, root privileges; it restores from the saved
 snapshot, removes the snapshot file after successful restore and returns
-`rollback_snapshot.restored=true` in JSON.
+`rollback_snapshot.restored=true` in JSON. A reset with no snapshot remains a
+clean unprivileged no-op.
 
 Normal tests and local CLI validation must use mocked managers or isolated
 temporary resolver files. Do not run DNS apply/reset against the workstation's

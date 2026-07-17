@@ -5101,6 +5101,7 @@ def _dns_apply(args: argparse.Namespace) -> int:
         raise ParseError(
             "dns apply requires --entrypoint-port 53; system resolvers are configured by address only"
         )
+    _require_privileged_dns_mutation("apply")
     if plan["would_apply"] and not args.skip_entrypoint_check:
         _require_dns_entrypoint(entrypoint, timeout=float(args.entrypoint_timeout))
 
@@ -5156,6 +5157,7 @@ def _dns_reset(args: argparse.Namespace) -> int:
             print("No DNS snapshot found; nothing to restore.")
             print(f"Snapshot: {snapshot_path}")
         return 0
+    _require_privileged_dns_mutation("reset")
     manager = SystemDNSStateManager(resolv_conf_path=Path(args.resolv_conf_path))
     manager.restore_state(snapshot)
     try:
@@ -5610,6 +5612,30 @@ def _require_dns_entrypoint(entrypoint: LocalDNSEntryPoint, timeout: float) -> N
             "local DNS entrypoint is not reachable; start the DNS runtime first "
             "or use --dry-run"
         ) from exc
+
+
+def _require_privileged_dns_mutation(action: str) -> None:
+    """Reject host-DNS mutation before snapshots or resolver state change.
+
+    The TUI already invokes confirmed DNS apply/reset through sudo.  The CLI
+    must enforce the same boundary itself: resolvectl and nmcli can otherwise
+    save a rollback snapshot and only then fail at Polkit, leaving the user
+    with a partial operation and a misleading generic error.
+    """
+
+    if os.geteuid() == 0:
+        return
+    if action == "apply":
+        command = "sudo watchdog dns apply --yes ..."
+        detail = "apply mutates system resolver state"
+    else:
+        command = "sudo watchdog dns reset --yes ..."
+        detail = "reset restores system resolver state from the saved snapshot"
+    raise DNSStateError(
+        f"dns {action} requires root privileges because {detail}; "
+        f"prefix the same command with sudo (for example: {command}). "
+        "DNS status and apply --dry-run do not require sudo"
+    )
 
 
 def _save_dns_snapshot(path: Path, snapshot: DNSStateSnapshot) -> None:

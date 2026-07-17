@@ -199,7 +199,7 @@ matrix, "VPN" means `current`.
 | ID | External VPN | CLI commands | Required proof |
 | --- | --- | --- | --- |
 | M5.1 | absent | `watchdog dns status --json`; `watchdog dns diagnose --domain <probe_domain> --json`; `watchdog dns apply --dry-run --json` | Dry run is non-mutating and reports the planned resolver path. |
-| M5.2 | absent | `watchdog dns apply --yes --json`; resolver probe; `watchdog dns status --json`; `watchdog dns reset --yes --json` | Apply saves or uses rollback metadata; resolver probe works as expected; reset restores pre-apply resolver checksum or records a concrete finding. |
+| M5.2 | absent | `sudo watchdog dns apply --yes --json`; resolver probe; `watchdog dns status --json`; `sudo watchdog dns reset --yes --json` | Apply saves or uses rollback metadata; resolver probe works as expected; reset restores pre-apply resolver checksum or records a concrete finding. Unprivileged mutation must fail before creating a snapshot. |
 | M5.3 | present | Repeat M5.1-M5.2 only if the operator confirms it will not cut the session | DNS apply/reset does not strand the external VPN session; otherwise cell is unavailable with reason and owner. |
 
 ### M6 - Kill Switch Enable And Disable
@@ -236,7 +236,7 @@ Every matrix block must end with:
 
 ```bash
 watchdog disconnect --json
-watchdog dns reset --yes --json
+sudo watchdog dns reset --yes --json
 watchdog app-policy disable --json
 watchdog panic wake
 watchdog status --json

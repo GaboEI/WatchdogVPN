@@ -81,16 +81,18 @@ alternate rule-set trust registry during tests or support workflows.
 
 Real apply requires explicit confirmation and a reachable local DNS entrypoint.
 The command saves a snapshot before changing DNS so `reset` can restore the
-previous resolver state.
+previous resolver state. Confirmed host-DNS mutation requires root privileges;
+the CLI rejects an unprivileged apply before it saves a snapshot or calls the
+resolver manager.
 
 ```sh
-./bin/watchdog dns apply --yes --systemd-link tun0
+sudo ./bin/watchdog dns apply --yes --systemd-link tun0
 ```
 
 The local entrypoint defaults to `127.0.0.1:53`:
 
 ```sh
-./bin/watchdog dns apply --yes --entrypoint-address 127.0.0.1 --entrypoint-port 53
+sudo ./bin/watchdog dns apply --yes --entrypoint-address 127.0.0.1 --entrypoint-port 53
 ```
 
 Real apply requires port `53`. System resolver managers such as
@@ -113,9 +115,13 @@ Confirmed apply preserves an existing rollback snapshot instead of overwriting
 the original resolver state during repeated apply attempts.
 
 ```sh
-./bin/watchdog dns reset --yes
-./bin/watchdog dns reset --yes --json
+sudo ./bin/watchdog dns reset --yes
+sudo ./bin/watchdog dns reset --yes --json
 ```
+
+`reset` remains an unprivileged clean no-op when no snapshot exists. If a
+snapshot is present, it requires root before attempting any resolver restore
+and leaves the snapshot intact when that privilege precondition is not met.
 
 ## Files
 
@@ -130,6 +136,6 @@ Overrides:
 
 ```sh
 WATCHDOGVPN_DNS_POLICY_FILE=/path/to/dns-policy.json ./bin/watchdog dns status
-WATCHDOGVPN_DNS_SNAPSHOT_FILE=/path/to/dns-state.json ./bin/watchdog dns reset --yes
+sudo env WATCHDOGVPN_DNS_SNAPSHOT_FILE=/path/to/dns-state.json ./bin/watchdog dns reset --yes
 WATCHDOGVPN_CONFIG_DIR=/tmp/watchdogvpn ./bin/watchdog dns status
 ```

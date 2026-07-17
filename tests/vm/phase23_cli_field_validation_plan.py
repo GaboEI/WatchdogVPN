@@ -318,9 +318,9 @@ def build_runbook(plan: dict[str, Any]) -> str:
             ["watchdog", "dns", "status", "--json"],
             ["watchdog", "dns", "diagnose", "--domain", probe_domain, "--json"],
             ["watchdog", "dns", "apply", "--dry-run", "--json"],
-            ["watchdog", "dns", "apply", "--yes", "--json"],
+            ["sudo", "watchdog", "dns", "apply", "--yes", "--json"],
             ["watchdog", "dns", "status", "--json"],
-            ["watchdog", "dns", "reset", "--yes", "--json"],
+            ["sudo", "watchdog", "dns", "reset", "--yes", "--json"],
         ],
     )
 
@@ -395,7 +395,7 @@ def build_runbook(plan: dict[str, Any]) -> str:
         "Cleanup",
         [
             ["watchdog", "disconnect", "--json"],
-            ["watchdog", "dns", "reset", "--yes", "--json"],
+            ["sudo", "watchdog", "dns", "reset", "--yes", "--json"],
             ["watchdog", "app-policy", "disable", "--json"],
             ["watchdog", "panic", "wake"],
             ["watchdog", "status", "--json"],

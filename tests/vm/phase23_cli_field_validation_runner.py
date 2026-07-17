@@ -480,7 +480,7 @@ class Runner:
     def dns(self) -> None:
         # dns apply (non-dry-run) requires the local DNS entrypoint to
         # already be listening, which is only true while connected (TUN/DNS
-        # hijack active) - "watchdog dns apply --yes" against a disconnected
+        # hijack active) - "sudo watchdog dns apply --yes" against a disconnected
         # daemon fails closed with "local DNS entrypoint is not reachable",
         # by design, not a bug. Connect first so apply/reset actually
         # exercise the real runtime path instead of a precondition that
@@ -502,12 +502,12 @@ class Runner:
         self.run(
             section,
             "apply",
-            ["watchdog", "dns", "apply", "--yes", "--systemd-link", "wdvpn-tun0", "--json"],
+            ["sudo", "watchdog", "dns", "apply", "--yes", "--systemd-link", "wdvpn-tun0", "--json"],
             timeout=120,
         )
         self.run(section, "status-after-apply", ["watchdog", "dns", "status", "--json"])
         self.run(section, "resolver-probe", ["getent", "hosts", self.plan["probe_domain"]], timeout=45)
-        self.run(section, "reset", ["watchdog", "dns", "reset", "--yes", "--json"], timeout=120, ok_codes={0, 70})
+        self.run(section, "reset", ["sudo", "watchdog", "dns", "reset", "--yes", "--json"], timeout=120, ok_codes={0, 70})
         self.run(section, "disconnect-after-dns", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.snapshot(f"post-dns-{self.external_vpn_state}")
 
@@ -643,7 +643,7 @@ watchdog doctor --json
 watchdog status --json
 curl --fail --show-error --max-time 20 https://{self.plan['probe_domain']}
 watchdog disconnect --json
-watchdog dns reset --yes --json
+sudo watchdog dns reset --yes --json
 watchdog panic wake
 ```
 """
@@ -654,7 +654,7 @@ watchdog panic wake
     def cleanup(self) -> None:
         section = "cleanup"
         self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
-        self.run(section, "dns-reset", ["watchdog", "dns", "reset", "--yes", "--json"], timeout=120, ok_codes={0, 70})
+        self.run(section, "dns-reset", ["sudo", "watchdog", "dns", "reset", "--yes", "--json"], timeout=120, ok_codes={0, 70})
         self.run(section, "app-policy-disable", ["watchdog", "app-policy", "disable", "--json"], ok_codes={0, 70})
         self.run(section, "panic-wake", ["watchdog", "panic", "wake"], timeout=180, ok_codes={0, 1})
         self.run(section, "status", ["watchdog", "status", "--json"], ok_codes={0, 69})
