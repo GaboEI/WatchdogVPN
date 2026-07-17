@@ -239,7 +239,7 @@ config_write_installed_key() {
     END {exit changed ? 0 : 1}
   ' "$WATCHDOGVPN_CONFIG_FILE" >"$tmp"
   fi
-  run_step sudo install -m 0644 -o root -g root "$tmp" "$WATCHDOGVPN_CONFIG_FILE"
+  run_step sudo install -m 0640 -o root -g watchdogvpn "$tmp" "$WATCHDOGVPN_CONFIG_FILE"
   rm -f "$tmp"
 }
 

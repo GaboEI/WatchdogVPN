@@ -23,6 +23,10 @@ grep -Fq 'sudo awk -v section="$section" -v name="$name" -v value="$formatted"' 
   printf 'FAIL: installer must read a private root-owned config through sudo before updating it\n' >&2
   exit 1
 }
+grep -Fq 'sudo install -m 0640 -o root -g watchdogvpn "$tmp" "$WATCHDOGVPN_CONFIG_FILE"' "$ROOT_DIR/install.sh" || {
+  printf 'FAIL: backend selection must preserve the private root:watchdogvpn config policy\n' >&2
+  exit 1
+}
 
 # Every invocation below points WATCHDOGVPN_ETC_CONFIG_DIR/FILE at an isolated
 # temp path so this test never reads or depends on the real
