@@ -417,7 +417,15 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             "tap" if configured_type == "tap" or configured_dev.startswith("tap") else "tun"
         )
         token = self._runtime_dir.name.rsplit("-", 1)[-1].replace("_", "")[:10]
-        self._expected_interface = f"wd{self._expected_device_type}{token}"
+        # The name must literally start with "tun"/"tap" - OpenVPN 2.6 rejects
+        # a server PUSH_REPLY with topology-subnet ifconfig options on a
+        # differently-prefixed --dev name ("problem with tun vs. tap
+        # setting"), even with an explicit --dev-type. Confirmed live on the
+        # plain OpenVPN driver's identical naming scheme: a "wdtun..." name
+        # crashed post-handshake, "tunwd..." completed. This driver shares
+        # the same server-push exposure even though it wasn't observed
+        # tripping here today.
+        self._expected_interface = f"{self._expected_device_type}wd{token}"
         return (
             "--dev",
             self._expected_interface,

@@ -315,7 +315,10 @@ class OpenVPNDriverTests(unittest.TestCase):
         options = self.driver._configure_readiness(profile)
 
         self.assertEqual(self.driver._expected_device_type, "tap")
-        self.assertTrue(self.driver._expected_interface.startswith("wdtap"))
+        # Must start with "tap" literally - OpenVPN rejects a topology-subnet
+        # PUSH_REPLY on a --dev name not prefixed with tun/tap, regardless of
+        # an explicit --dev-type (confirmed live, see openvpn_driver.py).
+        self.assertTrue(self.driver._expected_interface.startswith("tapwd"))
         self.assertLessEqual(len(self.driver._expected_interface), 15)
         self.assertEqual(options[0:4], ("--dev", self.driver._expected_interface, "--dev-type", "tap"))
 
