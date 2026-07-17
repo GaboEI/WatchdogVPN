@@ -74,8 +74,10 @@ EOF
 
 # Cloak is only needed for the OpenVPN+Cloak protocol combination, unlike
 # sing-box which is required by most Custom VPS protocols. Installation is
-# therefore always opt-in, defaulting to no, and is skipped without asking
-# under --dry-run so dry-run stays scriptable without extra stdin input.
+# still prompted for rather than unconditional, but defaults to "yes" like
+# every other resilient-protocol dependency (see the prompt_yes_no call
+# below), and is skipped without asking under --dry-run so dry-run stays
+# scriptable without extra stdin input.
 install_official_cloak() {
   local asset url tmpdir bin expected_sha256
 
