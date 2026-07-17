@@ -575,7 +575,7 @@ else
 fi
 
 if amneziawg_runtime_available; then
-  mark_ok "AmneziaWG (or compatible WireGuard) tooling detected"
+  mark_ok "AmneziaWG tooling detected"
 else
   mark_warn "AmneziaWG tooling not fully detected; AmneziaWG profiles will not run"
 fi
