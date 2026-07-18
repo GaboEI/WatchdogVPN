@@ -42,6 +42,9 @@ Role: read-only preflight and diagnostics.
 It must not install, remove or modify files.
 It must not change system time or NTP settings; wrong time is reported as a
 protocol-connectivity risk with actionable guidance.
+Its capture-mode diagnostic uses a lock-free read of the atomically published
+state snapshot; a missing state file returns defaults without creating the
+legacy config directory, lock files or restore journals.
 
 It should check:
 

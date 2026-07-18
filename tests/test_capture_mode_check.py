@@ -17,6 +17,7 @@ class CaptureModeCheckTests(unittest.TestCase):
 
             self.assertEqual(result.status, "ok")
             self.assertIn("tun", result.capture_modes)
+            self.assertFalse((Path(tmp) / "state.toml.lock").exists())
 
     def test_rules_policy_without_tun_warns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

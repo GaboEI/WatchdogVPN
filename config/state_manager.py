@@ -148,6 +148,16 @@ class StateManager:
         with file_lock(self.path):
             return self._load_unlocked()
 
+    def load_readonly(self) -> dict[str, Any]:
+        """Read one atomic state snapshot without creating lock/journal files.
+
+        State publication uses same-directory atomic replacement, so a
+        diagnostic reader can observe either the complete old file or the
+        complete new file without taking the writer lock. This entrypoint is
+        deliberately side-effect free for doctor/preflight contracts.
+        """
+        return self._load_unlocked()
+
     def _load_unlocked(self) -> dict[str, Any]:
         if not self.path.exists():
             return dict(DEFAULT_STATE)

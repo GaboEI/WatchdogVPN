@@ -25,7 +25,7 @@ class CaptureModeDiagnostic:
 
 def diagnose_capture_mode(state_manager: StateManager | None = None) -> CaptureModeDiagnostic:
     manager = state_manager or StateManager()
-    state = manager.load()
+    state = manager.load_readonly()
     routing_policy = str(state.get("routing_policy", "rule"))
     default_route_action = str(state.get("default_route_action", "current"))
     capture_modes = parse_capture_modes(str(state.get("capture_modes", "local_proxy")))
