@@ -23,6 +23,9 @@ REQUIRED_PROTOCOLS: dict[str, str] = {
 }
 
 REQUIRED_EXTERNAL_VPN_STATES = {"absent", "present"}
+NORMAL_EGRESS_URL = "https://www.facebook.com/"
+SOCKS_EGRESS_URL = "https://www.instagram.com/"
+HTTP_EGRESS_URL = "https://www.youtube.com/"
 
 
 class ManifestError(ValueError):
@@ -173,12 +176,11 @@ def _append_commands(lines: list[str], title: str, commands: list[list[str]]) ->
     lines.append("")
 
 
-def _egress_probe_commands(probe_domain: str) -> list[list[str]]:
-    url = f"https://{probe_domain}"
+def _egress_probe_commands(_probe_domain: str) -> list[list[str]]:
     return [
-        ["curl", "--fail", "--show-error", "--max-time", "20", url],
-        ["curl", "--fail", "--show-error", "--max-time", "20", "--socks5-hostname", "127.0.0.1:2080", url],
-        ["curl", "--fail", "--show-error", "--max-time", "20", "--proxy", "http://127.0.0.1:2081", url],
+        ["curl", "--fail", "--show-error", "--max-time", "20", NORMAL_EGRESS_URL],
+        ["curl", "--fail", "--show-error", "--max-time", "20", "--socks5-hostname", "127.0.0.1:2080", SOCKS_EGRESS_URL],
+        ["curl", "--fail", "--show-error", "--max-time", "20", "--proxy", "http://127.0.0.1:2081", HTTP_EGRESS_URL],
     ]
 
 

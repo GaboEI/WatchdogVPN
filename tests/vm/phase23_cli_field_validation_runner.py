@@ -20,6 +20,9 @@ from phase23_cli_field_validation_plan import ManifestError, _read_manifest, val
 GUARD_ENV = "WATCHDOGVPN_FIELD_VALIDATION"
 BRANCH = "phase-23-cli-field-validation"
 PROCESS_PATTERN = "sing-box|openvpn|ck-client|awg|wireguard|watchdog"
+NORMAL_EGRESS_URL = "https://www.facebook.com/"
+SOCKS_EGRESS_URL = "https://www.instagram.com/"
+HTTP_EGRESS_URL = "https://www.youtube.com/"
 
 
 class FieldValidationError(RuntimeError):
@@ -343,22 +346,26 @@ class Runner:
         }
 
     def egress_probes(self, section: str, *, expect_normal: bool = True, expect_proxy: bool = True) -> None:
-        url = f"https://{self.plan['probe_domain']}"
         if expect_normal:
-            self.run(section, "egress-normal", ["curl", "--fail", "--show-error", "--max-time", "20", url], timeout=45)
+            self.run(
+                section,
+                "egress-normal",
+                ["curl", "--fail", "--show-error", "--max-time", "20", NORMAL_EGRESS_URL],
+                timeout=45,
+            )
         else:
             print(f"PHASE23_SKIP {section} egress-normal tun_inactive")
         if expect_proxy:
             self.run(
                 section,
                 "egress-socks",
-                ["curl", "--fail", "--show-error", "--max-time", "20", "--socks5-hostname", "127.0.0.1:2080", url],
+                ["curl", "--fail", "--show-error", "--max-time", "20", "--socks5-hostname", "127.0.0.1:2080", SOCKS_EGRESS_URL],
                 timeout=45,
             )
             self.run(
                 section,
                 "egress-http",
-                ["curl", "--fail", "--show-error", "--max-time", "20", "--proxy", "http://127.0.0.1:2081", url],
+                ["curl", "--fail", "--show-error", "--max-time", "20", "--proxy", "http://127.0.0.1:2081", HTTP_EGRESS_URL],
                 timeout=45,
             )
         else:
