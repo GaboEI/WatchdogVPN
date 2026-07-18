@@ -398,10 +398,8 @@ print_contract
 
 if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
   warn "dry-run mode: no system changes will be made"
-else
-  print_section "Privilege check"
-  sudo -v
 fi
+require_installer_privileges
 
 if ((ASSUME_YES == 0)); then
   printf '\nThis removes WatchdogVPN product files from this system.\n'

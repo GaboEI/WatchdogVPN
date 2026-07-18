@@ -27,8 +27,8 @@ sudo() {
 # real permission boundary, so assert the fix statically; the actual
 # privilege behavior was confirmed by reproducing and fixing the failure on a
 # real installed host.
-if ! declare -f _watchdogvpn_migration_entries | grep -Fq 'sudo find'; then
-  printf 'FAIL: _watchdogvpn_migration_entries must list entries via sudo find; it is called against the root-owned staging directory created by `sudo mktemp -d`, which the invoking user cannot read directly\n' >&2
+if ! declare -f _watchdogvpn_migration_entries | grep -Fq 'run_privileged_readonly find'; then
+  printf 'FAIL: _watchdogvpn_migration_entries must list entries through the privileged read-only helper; it is called against the root-owned staging directory created by `sudo mktemp -d`, which the invoking user cannot read directly\n' >&2
   exit 1
 fi
 

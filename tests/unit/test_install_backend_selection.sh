@@ -6,6 +6,44 @@ INSTALLER="$ROOT_DIR/install.sh"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+FAKE_BIN="$TMP_DIR/fake-bin"
+mkdir -p "$FAKE_BIN"
+cat >"$FAKE_BIN/sudo" <<'SUDO'
+#!/usr/bin/env bash
+set -euo pipefail
+
+non_interactive=0
+validate=0
+while (($#)); do
+  case "$1" in
+    -n) non_interactive=1; shift ;;
+    -v) validate=1; shift ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+if [[ "${FAKE_SUDO_DENY:-0}" == "1" ]]; then
+  if ((non_interactive == 0)); then
+    printf 'interactive-sudo-invoked\n' >&2
+  fi
+  exit 1
+fi
+if ((non_interactive == 0)); then
+  printf 'interactive-sudo-invoked\n' >&2
+  exit 97
+fi
+((validate == 0)) || exit 0
+"$@"
+SUDO
+chmod 0755 "$FAKE_BIN/sudo"
+
+export PATH="$FAKE_BIN:$PATH"
+export WATCHDOGVPN_PREFLIGHT_ROOT="$TMP_DIR/preflight-root"
+export WATCHDOGVPN_SHARED_STATE_DIR="$TMP_DIR/shared-state"
+export WATCHDOGVPN_LEGACY_CONFIG_DIR="$TMP_DIR/legacy-state"
+mkdir -p "$WATCHDOGVPN_PREFLIGHT_ROOT"
+
 contains() {
   local haystack="$1" needle="$2"
   grep -Fq "$needle" <<<"$haystack"
@@ -51,7 +89,7 @@ contains "$yes_output" "[DRY-RUN] sudo systemctl enable --now watchdogvpn.servic
 mkdir -p "$TMP_DIR/home"
 fresh_custom_dir="$TMP_DIR/fresh-custom/etc/watchdogvpn"
 mkdir -p "$fresh_custom_dir"
-custom_output="$(printf '\n\n\n\n\n\n\n\nn\nn\n' | HOME="$TMP_DIR/home" WATCHDOGVPN_ETC_CONFIG_DIR="$fresh_custom_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_custom_dir/config.toml" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$INSTALLER" --dry-run --skip-doctor 2>&1)"
+custom_output="$(printf '\n\n\n\n\n\n\n\nn\nn\n' | HOME="$TMP_DIR/home" WATCHDOGVPN_ETC_CONFIG_DIR="$fresh_custom_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_custom_dir/config.toml" PATH="$FAKE_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$INSTALLER" --dry-run --skip-doctor 2>&1)"
 contains "$custom_output" "WatchdogVPN backend: Custom VPS"
 contains "$custom_output" "Custom VPS configuration stores only non-secret local metadata."
 if ! contains "$custom_output" "[DRY-RUN] install sing-box to /usr/local/bin/sing-box" \
@@ -105,5 +143,22 @@ if [[ "$existing_hash_before" != "$existing_hash_after" ]]; then
   printf 'FAIL: existing config.toml must not be modified when a backend is already configured\n' >&2
   exit 1
 fi
+
+# A non-interactive dry-run with no cached sudo ticket must stop before it can
+# classify protected paths. It must not print sudo's password/TTY noise and it
+# must never claim that the mixed-install preflight passed.
+set +e
+denied_output="$(FAKE_SUDO_DENY=1 WATCHDOGVPN_ETC_CONFIG_DIR="$fresh_yes_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_yes_dir/config.toml" "$INSTALLER" --dry-run --yes --skip-doctor </dev/null 2>&1)"
+denied_rc=$?
+set -e
+if ((denied_rc == 0)); then
+  printf 'FAIL: non-interactive dry-run without privileged read access must fail closed\n' >&2
+  exit 1
+fi
+contains "$denied_output" "dry-run cannot inspect protected paths without cached sudo credentials"
+not_contains "$denied_output" "mixed-install preflight passed"
+not_contains "$denied_output" "a terminal is required"
+not_contains "$denied_output" "a password is required"
+not_contains "$denied_output" "interactive-sudo-invoked"
 
 echo "install backend selection checks passed"

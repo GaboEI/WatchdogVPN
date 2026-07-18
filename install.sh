@@ -401,10 +401,7 @@ if ((RUN_DOCTOR == 1)); then
   "$ROOT_DIR/doctor.sh" || warn "preflight reported issues; continuing with guided installer checks"
 fi
 
-if [[ "${INSTALL_DRY_RUN:-0}" != "1" ]]; then
-  print_section "Privilege check"
-  sudo -v
-fi
+require_installer_privileges
 
 print_section "Mixed-install preflight"
 run_mixed_install_preflight install

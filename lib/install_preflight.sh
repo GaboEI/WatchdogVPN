@@ -34,13 +34,30 @@ preflight_home_path() {
 
 preflight_exists() {
   local path="$1"
-  [[ -e "$path" || -L "$path" ]]
+  if [[ -n "${WATCHDOGVPN_PREFLIGHT_ROOT:-}" ]]; then
+    [[ -e "$path" || -L "$path" ]]
+  else
+    root_path_exists "$path"
+  fi
+}
+
+preflight_is_directory() {
+  local path="$1"
+  if [[ -n "${WATCHDOGVPN_PREFLIGHT_ROOT:-}" ]]; then
+    [[ -d "$path" ]]
+  else
+    root_path_is_directory "$path"
+  fi
 }
 
 preflight_has_children() {
   local path="$1"
-  [[ -d "$path" ]] || return 1
-  [[ -n "$(find "$path" -mindepth 1 ! -name .migrated -print -quit 2>/dev/null || true)" ]]
+  preflight_is_directory "$path" || return 1
+  if [[ -n "${WATCHDOGVPN_PREFLIGHT_ROOT:-}" || ( -r "$path" && -x "$path" ) ]]; then
+    [[ -n "$(find "$path" -mindepth 1 ! -name .migrated -print -quit 2>/dev/null || true)" ]]
+  else
+    [[ -n "$(run_privileged_readonly find "$path" -mindepth 1 ! -name .migrated -print -quit 2>/dev/null || true)" ]]
+  fi
 }
 
 preflight_add_block() {
@@ -144,7 +161,7 @@ preflight_detect_unsupported_paths() {
     "$(preflight_path /usr/local/sbin/vpn_domain_bypass_apply.sh)" \
     "$(preflight_home_path .local/bin/VPN)"
   do
-    if [[ -d "$path" ]]; then
+    if preflight_is_directory "$path"; then
       preflight_add_block "expected file path is a directory: $(preflight_display_path "$path")"
     fi
   done
@@ -155,7 +172,7 @@ preflight_detect_unsupported_paths() {
     "$(preflight_path "${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}")" \
     "$(preflight_path /var/log/myvpn)"
   do
-    if [[ -e "$path" && ! -d "$path" ]]; then
+    if preflight_exists "$path" && ! preflight_is_directory "$path"; then
       preflight_add_block "expected directory path is not a directory: $(preflight_display_path "$path")"
     fi
   done
@@ -164,7 +181,7 @@ preflight_detect_unsupported_paths() {
 preflight_detect_unsupported_backend_config() {
   local config_file active mode
   config_file="$(preflight_path "${WATCHDOGVPN_CONFIG_FILE:-/etc/watchdogvpn/config.toml}")"
-  config_file_exists "$config_file" || return 0
+  preflight_exists "$config_file" || return 0
   if ! declare -F config_value >/dev/null 2>&1; then
     return 0
   fi
@@ -210,7 +227,7 @@ preflight_classify_machine_state() {
     return 0
   fi
 
-  if [[ -d "$legacy_config_dir" ]] && preflight_has_children "$legacy_config_dir" && [[ ! -e "$marker" ]]; then
+  if preflight_is_directory "$legacy_config_dir" && preflight_has_children "$legacy_config_dir" && ! preflight_exists "$marker"; then
     PREFLIGHT_STATE_CLASS="legacy migration"
     return 0
   fi

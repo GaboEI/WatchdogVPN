@@ -221,21 +221,21 @@ migrate_watchdogvpn_shared_state() {
   # always uses the shared dir), so the CLI and daemon silently never share
   # state on any install that never had legacy per-user config. Found during
   # the Phase 18 Task 18.4 shared-state permissions audit.
-  if [[ -e "$marker" ]]; then
+  if root_path_exists "$marker"; then
     # A crash after marker publication but before journal cleanup is already a
     # completed migration: marker publication only follows target validation.
-    if [[ -e "$journal" ]]; then
+    if root_path_exists "$journal"; then
       run_step sudo rm -f -- "$journal"
     fi
     printf '[KEEP] WatchdogVPN shared state already migrated: %s\n' "$target_dir"
     return 0
   fi
-  if [[ -e "$journal" ]] \
-    && { [[ ! -f "$journal" ]] || ! sudo grep -Fxq 'watchdogvpn-state-migration-v1' "$journal"; }; then
+  if root_path_exists "$journal" \
+    && { ! root_path_is_file "$journal" || ! run_privileged_readonly grep -Fxq 'watchdogvpn-state-migration-v1' "$journal"; }; then
     printf 'ERROR: WatchdogVPN migration recovery journal is invalid: %s\n' "$journal" >&2
     return 1
   fi
-  if [[ -e "$target_dir" && ! -d "$target_dir" ]]; then
+  if root_path_exists "$target_dir" && ! root_path_is_directory "$target_dir"; then
     printf 'ERROR: WatchdogVPN shared state target is not a directory: %s\n' "$target_dir" >&2
     return 1
   fi
@@ -243,14 +243,14 @@ migrate_watchdogvpn_shared_state() {
     && [[ -n "$(find "$source_dir" -mindepth 1 ! -name .migrated -print -quit)" ]]; then
     has_legacy_data=1
   fi
-  if [[ ! -d "$target_dir" ]]; then
+  if ! root_path_is_directory "$target_dir"; then
     prepare_watchdogvpn_state_directory "$target_dir"
   fi
-  if [[ ! -d "$target_dir" ]]; then
+  if ! root_path_is_directory "$target_dir"; then
     printf '[SKIP] WatchdogVPN shared state target is not available yet: %s\n' "$target_dir"
     return 0
   fi
-  if [[ -e "$marker" ]]; then
+  if root_path_exists "$marker"; then
     printf '[KEEP] WatchdogVPN shared state already migrated: %s\n' "$target_dir"
     return 0
   fi
@@ -356,7 +356,7 @@ _watchdogvpn_migration_entries() {
   # left the target directory empty, and target-content-validate correctly
   # caught the resulting divergence, but only after silently discarding the
   # staged legacy state.
-  sudo find "$directory" -mindepth 1 -maxdepth 1 \
+  run_privileged_readonly find "$directory" -mindepth 1 -maxdepth 1 \
     ! -name .migrated \
     ! -name .migration-in-progress \
     -printf '%f\0' | sort -z

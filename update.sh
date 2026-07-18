@@ -198,10 +198,7 @@ print_preservation_contract
 require_supported_distro
 require_existing_installation
 
-if [[ "${INSTALL_DRY_RUN:-0}" != "1" ]]; then
-  print_section "Privilege check"
-  sudo -v
-fi
+require_installer_privileges
 
 print_section "Mixed-install preflight"
 run_mixed_install_preflight update

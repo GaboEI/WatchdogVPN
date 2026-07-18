@@ -84,7 +84,7 @@ ensure_config_permissions() {
 
 config_file_exists() {
   local file="${1:-$WATCHDOGVPN_CONFIG_FILE}"
-  [[ -f "$file" ]] || sudo test -f "$file"
+  root_path_is_file "$file"
 }
 
 config_read_to_stdout() {
@@ -92,7 +92,7 @@ config_read_to_stdout() {
   if [[ -r "$file" ]]; then
     cat "$file"
   else
-    sudo cat "$file"
+    run_privileged_readonly cat "$file"
   fi
 }
 
@@ -109,7 +109,7 @@ config_value() {
   config_file_exists "$file" || return 1
 
   local -a reader=(awk)
-  [[ -r "$file" ]] || reader=(sudo awk)
+  [[ -r "$file" ]] || reader=(run_privileged_readonly awk)
   "${reader[@]}" -v section="$section" -v name="$name" '
     $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; next}
     $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}

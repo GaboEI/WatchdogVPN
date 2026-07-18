@@ -6,6 +6,21 @@ UNINSTALLER="$ROOT_DIR/uninstall.sh"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+FAKE_BIN="$TMP_DIR/fake-bin"
+mkdir -p "$FAKE_BIN"
+cat >"$FAKE_BIN/sudo" <<'SUDO'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "-n" ]] || exit 97
+shift
+if [[ "${1:-}" == "-v" ]]; then
+  exit 0
+fi
+"$@"
+SUDO
+chmod 0755 "$FAKE_BIN/sudo"
+export PATH="$FAKE_BIN:$PATH"
+
 contains() {
   local haystack="$1" needle="$2" message="$3"
   if ! grep -Fq -- "$needle" <<<"$haystack"; then

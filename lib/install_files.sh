@@ -13,6 +13,46 @@ run_step() {
   "$@"
 }
 
+run_privileged_readonly() {
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    sudo -n "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+require_installer_privileges() {
+  print_section "Privilege check"
+
+  if [[ "${INSTALL_DRY_RUN:-0}" != "1" ]]; then
+    sudo -v
+    return 0
+  fi
+
+  # A truthful dry-run must inspect root-owned config/state as well as public
+  # product paths. Never let sudo fall back to a hidden password prompt in a
+  # non-interactive session, and never classify an unreadable path as absent.
+  if sudo -n -v 2>/dev/null; then
+    ok "read-only access to protected paths available"
+    return 0
+  fi
+
+  if [[ -t 0 ]]; then
+    info "sudo authentication is required to inspect protected paths; dry-run will not modify WatchdogVPN state"
+    sudo -v
+    sudo -n -v 2>/dev/null || {
+      fail "sudo authentication did not provide read access to protected paths"
+      return 1
+    }
+    ok "read-only access to protected paths available"
+    return 0
+  fi
+
+  fail "dry-run cannot inspect protected paths without cached sudo credentials"
+  printf 'Run sudo -v in an interactive terminal, then rerun this dry-run in the same terminal.\n' >&2
+  return 1
+}
+
 root_path_exists() {
   local path="$1"
   if [[ -e "$path" || -L "$path" ]]; then
@@ -23,11 +63,18 @@ root_path_exists() {
   # unprivileged installer process sees /root-owned children as "absent" and
   # silently skips both backup and removal. Live mutations have already passed
   # the caller's sudo privilege check, so preserve the real distinction here.
-  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    sudo -n test -e "$path" 2>/dev/null || sudo -n test -L "$path" 2>/dev/null
-  else
-    sudo test -e "$path" || sudo test -L "$path"
-  fi
+  run_privileged_readonly test -e "$path" 2>/dev/null \
+    || run_privileged_readonly test -L "$path" 2>/dev/null
+}
+
+root_path_is_file() {
+  local path="$1"
+  [[ -f "$path" ]] || run_privileged_readonly test -f "$path" 2>/dev/null
+}
+
+root_path_is_directory() {
+  local path="$1"
+  [[ -d "$path" ]] || run_privileged_readonly test -d "$path" 2>/dev/null
 }
 
 download_release_asset() {
@@ -136,7 +183,7 @@ create_owned_dir() {
 
 create_config_if_missing() {
   local src="$1" dest="$2" mode="${3:-0644}" group="${4:-root}"
-  if [[ -e "$dest" ]] || { [[ "$INSTALL_DRY_RUN" != "1" ]] && sudo test -e "$dest"; }; then
+  if root_path_exists "$dest"; then
     printf '[KEEP] existing config: %s\n' "$dest"
     return 0
   fi
