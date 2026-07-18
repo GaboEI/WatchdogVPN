@@ -290,3 +290,68 @@ Arch Linux (Task 23.5.2) is now fully certified: protocol matrix, provider
 lifecycle, DNS apply/reset, rotation, kill-switch controlled failure, and
 clean uninstall with post-uninstall baseline comparison all have accepted
 real-machine evidence.
+
+## Task 23.5.2 post-closure hardening — fresh installer and destructive-purge audit
+
+The 2026-07-18 closure was immediately followed by a second, destructive
+audit on the rebuilt `wdvpn-arch-certification` candidate. This did not
+reopen the already accepted protocol matrix. It challenged the fresh-install,
+read-only-preflight and full-purge claims against real protected paths and
+seeded non-secret data. Seven additional universal defects were found and
+closed before proceeding to another distro:
+
+1. Full purge still created internal recovery backups while deleting config,
+   state and logs, leaving unencrypted copies under
+   `/var/backups/watchdogvpn` after an explicit encrypted export. `96cabb9`
+   suppresses backup creation only for the confirmed three-flag purge and
+   removes the fixed internal backup root; an overrideable `BACKUP_ROOT` is
+   never a deletion target.
+2. A clean install started the daemon and created its socket successfully,
+   but the final IPC smoke reported it as not running because the already
+   running installer process did not have the newly added `watchdogvpn`
+   supplementary group. `695dbaf` runs the probe through
+   `setpriv --init-groups` and changes the IPC path preflight from
+   `Path.exists()` to `stat()` semantics, preserving permission errors instead
+   of misclassifying them as an absent daemon.
+3. The first failed transactional install could roll the unit back before
+   systemd removed `RuntimeDirectory=`, leaving orphaned numeric ownership in
+   `/run/watchdogvpn` and `/run/amneziawg`. `9e852eb` always removes the
+   exclusive WatchdogVPN runtime directory and removes the conventional
+   AmneziaWG UAPI directory only when it is a real empty directory.
+4. The refreshed-group smoke inherited sudo's `HOME=/root` identity on some
+   systems. `aad780d` resolves the invoking user's UID, GID and NSS home and
+   sets `HOME`, `USER` and `LOGNAME` explicitly before the unprivileged IPC
+   request.
+5. Shared-state migration intentionally preserves its source at
+   `~/.config/watchdogvpn`, but delete-all-data did not remove that duplicate
+   or the fixed historical root copy. `84fa0b2` purges the invoking user's
+   source, root's known copy, and an NSS-resolved sudo invoker home only under
+   the confirmed full-purge gate; it never enumerates unrelated users.
+6. The common root-path helper checked existence without privilege. A child
+   below a non-traversable parent such as `/root` was therefore printed as
+   absent and skipped, including previously documented `/root/.local`
+   cleanup. `5b75ded` centralizes privileged existence checks for both backup
+   and removal and adds a protected-parent regression seam.
+7. `doctor.sh` claimed to be read-only but its capture-mode diagnostic used a
+   writer lock and created `~/.config/watchdogvpn/state.toml.lock` on a clean
+   machine. `f48acd8` adds a side-effect-free read of atomically published
+   state and pins that a missing state file creates no directory, lock or
+   recovery journal.
+
+The final accepted live sequence used exact commit `f48acd8`: confirmed empty
+baseline; ran `doctor.sh` (`FAIL=0`) and proved both legacy config paths still
+absent; ran `install.sh --yes` with exit code 0 and a successful real daemon
+IPC smoke; verified the installed marker, active service, socket ownership and
+mode; proved a process with cleared supplementary groups receives exit 77 and
+the permission-specific error while `setpriv --init-groups` receives a valid
+standby response; seeded six harmless probes across user/root config, system
+config, state, logs and internal backups; then ran the confirmed full purge.
+
+The final baseline has no WatchdogVPN user/group or group membership, product
+paths, legacy user/root config, internal backups, runtime directories, nftables
+rules, policy-routing table 880 entries or TUN/WireGuard/AmneziaWG interfaces.
+The systemd-resolved stub remained active and direct baseline DNS/reachability
+worked. Full local gates passed after every fix; final count is 1737/1737
+Python tests plus `tests/unit.sh` and `tests/syntax.sh`. GitHub Actions run
+29643194893 passed for `f48acd8`. Raw logs contain no private profile,
+provider, endpoint or key material and remain outside the repository.
