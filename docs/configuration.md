@@ -51,7 +51,10 @@ managed TOML files are `root:watchdogvpn` with mode `0640`. This keeps product
 configuration unavailable to unrelated local users while allowing the
 WatchdogVPN service and the installing user (which the installer adds to the
 `watchdogvpn` group) to read it. Start a new login session after the first
-install before using group-based read commands or the TUI.
+install before using group-based read commands or the TUI. The installer does
+not weaken this boundary for its own final check: it reloads the invoking
+user's groups in a short-lived process and requires a successful read-only IPC
+status response before reporting installation success.
 
 Configuration changes are administrative operations. Use `sudo` for manual
 edits and for `watchdogvpn config set` or `watchdogvpn config reset`; do not

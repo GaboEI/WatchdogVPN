@@ -142,11 +142,15 @@ class WatchdogIPCClient:
 
     def _connect(self, path: Path, timeout: float | None = None) -> socket.socket:
         try:
-            exists = path.exists()
+            # Path.exists() deliberately suppresses some OSError subclasses and
+            # can therefore turn EACCES on a protected parent directory into a
+            # false "socket does not exist" result.  stat() preserves the
+            # distinction required by the public CLI error contract.
+            path.stat()
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            raise DaemonNotRunningError() from exc
         except PermissionError as exc:
             raise DaemonPermissionError() from exc
-        if not exists:
-            raise DaemonNotRunningError()
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(self.timeout if timeout is None else timeout)
         try:

@@ -134,6 +134,16 @@ checks answer both "does the installed tree match this checkout?" and "is the
 daemon actually executing the refreshed tree?" instead of trusting only the
 hand-edited `VERSION` string in `bin/watchdogvpn`.
 
+On a first install, adding the invoking user to the `watchdogvpn` group updates
+NSS but cannot alter the supplementary groups of the installer process that is
+already running. The final read-only IPC smoke test therefore drops back to the
+invoking user's UID/GID with `setpriv --init-groups` and verifies `watchdog
+status --json` using the freshly loaded group vector. Permission errors remain
+hard failures; an active systemd unit and an existing socket are not accepted
+as proof when the CLI cannot complete the IPC request. The CLI's own socket
+preflight uses `stat(2)` semantics so an inaccessible socket directory is
+reported as a permission problem, never as a falsely absent daemon.
+
 ## Domain Bypass Network Contract
 
 Full rationale and incident background in `docs/security.md`'s "Domain

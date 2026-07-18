@@ -535,6 +535,31 @@ prepare_watchdogvpn_private_state() {
   fi
 }
 
+watchdog_status_with_refreshed_groups() {
+  local socket_path="$1"
+  local target_user="${SUDO_USER:-${USER:-}}"
+  local target_uid target_gid
+
+  # usermod updates /etc/group, but it cannot change the supplementary groups
+  # of the already-running installer process.  Run the read-only IPC probe as
+  # the invoking user with a group vector freshly loaded from NSS so a clean
+  # first install tests the real post-login access contract.
+  if [[ -n "$target_user" && "$target_user" != "root" ]] \
+    && getent passwd "$target_user" >/dev/null 2>&1; then
+    target_uid="$(id -u "$target_user")"
+    target_gid="$(id -g "$target_user")"
+    sudo setpriv \
+      --reuid "$target_uid" \
+      --regid "$target_gid" \
+      --init-groups \
+      -- env WATCHDOGVPN_SOCKET_PATH="$socket_path" \
+      /usr/local/bin/watchdog status --json
+    return
+  fi
+
+  WATCHDOGVPN_SOCKET_PATH="$socket_path" /usr/local/bin/watchdog status --json
+}
+
 smoke_test_watchdogvpn_daemon() {
   local socket_path="${WATCHDOGVPN_SOCKET_PATH:-/run/watchdogvpn/control.sock}"
   local status_output status_rc
@@ -571,18 +596,11 @@ smoke_test_watchdogvpn_daemon() {
   fi
 
   set +e
-  status_output="$(WATCHDOGVPN_SOCKET_PATH="$socket_path" /usr/local/bin/watchdog status --json 2>&1)"
+  status_output="$(watchdog_status_with_refreshed_groups "$socket_path" 2>&1)"
   status_rc=$?
   set -e
   if ((status_rc == 0)); then
     ok "daemon IPC status smoke test passed"
-    return 0
-  fi
-
-  if grep -Fqi "watchdogvpn' group" <<<"$status_output" \
-    || grep -Fqi "permission denied" <<<"$status_output"; then
-    warn "daemon is active, but this login session cannot access the IPC socket yet"
-    printf 'Open a new login session after the watchdogvpn group change, then run: watchdog status --json\n'
     return 0
   fi
 

@@ -103,8 +103,11 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo chmod 0600 "$cache_path"' "Fake
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'smoke_test_watchdogvpn_daemon()' "runtime install must define a daemon smoke test"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'systemctl is-active --quiet watchdogvpn.service' "daemon smoke test must verify the service is active"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo test -S "$socket_path"' "daemon smoke test must verify the IPC socket exists"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'watchdog_status_with_refreshed_groups "$socket_path"' "daemon smoke test must refresh the invoking user's group vector"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo setpriv \' "daemon smoke test must use the required privilege transition tool"
+assert_contains "$ROOT_DIR/lib/runtime.sh" '      --init-groups \' "daemon smoke test must reload supplementary groups from NSS"
 assert_contains "$ROOT_DIR/lib/runtime.sh" '/usr/local/bin/watchdog status --json' "daemon smoke test must use a read-only daemon status command"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'Open a new login session after the watchdogvpn group change' "daemon smoke test must distinguish session group refresh from daemon failure"
+assert_not_contains "$ROOT_DIR/lib/runtime.sh" 'daemon is active, but this login session cannot access the IPC socket yet' "daemon smoke test must not accept an unverified IPC connection"
 if grep -Fq 'install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"' "$ROOT_DIR/lib/runtime.sh"; then
   printf 'FAIL: migration must not create /var/lib/watchdogvpn with install -d\n' >&2
   exit 1

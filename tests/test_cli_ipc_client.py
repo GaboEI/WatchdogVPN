@@ -338,7 +338,7 @@ class WatchdogIPCClientErrorTests(unittest.TestCase):
     def test_permission_error_reading_socket_path_maps_to_daemon_permission_error(self) -> None:
         client = WatchdogIPCClient(Path("/run/watchdogvpn/control.sock"), timeout=0.1)
 
-        with patch.object(Path, "exists", side_effect=PermissionError):
+        with patch.object(Path, "stat", side_effect=PermissionError):
             with self.assertRaises(DaemonPermissionError) as cm:
                 client.status()
 
