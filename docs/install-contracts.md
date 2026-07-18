@@ -234,6 +234,9 @@ It should remove:
 - product systemd units
 - product NetworkManager dispatcher
 - product logrotate config
+- the exclusive ephemeral runtime directory `/run/watchdogvpn/`; an empty
+  `/run/amneziawg/` created for the daemon is also removed, while a non-empty
+  or symlinked shared AmneziaWG path is preserved
 - a desktop launcher file left by a pre-removal install, if present (the
   desktop launcher feature itself was removed; `install.sh`/`update.sh` no
   longer offer or refresh it, but `uninstall.sh` still cleans up a leftover

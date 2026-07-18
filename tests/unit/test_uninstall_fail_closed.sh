@@ -107,6 +107,18 @@ assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path "$PYTHON_PACKAGE_DIR"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /root/.local/bin/VPN' "uninstall must remove root's own TUI launcher copy left by a sudo install/update"
 assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /root/.local/share/watchdogvpn' "uninstall must remove root's own TUI package copy left by a sudo install/update"
 
+# An interrupted install can remove the systemd unit before RuntimeDirectory=
+# cleanup runs. The exclusive product directory must always be removed without
+# backup; the conventional AmneziaWG UAPI directory is only removed if empty.
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path_no_backup /run/watchdogvpn' "uninstall must remove its ephemeral runtime directory without creating a backup"
+assert_contains "$ROOT_DIR/uninstall.sh" 'sudo rmdir -- /run/amneziawg' "uninstall must remove an empty WatchdogVPN-created AmneziaWG runtime directory"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_product_runtime_directories' "uninstall flow must invoke ephemeral runtime cleanup"
+if grep -Fq 'rm -rf -- /run/amneziawg' "$ROOT_DIR/uninstall.sh"; then
+  printf 'FAIL: uninstall must not recursively delete the shared AmneziaWG runtime path\n' >&2
+  exit 1
+fi
+assert_order 'print_section "Remove systemd units"' 'print_section "Remove ephemeral runtime directories"' "runtime directories must be cleaned only after product units are removed"
+
 set +e
 "$ROOT_DIR/uninstall.sh" --skip-dns-rescue >/dev/null 2>&1
 skip_status=$?

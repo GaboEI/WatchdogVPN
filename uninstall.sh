@@ -118,6 +118,7 @@ print_contract() {
   printf 'NetworkManager dispatcher\n'
   printf 'logrotate policy\n'
   printf 'desktop launcher\n'
+  printf '/run/watchdogvpn/ and an empty WatchdogVPN-created /run/amneziawg/\n'
   printf 'orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts, if present\n'
 
   print_section "Preserved unless explicitly purged"
@@ -182,6 +183,35 @@ remove_runtime_files() {
   remove_user_path "$desktop_dir/watchdogvpn.desktop"
 
   remove_root_path /etc/logrotate.d/myvpn
+}
+
+remove_product_runtime_directories() {
+  # RuntimeDirectory normally disappears when systemd stops the service. An
+  # interrupted installation can roll the unit back before systemd gets that
+  # cleanup opportunity, leaving root-owned runtime paths with an orphaned
+  # numeric UID/GID. These paths are ephemeral and must never be backed up.
+  remove_root_path_no_backup /run/watchdogvpn
+
+  # /run/amneziawg is the conventional UAPI location and may be shared by an
+  # independently managed AmneziaWG process. Remove the directory only when
+  # it is a real, empty directory; preserve any non-empty or symlinked path.
+  if [[ -L /run/amneziawg ]]; then
+    warn "preserving symlinked shared AmneziaWG runtime path: /run/amneziawg"
+    return 0
+  fi
+  if [[ ! -d /run/amneziawg ]]; then
+    printf '[KEEP] absent: /run/amneziawg\n'
+    return 0
+  fi
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] remove empty shared runtime directory /run/amneziawg\n'
+    return 0
+  fi
+  if sudo rmdir -- /run/amneziawg 2>/dev/null; then
+    printf '[REMOVE] empty shared runtime directory: /run/amneziawg\n'
+  else
+    warn "preserving non-empty shared AmneziaWG runtime path: /run/amneziawg"
+  fi
 }
 
 remove_optional_user_data() {
@@ -389,6 +419,8 @@ print_section "Disable remaining product services"
 disable_systemd_units
 print_section "Remove systemd units"
 remove_systemd_units
+print_section "Remove ephemeral runtime directories"
+remove_product_runtime_directories
 print_section "Remove legacy AdGuard-era units"
 remove_legacy_systemd_units
 print_section "Remove product files"
