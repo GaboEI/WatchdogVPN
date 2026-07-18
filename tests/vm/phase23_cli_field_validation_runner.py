@@ -236,6 +236,7 @@ class Runner:
         ok_codes: set[int] | None = None,
         outcome_wait_seconds: int = 300,
         poll_interval_seconds: int = 5,
+        record_failure: bool = True,
     ) -> int:
         """Run a daemon mutation and resolve a deferred result authoritatively."""
 
@@ -253,7 +254,7 @@ class Runner:
 
         command_id = self._in_progress_command_id()
         if command_id is None:
-            if returncode not in accepted_codes:
+            if record_failure and returncode not in accepted_codes:
                 self.failures.append(f"{section}:{label}: rc={returncode}")
             return returncode
 
@@ -273,13 +274,14 @@ class Runner:
             if self._in_progress_command_id() is not None:
                 time.sleep(poll_interval_seconds)
                 continue
-            if outcome_rc not in accepted_codes:
+            if record_failure and outcome_rc not in accepted_codes:
                 self.failures.append(f"{section}:{label}: final rc={outcome_rc}")
             return outcome_rc
 
-        self.failures.append(
-            f"{section}:{label}: authoritative outcome timeout after {outcome_wait_seconds}s"
-        )
+        if record_failure:
+            self.failures.append(
+                f"{section}:{label}: authoritative outcome timeout after {outcome_wait_seconds}s"
+            )
         print(f"PHASE23_MUTATION_TIMEOUT {section} {label}", file=sys.stderr)
         return 124
 
@@ -397,6 +399,24 @@ class Runner:
                 return mapped
         return placeholder
 
+    def resolved_provider_ids(self) -> tuple[str, str]:
+        provider = self.plan["provider"]
+        provider_id = str(provider["expected_provider_id"])
+        node_id = str(provider["expected_node_id"])
+        provider_id_map_path = self.evidence_dir / "phase23-provider-id-map.json"
+        if provider_id_map_path.is_file():
+            try:
+                provider_id_map = json.loads(provider_id_map_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return provider_id, node_id
+            mapped_provider_id = provider_id_map.get("provider_id")
+            mapped_node_id = provider_id_map.get("node_id")
+            if isinstance(mapped_provider_id, str) and mapped_provider_id:
+                provider_id = mapped_provider_id
+            if isinstance(mapped_node_id, str) and mapped_node_id:
+                node_id = mapped_node_id
+        return provider_id, node_id
+
     def protocols(self) -> None:
         for profile in self.selected_profiles():
             profile_id = self.profile_id_for(profile)
@@ -505,7 +525,7 @@ class Runner:
             "provider", "provider-stats-after-update", ["watchdog", "provider", "stats", provider_id, "--json"]
         )
 
-        node_id = provider["expected_node_id"]
+        node_ids = [provider["expected_node_id"]]
         if not self.dry_run and stats_rc == 0:
             list_rc = self.run(
                 "provider", "profile-list-for-node-lookup", ["watchdog", "profile", "list", "--json"], timeout=60
@@ -521,15 +541,58 @@ class Runner:
                     for item in (profiles if isinstance(profiles, list) else [])
                     if isinstance(item, dict) and item.get("provider_id") == provider_id
                 ]
-                if owned and isinstance(owned[0].get("id"), str):
-                    node_id = owned[0]["id"]
+                node_ids = sorted(
+                    item["id"]
+                    for item in owned
+                    if isinstance(item.get("id"), str) and item["id"]
+                )
+                if node_ids:
+                    _json_write(
+                        self.evidence_dir / "phase23-provider-id-map.json",
+                        {"provider_id": provider_id, "node_id": node_ids[0]},
+                    )
                 else:
                     self.failures.append("provider:profile-list-for-node-lookup: no owned node found for provider")
 
-        self.run_mutation("provider", "connect-provider-node", ["watchdog", "connect", node_id, "--json"], timeout=180)
-        self.run("provider", "status-provider-node", ["watchdog", "status", "--json"], timeout=60)
-        self.egress_probes("provider")
-        self.run_mutation("provider", "disconnect-provider-node", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
+        connected_node_id = ""
+        for attempt, node_id in enumerate(node_ids, start=1):
+            connect_rc = self.run_mutation(
+                "provider",
+                f"connect-provider-node-{attempt}",
+                ["watchdog", "connect", node_id, "--json"],
+                timeout=180,
+                record_failure=False,
+            )
+            if connect_rc == 0:
+                connected_node_id = node_id
+                break
+            self.run(
+                "provider",
+                f"status-after-failed-provider-node-{attempt}",
+                ["watchdog", "status", "--json"],
+                timeout=60,
+                ok_codes={0, 69, 70},
+            )
+
+        if connected_node_id:
+            if not self.dry_run:
+                _json_write(
+                    self.evidence_dir / "phase23-provider-id-map.json",
+                    {"provider_id": provider_id, "node_id": connected_node_id},
+                )
+            self.run("provider", "status-provider-node", ["watchdog", "status", "--json"], timeout=60)
+            self.egress_probes("provider")
+            self.run_mutation(
+                "provider",
+                "disconnect-provider-node",
+                ["watchdog", "disconnect", "--json"],
+                timeout=180,
+                ok_codes={0, 70},
+            )
+        else:
+            self.failures.append(
+                f"provider:connect-provider-node: no provider-owned node connected (attempted={len(node_ids)})"
+            )
         self.snapshot(f"post-provider-{self.external_vpn_state}")
 
     def app_policy(self) -> None:
@@ -719,10 +782,10 @@ class Runner:
 
     def rotation(self) -> None:
         rotation = self.plan["rotation"]
-        provider = self.plan["provider"]
         section = "rotation"
         primary_id = self.resolved_profile_id(rotation["primary_profile_id"])
         secondary_id = self.resolved_profile_id(rotation["secondary_profile_id"])
+        provider_id, provider_node_id = self.resolved_provider_ids()
         all_failed_ids = [self.resolved_profile_id(pid) for pid in rotation["all_failed_profile_ids"]]
         self.run(section, "primary-rotation-on", ["watchdog", "profile", "rotation", primary_id, "--enable", "--json"])
         self.run(section, "secondary-rotation-on", ["watchdog", "profile", "rotation", secondary_id, "--enable", "--json"])
@@ -730,11 +793,11 @@ class Runner:
         self.run_mutation(section, "connect-primary", ["watchdog", "connect", primary_id, "--json"], timeout=180)
         self.run_mutation(section, "rotate-force", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
         self.run(section, "status-after-rotate", ["watchdog", "status", "--json"], ok_codes={0, 69})
-        self.run(section, "provider-rotation-on", ["watchdog", "provider", "rotation", provider["expected_provider_id"], "--enable", "--json"], ok_codes={0, 65, 70})
+        self.run(section, "provider-rotation-on", ["watchdog", "provider", "rotation", provider_id, "--enable", "--json"], ok_codes={0, 65, 70})
         self.run(
             section,
             "provider-node-rotation-on",
-            ["watchdog", "provider", "node", provider["expected_provider_id"], provider["expected_node_id"], "--rotation", "--enable", "--json"],
+            ["watchdog", "provider", "node", provider_id, provider_node_id, "--rotation", "--enable", "--json"],
             ok_codes={0, 65, 70},
         )
         self.run_mutation(section, "rotate-provider", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
@@ -747,7 +810,7 @@ class Runner:
         self.run(
             section,
             "provider-rotation-off-for-all-failed",
-            ["watchdog", "provider", "rotation", provider["expected_provider_id"], "--disable", "--json"],
+            ["watchdog", "provider", "rotation", provider_id, "--disable", "--json"],
             ok_codes={0, 65, 70},
         )
         for profile_id in all_failed_ids:
@@ -761,7 +824,7 @@ class Runner:
         self.run(
             section,
             "provider-rotation-restore-off",
-            ["watchdog", "provider", "rotation", provider["expected_provider_id"], "--disable", "--json"],
+            ["watchdog", "provider", "rotation", provider_id, "--disable", "--json"],
             ok_codes={0, 65, 70},
         )
         self.run_mutation(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})

@@ -114,6 +114,47 @@ class Phase23FieldValidationToolsTests(unittest.TestCase):
                 ["protocols-absent-amneziawg:connect: final rc=70"],
             )
 
+    def test_mutation_can_defer_candidate_failure_to_bounded_search(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.make_runner(tmp)
+            with patch.object(runner, "run", return_value=70):
+                result = runner.run_mutation(
+                    "provider",
+                    "connect-provider-node-1",
+                    ["watchdog", "connect", "provider-node-id", "--json"],
+                    record_failure=False,
+                )
+
+            self.assertEqual(result, 70)
+            self.assertEqual(runner.failures, [])
+
+    def test_rotation_resolves_dynamic_provider_and_node_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = Runner(
+                {
+                    "evidence_dir": tmp,
+                    "probe_domain": "ignored.example",
+                    "profiles": [],
+                    "provider": {
+                        "expected_provider_id": "provider-placeholder",
+                        "expected_node_id": "node-placeholder",
+                    },
+                },
+                section="rotation",
+                external_vpn_state="absent",
+                dry_run=False,
+                selected_protocols=None,
+            )
+            (Path(tmp) / "phase23-provider-id-map.json").write_text(
+                json.dumps({"provider_id": "provider-real", "node_id": "node-real"}),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                runner.resolved_provider_ids(),
+                ("provider-real", "node-real"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
