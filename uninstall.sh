@@ -126,6 +126,7 @@ print_contract() {
   printf '/etc/adguardvpn.env (legacy, if present)\n'
   printf '/var/lib/vpn-rotate/ (legacy, if present)\n'
   printf '~/.conky/WatchdogVPN/ (legacy, if present)\n'
+  printf 'watchdogvpn system account and group (removed only alongside a full --purge-config --purge-logs --purge-state --confirm-delete DELETE)\n'
 }
 
 remove_runtime_files() {
@@ -195,6 +196,14 @@ remove_optional_user_data() {
     printf '[KEEP] legacy state: /var/lib/vpn-rotate\n'
   fi
 
+  # The service account is scoped to config/logs/state, not to any single
+  # one of them - only remove it once all three are gone, matching the
+  # dpkg --purge convention instead of tying it to one arbitrary flag.
+  if ((PURGE_CONFIG == 1 && PURGE_LOGS == 1 && PURGE_STATE == 1)); then
+    remove_watchdogvpn_system_account
+  else
+    printf '[KEEP] system account: watchdogvpn (removed only alongside a full purge)\n'
+  fi
 }
 
 require_delete_confirmation() {

@@ -457,6 +457,25 @@ add_installing_user_to_watchdogvpn_group() {
   warn "added $target_user to watchdogvpn group; open a new login session before using the v2 CLI"
 }
 
+remove_watchdogvpn_system_account() {
+  # Only called by uninstall.sh when config, logs and state were all purged
+  # with explicit --confirm-delete DELETE: a full purge previously left the
+  # service account and the installing user's group membership behind
+  # forever, with neither state documented in the uninstall contract. A
+  # plain (non-purge) uninstall must keep preserving this account, matching
+  # every other preserved-unless-purged path.
+  if getent passwd watchdogvpn >/dev/null 2>&1; then
+    run_step sudo userdel watchdogvpn
+  else
+    printf '[KEEP] absent: watchdogvpn system user\n'
+  fi
+  if getent group watchdogvpn >/dev/null 2>&1; then
+    run_step sudo groupdel watchdogvpn
+  else
+    printf '[KEEP] absent: watchdogvpn system group\n'
+  fi
+}
+
 repair_watchdogvpn_shared_state_permissions() {
   local target_dir="${1:-${WATCHDOGVPN_SHARED_STATE_DIR:-/var/lib/watchdogvpn}}"
   local private_dir="$target_dir/private"

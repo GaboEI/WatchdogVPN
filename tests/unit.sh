@@ -25,6 +25,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT_DIR/tests/unit/test_update_daemon_restart.sh"
 "$ROOT_DIR/tests/unit/test_runtime_update_transaction.sh"
 "$ROOT_DIR/tests/unit/test_uninstall_fail_closed.sh"
+"$ROOT_DIR/tests/unit/test_uninstall_system_account.sh"
 "$ROOT_DIR/tests/unit/test_watchdog_panic.sh"
 "$ROOT_DIR/tests/unit/test_amneziawg_sysctl_defaults.sh"
 python3 "$ROOT_DIR/scripts/generate_cli_inventory.py" --check

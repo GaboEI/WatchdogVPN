@@ -57,6 +57,12 @@ Configuration changes are administrative operations. Use `sudo` for manual
 edits and for `watchdogvpn config set` or `watchdogvpn config reset`; do not
 put credentials, tokens, account data or private keys in this file.
 
+The `watchdogvpn` system account and group, and the installing user's
+membership in that group, are preserved by a plain `./uninstall.sh` like every
+other path listed in its "Preserved unless explicitly purged" contract. They
+are only removed by a full purge (`--purge-config --purge-logs --purge-state
+--confirm-delete DELETE`), matching the `dpkg --purge` convention.
+
 Backups created during migration or update should use the existing WatchdogVPN
 backup root:
 
