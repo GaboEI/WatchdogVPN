@@ -15,7 +15,7 @@ claims to support:
 
 | Certification target | Adapter path | Phase | Status before certification |
 | --- | --- | --- | --- |
-| Arch Linux | `arch` | 23.5 | Field matrix completed on the clean candidate; uninstall/baseline closure still pending |
+| Arch Linux | `arch` | 23.5 | **CERTIFIED** — full matrix, DNS, rotation, kill switch, and clean uninstall/baseline comparison complete (2026-07-18) |
 | CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | Supported fallback, un-certified on a clean VM |
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
@@ -248,3 +248,45 @@ pre-install baseline have not yet closed.
 
 All endpoint addresses, generated profile/provider identifiers, subscription
 material, and private fixture contents remain outside repository evidence.
+
+## Task 23.5.2 closure — Arch Linux clean uninstall and baseline comparison
+
+On 2026-07-18, Task 23.5.2 closed. A second VM (`wdvpn-arch-reference`), built
+from the same `generic/arch` 4.3.12 box lineage as the candidate but never
+touched by WatchdogVPN, provided the pre-install baseline the candidate could
+no longer capture retroactively (it was already carrying WatchdogVPN state
+from the rest of the matrix). Arch is rolling, so the reference VM's system
+was fully updated (`pacman -Syu`, kernel `6.6.10-arch1-1` to `7.1.3-arch2-2`)
+before its state was accepted as the comparison baseline: no WatchdogVPN
+commands, runtime, config, state directories, or system account/group, with
+GitHub reachable directly.
+
+- The candidate then ran a full purge uninstall
+  (`--purge-config --purge-logs --purge-state --confirm-delete DELETE`) after
+  completing the rest of the Arch matrix. Product commands, directories,
+  systemd units, the nftables kill-switch table, TUN interfaces and
+  domain-bypass `ip rule` entries were all confirmed absent afterward, with
+  GitHub direct reachability restored.
+- Comparing that result against the reference baseline surfaced one real,
+  universal gap, not previously documented anywhere in the uninstall
+  contract: the `watchdogvpn` system user/group, and the installing user's
+  membership in it, were never removed - not even by a full purge. Fixed in
+  commit `48e2483`, gated on all three purge flags together (the same
+  convention as `dpkg --purge`), so a plain uninstall keeps preserving the
+  account exactly like every other path already listed under "Preserved
+  unless explicitly purged".
+- The fix was live-validated on the same candidate, not only unit-tested:
+  the account was confirmed still present after the first (pre-fix) purge
+  run, then the fixed `uninstall.sh`/`lib/runtime.sh` were deployed and the
+  same real purge command was re-run, after which the user, the group, and
+  the installing user's group membership were all confirmed absent.
+- Full regression coverage added
+  (`tests/unit/test_uninstall_system_account.sh`): a plain uninstall and a
+  partial purge must not touch the account; only the full three-flag purge
+  may. Complete suite green at closure: `tests/unit.sh`, `tests/syntax.sh`,
+  and `python3 -m unittest discover tests` (1736/1736).
+
+Arch Linux (Task 23.5.2) is now fully certified: protocol matrix, provider
+lifecycle, DNS apply/reset, rotation, kill-switch controlled failure, and
+clean uninstall with post-uninstall baseline comparison all have accepted
+real-machine evidence.
