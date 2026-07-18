@@ -3,6 +3,7 @@ set -euo pipefail
 
 INSTALL_DRY_RUN="${INSTALL_DRY_RUN:-0}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/watchdogvpn}"
+REMOVE_ROOT_PATH_BACKUPS="${REMOVE_ROOT_PATH_BACKUPS:-1}"
 
 run_step() {
   if [[ "$INSTALL_DRY_RUN" == "1" ]]; then
@@ -143,9 +144,20 @@ remove_root_path() {
     printf '[KEEP] absent: %s\n' "$path"
     return 0
   fi
-  backup_path "$path"
+  if [[ "$REMOVE_ROOT_PATH_BACKUPS" == "1" ]]; then
+    backup_path "$path"
+  fi
   if declare -F runtime_transaction_is_active >/dev/null && runtime_transaction_is_active; then
     runtime_transaction_snapshot_path "$path"
+  fi
+  run_step sudo rm -rf -- "$path"
+}
+
+remove_root_path_no_backup() {
+  local path="$1"
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    printf '[KEEP] absent: %s\n' "$path"
+    return 0
   fi
   run_step sudo rm -rf -- "$path"
 }

@@ -21,6 +21,8 @@ PURGE_CONFIG=0
 PURGE_LOGS=0
 PURGE_STATE=0
 CONFIRM_DELETE=""
+FULL_PURGE=0
+INTERNAL_BACKUP_ROOT="/var/backups/watchdogvpn"
 
 usage() {
   cat <<'USAGE'
@@ -127,6 +129,19 @@ print_contract() {
   printf '/var/lib/vpn-rotate/ (legacy, if present)\n'
   printf '~/.conky/WatchdogVPN/ (legacy, if present)\n'
   printf 'watchdogvpn system account and group (removed only alongside a full --purge-config --purge-logs --purge-state --confirm-delete DELETE)\n'
+  printf '%s (internal recovery backups; removed only alongside that same full purge)\n' "$INTERNAL_BACKUP_ROOT"
+}
+
+configure_full_purge_contract() {
+  if ((PURGE_CONFIG == 1 && PURGE_LOGS == 1 && PURGE_STATE == 1)); then
+    FULL_PURGE=1
+    # A confirmed full purge must not silently recreate unencrypted copies of
+    # config, profiles, keys, state or logs while deleting them. The Python
+    # CLI already exports the user's explicit pre-delete backup outside
+    # product-owned paths. install/update and non-full uninstalls retain the
+    # existing recovery-backup behavior.
+    REMOVE_ROOT_PATH_BACKUPS=0
+  fi
 }
 
 remove_runtime_files() {
@@ -199,10 +214,21 @@ remove_optional_user_data() {
   # The service account is scoped to config/logs/state, not to any single
   # one of them - only remove it once all three are gone, matching the
   # dpkg --purge convention instead of tying it to one arbitrary flag.
-  if ((PURGE_CONFIG == 1 && PURGE_LOGS == 1 && PURGE_STATE == 1)); then
+  if ((FULL_PURGE == 1)); then
     remove_watchdogvpn_system_account
   else
     printf '[KEEP] system account: watchdogvpn (removed only alongside a full purge)\n'
+  fi
+}
+
+remove_internal_recovery_backups() {
+  if ((FULL_PURGE == 1)); then
+    # Never derive this destructive target from BACKUP_ROOT: callers may set a
+    # custom, user-owned recovery location. Only the fixed product-owned root
+    # is part of the full-purge contract.
+    remove_root_path_no_backup "$INTERNAL_BACKUP_ROOT"
+  else
+    printf '[KEEP] internal recovery backups: %s\n' "$INTERNAL_BACKUP_ROOT"
   fi
 }
 
@@ -297,7 +323,11 @@ print_uninstall_plan() {
   print_field "Purge logs" "$(yes_no_word "$PURGE_LOGS")"
   print_field "Purge state" "$(yes_no_word "$PURGE_STATE")"
   print_field "Dry run" "$(yes_no_word "${INSTALL_DRY_RUN:-0}")"
-  print_field "Backups" "$BACKUP_ROOT"
+  if ((FULL_PURGE == 1)); then
+    print_field "Internal backups" "remove $INTERNAL_BACKUP_ROOT; do not create new copies"
+  else
+    print_field "Backups" "$BACKUP_ROOT"
+  fi
 }
 
 print_title "$PROJECT_NAME Uninstall"
@@ -332,6 +362,7 @@ if ((PURGE_STATE == 0)) && prompt_yes_no "Also remove WatchdogVPN rotation state
 fi
 
 require_delete_confirmation
+configure_full_purge_contract
 
 print_uninstall_plan
 print_section "Stop and verify daemon inactivity"
@@ -366,4 +397,6 @@ print_section "Remove legacy AdGuard-era files"
 remove_legacy_runtime_files
 print_section "Remove optional user data"
 remove_optional_user_data
+print_section "Remove internal recovery backups"
+remove_internal_recovery_backups
 final_report

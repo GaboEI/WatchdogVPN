@@ -244,6 +244,10 @@ It must ask before deleting:
 Data deletion requires the literal confirmation `DELETE`. The Python
 `watchdog uninstall --delete-all-data` flow also exports a pre-delete backup
 outside WatchdogVPN-owned paths before passing purge flags to `uninstall.sh`.
+That full purge removes the fixed internal recovery root
+`/var/backups/watchdogvpn` and suppresses new internal backups during removal;
+only the user's explicit outside export survives. An overrideable custom
+`BACKUP_ROOT` is never used as a recursive deletion target.
 
 It must not remove:
 

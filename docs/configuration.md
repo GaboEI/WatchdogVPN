@@ -70,6 +70,11 @@ backup root:
 /var/backups/watchdogvpn/
 ```
 
+Install, update and non-full uninstall operations preserve these internal
+recovery backups. A confirmed full purge removes this fixed product-owned root
+and disables creation of new internal copies during deletion. A custom
+`BACKUP_ROOT` is never recursively deleted by the purge contract.
+
 ## Initial Schema
 
 The initial configuration should stay small and stable.

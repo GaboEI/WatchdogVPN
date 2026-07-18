@@ -34,6 +34,11 @@ PATH --yes` creates a `pre-uninstall-delete` backup at `PATH`, then invokes
 
 Backup output paths inside WatchdogVPN-owned paths are rejected. This prevents a
 pre-delete backup from being removed by the same delete-all-data operation.
+The explicit outside export is the only backup retained by delete-all-data:
+the fixed internal recovery root `/var/backups/watchdogvpn` is removed and no
+new internal copies are created during the purge. This also prevents an
+encrypted export from being undermined by a parallel unencrypted internal
+copy. Custom `BACKUP_ROOT` overrides are never recursive deletion targets.
 
 Encrypted backups are supported through:
 
@@ -66,6 +71,8 @@ Tests cover:
 - delete-all-data requires `--confirm-delete DELETE`;
 - delete-all-data creates a `pre-uninstall-delete` backup and passes purge
   flags plus confirmation to `uninstall.sh`;
+- delete-all-data removes the fixed internal backup root without creating new
+  internal copies, while preserving the explicit outside export;
 - backup output paths inside WatchdogVPN data paths are rejected;
 - encrypted uninstall backups require a password and restore through
   `BackupManager`;

@@ -551,6 +551,11 @@ from the named environment variable and is not written to the backup manifest.
 Backup output paths inside WatchdogVPN-owned paths are rejected so a pre-delete
 backup is not deleted by the same uninstall operation.
 
+Delete-all-data preserves that explicit export but removes WatchdogVPN's
+internal recovery root (`/var/backups/watchdogvpn`) and does not create new
+internal copies while purging. This keeps an encrypted export honest: no
+parallel unencrypted copy of config, profiles, state or logs is retained.
+
 `--dry-run` is plan-only in the Python CLI wrapper: it does not invoke
 `uninstall.sh`, create backups or remove files. Real uninstall execution
 requires `--yes`. JSON output includes the selected mode, dry-run state,

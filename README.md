@@ -220,7 +220,12 @@ cd WatchdogVPN
 Uninstall does not remove user-owned VPN/proxy provider software, private keys,
 profiles or account state unless an explicit future contract says otherwise.
 A full purge also removes the internal `watchdogvpn` system account/group and
-the installing user's membership in it; a plain uninstall preserves both.
+the installing user's membership in it, plus WatchdogVPN's internal recovery
+backups under `/var/backups/watchdogvpn`; it does not create new internal
+copies while deleting data. A plain uninstall preserves all of them. The CLI
+`--delete-all-data` flow first exports the user's explicit backup outside
+product-owned paths, so an encrypted export is not undermined by a second
+silent unencrypted copy.
 
 ## For Providers
 

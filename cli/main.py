@@ -2275,6 +2275,7 @@ def _validate_uninstall_backup_output(path: Path) -> None:
         Path("/etc/watchdogvpn"),
         Path("/var/lib/watchdogvpn"),
         Path("/var/log/myvpn"),
+        Path("/var/backups/watchdogvpn"),
     ]
     for root in managed_roots:
         root_resolved = root.resolve(strict=False)
@@ -2356,7 +2357,12 @@ def _uninstall_contract(mode: str) -> dict[str, object]:
         ],
         "preserved_user_state": preserved,
         "logs": "preserved" if mode != "delete-all-data" else "removed after pre-delete backup",
-        "backups": "never removed by the CLI; pre-delete backup must be outside WatchdogVPN-owned paths",
+        "backups": (
+            "explicit pre-delete export preserved outside WatchdogVPN-owned paths; "
+            "internal /var/backups/watchdogvpn copies removed"
+            if mode == "delete-all-data"
+            else "internal recovery backups preserved"
+        ),
         "systemd_units": [
             "watchdogvpn.service",
             "watchdogvpn-scheduled-rotation.service",

@@ -147,6 +147,7 @@ class CliUninstallCommandTests(unittest.TestCase):
             self.assertIsNone(data["uninstall_exit_code"])
             self.assertEqual(data["uninstall_stdout"], "")
             self.assertIn("product_managed_files", data["contract"])
+            self.assertEqual(data["contract"]["backups"], "internal recovery backups preserved")
 
     def test_uninstall_resolves_installed_runtime_without_cwd_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
@@ -250,6 +251,19 @@ class CliUninstallCommandTests(unittest.TestCase):
                     "DELETE",
                 ],
             )
+            dry_run = self.run_watchdog(
+                [
+                    "uninstall",
+                    "--delete-all-data",
+                    "--dry-run",
+                    "--json",
+                ],
+                tmp,
+                script,
+            )
+            contract = json.loads(dry_run.stdout)["contract"]
+            self.assertIn("explicit pre-delete export preserved", contract["backups"])
+            self.assertIn("internal /var/backups/watchdogvpn copies removed", contract["backups"])
             with ZipFile(backup) as archive:
                 manifest = json.loads(archive.read("manifest.json"))
             self.assertEqual(manifest["reason"], "pre-uninstall-delete")
@@ -267,6 +281,30 @@ class CliUninstallCommandTests(unittest.TestCase):
                     "--yes",
                     "--backup-output",
                     str(inside_config),
+                ],
+                tmp,
+                script,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 65)
+            self.assertIn("outside WatchdogVPN-owned paths", result.stderr)
+            self.assertFalse(log.exists())
+
+    def test_rejects_explicit_export_inside_internal_backup_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            script, log = self.make_script(tmp)
+
+            result = self.run_watchdog(
+                [
+                    "uninstall",
+                    "--delete-all-data",
+                    "--yes",
+                    "--confirm-delete",
+                    "DELETE",
+                    "--backup-output",
+                    "/var/backups/watchdogvpn/pre-delete.zip",
                 ],
                 tmp,
                 script,
