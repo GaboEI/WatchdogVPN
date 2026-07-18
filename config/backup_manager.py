@@ -1015,11 +1015,14 @@ def _encrypt_backup_payload(
     plaintext: bytes,
     password: str | None,
 ) -> tuple[bytes, dict[str, Any]]:
+    # Validate caller input independently of optional host capabilities. A
+    # missing password is an invalid encryption request even on a machine
+    # without cryptography, and must not be masked by the dependency error.
+    password_bytes = _password_bytes(password)
     if not BACKUP_ENCRYPTION_SUPPORTED:
         raise BackupValidationError(
             "backup encryption requires the optional cryptography dependency"
         )
-    password_bytes = _password_bytes(password)
     salt = os.urandom(ENCRYPTION_SALT_BYTES)
     nonce = os.urandom(ENCRYPTION_NONCE_BYTES)
     key = _derive_encryption_key(password_bytes, salt)
