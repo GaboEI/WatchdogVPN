@@ -271,6 +271,10 @@ that legacy source for the invoking user and the fixed historical root copy at
 invoking user's NSS home is handled as well. It does not enumerate or delete
 other users' homes. The explicit CLI export is created from the already
 migrated shared state before these duplicate sources are removed.
+Root-managed paths are existence-checked through the shared privileged helper;
+an inaccessible parent such as `/root` must not be interpreted as an absent
+child and silently skip backup or removal. Dry runs use only non-interactive
+cached sudo for this additional read-only check.
 
 It must not remove:
 

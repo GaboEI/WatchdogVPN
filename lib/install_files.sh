@@ -13,6 +13,23 @@ run_step() {
   "$@"
 }
 
+root_path_exists() {
+  local path="$1"
+  if [[ -e "$path" || -L "$path" ]]; then
+    return 0
+  fi
+
+  # Shell -e/-L checks suppress EACCES just like pathlib.Path.exists(): an
+  # unprivileged installer process sees /root-owned children as "absent" and
+  # silently skips both backup and removal. Live mutations have already passed
+  # the caller's sudo privilege check, so preserve the real distinction here.
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    sudo -n test -e "$path" 2>/dev/null || sudo -n test -L "$path" 2>/dev/null
+  else
+    sudo test -e "$path" || sudo test -L "$path"
+  fi
+}
+
 download_release_asset() {
   local url="$1" destination="$2" timeout="$3" label="$4"
 
@@ -38,7 +55,7 @@ download_release_asset() {
 
 backup_path() {
   local path="$1" stamp backup
-  [[ -e "$path" ]] || return 0
+  root_path_exists "$path" || return 0
   stamp="$(date +%Y%m%d-%H%M%S)"
   backup="$BACKUP_ROOT$path.$stamp"
   if [[ "$INSTALL_DRY_RUN" == "1" ]]; then
@@ -140,7 +157,7 @@ create_system_user_no_home() {
 
 remove_root_path() {
   local path="$1"
-  if [[ ! -e "$path" && ! -L "$path" ]]; then
+  if ! root_path_exists "$path"; then
     printf '[KEEP] absent: %s\n' "$path"
     return 0
   fi
@@ -155,7 +172,7 @@ remove_root_path() {
 
 remove_root_path_no_backup() {
   local path="$1"
-  if [[ ! -e "$path" && ! -L "$path" ]]; then
+  if ! root_path_exists "$path"; then
     printf '[KEEP] absent: %s\n' "$path"
     return 0
   fi

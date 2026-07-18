@@ -60,6 +60,33 @@ contains_file() {
   }
 )
 
+# A protected parent must not make a real root-owned path look absent. Model
+# that boundary without touching /root: local shell tests see a nonexistent
+# virtual path, while the privileged test/removal seam reports and removes it.
+(
+  # shellcheck source=../../lib/install_files.sh
+  . "$ROOT_DIR/lib/install_files.sh"
+  protected_path="/phase235-protected-parent/watchdogvpn"
+  removal_marker="$TMP_DIR/protected-removal"
+  sudo() {
+    if [[ "$1" == "test" && "$2" == "-e" && "$3" == "$protected_path" ]]; then
+      return 0
+    fi
+    if [[ "$1" == "rm" && "$2" == "-rf" && "$3" == "--" && "$4" == "$protected_path" ]]; then
+      : >"$removal_marker"
+      return 0
+    fi
+    return 1
+  }
+  INSTALL_DRY_RUN=0
+  REMOVE_ROOT_PATH_BACKUPS=0
+  remove_root_path "$protected_path" >/dev/null
+  [[ -f "$removal_marker" ]] || {
+    printf 'FAIL: privileged existence check did not remove a protected root path\n' >&2
+    exit 1
+  }
+)
+
 # Wiring and safety contract: only the exact fixed product-owned backup root is
 # removed. BACKUP_ROOT must never become the destructive full-purge target,
 # because callers may override it with a user-owned location.
@@ -67,6 +94,8 @@ contains_file "$UNINSTALLER" 'INTERNAL_BACKUP_ROOT="/var/backups/watchdogvpn"' \
   "uninstall must define the fixed product-owned internal backup root"
 contains_file "$UNINSTALLER" 'REMOVE_ROOT_PATH_BACKUPS=0' \
   "full purge must disable creation of new internal backups"
+contains_file "$ROOT_DIR/lib/install_files.sh" 'root_path_exists "$path" || return 0' \
+  "root backups must use the privileged existence contract"
 contains_file "$UNINSTALLER" 'remove_root_path_no_backup "$INTERNAL_BACKUP_ROOT"' \
   "full purge must delete the fixed internal backup root without backing it up again"
 contains_file "$UNINSTALLER" 'remove_user_path "$HOME/.config/watchdogvpn"' \
