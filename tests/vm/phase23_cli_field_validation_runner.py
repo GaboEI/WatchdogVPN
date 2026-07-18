@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -131,6 +132,7 @@ class Runner:
         ok_codes: set[int] | None = None,
         display_command: list[str] | None = None,
         env: dict[str, str] | None = None,
+        defer_failure: bool = False,
     ) -> int:
         ok_codes = ok_codes or {0}
         display = display_command or command
@@ -160,17 +162,21 @@ class Runner:
         except subprocess.TimeoutExpired as exc:
             stdout = exc.stdout if isinstance(exc.stdout, str) else ""
             stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            self.last_stdout = _redact(stdout, self.secrets)
             record.update(
                 {
                     "returncode": "timeout",
-                    "stdout": _redact(stdout, self.secrets),
+                    "stdout": self.last_stdout,
                     "stderr": _redact(stderr, self.secrets),
                     "finished_at": _utc_now(),
                 }
             )
-            self.failures.append(f"{section}:{label}: timeout")
+            if not defer_failure:
+                self.failures.append(f"{section}:{label}: timeout")
+            record["status"] = "deferred" if defer_failure else "failed"
             _json_write(self.command_path(section, label), record)
-            print(f"PHASE23_CMD_TIMEOUT {section} {label}", file=sys.stderr)
+            marker = "PHASE23_CMD_DEFERRED" if defer_failure else "PHASE23_CMD_TIMEOUT"
+            print(f"{marker} {section} {label} timeout", file=sys.stderr)
             return 124
 
         stdout = _redact(completed.stdout, self.secrets)
@@ -185,14 +191,97 @@ class Runner:
             }
         )
         if completed.returncode not in ok_codes:
-            self.failures.append(f"{section}:{label}: rc={completed.returncode}")
-            record["status"] = "failed"
-            print(f"PHASE23_CMD_FAILED {section} {label} rc={completed.returncode}", file=sys.stderr)
+            if defer_failure:
+                record["status"] = "deferred"
+                print(
+                    f"PHASE23_CMD_DEFERRED {section} {label} rc={completed.returncode}",
+                    file=sys.stderr,
+                )
+            else:
+                self.failures.append(f"{section}:{label}: rc={completed.returncode}")
+                record["status"] = "failed"
+                print(f"PHASE23_CMD_FAILED {section} {label} rc={completed.returncode}", file=sys.stderr)
         else:
             record["status"] = "ok"
             print(f"PHASE23_CMD_OK {section} {label}")
         _json_write(self.command_path(section, label), record)
         return completed.returncode
+
+    def _in_progress_command_id(self) -> str | None:
+        try:
+            response = _extract_json_document(self.last_stdout)
+        except FieldValidationError:
+            return None
+        if not isinstance(response, dict):
+            return None
+        payload = response.get("payload")
+        if not isinstance(payload, dict) or payload.get("error_kind") != "command_in_progress":
+            return None
+        command_id = payload.get("command_id")
+        if not isinstance(command_id, str):
+            return None
+        try:
+            parsed = uuid.UUID(command_id)
+        except ValueError:
+            return None
+        return command_id if str(parsed) == command_id.lower() else None
+
+    def run_mutation(
+        self,
+        section: str,
+        label: str,
+        command: list[str],
+        *,
+        timeout: int = 180,
+        ok_codes: set[int] | None = None,
+        outcome_wait_seconds: int = 300,
+        poll_interval_seconds: int = 5,
+    ) -> int:
+        """Run a daemon mutation and resolve a deferred result authoritatively."""
+
+        accepted_codes = ok_codes or {0}
+        returncode = self.run(
+            section,
+            label,
+            command,
+            timeout=timeout,
+            ok_codes=accepted_codes,
+            defer_failure=True,
+        )
+        if self.dry_run:
+            return returncode
+
+        command_id = self._in_progress_command_id()
+        if command_id is None:
+            if returncode not in accepted_codes:
+                self.failures.append(f"{section}:{label}: rc={returncode}")
+            return returncode
+
+        print(f"PHASE23_MUTATION_WAIT {section} {label}")
+        deadline = time.monotonic() + outcome_wait_seconds
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            outcome_rc = self.run(
+                section,
+                f"{label}-outcome-{attempt}",
+                ["watchdog", "command", "outcome", command_id, "--json"],
+                timeout=60,
+                ok_codes=accepted_codes,
+                defer_failure=True,
+            )
+            if self._in_progress_command_id() is not None:
+                time.sleep(poll_interval_seconds)
+                continue
+            if outcome_rc not in accepted_codes:
+                self.failures.append(f"{section}:{label}: final rc={outcome_rc}")
+            return outcome_rc
+
+        self.failures.append(
+            f"{section}:{label}: authoritative outcome timeout after {outcome_wait_seconds}s"
+        )
+        print(f"PHASE23_MUTATION_TIMEOUT {section} {label}", file=sys.stderr)
+        return 124
 
     def write_environment(self) -> None:
         text = "\n".join(
@@ -312,7 +401,7 @@ class Runner:
         for profile in self.selected_profiles():
             profile_id = self.profile_id_for(profile)
             section = f"protocols-{self.external_vpn_state}-{profile['protocol']}"
-            connect_rc = self.run(section, "connect", ["watchdog", "connect", profile_id, "--json"], timeout=180)
+            connect_rc = self.run_mutation(section, "connect", ["watchdog", "connect", profile_id, "--json"], timeout=180)
             if connect_rc != 0:
                 self.run(section, "status-after-failed-connect", ["watchdog", "status", "--json"], timeout=60, ok_codes={0, 69, 70})
                 self.snapshot(f"post-failed-connect-{self.external_vpn_state}-{profile['protocol']}")
@@ -324,7 +413,7 @@ class Runner:
                 expect_normal=capabilities["tun_active"],
                 expect_proxy=capabilities["proxy_active"],
             )
-            self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
+            self.run_mutation(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
             self.run(section, "status-disconnected", ["watchdog", "status", "--json"], timeout=60, ok_codes={0, 69})
             self.snapshot(f"post-{self.external_vpn_state}-{profile['protocol']}")
 
@@ -437,10 +526,10 @@ class Runner:
                 else:
                     self.failures.append("provider:profile-list-for-node-lookup: no owned node found for provider")
 
-        self.run("provider", "connect-provider-node", ["watchdog", "connect", node_id, "--json"], timeout=180)
+        self.run_mutation("provider", "connect-provider-node", ["watchdog", "connect", node_id, "--json"], timeout=180)
         self.run("provider", "status-provider-node", ["watchdog", "status", "--json"], timeout=60)
         self.egress_probes("provider")
-        self.run("provider", "disconnect-provider-node", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
+        self.run_mutation("provider", "disconnect-provider-node", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.snapshot(f"post-provider-{self.external_vpn_state}")
 
     def app_policy(self) -> None:
@@ -497,7 +586,7 @@ class Runner:
         self.run(section, "status-before", ["watchdog", "dns", "status", "--json"])
         self.run(section, "diagnose", ["watchdog", "dns", "diagnose", "--domain", self.plan["probe_domain"], "--json"])
         self.run(section, "apply-dry-run", ["watchdog", "dns", "apply", "--dry-run", "--json"])
-        self.run(section, "connect-for-apply", ["watchdog", "connect", profile_id, "--json"], timeout=180)
+        self.run_mutation(section, "connect-for-apply", ["watchdog", "connect", profile_id, "--json"], timeout=180)
         # --systemd-link is mandatory for a first-time apply against
         # systemd-resolved (dns/state_manager.py:_apply_systemd_resolved
         # raises "systemd-resolved apply requires a link name" without it)
@@ -515,7 +604,7 @@ class Runner:
         self.run(section, "status-after-apply", ["watchdog", "dns", "status", "--json"])
         self.run(section, "resolver-probe", ["getent", "hosts", self.plan["probe_domain"]], timeout=45)
         self.run(section, "reset", ["sudo", "watchdog", "dns", "reset", "--yes", "--json"], timeout=120, ok_codes={0, 70})
-        self.run(section, "disconnect-after-dns", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
+        self.run_mutation(section, "disconnect-after-dns", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.snapshot(f"post-dns-{self.external_vpn_state}")
 
     def kill_switch(self) -> None:
@@ -543,7 +632,7 @@ class Runner:
                 return
         self.run(section, "enable", ["watchdog", "setup", "--yes", "--acknowledge-backup-warning", "--kill-switch", "enable", "--json"])
         try:
-            connect_rc = self.run(
+            connect_rc = self.run_mutation(
                 section,
                 "connect",
                 ["watchdog", "connect", profile_id, "--json"],
@@ -571,7 +660,7 @@ class Runner:
                     timeout=120,
                 )
         finally:
-            self.run(
+            self.run_mutation(
                 section,
                 "disconnect",
                 ["watchdog", "disconnect", "--json"],
@@ -638,8 +727,8 @@ class Runner:
         self.run(section, "primary-rotation-on", ["watchdog", "profile", "rotation", primary_id, "--enable", "--json"])
         self.run(section, "secondary-rotation-on", ["watchdog", "profile", "rotation", secondary_id, "--enable", "--json"])
         self.run(section, "pool-list", ["watchdog", "profile", "list", "--pool", "--json"])
-        self.run(section, "connect-primary", ["watchdog", "connect", primary_id, "--json"], timeout=180)
-        self.run(section, "rotate-force", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
+        self.run_mutation(section, "connect-primary", ["watchdog", "connect", primary_id, "--json"], timeout=180)
+        self.run_mutation(section, "rotate-force", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
         self.run(section, "status-after-rotate", ["watchdog", "status", "--json"], ok_codes={0, 69})
         self.run(section, "provider-rotation-on", ["watchdog", "provider", "rotation", provider["expected_provider_id"], "--enable", "--json"], ok_codes={0, 65, 70})
         self.run(
@@ -648,7 +737,7 @@ class Runner:
             ["watchdog", "provider", "node", provider["expected_provider_id"], provider["expected_node_id"], "--rotation", "--enable", "--json"],
             ok_codes={0, 65, 70},
         )
-        self.run(section, "rotate-provider", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
+        self.run_mutation(section, "rotate-provider", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
         # Disabling only the two manifest profiles is not "all failed" if a
         # provider with other rotation-eligible nodes is still enrolled
         # (confirmed live: rotate-force found a real provider node and
@@ -663,7 +752,7 @@ class Runner:
         )
         for profile_id in all_failed_ids:
             self.run(section, f"disable-{profile_id}", ["watchdog", "profile", "disable", profile_id, "--json"], ok_codes={0, 65, 70})
-        self.run(section, "rotate-all-failed", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
+        self.run_mutation(section, "rotate-all-failed", ["watchdog", "rotate", "--force", "--json"], timeout=180, ok_codes={0, 70})
         self.run(section, "status-all-failed", ["watchdog", "status", "--json"], ok_codes={0, 69})
         for profile_id in all_failed_ids:
             self.run(section, f"reenable-{profile_id}", ["watchdog", "profile", "enable", profile_id, "--json"], ok_codes={0, 65, 70})
@@ -675,12 +764,12 @@ class Runner:
             ["watchdog", "provider", "rotation", provider["expected_provider_id"], "--disable", "--json"],
             ok_codes={0, 65, 70},
         )
-        self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
+        self.run_mutation(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.snapshot(f"post-rotation-{self.external_vpn_state}")
 
     def manual_off(self) -> None:
         section = "manual-off"
-        self.run(section, "disconnect-before-manual-off", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
+        self.run_mutation(section, "disconnect-before-manual-off", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.snapshot("pre-manual-off")
         self.run(section, "systemctl-stop", ["sudo", "systemctl", "stop", "watchdogvpn.service"], timeout=120, ok_codes={0, 3, 4, 5})
         self.run(section, "status-after-stop", ["watchdog", "status", "--json"], timeout=60, ok_codes={0, 69})
@@ -758,7 +847,7 @@ watchdog panic wake
 
     def cleanup(self) -> None:
         section = "cleanup"
-        self.run(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
+        self.run_mutation(section, "disconnect", ["watchdog", "disconnect", "--json"], timeout=180, ok_codes={0, 70})
         self.run(section, "dns-reset", ["sudo", "watchdog", "dns", "reset", "--yes", "--json"], timeout=120, ok_codes={0, 70})
         self.run(section, "app-policy-disable", ["watchdog", "app-policy", "disable", "--json"], ok_codes={0, 70})
         self.run(section, "panic-wake", ["watchdog", "panic", "wake"], timeout=180, ok_codes={0, 1})
