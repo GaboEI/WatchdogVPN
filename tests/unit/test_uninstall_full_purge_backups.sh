@@ -69,6 +69,12 @@ contains_file "$UNINSTALLER" 'REMOVE_ROOT_PATH_BACKUPS=0' \
   "full purge must disable creation of new internal backups"
 contains_file "$UNINSTALLER" 'remove_root_path_no_backup "$INTERNAL_BACKUP_ROOT"' \
   "full purge must delete the fixed internal backup root without backing it up again"
+contains_file "$UNINSTALLER" 'remove_user_path "$HOME/.config/watchdogvpn"' \
+  "full purge must delete the invoking user's preserved legacy migration source"
+contains_file "$UNINSTALLER" 'remove_root_path /root/.config/watchdogvpn' \
+  "full purge must delete the known root legacy copy left by historical sudo execution"
+contains_file "$UNINSTALLER" 'if ((FULL_PURGE == 1)); then' \
+  "legacy user config deletion must remain gated to a confirmed full purge"
 if grep -Fq 'remove_root_path_no_backup "$BACKUP_ROOT"' "$UNINSTALLER"; then
   printf 'FAIL: full purge must never recursively delete an overrideable BACKUP_ROOT\n' >&2
   exit 1

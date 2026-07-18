@@ -126,6 +126,7 @@ print_contract() {
   printf '/etc/watchdogvpn/\n'
   printf '/var/log/myvpn/\n'
   printf '/var/lib/watchdogvpn/\n'
+  printf '~/.config/watchdogvpn/ legacy migration source (removed only alongside a full purge; root copy included)\n'
   printf '/etc/adguardvpn.env (legacy, if present)\n'
   printf '/var/lib/vpn-rotate/ (legacy, if present)\n'
   printf '~/.conky/WatchdogVPN/ (legacy, if present)\n'
@@ -214,6 +215,31 @@ remove_product_runtime_directories() {
   fi
 }
 
+remove_legacy_user_config_on_full_purge() {
+  local sudo_user="${SUDO_USER:-}" sudo_user_home=""
+
+  # Shared-state migration intentionally preserves its per-user source so an
+  # install/update is recoverable. A confirmed delete-all-data purge is the
+  # one operation that must remove that second copy too. Limit deletion to the
+  # current home, root's known historical sudo-created copy, and (when the
+  # whole script was invoked through sudo) the invoking user's NSS home.
+  remove_user_path "$HOME/.config/watchdogvpn"
+  if [[ "$HOME/.config/watchdogvpn" != "/root/.config/watchdogvpn" ]]; then
+    remove_root_path /root/.config/watchdogvpn
+  fi
+
+  if [[ -n "$sudo_user" && "$sudo_user" != "root" ]]; then
+    sudo_user_home="$(getent passwd "$sudo_user" 2>/dev/null | awk -F: 'NR == 1 {print $6}' || true)"
+    if [[ "$sudo_user_home" == /* && "$sudo_user_home" != "/" ]]; then
+      if [[ "$sudo_user_home/.config/watchdogvpn" != "$HOME/.config/watchdogvpn" ]]; then
+        remove_root_path "$sudo_user_home/.config/watchdogvpn"
+      fi
+    else
+      warn "cannot resolve a safe home for legacy full-purge cleanup: $sudo_user"
+    fi
+  fi
+}
+
 remove_optional_user_data() {
   if ((PURGE_CONFIG == 1)); then
     remove_root_path /etc/vpn-domain-bypass.conf
@@ -225,6 +251,13 @@ remove_optional_user_data() {
     printf '[KEEP] config: %s\n' "$WATCHDOGVPN_ETC_CONFIG_DIR"
     printf '[KEEP] legacy config: /etc/adguardvpn.env\n'
     printf '[KEEP] legacy conky: %s\n' "$HOME/.conky/WatchdogVPN"
+  fi
+
+  if ((FULL_PURGE == 1)); then
+    remove_legacy_user_config_on_full_purge
+  else
+    printf '[KEEP] legacy user config: %s\n' "$HOME/.config/watchdogvpn"
+    printf '[KEEP] legacy root config: /root/.config/watchdogvpn\n'
   fi
 
   if ((PURGE_LOGS == 1)); then

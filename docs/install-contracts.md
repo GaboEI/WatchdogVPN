@@ -264,6 +264,14 @@ That full purge removes the fixed internal recovery root
 only the user's explicit outside export survives. An overrideable custom
 `BACKUP_ROOT` is never used as a recursive deletion target.
 
+The migration source `~/.config/watchdogvpn/` remains preserved during
+install, update and ordinary uninstall. The same confirmed full purge removes
+that legacy source for the invoking user and the fixed historical root copy at
+`/root/.config/watchdogvpn/`; when the script itself was invoked via sudo, the
+invoking user's NSS home is handled as well. It does not enumerate or delete
+other users' homes. The explicit CLI export is created from the already
+migrated shared state before these duplicate sources are removed.
+
 It must not remove:
 
 - user-owned provider software, profiles, private keys or account state

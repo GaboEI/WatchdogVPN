@@ -225,7 +225,10 @@ backups under `/var/backups/watchdogvpn`; it does not create new internal
 copies while deleting data. A plain uninstall preserves all of them. The CLI
 `--delete-all-data` flow first exports the user's explicit backup outside
 product-owned paths, so an encrypted export is not undermined by a second
-silent unencrypted copy. Every uninstall removes the product's ephemeral
+silent unencrypted copy. The confirmed full purge also removes the invoking
+user's preserved legacy migration source at `~/.config/watchdogvpn` and the
+fixed historical root copy; it never scans or deletes unrelated users' homes.
+Every uninstall removes the product's ephemeral
 `/run/watchdogvpn` directory even if an interrupted install already rolled the
 systemd unit back; the shared `/run/amneziawg` path is removed only when empty.
 
