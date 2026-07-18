@@ -155,6 +155,54 @@ class Phase23FieldValidationToolsTests(unittest.TestCase):
                 ("provider-real", "node-real"),
             )
 
+    def test_app_policy_block_probe_cannot_pass_or_fail_on_dns_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            policy = {
+                "direct_probe_path": str(root / "direct-curl"),
+                "vpn_probe_path": str(root / "vpn-curl"),
+                "block_probe_path": str(root / "block-curl"),
+            }
+            runner = Runner(
+                {
+                    "evidence_dir": tmp,
+                    "probe_domain": "example.com",
+                    "profiles": [],
+                    "app_policy": policy,
+                    "rotation": {"primary_profile_id": "phase23-vless"},
+                },
+                section="app-policy",
+                external_vpn_state="absent",
+                dry_run=False,
+                selected_protocols=None,
+            )
+
+            events: list[str] = []
+
+            def fake_run(_section: str, label: str, _command: list[str], **_kwargs: object) -> int:
+                events.append(label)
+                if label == "resolve-block-target":
+                    runner.last_stdout = "203.0.113.10 STREAM example.com\n"
+                return 0
+
+            def fake_mutation(_section: str, label: str, _command: list[str], **_kwargs: object) -> int:
+                events.append(label)
+                return 0
+
+            with patch.object(runner, "run_mutation", side_effect=fake_mutation), patch.object(
+                runner, "run", side_effect=fake_run
+            ) as mocked_run:
+                runner.app_policy()
+
+            block_call = next(call for call in mocked_run.call_args_list if call.args[1] == "block-probe")
+            self.assertIn("--resolve", block_call.args[2])
+            self.assertNotIn(0, block_call.kwargs["ok_codes"])
+            self.assertNotIn(6, block_call.kwargs["ok_codes"])
+            self.assertLess(events.index("add-block"), events.index("connect-for-policy"))
+            self.assertLess(events.index("disconnect-after-policy"), events.index("remove-block"))
+            for path in policy.values():
+                self.assertFalse(Path(path).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

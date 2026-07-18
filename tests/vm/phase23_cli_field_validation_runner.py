@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -597,44 +598,112 @@ class Runner:
 
     def app_policy(self) -> None:
         policy = self.plan["app_policy"]
+        profile_id = self.resolved_profile_id(self.plan["rotation"]["primary_profile_id"])
         curl_binary = shutil.which("curl")
         if curl_binary is None:
             raise FieldValidationError("curl not found")
         curl_path = Path(curl_binary)
         for key in ("direct_probe_path", "vpn_probe_path", "block_probe_path"):
-            link = Path(policy[key])
+            probe_binary = Path(policy[key])
             if not self.dry_run:
-                if link.exists() or link.is_symlink():
-                    link.unlink()
-                link.symlink_to(curl_path)
+                if probe_binary.exists() or probe_binary.is_symlink():
+                    probe_binary.unlink()
+                # A symlink resolves to curl's original executable path in
+                # process attribution, making all three policies
+                # indistinguishable. Real copies keep distinct /proc paths.
+                shutil.copy2(curl_path, probe_binary)
         section = "app-policy"
-        self.run(section, "enable", ["watchdog", "app-policy", "enable", "--json"])
-        self.run(section, "mode-blacklist", ["watchdog", "app-policy", "mode", "blacklist", "--json"])
-        self.run(
-            section,
-            "add-direct",
-            ["watchdog", "app-policy", "add", "--process-path", policy["direct_probe_path"], "--action", "direct", "--id", "phase23-direct", "--json"],
-        )
-        self.run(
-            section,
-            "add-current",
-            ["watchdog", "app-policy", "add", "--process-path", policy["vpn_probe_path"], "--action", "current", "--id", "phase23-vpn", "--json"],
-        )
-        self.run(
-            section,
-            "add-block",
-            ["watchdog", "app-policy", "add", "--process-path", policy["block_probe_path"], "--action", "block", "--id", "phase23-block", "--json"],
-        )
-        self.run(section, "status", ["watchdog", "app-policy", "status", "--json"])
-        url = f"https://{self.plan['probe_domain']}"
-        self.run(section, "direct-probe", [policy["direct_probe_path"], "--fail", "--show-error", "--max-time", "20", url], timeout=45)
-        self.run(section, "current-probe", [policy["vpn_probe_path"], "--fail", "--show-error", "--max-time", "20", url], timeout=45)
-        self.run(section, "block-probe", [policy["block_probe_path"], "--fail", "--show-error", "--max-time", "20", url], timeout=45, ok_codes={0, 6, 7, 28, 35, 56})
-        self.run(section, "remove-direct", ["watchdog", "app-policy", "remove", "phase23-direct", "--json"], ok_codes={0, 65, 70})
-        self.run(section, "remove-current", ["watchdog", "app-policy", "remove", "phase23-vpn", "--json"], ok_codes={0, 65, 70})
-        self.run(section, "remove-block", ["watchdog", "app-policy", "remove", "phase23-block", "--json"], ok_codes={0, 65, 70})
-        self.run(section, "disable", ["watchdog", "app-policy", "disable", "--json"], ok_codes={0, 70})
-        self.snapshot(f"post-app-policy-{self.external_vpn_state}")
+        try:
+            self.run(section, "enable", ["watchdog", "app-policy", "enable", "--json"])
+            self.run(section, "mode-blacklist", ["watchdog", "app-policy", "mode", "blacklist", "--json"])
+            self.run(
+                section,
+                "add-direct",
+                ["watchdog", "app-policy", "add", "--process-path", policy["direct_probe_path"], "--action", "direct", "--id", "phase23-direct", "--json"],
+            )
+            self.run(
+                section,
+                "add-current",
+                ["watchdog", "app-policy", "add", "--process-path", policy["vpn_probe_path"], "--action", "current", "--id", "phase23-vpn", "--json"],
+            )
+            self.run(
+                section,
+                "add-block",
+                ["watchdog", "app-policy", "add", "--process-path", policy["block_probe_path"], "--action", "block", "--id", "phase23-block", "--json"],
+            )
+            self.run(section, "status", ["watchdog", "app-policy", "status", "--json"])
+            domain = str(self.plan["probe_domain"])
+            url = f"https://{domain}"
+            resolve_rc = self.run(
+                section,
+                "resolve-block-target",
+                ["getent", "ahostsv4", domain],
+                timeout=45,
+            )
+            resolved_ip = ""
+            if not self.dry_run and resolve_rc == 0:
+                for line in self.last_stdout.splitlines():
+                    candidate = line.split(maxsplit=1)[0] if line.split() else ""
+                    try:
+                        parsed = ipaddress.ip_address(candidate)
+                    except ValueError:
+                        continue
+                    if parsed.version == 4:
+                        resolved_ip = candidate
+                        break
+                if not resolved_ip:
+                    self.failures.append("app-policy:resolve-block-target: no IPv4 address in output")
+            connect_rc = self.run_mutation(
+                section,
+                "connect-for-policy",
+                ["watchdog", "connect", profile_id, "--json"],
+                timeout=180,
+            )
+            if connect_rc == 0:
+                self.run(section, "direct-probe", [policy["direct_probe_path"], "--fail", "--show-error", "--max-time", "20", url], timeout=45)
+                self.run(section, "current-probe", [policy["vpn_probe_path"], "--fail", "--show-error", "--max-time", "20", url], timeout=45)
+                if self.dry_run or resolved_ip:
+                    self.run(
+                        section,
+                        "block-probe",
+                        [
+                            policy["block_probe_path"],
+                            "--fail",
+                            "--show-error",
+                            "--max-time",
+                            "20",
+                            "--resolve",
+                            f"{domain}:443:{resolved_ip or '192.0.2.1'}",
+                            url,
+                        ],
+                        timeout=45,
+                        ok_codes={7, 28, 35, 52, 55, 56},
+                    )
+            else:
+                self.run(
+                    section,
+                    "status-after-failed-connect",
+                    ["watchdog", "status", "--json"],
+                    ok_codes={0, 69, 70},
+                )
+        finally:
+            self.run_mutation(
+                section,
+                "disconnect-after-policy",
+                ["watchdog", "disconnect", "--json"],
+                timeout=180,
+                ok_codes={0, 70},
+            )
+            self.run(section, "remove-direct", ["watchdog", "app-policy", "remove", "phase23-direct", "--json"], ok_codes={0, 65, 70})
+            self.run(section, "remove-current", ["watchdog", "app-policy", "remove", "phase23-vpn", "--json"], ok_codes={0, 65, 70})
+            self.run(section, "remove-block", ["watchdog", "app-policy", "remove", "phase23-block", "--json"], ok_codes={0, 65, 70})
+            self.run(section, "disable", ["watchdog", "app-policy", "disable", "--json"], ok_codes={0, 70})
+            if not self.dry_run:
+                for key in ("direct_probe_path", "vpn_probe_path", "block_probe_path"):
+                    probe_binary = Path(policy[key])
+                    if probe_binary.exists() or probe_binary.is_symlink():
+                        probe_binary.unlink()
+            self.snapshot(f"post-app-policy-{self.external_vpn_state}")
 
     def dns(self) -> None:
         # dns apply (non-dry-run) requires the local DNS entrypoint to
