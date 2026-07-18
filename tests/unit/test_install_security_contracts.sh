@@ -106,6 +106,7 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo test -S "$socket_path"' "daemon
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'watchdog_status_with_refreshed_groups "$socket_path"' "daemon smoke test must refresh the invoking user's group vector"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo setpriv \' "daemon smoke test must use the required privilege transition tool"
 assert_contains "$ROOT_DIR/lib/runtime.sh" '      --init-groups \' "daemon smoke test must reload supplementary groups from NSS"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'env HOME="$target_home" USER="$target_user" LOGNAME="$target_user"' "daemon smoke test must not inherit root's identity environment after sudo"
 assert_contains "$ROOT_DIR/lib/runtime.sh" '/usr/local/bin/watchdog status --json' "daemon smoke test must use a read-only daemon status command"
 assert_not_contains "$ROOT_DIR/lib/runtime.sh" 'daemon is active, but this login session cannot access the IPC socket yet' "daemon smoke test must not accept an unverified IPC connection"
 if grep -Fq 'install -d -m 0755 -o "$source_uid" -g "$source_gid" "$target_dir"' "$ROOT_DIR/lib/runtime.sh"; then

@@ -538,7 +538,7 @@ prepare_watchdogvpn_private_state() {
 watchdog_status_with_refreshed_groups() {
   local socket_path="$1"
   local target_user="${SUDO_USER:-${USER:-}}"
-  local target_uid target_gid
+  local target_uid target_gid target_home
 
   # usermod updates /etc/group, but it cannot change the supplementary groups
   # of the already-running installer process.  Run the read-only IPC probe as
@@ -548,11 +548,18 @@ watchdog_status_with_refreshed_groups() {
     && getent passwd "$target_user" >/dev/null 2>&1; then
     target_uid="$(id -u "$target_user")"
     target_gid="$(id -g "$target_user")"
+    target_home="$(getent passwd "$target_user" | awk -F: 'NR == 1 {print $6}')"
+    if [[ "$target_home" != /* ]]; then
+      printf 'ERROR: cannot resolve an absolute home directory for IPC smoke user: %s\n' \
+        "$target_user" >&2
+      return 1
+    fi
     sudo setpriv \
       --reuid "$target_uid" \
       --regid "$target_gid" \
       --init-groups \
-      -- env WATCHDOGVPN_SOCKET_PATH="$socket_path" \
+      -- env HOME="$target_home" USER="$target_user" LOGNAME="$target_user" \
+      WATCHDOGVPN_SOCKET_PATH="$socket_path" \
       /usr/local/bin/watchdog status --json
     return
   fi

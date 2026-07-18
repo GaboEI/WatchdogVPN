@@ -14,7 +14,11 @@ sudo() {
 }
 
 getent() {
-  [[ "$1" == "passwd" && "$2" == "phase235-user" ]]
+  if [[ "$1" == "passwd" && "$2" == "phase235-user" ]]; then
+    printf 'phase235-user:x:1234:4321::/home/phase235-user:/bin/bash\n'
+    return 0
+  fi
+  return 1
 }
 
 id() {
@@ -44,6 +48,9 @@ expected = [
     "--init-groups",
     "--",
     "env",
+    "HOME=/home/phase235-user",
+    "USER=phase235-user",
+    "LOGNAME=phase235-user",
     f"WATCHDOGVPN_SOCKET_PATH={sys.argv[2]}",
     "/usr/local/bin/watchdog",
     "status",

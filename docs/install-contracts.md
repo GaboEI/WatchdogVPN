@@ -138,11 +138,13 @@ On a first install, adding the invoking user to the `watchdogvpn` group updates
 NSS but cannot alter the supplementary groups of the installer process that is
 already running. The final read-only IPC smoke test therefore drops back to the
 invoking user's UID/GID with `setpriv --init-groups` and verifies `watchdog
-status --json` using the freshly loaded group vector. Permission errors remain
-hard failures; an active systemd unit and an existing socket are not accepted
-as proof when the CLI cannot complete the IPC request. The CLI's own socket
-preflight uses `stat(2)` semantics so an inaccessible socket directory is
-reported as a permission problem, never as a falsely absent daemon.
+status --json` using the freshly loaded group vector and that user's real
+`HOME`, `USER` and `LOGNAME`; sudo's root identity environment is not allowed to
+leak into the unprivileged probe. Permission errors remain hard failures; an
+active systemd unit and an existing socket are not accepted as proof when the
+CLI cannot complete the IPC request. The CLI's own socket preflight uses
+`stat(2)` semantics so an inaccessible socket directory is reported as a
+permission problem, never as a falsely absent daemon.
 
 ## Domain Bypass Network Contract
 
