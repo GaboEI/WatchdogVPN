@@ -517,3 +517,92 @@ all subsequent commands ran under umask 077. No product correction is justified
 by the current cross-distro evidence. Task 23.5.3 remains open pending repaired
 or renewed controlled fixtures/endpoints that make all five resilient rows
 pass on the installed CachyOS candidate.
+
+## Task 23.5.3 final superscriptive closure — CachyOS certified (2026-07-19)
+
+Status: **CERTIFIED; TASK CLOSED**. This section supersedes every earlier
+`NOT CERTIFIED`, `2/12`, `1/5 resilient`, current-fixture-control and
+compatibility-re-audit status in this document. Those entries remain as the
+forensic record of rejected evidence, not as the current result. The clean
+VirtualBox CachyOS VM is the accepted candidate; a physical-machine repeat is
+not required.
+
+The earlier cross-distro red was reproduced to a defective installed-runtime
+path rather than waived. Exact commit `b4d9928` was installed on CachyOS and
+the clean Arch control, using the same 12 authoritative private fixtures. The
+final protocol disposition is explicit:
+
+- all five resilient profiles passed end to end with real traffic: VLESS,
+  Trojan, Hysteria2, AmneziaWG and OpenVPN+Cloak;
+- four compatibility profiles proved useful real traffic: VMess, TUIC, SOCKS
+  and HTTP. The HTTP upstream passed Facebook and YouTube through TUN, SOCKS
+  and HTTP-proxy paths. Instagram failed through all three and also failed in
+  a direct control against the upstream proxy without WatchdogVPN; that single
+  destination failure is external/upstream attribution, not a false product
+  green or a missing traffic proof;
+- standard WireGuard, Shadowsocks and plain OpenVPN are **not green**. They are
+  the only three maintainer-authorized Task 23.6.5a Plan-B dispositions.
+  WireGuard was attempted five times and retains the ISP-confirmed block.
+  Shadowsocks intermittently established and moved real HTTP traffic but did
+  not produce a stable complete run. Plain OpenVPN established its native
+  process and generation TUN, then produced no useful egress; WatchdogVPN
+  correctly rejected it at deep health and tore it down fail-closed. A
+  non-UUID ad-hoc runner initially called its asynchronous
+  `command_in_progress` response a failure; authoritative UUID follow-up and
+  live process/interface observation exclude that harness result;
+- the result is therefore **9 functionally proven rows plus 3 formally
+  blocked Plan-B rows**, never “12/12 green”. Plan B is still optional external
+  control, never a shortcut, and cannot receive a resilient profile.
+
+Hysteria2 required bounded retries, consistent with the fixture's independently
+observed transient startup behavior; a single early failure was not treated as
+authoritative. CachyOS targeted reruns closed Trojan, Hysteria2, AmneziaWG and
+OpenVPN+Cloak. The remaining VLESS, VMess, TUIC and SOCKS runs passed, and the
+Arch control reproduced the same five resilient plus VMess/TUIC/SOCKS passes;
+AmneziaWG passed on its second bounded attempt. The 42-node provider lifecycle
+remains operational, while the bounded four-node provider sample remains
+formally external/provider-blocked rather than green; it is not substituted
+for the authoritative manual-profile matrix.
+
+Two universal traffic defects were fixed rather than hidden:
+
+- `faca677` authorizes sing-box physical `direct` egress under the kill switch
+  only when both the managed service UID and managed mark agree. nftables and
+  iptables regressions preserve the earlier rule that a mark alone is never a
+  firewall credential. Installed M4 then proved `direct` on physical egress,
+  `current` on a distinct VPN egress and `block` rejected;
+- `b4d9928` makes AmneziaWG trigger bounded tunnel traffic during startup so a
+  lazy peer can produce its first handshake before readiness is judged. The
+  real profile then passed full traffic after a bounded retry.
+
+Final CachyOS gates on `b4d9928` also passed DNS/FakeIP transitions, rotation
+fail-closed behavior, manual-off, panic sleep/wake and the controlled
+kill-switch crash (`drop_delta=1`). A real disconnected reboot returned clean
+`off`/standby with the resolver unchanged. A real connected VLESS reboot
+restored the same profile on the first poll, passed TUN/SOCKS/HTTP traffic and
+kill-switch consistency, and disconnected back to the exact clean state.
+
+The first destructive comparison then exposed one final universal lifecycle
+defect: `/etc/sysctl.d/99-watchdogvpn.conf` and live
+`all/default.src_valid_mark=1` survived full purge. Commit `5408f0a` records a
+root-private install baseline (`0700` directory, `0600` manifest), preserves a
+real user-preexisting file and live values, migrates pre-journal installations
+without adopting their own residue, verifies exact restoration, and refuses an
+unprovable real uninstall fail-closed. Source gates passed `tests/unit.sh`,
+`tests/syntax.sh`, compileall, `git diff --check`, and 1758/1758 Python tests.
+
+Installed lifecycle validation used exact `5408f0a` from a proven clean
+`file absent + 0/0` baseline. The manifest recorded `origin=fresh`,
+`file_present=0`, and `0/0`; installed source files, marker and applied `1/1`
+matched. Confirmed full purge returned zero and restored `file absent + 0/0`.
+IPv4/IPv6 routes and rules, resolver hash/mode/target, links and normalized
+firewall matched the prior clean baseline byte-for-byte. Direct GitHub returned
+HTTP 200. No product path, command, unit, process, listener, interface,
+nftables object, table-880 route, internal backup, account, group or membership
+remained. The new private evidence directory is mode 0700 with 24 files at
+0600. CachyOS finishes uninstalled, checkout clean and synchronized.
+
+The same final evidence closes the superscriptive compatibility re-audit of
+Task 23.5.2: Arch is again **CERTIFIED**, with the same honest 9-functional +
+3-Plan-B disposition. Task 23.5.4 — Debian certification is the next distro
+task; it was not started during this closure.
