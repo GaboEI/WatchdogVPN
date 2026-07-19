@@ -20,16 +20,22 @@ claims to support:
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
 
-Fedora, openSUSE, and a Debian/Ubuntu derivative are intentionally queued for
-Phase 23.6. Fedora has no `distros/fedora.sh`; openSUSE has no adapter or
-detector branch; and the Debian/Ubuntu `ID_LIKE` fallback has not been
-implemented. A VM for one of those systems is useful only as future-lab
-preparation until its adapter and threat audit exist.
+Fedora/Red Hat-family systems, openSUSE, and a Debian/Ubuntu derivative are
+intentionally queued for Phase 23.6. Fedora now has a package/`dnf` foundation
+in `distros/fedora.sh`, but the detector deliberately keeps Fedora, RHEL,
+CentOS, Rocky and AlmaLinux unsupported until SELinux/firewalld, installed
+lifecycle and certification close. openSUSE has no adapter or detector branch;
+the Debian/Ubuntu `ID_LIKE` fallback has not been implemented. A VM for one of
+those systems is useful only as future-lab preparation until its remaining
+adapter/threat gates close.
 
-This lab does not promise support for every Linux distribution or every
-kernel. Certification records the distro release and the distribution-default
-kernel actually tested. A release is supported only after its evidence is
-accepted; an untested kernel is not silently represented as certified.
+This lab does not promise support for every Linux distribution or arbitrary
+custom kernels. Certification records every distro release/kernel pair
+actually tested. The distribution-default kernel is the mandatory first
+candidate; before a broad Arch-family compatibility claim, the same installed
+security, lifecycle and real-egress gates must also pass on a representative
+alternate/LTS packaged kernel. An untested kernel is never silently represented
+as certified.
 
 ## Inventory and machine lifecycle
 
@@ -135,6 +141,8 @@ Every target gets an independent evidence subdirectory containing redacted
 command output and metadata for:
 
 - clean baseline and image provenance;
+- pre-install package/command inventory for every mandatory dependency, so an
+  image-provided tool cannot be mistaken for installer provisioning;
 - source commit and installed-runtime alignment;
 - fresh install and `doctor.sh` (`FAIL=0`);
 - all 12 protocol attempts with mode-appropriate real egress proof;
@@ -145,6 +153,24 @@ command output and metadata for:
 - DNS apply/reset, kill-switch enable/controlled-failure/disable, rotation
   where applicable, and clean disconnect;
 - clean uninstall and post-uninstall baseline comparison.
+
+### Non-negotiable dependency-provenance gate
+
+No distro certification may close merely because the final machine has the
+right binaries. Evidence must distinguish what the clean image already
+contained from what `install.sh` installed, then prove that `update.sh` repairs
+the same missing set. Before the final certification statement, explicitly
+ask and answer: did this work from WatchdogVPN's reproducible dependency
+contract, or from components a developer/tester installed outside it? Any
+mandatory pre-existing tool not guaranteed by install/update invalidates the
+green until all supported distro adapters provision it, `doctor.sh` reports it
+fail-closed, regression tests pin it, and installed validation is repeated.
+This applies even when the current target happens to ship the tool by default
+and even after all protocol rows pass. The sole protocol-runtime exception is
+AmneziaWG: its distro-specific third-party repository/AUR trust step remains
+guided and user-executed, followed by product verification. It may never be
+silently generalized into an exception for firewall, DNS, capture, cleanup,
+recovery, another protocol runtime, or another feature dependency.
 
 ### Non-negotiable protocol-egress gate
 
@@ -197,6 +223,19 @@ evidence. The guest's default security posture is part of certification:
 Any failure to create a TUN device, apply nftables, run the daemon sandbox, or
 obtain protocol egress is a field finding, not a reason to weaken
 `strict_route`, `auto_redirect`, the kill switch, or cleanup requirements.
+Record `/dev/net/tun`, nftables and policy-routing capability before protocol
+execution. On Arch-family candidates, record the running kernel package base
+and matching headers. The AmneziaWG guide must select
+`<running-pkgbase>-headers`, never assume `linux-headers`; test and record
+whether the native module or `amneziawg-go` fallback actually carried traffic.
+
+The alternate-kernel row is not a demand to bless arbitrary private kernels.
+It is a regression barrier against accidentally equating one VM's kernel with
+the whole distribution: at minimum Arch's current default plus its packaged
+LTS kernel must pass before the product uses an unqualified Arch compatibility
+statement. CachyOS's distribution-default kernel supplies a further
+Arch-derived flavor, and any additional flavor explicitly advertised by the
+project requires its own installed evidence.
 
 ## Task 23.5.2 partial evidence — Arch AmneziaWG user journey
 

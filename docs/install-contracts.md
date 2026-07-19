@@ -5,7 +5,9 @@ This document defines how the product scripts should behave.
 ## Principles
 
 - One repository supports Ubuntu, Debian and Arch Linux.
-- Fedora is future scope.
+- Fedora/Red Hat-family package and `dnf` foundations exist, but support
+  remains future scope until SELinux/firewalld and installed certification
+  close.
 - Runtime behavior should be shared across distros.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.
@@ -21,8 +23,8 @@ This document defines how the product scripts should behave.
 - Download and install the official sing-box binary now? (only if not already
   detected; required for most Custom VPS protocols)
 - Download and install the official Cloak client (`ck-client`) now? (only if
-  not already detected; defaults to yes, since it is needed for
-  OpenVPN+Cloak profiles)
+  not already detected; defaults to yes and declining aborts publication,
+  since it is required for the supported OpenVPN+Cloak protocol)
 
 `install.sh` should not ask:
 
@@ -78,14 +80,31 @@ Result levels:
 
 Protocol/feature runtime dependencies (Phase 18 Task 18.3):
 
+- **Distribution runtime set**: every real `install.sh` and `update.sh` run
+  reconciles the complete adapter-owned package set even when the current
+  machine already happens to expose all commonly checked commands. The set
+  includes OpenVPN, NetworkManager, Polkit, nftables plus the legacy iptables
+  cleanup tools, `iproute2`, `ping`, process recovery tools, notifications and
+  the installer/user-management base utilities. The explicit adapters also
+  own `ss`, `sysctl`, `modinfo`, CA trust and the standard text/file tools used
+  by installation and recovery. After the package manager returns, WatchdogVPN
+  re-checks every mandatory executable and aborts if any remain unavailable.
+  `nft` is a hard security dependency: a successful installation may not rely
+  on a firewall backend inherited from a developer or certification image.
+
 - **sing-box**: required by most Custom VPS protocols. `install.sh` downloads
   the official release archive for the pinned version if not already
   detected, verifies it against a maintainer-computed SHA-256 (SagerNet does
-  not publish release checksums), and refuses to install on mismatch.
+  not publish release checksums), and refuses to install on mismatch. This is
+  provisioned for every installation, not gated by the legacy `custom_vps`
+  backend toggle, because supported profiles can be imported later.
 - **Cloak client (`ck-client`)**: only needed for OpenVPN+Cloak profiles.
   `install.sh` offers to download and checksum-verify it the same way as
-  sing-box, defaults to yes, and is skipped without prompting under
-  `--dry-run`, since most installs never use this protocol combination.
+  sing-box and defaults to yes. A declined, unsupported or unverifiable Cloak
+  dependency aborts install/update instead of publishing a runtime where a
+  supported resilient protocol is known not to work. `--dry-run` reports the
+  exact download/install plan without prompting. It is likewise provisioned
+  on every installation rather than waiting for a profile to fail.
 - **AmneziaWG tooling (`amneziawg-tools`/`awg`, plus `amneziawg-dkms` or
   `amneziawg-go`)**:
   never installed unattended by WatchdogVPN itself - the official install
@@ -110,10 +129,9 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
 - **Python `cryptography` module**: needed for encrypted backups
   (`watchdog backup --encrypt-backup`, Phase 17). `install.sh` and
   `update.sh` install the distro package (`python3-cryptography` on
-  Ubuntu/Debian, `python-cryptography` on Arch) if missing; this is
-  best-effort and never blocks install/update, since backup encryption is an
-  optional feature that already fails with a clear error if the module is
-  absent.
+  Ubuntu/Debian, `python-cryptography` on Arch) if missing and then re-check
+  the import. Installation fails closed if the module remains unavailable;
+  shipping a known-disabled security feature is not a certified install.
 
 All automated binary downloads must use an explicit official source URL, a
 checksum/signature strategy where the upstream project provides one (or a
@@ -123,6 +141,48 @@ clear failure message that aborts before installing anything on mismatch.
 `install.sh` and `update.sh` run identical dependency checks. A returning
 user who runs `update.sh` instead of reinstalling from scratch must not get a
 weaker experience than a fresh install.
+
+### Certification dependency-provenance gate
+
+This is a permanent gate for every distro task and survives chat/session
+changes. Immediately before closure, answer with evidence: did the installed
+candidate work because WatchdogVPN provisioned every mandatory dependency, or
+because a developer/test image already contained extra components? Record the
+pre-install command/package baseline and the post-install provenance. A green
+that depends on an unexplained pre-existing component is invalid and the task
+remains open until that dependency is installed by both `install.sh` and
+`update.sh`, validated by `doctor.sh`, regression-tested for every supported
+adapter, and revalidated installed. The only protocol-runtime exception is
+AmneziaWG, whose third-party trust decision remains explicit guided setup with
+distro-owned commands and post-setup detection. Bootstrap requirements that
+must exist before any installer can execute (a supported systemd Linux,
+`bash`, package manager, network access and usable root/sudo authority) are
+preconditions, not hidden runtime dependencies.
+
+### Kernel portability contract
+
+Distribution support is capability-based, not pinned to the exact kernel
+release used by one VM. WatchdogVPN does not require a particular kernel
+version, but the running kernel must provide `/dev/net/tun`, nftables hooks,
+policy routing and the systemd security/capability behavior exercised by the
+installed daemon. Install, update and `doctor.sh` fail when the TUN device is
+absent; installed
+certification must additionally prove real TUN creation, nftables application,
+routing, cleanup and egress rather than infer them from the distro name.
+
+For Arch-family AmneziaWG setup, the guided command derives the active kernel
+package base from `/usr/lib/modules/$(uname -r)/pkgbase` and installs the
+matching `<pkgbase>-headers`; it must not assume `linux-headers`. This covers
+packaged default, LTS and alternate kernel families when their matching header
+package exists. `amneziawg-go` remains the userspace fallback when a compatible
+native module cannot be built or loaded.
+
+A broad Arch-family compatibility statement requires installed evidence on
+the current distribution-default kernel plus a representative alternate/LTS
+kernel. Evidence on one kernel certifies only that observed kernel. Arbitrary
+custom kernels that remove required Linux capabilities are not silently
+claimed as supported, and a hardened/alternate kernel failure is a field
+finding until attributed and formally scoped.
 
 **Installed/source version marker:** `install.sh`/`update.sh` record the
 installed source commit and timestamp (`lib/version_marker.sh`) every time

@@ -2,7 +2,11 @@
 set -euo pipefail
 
 DISTRO_PACKAGE_MANAGER="apt"
-DISTRO_BASE_PACKAGES=(python3 curl tar iproute2 network-manager logrotate libnotify-bin openvpn util-linux polkitd)
+DISTRO_BASE_PACKAGES=(
+  bash coreutils findutils grep gawk sed gzip libc-bin passwd systemd sudo kmod
+  ca-certificates python3 curl tar iproute2 network-manager logrotate
+  libnotify-bin openvpn util-linux polkitd nftables iptables iputils-ping procps
+)
 DISTRO_DNS_PACKAGES=(dnsutils)
 DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"
 DISTRO_POLKIT_PACKAGE="polkitd"

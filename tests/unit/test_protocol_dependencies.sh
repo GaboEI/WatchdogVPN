@@ -22,8 +22,10 @@ assert_not_contains() {
 
 assert_order() {
   local file="$1" first="$2" second="$3" message="$4" first_line second_line
-  first_line="$(grep -nF "$first" "$file" | head -n1 | cut -d: -f1 || true)"
-  second_line="$(grep -nF "$second" "$file" | head -n1 | cut -d: -f1 || true)"
+  # Wiring assertions care about the executable call sites, which appear
+  # after any helper definitions containing the same function names.
+  first_line="$(grep -nF "$first" "$file" | tail -n1 | cut -d: -f1 || true)"
+  second_line="$(grep -nF "$second" "$file" | tail -n1 | cut -d: -f1 || true)"
   if [[ -z "$first_line" || -z "$second_line" || "$first_line" -ge "$second_line" ]]; then
     printf 'FAIL: %s\n' "$message" >&2
     exit 1
@@ -51,6 +53,20 @@ assert_contains "$ROOT_DIR/lib/cloak.sh" 'CLOAK_SHA256_LINUX_ARM64' "Cloak lib m
 assert_contains "$ROOT_DIR/lib/cloak.sh" 'verify_sha256' "Cloak install must verify the download checksum"
 assert_contains "$ROOT_DIR/lib/cloak.sh" 'download_release_asset' "Cloak install must use the shared resilient downloader"
 assert_contains "$ROOT_DIR/lib/cloak.sh" '"${INSTALL_DRY_RUN:-0}" == "1"' "Cloak install must skip prompting under --dry-run"
+assert_contains "$ROOT_DIR/lib/cloak.sh" 'Cloak client is required for the supported OpenVPN+Cloak protocol' "declining Cloak must fail instead of publishing a partial installation"
+
+if (cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/install_files.sh
+source lib/cloak.sh
+cloak_available() { return 1; }
+prompt_yes_no() { return 1; }
+install_official_cloak
+' >/dev/null 2>&1); then
+  printf 'FAIL: declining a missing Cloak runtime must abort install/update\n' >&2
+  exit 1
+fi
 
 # --- release downloads: default path first, bounded IPv4 fallback ---
 
@@ -117,6 +133,9 @@ assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'amneziawg_runtime_available' "amne
 assert_contains "$ROOT_DIR/lib/amneziawg.sh" 'DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS' "amneziawg commands must come from a distro adapter"
 assert_contains "$ROOT_DIR/diagnostics/amneziawg_guidance.py" 'distro_adapter_path' "CLI guidance must reuse the shared distro adapter resolver"
 assert_contains "$ROOT_DIR/distros/arch.sh" 'DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS' "Arch adapter must own its AmneziaWG guidance"
+assert_contains "$ROOT_DIR/distros/arch.sh" '/usr/lib/modules/$(uname -r)/pkgbase' "Arch AmneziaWG guidance must derive headers from the running kernel package"
+assert_contains "$ROOT_DIR/distros/arch.sh" '${kernel_pkgbase}-headers' "Arch AmneziaWG guidance must install matching headers for default, LTS and alternate packaged kernels"
+assert_not_contains "$ROOT_DIR/distros/arch.sh" 'base-devel git linux-headers' "Arch AmneziaWG guidance must not hardcode default-kernel headers"
 assert_contains "$ROOT_DIR/distros/ubuntu.sh" 'DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS' "Ubuntu adapter must own its AmneziaWG guidance"
 assert_contains "$ROOT_DIR/distros/debian.sh" 'DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS' "Debian adapter must own its AmneziaWG guidance"
 assert_not_contains "$ROOT_DIR/install.sh" 'guide_amneziawg_setup' "blank installation must not show AmneziaWG instructions"
@@ -132,12 +151,101 @@ assert_contains "$ROOT_DIR/distros/ubuntu.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAG
 assert_contains "$ROOT_DIR/distros/debian.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "Debian adapter must map the cryptography package name"
 assert_contains "$ROOT_DIR/distros/arch.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python-cryptography"' "Arch adapter must map the cryptography package name"
 
+# --- complete distro runtime package contract ---
+
+for required_cmd in ss systemd-run getent useradd usermod sysctl modinfo nmcli nft iptables ip6tables ping pgrep; do
+  assert_contains "$ROOT_DIR/lib/packages.sh" "$required_cmd" "required command inventory must include $required_cmd"
+done
+assert_contains "$ROOT_DIR/lib/common.sh" 'IFS= read -r name </proc/1/comm' "systemd detection must not require procps before procps can be installed"
+assert_not_contains "$ROOT_DIR/install.sh" 'ps -p 1' "installer bootstrap must not require ps before package reconciliation"
+assert_contains "$ROOT_DIR/lib/packages.sh" '[[ ! -c /dev/net/tun ]]' "install/update dependency validation must fail closed without the running kernel TUN device"
+for package in coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps-ng; do
+  assert_contains "$ROOT_DIR/distros/arch.sh" "$package" "Arch adapter must install $package"
+done
+for adapter in ubuntu debian; do
+  for package in coreutils findutils grep gawk sed libc-bin passwd systemd sudo kmod ca-certificates nftables iptables iputils-ping procps; do
+    assert_contains "$ROOT_DIR/distros/$adapter.sh" "$package" "$adapter adapter must install $package"
+  done
+done
+for package in coreutils findutils grep gawk sed glibc-common shadow-utils systemd sudo kmod ca-certificates nftables iptables-nft iputils procps-ng openvpn NetworkManager polkit; do
+  assert_contains "$ROOT_DIR/distros/fedora.sh" "$package" "future Fedora adapter must pre-map $package"
+done
+assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PACKAGE_MANAGER="dnf"' "future Fedora adapter must use dnf"
+assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "future Fedora adapter must map cryptography"
+
+dnf_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/packages.sh
+run_step() { printf "%s\n" "$*"; }
+DISTRO_PACKAGE_MANAGER=dnf
+install_package_set nftables iputils
+')"
+grep -Fqx 'sudo dnf install -y nftables iputils' <<<"$dnf_output" || {
+  printf 'FAIL: future Fedora package foundation must use non-interactive dnf install\n' >&2
+  exit 1
+}
+
+dependency_reconcile_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/packages.sh
+DISTRO_BASE_PACKAGES=(runtime-one nftables iputils procps)
+reconciled=0
+install_package_set() {
+  printf "packages=%s\n" "$*"
+  reconciled=1
+}
+have_cmd() {
+  case "$1" in
+    nft|ping|pgrep) ((reconciled == 1)) ;;
+    *) return 0 ;;
+  esac
+}
+validate_required_commands
+' 2>&1)"
+grep -Fq 'packages=runtime-one nftables iputils procps' <<<"$dependency_reconcile_output" || {
+  printf 'FAIL: dependency validation must always reconcile the complete distro package set\n' >&2
+  exit 1
+}
+grep -Fq 'required runtime packages, commands and kernel TUN device available' <<<"$dependency_reconcile_output" || {
+  printf 'FAIL: dependency validation must re-check commands after package installation\n' >&2
+  exit 1
+}
+
+if (cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/packages.sh
+DISTRO_BASE_PACKAGES=(nftables iputils procps)
+install_package_set() { return 0; }
+have_cmd() { [[ "$1" != nft ]]; }
+validate_required_commands
+' >/dev/null 2>&1); then
+  printf 'FAIL: dependency validation must fail closed when a command remains missing\n' >&2
+  exit 1
+fi
+
+if (cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/packages.sh
+DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE=python-cryptography
+python_cryptography_available() { return 1; }
+install_package_set() { return 0; }
+validate_python_runtime_dependencies
+' >/dev/null 2>&1); then
+  printf 'FAIL: cryptography must be mandatory after its package install attempt\n' >&2
+  exit 1
+fi
+
 # --- install.sh wiring ---
 
 assert_contains "$ROOT_DIR/install.sh" 'validate_protocol_runtime_dependencies' "installer must validate protocol runtime dependencies"
 assert_contains "$ROOT_DIR/install.sh" 'install_official_cloak' "installer must offer the Cloak client for Custom VPS"
+assert_not_contains "$ROOT_DIR/install.sh" 'if [[ "$CUSTOM_VPS_ENABLED" == "true" ]]; then' "supported sing-box/Cloak runtimes must not depend on the legacy custom_vps backend toggle"
 assert_order "$ROOT_DIR/install.sh" "validate_required_commands" "validate_protocol_runtime_dependencies" "installer must check protocol dependencies after required commands"
-assert_order "$ROOT_DIR/install.sh" "install_official_singbox" "install_official_cloak" "installer must offer sing-box before the optional Cloak client"
+assert_order "$ROOT_DIR/install.sh" "install_official_singbox" "install_official_cloak" "installer must ensure sing-box before the required Cloak client"
 
 # Regression: confirmed live 2026-07-17 - this prompt defaulted to "no"
 # while install_official_singbox's equivalent prompt (lib/singbox.sh)
@@ -157,9 +265,11 @@ assert_contains "$ROOT_DIR/lib/cloak.sh" 'prompt_yes_no "Download and install th
 # update)
 
 assert_contains "$ROOT_DIR/update.sh" 'validate_python_runtime_dependencies' "updater must backfill missing python runtime dependencies"
+assert_contains "$ROOT_DIR/update.sh" 'validate_required_commands' "updater must reconcile the same complete distro runtime package set as install"
+assert_order "$ROOT_DIR/update.sh" 'validate_required_commands' 'validate_python_runtime_dependencies' "updater must reconcile system packages before Python/runtime dependencies"
 assert_contains "$ROOT_DIR/update.sh" 'install_official_singbox' "updater must ensure sing-box is present, not only a fresh install"
 assert_contains "$ROOT_DIR/update.sh" 'install_official_cloak' "updater must offer the Cloak client, not only a fresh install"
-assert_contains "$ROOT_DIR/update.sh" 'prompt_yes_no()' "updater must define the prompt helper required by optional dependency installers"
+assert_contains "$ROOT_DIR/update.sh" 'prompt_yes_no()' "updater must define the prompt helper required by reviewed external dependency installers"
 assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/singbox.sh"' "updater must source lib/singbox.sh to use install_official_singbox"
 assert_contains "$ROOT_DIR/update.sh" '. "$ROOT_DIR/lib/cloak.sh"' "updater must source lib/cloak.sh to use install_official_cloak"
 
@@ -171,12 +281,16 @@ assert_contains "$ROOT_DIR/uninstall.sh" '. "$ROOT_DIR/lib/runtime.sh"' "uninsta
 # --- doctor.sh reports dependency state without installing anything ---
 
 assert_contains "$ROOT_DIR/doctor.sh" 'Protocol Runtime Dependencies' "doctor must report protocol runtime dependency state"
+assert_contains "$ROOT_DIR/doctor.sh" '[[ -c /dev/net/tun ]]' "doctor must fail closed when the running kernel does not expose the TUN device"
 assert_contains "$ROOT_DIR/doctor.sh" 'singbox_available' "doctor must check sing-box availability"
 assert_contains "$ROOT_DIR/doctor.sh" 'amneziawg_runtime_available' "doctor must check AmneziaWG availability the same way the driver does (userspace tool plus kernel module OR amneziawg-go fallback), not require both unconditionally"
 assert_not_contains "$ROOT_DIR/doctor.sh" 'amneziawg_userspace_available && amneziawg_kernel_module_available' "doctor must not require the kernel module unconditionally; the userspace amneziawg-go fallback is a real working runtime path"
 assert_not_contains "$ROOT_DIR/doctor.sh" 'compatible WireGuard' "doctor must not claim plain WireGuard tooling satisfies the AmneziaWG runtime"
 assert_contains "$ROOT_DIR/doctor.sh" 'cloak_available' "doctor must check Cloak client availability"
 assert_contains "$ROOT_DIR/doctor.sh" 'python_cryptography_available' "doctor must check the cryptography module"
+assert_contains "$ROOT_DIR/doctor.sh" 'mark_fail "nftables missing;' "doctor must fail closed without the atomic firewall dependency"
+assert_contains "$ROOT_DIR/doctor.sh" 'mark_fail "Cloak client (ck-client) missing;' "doctor must fail closed without the resilient Cloak dependency"
+assert_contains "$ROOT_DIR/doctor.sh" 'mark_fail "python cryptography module missing;' "doctor must fail closed without encrypted-backup support"
 assert_not_contains "$ROOT_DIR/doctor.sh" 'install_official_singbox' "doctor must never call an installer function"
 assert_not_contains "$ROOT_DIR/doctor.sh" 'install_official_cloak' "doctor must never call an installer function"
 

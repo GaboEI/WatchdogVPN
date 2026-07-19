@@ -218,6 +218,73 @@ exercise the "still missing" branches.
   new dependency checks do not consume any stdin, so the existing
   fixed-answer-sequence dry-run test needed no changes.
 - `bash tests/unit.sh` passed (17 shell test files, including the new one).
+
+## Phase 23.5 superscriptive correction — reproducible dependency provenance (2026-07-19)
+
+This section supersedes the earlier optional/best-effort conclusions for
+Cloak and Python `cryptography`, and closes a broader contract gap discovered
+during installed Arch/CachyOS certification. The historical text above is
+retained as an audit trail; it is no longer the current product contract where
+it conflicts with this section.
+
+### Field finding and root cause
+
+The certification machines could exercise the complete runtime only after
+components already present in the image or installed during diagnosis filled
+gaps in WatchdogVPN's declared package set. In particular, `nft`, `ping` and
+`pgrep` were used by mandatory kill-switch, AmneziaWG handshake and process
+recovery paths, yet their owning packages were not guaranteed by every
+installer/updater adapter. A final green on such a machine therefore proved
+the assembled developer environment, not a reproducible user installation.
+The follow-up inventory expanded this beyond those three symptoms to the
+security/runtime commands and owning packages used for SSH-path inspection,
+policy routing, module detection, firewall fallback/cleanup, NetworkManager,
+user creation and transactional file installation.
+
+### Superseding universal contract
+
+- Every real `install.sh` and `update.sh` run reconciles the adapter's complete
+  runtime package set, even when a subset of commands is already visible.
+- After package installation, every mandatory executable is rechecked and the
+  operation fails closed if any remains unavailable. This includes the atomic
+  nftables backend, legacy iptables cleanup tooling, OpenVPN, `ping`, process
+  recovery, NetworkManager, Polkit, notifications and supporting utilities.
+- Python `cryptography` is required shipped functionality, not a best-effort
+  enhancement. Its distro package is installed, the import is rechecked, and
+  install/update fails if it is still unavailable.
+- Cloak is mandatory for the supported resilient OpenVPN+Cloak protocol. A
+  declined, unsupported or unverifiable `ck-client` installation aborts the
+  install/update instead of publishing a knowingly partial runtime. sing-box
+  and Cloak are provisioned on every installation independently of the legacy
+  `custom_vps` backend toggle; a later profile import must already have them.
+- `doctor.sh` reports missing `nft`, Cloak or `cryptography` as failures; it
+  remains read-only.
+- AmneziaWG remains the sole protocol-runtime exception: its third-party
+  repository/AUR trust step is guided and explicitly user-executed, with
+  WatchdogVPN rechecking the resulting runtime. That exception does not extend
+  to any other dependency.
+- Ubuntu, Debian and Arch adapters carry the complete contract. A Fedora/Red
+  Hat-family `dnf`/package adapter is laid down for Phase 23.6, but its presence
+  is not a support claim; SELinux, firewalld, lifecycle and installed
+  certification remain required before those systems can be accepted.
+
+The bootstrap boundary is deliberately narrow: a supported systemd-based
+Linux with Bash, its package manager, network access and usable root/sudo
+authority must exist before the installer can provision anything. Installer
+startup reads `/proc/1/comm` without depending on `ps`, so a missing `procps`
+package cannot prevent the package reconciliation that repairs it.
+
+### Permanent certification closing gate
+
+Every distro certification must record a pre-install command/package inventory
+and answer, with installed evidence: did the result work because WatchdogVPN's
+installer/updater provisioned all required components, or because the test
+environment already contained external components? An unexplained pre-existing
+dependency invalidates the green. Closure requires a clean or deliberately
+dependency-depleted VM, installer provisioning proof, updater repair proof,
+`doctor.sh` with no dependency failures, regression suites, and installed
+runtime revalidation. This gate applies to every future distro and survives
+task, chat and maintainer handoffs.
 - `bash tests/syntax.sh` passed.
 - `python3 -m unittest discover -s tests -p 'test_*.py'` passed: 1026 tests
   (unaffected - this task only touched shell scripts and docs).
@@ -287,3 +354,22 @@ and human-readable steps. The commands are printed, never executed by
 WatchdogVPN; unsupported or unverified distributions receive official source
 links instead of guessed package-manager commands. `doctor.sh` keeps the
 same read-only availability check.
+
+## Final superscriptive status — dependency and kernel provenance (2026-07-19)
+
+The 2026-07-19 superscriptive correction above is the current authority over
+all earlier validation and acceptance text in this file. In particular, the
+clean-machine missing-dependency proof is a mandatory certification gate, not
+work that can be waived or indefinitely delegated to an older task; Cloak and
+Python `cryptography` are fail-closed requirements; and AmneziaWG is the sole
+guided, user-executed protocol-runtime trust exception.
+
+Kernel provenance is part of the same rule. Arch AmneziaWG guidance derives
+the active kernel package base from `/usr/lib/modules/$(uname -r)/pkgbase` and
+requests matching headers instead of hardcoding `linux-headers`, with
+`amneziawg-go` as the userspace fallback. `doctor.sh` fails when
+`/dev/net/tun` is unavailable, as do install/update dependency validation. A
+broad Arch-family compatibility statement
+requires installed TUN, nftables, routing, cleanup and real-egress evidence on
+the distribution-default kernel plus a representative packaged alternate/LTS
+kernel; a single VM kernel is never silently generalized to the distribution.

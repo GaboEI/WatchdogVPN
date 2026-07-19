@@ -72,12 +72,10 @@ Security notice:
 EOF
 }
 
-# Cloak is only needed for the OpenVPN+Cloak protocol combination, unlike
-# sing-box which is required by most Custom VPS protocols. Installation is
-# still prompted for rather than unconditional, but defaults to "yes" like
-# every other resilient-protocol dependency (see the prompt_yes_no call
-# below), and is skipped without asking under --dry-run so dry-run stays
-# scriptable without extra stdin input.
+# Cloak is the required transport for the supported resilient OpenVPN+Cloak
+# protocol. The user may review and decline the external download, but a
+# declined or unverifiable dependency must abort install/update instead of
+# publishing a partially functional green installation.
 install_official_cloak() {
   local asset url tmpdir bin expected_sha256
 
@@ -87,25 +85,24 @@ install_official_cloak() {
     return 0
   fi
 
-  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] skip optional Cloak client install (only needed for OpenVPN+Cloak profiles)\n'
-    return 0
-  fi
-
   asset="$(cloak_asset_name)" || {
-    warn "Cloak client automatic install does not support architecture: $(uname -m)"
-    printf 'Install ck-client manually if you plan to use OpenVPN+Cloak profiles.\n'
-    return 0
+    fail "Cloak client automatic install does not support architecture: $(uname -m)"
+    return 1
   }
   expected_sha256="$(cloak_asset_sha256)" || {
-    warn "Cloak client automatic install has no pinned checksum for architecture: $(uname -m)"
-    printf 'Install ck-client manually if you plan to use OpenVPN+Cloak profiles.\n'
-    return 0
+    fail "Cloak client automatic install has no pinned checksum for architecture: $(uname -m)"
+    return 1
   }
   url="${CLOAK_RELEASE_BASE_URL}/${asset}"
 
   printf '\nThe Cloak client (ck-client) is only needed for OpenVPN+Cloak profiles.\n'
   print_cloak_external_notice
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] download %s\n' "$url"
+    printf '[DRY-RUN] install Cloak client to /usr/local/bin/ck-client\n'
+    return 0
+  fi
 
   # Default "yes", matching install_official_singbox's own prompt
   # (lib/singbox.sh): OpenVPN+Cloak is a resilient-tier protocol like every
@@ -121,8 +118,9 @@ install_official_cloak() {
   # time, but nothing surfaced that as a real problem for a resilient
   # protocol.
   if ! prompt_yes_no "Download and install the official Cloak client now?" yes; then
-    printf '[SKIP] Cloak client not installed; OpenVPN+Cloak profiles will fail until it is installed.\n'
-    return 0
+    fail "Cloak client is required for the supported OpenVPN+Cloak protocol"
+    printf 'Install/update was not published because it would be incomplete.\n'
+    return 1
   fi
 
   tmpdir="$(mktemp -d)"
@@ -142,7 +140,7 @@ install_official_cloak() {
 
   if ! cloak_available; then
     fail "Cloak client installation finished but ck-client was not found"
-    exit 1
+    return 1
   fi
 
   bin="$(cloak_path)"

@@ -100,6 +100,14 @@ have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+init_process_name() {
+  local name=""
+  [[ -r /proc/1/comm ]] || return 1
+  IFS= read -r name </proc/1/comm || true
+  [[ -n "$name" ]] || return 1
+  printf '%s\n' "$name"
+}
+
 verify_sha256() {
   local file="$1" expected="$2" actual
   actual="$(sha256sum "$file" | awk '{print $1}')"

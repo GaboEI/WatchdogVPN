@@ -61,6 +61,25 @@ assert_eq "arch" "$DISTRO_FAMILY" "cachyos family"
 assert_eq "1" "$DISTRO_SUPPORTED" "cachyos supported"
 assert_eq "$ROOT_DIR/distros/arch.sh" "$(distro_adapter_path "$ROOT_DIR")" "cachyos adapter path"
 
+write_os_release fedora \
+  'ID=fedora' \
+  'PRETTY_NAME="Fedora Linux"'
+detect_distro
+assert_eq "0" "$DISTRO_SUPPORTED" "fedora remains unsupported"
+assert_eq "1" "$DISTRO_FUTURE" "fedora future scope"
+assert_eq "fedora" "$DISTRO_ADAPTER_ID" "fedora foundation adapter"
+assert_eq "redhat" "$DISTRO_FAMILY" "fedora family"
+assert_eq "$ROOT_DIR/distros/fedora.sh" "$(distro_adapter_path "$ROOT_DIR")" "fedora adapter path"
+
+write_os_release rhel \
+  'ID=rhel' \
+  'PRETTY_NAME="Red Hat Enterprise Linux"'
+detect_distro
+assert_eq "0" "$DISTRO_SUPPORTED" "rhel remains unsupported"
+assert_eq "1" "$DISTRO_FUTURE" "rhel future scope"
+assert_eq "fedora" "$DISTRO_ADAPTER_ID" "rhel foundation adapter"
+assert_eq "redhat" "$DISTRO_FAMILY" "rhel family"
+
 write_os_release unknown \
   'ID=exampleos' \
   'PRETTY_NAME="ExampleOS"'

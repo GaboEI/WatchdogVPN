@@ -258,13 +258,13 @@ if [[ "${DISTRO_SUPPORTED:-0}" == "1" ]]; then
     mark_fail "missing distro adapter: $adapter"
   fi
 elif [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
-  mark_fail "Fedora support is planned for a future release"
+  mark_fail "Red Hat-family support is planned for a future release"
 else
   mark_fail "unsupported distro for this release"
 fi
 
 section "System"
-if [[ "$(ps -p 1 -o comm= 2>/dev/null || true)" == "systemd" ]]; then
+if [[ "$(init_process_name 2>/dev/null || true)" == "systemd" ]]; then
   mark_ok "init: systemd"
 else
   mark_fail "systemd is required"
@@ -580,10 +580,22 @@ fi
 info "capture_modes=${capture_modes_value:-unknown}"
 
 section "Protocol Runtime Dependencies"
+if [[ -c /dev/net/tun ]]; then
+  mark_ok "kernel TUN device available: /dev/net/tun"
+else
+  mark_fail "kernel TUN device unavailable: /dev/net/tun; VPN capture cannot operate"
+fi
+
 if singbox_available; then
   mark_ok "sing-box detected: $(singbox_path)"
 else
   mark_warn "sing-box not detected; most Custom VPS protocols will not run"
+fi
+
+if have_cmd nft; then
+  mark_ok "atomic firewall backend detected: nftables"
+else
+  mark_fail "nftables missing; WatchdogVPN cannot enforce its atomic kill switch"
 fi
 
 if amneziawg_runtime_available; then
@@ -595,13 +607,13 @@ fi
 if cloak_available; then
   mark_ok "Cloak client detected: $(cloak_path)"
 else
-  info "Cloak client (ck-client) not detected; only needed for OpenVPN+Cloak profiles"
+  mark_fail "Cloak client (ck-client) missing; resilient OpenVPN+Cloak profiles will not run"
 fi
 
 if python_cryptography_available; then
   mark_ok "python cryptography module available"
 else
-  mark_warn "python cryptography module missing; encrypted backups will not work"
+  mark_fail "python cryptography module missing; encrypted backups will not work"
 fi
 
 section "Optional Integrations"

@@ -283,7 +283,7 @@ require_supported_distro() {
 }
 
 require_system_shape() {
-  if [[ "$(ps -p 1 -o comm= 2>/dev/null || true)" != "systemd" ]]; then
+  if [[ "$(init_process_name 2>/dev/null || true)" != "systemd" ]]; then
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
       warn "systemd is required; dry-run continues without validating init PID 1"
     else
@@ -304,22 +304,6 @@ require_system_shape() {
     printf 'Install sudo or run from an environment where privileged setup is available.\n'
     exit 1
   fi
-}
-
-validate_required_commands() {
-  local missing=() cmd
-  for cmd in $(required_commands); do
-    have_cmd "$cmd" || missing+=("$cmd")
-  done
-
-  if ((${#missing[@]} == 0)); then
-    ok "required commands available"
-    return 0
-  fi
-
-  warn "missing required commands: ${missing[*]}"
-  printf 'WatchdogVPN will ask the distro package manager to install missing prerequisites.\n'
-  install_package_set "${DISTRO_BASE_PACKAGES[@]}"
 }
 
 validate_protocol_runtime_dependencies() {
@@ -415,10 +399,12 @@ detect_existing_backend_config
 prompt_backend_mode
 prompt_custom_vps_config
 
-if [[ "$CUSTOM_VPS_ENABLED" == "true" ]]; then
-  install_official_singbox
-  install_official_cloak
-fi
+# These are supported profile runtimes, not dependencies of the legacy
+# custom_vps backend toggle. Provision them on every installation so a later
+# profile import does not depend on developer/image state. AmneziaWG remains
+# the sole import-scoped guided trust exception.
+install_official_singbox
+install_official_cloak
 
 print_install_plan
 
