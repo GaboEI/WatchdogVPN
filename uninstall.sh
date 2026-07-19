@@ -475,6 +475,11 @@ if ! rescue_system_dns; then
   uninstall_abort_with_recovery "DNS cleanup"
   exit 1
 fi
+print_section "Restore kernel tunable baseline"
+if ! restore_sysctl_defaults_baseline; then
+  uninstall_abort_with_recovery "kernel tunable baseline restoration"
+  exit 1
+fi
 print_section "Disable remaining product services"
 disable_systemd_units
 print_section "Remove systemd units"

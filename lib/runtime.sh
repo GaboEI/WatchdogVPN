@@ -42,6 +42,14 @@ PYTHON_RUNTIME_SUPPORT_EXECUTABLES=(
   tui/VPN
 )
 
+SYSCTL_DEFAULTS_PATH="${WATCHDOGVPN_SYSCTL_DEFAULTS_PATH:-/etc/sysctl.d/99-watchdogvpn.conf}"
+SYSCTL_BASELINE_DIR="${WATCHDOGVPN_SYSCTL_BASELINE_DIR:-/var/backups/watchdogvpn/install-baseline/sysctl}"
+SYSCTL_BASELINE_MANIFEST="$SYSCTL_BASELINE_DIR/manifest"
+SYSCTL_BASELINE_FILE="$SYSCTL_BASELINE_DIR/defaults.before"
+SRC_VALID_MARK_ALL_PATH="${WATCHDOGVPN_SRC_VALID_MARK_ALL_PATH:-/proc/sys/net/ipv4/conf/all/src_valid_mark}"
+SRC_VALID_MARK_DEFAULT_PATH="${WATCHDOGVPN_SRC_VALID_MARK_DEFAULT_PATH:-/proc/sys/net/ipv4/conf/default/src_valid_mark}"
+SYSCTL_INSTALLED_MARKER_PATH="${WATCHDOGVPN_VERSION_MARKER:-/usr/local/lib/watchdogvpn/installed-version}"
+
 # Historical WatchdogVPN-owned files removed from the shipped set before this
 # release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept separate
 # from remove_runtime_files()/install_runtime_files() purely so both install
@@ -114,12 +122,149 @@ install_runtime_files() {
 # here, at install/update time, as root, outside the daemon's sandbox.
 install_sysctl_defaults() {
   local runtime_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
-  install_root_file "$runtime_root/etc/sysctl.d/99-watchdogvpn.conf" /etc/sysctl.d/99-watchdogvpn.conf 0644
+  capture_sysctl_defaults_baseline
+  install_root_file "$runtime_root/etc/sysctl.d/99-watchdogvpn.conf" "$SYSCTL_DEFAULTS_PATH" 0644
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] sudo sysctl -p /etc/sysctl.d/99-watchdogvpn.conf\n'
+    printf '[DRY-RUN] sudo sysctl -p %s\n' "$SYSCTL_DEFAULTS_PATH"
     return 0
   fi
-  run_step sudo sysctl -q -p /etc/sysctl.d/99-watchdogvpn.conf
+  run_step sudo sysctl -q -p "$SYSCTL_DEFAULTS_PATH"
+}
+
+_read_src_valid_mark() {
+  local path="$1" value
+  value="$(run_privileged_readonly cat "$path")" || return 1
+  [[ "$value" =~ ^[01]$ ]] || return 1
+  printf '%s\n' "$value"
+}
+
+_validated_sysctl_baseline() {
+  local manifest="$1" version origin file_present all_value default_value
+  version="$(run_privileged_readonly awk -F= '$1 == "version" {print $2}' "$manifest")" || return 1
+  origin="$(run_privileged_readonly awk -F= '$1 == "origin" {print $2}' "$manifest")" || return 1
+  file_present="$(run_privileged_readonly awk -F= '$1 == "file_present" {print $2}' "$manifest")" || return 1
+  all_value="$(run_privileged_readonly awk -F= '$1 == "all_src_valid_mark" {print $2}' "$manifest")" || return 1
+  default_value="$(run_privileged_readonly awk -F= '$1 == "default_src_valid_mark" {print $2}' "$manifest")" || return 1
+  [[ "$version" == "1" ]] || return 1
+  [[ "$origin" == "fresh" || "$origin" == "legacy-inferred" ]] || return 1
+  [[ "$file_present" =~ ^[01]$ && "$all_value" =~ ^[01]$ && "$default_value" =~ ^[01]$ ]] || return 1
+  [[ "$origin" != "legacy-inferred" || "$file_present $all_value $default_value" == "0 0 0" ]] || return 1
+  [[ "$file_present" == "0" ]] || root_path_is_file "$SYSCTL_BASELINE_FILE" || return 1
+  printf '%s %s %s\n' "$file_present" "$all_value" "$default_value"
+}
+
+capture_sysctl_defaults_baseline() {
+  local all_value default_value file_present=0 manifest_tmp origin="fresh"
+  if root_path_is_file "$SYSCTL_BASELINE_MANIFEST"; then
+    _validated_sysctl_baseline "$SYSCTL_BASELINE_MANIFEST" >/dev/null || {
+      printf 'ERROR: invalid WatchdogVPN sysctl baseline: %s\n' "$SYSCTL_BASELINE_MANIFEST" >&2
+      return 1
+    }
+    printf '[KEEP] existing sysctl baseline: %s\n' "$SYSCTL_BASELINE_MANIFEST"
+    return 0
+  fi
+
+  if root_path_is_file "$SYSCTL_INSTALLED_MARKER_PATH"; then
+    # Releases predating this baseline journal installed the product-specific
+    # file and forced both values to 1 without recording what they replaced.
+    # The kernel default is 0 for both booleans.  Recognize that one-time
+    # migration by the already-installed product marker; otherwise an update
+    # would misclassify WatchdogVPN's own residue as user configuration.
+    origin="legacy-inferred"
+    all_value=0
+    default_value=0
+    printf '[MIGRATE] infer pre-journal sysctl baseline from installed WatchdogVPN generation\n'
+  else
+    all_value="$(_read_src_valid_mark "$SRC_VALID_MARK_ALL_PATH")" || {
+      printf 'ERROR: cannot read a valid all.src_valid_mark baseline\n' >&2
+      return 1
+    }
+    default_value="$(_read_src_valid_mark "$SRC_VALID_MARK_DEFAULT_PATH")" || {
+      printf 'ERROR: cannot read a valid default.src_valid_mark baseline\n' >&2
+      return 1
+    }
+    root_path_is_file "$SYSCTL_DEFAULTS_PATH" && file_present=1
+  fi
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] capture sysctl baseline: origin=%s file_present=%s all=%s default=%s\n' \
+      "$origin" "$file_present" "$all_value" "$default_value"
+    return 0
+  fi
+
+  run_step sudo install -d -m 0700 -o root -g root "$SYSCTL_BASELINE_DIR"
+  if [[ "$file_present" == "1" ]]; then
+    run_step sudo cp -a -- "$SYSCTL_DEFAULTS_PATH" "$SYSCTL_BASELINE_FILE"
+  else
+    run_step sudo rm -f -- "$SYSCTL_BASELINE_FILE"
+  fi
+  manifest_tmp="$(mktemp)"
+  {
+    printf 'version=1\n'
+    printf 'origin=%s\n' "$origin"
+    printf 'file_present=%s\n' "$file_present"
+    printf 'all_src_valid_mark=%s\n' "$all_value"
+    printf 'default_src_valid_mark=%s\n' "$default_value"
+  } >"$manifest_tmp"
+  run_step sudo install -m 0600 -o root -g root "$manifest_tmp" "$SYSCTL_BASELINE_MANIFEST"
+  rm -f -- "$manifest_tmp"
+}
+
+_write_src_valid_mark() {
+  local path="$1" value="$2"
+  printf '%s\n' "$value" | sudo tee "$path" >/dev/null
+}
+
+restore_sysctl_defaults_baseline() {
+  local values file_present all_value default_value observed
+  if ! root_path_is_file "$SYSCTL_BASELINE_MANIFEST"; then
+    if root_path_is_file "$SYSCTL_INSTALLED_MARKER_PATH"; then
+      if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+        printf '[DRY-RUN] migrate the pre-journal installed sysctl baseline before restoration\n'
+        return 0
+      fi
+      capture_sysctl_defaults_baseline || return 1
+    fi
+  fi
+  if ! root_path_is_file "$SYSCTL_BASELINE_MANIFEST"; then
+    if ! root_path_exists "$SYSCTL_DEFAULTS_PATH"; then
+      printf '[KEEP] sysctl defaults and baseline are both absent\n'
+      return 0
+    fi
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      printf '[DRY-RUN] sysctl baseline is missing; a real uninstall would refuse before mutation\n'
+      return 0
+    fi
+    printf 'ERROR: WatchdogVPN sysctl baseline is missing; refusing an inexact uninstall\n' >&2
+    return 1
+  fi
+  values="$(_validated_sysctl_baseline "$SYSCTL_BASELINE_MANIFEST")" || {
+    printf 'ERROR: WatchdogVPN sysctl baseline is invalid\n' >&2
+    return 1
+  }
+  read -r file_present all_value default_value <<<"$values"
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] restore sysctl baseline: file_present=%s all=%s default=%s\n' \
+      "$file_present" "$all_value" "$default_value"
+    return 0
+  fi
+
+  if [[ "$file_present" == "1" ]]; then
+    run_step sudo cp -a -- "$SYSCTL_BASELINE_FILE" "$SYSCTL_DEFAULTS_PATH"
+  else
+    run_step sudo rm -f -- "$SYSCTL_DEFAULTS_PATH"
+  fi
+  _write_src_valid_mark "$SRC_VALID_MARK_ALL_PATH" "$all_value"
+  _write_src_valid_mark "$SRC_VALID_MARK_DEFAULT_PATH" "$default_value"
+  observed="$(_read_src_valid_mark "$SRC_VALID_MARK_ALL_PATH")" || return 1
+  [[ "$observed" == "$all_value" ]] || return 1
+  observed="$(_read_src_valid_mark "$SRC_VALID_MARK_DEFAULT_PATH")" || return 1
+  [[ "$observed" == "$default_value" ]] || return 1
+  if [[ "$file_present" == "1" ]]; then
+    root_path_is_file "$SYSCTL_DEFAULTS_PATH" || return 1
+    run_privileged_readonly cmp -s "$SYSCTL_BASELINE_FILE" "$SYSCTL_DEFAULTS_PATH" || return 1
+  else
+    ! root_path_exists "$SYSCTL_DEFAULTS_PATH" || return 1
+  fi
 }
 
 install_python_module_wrapper() {
