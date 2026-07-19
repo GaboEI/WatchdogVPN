@@ -146,6 +146,25 @@ command output and metadata for:
   where applicable, and clean disconnect;
 - clean uninstall and post-uninstall baseline comparison.
 
+### Non-negotiable protocol-egress gate
+
+Every resilient profile must connect end to end and prove its required real
+traffic on every certification target. No resilient red may be deferred,
+waived, reclassified as external or assigned to Task 23.6.5a.
+
+Compatibility profiles also require real traffic and must be investigated to
+closure when they fail. Task 23.6.5a is a conditional, optional Plan B that
+should never run if all compatibility profiles pass; it is not a scheduled
+gate, a shortcut, or a destination for ordinary red results. A compatibility
+row becomes eligible only after repeated installed reproduction and evidence
+have exhaustively excluded product, parser/configuration, driver, fixture,
+server, runtime, distro and harness causes, leaving the local ISP/path as the
+only sustainable explanation. A first failure, a handshake without egress, a
+health classification, an ISP suspicion, or a prior disposition is not enough.
+Transfer does not turn the row green: it remains explicitly blocked pending the
+external-origin control. These rules apply to every distro and survive session
+or chat changes.
+
 For a session with TUN and local proxy capabilities, normal egress, SOCKS
 egress, and HTTP-proxy egress are separate required observations. A SOCKS
 success alone is never evidence that system/TUN traffic works.
