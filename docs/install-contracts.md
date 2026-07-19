@@ -45,6 +45,13 @@ recommendation remains usable and reports daemon-first truth when the optional
 service is absent, while connect/restart operations still validate and fail
 closed.
 
+Install and update also repair the historical invalid state
+`custom_vps.enabled = true` with a missing or malformed `service_name`: they
+back up the configuration and change only `enabled` to `false`. A valid service
+selection is preserved byte-for-byte. This narrowly scoped migration prevents
+an older installer defect from making the read-only status command unusable
+without inventing backend metadata or weakening mutating-command validation.
+
 ## doctor.sh
 
 Role: read-only preflight and diagnostics.

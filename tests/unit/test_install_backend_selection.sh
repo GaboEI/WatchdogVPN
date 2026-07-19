@@ -57,11 +57,11 @@ not_contains() {
   fi
 }
 
-grep -Fq 'sudo awk -v section="$section" -v name="$name" -v value="$formatted"' "$ROOT_DIR/install.sh" || {
-  printf 'FAIL: installer must read a private root-owned config through sudo before updating it\n' >&2
+grep -Fq 'sudo awk -v section="$section" -v name="$name" -v value="$formatted"' "$ROOT_DIR/lib/config.sh" || {
+  printf 'FAIL: shared config writer must read a private root-owned config through sudo before updating it\n' >&2
   exit 1
 }
-grep -Fq 'sudo install -m 0640 -o root -g watchdogvpn "$tmp" "$WATCHDOGVPN_CONFIG_FILE"' "$ROOT_DIR/install.sh" || {
+grep -Fq 'sudo install -m 0640 -o root -g watchdogvpn "$tmp" "$WATCHDOGVPN_CONFIG_FILE"' "$ROOT_DIR/lib/config.sh" || {
   printf 'FAIL: backend selection must preserve the private root:watchdogvpn config policy\n' >&2
   exit 1
 }

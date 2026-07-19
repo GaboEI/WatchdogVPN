@@ -16,6 +16,9 @@ That means:
 - a blank or `--yes` installation leaves `custom_vps.enabled = false` until a
   valid local `*.service` name is supplied; it never publishes an enabled but
   invalid backend;
+- install/update migrate an older `enabled = true` entry with an empty or
+  malformed `service_name` by backing up the configuration and changing only
+  `enabled` to `false`; valid service metadata is preserved byte-for-byte;
 - `watchdog maintenance backend status` reports the selected mode and active backend;
 - the TUI has a Backend view for status and configuration review;
 - `vpnctl connect`, `vpnctl disconnect`, `vpnctl restart` and `vpnctl status`

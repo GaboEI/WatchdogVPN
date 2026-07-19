@@ -190,60 +190,12 @@ prompt_custom_vps_config() {
   CUSTOM_VPS_SERVICE_NAME="$(prompt_text "Local service name" "$CUSTOM_VPS_SERVICE_NAME")"
   CUSTOM_VPS_INTERFACE="$(prompt_text "Tunnel interface (example: wg0, awg0, tun0)" "$CUSTOM_VPS_INTERFACE")"
 
-  if [[ "$CUSTOM_VPS_SERVICE_NAME" =~ ^[A-Za-z0-9_.@:-]+\.service$ ]]; then
+  if custom_vps_service_name_valid "$CUSTOM_VPS_SERVICE_NAME"; then
     CUSTOM_VPS_ENABLED="true"
   else
     CUSTOM_VPS_ENABLED="false"
     warn "Custom VPS remains disabled until a valid local systemd service name is configured"
   fi
-}
-
-config_write_installed_key() {
-  local key="$1" value="$2" section name formatted tmp
-  section="${key%%.*}"
-  name="${key#*.}"
-
-  if [[ "$value" == "true" || "$value" == "false" || "$value" =~ ^[0-9]+$ ]]; then
-    formatted="$value"
-  else
-    value="${value//\\/\\\\}"
-    value="${value//\"/\\\"}"
-    formatted="\"$value\""
-  fi
-
-  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] set %s = %s in %s\n' "$key" "$formatted" "$WATCHDOGVPN_CONFIG_FILE"
-    return 0
-  fi
-
-  tmp="$(mktemp)"
-  if [[ -r "$WATCHDOGVPN_CONFIG_FILE" ]]; then
-    awk -v section="$section" -v name="$name" -v value="$formatted" '
-    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; print; next}
-    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
-    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
-      print name " = " value
-      changed=1
-      next
-    }
-    {print}
-    END {exit changed ? 0 : 1}
-  ' "$WATCHDOGVPN_CONFIG_FILE" >"$tmp"
-  else
-    sudo awk -v section="$section" -v name="$name" -v value="$formatted" '
-    $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; print; next}
-    $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
-    in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
-      print name " = " value
-      changed=1
-      next
-    }
-    {print}
-    END {exit changed ? 0 : 1}
-  ' "$WATCHDOGVPN_CONFIG_FILE" >"$tmp"
-  fi
-  run_step sudo install -m 0640 -o root -g watchdogvpn "$tmp" "$WATCHDOGVPN_CONFIG_FILE"
-  rm -f "$tmp"
 }
 
 apply_backend_install_selection() {
@@ -254,17 +206,17 @@ apply_backend_install_selection() {
     return 0
   fi
 
-  config_write_installed_key backend.mode "$BACKEND_MODE"
-  config_write_installed_key backend.active "$BACKEND_ACTIVE"
-  config_write_installed_key custom_vps.enabled "$CUSTOM_VPS_ENABLED"
-  config_write_installed_key custom_vps.name "$CUSTOM_VPS_NAME"
-  config_write_installed_key custom_vps.host "$CUSTOM_VPS_HOST"
-  config_write_installed_key custom_vps.ssh_user "$CUSTOM_VPS_SSH_USER"
-  config_write_installed_key custom_vps.ssh_port "$CUSTOM_VPS_SSH_PORT"
-  config_write_installed_key custom_vps.protocol "$CUSTOM_VPS_PROTOCOL"
-  config_write_installed_key custom_vps.profile_path "$CUSTOM_VPS_PROFILE_PATH"
-  config_write_installed_key custom_vps.service_name "$CUSTOM_VPS_SERVICE_NAME"
-  config_write_installed_key custom_vps.interface "$CUSTOM_VPS_INTERFACE"
+  config_write_value backend.mode "$BACKEND_MODE"
+  config_write_value backend.active "$BACKEND_ACTIVE"
+  config_write_value custom_vps.enabled "$CUSTOM_VPS_ENABLED"
+  config_write_value custom_vps.name "$CUSTOM_VPS_NAME"
+  config_write_value custom_vps.host "$CUSTOM_VPS_HOST"
+  config_write_value custom_vps.ssh_user "$CUSTOM_VPS_SSH_USER"
+  config_write_value custom_vps.ssh_port "$CUSTOM_VPS_SSH_PORT"
+  config_write_value custom_vps.protocol "$CUSTOM_VPS_PROTOCOL"
+  config_write_value custom_vps.profile_path "$CUSTOM_VPS_PROFILE_PATH"
+  config_write_value custom_vps.service_name "$CUSTOM_VPS_SERVICE_NAME"
+  config_write_value custom_vps.interface "$CUSTOM_VPS_INTERFACE"
 }
 
 require_supported_distro() {

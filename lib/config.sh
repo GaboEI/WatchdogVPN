@@ -71,6 +71,8 @@ install_config_defaults() {
   create_config_if_missing "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_FILE" 0640 watchdogvpn
   ensure_config_permissions
   migrate_config_missing_keys
+  repair_incomplete_custom_vps_backend
+  ensure_config_permissions
 }
 
 ensure_config_permissions() {
@@ -123,6 +125,76 @@ config_value() {
     }
     END {exit found ? 0 : 1}
   ' "$file"
+}
+
+config_write_value() {
+  local key="$1" value="$2" section name formatted tmp
+  section="${key%%.*}"
+  name="${key#*.}"
+
+  if [[ "$value" == "true" || "$value" == "false" || "$value" =~ ^[0-9]+$ ]]; then
+    formatted="$value"
+  else
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    formatted="\"$value\""
+  fi
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] set %s = %s in %s\n' "$key" "$formatted" "$WATCHDOGVPN_CONFIG_FILE"
+    return 0
+  fi
+
+  tmp="$(mktemp)"
+  if [[ -r "$WATCHDOGVPN_CONFIG_FILE" ]]; then
+    awk -v section="$section" -v name="$name" -v value="$formatted" '
+      $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; print; next}
+      $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
+      in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+        print name " = " value
+        changed=1
+        next
+      }
+      {print}
+      END {exit changed ? 0 : 1}
+    ' "$WATCHDOGVPN_CONFIG_FILE" >"$tmp"
+  else
+    sudo awk -v section="$section" -v name="$name" -v value="$formatted" '
+      $0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$" {in_section=1; print; next}
+      $0 ~ "^[[:space:]]*\\[[^]]+\\][[:space:]]*$" {in_section=0}
+      in_section && $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+        print name " = " value
+        changed=1
+        next
+      }
+      {print}
+      END {exit changed ? 0 : 1}
+    ' "$WATCHDOGVPN_CONFIG_FILE" >"$tmp"
+  fi
+  if [[ -w "$WATCHDOGVPN_CONFIG_FILE" ]]; then
+    install -m 0640 "$tmp" "$WATCHDOGVPN_CONFIG_FILE"
+  else
+    run_step sudo install -m 0640 -o root -g watchdogvpn "$tmp" "$WATCHDOGVPN_CONFIG_FILE"
+  fi
+  rm -f "$tmp"
+}
+
+custom_vps_service_name_valid() {
+  local service="${1:-}"
+  [[ "$service" =~ ^[A-Za-z0-9_.@:-]+\.service$ ]]
+}
+
+repair_incomplete_custom_vps_backend() {
+  local enabled service
+  config_file_exists "$WATCHDOGVPN_CONFIG_FILE" || return 0
+  enabled="$(config_value custom_vps.enabled 2>/dev/null || true)"
+  service="$(config_value custom_vps.service_name 2>/dev/null || true)"
+  [[ "$enabled" == "true" ]] || return 0
+  custom_vps_service_name_valid "$service" && return 0
+
+  warn "repairing incomplete Custom VPS metadata: disabling the optional backend until a valid local service is configured"
+  backup_config_file
+  config_write_value custom_vps.enabled false
 }
 
 config_has_key() {

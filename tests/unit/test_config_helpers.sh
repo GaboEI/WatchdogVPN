@@ -132,4 +132,25 @@ if grep -Fq 'current = "en"' "$WATCHDOGVPN_CONFIG_FILE"; then
 fi
 find "$BACKUP_ROOT" -type f -path '*/etc/watchdogvpn/config.toml.*' | grep -q .
 
+# A previous non-interactive installer could publish enabled=true with an
+# empty service name. Update/install migration must back it up and disable
+# only that invalid optional backend, while preserving a valid service.
+rm -rf "$BACKUP_ROOT"
+cp "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_FILE"
+sed -i 's/^enabled = false$/enabled = true/' "$WATCHDOGVPN_CONFIG_FILE"
+repair_incomplete_custom_vps_backend
+grep -Fq 'enabled = false' "$WATCHDOGVPN_CONFIG_FILE"
+find "$BACKUP_ROOT" -type f -path '*/etc/watchdogvpn/config.toml.*' | grep -q .
+
+cp "$WATCHDOGVPN_REPO_CONFIG_EXAMPLE" "$WATCHDOGVPN_CONFIG_FILE"
+sed -i 's/^enabled = false$/enabled = true/' "$WATCHDOGVPN_CONFIG_FILE"
+sed -i 's/^service_name = ""$/service_name = "wg-quick@wg0.service"/' "$WATCHDOGVPN_CONFIG_FILE"
+valid_hash_before="$(sha256sum "$WATCHDOGVPN_CONFIG_FILE" | awk '{print $1}')"
+repair_incomplete_custom_vps_backend
+valid_hash_after="$(sha256sum "$WATCHDOGVPN_CONFIG_FILE" | awk '{print $1}')"
+[[ "$valid_hash_before" == "$valid_hash_after" ]] || {
+  printf 'FAIL: valid Custom VPS metadata must be preserved byte-for-byte\n' >&2
+  exit 1
+}
+
 printf 'config helper checks passed\n'
