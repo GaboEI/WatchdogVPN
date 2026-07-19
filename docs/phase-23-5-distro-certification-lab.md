@@ -16,7 +16,7 @@ claims to support:
 | Certification target | Adapter path | Phase | Status before certification |
 | --- | --- | --- | --- |
 | Arch Linux | `arch` | 23.5 | **CERTIFIED** — full matrix, DNS, rotation, kill switch, and clean uninstall/baseline comparison complete (2026-07-18) |
-| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CLEAN VM CERTIFIED** (2026-07-19); required physical-host observation remains open |
+| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CERTIFIED** — clean VirtualBox VM, full matrix/dispositions, real reboots and exact purge/baseline comparison complete (2026-07-19) |
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
 
@@ -64,15 +64,17 @@ The existing `tests/vm/vagrant` Ubuntu machine is a diagnostic VM with
 retained profiles. It must not be reused as the fresh-install certification
 candidate.
 
-### CachyOS physical validation target
+### CachyOS certification environment
 
-A maintainer-owned CachyOS PC is available for a controlled physical-host
-validation when the CachyOS slot is reached. It is the preferred additional
-compatibility target for CachyOS-specific kernels and hardware behavior.
-It does not replace the fresh-install VM evidence: the physical host first
-gets a recorded preflight and, if it has pre-existing state, its result is
-recorded as a separate physical-host validation. No live networking action is
-performed on it until the certification task explicitly authorizes it.
+The original plan named a maintainer-owned physical CachyOS PC because no
+suitable CachyOS Vagrant box was available; physical hardware was an available
+replacement environment, not an independent product requirement. When that
+PC's disk failed before execution, the maintainer explicitly authorized a
+fresh, manually provisioned VirtualBox CachyOS VM as the isolated certification
+target. That clean VM provides the required installation, runtime, reboot,
+network-policy, uninstall and baseline evidence. A later physical-host run may
+add compatibility evidence, but it is not a gate for CachyOS certification or
+for starting the next Phase 23.5 target.
 
 ## Generic Vagrant invocation
 
@@ -356,13 +358,14 @@ Python tests plus `tests/unit.sh` and `tests/syntax.sh`. GitHub Actions run
 29643194893 passed for `f48acd8`. Raw logs contain no private profile,
 provider, endpoint or key material and remain outside the repository.
 
-## Task 23.5.3 clean-VM component — CachyOS certification
+## Task 23.5.3 closure — CachyOS certification
 
-Status: CLEAN VM CERTIFIED on 2026-07-19; Task 23.5.3 remains open only for
-the separately required maintainer-owned physical CachyOS observation. The
-accepted candidate was a VirtualBox CachyOS x86_64 VM using the Arch adapter
-through `ID_LIKE=arch`. The physical machine reachable during closure was
-running Ubuntu, so it was not relabelled or substituted for that requirement.
+Status: **CLOSED — CACHYOS CERTIFIED** on 2026-07-19. The accepted candidate
+was a clean VirtualBox CachyOS x86_64 VM using the Arch adapter through
+`ID_LIKE=arch`. The maintainer explicitly clarified that the earlier physical
+target existed only because Vagrant did not offer a suitable CachyOS image;
+it was never a second certification gate. The manual VirtualBox candidate
+therefore supersedes that unavailable environment and closes Task 23.5.3.
 
 The clean candidate completed fresh installation, protected-path doctor and
 runtime checks, profile/provider lifecycle, installed DNS/FakeIP transitions,
@@ -425,6 +428,6 @@ is mode 0700 with every file mode 0600 and remains outside the repository.
 
 Final source gates after the last product fix: `tests/unit.sh`,
 `tests/syntax.sh`, and `python3 -m unittest discover tests` (1756/1756), all
-green. Task 23.5.4 must not begin until the outstanding physical CachyOS
-observation is completed or the maintainer explicitly supersedes that Master
-Plan requirement.
+green. Task 23.5.4 — Debian certification is the next task in Phase 23.5. The
+accepted CachyOS matrix need not be repeated unless a later product change or
+new defect materially affects its evidence.
