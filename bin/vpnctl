@@ -82,6 +82,12 @@ custom_service_status() {
 case "$CMD" in
   status)
     BACKEND="$(active_backend)"
+    # An absent optional Custom VPS service is a valid fresh-install state for
+    # read-only status, but an unknown backend name remains a configuration
+    # error and must not be disguised as ordinary DOWN truth.
+    if [[ "$BACKEND" != "custom-vps" ]]; then
+      validate_backend
+    fi
     STATUS="DOWN"
     TUN="DOWN"
     ROUTE="UNKNOWN"
