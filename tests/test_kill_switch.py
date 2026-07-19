@@ -7,8 +7,11 @@ from core.kill_switch import (
     KillSwitch,
     LOOPBACK_CIDRS,
     SING_BOX_AUTO_REDIRECT_MARKS,
+    SING_BOX_CAPTURE_MARK,
     SING_BOX_OUTBOUND_MARK,
     SING_BOX_TUN_DNS_ENDPOINTS,
+    WATCHDOGVPN_CAPTURE_GUARD_CHAIN,
+    WATCHDOGVPN_CHAIN,
     WATCHDOGVPN_COMMENT,
     WATCHDOGVPN_IPTABLES_CHAIN,
 )
@@ -65,16 +68,20 @@ def complete_nft_ruleset(kill_switch: KillSwitch) -> str:
     )
     if not generator.enable():
         raise AssertionError("fixture generation failed")
-    rules: list[str] = []
+    rules: dict[str, list[str]] = {
+        WATCHDOGVPN_CHAIN: [],
+        WATCHDOGVPN_CAPTURE_GUARD_CHAIN: [],
+    }
     for command in recorder.commands:
         if command[:3] != ["nft", "add", "rule"]:
             continue
+        chain = command[5]
         body = command[6:]
         counter_index = body.index("counter")
         match = " ".join(body[:counter_index])
         verdict = body[counter_index + 1]
         prefix = f"{match} " if match else ""
-        rules.append(
+        rules[chain].append(
             f'        {prefix}counter packets 0 bytes 0 {verdict} comment "{WATCHDOGVPN_COMMENT}"'
         )
     return "\n".join(
@@ -82,7 +89,11 @@ def complete_nft_ruleset(kill_switch: KillSwitch) -> str:
             f"table inet {WATCHDOGVPN_TABLE} {{",
             "    chain output {",
             "        type filter hook output priority filter; policy drop;",
-            *rules,
+            *rules[WATCHDOGVPN_CHAIN],
+            "    }",
+            f"    chain {WATCHDOGVPN_CAPTURE_GUARD_CHAIN} {{",
+            "        type filter hook postrouting priority filter; policy accept;",
+            *rules[WATCHDOGVPN_CAPTURE_GUARD_CHAIN],
             "    }",
             "}",
         )
@@ -164,6 +175,27 @@ class NftablesKillSwitchTests(unittest.TestCase):
         )
         self.assertIn(
             nft_rule("oifname", "wg0", "accept"),
+            recorder.commands,
+        )
+        self.assertIn(
+            [
+                "nft",
+                "add",
+                "chain",
+                "inet",
+                WATCHDOGVPN_TABLE,
+                WATCHDOGVPN_CAPTURE_GUARD_CHAIN,
+                "{",
+                "type",
+                "filter",
+                "hook",
+                "postrouting",
+                "priority",
+                "0;",
+                "policy",
+                "accept;",
+                "}",
+            ],
             recorder.commands,
         )
 
@@ -268,7 +300,7 @@ class NftablesKillSwitchTests(unittest.TestCase):
         self.assertLess(recorder.commands.index(tunnel_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(established_rule))
 
-    def test_nftables_allows_vpn_endpoint_but_not_singbox_marks(self) -> None:
+    def test_nftables_capture_mark_requires_postrouting_tunnel_guard(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(
             allowed_endpoints=("203.0.113.10", "not-a-literal"),
@@ -281,13 +313,52 @@ class NftablesKillSwitchTests(unittest.TestCase):
         endpoint_rule = nft_rule("ip", "daddr", "203.0.113.10", "accept")
         dns_rule = nft_rule("udp", "dport", "53", "reject")
         established_rule = nft_rule("ct", "state", "established,related", "accept")
-        mark_rule = nft_rule("meta", "mark", SING_BOX_AUTO_REDIRECT_MARKS[0], "accept")
-        ct_mark_rule = nft_rule("ct", "mark", SING_BOX_AUTO_REDIRECT_MARKS[0], "accept")
+        capture_rule = nft_rule("meta", "mark", SING_BOX_CAPTURE_MARK, "accept")
+        guard_tunnel_rule = [
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            WATCHDOGVPN_TABLE,
+            WATCHDOGVPN_CAPTURE_GUARD_CHAIN,
+            "meta",
+            "mark",
+            SING_BOX_CAPTURE_MARK,
+            "oifname",
+            "wdvpn-tun0",
+            "counter",
+            "accept",
+            "comment",
+            WATCHDOGVPN_NFT_COMMENT,
+        ]
+        guard_drop_rule = [
+            "nft",
+            "add",
+            "rule",
+            "inet",
+            WATCHDOGVPN_TABLE,
+            WATCHDOGVPN_CAPTURE_GUARD_CHAIN,
+            "meta",
+            "mark",
+            SING_BOX_CAPTURE_MARK,
+            "counter",
+            "drop",
+            "comment",
+            WATCHDOGVPN_NFT_COMMENT,
+        ]
+        unguarded_connmark = nft_rule(
+            "ct", "mark", SING_BOX_CAPTURE_MARK, "accept"
+        )
+        udp_drop = nft_rule("meta", "l4proto", "udp", "drop")
         self.assertIn(endpoint_rule, recorder.commands)
-        self.assertNotIn(mark_rule, recorder.commands)
-        self.assertNotIn(ct_mark_rule, recorder.commands)
+        self.assertIn(capture_rule, recorder.commands)
+        self.assertIn(guard_tunnel_rule, recorder.commands)
+        self.assertIn(guard_drop_rule, recorder.commands)
+        self.assertNotIn(unguarded_connmark, recorder.commands)
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(dns_rule))
-        self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(established_rule))
+        self.assertLess(recorder.commands.index(dns_rule), recorder.commands.index(capture_rule))
+        self.assertLess(recorder.commands.index(capture_rule), recorder.commands.index(established_rule))
+        self.assertLess(recorder.commands.index(capture_rule), recorder.commands.index(udp_drop))
 
     def test_nftables_direct_egress_requires_daemon_uid_and_outbound_mark(self) -> None:
         recorder = CommandRecorder()
@@ -390,6 +461,23 @@ class AtomicNftablesKillSwitchTests(unittest.TestCase):
         self.assertIn("add table inet watchdogvpn", script)
         self.assertIn("oifname wg0 counter accept", script)
         self.assertIn("ip daddr 203.0.113.10 counter accept", script)
+        self.assertIn(
+            "add chain inet watchdogvpn capture_postrouting { "
+            "type filter hook postrouting priority 0; policy accept; }",
+            script,
+        )
+        self.assertIn(
+            "add rule inet watchdogvpn output meta mark 0x2023 counter accept",
+            script,
+        )
+        self.assertIn(
+            "add rule inet watchdogvpn capture_postrouting meta mark 0x2023 oifname wg0 counter accept",
+            script,
+        )
+        self.assertIn(
+            "add rule inet watchdogvpn capture_postrouting meta mark 0x2023 counter drop",
+            script,
+        )
         self.assertIn('comment "WatchdogVPN kill switch"', script)
 
     def test_apply_atomic_deletes_an_existing_policy_inside_the_same_batch(self) -> None:
@@ -938,6 +1026,36 @@ class KillSwitchStatusTests(unittest.TestCase):
         status = kill_switch.status()
 
         self.assertTrue(status["active"])
+
+    def test_nftables_inspection_requires_capture_postrouting_guard_rules(self) -> None:
+        kill_switch = KillSwitch(which=fake_which("nft"))
+        complete = complete_nft_ruleset(kill_switch)
+        missing = "\n".join(
+            line
+            for line in complete.splitlines()
+            if not (
+                f"meta mark {SING_BOX_CAPTURE_MARK}" in line
+                and (
+                    "oifname wdvpn-tun0" in line
+                    or " drop comment " in f" {line} "
+                )
+            )
+        )
+        kill_switch.runner = CommandRecorder(
+            {
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=0,
+                    stdout=missing,
+                )
+            }
+        )
+
+        status = kill_switch.status()
+
+        self.assertTrue(status["active"])
+        self.assertFalse(status["consistent"])
+        self.assertIn("missing_capture_guard_tunnel_allow", status["mismatch_reasons"])
+        self.assertIn("missing_capture_guard_drop", status["mismatch_reasons"])
 
     def test_nftables_inspection_requires_direct_uid_and_mark_rule(self) -> None:
         kill_switch = KillSwitch(direct_egress_uid=955, which=fake_which("nft"))

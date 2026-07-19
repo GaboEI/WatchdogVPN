@@ -14,16 +14,20 @@ LOGGER = logging.getLogger(__name__)
 
 WATCHDOGVPN_TABLE = "watchdogvpn"
 WATCHDOGVPN_CHAIN = "output"
+WATCHDOGVPN_CAPTURE_GUARD_CHAIN = "capture_postrouting"
 WATCHDOGVPN_IPTABLES_CHAIN = "WATCHDOGVPN-OUTPUT"
 WATCHDOGVPN_COMMENT = "WatchdogVPN kill switch"
 WATCHDOGVPN_NFT_COMMENT = f'"{WATCHDOGVPN_COMMENT}"'
 # Reserved sing-box routing marks remain useful for bounded residue discovery
-# and collision avoidance in other drivers. They are intentionally *not*
-# firewall trust signals: auto_redirect can apply them to arbitrary physical
-# egress, so accepting a mark alone would bypass the kill switch.  An explicit
-# direct route may authorize the outbound mark only when it is conjoined with
-# the exact unprivileged daemon UID that owns the managed sing-box process.
+# and collision avoidance in other drivers. A mark alone is intentionally not
+# a firewall trust signal: auto_redirect can apply it while the packet's stale
+# output route still names a physical interface. The output chain accepts the
+# capture mark only together with a second postrouting guard that rejects it
+# unless the final output interface is the managed TUN. An explicit direct
+# route may authorize the outbound mark only when it is conjoined with the
+# exact unprivileged daemon UID that owns the managed sing-box process.
 SING_BOX_AUTO_REDIRECT_MARKS = ("0x2023", "0x2024")
+SING_BOX_CAPTURE_MARK = SING_BOX_AUTO_REDIRECT_MARKS[0]
 SING_BOX_OUTBOUND_MARK = SING_BOX_AUTO_REDIRECT_MARKS[1]
 SING_BOX_TUN_DNS_ENDPOINTS = ("172.19.0.2",)
 
@@ -237,12 +241,23 @@ class KillSwitch:
             output,
             flags=re.MULTILINE | re.DOTALL,
         )
+        guard_match = re.search(
+            rf"\bchain\s+{re.escape(WATCHDOGVPN_CAPTURE_GUARD_CHAIN)}\s*\{{(?P<body>.*?)^\s*\}}",
+            output,
+            flags=re.MULTILINE | re.DOTALL,
+        )
         chain = chain_match.group("body") if chain_match else ""
+        guard_chain = guard_match.group("body") if guard_match else ""
         has_output_hook = bool(re.search(r"\bhook\s+output\b", chain))
         has_drop_policy = bool(re.search(r"\bpolicy\s+drop\b", chain))
+        has_capture_guard_hook = bool(re.search(r"\bhook\s+postrouting\b", guard_chain))
+        has_capture_guard_accept_policy = bool(
+            re.search(r"\bpolicy\s+accept\b", guard_chain)
+        )
         active = has_output_hook and has_drop_policy
         managed_lines = self._managed_nft_rule_lines(chain)
-        managed_rule_count = len(managed_lines)
+        guard_lines = self._managed_nft_rule_lines(guard_chain)
+        managed_rule_count = len(managed_lines) + len(guard_lines)
         expected_rule_count = self._expected_nft_rule_count()
         checks = {
             "missing_output_hook": has_output_hook,
@@ -258,6 +273,19 @@ class KillSwitch:
             ),
             "missing_tunnel_allow": self._nft_rule_present(
                 managed_lines, ("oifname", self.tunnel_interface), "accept"
+            ),
+            "missing_capture_output_allow": self._nft_rule_present(
+                managed_lines, ("meta", "mark", SING_BOX_CAPTURE_MARK), "accept"
+            ),
+            "missing_capture_guard_hook": has_capture_guard_hook,
+            "missing_capture_guard_accept_policy": has_capture_guard_accept_policy,
+            "missing_capture_guard_tunnel_allow": self._nft_rule_present(
+                guard_lines,
+                ("meta", "mark", SING_BOX_CAPTURE_MARK, "oifname", self.tunnel_interface),
+                "accept",
+            ),
+            "missing_capture_guard_drop": self._nft_rule_present(
+                guard_lines, ("meta", "mark", SING_BOX_CAPTURE_MARK), "drop"
             ),
             "missing_established_allow": self._nft_rule_present(
                 managed_lines, ("ct", "state", "established,related"), "accept"
@@ -413,7 +441,7 @@ class KillSwitch:
                 continue
             endpoint_count += 1
         return (
-            16
+            19
             + endpoint_count
             + (1 if self.direct_egress_uid is not None else 0)
             + (len(self.lan_cidrs) if self.allow_lan else 0)
@@ -624,6 +652,25 @@ class KillSwitch:
                 "drop;",
                 "}",
             ],
+            [
+                "nft",
+                "add",
+                "chain",
+                "inet",
+                WATCHDOGVPN_TABLE,
+                WATCHDOGVPN_CAPTURE_GUARD_CHAIN,
+                "{",
+                "type",
+                "filter",
+                "hook",
+                "postrouting",
+                "priority",
+                "0;",
+                "policy",
+                "accept;",
+                "}",
+            ],
+            *self._nft_capture_guard_rules(),
             self._nft_rule("oifname", "lo", "accept"),
             *self._nft_loopback_destination_rules(),
             self._nft_rule("oifname", self.tunnel_interface, "accept"),
@@ -631,6 +678,7 @@ class KillSwitch:
             *self._nft_endpoint_rules(),
             *self._nft_internal_dns_rules(),
             *self._nft_dns_leak_block_rules(),
+            *self._nft_capture_egress_rules(),
             self._nft_rule("ct", "state", "established,related", "accept"),
         ]
         if self.allow_lan:
@@ -661,6 +709,9 @@ class KillSwitch:
         return True
 
     def _nft_rule(self, *tokens: str) -> list[str]:
+        return self._nft_rule_in_chain(WATCHDOGVPN_CHAIN, *tokens)
+
+    def _nft_rule_in_chain(self, chain: str, *tokens: str) -> list[str]:
         match_tokens = list(tokens[:-1])
         verdict = tokens[-1]
         return [
@@ -669,7 +720,7 @@ class KillSwitch:
             "rule",
             "inet",
             WATCHDOGVPN_TABLE,
-            WATCHDOGVPN_CHAIN,
+            chain,
             *match_tokens,
             "counter",
             verdict,
@@ -727,6 +778,37 @@ class KillSwitch:
         ] + [
             self._nft_rule("tcp", "dport", str(port), "reject")
             for port in (53, 853)
+        ]
+
+    def _nft_capture_egress_rules(self) -> list[list[str]]:
+        # sing-box's route/output hook marks captured UDP and ICMP before this
+        # filter chain runs, but nftables may still expose the packet's stale
+        # physical oifname here. Matching only oifname therefore drops healthy
+        # capture traffic. The mark allow is safe only because the independent
+        # postrouting guard below observes the final route and drops the same
+        # mark unless it is actually leaving through the managed TUN.
+        return [
+            self._nft_rule("meta", "mark", SING_BOX_CAPTURE_MARK, "accept")
+        ]
+
+    def _nft_capture_guard_rules(self) -> list[list[str]]:
+        return [
+            self._nft_rule_in_chain(
+                WATCHDOGVPN_CAPTURE_GUARD_CHAIN,
+                "meta",
+                "mark",
+                SING_BOX_CAPTURE_MARK,
+                "oifname",
+                self.tunnel_interface,
+                "accept",
+            ),
+            self._nft_rule_in_chain(
+                WATCHDOGVPN_CAPTURE_GUARD_CHAIN,
+                "meta",
+                "mark",
+                SING_BOX_CAPTURE_MARK,
+                "drop",
+            ),
         ]
 
     def _nft_terminal_drop_rules(self) -> list[list[str]]:

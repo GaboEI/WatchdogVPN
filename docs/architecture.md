@@ -31,6 +31,11 @@ only in installation and dependency detection.
 - `bin/vpn_notify`: desktop notification and traceable event helper
 - `sbin/vpn_domain_bypass_apply.sh`: domain exclusion/bypass rules
 - `daemon/`: systemd daemon, IPC server, runtime worker and event bus
+- `core/kill_switch.py`: fail-closed nftables/iptables policy. On sing-box TUN
+  sessions, the nftables output path accepts the capture mark only with a
+  companion postrouting guard that drops it unless the final interface is the
+  managed TUN; the physical outbound mark remains restricted to the daemon
+  UID. DNS leak rejects run before capture traffic is admitted.
 - `rules/`: routing-rule store, parser, engine and sing-box translation
 
 ## Install Layer

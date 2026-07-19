@@ -274,6 +274,16 @@ Current coverage:
   - standby state is explicit
   - connect, disconnect, status and rotate go through daemon IPC
   - runtime state is persisted in the shared WatchdogVPN state directory
+- kill-switch behavior:
+  - sing-box capture traffic is not trusted from a mark alone
+  - nftables admits the capture mark in the output chain only when an atomic
+    companion postrouting chain also rejects that mark from every final
+    interface except the configured managed TUN
+  - external DNS rejects precede the capture-mark allow, and the separate
+    outbound mark still requires the daemon UID
+  - ruleset inspection treats a missing output allow or postrouting guard as
+    inconsistent
+  - the iptables fallback continues to reject unscoped sing-box mark allows
 - TUI module behavior:
   - extracted action command builders, command helpers, state collectors,
     render helpers, constants, formatters, parsers and validators keep stable
