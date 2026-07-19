@@ -16,7 +16,7 @@ claims to support:
 | Certification target | Adapter path | Phase | Status before certification |
 | --- | --- | --- | --- |
 | Arch Linux | `arch` | 23.5 | **CERTIFIED** — full matrix, DNS, rotation, kill switch, and clean uninstall/baseline comparison complete (2026-07-18) |
-| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **NOT CERTIFIED — OPEN**; lifecycle/security evidence passed, but only 1/5 resilient profiles completed mandatory real egress (2026-07-19) |
+| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **NOT CERTIFIED — OPEN**; lifecycle/security evidence passed, but only 2/12 profiles completed mandatory real egress, including only 1/5 resilient profiles (2026-07-19) |
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
 
@@ -385,12 +385,16 @@ time.
 The mandatory resilient-profile gate failed. The authoritative product split
 classifies VLESS, Trojan, Hysteria2, AmneziaWG and OpenVPN+Cloak as resilient;
 every resilient profile must connect end to end and prove mode-appropriate real
-egress on the certification target. Task 23.6.5a is exclusively an
-external-origin control for failed `compatibility` profiles and cannot receive,
-waive or close a resilient result. CachyOS produced only **1/5 resilient
-passes**: VLESS passed; Trojan, Hysteria2, AmneziaWG and OpenVPN+Cloak did not
-obtain useful real egress. Consequently, lifecycle/security successes and
-external explanations cannot certify CachyOS.
+egress on the certification target. Task 23.6.5a is exclusively a last-resort
+external-origin control for a `compatibility` profile after product,
+configuration, fixture, server, runtime, distro and harness causes have been
+exhaustively excluded and the local ISP/path is the only remaining sustainable
+cause. A failed compatibility attempt is not automatically eligible. Task
+23.6.5a can never receive, waive or close a resilient result. CachyOS produced
+only **1/5 resilient passes**: VLESS passed; Trojan, Hysteria2, AmneziaWG and
+OpenVPN+Cloak did not obtain useful real egress. Consequently,
+lifecycle/security successes and unproven external explanations cannot certify
+CachyOS.
 
 The complete 12-profile result remains explicit:
 
@@ -400,8 +404,10 @@ The complete 12-profile result remains explicit:
   but not a pass;
 - compatibility: SOCKS passed; HTTP was partial because the mandatory
   Instagram destination timed out; VMess, TUIC, Shadowsocks, WireGuard and
-  plain OpenVPN did not obtain useful egress. Failed compatibility rows may be
-  investigated by Task 23.6.5a, but none is recorded as a local pass;
+  plain OpenVPN did not obtain useful egress. All six incomplete rows require
+  continued diagnosis and real-traffic proof. An individual row may move to
+  Task 23.6.5a only under the exhaustive ISP-only rule above; none is recorded
+  as a local pass;
 - the HTTP/SOCKS Instagram-only timeout remained destination/path evidence
   because the other required destinations passed through the same runtime;
 - the provider was refreshed successfully with 42 current nodes. The bounded
@@ -441,7 +447,8 @@ is mode 0700 with every file mode 0600 and remains outside the repository.
 Final source gates after the last product fix: `tests/unit.sh`,
 `tests/syntax.sh`, and `python3 -m unittest discover tests` (1756/1756), all
 green. These source gates do not substitute for installed real egress. Task
-23.5.3 must reproduce and resolve the four resilient-profile failures, then
-rerun all five resilient rows end to end on the installed candidate. Task
-23.5.4 — Debian certification must not begin before CachyOS reaches 5/5
-resilient real-egress passes and receives a new explicit closure.
+23.5.3 must reproduce and resolve all ten incomplete profile rows. All five
+resilient rows must pass end to end. Each compatibility row must also pass real
+traffic unless its complete investigation satisfies the individual ISP-only
+exception and formally transfers it to Task 23.6.5a. Task 23.5.4 — Debian
+certification must not begin before those gates receive a new explicit closure.
