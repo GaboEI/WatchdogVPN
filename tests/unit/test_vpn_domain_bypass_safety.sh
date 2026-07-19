@@ -103,6 +103,38 @@ if ! timeout 10 env INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_domain_bypass_rescue" a
   exit 1
 fi
 
+# Regression (CachyOS field certification, 2026-07-19): strict cleanup
+# correctly treats a missing policy-routing table as empty, but the raw
+# verification command leaked iproute2's "FIB table does not exist" message
+# to stderr. A successful uninstall must not look failed on a clean host.
+mock_bin="$TMP_DIR/mock-bin"
+mkdir -p "$mock_bin"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'exit 1' \
+  > "$mock_bin/systemctl"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [[ "$*" == "route show table 880" ]]; then' \
+  '  echo "Error: ipv4: FIB table does not exist." >&2' \
+  '  exit 2' \
+  'fi' \
+  'exit 0' \
+  > "$mock_bin/ip"
+chmod 755 "$mock_bin/systemctl" "$mock_bin/ip"
+missing_table_stderr="$TMP_DIR/missing-table.stderr"
+if ! PATH="$mock_bin:$PATH" INSTALL_DRY_RUN=1 \
+  "$ROOT_DIR/bin/vpn_domain_bypass_rescue" auto \
+  >"$TMP_DIR/missing-table.stdout" 2>"$missing_table_stderr"; then
+  echo "FAIL: a missing policy-routing table must be accepted as already clean" >&2
+  exit 1
+fi
+if [[ -s "$missing_table_stderr" ]]; then
+  echo "FAIL: a missing policy-routing table must not leak a false error to stderr" >&2
+  cat "$missing_table_stderr" >&2
+  exit 1
+fi
+
 # --- vpn_domain_bypass_configured(): file content detection ---
 
 empty_conf="$TMP_DIR/empty.conf"
