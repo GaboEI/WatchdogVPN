@@ -102,6 +102,16 @@ contains_file "$UNINSTALLER" 'remove_user_path "$HOME/.config/watchdogvpn"' \
   "full purge must delete the invoking user's preserved legacy migration source"
 contains_file "$UNINSTALLER" 'remove_root_path /root/.config/watchdogvpn' \
   "full purge must delete the known root legacy copy left by historical sudo execution"
+contains_file "$UNINSTALLER" 'sudo_invoker_home()' \
+  "sudo uninstall must resolve the invoking user's home through NSS"
+contains_file "$UNINSTALLER" 'remove_root_path "$sudo_user_home/.local/share/watchdogvpn"' \
+  "sudo uninstall must remove runtime backups from the invoking user's home"
+contains_file "$UNINSTALLER" 'remove_root_path "$sudo_user_home/.local/bin/watchdogvpn"' \
+  "sudo uninstall must remove the invoking user's compatibility launcher"
+contains_file "$UNINSTALLER" 'remove_root_path "$sudo_user_home/Desktop/watchdogvpn.desktop"' \
+  "sudo uninstall must remove the invoking user's desktop launcher"
+contains_file "$UNINSTALLER" '--preserve-working' \
+  "uninstall DNS rescue must preserve an already-working resolver baseline"
 contains_file "$UNINSTALLER" 'if ((FULL_PURGE == 1)); then' \
   "legacy user config deletion must remain gated to a confirmed full purge"
 if grep -Fq 'remove_root_path_no_backup "$BACKUP_ROOT"' "$UNINSTALLER"; then

@@ -146,7 +146,17 @@ configure_full_purge_contract() {
   fi
 }
 
+sudo_invoker_home() {
+  local sudo_user="${SUDO_USER:-}" resolved_home=""
+  [[ -n "$sudo_user" && "$sudo_user" != "root" ]] || return 1
+  resolved_home="$(getent passwd "$sudo_user" 2>/dev/null | awk -F: 'NR == 1 {print $6}' || true)"
+  [[ "$resolved_home" == /* && "$resolved_home" != "/" ]] || return 1
+  printf '%s\n' "$resolved_home"
+}
+
 remove_runtime_files() {
+  local desktop_dir sudo_user="${SUDO_USER:-}" sudo_user_home=""
+
   remove_root_path /usr/local/bin/no_vpn
   remove_root_path /usr/local/bin/vpn_dns_rescue
   remove_root_path /usr/local/bin/vpn_domain_bypass_rescue
@@ -179,6 +189,24 @@ remove_runtime_files() {
   # them via $HOME above.
   remove_root_path /root/.local/bin/VPN
   remove_root_path /root/.local/share/watchdogvpn
+
+  # A direct `sudo ./uninstall.sh` gives the process HOME=/root. Clean the
+  # fixed product paths in the sudo invoker's NSS home as well, without
+  # enumerating unrelated users or trusting an environment-provided home.
+  if [[ -n "$sudo_user" && "$sudo_user" != "root" ]]; then
+    sudo_user_home="$(sudo_invoker_home || true)"
+    if [[ -n "$sudo_user_home" && "$sudo_user_home" != "$HOME" ]]; then
+      remove_root_path "$sudo_user_home/.local/bin/VPN"
+      remove_root_path "$sudo_user_home/.local/bin/watchdogvpn"
+      remove_root_path "$sudo_user_home/.local/share/watchdogvpn"
+      remove_root_path "$sudo_user_home/.local/share/applications/watchdogvpn.desktop"
+      remove_root_path "$sudo_user_home/.local/share/applications/vpn-control-center.desktop"
+      remove_root_path "$sudo_user_home/Desktop/watchdogvpn.desktop"
+    else
+      warn "cannot resolve a safe home for sudo-invoker runtime cleanup: $sudo_user"
+    fi
+  fi
+
   desktop_dir="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
   [[ -n "$desktop_dir" ]] || desktop_dir="$HOME/Desktop"
   remove_user_path "$desktop_dir/watchdogvpn.desktop"
@@ -230,8 +258,8 @@ remove_legacy_user_config_on_full_purge() {
   fi
 
   if [[ -n "$sudo_user" && "$sudo_user" != "root" ]]; then
-    sudo_user_home="$(getent passwd "$sudo_user" 2>/dev/null | awk -F: 'NR == 1 {print $6}' || true)"
-    if [[ "$sudo_user_home" == /* && "$sudo_user_home" != "/" ]]; then
+    sudo_user_home="$(sudo_invoker_home || true)"
+    if [[ -n "$sudo_user_home" ]]; then
       if [[ "$sudo_user_home/.config/watchdogvpn" != "$HOME/.config/watchdogvpn" ]]; then
         remove_root_path "$sudo_user_home/.config/watchdogvpn"
       fi
@@ -346,18 +374,18 @@ rescue_domain_bypass_routing() {
 rescue_system_dns() {
   if [[ -x "$ROOT_DIR/bin/vpn_dns_rescue" ]]; then
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-      INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect --strict
+      INSTALL_DRY_RUN=1 "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect --strict --preserve-working
     else
-      "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect --strict
+      "$ROOT_DIR/bin/vpn_dns_rescue" auto --no-reconnect --strict --preserve-working
     fi
     return 0
   fi
 
   if [[ -x /usr/local/bin/vpn_dns_rescue ]]; then
     if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-      INSTALL_DRY_RUN=1 /usr/local/bin/vpn_dns_rescue auto --no-reconnect --strict
+      INSTALL_DRY_RUN=1 /usr/local/bin/vpn_dns_rescue auto --no-reconnect --strict --preserve-working
     else
-      /usr/local/bin/vpn_dns_rescue auto --no-reconnect --strict
+      /usr/local/bin/vpn_dns_rescue auto --no-reconnect --strict --preserve-working
     fi
     return 0
   fi

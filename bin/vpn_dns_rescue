@@ -4,6 +4,7 @@ set -euo pipefail
 MODE="auto"
 RECONNECT=1
 STRICT=0
+PRESERVE_WORKING=0
 
 usage() {
   cat <<'USAGE'
@@ -20,6 +21,8 @@ Modes:
 Options:
   --no-reconnect  Do not cycle active NetworkManager connections.
   --strict        Return an error when an installed cleanup command fails.
+  --preserve-working
+                  Keep an already-working resolver configuration unchanged.
 
 Use this when DNS was left pointing at a local resolver that is no longer
 running.
@@ -36,6 +39,9 @@ while (($#)); do
       ;;
     --strict)
       STRICT=1
+      ;;
+    --preserve-working)
+      PRESERVE_WORKING=1
       ;;
     --help|-h)
       usage
@@ -66,8 +72,14 @@ run() {
 }
 
 active_connections() {
+  local conn interface_name
   have nmcli || return 0
-  nmcli -t -f NAME con show --active 2>/dev/null | sed '/^$/d'
+  while IFS= read -r conn; do
+    [[ -n "$conn" ]] || continue
+    interface_name="$(nmcli -g connection.interface-name con show "$conn" 2>/dev/null || true)"
+    [[ "$interface_name" == "lo" ]] && continue
+    printf '%s\n' "$conn"
+  done < <(nmcli -t -f NAME con show --active 2>/dev/null | sed '/^$/d')
 }
 
 resolver_works() {
@@ -184,6 +196,11 @@ case "$MODE" in
     status
     ;;
   auto)
+    if ((PRESERVE_WORKING == 1)) && resolver_works; then
+      echo "DNS is already working; preserving the current resolver configuration."
+      status
+      exit 0
+    fi
     restore_resolved
     reset_nm_dns_auto
     if ! resolver_works; then
