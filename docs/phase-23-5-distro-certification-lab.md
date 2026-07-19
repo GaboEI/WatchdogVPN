@@ -16,7 +16,7 @@ claims to support:
 | Certification target | Adapter path | Phase | Status before certification |
 | --- | --- | --- | --- |
 | Arch Linux | `arch` | 23.5 | **CERTIFIED** — full matrix, DNS, rotation, kill switch, and clean uninstall/baseline comparison complete (2026-07-18) |
-| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CERTIFIED** — clean VirtualBox VM, full matrix/dispositions, real reboots and exact purge/baseline comparison complete (2026-07-19) |
+| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **NOT CERTIFIED — OPEN**; lifecycle/security evidence passed, but only 1/5 resilient profiles completed mandatory real egress (2026-07-19) |
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
 
@@ -358,14 +358,15 @@ Python tests plus `tests/unit.sh` and `tests/syntax.sh`. GitHub Actions run
 29643194893 passed for `f48acd8`. Raw logs contain no private profile,
 provider, endpoint or key material and remain outside the repository.
 
-## Task 23.5.3 closure — CachyOS certification
+## Task 23.5.3 field evidence — CachyOS certification remains open
 
-Status: **CLOSED — CACHYOS CERTIFIED** on 2026-07-19. The accepted candidate
-was a clean VirtualBox CachyOS x86_64 VM using the Arch adapter through
-`ID_LIKE=arch`. The maintainer explicitly clarified that the earlier physical
-target existed only because Vagrant did not offer a suitable CachyOS image;
-it was never a second certification gate. The manual VirtualBox candidate
-therefore supersedes that unavailable environment and closes Task 23.5.3.
+Status: **NOT CERTIFIED — TASK OPEN** on 2026-07-19. Repository commit
+`f63a591` incorrectly closed this task by treating external/server dispositions
+as sufficient for the resilient-profile gate. This section supersedes that
+closure. The accepted candidate was a clean VirtualBox CachyOS x86_64 VM using
+the Arch adapter through `ID_LIKE=arch`; the maintainer's clarification that a
+physical machine is not a second gate remains valid, but it does not relax the
+protocol matrix.
 
 The clean candidate completed fresh installation, protected-path doctor and
 runtime checks, profile/provider lifecycle, installed DNS/FakeIP transitions,
@@ -381,15 +382,26 @@ window; this stayed visible as the plan-defined environmental warning, not a
 false pass, and the final fresh-install doctor later observed synchronized
 time.
 
-No historical red was converted into a synthetic protocol pass:
+The mandatory resilient-profile gate failed. The authoritative product split
+classifies VLESS, Trojan, Hysteria2, AmneziaWG and OpenVPN+Cloak as resilient;
+every resilient profile must connect end to end and prove mode-appropriate real
+egress on the certification target. Task 23.6.5a is exclusively an
+external-origin control for failed `compatibility` profiles and cannot receive,
+waive or close a resilient result. CachyOS produced only **1/5 resilient
+passes**: VLESS passed; Trojan, Hysteria2, AmneziaWG and OpenVPN+Cloak did not
+obtain useful real egress. Consequently, lifecycle/security successes and
+external explanations cannot certify CachyOS.
 
-- all 12 private fixtures imported, but Trojan, Hysteria2, AmneziaWG,
-  OpenVPN+Cloak, VMess and TUIC retained their demonstrated server/fixture or
-  selected-egress failures; AmneziaWG had a real interface, route, handshake
-  and receive traffic without useful egress;
-- WireGuard, Shadowsocks and plain OpenVPN retain the already planned
-  external-origin disposition in Task 23.6.5a and are neither CachyOS
-  failures nor local passes;
+The complete 12-profile result remains explicit:
+
+- resilient: VLESS passed 3/3 required real-egress paths; Trojan, Hysteria2,
+  AmneziaWG and OpenVPN+Cloak failed useful egress. AmneziaWG had a real
+  interface, route, handshake and receive traffic, which is diagnostic evidence
+  but not a pass;
+- compatibility: SOCKS passed; HTTP was partial because the mandatory
+  Instagram destination timed out; VMess, TUIC, Shadowsocks, WireGuard and
+  plain OpenVPN did not obtain useful egress. Failed compatibility rows may be
+  investigated by Task 23.6.5a, but none is recorded as a local pass;
 - the HTTP/SOCKS Instagram-only timeout remained destination/path evidence
   because the other required destinations passed through the same runtime;
 - the provider was refreshed successfully with 42 current nodes. The bounded
@@ -428,6 +440,8 @@ is mode 0700 with every file mode 0600 and remains outside the repository.
 
 Final source gates after the last product fix: `tests/unit.sh`,
 `tests/syntax.sh`, and `python3 -m unittest discover tests` (1756/1756), all
-green. Task 23.5.4 — Debian certification is the next task in Phase 23.5. The
-accepted CachyOS matrix need not be repeated unless a later product change or
-new defect materially affects its evidence.
+green. These source gates do not substitute for installed real egress. Task
+23.5.3 must reproduce and resolve the four resilient-profile failures, then
+rerun all five resilient rows end to end on the installed candidate. Task
+23.5.4 — Debian certification must not begin before CachyOS reaches 5/5
+resilient real-egress passes and receives a new explicit closure.
