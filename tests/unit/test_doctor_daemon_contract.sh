@@ -38,6 +38,9 @@ assert_contains "$DOCTOR" 'PATH conflict for $name: first hit is $first' "doctor
 assert_contains "$DOCTOR" 'recovery: remove or rename the earlier wrapper, or adjust PATH precedence' "doctor must provide PATH conflict recovery hints"
 assert_contains "$DOCTOR" 'installed_product_paths=(' "doctor must keep an explicit installed product file list"
 assert_contains "$DOCTOR" '/usr/local/bin/no_vpn' "doctor must check the no_vpn installed helper"
+assert_contains "$DOCTOR" '. "$ROOT_DIR/lib/doctor_paths.sh"' "doctor must use permission-aware installed-path classification"
+assert_contains "$DOCTOR" 'installed product file not verifiable without privilege: $path' "doctor must distinguish a protected installed path from an absent path"
+assert_contains "$DOCTOR" 'verification: sudo test -e -- $path' "doctor must provide a non-destructive privileged verification command"
 assert_contains "$DOCTOR" 'installed product file missing: $path' "doctor must warn when an existing install is incomplete"
 assert_contains "$DOCTOR" 'recovery: run ./install.sh or ./update.sh to refresh the installed runtime' "doctor must provide incomplete-install recovery hints"
 assert_contains "$DOCTOR" 'cap_net_bind_service' "doctor must check privileged-port bind capability"
@@ -73,5 +76,55 @@ assert_not_contains "$DOCTOR" 'systemctl start watchdogvpn' "doctor must not sta
 assert_not_contains "$DOCTOR" 'sudo systemctl' "doctor must remain read-only and non-privileged"
 assert_not_contains "$DOCTOR" 'timedatectl set-' "doctor must not change time or NTP settings"
 assert_not_contains "$DOCTOR" 'date -s' "doctor must not set the system clock"
+
+# shellcheck source=../../lib/doctor_paths.sh
+. "$ROOT_DIR/lib/doctor_paths.sh"
+
+doctor_path_exists_impl="$(declare -f _doctor_path_exists)"
+doctor_path_parent_searchable_impl="$(declare -f _doctor_path_parent_searchable)"
+
+assert_path_state() {
+  local expected="$1" actual
+  actual="$(doctor_path_presence_state /irrelevant-for-mocked-probe)"
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'FAIL: expected doctor path state %s, got %s\n' "$expected" "$actual" >&2
+    exit 1
+  fi
+}
+
+_doctor_path_exists() { return 0; }
+_doctor_path_parent_searchable() { return 0; }
+assert_path_state present
+
+_doctor_path_exists() { return 1; }
+_doctor_path_parent_searchable() { return 0; }
+assert_path_state absent
+
+_doctor_path_exists() { return 1; }
+_doctor_path_parent_searchable() { return 1; }
+assert_path_state protected
+
+# Exercise the field failure mode against the real filesystem when the test is
+# not running as root. Root can traverse a mode-000 directory by capability,
+# so the deterministic probes above remain the portable regression contract.
+if ((EUID != 0)); then
+  doctor_tmp="$(mktemp -d)"
+  trap 'chmod 0700 "$doctor_tmp/protected" 2>/dev/null || true; rm -rf -- "$doctor_tmp"' EXIT
+  mkdir "$doctor_tmp/protected"
+  touch "$doctor_tmp/protected/installed-rule"
+  chmod 000 "$doctor_tmp/protected"
+
+  unset -f _doctor_path_exists _doctor_path_parent_searchable
+  eval "$doctor_path_exists_impl"
+  eval "$doctor_path_parent_searchable_impl"
+  if [[ "$(doctor_path_presence_state "$doctor_tmp/protected/installed-rule")" != "protected" ]]; then
+    printf 'FAIL: an existing path behind a non-searchable parent was not classified as protected\n' >&2
+    exit 1
+  fi
+
+  chmod 0700 "$doctor_tmp/protected"
+  rm -rf -- "$doctor_tmp"
+  trap - EXIT
+fi
 
 echo "doctor daemon contract checks passed"

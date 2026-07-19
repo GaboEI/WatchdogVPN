@@ -21,6 +21,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT_DIR/lib/systemd.sh"
 # shellcheck source=lib/runtime.sh
 . "$ROOT_DIR/lib/runtime.sh"
+# shellcheck source=lib/doctor_paths.sh
+. "$ROOT_DIR/lib/doctor_paths.sh"
 
 FAIL_COUNT=0
 WARN_COUNT=0
@@ -352,18 +354,26 @@ installed_product_paths=(
   "$HOME/.local/share/watchdogvpn/watchdogvpn"
 )
 for path in "${installed_product_paths[@]}"; do
-  if [[ -e "$path" ]]; then
+  if [[ "$(doctor_path_presence_state "$path")" != "absent" ]]; then
     installed_any=1
   fi
 done
 if ((installed_any == 1)); then
   for path in "${installed_product_paths[@]}"; do
-    if [[ -e "$path" ]]; then
-      mark_ok "installed: $path"
-    else
-      mark_warn "installed product file missing: $path"
-      info "recovery: run ./install.sh or ./update.sh to refresh the installed runtime"
-    fi
+    case "$(doctor_path_presence_state "$path")" in
+      present)
+        mark_ok "installed: $path"
+        ;;
+      protected)
+        mark_warn "installed product file not verifiable without privilege: $path"
+        info "reason: parent directory is not searchable by the current user"
+        info "verification: sudo test -e -- $path"
+        ;;
+      absent)
+        mark_warn "installed product file missing: $path"
+        info "recovery: run ./install.sh or ./update.sh to refresh the installed runtime"
+        ;;
+    esac
   done
 else
   mark_warn "no previous WatchdogVPN runtime detected"
