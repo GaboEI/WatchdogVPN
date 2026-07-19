@@ -30,8 +30,10 @@ vpn-stress-runs/
 tmp/
 
 # Vagrant's own auto-generated state (includes an unencrypted SSH private key
-# per VM, e.g. tests/vm/vagrant/.vagrant/machines/*/virtualbox/private_key)
-.vagrant/
+# per VM, e.g. tests/vm/vagrant/.vagrant/machines/*/virtualbox/private_key).
+# Alternate VAGRANT_DOTFILE_PATH names such as .vagrant-bisect are equally
+# private local state and must never appear as repository content.
+.vagrant*/
 
 # IDE/editor tool configs that may land in project root
 /config.json
