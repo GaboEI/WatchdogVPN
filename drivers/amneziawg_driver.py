@@ -712,10 +712,18 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
             return "down"
         age = self._latest_handshake_age()
         if age is None or age > HANDSHAKE_TIMEOUT_SECONDS:
+            # A freshly configured peer may not emit its first persistent
+            # keepalive before the startup health gate runs.  Generate
+            # bounded tunnel traffic to trigger negotiation, then re-read
+            # the cryptographic handshake instead of tearing down a viable
+            # interface before its keepalive interval.  ICMP itself is not
+            # the egress authority: the outer health checker still requires
+            # the configured multi-target HTTPS quorum.
+            self._ping_through_interface()
+            age = self._latest_handshake_age()
+        if age is None or age > HANDSHAKE_TIMEOUT_SECONDS:
             return "degraded"
-        if self._ping_through_interface():
-            return "ok"
-        return "degraded"
+        return "ok"
 
     def status(self) -> ConnectionState:
         # Evaluate interface existence unconditionally - the original

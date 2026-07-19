@@ -421,31 +421,46 @@ class AmneziaWGDriverTests(unittest.TestCase):
     def test_health_check_down_without_interface(self, _iface) -> None:
         self.assertEqual(self.driver.health_check(), "down")
 
-    @patch.object(AmneziaWGDriver, "_ping_through_interface", return_value=True)
+    @patch.object(AmneziaWGDriver, "_ping_through_interface")
     @patch.object(AmneziaWGDriver, "_latest_handshake_age", return_value=30)
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
     def test_health_check_ok(self, _iface, _hs, _ping) -> None:
         self.driver._active_profile = self.profile
         self.assertEqual(self.driver.health_check(), "ok")
-
-    @patch.object(AmneziaWGDriver, "_latest_handshake_age", return_value=None)
-    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
-    def test_health_check_degraded_no_handshake(self, _iface, _hs) -> None:
-        self.driver._active_profile = self.profile
-        self.assertEqual(self.driver.health_check(), "degraded")
-
-    @patch.object(AmneziaWGDriver, "_latest_handshake_age", return_value=HANDSHAKE_TIMEOUT_SECONDS + 10)
-    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
-    def test_health_check_degraded_old_handshake(self, _iface, _hs) -> None:
-        self.driver._active_profile = self.profile
-        self.assertEqual(self.driver.health_check(), "degraded")
+        _ping.assert_not_called()
 
     @patch.object(AmneziaWGDriver, "_ping_through_interface", return_value=False)
-    @patch.object(AmneziaWGDriver, "_latest_handshake_age", return_value=10)
+    @patch.object(AmneziaWGDriver, "_latest_handshake_age", side_effect=[None, None])
     @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
-    def test_health_check_degraded_no_ping(self, _iface, _hs, _ping) -> None:
+    def test_health_check_degraded_no_handshake(self, _iface, _hs, _ping) -> None:
         self.driver._active_profile = self.profile
         self.assertEqual(self.driver.health_check(), "degraded")
+        _ping.assert_called_once_with()
+        self.assertEqual(_hs.call_count, 2)
+
+    @patch.object(AmneziaWGDriver, "_ping_through_interface", return_value=False)
+    @patch.object(
+        AmneziaWGDriver,
+        "_latest_handshake_age",
+        side_effect=[HANDSHAKE_TIMEOUT_SECONDS + 10, HANDSHAKE_TIMEOUT_SECONDS + 10],
+    )
+    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
+    def test_health_check_degraded_old_handshake(self, _iface, _hs, _ping) -> None:
+        self.driver._active_profile = self.profile
+        self.assertEqual(self.driver.health_check(), "degraded")
+        _ping.assert_called_once_with()
+        self.assertEqual(_hs.call_count, 2)
+
+    @patch.object(AmneziaWGDriver, "_ping_through_interface", return_value=False)
+    @patch.object(AmneziaWGDriver, "_latest_handshake_age", side_effect=[None, 10])
+    @patch.object(AmneziaWGDriver, "_interface_exists", return_value=True)
+    def test_health_check_accepts_probe_triggered_handshake_when_icmp_reply_is_lost(
+        self, _iface, _hs, _ping
+    ) -> None:
+        self.driver._active_profile = self.profile
+        self.assertEqual(self.driver.health_check(), "ok")
+        _ping.assert_called_once_with()
+        self.assertEqual(_hs.call_count, 2)
 
     # --- Status ---
 
