@@ -16,7 +16,7 @@ claims to support:
 | Certification target | Adapter path | Phase | Status before certification |
 | --- | --- | --- | --- |
 | Arch Linux | `arch` | 23.5 | **CERTIFIED** — full matrix, DNS, rotation, kill switch, and clean uninstall/baseline comparison complete (2026-07-18) |
-| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | Supported fallback, un-certified on a clean VM |
+| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CLEAN VM CERTIFIED** (2026-07-19); required physical-host observation remains open |
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
 
@@ -355,3 +355,76 @@ worked. Full local gates passed after every fix; final count is 1737/1737
 Python tests plus `tests/unit.sh` and `tests/syntax.sh`. GitHub Actions run
 29643194893 passed for `f48acd8`. Raw logs contain no private profile,
 provider, endpoint or key material and remain outside the repository.
+
+## Task 23.5.3 clean-VM component — CachyOS certification
+
+Status: CLEAN VM CERTIFIED on 2026-07-19; Task 23.5.3 remains open only for
+the separately required maintainer-owned physical CachyOS observation. The
+accepted candidate was a VirtualBox CachyOS x86_64 VM using the Arch adapter
+through `ID_LIKE=arch`. The physical machine reachable during closure was
+running Ubuntu, so it was not relabelled or substituted for that requirement.
+
+The clean candidate completed fresh installation, protected-path doctor and
+runtime checks, profile/provider lifecycle, installed DNS/FakeIP transitions,
+rotation, app-policy enforcement, kill-switch failure behavior, manual-off,
+panic sleep/wake, disconnected and connected real reboots, and destructive
+full-purge comparison. A known-good VLESS profile proved normal TUN, SOCKS
+and HTTP-proxy traffic using the required public destinations. Reboot while
+connected restored the same desired profile, truthful `UP` state, HTTP 200,
+a VPN egress distinct from the physical path, and a consistent kill switch.
+The post-routing capture guard accepted managed UDP and recorded zero
+physical-path drops. NTP remained unsynchronized during one connected-reboot
+window; this stayed visible as the plan-defined environmental warning, not a
+false pass, and the final fresh-install doctor later observed synchronized
+time.
+
+No historical red was converted into a synthetic protocol pass:
+
+- all 12 private fixtures imported, but Trojan, Hysteria2, AmneziaWG,
+  OpenVPN+Cloak, VMess and TUIC retained their demonstrated server/fixture or
+  selected-egress failures; AmneziaWG had a real interface, route, handshake
+  and receive traffic without useful egress;
+- WireGuard, Shadowsocks and plain OpenVPN retain the already planned
+  external-origin disposition in Task 23.6.5a and are neither CachyOS
+  failures nor local passes;
+- the HTTP/SOCKS Instagram-only timeout remained destination/path evidence
+  because the other required destinations passed through the same runtime;
+- the provider was refreshed successfully with 42 current nodes. The bounded
+  maintainer-requested sample tested exactly four owned nodes (two VLESS and
+  two Trojan), and all four reached authoritative `connect_failed` outcomes
+  after deep health reported zero of two required egress targets with
+  `endpoint_censorship_or_network_interference_suspected`. Probes were
+  correctly skipped when no connection existed. M3.3 is therefore recorded
+  as externally/provider blocked, not green and not a distro/product defect;
+  the same installed runtime and machine had already passed the known-good
+  manual VLESS path.
+
+Field investigation produced universal fixes rather than machine-specific
+exceptions. Commits `27b457d` through `5a77be1` closed backup/preflight,
+private-permission, authoritative async-runner, bounded-provider, app-policy,
+FakeIP cache invalidation, least-privilege Polkit and kill-switch direct-route
+contracts. Later installed findings closed protected-path doctor reporting
+(`7db2559`), v2 runtime truth (`e77ccff`), captured UDP post-routing
+fail-closed enforcement (`13cfef0`), missing-table uninstall diagnostics
+(`4451c1f`) and exact uninstall baseline preservation (`bdbf599`). The UDP
+fix accepts sing-box's capture mark only in the output chain and guards it in
+a policy-controlled post-routing chain: the packet must finally leave through
+the managed TUN or be dropped. DNS leak rejection and the UID-plus-mark
+physical direct path remain stricter and unchanged.
+
+The final destructive proof used source and installed commit `bdbf599`.
+Fresh `install.sh --yes` returned zero, the marker and installed rescue/
+uninstall files matched source, the daemon was enabled and active in clean
+`standby/off`, and doctor returned zero with no FAIL. The corrected full purge
+then returned zero. Routes, IPv4/IPv6 rules, resolver content and resolver
+target matched the captured clean baseline exactly; the normalized firewall
+ruleset was identical; direct GitHub returned HTTP 200; and no product
+command, unit, path, process, listener, interface, nftables object, table-880
+route, system account, group or user membership remained. Private evidence
+is mode 0700 with every file mode 0600 and remains outside the repository.
+
+Final source gates after the last product fix: `tests/unit.sh`,
+`tests/syntax.sh`, and `python3 -m unittest discover tests` (1756/1756), all
+green. Task 23.5.4 must not begin until the outstanding physical CachyOS
+observation is completed or the maintainer explicitly supersedes that Master
+Plan requirement.
