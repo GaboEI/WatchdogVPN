@@ -360,7 +360,7 @@ class NftablesKillSwitchTests(unittest.TestCase):
         self.assertLess(recorder.commands.index(capture_rule), recorder.commands.index(established_rule))
         self.assertLess(recorder.commands.index(capture_rule), recorder.commands.index(udp_drop))
 
-    def test_nftables_direct_egress_requires_daemon_uid_and_outbound_mark(self) -> None:
+    def test_nftables_managed_egress_requires_daemon_uid_and_outbound_mark(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(
             direct_egress_uid=955,
@@ -370,7 +370,7 @@ class NftablesKillSwitchTests(unittest.TestCase):
 
         kill_switch.enable()
 
-        direct_rule = nft_rule(
+        managed_rule = nft_rule(
             "meta",
             "skuid",
             "955",
@@ -382,10 +382,10 @@ class NftablesKillSwitchTests(unittest.TestCase):
         mark_only = nft_rule("meta", "mark", SING_BOX_OUTBOUND_MARK, "accept")
         uid_only = nft_rule("meta", "skuid", "955", "accept")
         dns_block = nft_rule("udp", "dport", "53", "reject")
-        self.assertIn(direct_rule, recorder.commands)
+        self.assertIn(managed_rule, recorder.commands)
         self.assertNotIn(mark_only, recorder.commands)
         self.assertNotIn(uid_only, recorder.commands)
-        self.assertLess(recorder.commands.index(direct_rule), recorder.commands.index(dns_block))
+        self.assertLess(recorder.commands.index(managed_rule), recorder.commands.index(dns_block))
 
     def test_nftables_allows_internal_tun_dns_before_dns_leak_blocks(self) -> None:
         recorder = CommandRecorder()
@@ -764,7 +764,7 @@ class IptablesKillSwitchTests(unittest.TestCase):
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(established_rule))
 
-    def test_iptables_direct_egress_requires_daemon_uid_and_outbound_mark(self) -> None:
+    def test_iptables_managed_egress_requires_daemon_uid_and_outbound_mark(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(
             direct_egress_uid=955,
@@ -774,7 +774,7 @@ class IptablesKillSwitchTests(unittest.TestCase):
 
         kill_switch.enable()
 
-        direct_rule = [
+        managed_rule = [
             "iptables",
             "-A",
             WATCHDOGVPN_IPTABLES_CHAIN,
@@ -793,7 +793,7 @@ class IptablesKillSwitchTests(unittest.TestCase):
             "-j",
             "ACCEPT",
         ]
-        ipv6_direct_rule = ["ip6tables", *direct_rule[1:]]
+        ipv6_managed_rule = ["ip6tables", *managed_rule[1:]]
         mark_only = [
             "iptables",
             "-A",
@@ -820,10 +820,10 @@ class IptablesKillSwitchTests(unittest.TestCase):
             "-j",
             "REJECT",
         ]
-        self.assertIn(direct_rule, recorder.commands)
-        self.assertIn(ipv6_direct_rule, recorder.commands)
+        self.assertIn(managed_rule, recorder.commands)
+        self.assertIn(ipv6_managed_rule, recorder.commands)
         self.assertNotIn(mark_only, recorder.commands)
-        self.assertLess(recorder.commands.index(direct_rule), recorder.commands.index(dns_rule))
+        self.assertLess(recorder.commands.index(managed_rule), recorder.commands.index(dns_rule))
 
     def test_iptables_allows_internal_tun_dns_before_dns_leak_blocks(self) -> None:
         recorder = CommandRecorder()
@@ -1057,7 +1057,7 @@ class KillSwitchStatusTests(unittest.TestCase):
         self.assertIn("missing_capture_guard_tunnel_allow", status["mismatch_reasons"])
         self.assertIn("missing_capture_guard_drop", status["mismatch_reasons"])
 
-    def test_nftables_inspection_requires_direct_uid_and_mark_rule(self) -> None:
+    def test_nftables_inspection_requires_managed_uid_and_mark_rule(self) -> None:
         kill_switch = KillSwitch(direct_egress_uid=955, which=fake_which("nft"))
         complete = complete_nft_ruleset(kill_switch)
         missing = "\n".join(
@@ -1119,7 +1119,7 @@ class KillSwitchStatusTests(unittest.TestCase):
             ],
         )
 
-    def test_iptables_inspection_accepts_masked_direct_outbound_mark(self) -> None:
+    def test_iptables_inspection_accepts_masked_managed_outbound_mark(self) -> None:
         kill_switch = KillSwitch(
             block_ipv6=False,
             direct_egress_uid=955,

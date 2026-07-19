@@ -17,7 +17,6 @@ from typing import Any
 GUARD_ENV = "WATCHDOGVPN_FIELD_VALIDATION"
 SERVICE = "watchdogvpn.service"
 NFT_TABLE = ("inet", "watchdogvpn")
-NFT_CHAIN = "output"
 IPTABLES_CHAIN = "WATCHDOGVPN-OUTPUT"
 
 
@@ -109,7 +108,7 @@ def _iptables_drop_packet_count(snapshot: str) -> int:
 def _firewall_snapshot(backend: str) -> tuple[str, int]:
     if backend == "nftables":
         snapshot = _require_ok(
-            ["sudo", "-n", "nft", "list", "chain", *NFT_TABLE, NFT_CHAIN]
+            ["sudo", "-n", "nft", "list", "table", *NFT_TABLE]
         )
         return snapshot, _nft_drop_packet_count(snapshot)
     if backend in {"iptables", "ip6tables"}:

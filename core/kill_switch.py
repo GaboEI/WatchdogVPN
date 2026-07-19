@@ -23,9 +23,10 @@ WATCHDOGVPN_NFT_COMMENT = f'"{WATCHDOGVPN_COMMENT}"'
 # a firewall trust signal: auto_redirect can apply it while the packet's stale
 # output route still names a physical interface. The output chain accepts the
 # capture mark only together with a second postrouting guard that rejects it
-# unless the final output interface is the managed TUN. An explicit direct
-# route may authorize the outbound mark only when it is conjoined with the
-# exact unprivileged daemon UID that owns the managed sing-box process.
+# unless the final output interface is the managed TUN. The physical outbound
+# mark used by the selected VPN transport and explicit direct routes may be
+# authorized only when it is conjoined with the exact unprivileged daemon UID
+# that owns the managed sing-box process.
 SING_BOX_AUTO_REDIRECT_MARKS = ("0x2023", "0x2024")
 SING_BOX_CAPTURE_MARK = SING_BOX_AUTO_REDIRECT_MARKS[0]
 SING_BOX_OUTBOUND_MARK = SING_BOX_AUTO_REDIRECT_MARKS[1]

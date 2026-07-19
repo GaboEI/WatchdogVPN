@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 VM_TESTS = Path(__file__).resolve().parent / "vm"
 sys.path.insert(0, str(VM_TESTS))
@@ -11,6 +12,7 @@ sys.path.insert(0, str(VM_TESTS))
 from phase23_kill_switch_controlled_failure import (  # noqa: E402
     ControlledFailureError,
     _iptables_drop_packet_count,
+    _firewall_snapshot,
     _nft_drop_packet_count,
     _owned_sing_box_child,
     _select_target_ip,
@@ -48,6 +50,23 @@ class ControlledFailureHelperTests(unittest.TestCase):
         """
 
         self.assertEqual(_nft_drop_packet_count(snapshot), 10)
+
+    def test_nft_snapshot_includes_output_and_postrouting_guard_chains(self) -> None:
+        snapshot = """
+            chain output { counter packets 2 bytes 120 drop }
+            chain capture_postrouting { counter packets 3 bytes 252 drop }
+        """
+        with patch(
+            "phase23_kill_switch_controlled_failure._require_ok",
+            return_value=snapshot,
+        ) as run:
+            captured, drops = _firewall_snapshot("nftables")
+
+        self.assertEqual(captured, snapshot)
+        self.assertEqual(drops, 5)
+        run.assert_called_once_with(
+            ["sudo", "-n", "nft", "list", "table", "inet", "watchdogvpn"]
+        )
 
     def test_iptables_drop_packet_count_sums_drop_and_reject_only(self) -> None:
         snapshot = """

@@ -1103,45 +1103,29 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(kill_switch.direct_egress_uid, 4242)
 
-    def test_kill_switch_does_not_trust_uid_without_enabled_direct_policy(self) -> None:
-        app_policy_store = AppPolicyStore(Path(self.tmpdir.name) / "app-policy.json")
-        app_policy_store.save(
-            AppPolicy(
-                enabled=False,
-                rules=[
-                    AppPolicyRule(
-                        id="disabled-direct",
-                        action=AppPolicyAction.DIRECT,
-                        match={"process_path": ["/usr/bin/browser"]},
-                    )
-                ],
-            )
+    @patch("core.watchdog.os.getuid", return_value=4242)
+    def test_kill_switch_authorizes_managed_transport_for_active_profile(self, _getuid) -> None:
+        kill_switch = FakeKillSwitch()
+        runtime = WatchdogRuntime(
+            driver=FakeDriver(),
+            state_manager=self.state_manager,
+            kill_switch=kill_switch,
         )
-        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
-        rule_store.add_group(
-            RuleGroup(
-                name="custom",
-                enabled=False,
-                rules=[
-                    Rule(
-                        id="disabled-rule-direct",
-                        action="direct",
-                        conditions={"domain_suffix": ["updates.example"]},
-                    )
-                ],
-            )
-        )
+
+        runtime._configure_kill_switch({}, self.profile)
+
+        self.assertEqual(kill_switch.direct_egress_uid, 4242)
+
+    def test_kill_switch_clears_direct_egress_uid_without_active_profile(self) -> None:
         kill_switch = FakeKillSwitch()
         kill_switch.direct_egress_uid = 9999
         runtime = WatchdogRuntime(
             driver=FakeDriver(),
             state_manager=self.state_manager,
-            app_policy_store=app_policy_store,
-            rule_store=rule_store,
             kill_switch=kill_switch,
         )
 
-        runtime._configure_kill_switch({}, self.profile)
+        runtime._configure_kill_switch({}, None)
 
         self.assertIsNone(kill_switch.direct_egress_uid)
 
