@@ -485,3 +485,35 @@ already-attempted standard WireGuard row has the maintainer-authorized reduced
 ISP-block exception and remains pending Task 23.6.5a rather than green. Task
 23.5.4 — Debian certification must not begin before those gates receive a new
 explicit closure.
+
+### Reopened protocol revalidation at `23af3a6` (2026-07-19)
+
+The candidate was returned from the accepted purge baseline, installed from
+exact source/installed marker `23af3a6`, and received fresh private copies of
+all 12 fixtures. All imports passed. SHA-256 comparison performed without
+printing hashes or content proved 12/12 byte-identical copies from the
+authoritative host source to CachyOS. VLESS again passed connection, state and
+all three required TUN/SOCKS/HTTP egress probes. Trojan, Hysteria2, AmneziaWG
+and OpenVPN+Cloak again reached authoritative `connect_failed`; each produced
+zero of three reachable health targets in both bounded rounds and then returned
+to clean standby.
+
+A separate clean Arch control was installed from the same `23af3a6` commit and
+received another 12/12 byte-identical copy of the fixtures. Its resilient
+matrix reproduced the CachyOS result exactly: VLESS passed 3/3, while Trojan,
+Hysteria2, AmneziaWG and OpenVPN+Cloak failed useful egress. This rules out a
+CachyOS-specific adapter/runtime cause but does not waive the resilient gate.
+A reversible diagnostic then replaced the three certification targets with
+GitHub, Cloudflare and IETF; all four failed profiles still obtained zero
+usable egress. The original targets and quorum were restored, and CachyOS
+remained `desired_state=off` in clean standby.
+
+One initial neutral-control attempt was rejected as invalid evidence because a
+new evidence subdirectory lacked the private dynamic profile-ID map and the
+runner returned `profile_not_found`; the map was restored privately and the
+control was repeated correctly. New evidence initially inherited operator
+umask 022, was corrected immediately, and is now directory 0700/files 0600;
+all subsequent commands ran under umask 077. No product correction is justified
+by the current cross-distro evidence. Task 23.5.3 remains open pending repaired
+or renewed controlled fixtures/endpoints that make all five resilient rows
+pass on the installed CachyOS candidate.
