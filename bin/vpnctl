@@ -81,7 +81,6 @@ custom_service_status() {
 
 case "$CMD" in
   status)
-    validate_backend
     BACKEND="$(active_backend)"
     STATUS="DOWN"
     TUN="DOWN"
@@ -108,7 +107,13 @@ case "$CMD" in
     echo "🧭 route: ${ROUTE}"
     echo "🌍 public ip: ${IP_ADDR}"
     echo
-    custom_service_status "$(backend_service_name)"
+    service="$(backend_service_name 2>/dev/null || true)"
+    if [[ -n "$service" ]]; then
+      custom_service_status "$service"
+    else
+      echo "🧩 service: not configured"
+      echo "⚙️ custom-vps: setup required; the v2 daemon status above remains authoritative"
+    fi
 
     # WDCLI-008: the printed status must agree with the real exit code, or
     # a shell health-check trusting only "$?" sees a false UP. Mirrors

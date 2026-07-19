@@ -37,6 +37,14 @@ This document defines how the product scripts should behave.
 
 Those are product defaults and can be adjusted later from the TUI.
 
+A non-interactive or blank Custom VPS setup retains the example default
+`custom_vps.enabled = false`. Only a syntactically valid local `*.service`
+selection enables that compatibility backend; the installer never publishes
+it as enabled with missing control metadata. The final `vpnctl status`
+recommendation remains usable and reports daemon-first truth when the optional
+service is absent, while connect/restart operations still validate and fail
+closed.
+
 ## doctor.sh
 
 Role: read-only preflight and diagnostics.

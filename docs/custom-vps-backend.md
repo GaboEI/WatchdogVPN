@@ -13,13 +13,18 @@ does not provision servers and does not store secrets.
 That means:
 
 - the installer prepares `backend.mode = "custom-vps"`;
+- a blank or `--yes` installation leaves `custom_vps.enabled = false` until a
+  valid local `*.service` name is supplied; it never publishes an enabled but
+  invalid backend;
 - `watchdog maintenance backend status` reports the selected mode and active backend;
 - the TUI has a Backend view for status and configuration review;
 - `vpnctl connect`, `vpnctl disconnect`, `vpnctl restart` and `vpnctl status`
   can control the configured service;
 - rotation is disabled for Custom VPS unless a future backend explicitly
   supports multiple nodes;
-- runtime commands fail closed if required Custom VPS fields are missing.
+- mutating runtime commands fail closed if required Custom VPS fields are
+  missing. `vpnctl status` remains read-only and reports daemon-first VPN truth
+  while labeling the optional service as not configured.
 
 ## Installer Flow
 

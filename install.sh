@@ -32,7 +32,7 @@ ASSUME_YES=0
 RUN_DOCTOR=1
 BACKEND_MODE="custom-vps"
 BACKEND_ACTIVE="custom-vps"
-CUSTOM_VPS_ENABLED="true"
+CUSTOM_VPS_ENABLED="false"
 CUSTOM_VPS_NAME=""
 CUSTOM_VPS_HOST=""
 CUSTOM_VPS_SSH_USER=""
@@ -57,7 +57,7 @@ Usage:
 
 Options:
   --dry-run       Show what would be installed without changing the system.
-  --yes           Use product defaults: Custom VPS backend.
+  --yes           Use product defaults without enabling an unconfigured Custom VPS service.
   --skip-doctor   Do not run the read-only preflight first.
   --help          Show this help.
 
@@ -142,7 +142,7 @@ prompt_backend_mode() {
 
   BACKEND_MODE="custom-vps"
   BACKEND_ACTIVE="custom-vps"
-  CUSTOM_VPS_ENABLED="true"
+  CUSTOM_VPS_ENABLED="false"
 
   if ((ASSUME_YES == 1)); then
     return 0
@@ -167,8 +167,6 @@ prompt_custom_vps_config() {
   local port
 
   ((PRESERVE_BACKEND_CONFIG == 0)) || return 0
-  [[ "$CUSTOM_VPS_ENABLED" == "true" ]] || return 0
-
   if ((ASSUME_YES == 1)); then
     return 0
   fi
@@ -191,6 +189,13 @@ prompt_custom_vps_config() {
   CUSTOM_VPS_PROFILE_PATH="$(prompt_text "Local profile path" "$CUSTOM_VPS_PROFILE_PATH")"
   CUSTOM_VPS_SERVICE_NAME="$(prompt_text "Local service name" "$CUSTOM_VPS_SERVICE_NAME")"
   CUSTOM_VPS_INTERFACE="$(prompt_text "Tunnel interface (example: wg0, awg0, tun0)" "$CUSTOM_VPS_INTERFACE")"
+
+  if [[ "$CUSTOM_VPS_SERVICE_NAME" =~ ^[A-Za-z0-9_.@:-]+\.service$ ]]; then
+    CUSTOM_VPS_ENABLED="true"
+  else
+    CUSTOM_VPS_ENABLED="false"
+    warn "Custom VPS remains disabled until a valid local systemd service name is configured"
+  fi
 }
 
 config_write_installed_key() {

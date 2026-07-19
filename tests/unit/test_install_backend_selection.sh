@@ -75,6 +75,7 @@ yes_output="$(WATCHDOGVPN_ETC_CONFIG_DIR="$fresh_yes_dir" WATCHDOGVPN_CONFIG_FIL
 contains "$yes_output" "Backend mode:"
 contains "$yes_output" "Active backend:"
 contains "$yes_output" "custom-vps"
+contains "$yes_output" '[DRY-RUN] set custom_vps.enabled = false'
 contains "$yes_output" "[DRY-RUN] smoke test watchdogvpn.service and daemon IPC status"
 not_contains "$yes_output" "select vpn backend"
 # Regression test for a real fresh-install finding: install.sh used to hardcode
@@ -101,13 +102,23 @@ contains "$custom_output" "Backend mode:"
 contains "$custom_output" "Active backend:"
 contains "$custom_output" "custom-vps"
 contains "$custom_output" "[DRY-RUN] set backend.mode = \"custom-vps\""
-contains "$custom_output" "[DRY-RUN] set custom_vps.enabled = true"
+contains "$custom_output" "Custom VPS remains disabled until a valid local systemd service name is configured"
+contains "$custom_output" "[DRY-RUN] set custom_vps.enabled = false"
 contains "$custom_output" "[DRY-RUN] set custom_vps.ssh_port = 22"
 contains "$custom_output" "[DRY-RUN] set custom_vps.interface = \"\""
 contains "$custom_output" "[DRY-RUN] smoke test watchdogvpn.service and daemon IPC status"
 contains "$custom_output" "[SKIP] automatic VPN settle check; selected backend is custom-vps"
 contains "$custom_output" "[SKIP] automatic runtime validation; selected backend is custom-vps"
 not_contains "$custom_output" "select vpn backend"
+
+# A real, syntactically valid local service is the only path that enables the
+# compatibility backend during an interactive fresh install.
+fresh_configured_dir="$TMP_DIR/fresh-configured/etc/watchdogvpn"
+mkdir -p "$fresh_configured_dir"
+configured_output="$(printf '\n\n\n\n\n\nwg-quick@wg0.service\nwg0\n' | HOME="$TMP_DIR/home" WATCHDOGVPN_ETC_CONFIG_DIR="$fresh_configured_dir" WATCHDOGVPN_CONFIG_FILE="$fresh_configured_dir/config.toml" PATH="$FAKE_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$INSTALLER" --dry-run --skip-doctor 2>&1)"
+contains "$configured_output" '[DRY-RUN] set custom_vps.enabled = true'
+contains "$configured_output" '[DRY-RUN] set custom_vps.service_name = "wg-quick@wg0.service"'
+not_contains "$configured_output" "Custom VPS remains disabled"
 
 # Re-run scenario: an already-configured backend must be detected and left
 # alone, not silently overwritten with the fresh-install default.

@@ -78,4 +78,39 @@ run_case "down vpn" "DOWN" "DOWN" "UNKNOWN" "none" 2 2
 # exempt from errexit propagation in Bash).
 run_case "process substitution survives nonzero truth exit" "DOWN" "DOWN" "UNKNOWN" "none" 2 2
 
+# A fresh non-interactive install intentionally has no legacy Custom VPS
+# service. Status must still report daemon-first truth instead of aborting with
+# the backend validator's configuration error. Mutating connect/restart paths
+# continue to call validate_backend and fail closed.
+cat >"$tmpdir/incomplete_backend" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  active) printf 'custom-vps\n' ;;
+  configured) exit 1 ;;
+  validate|service-name) printf 'backend custom-vps is not configured\n' >&2; exit 65 ;;
+  *) exit 64 ;;
+esac
+EOF
+chmod +x "$tmpdir/incomplete_backend"
+write_fake_truth "DOWN" "DOWN" "UNKNOWN" "none" 2
+set +e
+incomplete_output="$(
+  VPNCTL_TRUTH_BIN="$tmpdir/vpn_truth_check" \
+  VPNCTL_BACKEND_BIN="$tmpdir/incomplete_backend" \
+  VPNCTL_MANUAL_STATE_BIN="$tmpdir/does-not-exist" \
+  "$SCRIPT" status 2>&1
+)"
+incomplete_rc=$?
+set -e
+[[ "$incomplete_rc" == "2" ]] || {
+  printf 'incomplete backend status: expected truth exit 2, got %s\n' "$incomplete_rc" >&2
+  exit 1
+}
+assert_contains "$incomplete_output" "VPN STATUS: DOWN"
+assert_contains "$incomplete_output" "service: not configured"
+if [[ "$incomplete_output" == *"backend custom-vps is not configured"* ]]; then
+  printf 'incomplete backend status must not leak a validation abort\n' >&2
+  exit 1
+fi
+
 echo "vpnctl unit checks passed"
