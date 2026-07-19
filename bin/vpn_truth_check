@@ -3,6 +3,7 @@ set -euo pipefail
 
 MODE="shell"
 BACKEND_BIN="${VPN_TRUTH_BACKEND_BIN:-/usr/local/bin/vpn_backend}"
+WATCHDOG_BIN="${VPN_TRUTH_WATCHDOG_BIN:-/usr/local/bin/watchdog}"
 
 usage() {
   cat <<'USAGE'
@@ -19,11 +20,12 @@ Modos:
   --help    Muestra esta ayuda.
 
 Contrato de estado:
-  BACKEND=custom-vps Backend activo segun WatchdogVPN.
-  INTERFACE=tun0     Interfaz de tunel esperada para el backend activo.
-  STATUS=UP        tun0 UP, ruta por tun0 e IP publica OK.
-  STATUS=DEGRADED  tun0 UP, pero ruta o IP publica no valida.
-  STATUS=DOWN      tun0 no esta UP.
+  SOURCE=daemon    El daemon v2 alcanzable prevalece sobre el backend legado.
+  BACKEND=watchdogvpn para runtime v2; custom-vps para compatibilidad legada.
+  INTERFACE=wdvpn-tun0 u otra interfaz observada en los artefactos del runtime.
+  STATUS=UP        runtime, captura mode-aware y egress observables sanos.
+  STATUS=DEGRADED  daemon/runtime activo con evidencia incompleta o incoherente.
+  STATUS=DOWN      no existe un runtime activo utilizable.
 USAGE
 }
 
@@ -79,6 +81,27 @@ public_ip() {
   echo "none"
 }
 
+public_ip_via_proxy() {
+  local ip proxy url
+  for proxy in \
+    "socks5h://127.0.0.1:2080" \
+    "http://127.0.0.1:2081"
+  do
+    for url in \
+      "https://ifconfig.me" \
+      "https://api.ipify.org" \
+      "https://ipinfo.io/ip"
+    do
+      ip="$(curl -4 -s --max-time 3 --proxy "$proxy" "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+      if is_ipv4 "$ip"; then
+        echo "$ip"
+        return 0
+      fi
+    done
+  done
+  echo "none"
+}
+
 status_code() {
   case "${1:-DOWN}" in
     UP) echo 0 ;;
@@ -89,6 +112,7 @@ status_code() {
 }
 
 emit_shell() {
+  printf 'SOURCE=%s\n' "$SOURCE"
   printf 'BACKEND=%s\n' "$BACKEND"
   printf 'INTERFACE=%s\n' "$INTERFACE"
   printf 'STATUS=%s\n' "$STATUS"
@@ -100,7 +124,7 @@ emit_shell() {
 
 emit_json() {
   cat <<JSON
-{"schema":"vpn_truth_check.v1","backend":"$(json_escape "$BACKEND")","interface":"$(json_escape "$INTERFACE")","status":"$(json_escape "$STATUS")","tun":"$(json_escape "$TUN")","route":"$(json_escape "$ROUTE")","ip":"$(json_escape "$IP")","ip_addr":"$(json_escape "$IP_ADDR")","exit_code":$(status_code "$STATUS")}
+{"schema":"vpn_truth_check.v1","source":"$(json_escape "$SOURCE")","backend":"$(json_escape "$BACKEND")","interface":"$(json_escape "$INTERFACE")","status":"$(json_escape "$STATUS")","tun":"$(json_escape "$TUN")","route":"$(json_escape "$ROUTE")","ip":"$(json_escape "$IP")","ip_addr":"$(json_escape "$IP_ADDR")","exit_code":$(status_code "$STATUS")}
 JSON
 }
 
@@ -133,7 +157,121 @@ parse_args() {
   esac
 }
 
-collect_truth() {
+managed_runtime_context() {
+  local raw
+  [[ -x "$WATCHDOG_BIN" ]] || return 1
+  raw="$("$WATCHDOG_BIN" status --json 2>/dev/null)" || return 1
+  printf '%s' "$raw" | python3 -c '
+import json
+import re
+import sys
+
+try:
+    document = json.load(sys.stdin)
+    lifecycle = document["payload"]["lifecycle"]
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+if document.get("ok") is not True or lifecycle.get("daemon_reachable") is not True:
+    raise SystemExit(1)
+
+artifacts = [str(value) for value in lifecycle.get("runtime_artifacts", [])]
+interface = next(
+    (value.split(":", 1)[1] for value in artifacts if value.startswith("interface:")),
+    "unknown",
+)
+if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", interface):
+    interface = "unknown"
+
+def flag(name):
+    return "1" if lifecycle.get(name) is True else "0"
+
+values = {
+    "ACTUAL": str(lifecycle.get("actual_runtime_state", "unknown")),
+    "DESIRED": str(lifecycle.get("desired_state", "unknown")),
+    "RUNTIME": flag("runtime_active"),
+    "TUN_ACTIVE": flag("tun_active"),
+    "PROXY_ACTIVE": flag("proxy_active"),
+    "KILL_SWITCH_CONSISTENT": flag("kill_switch_consistent"),
+    "FAILURE": flag("failure_or_degraded"),
+    "INTERFACE": interface,
+    "ROUTING": "1" if any(value.startswith("routing:") for value in artifacts) else "0",
+    "PROXY_EVIDENCE": "1" if any(
+        value.startswith("owned_listener:") and (value.endswith("/2080") or value.endswith("/2081"))
+        for value in artifacts
+    ) else "0",
+}
+for key, value in values.items():
+    print(f"{key}={value}")
+'
+}
+
+load_managed_runtime() {
+  local context key value
+  context="$(managed_runtime_context)" || return 1
+
+  while IFS='=' read -r key value; do
+    case "$key" in
+      ACTUAL) MANAGED_ACTUAL="$value" ;;
+      DESIRED) MANAGED_DESIRED="$value" ;;
+      RUNTIME) MANAGED_RUNTIME_ACTIVE="$value" ;;
+      TUN_ACTIVE) MANAGED_TUN_ACTIVE="$value" ;;
+      PROXY_ACTIVE) MANAGED_PROXY_ACTIVE="$value" ;;
+      KILL_SWITCH_CONSISTENT) MANAGED_KILL_SWITCH_CONSISTENT="$value" ;;
+      FAILURE) MANAGED_FAILURE="$value" ;;
+      INTERFACE) MANAGED_INTERFACE="$value" ;;
+      ROUTING) MANAGED_ROUTING="$value" ;;
+      PROXY_EVIDENCE) MANAGED_PROXY_EVIDENCE="$value" ;;
+    esac
+  done <<<"$context"
+
+  [[ -n "$MANAGED_ACTUAL" && -n "$MANAGED_DESIRED" ]] || return 1
+  SOURCE="daemon"
+  BACKEND="watchdogvpn"
+  INTERFACE="${MANAGED_INTERFACE:-unknown}"
+}
+
+collect_managed_truth() {
+  if [[ "$MANAGED_TUN_ACTIVE" == "1" ]]; then
+    TUN="$(tun_state)"
+  else
+    TUN="DOWN"
+  fi
+
+  if [[ "$MANAGED_TUN_ACTIVE" == "1" && "$MANAGED_ROUTING" == "1" ]]; then
+    ROUTE="TUN"
+    IP_ADDR="$(public_ip)"
+  elif [[ "$MANAGED_PROXY_ACTIVE" == "1" && "$MANAGED_PROXY_EVIDENCE" == "1" ]]; then
+    ROUTE="PROXY"
+    IP_ADDR="$(public_ip_via_proxy)"
+  else
+    ROUTE="DEFAULT"
+    IP_ADDR="none"
+  fi
+
+  if [[ "$IP_ADDR" == "none" ]]; then
+    IP="FAIL"
+  else
+    IP="OK"
+  fi
+
+  if [[ "$MANAGED_ACTUAL" == "connected" && "$MANAGED_RUNTIME_ACTIVE" == "1" ]]; then
+    if [[ "$MANAGED_DESIRED" == "on" && "$MANAGED_FAILURE" == "0" \
+      && "$MANAGED_KILL_SWITCH_CONSISTENT" == "1" && "$IP" == "OK" ]] \
+      && { [[ "$MANAGED_TUN_ACTIVE" == "1" && "$TUN" == "UP" && "$ROUTE" == "TUN" ]] \
+        || [[ "$MANAGED_PROXY_ACTIVE" == "1" && "$MANAGED_PROXY_EVIDENCE" == "1" && "$ROUTE" == "PROXY" ]]; }; then
+      STATUS="UP"
+    else
+      STATUS="DEGRADED"
+    fi
+  elif [[ "$MANAGED_RUNTIME_ACTIVE" == "1" ]]; then
+    STATUS="DEGRADED"
+  else
+    STATUS="DOWN"
+  fi
+}
+
+collect_legacy_truth() {
   backend_context
   TUN="$(tun_state)"
   ROUTE="$(route_state)"
@@ -151,6 +289,14 @@ collect_truth() {
     STATUS="DEGRADED"
   else
     STATUS="DOWN"
+  fi
+}
+
+collect_truth() {
+  if load_managed_runtime; then
+    collect_managed_truth
+  else
+    collect_legacy_truth
   fi
 }
 
@@ -184,6 +330,17 @@ IP="FAIL"
 IP_ADDR="none"
 BACKEND="custom-vps"
 INTERFACE="tun0"
+SOURCE="legacy"
+MANAGED_ACTUAL=""
+MANAGED_DESIRED=""
+MANAGED_RUNTIME_ACTIVE="0"
+MANAGED_TUN_ACTIVE="0"
+MANAGED_PROXY_ACTIVE="0"
+MANAGED_KILL_SWITCH_CONSISTENT="0"
+MANAGED_FAILURE="0"
+MANAGED_INTERFACE="unknown"
+MANAGED_ROUTING="0"
+MANAGED_PROXY_EVIDENCE="0"
 
 backend_context() {
   if [[ -x "$BACKEND_BIN" ]]; then

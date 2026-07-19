@@ -255,9 +255,20 @@ state. These tests do not require a real VPN tunnel, do not write to `/etc`,
 Current coverage:
 
 - `vpn_truth_check` state contract:
-  - `UP` when `tun0`, route and public IP are healthy
-  - `DEGRADED` when the tunnel exists but route or public IP is unhealthy
-  - `DOWN` when the tunnel is absent
+  - the reachable v2 daemon takes precedence over the legacy custom-vps
+    backend, so an active `wdvpn-tun0` runtime is never checked against a stale
+    static `tun0` setting;
+  - managed TUN mode is `UP` only when lifecycle state, the observed runtime
+    interface, managed routing artifacts, kill-switch consistency and normal
+    public egress agree;
+  - managed proxy mode is `UP` only when lifecycle state, owned proxy listener
+    evidence, kill-switch consistency and a public-IP request through the
+    local proxy agree;
+  - `DEGRADED` means a managed runtime exists but one or more observable layers
+    disagree or egress cannot be proved;
+  - `DOWN` means no usable managed runtime is active;
+  - custom-vps retains the historical `tun0`/route/public-IP contract only as a
+    compatibility fallback when daemon lifecycle truth is unavailable;
   - `--shell`, `--quiet` and `--json` output behavior
 - daemon/runtime behavior:
   - standby state is explicit

@@ -29,9 +29,10 @@ hardening.
 
 | Threat | Impact | Current mitigation |
 | --- | --- | --- |
-| Provider CLI reports a misleading state | User thinks VPN is working when route/tunnel is degraded | `vpn_truth_check` checks tunnel, route and public IP |
-| `tun0` disappears | Traffic leaves through the default route | daemon/runtime health checks and truth checks expose the degraded state |
-| `tun0` exists but route is not through tunnel | Degraded protection | `vpn_truth_check` reports `DEGRADED`; dashboard exposes route |
+| Provider CLI reports a misleading state | User thinks VPN is working when route/tunnel is degraded | `vpn_truth_check` combines daemon lifecycle with mode-aware interface, routing/listener and egress evidence |
+| A managed TUN disappears | Traffic may leave through the default route | daemon/runtime health plus an independently observed managed interface make `vpn_truth_check` report `DEGRADED` |
+| A managed TUN exists but capture/routing evidence is incomplete | Degraded protection | `vpn_truth_check` requires the v2 lifecycle and managed routing artifacts to agree before reporting `UP` |
+| Legacy static `tun0` configuration disagrees with the active v2 runtime | A healthy `wdvpn-tun0` connection is falsely reported `DOWN` | reachable daemon lifecycle takes precedence; custom-vps remains a bounded fallback only when v2 truth is unavailable |
 | Public IP lookup fails | State can be unknown or degraded | multiple IP providers are attempted; degraded state is explicit |
 | Provider/profile configuration is invalid | Recovery loops cannot fix setup | stores and runtime commands fail closed with explicit errors |
 | Bad VPN endpoint | Rotation may land on unusable node | the v2 rotation/runtime path validates state before accepting a connection |

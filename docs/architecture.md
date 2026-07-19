@@ -23,7 +23,10 @@ only in installation and dependency detection.
 - `bin/vpn_backend`: backend contract helper for the custom-vps legacy bash
   compatibility path
 - `bin/vpnctl`: user command surface
-- `bin/vpn_truth_check`: source of truth for tunnel/routing/IP state
+- `bin/vpn_truth_check`: mode-aware runtime truth check. It prefers the
+  reachable v2 daemon lifecycle plus independently observed interface and
+  egress evidence, and falls back to the custom-vps compatibility backend only
+  when the daemon cannot provide an authoritative lifecycle.
 - `bin/vpn_manual_state`: runtime state helper for user-requested manual-off
 - `bin/vpn_notify`: desktop notification and traceable event helper
 - `sbin/vpn_domain_bypass_apply.sh`: domain exclusion/bypass rules
