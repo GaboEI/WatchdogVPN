@@ -204,6 +204,7 @@ print_section "Mixed-install preflight"
 run_mixed_install_preflight update
 
 print_section "Runtime dependencies"
+validate_polkit_runtime_dependency
 validate_python_runtime_dependencies
 install_official_singbox
 install_official_cloak

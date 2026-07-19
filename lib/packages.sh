@@ -52,6 +52,28 @@ validate_python_runtime_dependencies() {
   fi
 }
 
+validate_polkit_runtime_dependency() {
+  if command -v pkaction >/dev/null 2>&1; then
+    ok "polkit runtime available"
+    return 0
+  fi
+
+  if [[ -z "${DISTRO_POLKIT_PACKAGE:-}" ]]; then
+    fail "polkit is required for the unprivileged daemon to invalidate system DNS caches"
+    return 1
+  fi
+  install_package_set "$DISTRO_POLKIT_PACKAGE"
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] verify pkaction after installing %s\n' "$DISTRO_POLKIT_PACKAGE"
+    return 0
+  fi
+  if ! command -v pkaction >/dev/null 2>&1; then
+    fail "polkit installation completed but pkaction is unavailable"
+    return 1
+  fi
+  ok "polkit runtime installed"
+}
+
 install_package_set() {
   local packages=("$@")
   ((${#packages[@]} > 0)) || return 0

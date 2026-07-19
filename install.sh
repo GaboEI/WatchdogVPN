@@ -323,6 +323,7 @@ validate_required_commands() {
 }
 
 validate_protocol_runtime_dependencies() {
+  validate_polkit_runtime_dependency
   validate_python_runtime_dependencies
 }
 

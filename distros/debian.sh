@@ -2,9 +2,10 @@
 set -euo pipefail
 
 DISTRO_PACKAGE_MANAGER="apt"
-DISTRO_BASE_PACKAGES=(python3 curl tar iproute2 network-manager logrotate libnotify-bin openvpn util-linux)
+DISTRO_BASE_PACKAGES=(python3 curl tar iproute2 network-manager logrotate libnotify-bin openvpn util-linux polkitd)
 DISTRO_DNS_PACKAGES=(dnsutils)
 DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"
+DISTRO_POLKIT_PACKAGE="polkitd"
 DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS=(
   "sudo apt install -y software-properties-common python3-launchpadlib gnupg2 linux-headers-\$(uname -r)"
   "sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 57290828"

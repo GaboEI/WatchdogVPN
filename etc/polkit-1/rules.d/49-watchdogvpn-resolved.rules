@@ -1,0 +1,10 @@
+// WatchdogVPN's unprivileged service must invalidate systemd-resolved's
+// cache exactly when a sing-box FakeIP TUN takes or releases DNS ownership.
+// Grant only that narrow resolver action; do not authorize arbitrary
+// resolvectl operations or commands.
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.resolve1.flush-caches" &&
+        subject.user === "watchdogvpn") {
+        return polkit.Result.YES;
+    }
+});

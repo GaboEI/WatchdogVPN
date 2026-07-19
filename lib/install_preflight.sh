@@ -89,6 +89,7 @@ preflight_current_runtime_files() {
   preflight_path /usr/local/sbin/vpn_domain_bypass_apply.sh
   preflight_path /usr/local/lib/watchdogvpn
   preflight_path /etc/logrotate.d/myvpn
+  preflight_path /etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules
   preflight_home_path .local/bin/VPN
   preflight_home_path .local/share/watchdogvpn/watchdogvpn
 }

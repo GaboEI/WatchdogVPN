@@ -100,6 +100,10 @@ install_runtime_files() {
   install_user_dir "$runtime_root/tui/watchdogvpn" "$HOME/.local/share/watchdogvpn/watchdogvpn"
   install_user_dir "$runtime_root/terminal_safety" "$HOME/.local/share/watchdogvpn/terminal_safety"
   install_root_file "$runtime_root/etc/logrotate.d/myvpn" /etc/logrotate.d/myvpn 0644
+  install_root_file \
+    "$runtime_root/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" \
+    /etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules \
+    0644
   install_systemd_units
 }
 

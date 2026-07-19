@@ -329,6 +329,7 @@ check_repo_file "bin/watchdogvpn" exec
 check_repo_file "bin/watchdogvpn-daemon" exec
 check_repo_file "systemd/watchdogvpn.service"
 check_repo_file "etc/logrotate.d/myvpn"
+check_repo_file "etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules"
 
 section "Current Installation"
 installed_any=0
@@ -346,6 +347,7 @@ installed_product_paths=(
   /usr/local/bin/watchdogvpn
   /usr/local/bin/watchdogvpn-daemon
   /usr/local/lib/watchdogvpn
+  /etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules
   "$HOME/.local/bin/VPN"
   "$HOME/.local/share/watchdogvpn/watchdogvpn"
 )
