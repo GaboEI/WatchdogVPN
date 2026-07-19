@@ -7,7 +7,7 @@ set -euo pipefail
 # does not begin from an empty installer path.
 DISTRO_PACKAGE_MANAGER="dnf"
 DISTRO_BASE_PACKAGES=(
-  bash coreutils findutils grep gawk sed gzip glibc-common shadow-utils systemd
+  bash git coreutils findutils grep gawk sed gzip glibc-common shadow-utils systemd
   sudo kmod ca-certificates python3 curl tar iproute NetworkManager logrotate
   libnotify openvpn util-linux polkit nftables iptables-nft iputils procps-ng
 )

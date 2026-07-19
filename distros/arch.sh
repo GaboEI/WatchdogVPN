@@ -3,7 +3,7 @@ set -euo pipefail
 
 DISTRO_PACKAGE_MANAGER="pacman"
 DISTRO_BASE_PACKAGES=(
-  bash coreutils findutils grep gawk sed gzip glibc shadow systemd sudo kmod
+  bash git coreutils findutils grep gawk sed gzip glibc shadow systemd sudo kmod
   ca-certificates python curl tar iproute2 networkmanager logrotate libnotify
   openvpn util-linux polkit nftables iptables iputils procps-ng
 )

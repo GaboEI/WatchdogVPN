@@ -153,21 +153,21 @@ assert_contains "$ROOT_DIR/distros/arch.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE=
 
 # --- complete distro runtime package contract ---
 
-for required_cmd in ss systemd-run getent useradd usermod sysctl modinfo nmcli nft iptables ip6tables ping pgrep; do
+for required_cmd in git ss systemd-run getent useradd usermod sysctl modinfo nmcli nft iptables ip6tables ping pgrep; do
   assert_contains "$ROOT_DIR/lib/packages.sh" "$required_cmd" "required command inventory must include $required_cmd"
 done
 assert_contains "$ROOT_DIR/lib/common.sh" 'IFS= read -r name </proc/1/comm' "systemd detection must not require procps before procps can be installed"
 assert_not_contains "$ROOT_DIR/install.sh" 'ps -p 1' "installer bootstrap must not require ps before package reconciliation"
 assert_contains "$ROOT_DIR/lib/packages.sh" '[[ ! -c /dev/net/tun ]]' "install/update dependency validation must fail closed without the running kernel TUN device"
-for package in coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps-ng; do
+for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps-ng; do
   assert_contains "$ROOT_DIR/distros/arch.sh" "$package" "Arch adapter must install $package"
 done
 for adapter in ubuntu debian; do
-  for package in coreutils findutils grep gawk sed libc-bin passwd systemd sudo kmod ca-certificates nftables iptables iputils-ping procps; do
+  for package in git coreutils findutils grep gawk sed libc-bin passwd systemd sudo kmod ca-certificates nftables iptables iputils-ping procps; do
     assert_contains "$ROOT_DIR/distros/$adapter.sh" "$package" "$adapter adapter must install $package"
   done
 done
-for package in coreutils findutils grep gawk sed glibc-common shadow-utils systemd sudo kmod ca-certificates nftables iptables-nft iputils procps-ng openvpn NetworkManager polkit; do
+for package in git coreutils findutils grep gawk sed glibc-common shadow-utils systemd sudo kmod ca-certificates nftables iptables-nft iputils procps-ng openvpn NetworkManager polkit; do
   assert_contains "$ROOT_DIR/distros/fedora.sh" "$package" "future Fedora adapter must pre-map $package"
 done
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PACKAGE_MANAGER="dnf"' "future Fedora adapter must use dnf"

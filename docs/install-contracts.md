@@ -87,7 +87,9 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   cleanup tools, `iproute2`, `ping`, process recovery tools, notifications and
   the installer/user-management base utilities. The explicit adapters also
   own `ss`, `sysctl`, `modinfo`, CA trust and the standard text/file tools used
-  by installation and recovery. After the package manager returns, WatchdogVPN
+  by installation and recovery. `git` is provisioned so a checkout-based
+  install/update can publish and later compare its exact source commit instead
+  of silently recording `unknown`. After the package manager returns, WatchdogVPN
   re-checks every mandatory executable and aborts if any remain unavailable.
   `nft` is a hard security dependency: a successful installation may not rely
   on a firewall backend inherited from a developer or certification image.

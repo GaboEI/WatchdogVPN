@@ -3,7 +3,7 @@ set -euo pipefail
 
 required_commands() {
   printf '%s\n' \
-    bash python3 curl tar ip ss systemctl systemd-run sudo logrotate awk sed \
+    bash git python3 curl tar ip ss systemctl systemd-run sudo logrotate awk sed \
     grep find sort sha256sum install getent useradd usermod openvpn setpriv \
     sysctl modinfo nmcli nft iptables ip6tables ping pgrep
 }

@@ -239,7 +239,8 @@ the assembled developer environment, not a reproducible user installation.
 The follow-up inventory expanded this beyond those three symptoms to the
 security/runtime commands and owning packages used for SSH-path inspection,
 policy routing, module detection, firewall fallback/cleanup, NetworkManager,
-user creation and transactional file installation.
+user creation, transactional file installation and Git-backed installed
+version provenance.
 
 ### Superseding universal contract
 

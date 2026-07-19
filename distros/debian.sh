@@ -3,7 +3,7 @@ set -euo pipefail
 
 DISTRO_PACKAGE_MANAGER="apt"
 DISTRO_BASE_PACKAGES=(
-  bash coreutils findutils grep gawk sed gzip libc-bin passwd systemd sudo kmod
+  bash git coreutils findutils grep gawk sed gzip libc-bin passwd systemd sudo kmod
   ca-certificates python3 curl tar iproute2 network-manager logrotate
   libnotify-bin openvpn util-linux polkitd nftables iptables iputils-ping procps
 )
