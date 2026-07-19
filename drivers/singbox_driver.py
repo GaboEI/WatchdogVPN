@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -11,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app_policy.models import AppPolicy
 from config.paths import resolve_config_dir
@@ -22,6 +23,7 @@ from dns.singbox import (
     build_dns_hijack_route,
     build_singbox_dns_config,
     build_tun_domain_preservation_route,
+    fakeip_policy_ready,
 )
 from config.lan_sharing import LANGatewayRuntimeConfig, LANProxyRuntimeConfig
 from drivers.base import (
@@ -50,6 +52,8 @@ from rules.models import SIMPLE_RULE_ACTIONS, RuleGroup
 from rules.singbox import build_singbox_route_rules
 
 
+LOGGER = logging.getLogger(__name__)
+
 RUNTIME_PREFIX = "watchdogvpn-singbox-"
 CONFIG_NAME = "singbox.json"
 LOG_NAME = "singbox.log"
@@ -67,6 +71,59 @@ SING_BOX_LOG_LEVELS = {
     "fatal",
     "panic",
 }
+
+
+def _flush_systemd_resolved_caches() -> bool:
+    """Invalidate resolver answers when FakeIP routing changes ownership.
+
+    systemd-resolved keeps answers obtained before a TUN session.  Once
+    sing-box starts intercepting DNS, those cached answers bypass its FakeIP
+    allocator entirely; cached loopback/sinkhole answers can therefore break
+    user traffic while a multi-target health quorum still reports healthy.
+    The inverse transition matters too: cached FakeIP answers are unusable
+    after sing-box has stopped.
+    """
+
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return True
+    active = subprocess.run(
+        [systemctl, "is-active", "systemd-resolved.service"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    state = (active.stdout or "").strip()
+    if active.returncode in {3, 4} or state in {"inactive", "failed", "unknown"}:
+        return True
+    if active.returncode != 0 or state != "active":
+        LOGGER.error(
+            "singbox_dns_cache_flush_failed reason=resolver_state_unknown state=%s rc=%s",
+            state or "empty",
+            active.returncode,
+        )
+        return False
+
+    resolvectl = shutil.which("resolvectl")
+    if resolvectl is None:
+        LOGGER.error("singbox_dns_cache_flush_failed reason=resolvectl_unavailable")
+        return False
+    flushed = subprocess.run(
+        [resolvectl, "flush-caches"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if flushed.returncode == 0:
+        return True
+    LOGGER.error(
+        "singbox_dns_cache_flush_failed reason=command_failed rc=%s stderr=%s",
+        flushed.returncode,
+        (flushed.stderr or "").strip(),
+    )
+    return False
+
+
 # sing-box's own TUN default reported 65535 (effectively "no limit") on the
 # wdvpn-tun0 interface, while the real path underneath - especially for a
 # native transport's own tunnel (e.g. AmneziaWG at MTU 1420) plus this
@@ -194,8 +251,13 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
     def _has_existing_connection(self) -> bool:
         return self._process is not None
 
-    def __init__(self, binaries: _BinaryPaths | None = None) -> None:
+    def __init__(
+        self,
+        binaries: _BinaryPaths | None = None,
+        dns_cache_flusher: Callable[[], bool] | None = None,
+    ) -> None:
         self.binaries = binaries or _BinaryPaths()
+        self._dns_cache_flusher = dns_cache_flusher or _flush_systemd_resolved_caches
         self._process: subprocess.Popen[str] | None = None
         self.last_error = ""
         self._active_profile: Profile | None = None
@@ -210,6 +272,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._tun_cleanup_route_tables: tuple[str, ...] = ()
         self._lan_gateway_active: LANGatewayRuntimeConfig | None = None
         self._lan_gateway_ip_forward_snapshot: str | None = None
+        self._fakeip_cache_flush_required = False
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
     def find_singbox_binary(self) -> str | None:
@@ -1530,6 +1593,12 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
     ) -> bool:
         self.last_error = ""
         tun_expected = self._mode_requires_tun(mode, capture_modes)
+        fakeip_cache_flush_required = bool(
+            tun_expected
+            and not native_transport
+            and dns_policy is not None
+            and fakeip_policy_ready(dns_policy)
+        )
         if management_peers is None:
             try:
                 management_peers = self.preflight_management_path(
@@ -1583,9 +1652,16 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._active_profile = profile
         self._active_mode = mode
         self._tun_expected = tun_expected
+        self._fakeip_cache_flush_required = fakeip_cache_flush_required
         if self._process.poll() is None and self.health_check() == "ok":
             if self._tun_expected:
                 self._capture_tun_cleanup_state()
+            if self._fakeip_cache_flush_required and not self._dns_cache_flusher():
+                self.last_error = "system DNS cache invalidation failed for FakeIP activation"
+                self._connected_at = None
+                self._active_profile = None
+                self.disconnect()
+                return False
             if lan_gateway is not None and not self._apply_lan_gateway(lan_gateway):
                 self._connected_at = None
                 self._active_profile = None
@@ -1603,6 +1679,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
     def disconnect(self) -> bool:
         process = self._process
         cleanup_tun_residue = self._tun_expected
+        flush_fakeip_cache = self._fakeip_cache_flush_required
         if cleanup_tun_residue:
             self._capture_tun_cleanup_state()
         self._process = None
@@ -1633,6 +1710,12 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             # catches anything orphaned by a past bug or crash too.
             kill_all_recorded_children(RUNTIME_PREFIX)
             self._cleanup_runtime()
+        if stopped and flush_fakeip_cache:
+            if not self._dns_cache_flusher():
+                self._fakeip_cache_flush_required = True
+                self.last_error = "system DNS cache invalidation failed for FakeIP deactivation"
+                return False
+            self._fakeip_cache_flush_required = False
         return stopped
 
     def _owned_proxy_egress_ready(self) -> bool:
