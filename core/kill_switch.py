@@ -20,8 +20,11 @@ WATCHDOGVPN_NFT_COMMENT = f'"{WATCHDOGVPN_COMMENT}"'
 # Reserved sing-box routing marks remain useful for bounded residue discovery
 # and collision avoidance in other drivers. They are intentionally *not*
 # firewall trust signals: auto_redirect can apply them to arbitrary physical
-# egress, so accepting a mark alone would bypass the kill switch.
+# egress, so accepting a mark alone would bypass the kill switch.  An explicit
+# direct route may authorize the outbound mark only when it is conjoined with
+# the exact unprivileged daemon UID that owns the managed sing-box process.
 SING_BOX_AUTO_REDIRECT_MARKS = ("0x2023", "0x2024")
+SING_BOX_OUTBOUND_MARK = SING_BOX_AUTO_REDIRECT_MARKS[1]
 SING_BOX_TUN_DNS_ENDPOINTS = ("172.19.0.2",)
 
 DEFAULT_LAN_CIDRS = (
@@ -53,6 +56,7 @@ class KillSwitchStatus:
     block_ipv6: bool
     allow_lan: bool
     allowed_endpoints: tuple[str, ...]
+    direct_egress_uid: int | None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -67,6 +71,7 @@ class KillSwitchStatus:
             "block_ipv6": self.block_ipv6,
             "allow_lan": self.allow_lan,
             "allowed_endpoints": list(self.allowed_endpoints),
+            "direct_egress_uid": self.direct_egress_uid,
         }
 
 
@@ -115,6 +120,7 @@ class KillSwitch:
     block_ipv6: bool = True
     allow_lan: bool = True
     allowed_endpoints: tuple[str, ...] = ()
+    direct_egress_uid: int | None = None
     lan_cidrs: tuple[str, ...] = DEFAULT_LAN_CIDRS
     runner: RunCommand = _default_run
     nft_batch_runner: RunNftBatch = _default_run_nft_batch
@@ -218,6 +224,7 @@ class KillSwitch:
             block_ipv6=self.block_ipv6,
             allow_lan=self.allow_lan,
             allowed_endpoints=tuple(self.allowed_endpoints),
+            direct_egress_uid=self.direct_egress_uid,
         ).to_dict()
 
     def _inspect_nftables(self) -> "_FirewallState":
@@ -260,6 +267,21 @@ class KillSwitch:
                 for line in managed_lines
             ),
         }
+        if self.direct_egress_uid is not None:
+            checks[f"missing_direct_egress_allow:{self.direct_egress_uid}"] = (
+                self._nft_rule_present(
+                    managed_lines,
+                    (
+                        "meta",
+                        "skuid",
+                        str(self.direct_egress_uid),
+                        "meta",
+                        "mark",
+                        SING_BOX_OUTBOUND_MARK,
+                    ),
+                    "accept",
+                )
+            )
         for endpoint in self.allowed_endpoints:
             try:
                 parsed = ip_address(endpoint)
@@ -393,6 +415,7 @@ class KillSwitch:
         return (
             16
             + endpoint_count
+            + (1 if self.direct_egress_uid is not None else 0)
             + (len(self.lan_cidrs) if self.allow_lan else 0)
             + (1 if not self.block_ipv6 else 0)
         )
@@ -432,6 +455,7 @@ class KillSwitch:
                 binary, "-o", self.tunnel_interface, "-j", "ACCEPT"
             ),
         ]
+        commands.extend(self._iptables_direct_egress_rules(binary))
         commands.extend(
             self._ip6tables_endpoint_rules()
             if binary == "ip6tables"
@@ -458,6 +482,25 @@ class KillSwitch:
             rule = tuple(command[3:])
             expected.append((f"missing_managed_rule:{binary}/{index}", rule))
         return tuple(expected)
+
+    def _iptables_direct_egress_rules(self, binary: str) -> list[list[str]]:
+        if self.direct_egress_uid is None:
+            return []
+        return [
+            self._iptables_rule_command(
+                binary,
+                "-m",
+                "owner",
+                "--uid-owner",
+                str(self.direct_egress_uid),
+                "-m",
+                "mark",
+                "--mark",
+                SING_BOX_OUTBOUND_MARK,
+                "-j",
+                "ACCEPT",
+            )
+        ]
 
     @staticmethod
     def _iptables_rule_command(binary: str, *tokens: str) -> list[str]:
@@ -520,6 +563,14 @@ class KillSwitch:
                 continue
             suffix = 32 if parsed.version == 4 else 128
             values[index + 1] = f"{parsed}/{suffix}"
+        for index, token in enumerate(values[:-1]):
+            if token != "--mark":
+                continue
+            raw_mark = values[index + 1].split("/", 1)[0]
+            try:
+                values[index + 1] = f"0x{int(raw_mark, 0):x}"
+            except ValueError:
+                continue
         return values
 
     def _run_required(self, command: list[str]) -> bool:
@@ -576,6 +627,7 @@ class KillSwitch:
             self._nft_rule("oifname", "lo", "accept"),
             *self._nft_loopback_destination_rules(),
             self._nft_rule("oifname", self.tunnel_interface, "accept"),
+            *self._nft_direct_egress_rules(),
             *self._nft_endpoint_rules(),
             *self._nft_internal_dns_rules(),
             *self._nft_dns_leak_block_rules(),
@@ -646,6 +698,21 @@ class KillSwitch:
             rules.append(self._nft_rule(family, "daddr", str(parsed), "accept"))
         return rules
 
+    def _nft_direct_egress_rules(self) -> list[list[str]]:
+        if self.direct_egress_uid is None:
+            return []
+        return [
+            self._nft_rule(
+                "meta",
+                "skuid",
+                str(self.direct_egress_uid),
+                "meta",
+                "mark",
+                SING_BOX_OUTBOUND_MARK,
+                "accept",
+            )
+        ]
+
     def _nft_internal_dns_rules(self) -> list[list[str]]:
         rules: list[list[str]] = []
         for endpoint in SING_BOX_TUN_DNS_ENDPOINTS:
@@ -712,6 +779,7 @@ class KillSwitch:
                 "ACCEPT",
             ],
         ]
+        commands.extend(self._iptables_direct_egress_rules("iptables"))
         commands.extend(self._iptables_endpoint_rules())
         commands.extend(self._iptables_internal_dns_rules("iptables"))
         commands.extend(self._iptables_dns_leak_block_rules("iptables"))
@@ -918,6 +986,7 @@ class KillSwitch:
                 "ACCEPT",
             ],
         ]
+        commands.extend(self._iptables_direct_egress_rules("ip6tables"))
         commands.extend(self._ip6tables_endpoint_rules())
         commands.extend(self._iptables_internal_dns_rules("ip6tables"))
         commands.extend(self._iptables_dns_leak_block_rules("ip6tables"))

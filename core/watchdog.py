@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -1423,6 +1424,38 @@ class WatchdogRuntime:
             )
         if hasattr(self.kill_switch, "allowed_endpoints"):
             self.kill_switch.allowed_endpoints = self._kill_switch_allowed_endpoints(profile)
+        if hasattr(self.kill_switch, "direct_egress_uid"):
+            # A direct route is an explicit operator bypass, but the kill
+            # switch must still authenticate the process that implements it.
+            # core.kill_switch conjoins this unprivileged daemon UID with
+            # sing-box's reserved outbound socket mark; neither signal is
+            # trusted on its own.
+            self.kill_switch.direct_egress_uid = (
+                os.getuid() if self._managed_direct_egress_requested() else None
+            )
+
+    def _managed_direct_egress_requested(self) -> bool:
+        state = self.state_manager.load()
+        if str(state.get("default_route_action", "current")) == "direct":
+            return True
+        if str(state.get("routing_policy", "rule")) != "rule":
+            return False
+
+        for group in self.rule_store.list_groups():
+            if not group.enabled:
+                continue
+            if any(rule.enabled and rule.action == "direct" for rule in group.rules):
+                return True
+
+        app_policy = self._runtime_app_policy()
+        if not app_policy.enabled:
+            return False
+        if app_policy.default_action == AppPolicyAction.DIRECT:
+            return True
+        return any(
+            rule.enabled and rule.action == AppPolicyAction.DIRECT
+            for rule in app_policy.rules
+        )
 
     def _kill_switch_allowed_endpoints(self, profile: Profile | None) -> tuple[str, ...]:
         if profile is None:

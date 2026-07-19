@@ -184,6 +184,7 @@ class FakeKillSwitch:
         self.block_ipv6 = True
         self.allow_lan = True
         self.allowed_endpoints: tuple[str, ...] = ()
+        self.direct_egress_uid: int | None = None
 
     def _enable(self) -> bool:
         if self.enable_result:
@@ -1029,6 +1030,120 @@ class WatchdogCoreTests(unittest.TestCase):
         driver.connect_mock.assert_not_called()
         self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
         self.assertEqual(self.state_manager.get("active_profile_id", ""), "")
+
+    @patch("core.watchdog.os.getuid", return_value=4242)
+    def test_kill_switch_authorizes_managed_direct_app_policy_egress(self, _getuid) -> None:
+        app_policy_store = AppPolicyStore(Path(self.tmpdir.name) / "app-policy.json")
+        app_policy_store.save(
+            AppPolicy(
+                enabled=True,
+                rules=[
+                    AppPolicyRule(
+                        id="browser-direct",
+                        action=AppPolicyAction.DIRECT,
+                        match={"process_path": ["/usr/bin/browser"]},
+                    )
+                ],
+            )
+        )
+        kill_switch = FakeKillSwitch()
+        runtime = WatchdogRuntime(
+            driver=FakeDriver(),
+            state_manager=self.state_manager,
+            app_policy_store=app_policy_store,
+            rule_store=RuleStore(Path(self.tmpdir.name) / "rules"),
+            kill_switch=kill_switch,
+        )
+
+        runtime._configure_kill_switch({}, self.profile)
+
+        self.assertEqual(kill_switch.direct_egress_uid, 4242)
+
+    @patch("core.watchdog.os.getuid", return_value=4242)
+    def test_kill_switch_authorizes_managed_direct_rule_group_egress(self, _getuid) -> None:
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        rule_store.add_group(
+            RuleGroup(
+                name="custom",
+                rules=[
+                    Rule(
+                        id="updates-direct",
+                        action="direct",
+                        conditions={"domain_suffix": ["updates.example"]},
+                    )
+                ],
+            )
+        )
+        kill_switch = FakeKillSwitch()
+        runtime = WatchdogRuntime(
+            driver=FakeDriver(),
+            state_manager=self.state_manager,
+            app_policy_store=AppPolicyStore(Path(self.tmpdir.name) / "app-policy.json"),
+            rule_store=rule_store,
+            kill_switch=kill_switch,
+        )
+
+        runtime._configure_kill_switch({}, self.profile)
+
+        self.assertEqual(kill_switch.direct_egress_uid, 4242)
+
+    @patch("core.watchdog.os.getuid", return_value=4242)
+    def test_kill_switch_authorizes_managed_direct_default_egress(self, _getuid) -> None:
+        self.state_manager.set("default_route_action", "direct")
+        kill_switch = FakeKillSwitch()
+        runtime = WatchdogRuntime(
+            driver=FakeDriver(),
+            state_manager=self.state_manager,
+            app_policy_store=AppPolicyStore(Path(self.tmpdir.name) / "app-policy.json"),
+            rule_store=RuleStore(Path(self.tmpdir.name) / "rules"),
+            kill_switch=kill_switch,
+        )
+
+        runtime._configure_kill_switch({}, self.profile)
+
+        self.assertEqual(kill_switch.direct_egress_uid, 4242)
+
+    def test_kill_switch_does_not_trust_uid_without_enabled_direct_policy(self) -> None:
+        app_policy_store = AppPolicyStore(Path(self.tmpdir.name) / "app-policy.json")
+        app_policy_store.save(
+            AppPolicy(
+                enabled=False,
+                rules=[
+                    AppPolicyRule(
+                        id="disabled-direct",
+                        action=AppPolicyAction.DIRECT,
+                        match={"process_path": ["/usr/bin/browser"]},
+                    )
+                ],
+            )
+        )
+        rule_store = RuleStore(Path(self.tmpdir.name) / "rules")
+        rule_store.add_group(
+            RuleGroup(
+                name="custom",
+                enabled=False,
+                rules=[
+                    Rule(
+                        id="disabled-rule-direct",
+                        action="direct",
+                        conditions={"domain_suffix": ["updates.example"]},
+                    )
+                ],
+            )
+        )
+        kill_switch = FakeKillSwitch()
+        kill_switch.direct_egress_uid = 9999
+        runtime = WatchdogRuntime(
+            driver=FakeDriver(),
+            state_manager=self.state_manager,
+            app_policy_store=app_policy_store,
+            rule_store=rule_store,
+            kill_switch=kill_switch,
+        )
+
+        runtime._configure_kill_switch({}, self.profile)
+
+        self.assertIsNone(kill_switch.direct_egress_uid)
 
     def test_connect_forwards_the_stored_dns_policy_to_the_driver(self) -> None:
         self.set_desired_state("off")

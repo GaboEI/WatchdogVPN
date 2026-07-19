@@ -62,6 +62,7 @@ class FakeKillSwitch:
         self.block_ipv6 = True
         self.allow_lan = True
         self.allowed_endpoints: tuple[str, ...] = ()
+        self.direct_egress_uid: int | None = None
 
     def enable(self) -> bool:
         self.enable_calls += 1

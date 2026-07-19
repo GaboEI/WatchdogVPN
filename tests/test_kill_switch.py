@@ -7,6 +7,7 @@ from core.kill_switch import (
     KillSwitch,
     LOOPBACK_CIDRS,
     SING_BOX_AUTO_REDIRECT_MARKS,
+    SING_BOX_OUTBOUND_MARK,
     SING_BOX_TUN_DNS_ENDPOINTS,
     WATCHDOGVPN_COMMENT,
     WATCHDOGVPN_IPTABLES_CHAIN,
@@ -57,6 +58,7 @@ def complete_nft_ruleset(kill_switch: KillSwitch) -> str:
         block_ipv6=kill_switch.block_ipv6,
         allow_lan=kill_switch.allow_lan,
         allowed_endpoints=kill_switch.allowed_endpoints,
+        direct_egress_uid=kill_switch.direct_egress_uid,
         lan_cidrs=kill_switch.lan_cidrs,
         runner=recorder,
         which=fake_which("nft"),
@@ -95,6 +97,7 @@ def complete_iptables_ruleset(kill_switch: KillSwitch, binary: str = "iptables")
         block_ipv6=kill_switch.block_ipv6,
         allow_lan=kill_switch.allow_lan,
         allowed_endpoints=kill_switch.allowed_endpoints,
+        direct_egress_uid=kill_switch.direct_egress_uid,
         lan_cidrs=kill_switch.lan_cidrs,
         runner=recorder,
         which=fake_which(*available),
@@ -285,6 +288,33 @@ class NftablesKillSwitchTests(unittest.TestCase):
         self.assertNotIn(ct_mark_rule, recorder.commands)
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(established_rule))
+
+    def test_nftables_direct_egress_requires_daemon_uid_and_outbound_mark(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(
+            direct_egress_uid=955,
+            runner=recorder,
+            which=fake_which("nft"),
+        )
+
+        kill_switch.enable()
+
+        direct_rule = nft_rule(
+            "meta",
+            "skuid",
+            "955",
+            "meta",
+            "mark",
+            SING_BOX_OUTBOUND_MARK,
+            "accept",
+        )
+        mark_only = nft_rule("meta", "mark", SING_BOX_OUTBOUND_MARK, "accept")
+        uid_only = nft_rule("meta", "skuid", "955", "accept")
+        dns_block = nft_rule("udp", "dport", "53", "reject")
+        self.assertIn(direct_rule, recorder.commands)
+        self.assertNotIn(mark_only, recorder.commands)
+        self.assertNotIn(uid_only, recorder.commands)
+        self.assertLess(recorder.commands.index(direct_rule), recorder.commands.index(dns_block))
 
     def test_nftables_allows_internal_tun_dns_before_dns_leak_blocks(self) -> None:
         recorder = CommandRecorder()
@@ -646,6 +676,67 @@ class IptablesKillSwitchTests(unittest.TestCase):
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(dns_rule))
         self.assertLess(recorder.commands.index(endpoint_rule), recorder.commands.index(established_rule))
 
+    def test_iptables_direct_egress_requires_daemon_uid_and_outbound_mark(self) -> None:
+        recorder = CommandRecorder()
+        kill_switch = KillSwitch(
+            direct_egress_uid=955,
+            runner=recorder,
+            which=fake_which("iptables", "ip6tables"),
+        )
+
+        kill_switch.enable()
+
+        direct_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-m",
+            "owner",
+            "--uid-owner",
+            "955",
+            "-m",
+            "mark",
+            "--mark",
+            SING_BOX_OUTBOUND_MARK,
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "ACCEPT",
+        ]
+        ipv6_direct_rule = ["ip6tables", *direct_rule[1:]]
+        mark_only = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-m",
+            "mark",
+            "--mark",
+            SING_BOX_OUTBOUND_MARK,
+            "-j",
+            "ACCEPT",
+        ]
+        dns_rule = [
+            "iptables",
+            "-A",
+            WATCHDOGVPN_IPTABLES_CHAIN,
+            "-p",
+            "udp",
+            "--dport",
+            "53",
+            "-m",
+            "comment",
+            "--comment",
+            WATCHDOGVPN_COMMENT,
+            "-j",
+            "REJECT",
+        ]
+        self.assertIn(direct_rule, recorder.commands)
+        self.assertIn(ipv6_direct_rule, recorder.commands)
+        self.assertNotIn(mark_only, recorder.commands)
+        self.assertLess(recorder.commands.index(direct_rule), recorder.commands.index(dns_rule))
+
     def test_iptables_allows_internal_tun_dns_before_dns_leak_blocks(self) -> None:
         recorder = CommandRecorder()
         kill_switch = KillSwitch(runner=recorder, which=fake_which("iptables", "ip6tables"))
@@ -847,6 +938,30 @@ class KillSwitchStatusTests(unittest.TestCase):
         status = kill_switch.status()
 
         self.assertTrue(status["active"])
+
+    def test_nftables_inspection_requires_direct_uid_and_mark_rule(self) -> None:
+        kill_switch = KillSwitch(direct_egress_uid=955, which=fake_which("nft"))
+        complete = complete_nft_ruleset(kill_switch)
+        missing = "\n".join(
+            line
+            for line in complete.splitlines()
+            if not ("meta skuid 955" in line and SING_BOX_OUTBOUND_MARK in line)
+        )
+        kill_switch.runner = CommandRecorder(
+            {
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=0,
+                    stdout=missing,
+                )
+            }
+        )
+
+        status = kill_switch.status()
+
+        self.assertTrue(status["active"])
+        self.assertFalse(status["consistent"])
+        self.assertIn("missing_direct_egress_allow:955", status["mismatch_reasons"])
+
     def test_empty_nftables_table_is_partial_not_active(self) -> None:
         recorder = CommandRecorder(
             {
@@ -885,6 +1000,31 @@ class KillSwitchStatusTests(unittest.TestCase):
                 ["iptables", "-C", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN],
             ],
         )
+
+    def test_iptables_inspection_accepts_masked_direct_outbound_mark(self) -> None:
+        kill_switch = KillSwitch(
+            block_ipv6=False,
+            direct_egress_uid=955,
+            which=fake_which("iptables"),
+        )
+        output = complete_iptables_ruleset(kill_switch).replace(
+            f"--mark {SING_BOX_OUTBOUND_MARK}",
+            f"--mark {SING_BOX_OUTBOUND_MARK}/0xffffffff",
+        )
+        kill_switch.runner = CommandRecorder(
+            {
+                ("iptables", "-S", WATCHDOGVPN_IPTABLES_CHAIN): CommandResult(
+                    returncode=0,
+                    stdout=output,
+                )
+            }
+        )
+
+        status = kill_switch.status()
+
+        self.assertTrue(status["active"])
+        self.assertTrue(status["consistent"])
+        self.assertEqual(status["direct_egress_uid"], 955)
 
     def test_partial_iptables_chain_reports_missing_rules(self) -> None:
         output = shlex.join(
@@ -953,6 +1093,7 @@ class KillSwitchStatusTests(unittest.TestCase):
                 "block_ipv6": False,
                 "allow_lan": False,
                 "allowed_endpoints": [],
+                "direct_egress_uid": None,
             },
         )
 
