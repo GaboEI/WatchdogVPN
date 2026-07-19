@@ -15,7 +15,7 @@ claims to support:
 
 | Certification target | Adapter path | Phase | Status before certification |
 | --- | --- | --- | --- |
-| Arch Linux | `arch` | 23.5 | **CERTIFIED** — full matrix, DNS, rotation, kill switch, and clean uninstall/baseline comparison complete (2026-07-18) |
+| Arch Linux | `arch` | 23.5 | **CERTIFICATION RE-AUDIT OPEN** — resilient/lifecycle evidence accepted; historical Shadowsocks, plain OpenVPN and HTTP dispositions require review under the superseding WireGuard-only exception |
 | CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **NOT CERTIFIED — OPEN**; lifecycle/security evidence passed, but only 2/12 profiles completed mandatory real egress, including only 1/5 resilient profiles (2026-07-19) |
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
@@ -162,8 +162,15 @@ server, runtime, distro and harness causes, leaving the local ISP/path as the
 only sustainable explanation. A first failure, a handshake without egress, a
 health classification, an ISP suspicion, or a prior disposition is not enough.
 Transfer does not turn the row green: it remains explicitly blocked pending the
-external-origin control. These rules apply to every distro and survive session
-or chat changes.
+external-origin control.
+
+Standard WireGuard is the only reduced-investigation exception because the
+maintainer obtained direct confirmation from the local ISP that it is blocked.
+WireGuard must still be attempted on every candidate; a failure consistent with
+that known block may move to Task 23.6.5a without the same exhaustive local
+elimination, but it is never green. No other compatibility profile inherits
+this exception. These rules apply to every distro, including prior closure
+claims, and survive session or chat changes.
 
 For a session with TUN and local proxy capabilities, normal egress, SOCKS
 egress, and HTTP-proxy egress are separate required observations. A SOCKS
@@ -237,11 +244,14 @@ pre-install baseline have not yet closed.
 - VMess, TUIC, and SOCKS passed. HTTP proxy operation was demonstrated; one
   destination-specific Instagram timeout was retained as provider/path
   evidence rather than represented as a product-wide failure.
-- WireGuard and Shadowsocks were classified unavailable on this network after
-  the maintainer's ISP confirmed those traffic types are blocked. Plain
-  OpenVPN completed its protocol handshake but did not produce real egress.
-  Those compatibility rows remain assigned to the isolated external-provider
-  lab; they are not false product passes or distro failures.
+- WireGuard was unavailable and is covered by the maintainer's direct ISP
+  confirmation for that protocol alone. Shadowsocks was also unavailable, but
+  the ISP did not confirm a Shadowsocks block. Plain OpenVPN completed its
+  protocol handshake but did not produce real egress. The earlier grouping of
+  all three under the external-provider disposition is superseded: WireGuard
+  retains the narrow exception, while Shadowsocks and plain OpenVPN require
+  renewed diagnosis under the global gate. The partial HTTP row requires the
+  same audit and is not a full pass.
 - Provider add/update/node-connect/remove passed without deleting or mutating
   the 12 manual profiles. Real provider-node egress passed before removal.
 - DNS apply/reset passed on the connected runtime after the CLI was corrected
@@ -307,10 +317,11 @@ GitHub reachable directly.
   may. Complete suite green at closure: `tests/unit.sh`, `tests/syntax.sh`,
   and `python3 -m unittest discover tests` (1736/1736).
 
-Arch Linux (Task 23.5.2) is now fully certified: protocol matrix, provider
-lifecycle, DNS apply/reset, rotation, kill-switch controlled failure, and
-clean uninstall with post-uninstall baseline comparison all have accepted
-real-machine evidence.
+Arch Linux retains accepted resilient, provider, DNS, rotation, kill-switch,
+clean-uninstall and baseline evidence. Its 2026-07-18 full-certification claim
+is reopened only for the compatibility disposition audit above: WireGuard has
+the sole reduced-investigation exception; Shadowsocks, plain OpenVPN and the
+partial HTTP row do not.
 
 ## Task 23.5.2 post-closure hardening — fresh installer and destructive-purge audit
 
@@ -423,10 +434,11 @@ The complete 12-profile result remains explicit:
   but not a pass;
 - compatibility: SOCKS passed; HTTP was partial because the mandatory
   Instagram destination timed out; VMess, TUIC, Shadowsocks, WireGuard and
-  plain OpenVPN did not obtain useful egress. All six incomplete rows require
-  continued diagnosis and real-traffic proof. An individual row may move to
-  Task 23.6.5a only under the exhaustive ISP-only rule above; none is recorded
-  as a local pass;
+  plain OpenVPN did not obtain useful egress. WireGuard was attempted and may
+  use the sole reduced-investigation exception based on the direct ISP
+  confirmation, but remains blocked rather than passed. The other five
+  incomplete compatibility rows require continued diagnosis and real-traffic
+  proof; none is recorded as a local pass;
 - the HTTP/SOCKS Instagram-only timeout remained destination/path evidence
   because the other required destinations passed through the same runtime;
 - the provider was refreshed successfully with 42 current nodes. The bounded
@@ -466,8 +478,10 @@ is mode 0700 with every file mode 0600 and remains outside the repository.
 Final source gates after the last product fix: `tests/unit.sh`,
 `tests/syntax.sh`, and `python3 -m unittest discover tests` (1756/1756), all
 green. These source gates do not substitute for installed real egress. Task
-23.5.3 must reproduce and resolve all ten incomplete profile rows. All five
-resilient rows must pass end to end. Each compatibility row must also pass real
-traffic unless its complete investigation satisfies the individual ISP-only
-exception and formally transfers it to Task 23.6.5a. Task 23.5.4 — Debian
-certification must not begin before those gates receive a new explicit closure.
+23.5.3 must reproduce and resolve the four failed resilient rows and the five
+non-WireGuard incomplete compatibility rows. All five resilient rows must pass
+end to end. Every compatibility row must also pass real traffic; only the
+already-attempted standard WireGuard row has the maintainer-authorized reduced
+ISP-block exception and remains pending Task 23.6.5a rather than green. Task
+23.5.4 — Debian certification must not begin before those gates receive a new
+explicit closure.
