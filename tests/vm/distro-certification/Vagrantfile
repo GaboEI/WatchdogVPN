@@ -28,6 +28,14 @@ Vagrant.configure("2") do |config|
   config.vm.hostname = machine_name
   config.vm.communicator = "none" if bridge_only
 
+  # Certification evidence must start from the selected box itself. The
+  # vagrant-vbguest plugin otherwise installs compilers, DKMS and headers
+  # during `vagrant up`, contaminating dependency provenance before
+  # WatchdogVPN's installer is exercised.
+  if Vagrant.has_plugin?("vagrant-vbguest")
+    config.vbguest.auto_update = false
+  end
+
   config.vm.provider "virtualbox" do |vb|
     vb.name = machine_name
     vb.cpus = cpus

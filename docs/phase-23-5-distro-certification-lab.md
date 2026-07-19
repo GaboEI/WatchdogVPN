@@ -42,7 +42,10 @@ as certified.
 `tests/vm/distro-certification/inventory.json` is the machine inventory.
 `tests/vm/distro-certification/Vagrantfile` is a generic, NAT-only
 VirtualBox definition. It intentionally requires a maintainer-selected and
-verified box rather than hardcoding an unreviewed third-party image.
+verified box rather than hardcoding an unreviewed third-party image. It also
+forces `vagrant-vbguest` auto-update off when that host plugin is installed;
+Guest Additions repair can otherwise install compilers, DKMS and headers before
+the baseline is captured and falsely make those packages look image-provided.
 
 One host is used sequentially:
 
@@ -132,8 +135,8 @@ maintainer authorization.
 The caller must pin and record the exact box name and version, its checksum if
 available, provider version, VirtualBox version, guest `/etc/os-release`, and
 `uname -r` in the evidence directory. The Vagrantfile performs no package
-installation or WatchdogVPN provisioning: `install.sh` is itself the subject
-under test.
+installation, including no `vagrant-vbguest` auto-provisioning, or WatchdogVPN
+provisioning: `install.sh` is itself the subject under test.
 
 ## Per-target certification evidence
 

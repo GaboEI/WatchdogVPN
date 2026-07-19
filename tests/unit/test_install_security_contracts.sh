@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CERTIFICATION_VAGRANTFILE="$ROOT_DIR/tests/vm/distro-certification/Vagrantfile"
 
 assert_contains() {
   local file="$1" pattern="$2" message="$3"
@@ -194,6 +195,9 @@ assert_contains "$ROOT_DIR/lib/packages.sh" 'nft iptables ip6tables ping pgrep' 
 assert_contains "$ROOT_DIR/distros/ubuntu.sh" "openvpn" "Ubuntu package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/debian.sh" "openvpn" "Debian package set must include OpenVPN"
 assert_contains "$ROOT_DIR/distros/arch.sh" "openvpn" "Arch package set must include OpenVPN"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'Vagrant.has_plugin?("vagrant-vbguest")' "certification lab must account for an installed vagrant-vbguest plugin"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'config.vbguest.auto_update = false' "certification lab must prevent Guest Additions package mutation before dependency provenance is captured"
+assert_not_contains "$CERTIFICATION_VAGRANTFILE" 'config.vbguest.auto_update = true' "certification lab must never pre-provision Guest Additions build dependencies"
 
 # The desktop launcher feature was removed entirely (maintainer feedback:
 # "nadie la uso realmente"). Guard against it silently coming back.
