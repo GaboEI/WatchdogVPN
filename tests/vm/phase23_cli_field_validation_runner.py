@@ -48,14 +48,30 @@ def _redact(text: str, secrets: list[str]) -> str:
     return result
 
 
+def _ensure_private_dir(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.chmod(0o700)
+
+
+def _private_write(path: Path, text: str) -> None:
+    _ensure_private_dir(path.parent)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(text)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _json_write(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _private_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
 def _text_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _private_write(path, text)
 
 
 def _extract_json_document(text: str) -> Any:
@@ -1005,7 +1021,7 @@ watchdog panic wake
 
     def dispatch(self) -> int:
         self.require_guard()
-        self.evidence_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_private_dir(self.evidence_dir)
         if self.section in {"all", "preflight"}:
             self.preflight()
         if self.section in {"all", "imports"}:

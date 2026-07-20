@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -54,6 +56,28 @@ class Phase23FieldValidationToolsTests(unittest.TestCase):
                 SOCKS_EGRESS_URL,
                 HTTP_EGRESS_URL,
             ])
+
+    def test_evidence_tree_is_private_with_permissive_umask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp) / "evidence"
+            runner = Runner(
+                {"evidence_dir": str(evidence), "probe_domain": "ignored.example", "profiles": []},
+                section="protocols",
+                external_vpn_state="absent",
+                dry_run=True,
+                selected_protocols=None,
+            )
+            previous_umask = os.umask(0o022)
+            try:
+                runner.dispatch()
+                runner.egress_probes("private-section")
+            finally:
+                os.umask(previous_umask)
+
+            record = next((evidence / "private-section").glob("*.json"))
+            self.assertEqual(stat.S_IMODE(evidence.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(record.parent.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(record.stat().st_mode), 0o600)
 
     def test_mutation_polls_authoritative_outcome_until_success(self) -> None:
         command_id = "123e4567-e89b-12d3-a456-426614174000"
