@@ -13,10 +13,10 @@ image or a successful boot cannot silently turn into a support promise.
 Phase 23.5 certifies only the distributions that `lib/distro.sh` already
 claims to support:
 
-| Certification target | Adapter path | Phase | Status before certification |
+| Certification target | Adapter path | Phase | Current certification status |
 | --- | --- | --- | --- |
-| Arch Linux | `arch` | 23.5 | **CERTIFICATION RE-AUDIT OPEN** — resilient/lifecycle evidence accepted; historical Shadowsocks, plain OpenVPN and HTTP dispositions require review under the superseding WireGuard-only exception |
-| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **NOT CERTIFIED — OPEN**; lifecycle/security evidence passed, but only 2/12 profiles completed mandatory real egress, including only 1/5 resilient profiles (2026-07-19) |
+| Arch Linux | `arch` | 23.5 | **CERTIFIED / CLOSED** — default-kernel and packaged-LTS evidence complete; 9 functional rows + the 3 individually authorized Plan-B rows, with 5/5 resilient green |
+| CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CERTIFIED / CLOSED** — clean install/update provenance and full purge complete; 9 functional rows + the same 3 individually authorized Plan-B rows, with 5/5 resilient green |
 | Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
 
@@ -40,9 +40,11 @@ as certified.
 ## Inventory and machine lifecycle
 
 `tests/vm/distro-certification/inventory.json` is the machine inventory.
-`tests/vm/distro-certification/Vagrantfile` is a generic, NAT-only
-VirtualBox definition. It intentionally requires a maintainer-selected and
-verified box rather than hardcoding an unreviewed third-party image. It also
+`tests/vm/distro-certification/Vagrantfile` is a generic, bridge-only
+VirtualBox definition that fails closed unless an explicit host bridge and the
+no-communicator execution mode are selected. It intentionally requires a
+maintainer-selected and verified box rather than hardcoding an unreviewed
+third-party image. It also
 forces `vagrant-vbguest` auto-update off when that host plugin is installed;
 Guest Additions repair can otherwise install compilers, DKMS and headers before
 the baseline is captured and falsely make those packages look image-provided.
