@@ -201,6 +201,8 @@ assert_not_contains "$CERTIFICATION_VAGRANTFILE" 'config.vbguest.auto_update = t
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'abort "WDVPN_VM_BRIDGE is required; certification VMs are bridge-only and must never use NAT" if bridge.empty?' "certification lab must fail closed when no host bridge is selected"
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'abort "VAGRANT_EXPERIMENTAL=none_communicator is required for bridge-only direct SSH"' "certification lab must fail clearly unless Vagrant loads its no-communicator plugin"
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'config.vm.communicator = "none"' "certification lab must not retain Vagrant's NAT-dependent SSH communicator"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'id: "ssh"' "certification lab must override Vagrant's reserved SSH forwarded-port id"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'disabled: true' "certification lab must disable Vagrant's implicit SSH NAT redirect"
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'vb.customize ["modifyvm", :id, "--nic1", "bridged"]' "certification lab must replace VirtualBox's implicit NAT adapter with a bridge"
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'vb.customize ["modifyvm", :id, "--bridgeadapter1", bridge]' "certification lab must attach its primary adapter to the selected bridge"
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'vb.customize ["modifyvm", :id, "--nic2", "none"]' "certification lab must disable secondary network adapters"

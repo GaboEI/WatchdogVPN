@@ -101,12 +101,12 @@ vagrant up --provider=virtualbox
 The topology is unconditionally bridge-only. The Vagrantfile refuses to start
 without `WDVPN_VM_BRIDGE`, converts VirtualBox adapter 1 from Vagrant's
 temporary NAT preparation to the selected bridge before boot, and disables
-every secondary adapter. NAT is not a supported certification or diagnostic
-baseline: it has already altered protocol behavior and can route a guest
-through an unrelated VPN active on the host, giving false-negative endpoint
-and egress failures. A previously captured green remains usable only when its
-evidence independently proved real traffic through the selected WatchdogVPN
-profile rather than mere general reachability.
+every secondary adapter and Vagrant's implicit SSH NAT redirect. NAT is not a
+supported certification or diagnostic baseline: it has already altered
+protocol behavior and can route a guest through an unrelated VPN active on the
+host, giving false-negative endpoint and egress failures. A previously captured
+green remains usable only when its evidence independently proved real traffic
+through the selected WatchdogVPN profile rather than mere general reachability.
 
 Bridge-only mode deliberately disables Vagrant's NAT SSH communicator and
 shared-folder mount. After the guest receives its bridged DHCP address, use a
