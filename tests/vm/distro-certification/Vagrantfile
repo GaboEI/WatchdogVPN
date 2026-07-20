@@ -42,6 +42,10 @@ Vagrant.configure("2") do |config|
                     host: 2222,
                     id: "ssh",
                     disabled: true
+  # Disable both Vagrant's implicit /vagrant share and the historical source
+  # mapping used by the old NAT workflow. Source is copied over direct SSH.
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.synced_folder "../../..", "/home/vagrant/WatchdogVPN", disabled: true
 
   # Certification evidence must start from the selected box itself. The
   # vagrant-vbguest plugin otherwise installs compilers, DKMS and headers

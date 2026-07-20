@@ -207,7 +207,8 @@ assert_contains "$CERTIFICATION_VAGRANTFILE" 'vb.customize ["modifyvm", :id, "--
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'vb.customize ["modifyvm", :id, "--bridgeadapter1", bridge]' "certification lab must attach its primary adapter to the selected bridge"
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'vb.customize ["modifyvm", :id, "--nic2", "none"]' "certification lab must disable secondary network adapters"
 assert_not_contains "$CERTIFICATION_VAGRANTFILE" 'config.vm.network "public_network"' "certification lab must not let Vagrant add a second adapter behind the primary guest interface"
-assert_not_contains "$CERTIFICATION_VAGRANTFILE" 'config.vm.synced_folder' "bridge-only certification must inject source explicitly instead of relying on the NAT-era shared-folder flow"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'config.vm.synced_folder ".", "/vagrant", disabled: true' "bridge-only certification must disable Vagrant's implicit project share"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'config.vm.synced_folder "../../..", "/home/vagrant/WatchdogVPN", disabled: true' "bridge-only certification must disable the historical NAT-era source share"
 assert_contains "$ROOT_DIR/tests/vm/distro-certification/inventory.json" '"network": "bridge-only-no-nat"' "certification inventory must declare the permanent no-NAT topology"
 
 # The desktop launcher feature was removed entirely (maintainer feedback:
