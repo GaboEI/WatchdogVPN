@@ -374,3 +374,28 @@ broad Arch-family compatibility statement
 requires installed TUN, nftables, routing, cleanup and real-egress evidence on
 the distribution-default kernel plus a representative packaged alternate/LTS
 kernel; a single VM kernel is never silently generalized to the distribution.
+
+## Installed clean-machine closure — Arch family (2026-07-19)
+
+The missing-dependency field debt is now closed on both a packaged Arch LTS
+candidate and the default-kernel CachyOS candidate. On Arch LTS, real update
+and fresh-install runs independently restored eleven intentionally absent
+required packages. On fully purged CachyOS, fresh install and update each
+independently restored the same ten removed mandatory runtime packages,
+including firewall, OpenVPN, NetworkManager, process recovery, Polkit and
+Python cryptography. Both installed environments ended with exact source/
+marker alignment and doctor `FAIL=0`.
+
+The CachyOS candidate then re-imported all 12 private fixtures. All five
+resilient profiles and VMess/TUIC/SOCKS passed real TUN/SOCKS/HTTP traffic;
+HTTP's Instagram-only timeout reproduced directly at the exact upstream with
+WDV disconnected. The only incomplete rows were the three individually
+authorized compatibility Plan-B cases. Plain OpenVPN's real process and owned
+TUN were observed before fail-closed health rejection. A final full purge
+returned the machine to its exact product-free route, rule, resolver, link,
+listener, firewall, sysctl, account and membership baseline.
+
+The permanent question is therefore answered: these candidates worked because
+install/update provisioned every mandatory supported dependency, not because a
+developer silently prepared them. AmneziaWG remains the only guided external
+trust-boundary exception and was not credited to either installer path.

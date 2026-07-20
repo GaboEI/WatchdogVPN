@@ -695,3 +695,75 @@ runtime artifacts, and an inactive consistent kill switch.
 This closes the representative Arch LTS kernel and clean dependency-provenance
 gates. It does not substitute for CachyOS's separate clean install/update
 provenance revalidation, which remains open.
+
+## Task 23.5.3 post-closure clean provenance revalidation (2026-07-19)
+
+Status: **CLOSED; CACHYOS CERTIFICATION REMAINS VALID**. This section closes
+the separate CachyOS gate left open by the Arch LTS addendum. It does not turn
+the three authorized Plan-B rows green and does not alter their individual
+scope.
+
+The candidate was the same bridge-only CachyOS VM, initially fully purged,
+with checkout `74f5ecd`. Ten mandatory packages were deliberately removed:
+NetworkManager, logrotate, libnotify, OpenVPN, Polkit, nftables, iptables,
+iputils, procps-ng and Python cryptography. A fresh `install.sh --yes`
+restored 10/10, completed its real daemon IPC smoke, published the exact
+installed marker and ended with doctor `OK=132 WARN=3 FAIL=0`. The same ten
+were then removed again; `update.sh --yes` independently restored 10/10,
+refreshed the daemon generation, retained marker alignment and completed its
+IPC smoke. A separately removed `bind` package was correctly excluded from
+the product claim: it is a historical auxiliary adapter declaration with no
+current runtime consumer and was restored manually to the machine baseline.
+AmneziaWG remained available solely through its previously documented guided
+third-party trust boundary, never as installer credit.
+
+All 12 byte-identical private fixtures were imported again. The complete
+installed matrix reproduced the accepted honest disposition:
+
+- all five resilient rows passed truthful connection, normal TUN, local SOCKS
+  and local HTTP-proxy real traffic, then clean disconnect: VLESS, Trojan,
+  Hysteria2, AmneziaWG and OpenVPN+Cloak;
+- VMess, TUIC and SOCKS also passed all three real-egress observations;
+- HTTP passed Facebook on the normal path and YouTube through the local HTTP
+  proxy. Instagram alone timed out over the local SOCKS path. With WDV
+  disconnected, a private direct control through the exact upstream HTTP
+  proxy returned HTTP 200 for Facebook and YouTube and reproduced Instagram
+  alone as curl exit 28 with no HTTP response;
+- Shadowsocks connected and carried useful YouTube traffic but its normal and
+  Instagram observations timed out; standard WireGuard ended in authoritative
+  `connect_failed`; plain OpenVPN was observed with one real OpenVPN process
+  and an owned TUN before deep health rejected its null egress and cleaned it
+  back to standby. These are exactly the three individually authorized
+  Task 23.6.5a rows and remain blocked, not green.
+
+Thus the final CachyOS result remains **9 functionally proven rows + 3 formal
+Plan-B rows**, including 5/5 resilient green. No failed resilient result was
+waived, and no new compatibility profile was sent to Plan B.
+
+The confirmed full purge returned zero and removed every product command,
+unit, path, runtime, account, group and installing-user membership. Exact
+process-name checks found no sing-box, OpenVPN, Cloak or daemon process; no
+managed link or table-880 route remained. The sysctl file was absent and live
+`src_valid_mark` was restored to `0/0`. Raw IPv4/IPv6 routes and rules,
+resolver hash/target, links, sorted listeners and normalized firewall matched
+the prior clean baseline exactly; direct GitHub returned HTTP 200. Two
+standard main-table loopback routes introduced by the deliberate
+NetworkManager package reinstall were removed as test-created baseline drift;
+the kernel local table was untouched, IPv4/IPv6 loopback remained healthy,
+and the raw route comparison then matched.
+
+Two harness observations are excluded explicitly. An accidental invocation on
+the protected local Arch host failed before loading a nonexistent manifest and
+before any action; it made no local network mutation. During the final audit,
+`pgrep -f` counted its own command line as two apparent product processes;
+exact-name checks corrected that to zero. One auxiliary tee log initially had
+mode 0644 and was corrected to 0600. The final private evidence tree has no
+directory or file permission violations: every directory is 0700 and every
+file 0600.
+
+This answers the permanent final question affirmatively: CachyOS worked after
+a clean install and update because WatchdogVPN provisioned every mandatory
+supported dependency. No undeclared developer-installed component is credited;
+AmneziaWG is the sole guided external exception. The renewed Arch-family
+dependency, alternate-kernel and CachyOS provenance audit is closed. Task
+23.5.4 — Debian is again the next distro task and has not started.
