@@ -633,3 +633,65 @@ The same final evidence closes the superscriptive compatibility re-audit of
 Task 23.5.2: Arch is again **CERTIFIED**, with the same honest 9-functional +
 3-Plan-B disposition. Task 23.5.4 — Debian certification is the next distro
 task; it was not started during this closure.
+
+## Task 23.5.2 post-closure dependency and Arch LTS gate (2026-07-19)
+
+Status: **ARCH LTS GATE CERTIFIED; DEPENDENCY PROVENANCE CLOSED**. This
+addendum closes the later re-audit without weakening the superscriptive
+bridge-only rule or retroactively accepting a negative NAT result.
+
+The disposable Arch candidate ran the packaged `linux-lts` kernel. A real
+update and a separate fresh install each began with eleven required distro
+packages intentionally absent and each restored the complete supported
+runtime set. Doctor ended with no FAIL in both cases. This proves that the
+candidate did not pass because a developer had silently prepared its
+dependencies. AmneziaWG remains the one explicit trust-boundary exception:
+the product detected the running LTS kernel and presented the guided commands;
+the reviewed external AUR components and matching `linux-lts-headers` were
+installed through that documented flow and are not credited to install/update.
+
+The first 12-profile run used Vagrant's then-implicit NAT path and inherited
+the Ubuntu host's unrelated AmneziaVPN policy routing. Nine rows nevertheless
+proved real traffic through their selected WatchdogVPN runtime and all required
+capture paths: VMess, Trojan, Hysteria2, TUIC, Shadowsocks, WireGuard,
+AmneziaWG, plain OpenVPN and SOCKS. Those positive observations remain valid.
+Only the three negative rows were rejected and repeated after converting the
+candidate to a single bridged adapter with no NAT, forwarded port or shared
+folder.
+
+The valid bridge-only repeat produced these authoritative results:
+
+- VLESS connected truthfully and passed normal TUN, local SOCKS and local HTTP
+  egress, then disconnected cleanly;
+- OpenVPN+Cloak connected truthfully and passed the same three real-egress
+  paths, then disconnected cleanly;
+- HTTP connected truthfully, passed the normal Facebook observation and the
+  local HTTP-proxy YouTube observation, while the local SOCKS Instagram probe
+  timed out. A direct control against the exact upstream HTTP proxy, with
+  WatchdogVPN disconnected and no managed proxy listener, returned HTTP 200
+  for Facebook and YouTube and reproduced only Instagram as curl exit 28 with
+  no HTTP response. The Instagram result is therefore an upstream/destination
+  limitation rather than a WatchdogVPN failure.
+
+One earlier bridge attempt is explicitly invalid evidence: the new evidence
+directory lacked the private dynamic profile-ID map, so all three operations
+returned immediate `profile_not_found`. It is preserved as a harness failure
+and contributes no protocol result. That run also exposed that the runner
+trusted the caller's umask. Commit `4da42f2` now enforces directory mode 0700
+and file mode 0600 itself; its regression test runs under umask 022. The
+affected evidence was corrected before private material was reused. The final
+three private trees contain no directory or file permission violations.
+
+The permanent VM enforcement series is `9e00dc3`, `bd8443f`, `617ded9`,
+`72edf92` and `4da42f2`: certification requires an explicit bridge, converts
+adapter 1 to that bridge, disables secondary adapters, removes implicit NAT
+SSH forwarding and shared folders, and pins private evidence permissions.
+Final source gates passed shell unit, syntax, compileall, Ruby/Vagrant
+validation, `git diff --check` and 1759/1759 Python tests. The installed
+candidate ended at source/marker `4da42f2`, doctor `OK=131 WARN=4 FAIL=0`,
+`desired_state=off`, clean standby, no managed TUN or proxy listener, no
+runtime artifacts, and an inactive consistent kill switch.
+
+This closes the representative Arch LTS kernel and clean dependency-provenance
+gates. It does not substitute for CachyOS's separate clean install/update
+provenance revalidation, which remains open.
