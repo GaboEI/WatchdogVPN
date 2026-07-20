@@ -1,7 +1,8 @@
 # Generic disposable guest for the Phase 23.5/23.6 distro-certification lab.
 #
 # Usage (from this directory):
-#   WDVPN_VM_BOX=<verified-box> WDVPN_VM_NAME=wdvpn-<target> \
+#   VAGRANT_EXPERIMENTAL=none_communicator \
+#     WDVPN_VM_BOX=<verified-box> WDVPN_VM_NAME=wdvpn-<target> \
 #     WDVPN_VM_BRIDGE=<verified-host-interface> \
 #     vagrant up --provider=virtualbox
 #
@@ -19,6 +20,10 @@ abort "WDVPN_VM_NAME must not be empty" if machine_name.empty?
 
 bridge = ENV.fetch("WDVPN_VM_BRIDGE", "").strip
 abort "WDVPN_VM_BRIDGE is required; certification VMs are bridge-only and must never use NAT" if bridge.empty?
+experimental_features = ENV.fetch("VAGRANT_EXPERIMENTAL", "").split(",").map(&:strip)
+unless experimental_features.include?("none_communicator") || experimental_features == ["1"]
+  abort "VAGRANT_EXPERIMENTAL=none_communicator is required for bridge-only direct SSH"
+end
 cpus = Integer(ENV.fetch("WDVPN_VM_CPUS", "2"), 10)
 memory = Integer(ENV.fetch("WDVPN_VM_MEMORY_MB", "4096"), 10)
 
@@ -43,14 +48,17 @@ Vagrant.configure("2") do |config|
     vb.name = machine_name
     vb.cpus = cpus
     vb.memory = memory
-    # VirtualBox otherwise injects adapter 1 as NAT even when a public network
-    # is declared. Keep that path absent, not merely unused by the guest.
-    vb.customize ["modifyvm", :id, "--nic1", "none"]
+    # Vagrant initially prepares adapter 1 as NAT. Convert that exact adapter
+    # to the bridge before boot so the guest keeps its normal eth0 DHCP path,
+    # then explicitly disable every secondary adapter.
+    vb.customize ["modifyvm", :id, "--nic1", "bridged"]
+    vb.customize ["modifyvm", :id, "--bridgeadapter1", bridge]
+    vb.customize ["modifyvm", :id, "--cableconnected1", "on"]
+    vb.customize ["modifyvm", :id, "--nic2", "none"]
   end
 
-  # The sole guest path is adapter 2 bridged to the explicitly selected host
-  # interface. NAT has already produced protocol-specific interference and
-  # can inherit an unrelated host VPN's policy route, invalidating egress
-  # evidence. Source and fixtures are injected through the direct SSH channel.
-  config.vm.network "public_network", bridge: bridge
+  # The sole guest path is adapter 1 bridged to the explicitly selected host
+  # interface. NAT has already produced protocol-specific interference and can
+  # inherit an unrelated host VPN's policy route, invalidating egress evidence.
+  # Source and fixtures are injected through the direct SSH channel.
 end

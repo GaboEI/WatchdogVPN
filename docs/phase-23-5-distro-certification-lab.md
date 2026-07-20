@@ -90,6 +90,7 @@ for starting the next Phase 23.5 target.
 From `tests/vm/distro-certification`:
 
 ```bash
+VAGRANT_EXPERIMENTAL=none_communicator \
 WDVPN_VM_BOX=<verified-box> \
 WDVPN_VM_BOX_VERSION=<verified-version> \
 WDVPN_VM_NAME=wdvpn-<target> \
@@ -98,21 +99,23 @@ vagrant up --provider=virtualbox
 ```
 
 The topology is unconditionally bridge-only. The Vagrantfile refuses to start
-without `WDVPN_VM_BRIDGE`, disables VirtualBox adapter 1 so no implicit NAT
-path exists, and attaches adapter 2 to the selected host interface. NAT is not
-a supported certification or diagnostic baseline: it has already altered
-protocol behavior and can route a guest through an unrelated VPN active on the
-host, giving false-negative endpoint and egress failures. A previously captured
-green remains usable only when its evidence independently proved real traffic
-through the selected WatchdogVPN profile rather than mere general reachability.
+without `WDVPN_VM_BRIDGE`, converts VirtualBox adapter 1 from Vagrant's
+temporary NAT preparation to the selected bridge before boot, and disables
+every secondary adapter. NAT is not a supported certification or diagnostic
+baseline: it has already altered protocol behavior and can route a guest
+through an unrelated VPN active on the host, giving false-negative endpoint
+and egress failures. A previously captured green remains usable only when its
+evidence independently proved real traffic through the selected WatchdogVPN
+profile rather than mere general reachability.
 
 Bridge-only mode deliberately disables Vagrant's NAT SSH communicator and
 shared-folder mount. After the guest receives its bridged DHCP address, use a
 direct SSH channel to inject the private fixtures and the exact source tree;
 record that address only in private evidence, never in the repository or
 redacted evidence. Evidence must record the selected host bridge, prove that
-adapter 1/NAT is disabled, and show that the bridge is the guest's only active
-network path. This applies to every current and future distro-certification VM.
+adapter 1 is bridged rather than NAT, prove that secondary adapters are
+disabled, and show that the bridge is the guest's only active network path.
+This applies to every current and future distro-certification VM.
 
 The caller must pin and record the exact box name and version, its checksum if
 available, provider version, VirtualBox version, guest `/etc/os-release`, and
