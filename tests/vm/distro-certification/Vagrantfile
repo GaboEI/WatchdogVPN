@@ -2,6 +2,7 @@
 #
 # Usage (from this directory):
 #   WDVPN_VM_BOX=<verified-box> WDVPN_VM_NAME=wdvpn-<target> \
+#     WDVPN_VM_BRIDGE=<verified-host-interface> \
 #     vagrant up --provider=virtualbox
 #
 # The box is intentionally an explicit maintainer input. The inventory records
@@ -17,8 +18,7 @@ machine_name = ENV.fetch("WDVPN_VM_NAME", "wdvpn-certification").strip
 abort "WDVPN_VM_NAME must not be empty" if machine_name.empty?
 
 bridge = ENV.fetch("WDVPN_VM_BRIDGE", "").strip
-bridge_only = ENV.fetch("WDVPN_VM_BRIDGE_ONLY", "0").strip == "1"
-abort "WDVPN_VM_BRIDGE_ONLY=1 requires WDVPN_VM_BRIDGE" if bridge_only && bridge.empty?
+abort "WDVPN_VM_BRIDGE is required; certification VMs are bridge-only and must never use NAT" if bridge.empty?
 cpus = Integer(ENV.fetch("WDVPN_VM_CPUS", "2"), 10)
 memory = Integer(ENV.fetch("WDVPN_VM_MEMORY_MB", "4096"), 10)
 
@@ -26,7 +26,10 @@ Vagrant.configure("2") do |config|
   config.vm.box = box
   config.vm.box_version = box_version unless box_version.empty?
   config.vm.hostname = machine_name
-  config.vm.communicator = "none" if bridge_only
+  # Vagrant's normal SSH communicator depends on its implicit NAT adapter.
+  # Certification uses a direct maintainer-controlled SSH channel over the
+  # bridged LAN instead, so disabling the communicator is intentional.
+  config.vm.communicator = "none"
 
   # Certification evidence must start from the selected box itself. The
   # vagrant-vbguest plugin otherwise installs compilers, DKMS and headers
@@ -40,15 +43,14 @@ Vagrant.configure("2") do |config|
     vb.name = machine_name
     vb.cpus = cpus
     vb.memory = memory
-    vb.customize ["modifyvm", :id, "--nic1", "none"] if bridge_only
+    # VirtualBox otherwise injects adapter 1 as NAT even when a public network
+    # is declared. Keep that path absent, not merely unused by the guest.
+    vb.customize ["modifyvm", :id, "--nic1", "none"]
   end
 
-  # The default certification baseline is NAT-only. A maintainer-authorized
-  # run can add a bridged adapter, or disable adapter 1 and use only adapter 2
-  # as a bridge. The latter has no Vagrant SSH communicator by design.
-  config.vm.network "public_network", bridge: bridge unless bridge.empty?
-
-  # NAT-only is intentional. Any bridged diagnosis requires a separate,
-  # explicit maintainer authorization and must not modify this baseline.
-  config.vm.synced_folder "../../..", "/home/vagrant/WatchdogVPN" unless bridge_only
+  # The sole guest path is adapter 2 bridged to the explicitly selected host
+  # interface. NAT has already produced protocol-specific interference and
+  # can inherit an unrelated host VPN's policy route, invalidating egress
+  # evidence. Source and fixtures are injected through the direct SSH channel.
+  config.vm.network "public_network", bridge: bridge
 end

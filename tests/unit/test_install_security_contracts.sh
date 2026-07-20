@@ -198,6 +198,12 @@ assert_contains "$ROOT_DIR/distros/arch.sh" "openvpn" "Arch package set must inc
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'Vagrant.has_plugin?("vagrant-vbguest")' "certification lab must account for an installed vagrant-vbguest plugin"
 assert_contains "$CERTIFICATION_VAGRANTFILE" 'config.vbguest.auto_update = false' "certification lab must prevent Guest Additions package mutation before dependency provenance is captured"
 assert_not_contains "$CERTIFICATION_VAGRANTFILE" 'config.vbguest.auto_update = true' "certification lab must never pre-provision Guest Additions build dependencies"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'abort "WDVPN_VM_BRIDGE is required; certification VMs are bridge-only and must never use NAT" if bridge.empty?' "certification lab must fail closed when no host bridge is selected"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'config.vm.communicator = "none"' "certification lab must not retain Vagrant's NAT-dependent SSH communicator"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'vb.customize ["modifyvm", :id, "--nic1", "none"]' "certification lab must disable VirtualBox's implicit NAT adapter"
+assert_contains "$CERTIFICATION_VAGRANTFILE" 'config.vm.network "public_network", bridge: bridge' "certification lab must attach its only network path to the selected bridge"
+assert_not_contains "$CERTIFICATION_VAGRANTFILE" 'config.vm.synced_folder' "bridge-only certification must inject source explicitly instead of relying on the NAT-era shared-folder flow"
+assert_contains "$ROOT_DIR/tests/vm/distro-certification/inventory.json" '"network": "bridge-only-no-nat"' "certification inventory must declare the permanent no-NAT topology"
 
 # The desktop launcher feature was removed entirely (maintainer feedback:
 # "nadie la uso realmente"). Guard against it silently coming back.
