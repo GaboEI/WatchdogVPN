@@ -130,6 +130,16 @@ def _resolv_conf_target(path: Path) -> str | None:
         return None
 
 
+def _resolv_conf_generated_by_network_manager(path: Path, target: str | None) -> bool:
+    if target is not None and "/NetworkManager/" in target:
+        return True
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:512]
+    except OSError:
+        return False
+    return "NetworkManager" in head
+
+
 def detect_resolver_manager(
     resolv_conf_path: Path = Path("/etc/resolv.conf"),
     runner: CommandRunner = _run,
@@ -143,11 +153,12 @@ def detect_resolver_manager(
         if nm_active
         else False
     )
+    nm_resolv_conf = _resolv_conf_generated_by_network_manager(resolv_conf_path, target)
 
     manager = ResolverManager.UNKNOWN
     if resolved_active or (target is not None and "/run/systemd/resolve/" in target):
         manager = ResolverManager.SYSTEMD_RESOLVED
-    elif nm_managed:
+    elif nm_managed and nm_resolv_conf:
         manager = ResolverManager.NETWORK_MANAGER
     elif resolv_conf_path.exists():
         manager = ResolverManager.RESOLV_CONF
