@@ -99,6 +99,27 @@ class RotationEngine:
         health_check: HealthCheckFn,
         dns_policy: DNSPolicy | None = None,
     ) -> str:
+        def cleanup_failed_attempt(reason: str) -> bool:
+            try:
+                disconnected = driver.disconnect()
+            except Exception:
+                disconnected = False
+                LOGGER.error(
+                    "rotation_failed_attempt_cleanup_exception profile_id=%s reason=%s",
+                    profile.id,
+                    reason,
+                    exc_info=True,
+                )
+            if disconnected:
+                return False
+            self._cleanup_barrier_failed = True
+            LOGGER.error(
+                "rotation_failed_attempt_cleanup_failed profile_id=%s reason=%s",
+                profile.id,
+                reason,
+            )
+            return True
+
         preflight = getattr(driver, "preflight_profile", None)
         if callable(preflight):
             try:
@@ -124,10 +145,15 @@ class RotationEngine:
             return "cleanup_failed"
         connected = driver.connect(profile, dns_policy=dns_policy)
         if not connected:
+            if cleanup_failed_attempt("connect_failed"):
+                return "cleanup_failed"
             return "down"
         if self.warmup_seconds > 0:
             self.sleep(self.warmup_seconds)
-        return health_check(profile, driver)
+        status = health_check(profile, driver)
+        if status != "ok" and cleanup_failed_attempt(f"health_{status}"):
+            return "cleanup_failed"
+        return status
 
     def _rollback(
         self,

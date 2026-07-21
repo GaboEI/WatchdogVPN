@@ -209,7 +209,39 @@ class RotationEngineSelectionTests(unittest.TestCase):
 
         engine.rotate(pool, driver, health_check_from({"a": "down", "b": "down", "c": "ok"}))
 
-        self.assertEqual(driver.disconnect_calls, len(driver.connect_calls))
+        self.assertGreaterEqual(driver.disconnect_calls, len(driver.connect_calls))
+        self.assertEqual(driver.connected_profile_id, "c")
+
+    def test_failed_health_attempt_is_disconnected_before_all_failed(self) -> None:
+        engine = make_engine(max_fails_before_rollback=99)
+        driver = ScriptedDriver()
+        pool = [make_profile(pid) for pid in ("a", "b")]
+
+        result = engine.rotate(pool, driver, health_check_from({"a": "down", "b": "down"}), force=True)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.category, "conservative")
+        self.assertIsNone(driver.connected_profile_id)
+
+    def test_failed_attempt_cleanup_failure_is_cleanup_failed(self) -> None:
+        engine = make_engine(max_fails_before_rollback=99)
+        driver = ScriptedDriver()
+        pool = [make_profile("a")]
+
+        def fail_after_initial_disconnect() -> bool:
+            driver.disconnect_calls += 1
+            if driver.disconnect_calls == 1:
+                driver.connected_profile_id = None
+                return True
+            return False
+
+        driver.disconnect = fail_after_initial_disconnect  # type: ignore[method-assign]
+
+        result = engine.rotate(pool, driver, health_check_from({"a": "down"}), force=True)
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.cleanup_failed)
+        self.assertEqual(driver.disconnect_calls, 2)
 
     def test_warmup_sleep_called_after_each_successful_connect(self) -> None:
         sleep_calls: list[float] = []
