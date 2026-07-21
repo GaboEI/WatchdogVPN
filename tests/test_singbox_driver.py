@@ -1569,6 +1569,66 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         )
         self.assertEqual(self.driver._detect_default_interface(), "enp4s0")
 
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/sbin/ip")
+    @patch.object(SingBoxDriver, "_active_ssh_management_peers", return_value=("192.0.2.10",))
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_auto_bind_falls_back_to_management_peer_interface(
+        self, run_mock, peers_mock, which_mock
+    ) -> None:
+        def route_response(command, **_kwargs):
+            if command == ["ip", "route", "show", "default"]:
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout="default dev wdvpn-tun0 table 2022\n",
+                )
+            if command == ["ip", "route", "get", "192.0.2.10"]:
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout="192.0.2.10 via 192.168.0.1 dev enp4s0 src 192.168.0.44\n",
+                )
+            raise AssertionError(command)
+
+        run_mock.side_effect = route_response
+
+        self.assertEqual(
+            self.driver._outbound_bind_interface(self._profile(ProtocolType.VLESS)),
+            "enp4s0",
+        )
+
+    @patch("drivers.singbox_driver.shutil.which", return_value="/usr/sbin/ip")
+    @patch.object(
+        SingBoxDriver,
+        "_active_ssh_management_peers",
+        return_value=("192.0.2.10", "198.51.100.20"),
+    )
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_auto_bind_refuses_ambiguous_management_peer_interfaces(
+        self, run_mock, peers_mock, which_mock
+    ) -> None:
+        def route_response(command, **_kwargs):
+            if command == ["ip", "route", "show", "default"]:
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout="default dev wdvpn-tun0 table 2022\n",
+                )
+            if command == ["ip", "route", "get", "192.0.2.10"]:
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout="192.0.2.10 via 192.168.0.1 dev enp4s0 src 192.168.0.44\n",
+                )
+            if command == ["ip", "route", "get", "198.51.100.20"]:
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout="198.51.100.20 via 10.0.0.1 dev enp5s0 src 10.0.0.44\n",
+                )
+            raise AssertionError(command)
+
+        run_mock.side_effect = route_response
+
+        self.assertIsNone(
+            self.driver._outbound_bind_interface(self._profile(ProtocolType.VLESS))
+        )
+
 
 class SingBoxDriverProcessTests(unittest.TestCase):
     def setUp(self) -> None:

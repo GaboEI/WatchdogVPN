@@ -582,6 +582,29 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 return interface
         return None
 
+    def _detect_management_peer_interface(self) -> str | None:
+        peers = self._active_ssh_management_peers()
+        if not peers or not shutil.which("ip"):
+            return None
+        interfaces: set[str] = set()
+        for peer in peers:
+            result = subprocess.run(
+                ["ip", "route", "get", peer],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None
+            match = re.search(r"\bdev\s+(\S+)", result.stdout)
+            interface = match.group(1) if match else None
+            if interface is None or not self._is_physical_interface(interface):
+                return None
+            interfaces.add(interface)
+        if len(interfaces) == 1:
+            return next(iter(interfaces))
+        return None
+
     def _outbound_bind_interface(self, profile: Profile) -> str | None:
         configured = profile.config.get("bind_interface")
         if isinstance(configured, str):
@@ -595,7 +618,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             return None
         if env_value.lower() != "auto":
             return env_value
-        return self._detect_default_interface()
+        return self._detect_default_interface() or self._detect_management_peer_interface()
 
     def _apply_dialer_options(self, outbound: dict[str, Any], profile: Profile) -> dict[str, Any]:
         bind_interface = self._outbound_bind_interface(profile)
