@@ -8,7 +8,9 @@
 
 [![CI](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml/badge.svg)](https://github.com/GaboEI/WatchdogVPN/actions/workflows/ci.yml)
 
-- **Status:** v2.0.0 in active development
+- **Status:** v2.0.0 in active development (product line target; not a released
+  tag). The installed CLI reports its own version via `watchdog version`
+  (currently `v0.3.1`).
 - **Platform:** Linux
 - **Interface:** CLI first, TUI after CLI-backed validation
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
@@ -51,25 +53,28 @@ contains the core foundation:
 | Kill switch | nftables/iptables fail-closed model with DNS leak ordering |
 | DNS v2 | DNS policy model, resolver testing, TUN hijack, FakeIP, ECS, static IP mappings and rollback |
 | Routing rules | persistent rule groups, rule engine and sing-box route generation |
+| Split tunnel / app policy | `watchdog split-tunnel` CLI surface shipped; `watchdog app-policy` remains the compatibility alias |
 | Installer/update | non-destructive install/update contracts with backup and validation |
 | Audits | phase-level QA audits with HIGH/MEDIUM findings fixed before advancement |
 
 ## Active Roadmap Before v2.0.0
 
-These are planned phases, not current user-facing promises:
+These rows are remaining work before a frozen v2.0.0 operator surface. Several
+areas already have a CLI; the roadmap below is about hardening, product freeze
+and TUI—not claiming those commands are absent.
 
 | Phase | Goal |
 | --- | --- |
-| Linux split tunneling / app policy | route selected Linux processes through VPN, direct, auto-selected group or block |
-| Policy diagnostics | explain why traffic matches a rule and where it should go |
-| Node groups / auto-selection | named node groups with health-aware selection |
+| Split-tunnel / app-policy hardening | refine matchers, enforcement evidence and operator UX beyond the shipped CLI |
+| Policy diagnostics hardening | deepen `watchdog rules explain` / DNS diagnose confidence and runtime-backed cases |
+| Node groups / auto-selection hardening | improve health-aware selection on top of the existing `watchdog node-group` CLI |
 | DNS/network hardening | refine DNS diagnostics, time checks and LAN-service decisions |
 | Privacy-preserving observability | aggregate stats without silently logging sensitive browsing history |
-| Backup/restore/sync | safe versioned backups, restore rollback and remote-sync threat review |
-| Routing/capture architecture | align Rule/Global, Proxy/TUN/LAN and route actions before final CLI |
+| Backup/restore/sync hardening | strengthen versioned backups, restore rollback and remote-sync threat review beyond the shipped ZIP CLI |
+| Routing/capture architecture | align Rule/Global, Proxy/TUN/LAN and route actions before final CLI freeze |
 | LAN sharing / gateway mode | branch-gated LAN proxy and gateway capability for network operators |
-| Network context automation and diagnostics | network-aware activation plus unified diagnostics before final CLI |
-| Full CLI | complete operator surface after capabilities settle |
+| Network context automation and diagnostics | network-aware activation plus unified diagnostics before final CLI freeze |
+| CLI freeze | freeze the operator surface after remaining capabilities settle |
 | Field validation | real CLI-driven validation before final TUI work |
 | TUI premium experience | final v2 TUI over proven behavior |
 
@@ -141,8 +146,9 @@ the tunnel path and avoid LAN resolver leaks when the kill switch is active.
 
 ### Explicit Traffic Policy
 
-Routing rules make traffic decisions inspectable. The v2 roadmap extends this
-into Linux app/process policy, rule explanations and node-group routing.
+Routing rules make traffic decisions inspectable. The current CLI exposes rule
+explanations, Linux app/process policy and node-group routing; the remaining v2
+work hardens those flows before the operator surface is frozen.
 
 ### Non-Destructive Operations
 
@@ -171,6 +177,21 @@ Run the product CLI:
 ```sh
 watchdog --help
 ```
+
+Common starting points:
+
+```sh
+watchdog status
+watchdog profile list
+watchdog provider list
+watchdog dns status
+watchdog split-tunnel status
+watchdog panic status
+watchdog maintenance --help
+```
+
+Full operator docs: [CLI](docs/cli.md). Exhaustive public routes:
+[command inventory](docs/generated/cli-command-inventory.md).
 
 `watchdog` is the canonical CLI. The installed `watchdogvpn` command is a
 deprecated compatibility alias that forwards to the same parser and writes a
@@ -237,9 +258,11 @@ systemd unit back; the shared `/run/amneziawg` path is removed only when empty.
 WatchdogVPN is provider-agnostic. It can accept compatible subscription/profile
 formats without depending on or endorsing any specific provider.
 
-Provider collaboration is welcome when it improves interoperability. See
-[Provider Collaboration](docs/providers.md) for accepted formats, expectations
-and submission guidance.
+Local subscription and node management uses `watchdog provider --help`. See
+[CLI — Profiles And Providers](docs/cli.md#profiles-and-providers) for the
+operator commands. Provider collaboration is welcome when it improves
+interoperability. See [Provider Collaboration](docs/providers.md) for accepted
+formats, expectations and submission guidance.
 
 ## For Contributors
 

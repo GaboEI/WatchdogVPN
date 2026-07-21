@@ -1,12 +1,13 @@
 # WatchdogVPN DNS v2 CLI
 
-The DNS v2 CLI is exposed through the v2 core command:
+The DNS v2 CLI is exposed through the canonical product command:
 
 ```sh
-./bin/watchdog dns --help
+watchdog dns --help
 ```
 
-It is intentionally separate from the historical `watchdogvpn` runtime wrapper.
+From a source checkout you can also run `./bin/watchdog dns --help`. It is
+intentionally separate from the historical `watchdogvpn` runtime wrapper.
 Phase 10 shipped the DNS v2 command set with real status, test, apply and reset
 behavior.
 
@@ -16,15 +17,16 @@ behavior.
 manager and reports whether a rollback snapshot exists.
 
 ```sh
-./bin/watchdog dns status
-./bin/watchdog dns status --json
+watchdog dns status
+watchdog dns status --json
 ```
 
-Useful test overrides:
+Useful lab/test path overrides (temporary files and fixtures; not required for
+normal operator use):
 
 ```sh
-./bin/watchdog dns status --policy-file ./dns-policy.json
-./bin/watchdog dns status --resolv-conf-path /tmp/watchdogvpn-resolv.conf --json
+watchdog dns status --policy-file ./dns-policy.json
+watchdog dns status --resolv-conf-path /tmp/watchdogvpn-resolv.conf --json
 ```
 
 ## Test
@@ -36,9 +38,9 @@ the deterministic resolver order recorded in the policy and does not race
 runtime answers.
 
 ```sh
-./bin/watchdog dns test
-./bin/watchdog dns test --json
-./bin/watchdog dns test --auto --domain gstatic.com --timeout 3
+watchdog dns test
+watchdog dns test --json
+watchdog dns test --auto --domain gstatic.com --timeout 3
 ```
 
 ## Diagnose
@@ -49,8 +51,8 @@ channel would resolve its domain. It does not observe live packets or perform a
 DNS lookup.
 
 ```sh
-./bin/watchdog dns diagnose --domain example.com
-./bin/watchdog dns diagnose --domain example.com --process-name curl --json
+watchdog dns diagnose --domain example.com
+watchdog dns diagnose --domain example.com --process-name curl --json
 ```
 
 Route calculation uses the same Phase 19 diagnostic contract as
@@ -75,8 +77,8 @@ alternate rule-set trust registry during tests or support workflows.
 `apply` can mutate host DNS, so it is guarded. Use `--dry-run` first.
 
 ```sh
-./bin/watchdog dns apply --dry-run
-./bin/watchdog dns apply --dry-run --json
+watchdog dns apply --dry-run
+watchdog dns apply --dry-run --json
 ```
 
 Real apply requires explicit confirmation and a reachable local DNS entrypoint.
@@ -86,13 +88,13 @@ the CLI rejects an unprivileged apply before it saves a snapshot or calls the
 resolver manager.
 
 ```sh
-sudo ./bin/watchdog dns apply --yes --systemd-link tun0
+sudo watchdog dns apply --yes --systemd-link tun0
 ```
 
 The local entrypoint defaults to `127.0.0.1:53`:
 
 ```sh
-sudo ./bin/watchdog dns apply --yes --entrypoint-address 127.0.0.1 --entrypoint-port 53
+sudo watchdog dns apply --yes --entrypoint-address 127.0.0.1 --entrypoint-port 53
 ```
 
 Real apply requires port `53`. System resolver managers such as
@@ -115,8 +117,8 @@ Confirmed apply preserves an existing rollback snapshot instead of overwriting
 the original resolver state during repeated apply attempts.
 
 ```sh
-sudo ./bin/watchdog dns reset --yes
-sudo ./bin/watchdog dns reset --yes --json
+sudo watchdog dns reset --yes
+sudo watchdog dns reset --yes --json
 ```
 
 `reset` remains an unprivileged clean no-op when no snapshot exists. If a
@@ -135,7 +137,7 @@ Default files follow the standard WatchdogVPN config directory:
 Overrides:
 
 ```sh
-WATCHDOGVPN_DNS_POLICY_FILE=/path/to/dns-policy.json ./bin/watchdog dns status
-sudo env WATCHDOGVPN_DNS_SNAPSHOT_FILE=/path/to/dns-state.json ./bin/watchdog dns reset --yes
-WATCHDOGVPN_CONFIG_DIR=/tmp/watchdogvpn ./bin/watchdog dns status
+WATCHDOGVPN_DNS_POLICY_FILE=/path/to/dns-policy.json watchdog dns status
+sudo env WATCHDOGVPN_DNS_SNAPSHOT_FILE=/path/to/dns-state.json watchdog dns reset --yes
+WATCHDOGVPN_CONFIG_DIR=/tmp/watchdogvpn watchdog dns status
 ```

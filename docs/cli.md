@@ -154,6 +154,17 @@ watchdog backup export [--output PATH] [--section SECTION] [--json]
 watchdog backup inspect PATH [--json]
 watchdog backup restore PATH [--dry-run] [--section SECTION] [--mode replace|merge] [--json]
 watchdog backup import PATH [--dry-run] [--section SECTION] [--mode replace|merge] [--json]
+watchdog profile add --uri URI [--json]
+watchdog profile list [--json]
+watchdog profile remove <id> [--json]
+watchdog provider add <url> [--name NAME] [--json]
+watchdog provider list [--json]
+watchdog provider update <id> [--json]
+watchdog provider update --all [--json]
+watchdog dns status [--json]
+watchdog dns test [--json]
+watchdog dns diagnose [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
+watchdog dns apply --dry-run [--json]
 watchdog rules list [--json]
 watchdog rules explain [--domain DOMAIN] [--ip IP] [--process-name NAME] [--json]
 watchdog rules enable <group> [--json]
@@ -165,7 +176,17 @@ watchdog rules export <group> (--output PATH|--json)
 watchdog ruleset status [--json]
 watchdog ruleset refresh [RULE_SET_ID ...] [--referenced-only] [--force] [--json]
 watchdog split-tunnel status [--json]
+watchdog split-tunnel enable|disable [--json]
+watchdog split-tunnel mode <blacklist|whitelist> [--json]
+watchdog split-tunnel default-action <current|direct|block> [--json]
+watchdog split-tunnel add --process-name NAME --action ACTION [--id ID] [--json]
 watchdog split-tunnel add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog split-tunnel add --process-path-regex REGEX --action ACTION [--id ID] [--json]
+watchdog split-tunnel add --user NAME --action ACTION [--id ID] [--json]
+watchdog split-tunnel add --user-id UID --action ACTION [--id ID] [--json]
+watchdog split-tunnel enable-rule <id> [--json]
+watchdog split-tunnel disable-rule <id> [--json]
+watchdog split-tunnel remove <id> [--json]
 watchdog split-tunnel add-domain DOMAIN --action <direct|current|block> [--id ID] [--json]
 watchdog split-tunnel remove-domain <id> [--json]
 watchdog app-policy status [--json]
@@ -205,6 +226,17 @@ operation.
 The IPC protocol also has an exact payload schema per command. Unsupported
 payload keys are rejected at the daemon boundary with a structured
 `unsupported_payload_fields` response; they are never silently ignored.
+
+### `watchdog command`
+
+Inspects or cancels identifiable daemon commands after the CLI returns a
+command UUID. It never claims to interrupt a network operation that has already
+started running.
+
+```sh
+watchdog command outcome <command-uuid> [--json]
+watchdog command cancel <command-uuid> [--json]
+```
 
 ### `watchdog connect`
 
@@ -670,9 +702,9 @@ VPN
 
 `VPN` is kept because it is short and already familiar for interactive use.
 
-## Observability Stats
-
 ## DNS Policy And State
+
+### `watchdog dns`
 
 The Python DNS commands expose DNS policy status, resolver testing,
 configured-policy diagnostics and bounded apply/reset operations.
@@ -792,8 +824,6 @@ because detailed history is not implemented in Phase 16.
 
 JSON output keeps `detailed_history_supported=false` and
 `history_included=false` even when the selected mode is `detailed`.
-
-## Rule Diagnostics
 
 ## Routing Policy Commands
 
@@ -1404,11 +1434,14 @@ watchdog maintenance config get language.current
 Updates a supported safe key after validation.
 
 ```sh
-sudo watchdogvpn config set language.current es
-sudo watchdogvpn config set tui.theme high_contrast
-sudo watchdogvpn config set tui.color false
-sudo watchdogvpn config set reporting.sanitize_ipv4 true
+sudo watchdog maintenance config set language.current es
+sudo watchdog maintenance config set tui.theme high_contrast
+sudo watchdog maintenance config set tui.color false
+sudo watchdog maintenance config set reporting.sanitize_ipv4 true
 ```
+
+The deprecated `watchdogvpn` alias still forwards these invocations, but new
+docs and scripts should use `watchdog maintenance config set`.
 
 Each successful write creates a backup before modifying the active config.
 
@@ -1495,8 +1528,9 @@ Signal and pipeline handling is centralized for every Python CLI command:
 - Do not share diagnostic reports before reviewing them.
 - Do not edit `/etc/watchdogvpn/config.toml` while another update or config
   command is running.
-- Prefer `sudo watchdogvpn config set` over manual edits for the legacy
-  language/TUI/reporting preference keys it supports.
+- Prefer `sudo watchdog maintenance config set` over manual edits for the legacy
+  language/TUI/reporting preference keys it supports. The deprecated
+  `watchdogvpn` alias forwards to the same parser.
 - Use `./update.sh --skip-doctor` from a clean, current checkout when updating
   installed runtime files.
 - If you need to put WatchdogVPN completely to sleep (daemon, kill switch,

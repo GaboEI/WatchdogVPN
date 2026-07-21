@@ -253,6 +253,7 @@ ROOT_HELP_SECTIONS = (
             ("split-tunnel", "Manage split tunneling by app/process"),
             ("app-policy", "Manage split-tunnel app/process policy"),
             ("node-group", "Manage node groups"),
+            ("chain", "Manage proxy route chains"),
             ("config", "Manage WatchdogVPN configuration"),
         ),
     ),
