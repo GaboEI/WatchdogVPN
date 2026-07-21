@@ -1543,10 +1543,12 @@ class _RuntimeDriverRouter(BaseDriver):
             EndpointPolicyConnectionError,
             ManagementPathSafetyError,
             UnsupportedDriverPolicyError,
-        ):
+        ) as exc:
             LOGGER.warning(
-                "watchdog_rotation_candidate_prepare_failed profile_id=%s",
+                "watchdog_rotation_candidate_prepare_failed profile_id=%s error_kind=%s error=%s",
                 profile.id,
+                type(exc).__name__,
+                exc,
             )
             return False
         self._prepared_profile_id = profile.id
@@ -1580,10 +1582,12 @@ class _RuntimeDriverRouter(BaseDriver):
                 EndpointPolicyConnectionError,
                 ManagementPathSafetyError,
                 UnsupportedDriverPolicyError,
-            ):
+            ) as exc:
                 LOGGER.warning(
-                    "watchdog_rotation_candidate_prepare_failed profile_id=%s",
+                    "watchdog_rotation_candidate_prepare_failed profile_id=%s error_kind=%s error=%s",
                     profile.id,
+                    type(exc).__name__,
+                    exc,
                 )
                 return False
         self._prepared_profile_id = None
