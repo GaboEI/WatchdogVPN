@@ -3323,9 +3323,49 @@ class WatchdogIntegrationTests(unittest.TestCase):
             result = runtime.rotate_now(force=True)
 
         self.assertEqual(result.status, "recovered")
-        validate.assert_called_once_with(alt_profile, require_resolution=True)
+        validate.assert_called_once_with(
+            alt_profile,
+            require_resolution=True,
+            allow_captured_fakeip_ranges=(),
+        )
         driver.disconnect_mock.assert_called_once_with()
         driver.connect_mock.assert_called_once_with(alt_profile)
+
+    @patch("core.watchdog.select_driver")
+    @patch("core.watchdog.pool_builder.build_pool")
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
+    def test_rotation_endpoint_preflight_allows_configured_fakeip_when_runtime_active(
+        self, _hc, mock_pool, mock_sel_driver
+    ) -> None:
+        alt_profile = Profile(
+            id="hostname-alt",
+            name="Hostname alt",
+            protocol=ProtocolType.VLESS,
+            config={"server": "vpn.example.com", "server_port": 443},
+            source=ProfileSource.MANUAL,
+            in_rotation_pool=True,
+            enabled=True,
+        )
+        driver = FakeDriver()
+        driver.status_mock.return_value = ConnectionState(
+            status="connected",
+            mode="sing-box",
+            tun_active=True,
+            proxy_active=True,
+        )
+        mock_pool.return_value = [alt_profile]
+        mock_sel_driver.return_value = driver
+        runtime = self._make_runtime(driver)
+
+        with patch("core.watchdog.validate_profile_endpoint") as validate:
+            result = runtime.rotate_now(force=True)
+
+        self.assertEqual(result.status, "recovered")
+        validate.assert_called_once()
+        self.assertEqual(
+            validate.call_args.kwargs["allow_captured_fakeip_ranges"],
+            ("198.18.0.0/15", "fc00::/18"),
+        )
 
     @patch("core.watchdog.pool_builder.build_pool")
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok"))
@@ -3354,8 +3394,14 @@ class WatchdogIntegrationTests(unittest.TestCase):
         mock_pool.return_value = [unresolved, resolved]
         runtime = self._make_runtime(driver)
 
-        def endpoint_preflight(profile: Profile, *, require_resolution: bool) -> None:
+        def endpoint_preflight(
+            profile: Profile,
+            *,
+            require_resolution: bool,
+            allow_captured_fakeip_ranges: tuple[str, ...],
+        ) -> None:
             self.assertTrue(require_resolution)
+            self.assertEqual(allow_captured_fakeip_ranges, ())
             if profile.id == unresolved.id:
                 raise EndpointPolicyError("resolution failed")
 

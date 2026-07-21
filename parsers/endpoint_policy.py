@@ -44,7 +44,11 @@ def _resolved_addresses(host: str, resolver: Resolver) -> set[ipaddress._BaseAdd
 
 
 def canonicalize_remote_endpoint(
-    host: object, *, resolver: Resolver = socket.getaddrinfo, require_resolution: bool = False
+    host: object,
+    *,
+    resolver: Resolver = socket.getaddrinfo,
+    require_resolution: bool = False,
+    allow_captured_fakeip_ranges: tuple[str, ...] = (),
 ) -> str:
     """Return the normalised host only if every resolved address is global."""
     normalised = _normalise_host(host)
@@ -56,6 +60,11 @@ def canonicalize_remote_endpoint(
         return normalised
     unsafe = sorted(str(address) for address in addresses if not address.is_global)
     if unsafe:
+        fakeip_networks = tuple(ipaddress.ip_network(item, strict=False) for item in allow_captured_fakeip_ranges)
+        if fakeip_networks and all(
+            any(address in network for network in fakeip_networks) for address in addresses
+        ):
+            return normalised
         raise EndpointPolicyError(
             f"endpoint {normalised!r} resolves to a non-global address: {', '.join(unsafe)}"
         )
@@ -79,12 +88,18 @@ def profile_endpoint_host(profile: Profile) -> object | None:
 
 
 def validate_profile_endpoint(
-    profile: Profile, *, resolver: Resolver = socket.getaddrinfo, require_resolution: bool = False
+    profile: Profile,
+    *,
+    resolver: Resolver = socket.getaddrinfo,
+    require_resolution: bool = False,
+    allow_captured_fakeip_ranges: tuple[str, ...] = (),
 ) -> str:
     host = profile_endpoint_host(profile)
     if host is None:
         raise EndpointPolicyError("profile has no remote endpoint host")
     return canonicalize_remote_endpoint(
-        host, resolver=resolver, require_resolution=require_resolution
+        host,
+        resolver=resolver,
+        require_resolution=require_resolution,
+        allow_captured_fakeip_ranges=allow_captured_fakeip_ranges,
     )
-

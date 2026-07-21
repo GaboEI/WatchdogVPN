@@ -798,7 +798,11 @@ class WatchdogRuntime:
             raise UnsupportedDriverPolicyError(driver_name, unsupported)
         if profile_endpoint_host(profile) is not None:
             try:
-                validate_profile_endpoint(profile, require_resolution=True)
+                validate_profile_endpoint(
+                    profile,
+                    require_resolution=True,
+                    allow_captured_fakeip_ranges=self._endpoint_policy_fakeip_allowlist(),
+                )
             except EndpointPolicyError as exc:
                 raise EndpointPolicyConnectionError(f"endpoint policy rejected connection: {exc}") from exc
         driver = self._candidate_driver_for_profile(profile)
@@ -916,6 +920,19 @@ class WatchdogRuntime:
         if chain_runtime_plans:
             options["chain_runtime_plans"] = chain_runtime_plans
         return options
+
+    def _endpoint_policy_fakeip_allowlist(self) -> tuple[str, ...]:
+        try:
+            state = self.driver.status()
+        except Exception:
+            return ()
+        if not (state.tun_active or state.proxy_active or state.runtime_artifacts):
+            return ()
+        try:
+            policy = self.dns_policy_store.load()
+        except Exception:
+            return ()
+        return (policy.fakeip_inet4_range, policy.fakeip_inet6_range)
 
     def _chain_runtime_plans(
         self,

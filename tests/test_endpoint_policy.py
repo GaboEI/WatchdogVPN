@@ -8,6 +8,7 @@ from parsers.endpoint_policy import (
     EndpointPolicyError,
     canonicalize_remote_endpoint,
     profile_endpoint_host,
+    validate_profile_endpoint,
 )
 
 
@@ -38,6 +39,26 @@ class EndpointPolicyTests(unittest.TestCase):
                 resolver=_resolver("203.0.113.10", "10.0.0.1"),
             )
 
+    def test_captured_fakeip_ranges_can_be_treated_as_inconclusive(self) -> None:
+        self.assertEqual(
+            canonicalize_remote_endpoint(
+                "cdn.example",
+                resolver=_resolver("198.18.0.4", "fc00::11"),
+                require_resolution=True,
+                allow_captured_fakeip_ranges=("198.18.0.0/15", "fc00::/18"),
+            ),
+            "cdn.example",
+        )
+
+    def test_fakeip_allowlist_does_not_allow_private_real_answers(self) -> None:
+        with self.assertRaisesRegex(EndpointPolicyError, "10.0.0.1"):
+            canonicalize_remote_endpoint(
+                "cdn.example",
+                resolver=_resolver("198.18.0.4", "10.0.0.1"),
+                require_resolution=True,
+                allow_captured_fakeip_ranges=("198.18.0.0/15", "fc00::/18"),
+            )
+
     def test_dns_answer_with_only_global_addresses_is_accepted(self) -> None:
         self.assertEqual(
             canonicalize_remote_endpoint(
@@ -66,7 +87,25 @@ class EndpointPolicyTests(unittest.TestCase):
         )
         self.assertEqual(profile_endpoint_host(profile), "2001:4860:4860::8888")
 
+    def test_profile_validation_threads_fakeip_allowlist(self) -> None:
+        profile = Profile(
+            id="test",
+            name="test",
+            protocol=ProtocolType.VLESS,
+            config={"server": "cdn.example"},
+            source=ProfileSource.MANUAL,
+        )
+
+        self.assertEqual(
+            validate_profile_endpoint(
+                profile,
+                resolver=_resolver("198.18.0.8", "fc00::8"),
+                require_resolution=True,
+                allow_captured_fakeip_ranges=("198.18.0.0/15", "fc00::/18"),
+            ),
+            "cdn.example",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
