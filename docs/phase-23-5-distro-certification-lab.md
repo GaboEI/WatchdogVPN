@@ -17,7 +17,7 @@ claims to support:
 | --- | --- | --- | --- |
 | Arch Linux | `arch` | 23.5 | **CERTIFIED / CLOSED** — default-kernel and packaged-LTS evidence complete; 9 functional rows + the 3 individually authorized Plan-B rows, with 5/5 resilient green |
 | CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CERTIFIED / CLOSED** — clean install/update provenance and full purge complete; 9 functional rows + the same 3 individually authorized Plan-B rows, with 5/5 resilient green |
-| Debian | `debian` | 23.5 | Supported in code, un-certified on a clean VM |
+| Debian | `debian` | 23.5 | **CERTIFIED / CLOSED** — Debian 13.6 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 | Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
 
 Fedora/Red Hat-family systems, openSUSE, and a Debian/Ubuntu derivative are
