@@ -79,6 +79,21 @@ def _service_active(service: str, runner: CommandRunner) -> bool:
     return runner(["systemctl", "is-active", service]).strip() == "active"
 
 
+def _network_manager_has_managed_non_loopback_connection(runner: CommandRunner) -> bool:
+    output = runner(
+        ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "con", "show", "--active"]
+    )
+    for line in output.splitlines():
+        fields = line.strip().split(":")
+        if len(fields) < 3:
+            continue
+        _name, connection_type, device = fields[:3]
+        if connection_type == "loopback" or device in {"", "lo"}:
+            continue
+        return True
+    return False
+
+
 def _read_resolv_conf(path: Path) -> tuple[list[str], list[str], list[str]]:
     nameservers: list[str] = []
     search_domains: list[str] = []
@@ -123,11 +138,16 @@ def detect_resolver_manager(
     target = _resolv_conf_target(resolv_conf_path)
     resolved_active = _service_active("systemd-resolved.service", runner)
     nm_active = _service_active("NetworkManager.service", runner)
+    nm_managed = (
+        _network_manager_has_managed_non_loopback_connection(runner)
+        if nm_active
+        else False
+    )
 
     manager = ResolverManager.UNKNOWN
     if resolved_active or (target is not None and "/run/systemd/resolve/" in target):
         manager = ResolverManager.SYSTEMD_RESOLVED
-    elif nm_active:
+    elif nm_managed:
         manager = ResolverManager.NETWORK_MANAGER
     elif resolv_conf_path.exists():
         manager = ResolverManager.RESOLV_CONF

@@ -43,6 +43,14 @@ class FakeRunner:
             return "active" if command[2] in self.active_services else "inactive"
         if command == ["nmcli", "-t", "-f", "NAME", "con", "show", "--active"]:
             return "\n".join(self.active_connections)
+        if command == ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "con", "show", "--active"]:
+            rendered = []
+            for name in self.active_connections:
+                if ":" in name:
+                    rendered.append(name)
+                else:
+                    rendered.append(f"{name}:802-3-ethernet:eth0")
+            return "\n".join(rendered)
         if command[:2] == ["nmcli", "-g"] and command[-2:] != ["show", "--active"]:
             name = command[-1]
             return "\n".join(self.connection_values.get(name, ("", "no", "", "", "no", "")))
@@ -220,6 +228,49 @@ class DNSStateManagerTests(unittest.TestCase):
                     "2001:db8::53",
                     "ipv6.dns-search",
                     "lan6",
+                ],
+                runner.commands,
+            )
+
+    def test_network_manager_loopback_only_falls_back_to_resolv_conf(self) -> None:
+        # Debian certification VM regression: NetworkManager was installed and
+        # active, but the only NM connection was loopback while the real bridge
+        # interface was managed by ifupdown/dhcpcd. Selecting NetworkManager in
+        # that state made dns reset try to restore ipv4.dns on "lo", which NM
+        # rejects and leaves /etc/resolv.conf pinned to 127.0.0.1.
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            original = "nameserver 192.0.2.1\n"
+            resolv_conf.write_text(original, encoding="utf-8")
+            runner = FakeRunner(
+                active_services={"NetworkManager.service"},
+                active_connections=("lo:loopback:lo",),
+            )
+            manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+
+            snapshot = manager.apply_local_dns(LocalDNSEntryPoint(address="127.0.0.1"))
+            manager.restore_state(snapshot)
+
+            self.assertEqual(snapshot.inventory.manager, ResolverManager.RESOLV_CONF)
+            self.assertEqual(resolv_conf.read_text(encoding="utf-8"), original)
+            self.assertNotIn(
+                [
+                    "nmcli",
+                    "con",
+                    "mod",
+                    "lo",
+                    "ipv4.ignore-auto-dns",
+                    "no",
+                    "ipv4.dns",
+                    "",
+                    "ipv4.dns-search",
+                    "",
+                    "ipv6.ignore-auto-dns",
+                    "no",
+                    "ipv6.dns",
+                    "",
+                    "ipv6.dns-search",
+                    "",
                 ],
                 runner.commands,
             )

@@ -7,10 +7,15 @@ from pathlib import Path
 from dns.resolver_inventory import ResolverManager, detect_resolver_manager
 
 
-def runner_with(active_services: set[str]):
+def runner_with(
+    active_services: set[str],
+    active_connections: tuple[str, ...] = (),
+):
     def run(command: list[str]) -> str:
         if command[:2] == ["systemctl", "is-active"] and len(command) == 3:
             return "active" if command[2] in active_services else "inactive"
+        if command == ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "con", "show", "--active"]:
+            return "\n".join(active_connections)
         return ""
 
     return run
@@ -39,10 +44,30 @@ class ResolverInventoryTests(unittest.TestCase):
 
             inventory = detect_resolver_manager(
                 resolv_conf_path=resolv_conf,
-                runner=runner_with({"NetworkManager.service"}),
+                runner=runner_with(
+                    {"NetworkManager.service"},
+                    active_connections=("Home WiFi:802-11-wireless:wlan0",),
+                ),
             )
 
             self.assertEqual(inventory.manager, ResolverManager.NETWORK_MANAGER)
+            self.assertEqual(inventory.nameservers, ["192.0.2.1"])
+            self.assertTrue(inventory.network_manager_active)
+
+    def test_network_manager_with_only_loopback_active_uses_resolv_conf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resolv_conf = Path(tmp) / "resolv.conf"
+            resolv_conf.write_text("nameserver 192.0.2.1\n", encoding="utf-8")
+
+            inventory = detect_resolver_manager(
+                resolv_conf_path=resolv_conf,
+                runner=runner_with(
+                    {"NetworkManager.service"},
+                    active_connections=("lo:loopback:lo",),
+                ),
+            )
+
+            self.assertEqual(inventory.manager, ResolverManager.RESOLV_CONF)
             self.assertEqual(inventory.nameservers, ["192.0.2.1"])
             self.assertTrue(inventory.network_manager_active)
 

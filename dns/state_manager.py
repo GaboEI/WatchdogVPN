@@ -228,9 +228,17 @@ class SystemDNSStateManager:
     ) -> tuple[NetworkManagerConnectionState, ...]:
         if not inventory.network_manager_active:
             return ()
-        names_output = self.runner(["nmcli", "-t", "-f", "NAME", "con", "show", "--active"])
+        names_output = self.runner(
+            ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "con", "show", "--active"]
+        )
         states: list[NetworkManagerConnectionState] = []
-        for name in [line.strip() for line in names_output.splitlines() if line.strip()]:
+        for line in [line.strip() for line in names_output.splitlines() if line.strip()]:
+            fields = line.split(":")
+            if len(fields) < 3:
+                continue
+            name, connection_type, device = fields[:3]
+            if connection_type == "loopback" or device in {"", "lo"}:
+                continue
             values = self.runner(
                 [
                     "nmcli",
