@@ -21,12 +21,12 @@ overrides whose argparse help is suppressed remain intentionally absent.
 ## Snapshot
 
 - Schema version: `2`
-- Routes including the canonical root: `124`
-- Command routes excluding the root: `123`
-- Argparse-backed routes: `116`
+- Routes including the canonical root: `136`
+- Command routes excluding the root: `135`
+- Argparse-backed routes: `128`
 - Documented maintenance passthrough routes: `8`
-- Group/root routes: `18`
-- Leaf routes: `106`
+- Group/root routes: `19`
+- Leaf routes: `117`
 
 ## Route Index
 
@@ -137,25 +137,37 @@ overrides whose argparse help is suppressed remain intentionally absent.
 | 103 | `watchdog ruleset refresh` | command | argparse | Refresh trusted rule-set cache files |
 | 104 | `watchdog ruleset add` | command | argparse | Define a rule-set trust policy |
 | 105 | `watchdog ruleset remove` | command | argparse | Remove a rule-set trust policy |
-| 106 | `watchdog app-policy` | group | argparse | Manage minimal Linux app/process policy |
-| 107 | `watchdog app-policy status` | command | argparse | Show app policy |
-| 108 | `watchdog app-policy enable` | command | argparse | Enable app policy |
-| 109 | `watchdog app-policy disable` | command | argparse | Disable app policy |
-| 110 | `watchdog app-policy mode` | command | argparse | Set app policy mode |
-| 111 | `watchdog app-policy default-action` | command | argparse | Set app policy default action |
-| 112 | `watchdog app-policy add` | command | argparse | Add an app policy rule |
-| 113 | `watchdog app-policy remove` | command | argparse | Remove an app policy rule |
-| 114 | `watchdog app-policy enable-rule` | command | argparse | Enable a single app policy rule |
-| 115 | `watchdog app-policy disable-rule` | command | argparse | Disable a single app policy rule |
-| 116 | `watchdog chain` | group | argparse | Manage proxy route chains |
-| 117 | `watchdog chain list` | command | argparse | List route chains |
-| 118 | `watchdog chain show` | command | argparse | Show a route chain |
-| 119 | `watchdog chain create` | command | argparse | Create a route chain |
-| 120 | `watchdog chain add-hop` | command | argparse | Append a hop to a route chain |
-| 121 | `watchdog chain remove-hop` | command | argparse | Remove a hop from a route chain by position |
-| 122 | `watchdog chain enable` | command | argparse | Enable a route chain |
-| 123 | `watchdog chain disable` | command | argparse | Disable a route chain |
-| 124 | `watchdog chain remove` | command | argparse | Remove a route chain |
+| 106 | `watchdog split-tunnel` | group | argparse | Manage split tunneling by app/process |
+| 107 | `watchdog split-tunnel status` | command | argparse | Show split-tunnel policy |
+| 108 | `watchdog split-tunnel enable` | command | argparse | Enable split-tunnel policy |
+| 109 | `watchdog split-tunnel disable` | command | argparse | Disable split-tunnel policy |
+| 110 | `watchdog split-tunnel mode` | command | argparse | Set split-tunnel policy mode |
+| 111 | `watchdog split-tunnel default-action` | command | argparse | Set default split-tunnel route action |
+| 112 | `watchdog split-tunnel add` | command | argparse | Add a split-tunnel rule |
+| 113 | `watchdog split-tunnel remove` | command | argparse | Remove a split-tunnel rule |
+| 114 | `watchdog split-tunnel enable-rule` | command | argparse | Enable a single split-tunnel rule |
+| 115 | `watchdog split-tunnel disable-rule` | command | argparse | Disable a single split-tunnel rule |
+| 116 | `watchdog split-tunnel add-domain` | command | argparse | Add a domain split-tunnel rule |
+| 117 | `watchdog split-tunnel remove-domain` | command | argparse | Remove a domain split-tunnel rule |
+| 118 | `watchdog app-policy` | group | argparse | Manage split-tunnel app/process policy |
+| 119 | `watchdog app-policy status` | command | argparse | Show split-tunnel policy |
+| 120 | `watchdog app-policy enable` | command | argparse | Enable split-tunnel policy |
+| 121 | `watchdog app-policy disable` | command | argparse | Disable split-tunnel policy |
+| 122 | `watchdog app-policy mode` | command | argparse | Set split-tunnel policy mode |
+| 123 | `watchdog app-policy default-action` | command | argparse | Set default split-tunnel route action |
+| 124 | `watchdog app-policy add` | command | argparse | Add a split-tunnel rule |
+| 125 | `watchdog app-policy remove` | command | argparse | Remove a split-tunnel rule |
+| 126 | `watchdog app-policy enable-rule` | command | argparse | Enable a single split-tunnel rule |
+| 127 | `watchdog app-policy disable-rule` | command | argparse | Disable a single split-tunnel rule |
+| 128 | `watchdog chain` | group | argparse | Manage proxy route chains |
+| 129 | `watchdog chain list` | command | argparse | List route chains |
+| 130 | `watchdog chain show` | command | argparse | Show a route chain |
+| 131 | `watchdog chain create` | command | argparse | Create a route chain |
+| 132 | `watchdog chain add-hop` | command | argparse | Append a hop to a route chain |
+| 133 | `watchdog chain remove-hop` | command | argparse | Remove a hop from a route chain by position |
+| 134 | `watchdog chain enable` | command | argparse | Enable a route chain |
+| 135 | `watchdog chain disable` | command | argparse | Disable a route chain |
+| 136 | `watchdog chain remove` | command | argparse | Remove a route chain |
 
 ## Route Contracts
 
@@ -165,7 +177,7 @@ overrides whose argparse help is suppressed remain intentionally absent.
 - Source: `argparse`
 - Summary: Canonical WatchdogVPN command root
 - Help: `watchdog --help`
-- Direct child routes: `connect`, `disconnect`, `status`, `rotate`, `command`, `version`, `panic`, `doctor`, `setup`, `uninstall`, `maintenance`, `backup`, `profile`, `provider`, `node-group`, `dns`, `config`, `stats`, `rules`, `ruleset`, `app-policy`, `chain`
+- Direct child routes: `connect`, `disconnect`, `status`, `rotate`, `command`, `version`, `panic`, `doctor`, `setup`, `uninstall`, `maintenance`, `backup`, `profile`, `provider`, `node-group`, `dns`, `config`, `stats`, `rules`, `ruleset`, `split-tunnel`, `app-policy`, `chain`
 
 Usage:
 
@@ -2175,11 +2187,232 @@ usage: watchdog ruleset remove [-h] [--json] id
 | `id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 106. `watchdog app-policy`
+### 106. `watchdog split-tunnel`
 
 - Kind: `group`
 - Source: `argparse`
-- Summary: Manage minimal Linux app/process policy
+- Summary: Manage split tunneling by app/process
+- Help: `watchdog split-tunnel --help`
+- Direct child routes: `status`, `enable`, `disable`, `mode`, `default-action`, `add`, `remove`, `enable-rule`, `disable-rule`, `add-domain`, `remove-domain`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel [-h] {status,enable,disable,mode,default-action,add,remove,enable-rule,disable-rule,add-domain,remove-domain} ...
+```
+
+Public route-specific arguments: none.
+
+### 107. `watchdog split-tunnel status`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Show split-tunnel policy
+- Help: `watchdog split-tunnel status --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel status [-h] [--json]
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `--json` | option | no | flag | — | Print JSON |
+
+### 108. `watchdog split-tunnel enable`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Enable split-tunnel policy
+- Help: `watchdog split-tunnel enable --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel enable [-h] [--json]
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `--json` | option | no | flag | — | Print JSON |
+
+### 109. `watchdog split-tunnel disable`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Disable split-tunnel policy
+- Help: `watchdog split-tunnel disable --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel disable [-h] [--json]
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `--json` | option | no | flag | — | Print JSON |
+
+### 110. `watchdog split-tunnel mode`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Set split-tunnel policy mode
+- Help: `watchdog split-tunnel mode --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel mode [-h] [--json] {whitelist,blacklist}
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `mode` | positional | yes | one | whitelist, blacklist | App policy mode |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 111. `watchdog split-tunnel default-action`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Set default split-tunnel route action
+- Help: `watchdog split-tunnel default-action --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel default-action [-h] [--json] {current,direct,block}
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `default_action` | positional | yes | one | current, direct, block | Default route action |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 112. `watchdog split-tunnel add`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Add a split-tunnel rule
+- Help: `watchdog split-tunnel add --help`
+- Mutually exclusive argument groups:
+  - required: `--process-name`, `--process-path`, `--process-path-regex`, `--user`, `--user-id`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel add [-h] (--process-name PROCESS_NAME | --process-path PROCESS_PATH | --process-path-regex PROCESS_PATH_REGEX | --user USER | --user-id USER_ID) --action ACTION [--id ID] [--json]
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `--process-name` | option | no | one | — | Process executable name |
+| `--process-path` | option | no | one | — | Exact process executable path |
+| `--process-path-regex` | option | no | one | — | Regex matching a process executable path |
+| `--user` | option | no | one | — | Unix username |
+| `--user-id` | option | no | one | — | Unix numeric user ID |
+| `--action` | option | yes | one | — | Route action: current, direct, block, or group:<name> |
+| `--id` | option | no | one | — | Rule ID; generated when omitted |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 113. `watchdog split-tunnel remove`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Remove a split-tunnel rule
+- Help: `watchdog split-tunnel remove --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel remove [-h] [--json] rule_id
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `rule_id` | positional | yes | one | — | — |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 114. `watchdog split-tunnel enable-rule`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Enable a single split-tunnel rule
+- Help: `watchdog split-tunnel enable-rule --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel enable-rule [-h] [--json] rule_id
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `rule_id` | positional | yes | one | — | — |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 115. `watchdog split-tunnel disable-rule`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Disable a single split-tunnel rule
+- Help: `watchdog split-tunnel disable-rule --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel disable-rule [-h] [--json] rule_id
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `rule_id` | positional | yes | one | — | — |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 116. `watchdog split-tunnel add-domain`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Add a domain split-tunnel rule
+- Help: `watchdog split-tunnel add-domain --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel add-domain [-h] --action {direct,current,block} [--id ID] [--json] domain
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `domain` | positional | yes | one | — | Domain name, for example example.com |
+| `--action` | option | yes | one | direct, current, block | Route action for this domain |
+| `--id` | option | no | one | — | Rule ID; generated when omitted |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 117. `watchdog split-tunnel remove-domain`
+
+- Kind: `command`
+- Source: `argparse`
+- Summary: Remove a domain split-tunnel rule
+- Help: `watchdog split-tunnel remove-domain --help`
+
+Usage:
+
+```text
+usage: watchdog split-tunnel remove-domain [-h] [--json] rule_id
+```
+
+| Argument | Kind | Required | Cardinality | Choices | Description |
+|---|---|---|---|---|---|
+| `rule_id` | positional | yes | one | — | — |
+| `--json` | option | no | flag | — | Print JSON |
+
+### 118. `watchdog app-policy`
+
+- Kind: `group`
+- Source: `argparse`
+- Summary: Manage split-tunnel app/process policy
 - Help: `watchdog app-policy --help`
 - Direct child routes: `status`, `enable`, `disable`, `mode`, `default-action`, `add`, `remove`, `enable-rule`, `disable-rule`
 
@@ -2191,11 +2424,11 @@ usage: watchdog app-policy [-h] {status,enable,disable,mode,default-action,add,r
 
 Public route-specific arguments: none.
 
-### 107. `watchdog app-policy status`
+### 119. `watchdog app-policy status`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Show app policy
+- Summary: Show split-tunnel policy
 - Help: `watchdog app-policy status --help`
 
 Usage:
@@ -2208,11 +2441,11 @@ usage: watchdog app-policy status [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 108. `watchdog app-policy enable`
+### 120. `watchdog app-policy enable`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Enable app policy
+- Summary: Enable split-tunnel policy
 - Help: `watchdog app-policy enable --help`
 
 Usage:
@@ -2225,11 +2458,11 @@ usage: watchdog app-policy enable [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 109. `watchdog app-policy disable`
+### 121. `watchdog app-policy disable`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Disable app policy
+- Summary: Disable split-tunnel policy
 - Help: `watchdog app-policy disable --help`
 
 Usage:
@@ -2242,11 +2475,11 @@ usage: watchdog app-policy disable [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 110. `watchdog app-policy mode`
+### 122. `watchdog app-policy mode`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Set app policy mode
+- Summary: Set split-tunnel policy mode
 - Help: `watchdog app-policy mode --help`
 
 Usage:
@@ -2260,11 +2493,11 @@ usage: watchdog app-policy mode [-h] [--json] {whitelist,blacklist}
 | `mode` | positional | yes | one | whitelist, blacklist | App policy mode |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 111. `watchdog app-policy default-action`
+### 123. `watchdog app-policy default-action`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Set app policy default action
+- Summary: Set default split-tunnel route action
 - Help: `watchdog app-policy default-action --help`
 
 Usage:
@@ -2278,11 +2511,11 @@ usage: watchdog app-policy default-action [-h] [--json] {current,direct,block}
 | `default_action` | positional | yes | one | current, direct, block | Default route action |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 112. `watchdog app-policy add`
+### 124. `watchdog app-policy add`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Add an app policy rule
+- Summary: Add a split-tunnel rule
 - Help: `watchdog app-policy add --help`
 - Mutually exclusive argument groups:
   - required: `--process-name`, `--process-path`, `--process-path-regex`, `--user`, `--user-id`
@@ -2304,11 +2537,11 @@ usage: watchdog app-policy add [-h] (--process-name PROCESS_NAME | --process-pat
 | `--id` | option | no | one | — | Rule ID; generated when omitted |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 113. `watchdog app-policy remove`
+### 125. `watchdog app-policy remove`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Remove an app policy rule
+- Summary: Remove a split-tunnel rule
 - Help: `watchdog app-policy remove --help`
 
 Usage:
@@ -2322,11 +2555,11 @@ usage: watchdog app-policy remove [-h] [--json] rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 114. `watchdog app-policy enable-rule`
+### 126. `watchdog app-policy enable-rule`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Enable a single app policy rule
+- Summary: Enable a single split-tunnel rule
 - Help: `watchdog app-policy enable-rule --help`
 
 Usage:
@@ -2340,11 +2573,11 @@ usage: watchdog app-policy enable-rule [-h] [--json] rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 115. `watchdog app-policy disable-rule`
+### 127. `watchdog app-policy disable-rule`
 
 - Kind: `command`
 - Source: `argparse`
-- Summary: Disable a single app policy rule
+- Summary: Disable a single split-tunnel rule
 - Help: `watchdog app-policy disable-rule --help`
 
 Usage:
@@ -2358,7 +2591,7 @@ usage: watchdog app-policy disable-rule [-h] [--json] rule_id
 | `rule_id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 116. `watchdog chain`
+### 128. `watchdog chain`
 
 - Kind: `group`
 - Source: `argparse`
@@ -2374,7 +2607,7 @@ usage: watchdog chain [-h] {list,show,create,add-hop,remove-hop,enable,disable,r
 
 Public route-specific arguments: none.
 
-### 117. `watchdog chain list`
+### 129. `watchdog chain list`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2391,7 +2624,7 @@ usage: watchdog chain list [-h] [--json]
 |---|---|---|---|---|---|
 | `--json` | option | no | flag | — | Print JSON |
 
-### 118. `watchdog chain show`
+### 130. `watchdog chain show`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2409,7 +2642,7 @@ usage: watchdog chain show [-h] [--json] id
 | `id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 119. `watchdog chain create`
+### 131. `watchdog chain create`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2429,7 +2662,7 @@ usage: watchdog chain create [-h] --hop TYPE:TARGET [--description DESCRIPTION] 
 | `--description` | option | no | one | — | Free-form chain description |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 120. `watchdog chain add-hop`
+### 132. `watchdog chain add-hop`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2450,7 +2683,7 @@ usage: watchdog chain add-hop [-h] --type {profile,group} --target TARGET [--sel
 | `--selection-policy` | option | no | one | group_policy | Only valid for --type group |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 121. `watchdog chain remove-hop`
+### 133. `watchdog chain remove-hop`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2469,7 +2702,7 @@ usage: watchdog chain remove-hop [-h] --index INDEX [--json] id
 | `--index` | option | yes | one | — | 1-based hop position, see `chain show` |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 122. `watchdog chain enable`
+### 134. `watchdog chain enable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2487,7 +2720,7 @@ usage: watchdog chain enable [-h] [--json] id
 | `id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 123. `watchdog chain disable`
+### 135. `watchdog chain disable`
 
 - Kind: `command`
 - Source: `argparse`
@@ -2505,7 +2738,7 @@ usage: watchdog chain disable [-h] [--json] id
 | `id` | positional | yes | one | — | — |
 | `--json` | option | no | flag | — | Print JSON |
 
-### 124. `watchdog chain remove`
+### 136. `watchdog chain remove`
 
 - Kind: `command`
 - Source: `argparse`

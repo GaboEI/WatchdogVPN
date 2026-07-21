@@ -44,6 +44,29 @@ class CliAppPolicyCommandTests(unittest.TestCase):
         self.assertEqual(data["policy"]["mode"], "blacklist")
         self.assertEqual(data["rule_count"], 0)
 
+    def test_split_tunnel_alias_uses_same_policy_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_watchdog(["split-tunnel", "enable"], tmp)
+            self.run_watchdog(
+                [
+                    "split-tunnel",
+                    "add",
+                    "--process-path",
+                    "/usr/bin/curl",
+                    "--action",
+                    "direct",
+                    "--id",
+                    "curl-direct",
+                ],
+                tmp,
+            )
+            result = self.run_watchdog(["app-policy", "status", "--json"], tmp)
+
+        data = json.loads(result.stdout)
+        self.assertTrue(data["policy"]["enabled"])
+        self.assertEqual(data["rule_count"], 1)
+        self.assertEqual(data["rules"][0]["id"], "curl-direct")
+
     def test_enable_disable_and_mode_persist_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.run_watchdog(["app-policy", "enable"], tmp)

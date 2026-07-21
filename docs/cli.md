@@ -164,6 +164,10 @@ watchdog rules import <file> [--replace] [--dry-run] [--json]
 watchdog rules export <group> (--output PATH|--json)
 watchdog ruleset status [--json]
 watchdog ruleset refresh [RULE_SET_ID ...] [--referenced-only] [--force] [--json]
+watchdog split-tunnel status [--json]
+watchdog split-tunnel add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog split-tunnel add-domain DOMAIN --action <direct|current|block> [--id ID] [--json]
+watchdog split-tunnel remove-domain <id> [--json]
 watchdog app-policy status [--json]
 watchdog app-policy enable|disable [--json]
 watchdog app-policy mode <blacklist|whitelist> [--json]
@@ -827,9 +831,50 @@ remove-rule and replace import create a backup before the active group changes.
 New imports create a section backup and report that rollback is deleting the
 imported group.
 
+### `watchdog split-tunnel`
+
+Manages split tunneling by Linux app/process policy. This is the user-facing
+name for the same policy engine also exposed as `watchdog app-policy` for
+backward-compatible scripts.
+
+```sh
+watchdog split-tunnel status [--json]
+watchdog split-tunnel enable [--json]
+watchdog split-tunnel disable [--json]
+watchdog split-tunnel mode <blacklist|whitelist> [--json]
+watchdog split-tunnel default-action <current|direct|block> [--json]
+watchdog split-tunnel add --process-name NAME --action ACTION [--id ID] [--json]
+watchdog split-tunnel add --process-path PATH --action ACTION [--id ID] [--json]
+watchdog split-tunnel add --process-path-regex REGEX --action ACTION [--id ID] [--json]
+watchdog split-tunnel add --user NAME --action ACTION [--id ID] [--json]
+watchdog split-tunnel add --user-id UID --action ACTION [--id ID] [--json]
+watchdog split-tunnel enable-rule <id> [--json]
+watchdog split-tunnel disable-rule <id> [--json]
+watchdog split-tunnel remove <id> [--json]
+watchdog split-tunnel add-domain DOMAIN --action <direct|current|block> [--id ID] [--json]
+watchdog split-tunnel remove-domain <id> [--json]
+```
+
+Route actions are:
+
+- `current`: use the active WatchdogVPN route.
+- `direct`: bypass the VPN for the matched process/app.
+- `block`: deny the matched process/app.
+- `group:<name>`: use a configured node group.
+
+For a domain exclusion such as `ejemplo.com`, use:
+
+```sh
+watchdog split-tunnel add-domain ejemplo.com --action direct
+```
+
+Domain split-tunnel entries are stored as normal routing rules in the `custom`
+group, so advanced operators can still inspect them with `watchdog rules list`
+and `watchdog rules export custom --json`.
+
 ### `watchdog app-policy`
 
-Manages local Linux app/process routing policy.
+Backward-compatible technical name for `watchdog split-tunnel`.
 
 ```sh
 watchdog app-policy status [--json]

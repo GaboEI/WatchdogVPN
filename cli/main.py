@@ -250,7 +250,8 @@ ROOT_HELP_SECTIONS = (
             ("dns", "Manage DNS v2 policy and state"),
             ("rules", "Inspect configured routing rules"),
             ("ruleset", "Inspect and refresh trusted remote or built-in rule sets"),
-            ("app-policy", "Manage minimal Linux app/process policy"),
+            ("split-tunnel", "Manage split tunneling by app/process"),
+            ("app-policy", "Manage split-tunnel app/process policy"),
             ("node-group", "Manage node groups"),
             ("config", "Manage WatchdogVPN configuration"),
         ),
@@ -274,6 +275,8 @@ ROOT_HELP_EXAMPLES = (
     "watchdog connect <profile-id>",
     "watchdog disconnect",
 )
+
+SPLIT_TUNNEL_DOMAIN_GROUP = "custom"
 ROOT_USAGE_TEMPLATE = "%(prog)s <command> [options]"
 ROOT_USAGE_PLACEHOLDERS = frozenset({"<command>", "[options]"})
 
@@ -1497,82 +1500,126 @@ def _build_parser() -> argparse.ArgumentParser:
     ruleset_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
     ruleset_remove_parser.set_defaults(handler=_ruleset_remove)
 
-    app_policy_parser = subparsers.add_parser(
-        "app-policy",
-        help="Manage minimal Linux app/process policy",
-    )
-    app_policy_subparsers = app_policy_parser.add_subparsers(dest="app_policy_command")
-    app_policy_subparsers.required = True
+    def add_app_policy_parser(command_name: str, help_text: str) -> None:
+        app_policy_parser = subparsers.add_parser(
+            command_name,
+            help=help_text,
+            description=(
+                "Manage split tunneling through the same app/process policy engine. "
+                "Route actions are current (active VPN route), direct, block, or group:<name>."
+            ),
+        )
+        app_policy_subparsers = app_policy_parser.add_subparsers(dest="app_policy_command")
+        app_policy_subparsers.required = True
 
-    app_policy_status_parser = app_policy_subparsers.add_parser("status", help="Show app policy")
-    app_policy_status_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_status_parser.set_defaults(handler=_app_policy_status)
+        app_policy_status_parser = app_policy_subparsers.add_parser(
+            "status", help="Show split-tunnel policy"
+        )
+        app_policy_status_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_status_parser.set_defaults(handler=_app_policy_status)
 
-    app_policy_enable_parser = app_policy_subparsers.add_parser("enable", help="Enable app policy")
-    app_policy_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_enable_parser.set_defaults(handler=_app_policy_set_enabled, enabled=True)
+        app_policy_enable_parser = app_policy_subparsers.add_parser(
+            "enable", help="Enable split-tunnel policy"
+        )
+        app_policy_enable_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_enable_parser.set_defaults(handler=_app_policy_set_enabled, enabled=True)
 
-    app_policy_disable_parser = app_policy_subparsers.add_parser("disable", help="Disable app policy")
-    app_policy_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_disable_parser.set_defaults(handler=_app_policy_set_enabled, enabled=False)
+        app_policy_disable_parser = app_policy_subparsers.add_parser(
+            "disable", help="Disable split-tunnel policy"
+        )
+        app_policy_disable_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_disable_parser.set_defaults(handler=_app_policy_set_enabled, enabled=False)
 
-    app_policy_mode_parser = app_policy_subparsers.add_parser("mode", help="Set app policy mode")
-    app_policy_mode_parser.add_argument(
-        "mode",
-        choices=[item.value for item in AppPolicyMode],
-        help="App policy mode",
-    )
-    app_policy_mode_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_mode_parser.set_defaults(handler=_app_policy_set_mode)
+        app_policy_mode_parser = app_policy_subparsers.add_parser(
+            "mode", help="Set split-tunnel policy mode"
+        )
+        app_policy_mode_parser.add_argument(
+            "mode",
+            choices=[item.value for item in AppPolicyMode],
+            help="App policy mode",
+        )
+        app_policy_mode_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_mode_parser.set_defaults(handler=_app_policy_set_mode)
 
-    app_policy_default_action_parser = app_policy_subparsers.add_parser(
-        "default-action",
-        help="Set app policy default action",
-    )
-    app_policy_default_action_parser.add_argument(
-        "default_action",
-        choices=[item.value for item in AppPolicyAction],
-        help="Default route action",
-    )
-    app_policy_default_action_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_default_action_parser.set_defaults(handler=_app_policy_set_default_action)
+        app_policy_default_action_parser = app_policy_subparsers.add_parser(
+            "default-action",
+            help="Set default split-tunnel route action",
+        )
+        app_policy_default_action_parser.add_argument(
+            "default_action",
+            choices=[item.value for item in AppPolicyAction],
+            help="Default route action",
+        )
+        app_policy_default_action_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_default_action_parser.set_defaults(handler=_app_policy_set_default_action)
 
-    app_policy_add_parser = app_policy_subparsers.add_parser("add", help="Add an app policy rule")
-    app_policy_add_match = app_policy_add_parser.add_mutually_exclusive_group(required=True)
-    app_policy_add_match.add_argument("--process-name", help="Process executable name")
-    app_policy_add_match.add_argument("--process-path", help="Exact process executable path")
-    app_policy_add_match.add_argument(
-        "--process-path-regex", help="Regex matching a process executable path"
-    )
-    app_policy_add_match.add_argument("--user", help="Unix username")
-    app_policy_add_match.add_argument("--user-id", type=int, help="Unix numeric user ID")
-    app_policy_add_parser.add_argument(
-        "--action",
-        required=True,
-        help="Route action: current, direct, block, or group:<name>",
-    )
-    app_policy_add_parser.add_argument("--id", help="Rule ID; generated when omitted")
-    app_policy_add_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_add_parser.set_defaults(handler=_app_policy_add)
+        app_policy_add_parser = app_policy_subparsers.add_parser(
+            "add", help="Add a split-tunnel rule"
+        )
+        app_policy_add_match = app_policy_add_parser.add_mutually_exclusive_group(required=True)
+        app_policy_add_match.add_argument("--process-name", help="Process executable name")
+        app_policy_add_match.add_argument("--process-path", help="Exact process executable path")
+        app_policy_add_match.add_argument(
+            "--process-path-regex", help="Regex matching a process executable path"
+        )
+        app_policy_add_match.add_argument("--user", help="Unix username")
+        app_policy_add_match.add_argument("--user-id", type=int, help="Unix numeric user ID")
+        app_policy_add_parser.add_argument(
+            "--action",
+            required=True,
+            help="Route action: current, direct, block, or group:<name>",
+        )
+        app_policy_add_parser.add_argument("--id", help="Rule ID; generated when omitted")
+        app_policy_add_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_add_parser.set_defaults(handler=_app_policy_add)
 
-    app_policy_remove_parser = app_policy_subparsers.add_parser("remove", help="Remove an app policy rule")
-    app_policy_remove_parser.add_argument("rule_id")
-    app_policy_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_remove_parser.set_defaults(handler=_app_policy_remove)
+        app_policy_remove_parser = app_policy_subparsers.add_parser(
+            "remove", help="Remove a split-tunnel rule"
+        )
+        app_policy_remove_parser.add_argument("rule_id")
+        app_policy_remove_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_remove_parser.set_defaults(handler=_app_policy_remove)
 
-    app_policy_enable_rule_parser = app_policy_subparsers.add_parser(
-        "enable-rule", help="Enable a single app policy rule"
-    )
-    app_policy_enable_rule_parser.add_argument("rule_id")
-    app_policy_enable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_enable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=True)
+        app_policy_enable_rule_parser = app_policy_subparsers.add_parser(
+            "enable-rule", help="Enable a single split-tunnel rule"
+        )
+        app_policy_enable_rule_parser.add_argument("rule_id")
+        app_policy_enable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_enable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=True)
 
-    app_policy_disable_rule_parser = app_policy_subparsers.add_parser(
-        "disable-rule", help="Disable a single app policy rule"
-    )
-    app_policy_disable_rule_parser.add_argument("rule_id")
-    app_policy_disable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
-    app_policy_disable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=False)
+        app_policy_disable_rule_parser = app_policy_subparsers.add_parser(
+            "disable-rule", help="Disable a single split-tunnel rule"
+        )
+        app_policy_disable_rule_parser.add_argument("rule_id")
+        app_policy_disable_rule_parser.add_argument("--json", action="store_true", help="Print JSON")
+        app_policy_disable_rule_parser.set_defaults(handler=_app_policy_set_rule_enabled, enabled=False)
+
+        if command_name == "split-tunnel":
+            split_tunnel_add_domain_parser = app_policy_subparsers.add_parser(
+                "add-domain",
+                help="Add a domain split-tunnel rule",
+            )
+            split_tunnel_add_domain_parser.add_argument("domain", help="Domain name, for example example.com")
+            split_tunnel_add_domain_parser.add_argument(
+                "--action",
+                required=True,
+                choices=["direct", "current", "block"],
+                help="Route action for this domain",
+            )
+            split_tunnel_add_domain_parser.add_argument("--id", help="Rule ID; generated when omitted")
+            split_tunnel_add_domain_parser.add_argument("--json", action="store_true", help="Print JSON")
+            split_tunnel_add_domain_parser.set_defaults(handler=_split_tunnel_add_domain)
+
+            split_tunnel_remove_domain_parser = app_policy_subparsers.add_parser(
+                "remove-domain",
+                help="Remove a domain split-tunnel rule",
+            )
+            split_tunnel_remove_domain_parser.add_argument("rule_id")
+            split_tunnel_remove_domain_parser.add_argument("--json", action="store_true", help="Print JSON")
+            split_tunnel_remove_domain_parser.set_defaults(handler=_split_tunnel_remove_domain)
+
+    add_app_policy_parser("split-tunnel", "Manage split tunneling by app/process")
+    add_app_policy_parser("app-policy", "Manage split-tunnel app/process policy")
 
     chain_parser = subparsers.add_parser("chain", help="Manage proxy route chains")
     chain_subparsers = chain_parser.add_subparsers(dest="chain_command")
@@ -4045,6 +4092,100 @@ def _rules_add_rule(args: argparse.Namespace) -> int:
         print(f"Added rule: {group.name}/{rule.id}")
         print(f"Action: {rule.action}")
         print(f"Conditions: {_format_rule_conditions(rule.conditions)}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _split_tunnel_rule_action(action: str) -> str:
+    if action == "current":
+        return "current_profile"
+    return action
+
+
+def _split_tunnel_public_action(action: str) -> str:
+    if action == "current_profile":
+        return "current"
+    return action
+
+
+def _split_tunnel_add_domain(args: argparse.Namespace) -> int:
+    domain = str(args.domain).strip().lower().rstrip(".")
+    if not domain or "/" in domain or "=" in domain:
+        raise ParseError("domain must be a plain domain name, for example example.com")
+    rule_id = args.id or _slug(f"domain-{domain}-{args.action}")
+    action = _split_tunnel_rule_action(args.action)
+    try:
+        rule = Rule(id=rule_id, action=action, conditions={"domain": [domain]})
+    except ValueError as exc:
+        raise ParseError(str(exc)) from exc
+
+    store = RuleStore()
+    existing = store.get_group(SPLIT_TUNNEL_DOMAIN_GROUP)
+    backup_path = None
+    if existing is None:
+        group = RuleGroup(
+            name=SPLIT_TUNNEL_DOMAIN_GROUP,
+            enabled=True,
+            priority=10,
+            rules=[rule],
+        )
+        store.add_group(group)
+    else:
+        if any(existing_rule.id == rule.id for existing_rule in existing.rules):
+            raise RuleStoreError(
+                f"split-tunnel domain rule already exists: {rule.id}; "
+                f"run `watchdog split-tunnel remove-domain {rule.id}` to remove it"
+            )
+        backup_path = store.replace_group(existing, backup_existing=True)
+        group = store.add_rule(SPLIT_TUNNEL_DOMAIN_GROUP, rule)
+
+    data = {
+        "added": {
+            **rule.to_dict(),
+            "split_tunnel_action": _split_tunnel_public_action(rule.action),
+        },
+        "group": group.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Added split-tunnel domain rule: {domain}")
+        print(f"Action: {_split_tunnel_public_action(rule.action)}")
+        print(f"Rule ID: {rule.id}")
+        print(f"Rule group: {group.name}")
+        if backup_path:
+            print(f"Backup: {backup_path}")
+    return 0
+
+
+def _split_tunnel_remove_domain(args: argparse.Namespace) -> int:
+    store = RuleStore()
+    existing = store.get_group(SPLIT_TUNNEL_DOMAIN_GROUP)
+    if existing is None:
+        raise RuleStoreError(
+            f"split-tunnel domain group not found; run `watchdog rules list` to inspect rule groups"
+        )
+    if not any(rule.id == args.rule_id for rule in existing.rules):
+        raise RuleStoreError(
+            f"split-tunnel domain rule not found: {args.rule_id}; "
+            f"run `watchdog rules export {SPLIT_TUNNEL_DOMAIN_GROUP} --json` to inspect rules"
+        )
+    backup_path = store.replace_group(existing, backup_existing=True)
+    group = store.remove_rule(SPLIT_TUNNEL_DOMAIN_GROUP, args.rule_id)
+    data = {
+        "removed": args.rule_id,
+        "group": group.to_dict(),
+        "backup_path": str(backup_path) if backup_path else None,
+        "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+    }
+    if args.json:
+        _print_json(data)
+    else:
+        print(f"Removed split-tunnel domain rule: {args.rule_id}")
+        print(f"Rule group: {group.name}")
         if backup_path:
             print(f"Backup: {backup_path}")
     return 0

@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
   "cli": "watchdog",
-  "route_count": 124,
-  "command_route_count": 123,
-  "parser_route_count": 116,
+  "route_count": 136,
+  "command_route_count": 135,
+  "parser_route_count": 128,
   "passthrough_route_count": 8,
-  "group_route_count": 18,
-  "leaf_route_count": 106,
+  "group_route_count": 19,
+  "leaf_route_count": 117,
   "routes": [
     {
       "path": [],
@@ -37,6 +37,7 @@
         "stats",
         "rules",
         "ruleset",
+        "split-tunnel",
         "app-policy",
         "chain"
       ],
@@ -4590,12 +4591,452 @@
     },
     {
       "path": [
+        "split-tunnel"
+      ],
+      "command": "watchdog split-tunnel",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage split tunneling by app/process",
+      "usage": "usage: watchdog split-tunnel [-h] {status,enable,disable,mode,default-action,add,remove,enable-rule,disable-rule,add-domain,remove-domain} ...",
+      "help_command": "watchdog split-tunnel --help",
+      "children": [
+        "status",
+        "enable",
+        "disable",
+        "mode",
+        "default-action",
+        "add",
+        "remove",
+        "enable-rule",
+        "disable-rule",
+        "add-domain",
+        "remove-domain"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "status"
+      ],
+      "command": "watchdog split-tunnel status",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show split-tunnel policy",
+      "usage": "usage: watchdog split-tunnel status [-h] [--json]",
+      "help_command": "watchdog split-tunnel status --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "enable"
+      ],
+      "command": "watchdog split-tunnel enable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable split-tunnel policy",
+      "usage": "usage: watchdog split-tunnel enable [-h] [--json]",
+      "help_command": "watchdog split-tunnel enable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "disable"
+      ],
+      "command": "watchdog split-tunnel disable",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable split-tunnel policy",
+      "usage": "usage: watchdog split-tunnel disable [-h] [--json]",
+      "help_command": "watchdog split-tunnel disable --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "mode"
+      ],
+      "command": "watchdog split-tunnel mode",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set split-tunnel policy mode",
+      "usage": "usage: watchdog split-tunnel mode [-h] [--json] {whitelist,blacklist}",
+      "help_command": "watchdog split-tunnel mode --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "mode",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "whitelist",
+            "blacklist"
+          ],
+          "description": "App policy mode"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "default-action"
+      ],
+      "command": "watchdog split-tunnel default-action",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Set default split-tunnel route action",
+      "usage": "usage: watchdog split-tunnel default-action [-h] [--json] {current,direct,block}",
+      "help_command": "watchdog split-tunnel default-action --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "default_action",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "current",
+            "direct",
+            "block"
+          ],
+          "description": "Default route action"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "add"
+      ],
+      "command": "watchdog split-tunnel add",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a split-tunnel rule",
+      "usage": "usage: watchdog split-tunnel add [-h] (--process-name PROCESS_NAME | --process-path PROCESS_PATH | --process-path-regex PROCESS_PATH_REGEX | --user USER | --user-id USER_ID) --action ACTION [--id ID] [--json]",
+      "help_command": "watchdog split-tunnel add --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--process-name",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Process executable name"
+        },
+        {
+          "name": "--process-path",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Exact process executable path"
+        },
+        {
+          "name": "--process-path-regex",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Regex matching a process executable path"
+        },
+        {
+          "name": "--user",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Unix username"
+        },
+        {
+          "name": "--user-id",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Unix numeric user ID"
+        },
+        {
+          "name": "--action",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Route action: current, direct, block, or group:<name>"
+        },
+        {
+          "name": "--id",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Rule ID; generated when omitted"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": [
+        {
+          "required": true,
+          "members": [
+            "--process-name",
+            "--process-path",
+            "--process-path-regex",
+            "--user",
+            "--user-id"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "remove"
+      ],
+      "command": "watchdog split-tunnel remove",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a split-tunnel rule",
+      "usage": "usage: watchdog split-tunnel remove [-h] [--json] rule_id",
+      "help_command": "watchdog split-tunnel remove --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "enable-rule"
+      ],
+      "command": "watchdog split-tunnel enable-rule",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Enable a single split-tunnel rule",
+      "usage": "usage: watchdog split-tunnel enable-rule [-h] [--json] rule_id",
+      "help_command": "watchdog split-tunnel enable-rule --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "disable-rule"
+      ],
+      "command": "watchdog split-tunnel disable-rule",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Disable a single split-tunnel rule",
+      "usage": "usage: watchdog split-tunnel disable-rule [-h] [--json] rule_id",
+      "help_command": "watchdog split-tunnel disable-rule --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "add-domain"
+      ],
+      "command": "watchdog split-tunnel add-domain",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Add a domain split-tunnel rule",
+      "usage": "usage: watchdog split-tunnel add-domain [-h] --action {direct,current,block} [--id ID] [--json] domain",
+      "help_command": "watchdog split-tunnel add-domain --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "domain",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Domain name, for example example.com"
+        },
+        {
+          "name": "--action",
+          "kind": "option",
+          "required": true,
+          "cardinality": "one",
+          "choices": [
+            "direct",
+            "current",
+            "block"
+          ],
+          "description": "Route action for this domain"
+        },
+        {
+          "name": "--id",
+          "kind": "option",
+          "required": false,
+          "cardinality": "one",
+          "choices": [],
+          "description": "Rule ID; generated when omitted"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "split-tunnel",
+        "remove-domain"
+      ],
+      "command": "watchdog split-tunnel remove-domain",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Remove a domain split-tunnel rule",
+      "usage": "usage: watchdog split-tunnel remove-domain [-h] [--json] rule_id",
+      "help_command": "watchdog split-tunnel remove-domain --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "rule_id",
+          "kind": "positional",
+          "required": true,
+          "cardinality": "one",
+          "choices": [],
+          "description": ""
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
         "app-policy"
       ],
       "command": "watchdog app-policy",
       "kind": "group",
       "source": "argparse",
-      "summary": "Manage minimal Linux app/process policy",
+      "summary": "Manage split-tunnel app/process policy",
       "usage": "usage: watchdog app-policy [-h] {status,enable,disable,mode,default-action,add,remove,enable-rule,disable-rule} ...",
       "help_command": "watchdog app-policy --help",
       "children": [
@@ -4620,7 +5061,7 @@
       "command": "watchdog app-policy status",
       "kind": "command",
       "source": "argparse",
-      "summary": "Show app policy",
+      "summary": "Show split-tunnel policy",
       "usage": "usage: watchdog app-policy status [-h] [--json]",
       "help_command": "watchdog app-policy status --help",
       "children": [],
@@ -4644,7 +5085,7 @@
       "command": "watchdog app-policy enable",
       "kind": "command",
       "source": "argparse",
-      "summary": "Enable app policy",
+      "summary": "Enable split-tunnel policy",
       "usage": "usage: watchdog app-policy enable [-h] [--json]",
       "help_command": "watchdog app-policy enable --help",
       "children": [],
@@ -4668,7 +5109,7 @@
       "command": "watchdog app-policy disable",
       "kind": "command",
       "source": "argparse",
-      "summary": "Disable app policy",
+      "summary": "Disable split-tunnel policy",
       "usage": "usage: watchdog app-policy disable [-h] [--json]",
       "help_command": "watchdog app-policy disable --help",
       "children": [],
@@ -4692,7 +5133,7 @@
       "command": "watchdog app-policy mode",
       "kind": "command",
       "source": "argparse",
-      "summary": "Set app policy mode",
+      "summary": "Set split-tunnel policy mode",
       "usage": "usage: watchdog app-policy mode [-h] [--json] {whitelist,blacklist}",
       "help_command": "watchdog app-policy mode --help",
       "children": [],
@@ -4727,7 +5168,7 @@
       "command": "watchdog app-policy default-action",
       "kind": "command",
       "source": "argparse",
-      "summary": "Set app policy default action",
+      "summary": "Set default split-tunnel route action",
       "usage": "usage: watchdog app-policy default-action [-h] [--json] {current,direct,block}",
       "help_command": "watchdog app-policy default-action --help",
       "children": [],
@@ -4763,7 +5204,7 @@
       "command": "watchdog app-policy add",
       "kind": "command",
       "source": "argparse",
-      "summary": "Add an app policy rule",
+      "summary": "Add a split-tunnel rule",
       "usage": "usage: watchdog app-policy add [-h] (--process-name PROCESS_NAME | --process-path PROCESS_PATH | --process-path-regex PROCESS_PATH_REGEX | --user USER | --user-id USER_ID) --action ACTION [--id ID] [--json]",
       "help_command": "watchdog app-policy add --help",
       "children": [],
@@ -4854,7 +5295,7 @@
       "command": "watchdog app-policy remove",
       "kind": "command",
       "source": "argparse",
-      "summary": "Remove an app policy rule",
+      "summary": "Remove a split-tunnel rule",
       "usage": "usage: watchdog app-policy remove [-h] [--json] rule_id",
       "help_command": "watchdog app-policy remove --help",
       "children": [],
@@ -4886,7 +5327,7 @@
       "command": "watchdog app-policy enable-rule",
       "kind": "command",
       "source": "argparse",
-      "summary": "Enable a single app policy rule",
+      "summary": "Enable a single split-tunnel rule",
       "usage": "usage: watchdog app-policy enable-rule [-h] [--json] rule_id",
       "help_command": "watchdog app-policy enable-rule --help",
       "children": [],
@@ -4918,7 +5359,7 @@
       "command": "watchdog app-policy disable-rule",
       "kind": "command",
       "source": "argparse",
-      "summary": "Disable a single app policy rule",
+      "summary": "Disable a single split-tunnel rule",
       "usage": "usage: watchdog app-policy disable-rule [-h] [--json] rule_id",
       "help_command": "watchdog app-policy disable-rule --help",
       "children": [],

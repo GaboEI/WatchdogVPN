@@ -131,6 +131,59 @@ class CliRulesCommandTests(unittest.TestCase):
         self.assertEqual(removed_data["group"]["rules"], [])
         self.assertTrue(removed_backup_exists)
 
+    def test_split_tunnel_add_and_remove_domain_uses_routing_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                [
+                    "split-tunnel",
+                    "add-domain",
+                    "Ejemplo.COM.",
+                    "--action",
+                    "direct",
+                    "--json",
+                ],
+                tmp,
+            )
+            listed = self.run_watchdog(["rules", "list", "--json"], tmp)
+            removed = self.run_watchdog(
+                [
+                    "split-tunnel",
+                    "remove-domain",
+                    json.loads(added.stdout)["added"]["id"],
+                    "--json",
+                ],
+                tmp,
+            )
+
+        added_data = json.loads(added.stdout)
+        listed_data = json.loads(listed.stdout)
+        removed_data = json.loads(removed.stdout)
+        self.assertEqual(added_data["added"]["action"], "direct")
+        self.assertEqual(added_data["added"]["conditions"], {"domain": ["ejemplo.com"]})
+        self.assertEqual(added_data["group"]["name"], "custom")
+        self.assertEqual(listed_data[0]["name"], "custom")
+        self.assertEqual(removed_data["group"]["rules"], [])
+
+    def test_split_tunnel_domain_current_maps_to_current_profile_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            added = self.run_watchdog(
+                [
+                    "split-tunnel",
+                    "add-domain",
+                    "example.com",
+                    "--action",
+                    "current",
+                    "--id",
+                    "example-current",
+                    "--json",
+                ],
+                tmp,
+            )
+
+        data = json.loads(added.stdout)
+        self.assertEqual(data["added"]["action"], "current_profile")
+        self.assertEqual(data["added"]["split_tunnel_action"], "current")
+
     def test_set_priority_persists_group(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.add_group(tmp, RuleGroup(name="custom", priority=100))

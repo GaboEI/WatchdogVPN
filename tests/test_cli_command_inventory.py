@@ -32,12 +32,12 @@ class CliCommandInventoryTests(unittest.TestCase):
         self.routes = self.inventory["routes"]
 
     def test_inventory_covers_every_current_route(self) -> None:
-        self.assertEqual(self.inventory["route_count"], 124)
-        self.assertEqual(self.inventory["command_route_count"], 123)
-        self.assertEqual(self.inventory["parser_route_count"], 116)
+        self.assertEqual(self.inventory["route_count"], 136)
+        self.assertEqual(self.inventory["command_route_count"], 135)
+        self.assertEqual(self.inventory["parser_route_count"], 128)
         self.assertEqual(self.inventory["passthrough_route_count"], 8)
-        self.assertEqual(self.inventory["group_route_count"], 18)
-        self.assertEqual(self.inventory["leaf_route_count"], 106)
+        self.assertEqual(self.inventory["group_route_count"], 19)
+        self.assertEqual(self.inventory["leaf_route_count"], 117)
         commands = [route["command"] for route in self.routes]
         self.assertEqual(len(commands), len(set(commands)))
 
@@ -273,6 +273,9 @@ class CliCommandInventoryTests(unittest.TestCase):
             "watchdog app-policy add --process-path-regex",
             "watchdog app-policy add --user-id",
             "watchdog app-policy disable-rule",
+            "watchdog split-tunnel",
+            "watchdog split-tunnel add --process-path-regex",
+            "watchdog split-tunnel disable-rule",
             "watchdog node-group add-provider",
             "watchdog node-group exclude",
             "watchdog node-group resilience",
