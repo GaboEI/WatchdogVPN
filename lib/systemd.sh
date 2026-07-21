@@ -191,21 +191,29 @@ enable_watchdogvpn_service_unless_hibernating() {
 KILL_SWITCH_NFT_TABLE="${KILL_SWITCH_NFT_TABLE:-watchdogvpn}"
 KILL_SWITCH_IPTABLES_CHAIN="${KILL_SWITCH_IPTABLES_CHAIN:-WATCHDOGVPN-OUTPUT}"
 
+_systemd_have_cmd() {
+  if declare -F have_cmd >/dev/null 2>&1; then
+    have_cmd "$1"
+    return $?
+  fi
+  command -v "$1" >/dev/null 2>&1
+}
+
 remove_kill_switch_rules() {
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] remove kill switch firewall rules (nftables table %s / iptables chain %s)\n' \
       "$KILL_SWITCH_NFT_TABLE" "$KILL_SWITCH_IPTABLES_CHAIN"
     return 0
   fi
-  if command -v nft >/dev/null 2>&1; then
+  if _systemd_have_cmd nft; then
     sudo nft delete table inet "$KILL_SWITCH_NFT_TABLE" >/dev/null 2>&1 || true
   fi
-  if command -v iptables >/dev/null 2>&1; then
+  if _systemd_have_cmd iptables; then
     sudo iptables -D OUTPUT -j "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
     sudo iptables -F "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
     sudo iptables -X "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
   fi
-  if command -v ip6tables >/dev/null 2>&1; then
+  if _systemd_have_cmd ip6tables; then
     sudo ip6tables -D OUTPUT -j "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
     sudo ip6tables -F "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true
     sudo ip6tables -X "$KILL_SWITCH_IPTABLES_CHAIN" >/dev/null 2>&1 || true

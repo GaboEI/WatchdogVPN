@@ -156,6 +156,7 @@ assert_contains "$ROOT_DIR/distros/arch.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE=
 for required_cmd in git ss systemd-run getent useradd usermod sysctl modinfo nmcli nft iptables ip6tables ping pgrep; do
   assert_contains "$ROOT_DIR/lib/packages.sh" "$required_cmd" "required command inventory must include $required_cmd"
 done
+assert_contains "$ROOT_DIR/lib/common.sh" 'WATCHDOGVPN_COMMAND_PATHS:-/usr/local/sbin:/usr/sbin:/sbin' "command detection must search standard sbin paths outside user PATH"
 assert_contains "$ROOT_DIR/lib/common.sh" 'IFS= read -r name </proc/1/comm' "systemd detection must not require procps before procps can be installed"
 assert_not_contains "$ROOT_DIR/install.sh" 'ps -p 1' "installer bootstrap must not require ps before package reconciliation"
 assert_contains "$ROOT_DIR/lib/packages.sh" '[[ ! -c /dev/net/tun ]]' "install/update dependency validation must fail closed without the running kernel TUN device"
@@ -210,6 +211,28 @@ grep -Fq 'packages=runtime-one nftables iputils procps' <<<"$dependency_reconcil
 }
 grep -Fq 'required runtime packages, commands and kernel TUN device available' <<<"$dependency_reconcile_output" || {
   printf 'FAIL: dependency validation must re-check commands after package installation\n' >&2
+  exit 1
+}
+
+sbin_lookup_output="$(cd "$ROOT_DIR" && tmp="$(mktemp -d)" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/packages.sh
+mkdir -p "$1/bin" "$1/sbin"
+for cmd in $(required_commands); do
+  printf "#!/usr/bin/env sh\nexit 0\n" >"$1/sbin/$cmd"
+  chmod 0755 "$1/sbin/$cmd"
+done
+PATH="$1/bin" WATCHDOGVPN_COMMAND_PATHS="$1/sbin" have_cmd nft
+PATH="$1/bin" WATCHDOGVPN_COMMAND_PATHS="$1/sbin" have_cmd useradd
+PATH="$1/bin" WATCHDOGVPN_COMMAND_PATHS="$1/sbin" have_cmd openvpn
+DISTRO_BASE_PACKAGES=(already-installed)
+install_package_set() { return 0; }
+PATH="$1/bin" WATCHDOGVPN_COMMAND_PATHS="$1/sbin" validate_required_commands
+' bash "$tmp"; rc=$?; rm -rf "$tmp"; exit "$rc" 2>&1)"
+grep -Fq 'required runtime packages, commands and kernel TUN device available' <<<"$sbin_lookup_output" || {
+  printf 'FAIL: dependency validation must find required commands in sbin paths outside the user PATH\n' >&2
+  printf '%s\n' "$sbin_lookup_output" >&2
   exit 1
 }
 

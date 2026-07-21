@@ -576,7 +576,7 @@ prepare_watchdogvpn_state_directory() {
     printf '[DRY-RUN] ask systemd to create StateDirectory=watchdogvpn\n'
     return 0
   fi
-  if ! command -v systemd-run >/dev/null 2>&1; then
+  if ! have_cmd systemd-run; then
     printf 'ERROR: systemd-run is required to prepare StateDirectory=watchdogvpn\n' >&2
     return 1
   fi

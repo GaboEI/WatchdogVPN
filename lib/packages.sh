@@ -106,7 +106,7 @@ validate_required_commands() {
 }
 
 validate_polkit_runtime_dependency() {
-  if command -v pkaction >/dev/null 2>&1; then
+  if have_cmd pkaction; then
     ok "polkit runtime available"
     return 0
   fi
@@ -120,7 +120,7 @@ validate_polkit_runtime_dependency() {
     printf '[DRY-RUN] verify pkaction after installing %s\n' "$DISTRO_POLKIT_PACKAGE"
     return 0
   fi
-  if ! command -v pkaction >/dev/null 2>&1; then
+  if ! have_cmd pkaction; then
     fail "polkit installation completed but pkaction is unavailable"
     return 1
   fi

@@ -27,6 +27,14 @@ _uninstall_watchdogvpn_unit_known() {
   [[ "$load_state" != "not-found" && -n "$load_state" ]]
 }
 
+_uninstall_have_cmd() {
+  if declare -F have_cmd >/dev/null 2>&1; then
+    have_cmd "$1"
+    return $?
+  fi
+  command -v "$1" >/dev/null 2>&1
+}
+
 stop_watchdogvpn_for_uninstall() {
   local main_pid socket_path="${WATCHDOGVPN_SOCKET_PATH:-/run/watchdogvpn/control.sock}"
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
@@ -47,7 +55,7 @@ stop_watchdogvpn_for_uninstall() {
 
 _uninstall_remove_iptables_chain() {
   local command="$1" chain="$2"
-  command -v "$command" >/dev/null 2>&1 || return 0
+  _uninstall_have_cmd "$command" || return 0
   sudo "$command" -S >/dev/null || return 1
   while sudo "$command" -C OUTPUT -j "$chain" >/dev/null 2>&1; do
     sudo "$command" -D OUTPUT -j "$chain" || return 1
@@ -64,7 +72,7 @@ remove_kill_switch_rules_strict() {
     printf '[DRY-RUN] strictly remove and verify WatchdogVPN kill-switch rules\n'
     return 0
   fi
-  if command -v nft >/dev/null 2>&1; then
+  if _uninstall_have_cmd nft; then
     sudo nft list tables inet >/dev/null || return 1
     if sudo nft list tables inet | grep -Fqx "table inet $KILL_SWITCH_NFT_TABLE"; then
       sudo nft delete table inet "$KILL_SWITCH_NFT_TABLE" || return 1

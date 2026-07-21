@@ -97,7 +97,23 @@ EOF
 }
 
 have_cmd() {
-  command -v "$1" >/dev/null 2>&1
+  local command_name="$1" candidate search_path
+  local search_paths="${WATCHDOGVPN_COMMAND_PATHS:-/usr/local/sbin:/usr/sbin:/sbin}"
+
+  command -v "$command_name" >/dev/null 2>&1 && return 0
+
+  # Some supported distributions keep administrative binaries out of an
+  # unprivileged user's PATH. Debian fresh installs, for example, expose
+  # logrotate, useradd, openvpn, sysctl, nft and iptables under /usr/sbin.
+  # Installer/doctor checks must validate system capability rather than the
+  # caller's interactive PATH shape.
+  IFS=: read -r -a search_path <<<"$search_paths"
+  for candidate in "${search_path[@]}"; do
+    candidate="${candidate%/}/$command_name"
+    [[ -x "$candidate" ]] && return 0
+  done
+
+  return 1
 }
 
 init_process_name() {
