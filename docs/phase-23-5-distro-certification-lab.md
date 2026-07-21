@@ -767,5 +767,110 @@ This answers the permanent final question affirmatively: CachyOS worked after
 a clean install and update because WatchdogVPN provisioned every mandatory
 supported dependency. No undeclared developer-installed component is credited;
 AmneziaWG is the sole guided external exception. The renewed Arch-family
-dependency, alternate-kernel and CachyOS provenance audit is closed. Task
-23.5.4 — Debian is again the next distro task and has not started.
+dependency, alternate-kernel and CachyOS provenance audit is closed. The
+following addendum supersedes the earlier "Debian not started" handoff state.
+
+## Task 23.5.4 — Debian certification closure (2026-07-21)
+
+Status: **CERTIFIED/CLOSED**. Debian 13.6 (`bento/debian-13`
+`202508.10.0`, kernel `6.12.95+deb13-amd64`) was certified in a fresh
+bridge-only VM named `wdvpn-debian-certification`, reachable by direct LAN SSH
+at `192.168.0.224`. The VM had exactly one bridged adapter on `enp4s0`, no
+NAT adapter, no forwarded SSH port and no shared folder. The protected local
+Arch/CachyOS host network stack was not used for VPN, DNS, route, firewall or
+interface mutation.
+
+The implementation and installed certification commit for the functional
+matrix was `0e82068` (`expose split tunnel cli`). GitHub Actions completed
+successfully for that commit. The later documentation-only closure commit does
+not change runtime behavior.
+
+The Debian dependency-provenance gate passed. Baseline removals and
+post-install/update checks proved that the installer/update path supplies the
+supported Debian dependency set through `apt`: NetworkManager/nmcli,
+logrotate, OpenVPN, nftables, iptables, Polkit/systemd integration and the
+other required runtime tools. Product-managed `sing-box` and `ck-client`
+remained under `/usr/local/bin`. AmneziaWG retained the explicit guided
+third-party trust-boundary exception; on this Debian kernel the native
+AmneziaWG module/tooling path was available and the userspace fallback was not
+needed.
+
+The private fixture/protocol gate imported all 12 manual profiles without
+printing secrets, endpoints, keys, provider URL or raw profile material. The
+external provider refresh imported 42 current nodes. A bounded provider matrix
+connected successfully, created the managed TUN/listeners, passed real egress
+on the normal TUN-captured path, local SOCKS `127.0.0.1:2080` and local HTTP
+proxy `127.0.0.1:2081`, rotated successfully, and passed post-rotation real
+egress. A later compact installed regression over `0e82068` reproduced the
+same provider/rotation result and ended clean.
+
+Protocol classification is honest, not "12 green":
+
+- HTTP is green on Debian: it connected truthfully, exposed TUN/SOCKS/HTTP
+  proxy runtime and passed real traffic through all three channels.
+- WireGuard plain ends in authoritative `connect_failed` with
+  `endpoint_censorship_or_network_interference_suspected`, then cleans up.
+  This matches the maintainer-confirmed ISP/provider block and is a formal
+  Plan-B row, not a green row.
+- Shadowsocks can create runtime during the attempt but the authoritative
+  daemon outcome rejects the session after egress health failure/interference
+  and returns to clean standby. This matches the confirmed blocked/no-egress
+  behavior and is a formal Plan-B row, not a green row.
+- Plain OpenVPN was tested both through WatchdogVPN and directly with
+  `/usr/sbin/openvpn`: the native OpenVPN process completed TLS, received
+  `PUSH_REPLY`, created a TUN interface and logged `Initialization Sequence
+  Completed`, but user traffic through the tunnel timed out. WatchdogVPN
+  correctly refused to report a successful connection and ended in
+  `connect_failed` after the egress health check, then cleaned up. This is a
+  no-egress compatibility limitation, not a product green or teardown bug.
+
+DNS/FakeIP passed on Debian. While connected, `watchdog dns apply --yes
+--json` under sudo returned rc 0, traffic remained reachable, and `watchdog
+dns reset --yes --json` returned rc 0. Earlier rc 70/rc 2 observations were
+excluded as harness errors: one apply was invoked while the local DNS runtime
+was intentionally absent in standby, and another command was malformed by
+shell quoting before reaching the product.
+
+Split tunneling received both a functional Debian validation and a user-facing
+CLI correction. The existing engine had been exposed only as the technical
+`app-policy` command. Commit `0e82068` added the visible
+`watchdog split-tunnel` interface while keeping `watchdog app-policy` as the
+backward-compatible technical name. Debian installed validation proved:
+
+- process/app policy `direct` matched the direct baseline exit path;
+- process/app policy `current` used the active WatchdogVPN path and produced a
+  distinct VPN exit;
+- process/app policy `block` denied traffic with the target IP resolved
+  explicitly, so the block was not a DNS-only false positive;
+- `watchdog split-tunnel add-domain ejemplo.com --action direct` created a
+  real routing rule in the evaluated `custom` group, and `watchdog rules
+  explain --domain ejemplo.com --json` returned `route_action=direct` with a
+  matched rule. The test rule was removed and the final state stayed clean.
+
+Panic sleep/wake passed according to its true design contract. It is a rescue
+button, not a kill-switch mode: `panic sleep` puts WatchdogVPN out of the way
+so a user who lost connectivity can recover Internet without uninstalling,
+start another VPN if necessary, and later resume WatchdogVPN. Debian observed
+the service disabled/inactive, hibernate marker present, WatchdogVPN firewall
+rules absent and direct Internet still reachable. That direct reachability is
+expected. `panic wake` removed the marker and restored the service. Final
+status returned to clean standby.
+
+The reboot gate passed disconnected over the final installed runtime: after
+`sudo reboot`, the VM returned by direct SSH, source checkout was `0e82068`,
+`watchdog status --json` reported standby with no TUN, proxy, failure or
+kill-switch, `watchdog doctor --json` returned `doctor_exit_code=0`, and a
+direct HTTPS probe returned HTTP 200.
+
+The destructive purge/reinstall gate passed earlier in the Debian session and
+was not repeated after the split-tunnel UX change because the later commit did
+not alter uninstall/install teardown semantics. The prior Debian purge removed
+product commands, runtime/config/state paths and firewall remnants; the
+reinstall/update path then restored the runtime and passed provider, rotation
+and DNS smoke. No known Debian teardown debt remains.
+
+The final Debian result is **certified for supported end-user operation** with
+formal non-green Plan-B/no-egress classifications for the externally blocked
+or limited compatibility protocols above. No resilient-profile failure was
+waived, no protocol was marked green without traffic, and no known HIGH/MEDIUM
+bug or accepted technical debt remains for Task 23.5.4.
