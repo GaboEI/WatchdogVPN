@@ -92,6 +92,27 @@ for redhat_id in centos rocky almalinux; do
   assert_eq "redhat" "$DISTRO_FAMILY" "$redhat_id family"
 done
 
+for suse_id in opensuse opensuse-leap opensuse-tumbleweed; do
+  write_os_release "$suse_id" \
+    "ID=$suse_id" \
+    'ID_LIKE="suse opensuse"' \
+    "PRETTY_NAME=\"$suse_id\""
+  detect_distro
+  assert_eq "1" "$DISTRO_SUPPORTED" "$suse_id supported"
+  assert_eq "0" "$DISTRO_FUTURE" "$suse_id not future scope"
+  assert_eq "opensuse" "$DISTRO_ADAPTER_ID" "$suse_id adapter"
+  assert_eq "suse" "$DISTRO_FAMILY" "$suse_id family"
+  assert_eq "$ROOT_DIR/distros/opensuse.sh" "$(distro_adapter_path "$ROOT_DIR")" "$suse_id adapter path"
+done
+
+write_os_release suse_like_unknown \
+  'ID=example-suse' \
+  'ID_LIKE="suse opensuse"' \
+  'PRETTY_NAME="Example SUSE-like"'
+detect_distro
+assert_eq "0" "$DISTRO_SUPPORTED" "unknown suse-like unsupported"
+assert_eq "example-suse" "$DISTRO_ADAPTER_ID" "unknown suse-like adapter remains explicit id"
+
 write_os_release unknown \
   'ID=exampleos' \
   'PRETTY_NAME="ExampleOS"'

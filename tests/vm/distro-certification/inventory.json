@@ -48,7 +48,7 @@
       "id": "fedora",
       "phase": "23.6",
       "adapter": "fedora",
-      "support_state": "blocked_selinux_firewalld_lifecycle_and_certification",
+      "support_state": "adapter_implemented_certification_pending",
       "identity": {"id": "fedora"},
       "kernel_policy": "distribution_default_at_certification_time",
       "image_requirement": "official Fedora image or maintainer-approved Fedora Vagrant box with checksum-pinned provenance; Cloud 44 Vagrant VirtualBox beta media is not enough by itself"
@@ -57,7 +57,7 @@
       "id": "opensuse",
       "phase": "23.6",
       "adapter": "opensuse",
-      "support_state": "blocked_adapter_and_apparmor_audit",
+      "support_state": "adapter_implemented_certification_pending",
       "identity": {"ids_include": ["opensuse-leap", "opensuse-tumbleweed"], "id_like_contains": "suse"},
       "kernel_policy": "distribution_default_at_certification_time",
       "image_requirement": "official openSUSE Leap or Tumbleweed Vagrant box; Leap 15.6 currently has the strongest bridge-SSH baseline evidence"

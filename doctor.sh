@@ -311,6 +311,32 @@ if [[ "${DISTRO_FAMILY:-}" == "redhat" ]]; then
   fi
 fi
 
+if [[ "${DISTRO_FAMILY:-}" == "suse" ]]; then
+  if have_cmd aa-status; then
+    if aa-status --enabled >/dev/null 2>&1; then
+      info "AppArmor state: enabled"
+    else
+      info "AppArmor state: disabled or unavailable"
+    fi
+  else
+    mark_warn "AppArmor state unavailable: aa-status missing"
+  fi
+  if systemd_unit_known apparmor.service; then
+    apparmor_state="$(systemd_active_state apparmor.service)"
+    apparmor_enabled="$(systemd_enabled_state apparmor.service)"
+    info "apparmor: active=${apparmor_state:-unknown} enabled=${apparmor_enabled:-unknown}"
+  else
+    mark_warn "apparmor service not found"
+  fi
+  if systemd_unit_known firewalld.service; then
+    firewall_state="$(systemd_active_state firewalld.service)"
+    firewall_enabled="$(systemd_enabled_state firewalld.service)"
+    info "firewalld: active=${firewall_state:-unknown} enabled=${firewall_enabled:-unknown}"
+  else
+    mark_warn "firewalld service not found"
+  fi
+fi
+
 section "Time and NTP"
 time_diag="$(PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 -m diagnostics.time_check 2>/dev/null || true)"
 time_status="$(printf '%s\n' "$time_diag" | read_key_value STATUS)"

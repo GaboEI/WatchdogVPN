@@ -27,6 +27,8 @@ atomic nftables backend, legacy iptables cleanup tooling, OpenVPN, ping,
 process recovery, NetworkManager, Polkit and notification/runtime utilities;
 install and update reconcile it unconditionally. `fedora.sh` is the Fedora and
 Red Hat-family `dnf` adapter used by Fedora, RHEL, CentOS, RockyLinux and
-AlmaLinux detection. Adapter support means WatchdogVPN owns package
-reconciliation for those IDs; it is not a certification claim until the
-installed SELinux/firewalld lifecycle and real-traffic evidence tasks close.
+AlmaLinux detection. `opensuse.sh` is the openSUSE `zypper` adapter used by
+Leap, Tumbleweed and the explicit `ID=opensuse` spelling. Adapter support means
+WatchdogVPN owns package reconciliation for those IDs; it is not a
+certification claim until the installed SELinux/AppArmor/firewalld lifecycle
+and real-traffic evidence tasks close.

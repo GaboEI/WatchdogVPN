@@ -45,4 +45,4 @@ only in installation and dependency detection.
 - `update.sh`: safe update path
 - `uninstall.sh`: careful removal
 - `lib/`: shared installer functions
-- `distros/`: Ubuntu, Debian and Arch adapters
+- `distros/`: Ubuntu, Debian, Arch, Fedora/Red Hat-family and openSUSE adapters

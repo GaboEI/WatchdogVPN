@@ -23,6 +23,9 @@ package_hint_header() {
     fedora|rhel|centos|rocky|almalinux)
       printf 'sudo dnf install '
       ;;
+    opensuse|opensuse-leap|opensuse-tumbleweed)
+      printf 'sudo zypper --non-interactive install --no-recommends '
+      ;;
     *)
       printf 'Install packages for your distribution: '
       ;;
@@ -141,6 +144,9 @@ install_package_set() {
       ;;
     dnf)
       run_step sudo dnf install -y "${packages[@]}"
+      ;;
+    zypper)
+      run_step sudo zypper --non-interactive install --no-recommends "${packages[@]}"
       ;;
     *)
       warn "unsupported package manager: ${DISTRO_PACKAGE_MANAGER:-unknown}"

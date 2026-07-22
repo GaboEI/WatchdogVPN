@@ -4,11 +4,14 @@ This document defines how the product scripts should behave.
 
 ## Principles
 
-- One repository supports Ubuntu, Debian, Arch Linux and the Fedora/Red
-  Hat-family adapter path.
+- One repository supports Ubuntu, Debian, Arch Linux, the Fedora/Red
+  Hat-family adapter path and the openSUSE adapter path.
 - Fedora/Red Hat-family support means installer/update package reconciliation
   is implemented through `dnf`; it is not a certification claim until the
   installed SELinux/firewalld lifecycle and real-traffic evidence tasks close.
+- openSUSE support means installer/update package reconciliation is implemented
+  through `zypper`; it is not a certification claim until the installed
+  AppArmor/firewalld lifecycle and real-traffic evidence tasks close.
 - Runtime behavior should be shared across distros.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.

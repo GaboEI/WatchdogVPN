@@ -177,6 +177,12 @@ for package in git coreutils findutils grep gawk sed glibc-common shadow-utils s
 done
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PACKAGE_MANAGER="dnf"' "Fedora adapter must use dnf"
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "Fedora adapter must map cryptography"
+for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps openvpn NetworkManager polkit firewalld systemd-resolved apparmor-utils; do
+  assert_contains "$ROOT_DIR/distros/opensuse.sh" "$package" "openSUSE adapter must map $package"
+done
+assert_contains "$ROOT_DIR/distros/opensuse.sh" 'DISTRO_PACKAGE_MANAGER="zypper"' "openSUSE adapter must use zypper"
+assert_contains "$ROOT_DIR/distros/opensuse.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "openSUSE adapter must map cryptography"
+assert_contains "$ROOT_DIR/lib/packages.sh" 'sudo zypper --non-interactive install --no-recommends ' "openSUSE package hint must match zypper install behavior"
 
 dnf_output="$(cd "$ROOT_DIR" && bash -c '
 set -euo pipefail
@@ -188,6 +194,19 @@ install_package_set nftables iputils
 ')"
 grep -Fqx 'sudo dnf install -y nftables iputils' <<<"$dnf_output" || {
   printf 'FAIL: Fedora package adapter must use non-interactive dnf install\n' >&2
+  exit 1
+}
+
+zypper_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/packages.sh
+run_step() { printf "%s\n" "$*"; }
+DISTRO_PACKAGE_MANAGER=zypper
+install_package_set nftables iputils
+')"
+grep -Fqx 'sudo zypper --non-interactive install --no-recommends nftables iputils' <<<"$zypper_output" || {
+  printf 'FAIL: openSUSE package adapter must use non-interactive zypper install\n' >&2
   exit 1
 }
 

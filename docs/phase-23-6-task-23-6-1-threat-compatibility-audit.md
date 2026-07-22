@@ -174,17 +174,19 @@ maintainer-provided Red Hat Developer/subscription path.
 
 ## Product Gaps Before Implementation
 
-Task 23.6.2 update: the Red Hat-family detector and `dnf` adapter are now
-implemented after this audit. The bullets below remain the Task 23.6.1
-pre-implementation findings that drove that work; they are not a claim that
-those gaps remain open after Task 23.6.2.
+Task 23.6.2/23.6.3 update: the Red Hat-family detector/`dnf` adapter and
+openSUSE detector/`zypper` adapter are now implemented after this audit. The
+bullets below remain the Task 23.6.1 pre-implementation findings that drove
+that work; they are not a claim that those gaps remain open after Task 23.6.3.
 
-- `lib/distro.sh` has future Red Hat-family handling for Fedora/RHEL/CentOS/
-  Rocky/AlmaLinux, but openSUSE currently falls through to generic unsupported.
-- `distros/fedora.sh` exists as a future `dnf`/RPM package foundation, but the
-  detector deliberately keeps the family unsupported.
-- There is no `distros/opensuse.sh`.
-- `lib/packages.sh` has no `zypper` install branch.
+- Superseded by Task 23.6.2/23.6.3: `lib/distro.sh` had future Red
+  Hat-family handling for Fedora/RHEL/CentOS/Rocky/AlmaLinux, while openSUSE
+  fell through to generic unsupported.
+- Superseded by Task 23.6.2: `distros/fedora.sh` existed as a future
+  `dnf`/RPM package foundation, but the detector deliberately kept the family
+  unsupported.
+- Superseded by Task 23.6.3: there was no `distros/opensuse.sh`.
+- Superseded by Task 23.6.3: `lib/packages.sh` had no `zypper` install branch.
 - Red Hat-family detection tests cover Fedora and RHEL, but should also pin
   CentOS, RockyLinux and AlmaLinux behavior before support work starts.
 - openSUSE detection tests should pin both `ID=opensuse-leap` and
@@ -245,8 +247,9 @@ The next support-code tasks must treat these audit findings as gates:
 
 ## Next Gate
 
-Task 23.6.2 now owns the Fedora/Red Hat-family implementation changes derived
-from this audit. Fedora 44, AlmaLinux 9 and RockyLinux 9 baselines remain the
+Task 23.6.2 owns the Fedora/Red Hat-family implementation changes derived from
+this audit, and Task 23.6.3 owns the openSUSE implementation changes. Fedora
+44, AlmaLinux 9, RockyLinux 9 and openSUSE Leap 15.6 baselines remain the
 controls for certification planning, with the explicit caveat that Fedora
 SSH/firewalld access was manually enabled for audit access before baseline
 capture. Tumbleweed remains optional unless the maintainer chooses it over Leap

@@ -25,10 +25,12 @@ intentionally queued for Phase 23.6. Task 23.6.2 implements the Fedora/Red
 Hat-family package and `dnf` adapter path for Fedora, RHEL, CentOS, RockyLinux
 and AlmaLinux, but that is not a certification green: SELinux/firewalld,
 installed lifecycle, real runtime, real traffic and teardown evidence remain
-pending. openSUSE has no adapter or detector branch; the Debian/Ubuntu
-`ID_LIKE` fallback has not been implemented. A VM for one of those systems is
-useful only as future-lab preparation until its remaining adapter/threat gates
-close.
+pending. Task 23.6.3 implements the openSUSE package and `zypper` adapter path
+for explicit openSUSE IDs, but that likewise is not a certification green:
+AppArmor/firewalld, installed lifecycle, real runtime, real traffic and teardown
+evidence remain pending. The Debian/Ubuntu `ID_LIKE` fallback has not been
+implemented. A VM for one of those systems is useful only as future-lab
+preparation until its remaining adapter/threat gates close.
 
 Task 23.6.1 audit notes live in
 `docs/phase-23-6-task-23-6-1-threat-compatibility-audit.md`. That task is

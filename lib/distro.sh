@@ -31,6 +31,11 @@ detect_distro() {
       DISTRO_ADAPTER_ID="fedora"
       DISTRO_FAMILY="redhat"
       ;;
+    opensuse|opensuse-leap|opensuse-tumbleweed)
+      DISTRO_SUPPORTED=1
+      DISTRO_ADAPTER_ID="opensuse"
+      DISTRO_FAMILY="suse"
+      ;;
     *)
       case " $DISTRO_ID_LIKE " in
         *" arch "*)
