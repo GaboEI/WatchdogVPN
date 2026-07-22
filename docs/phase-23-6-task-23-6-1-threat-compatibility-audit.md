@@ -1,13 +1,20 @@
 # Phase 23.6 Task 23.6.1 Threat/Compatibility Audit
 
-Status: **IN PROGRESS**
+Status: **CLOSED**
 
-Baseline commit: `7441701`
+Started from baseline commit: `7441701`
+Closure commit: repository commit that records this closure entry
 
 Task 23.6.1 covers Fedora, the wider Red Hat/RHEL-compatible family, and
 openSUSE before any new support is claimed. This is an audit and lab-selection
 task only: a VM boot, package-manager probe, or unit dry run is not a distro
 certification green.
+
+Closure decision: Task 23.6.1 is closed as a threat/compatibility audit. It
+does not certify Fedora, RHEL, AlmaLinux, RockyLinux or openSUSE support.
+Support implementation starts in Task 23.6.2 and Task 23.6.3, and later
+certification tasks must still prove install/update provenance, real runtime,
+real traffic, teardown and doctor state on their selected targets.
 
 ## Evidence
 
@@ -233,9 +240,9 @@ The next support-code tasks must treat these audit findings as gates:
 
 ## Next Gate
 
-Task 23.6.1 has enough installed Fedora/openSUSE/Red Hat-family baseline
-evidence to proceed to a closure review. That review must decide whether the
-manually SSH-prepared Fedora baseline is sufficient for the audit, or whether a
-second pristine console-captured Fedora baseline is required before Task 23.6.2.
-Tumbleweed remains optional unless the maintainer chooses it over Leap for
-openSUSE certification.
+Next task: **Task 23.6.2 — `distros/fedora.sh` implementation**. Fedora 44,
+AlmaLinux 9 and RockyLinux 9 baselines are sufficient to design and test the
+Red Hat-family adapter gates, with the explicit caveat that Fedora SSH/firewalld
+access was manually enabled for audit access before baseline capture. Tumbleweed
+remains optional unless the maintainer chooses it over Leap for openSUSE
+certification.

@@ -30,9 +30,9 @@ those systems is useful only as future-lab preparation until its remaining
 adapter/threat gates close.
 
 Task 23.6.1 audit notes live in
-`docs/phase-23-6-task-23-6-1-threat-compatibility-audit.md`. That file records
-the first Red Hat-family/openSUSE Vagrant lab findings and does not certify any
-new distro.
+`docs/phase-23-6-task-23-6-1-threat-compatibility-audit.md`. That task is
+closed as an audit-only baseline/gate record for Fedora, Red Hat-family
+controls and openSUSE. It does not certify any new distro.
 
 This lab does not promise support for every Linux distribution or arbitrary
 custom kernels. Certification records every distro release/kernel pair
