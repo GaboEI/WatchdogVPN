@@ -23,6 +23,7 @@ Current evidence files:
 - `almalinux9_baseline_20260722T0900Z.log`
 - `rockylinux9_baseline_20260722T0901Z.log`
 - `bridge_ssh_preflight_update_20260722T0902Z.log`
+- `fedora_workstation44_iso_vm_provenance_20260722T0920Z.log`
 - `redhat_opensuse_vagrant_lab_20260722T084044Z.log`
 
 ## Vagrant Lab Findings
@@ -54,8 +55,19 @@ The repeatable preflight for a usable VM baseline is:
 Fedora official Vagrant Cloud names such as `fedora/44-cloud-base` were not
 available through `vagrant cloud box show` during discovery. Fedora's official
 Cloud download page currently lists Fedora Cloud 44 Vagrant VirtualBox media as
-beta, so the Fedora certification image still needs an explicitly pinned,
-checksum-verified source before Task 23.6.5.
+beta, so the Fedora Vagrant path remains unresolved for Task 23.6.5.
+
+Fedora Workstation 44 ISO provenance is now pinned separately from the Vagrant
+lab. The official Workstation download page resolves to
+`Fedora-Workstation-Live-44-1.7.x86_64.iso`; the official checksum file
+`Fedora-Workstation-44-1.7-x86_64-CHECKSUM` verifies the ISO with SHA256
+`1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf`. A
+separate graphical VirtualBox VM named `Fedora Workstation 44` exists on
+`ubuntu-host` with EFI, 2 CPU, 6144 MB RAM, a 64 GB VDI, the verified ISO
+mounted, and `nic1=bridged` on `enp4s0` with `nic2=none`. VirtualBox 7.0.16
+reports `Unattended installation supported = no` for this Live ISO, so Fedora
+still needs an interactive install or another checksum-pinned automation route
+before it can produce an internal installed baseline.
 
 Actual RHEL should not be treated as a free automatic VM target. Red Hat
 Developer access can provide RHEL images, but it requires a Red Hat account and
@@ -148,6 +160,37 @@ maintainer-provided Red Hat Developer/subscription path.
   interaction, and the real `systemd/watchdogvpn.service` sandbox.
 - Lowering SELinux/AppArmor/firewalld to get a green is not acceptable.
 
+## Implementation Gates For Task 23.6.2 and Task 23.6.3
+
+The next support-code tasks must treat these audit findings as gates:
+
+- Red Hat-family detection must keep Fedora, RHEL, CentOS, RockyLinux and
+  AlmaLinux unsupported until the adapter, installer, update, doctor and
+  cleanup paths are all implemented and tested. Unit tests should pin each ID
+  explicitly.
+- Fedora/RHEL-family package installation must use WatchdogVPN-managed `dnf`
+  paths for every required command. Current EL9 control baselines prove `git`,
+  `openvpn`, and `resolvectl` cannot be assumed present; AlmaLinux additionally
+  proves `nft`, `iptables`, `ip6tables` and `firewall-cmd` cannot be assumed
+  present.
+- The Fedora/RHEL-family adapter must not disable SELinux or firewalld. It must
+  report SELinux enforcing state, firewalld active/inactive state, and the
+  selected firewall backend clearly through doctor/support evidence.
+- Runtime tests on Red Hat-family systems must include one case with firewalld
+  inactive/missing tooling and one case with firewalld active and nft/iptables
+  frontends present. AlmaLinux 9 and RockyLinux 9 are suitable controls for
+  those two postures.
+- openSUSE detection must handle `ID=opensuse-leap` and
+  `ID=opensuse-tumbleweed` explicitly, including `ID_LIKE="suse opensuse"`.
+- openSUSE package installation must add a real `zypper` path in
+  `lib/packages.sh`; installing required packages manually before
+  WatchdogVPN runs is not valid evidence.
+- openSUSE doctor/support evidence must record AppArmor state when tools are
+  available and must distinguish image-default absence of firewalld/AppArmor
+  tooling from WatchdogVPN-managed installation.
+- The real `systemd/watchdogvpn.service` sandbox must be exercised on each new
+  family before certification. A dependency-only pass is not enough.
+
 ## Authoritative Source Notes
 
 - Fedora Developer documentation confirms official Fedora Vagrant boxes exist,
@@ -163,8 +206,7 @@ maintainer-provided Red Hat Developer/subscription path.
 
 ## Next Gate
 
-Task 23.6.1 should not close until Fedora image selection is checksum-pinned or
-explicitly deferred, and until the captured openSUSE and Red Hat-family control
-baselines have been converted into concrete implementation gates for Task
-23.6.2 and Task 23.6.3. Tumbleweed remains optional unless the maintainer
-chooses it over Leap for openSUSE certification.
+Task 23.6.1 should not close until the Fedora Workstation VM is installed or an
+equivalent checksum-pinned Fedora automation route produces an internal
+installed baseline. Tumbleweed remains optional unless the maintainer chooses it
+over Leap for openSUSE certification.
