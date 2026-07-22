@@ -18,7 +18,7 @@ claims to support:
 | Arch Linux | `arch` | 23.5 | **CERTIFIED / CLOSED** — default-kernel and packaged-LTS evidence complete; 9 functional rows + the 3 individually authorized Plan-B rows, with 5/5 resilient green |
 | CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CERTIFIED / CLOSED** — clean install/update provenance and full purge complete; 9 functional rows + the same 3 individually authorized Plan-B rows, with 5/5 resilient green |
 | Debian | `debian` | 23.5 | **CERTIFIED / CLOSED** — Debian 13.6 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
-| Ubuntu | `ubuntu` | 23.5 | **CERTIFIED / CLOSED** - Ubuntu 24.04.4 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
+| Ubuntu | `ubuntu` | 23.5 | **CERTIFIED / CLOSED** — Ubuntu 24.04.4 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 
 Fedora/Red Hat-family systems, openSUSE, and a Debian/Ubuntu derivative are
 intentionally queued for Phase 23.6. Fedora now has a package/`dnf` foundation
@@ -977,3 +977,57 @@ formal non-green Plan-B/no-egress classifications only for the three externally
 blocked or limited compatibility protocols above. No resilient-profile failure
 was waived, no protocol was marked green without real traffic, and no known
 HIGH/MEDIUM bug or accepted technical debt remains for Task 23.5.5.
+
+## Task 23.5.6 - Phase 23.5 audit closure (2026-07-22)
+
+Status: **CERTIFIED/CLOSED**. Task 23.5.6 audited the complete Phase 23.5
+certification record across Arch Linux, CachyOS, Debian and Ubuntu after the
+Ubuntu closure commit `935cd8a`. The audit was documentation/read-only with
+respect to installed runtime state: the protected local Arch/CachyOS host was
+not used for VPN, DNS, route, firewall, interface or network-service mutation.
+
+The audited authority set was this repository document, the external Master
+Plan, the project memory directory and the handoff file. The repository,
+`origin/main`, `ubuntu-host`, CachyOS checkout and Ubuntu certification VM
+checkout were verified at `935cd8a` before this closure documentation was
+written. `wdvpn-ubuntu-certification` and `wdvpn-debian-certification` were
+verified as bridge-only VirtualBox machines on `enp4s0` with no NAT or
+secondary adapters; Debian remained powered off and Ubuntu was inspected over
+direct bridged SSH without starting a graphical session.
+
+The final Phase 23.5 distro disposition is consistent across the certification
+record:
+
+- Arch Linux is certified/closed for the default kernel and packaged LTS
+  evidence path.
+- CachyOS is certified/closed through the `ID_LIKE=arch` adapter path.
+- Debian 13.6 is certified/closed on a fresh bridge-only VM.
+- Ubuntu 24.04.4 LTS is certified/closed on a fresh bridge-only VM.
+
+No distro is recorded as "12 green". The honest result remains 9 functional
+rows plus 3 formal non-green compatibility rows for the externally blocked or
+limited WireGuard plain, Shadowsocks standard and OpenVPN plain cases, with
+5/5 resilient rows green on every certified distro. Plan-B/no-egress
+classification is not product success and is not used for any resilient
+profile.
+
+The dependency-provenance rule remains closed: supported dependencies credited
+to certification came from WatchdogVPN `install.sh`, `update.sh` or another
+explicitly documented product route. AmneziaWG remains the guided external
+trust-boundary exception and is not credited as a normal silent dependency.
+Known harness-only events, including Ubuntu's wrong-user `sudo ./install.sh`
+run and SSH key recovery, are documented as excluded from product credit.
+
+Private evidence permissions were rechecked for the Ubuntu evidence tree and
+reported zero violations: directories 0700 and files 0600. The prior Arch,
+CachyOS and Debian closure entries remain the accepted evidence records for
+those tasks. The Ubuntu final installed state was verified as standby/off, kill
+switch inactive, no TUN, only `eth0`, default policy rules, no unexpected
+product listeners and doctor `FAIL=0`.
+
+The audit found one real handoff contradiction outside the repository: the
+CachyOS section still named `c73b001` as its final repo state after the project
+had already advanced and synced to `935cd8a`. That stale line was corrected in
+the private handoff. No repository runtime bug, unresolved HIGH/MEDIUM finding,
+known technical debt or evidence gap was found during Task 23.5.6. Phase 23.5
+is closed; Phase 23.6 must still start only after explicit maintainer approval.
