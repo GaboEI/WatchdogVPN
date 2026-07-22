@@ -20,12 +20,15 @@ claims to support:
 | Debian | `debian` | 23.5 | **CERTIFIED / CLOSED** — Debian 13.6 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 | Ubuntu | `ubuntu` | 23.5 | **CERTIFIED / CLOSED** — Ubuntu 24.04.4 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 
-Fedora/Red Hat-family systems, openSUSE, and a Debian/Ubuntu derivative are
-intentionally queued for Phase 23.6. Task 23.6.2 implements the Fedora/Red
-Hat-family package and `dnf` adapter path for Fedora, RHEL, CentOS, RockyLinux
-and AlmaLinux, but that is not a certification green: SELinux/firewalld,
-installed lifecycle, real runtime, real traffic and teardown evidence remain
-pending. Task 23.6.3 implements the openSUSE package and `zypper` adapter path
+openSUSE and a Debian/Ubuntu derivative are intentionally queued for later
+Phase 23.6 tasks. **Fedora itself is now field-certified (Task 23.6.5, closure
+section below): bridge-only, SELinux enforcing, 9 functional rows plus 3 formal
+Plan-B rows with 5/5 resilient green, real traffic, clean teardown.** Task
+23.6.2 implemented the Fedora/Red Hat-family `dnf` adapter path shared by
+Fedora, RHEL, CentOS, RockyLinux and AlmaLinux; that certification now holds for
+Fedora, but the RHEL/CentOS/Rocky/Alma control targets remain uncertified (they
+were never field-tested), so the shared adapter's certification is partial.
+Task 23.6.3 implements the openSUSE package and `zypper` adapter path
 for explicit openSUSE IDs, but that likewise is not a certification green:
 AppArmor/firewalld, installed lifecycle, real runtime, real traffic and teardown
 evidence remain pending. The Debian/Ubuntu `ID_LIKE` fallback is implemented in
@@ -1043,3 +1046,143 @@ had already advanced and synced to `935cd8a`. That stale line was corrected in
 the private handoff. No repository runtime bug, unresolved HIGH/MEDIUM finding,
 known technical debt or evidence gap was found during Task 23.5.6. Phase 23.5
 is closed; Phase 23.6 must still start only after explicit maintainer approval.
+
+## Task 23.6.5 - Fedora field certification closure (2026-07-22)
+
+Status: **CERTIFIED/CLOSED**. Fedora Workstation 44 (`ID=fedora`,
+`VERSION_ID=44`, kernel `6.19.10-300.fc44.x86_64`, **SELinux enforcing**,
+firewalld and systemd-resolved active) was certified in the bridge-only
+VirtualBox VM `Fedora Workstation 44` on `ubuntu-host`, single bridged adapter
+on `enp4s0`, no NAT and no secondary adapter, guest IP `192.168.0.151`. The
+protected Arch host network stack was not used for VPN/DNS/route/firewall/
+interface mutation. The functional matrix ran on installed source `3bf0276`,
+which includes the two product fixes found during this task (`4f930da`,
+`3bf0276`); CI passed for both.
+
+Dependency-provenance gate: Fedora Workstation ships almost the entire required
+runtime set, so provenance was proven by deliberate removal and restore. The
+only base package missing on the stock image was `python3-cryptography`, which
+`install.sh` provided. Nine required packages (`openvpn`, `nftables`,
+`iptables-nft`, `firewalld`, `logrotate`, `procps-ng`, `iputils`, `bind-utils`,
+`python3-cryptography`) were removed and restored: after removal the required
+commands `nft`/`iptables`/`ip6tables`/`openvpn`/`ping`/`pgrep` and the
+cryptography module were absent; `update.sh --yes` restored them and doctor
+returned `FAIL=0`. `bind-utils` (`dig`) was correctly not reclaimed by
+install/update - it is a historical auxiliary declaration with no current
+runtime consumer, restored to the machine baseline manually. Product-managed
+`sing-box` and `ck-client` install under `/usr/local/bin`. Accepted limitation
+(maintainer sign-off): `libnotify`, `polkit` and `NetworkManager` cannot be
+removed on Fedora Workstation because gnome-shell/gnome-settings-daemon
+hard-depend on them; they are stock Workstation packages and declared in
+`distros/fedora.sh`, installed by the same proven `dnf` path, and no manual
+out-of-band install of them was performed.
+
+Protocol matrix - honest disposition, the same as Arch/CachyOS/Debian/Ubuntu:
+**9 functional rows plus 3 formal Plan-B rows, 5/5 resilient green**, never
+"12 green".
+
+- Resilient (all five passed truthful connection plus real TUN, local SOCKS
+  (`127.0.0.1:2080`) and local HTTP-proxy (`127.0.0.1:2081`) egress to the
+  required censorship-relevant destinations, then clean disconnect): VLESS,
+  Trojan, Hysteria2, OpenVPN+Cloak and AmneziaWG.
+- Compatibility with useful real traffic: VMess, TUIC, SOCKS and HTTP. HTTP
+  reproduced an Instagram-only timeout that also occurred against the same
+  upstream HTTP proxy with WatchdogVPN disconnected, so it is an upstream
+  limitation, not a product failure.
+- Plan-B/no-egress (not green): standard WireGuard ended in authoritative
+  `connect_failed` matching the maintainer-confirmed ISP block; standard
+  Shadowsocks raised runtime but the daemon rejected it after egress health
+  failure and returned to clean standby; plain OpenVPN raised its native
+  process and a TUN interface (transport/TLS/TUN confirmed, so not a bug) but
+  produced no egress and the daemon rejected it fail-closed. None is a false
+  green.
+
+AmneziaWG required two real product fixes and one operational discovery:
+
+1. **MTU black-hole fix (`4f930da`).** The AmneziaWG driver fell back to plain
+   WireGuard's 1420 inner MTU when a profile pinned none. AmneziaWG's
+   obfuscation overhead makes 1420 sit at the path black-hole boundary over
+   real transports such as Cloudflare WARP: small requests pass while large
+   TLS transfers intermittently hang. The driver now defaults to 1280 (IPv6
+   minimum MTU), strictly safer than 1420 and cannot black-hole where 1420
+   worked, so it only makes AmneziaWG more reliable on every distro. Regression
+   test added.
+2. **Fedora AmneziaWG guided-setup commands (`3bf0276`).** `distros/fedora.sh`
+   carried no `DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS`, so importing an AmneziaWG
+   profile printed "No prevalidated command list is available for this distro".
+   Fedora has no official AmneziaWG package (the upstream copr ships only
+   EPEL/RHEL), so the guided trust-boundary setup builds the userspace stack
+   from Amnezia's official source - `amneziawg-tools` plus `amneziawg-go`. The
+   userspace path is preferred over the DKMS kernel module because it needs no
+   kernel headers and is not blocked by Secure Boot module signing while
+   carrying identical real traffic. The guided flow was validated end to end:
+   removing the backend and running only the codified commands installed
+   `awg`/`awg-quick`/`amneziawg-go`, WatchdogVPN detected the backend, and the
+   profile connected with real 3-path egress.
+3. **Shared-profile contention (operational, not a product defect).** Early
+   AmneziaWG runs were intermittent because the same AmneziaWG profile/key was
+   active on several devices at once (the maintainer's iPhone, Arch host and
+   native Amnezia app, plus the certification VM), and AmneziaWG/WireGuard bind
+   one peer key to a single endpoint at a time, so the devices repeatedly stole
+   the tunnel from each other; the assistant's own repeated test connections
+   amplified it. With a fresh, dedicated, never-used profile (sourced from the
+   CachyOS Amnezia export) the AmneziaWG row was fully green on the first
+   contained run over both the kernel module and the userspace backend: 9/9
+   3-path egress, VPN exit confirmed by three reflectors with no leak, and a
+   complete 1 GB download at ~10 MB/s.
+
+Provider lifecycle passed: the subscription imported 42 nodes, a node connected
+with real 3-path egress, and `watchdog rotate --force` rotated to a different
+node with real egress after rotation. (Non-forced rotation additionally
+requires the app-level `rotation.enabled` config, a deliberate second gate
+above per-provider rotation.)
+
+DNS apply/reset passed through systemd-resolved: `watchdog dns apply` correctly
+refused without privilege (`rc 70`, actionable message), succeeded under sudo
+with `--systemd-link wdvpn-tun0` (resolver moved to `127.0.0.1`, traffic stayed
+reachable), and `watchdog dns reset` restored the prior state.
+
+Kill switch controlled-failure passed: the guarded field script reported
+`PHASE23_KILL_SWITCH_CONTROLLED_FAILURE_OK backend=nftables drop_delta=1` -
+during the attributed failure (daemon frozen, its verified sing-box child
+killed) the nftables DROP counter increased and forced physical traffic was
+blocked fail-closed, with no leak, before clean disconnect.
+
+Split tunneling passed with isolated process-path evidence (a temporary copy of
+`curl`): `current` produced the VPN exit, `direct` produced the physical exit,
+and `block` rejected the traffic, while WatchdogVPN's own connection stayed
+healthy throughout. sing-box attributes the process correctly under Fedora's
+SELinux-enforcing posture; there is no per-process enforcement gap.
+
+Panic sleep/wake passed against its true rescue contract: `panic sleep` disabled
+the service, removed the WatchdogVPN firewall, left the hibernate marker, and
+restored direct Internet (verified against a non-DNS-filtered site); `panic
+wake` restored the service to standby.
+
+Reboot passed both disconnected (returned to standby, doctor `FAIL=0`, direct
+Internet reachable) and connected (`desired_state=on` persisted, the same VLESS
+profile auto-reconnected on return with real VPN egress).
+
+Uninstall/baseline passed: the confirmed full purge
+(`--yes --purge-config --purge-logs --purge-state --confirm-delete DELETE`)
+removed every product command, unit, path, the `watchdogvpn` account/group and
+the installing user's membership, the sysctl file (`src_valid_mark` restored to
+`0/0`), internal backups, nftables tables, TUN interfaces and table-880 routes;
+direct baseline reachability and the resolver were restored. `sing-box`,
+`ck-client` and the user-installed AmneziaWG backend are intentionally preserved
+per the uninstall contract ("remove WatchdogVPN without deleting user-owned
+VPN/proxy software").
+
+Network-environment note: the certification LAN blocks major social platforms
+at the DNS layer (facebook/instagram resolve to localhost, youtube is
+IP/SNI-blocked) while non-social domains resolve normally. This is the exact
+censorship WatchdogVPN circumvents: the resilient/compatibility egress rows
+reaching Facebook/Instagram/YouTube through the tunnel are therefore stronger
+evidence, since those destinations are actively blocked on the direct path.
+
+Private evidence is under
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-6-5-fedora-certification`
+(directory `0700`, all files `0600`). No unresolved HIGH/MEDIUM finding and no
+known technical debt remain for Task 23.6.5. Fedora is certified; openSUSE
+(Task 23.6.6) and the Debian-derivative (Task 23.6.7) certifications, and the
+Task 23.6.8 audit closure, remain.
