@@ -184,6 +184,12 @@ class AmneziaWGDriverTests(unittest.TestCase):
         self.assertIn(["/usr/bin/ip", "link", "add", INTERFACE_NAME, "type", "amneziawg"], calls)
         self.assertIn(["/usr/bin/awg", "setconf", INTERFACE_NAME, str(self.driver._config_path)], calls)
         self.assertIn(["/usr/bin/ip", "-4", "address", "add", "10.8.1.5/32", "dev", INTERFACE_NAME], calls)
+        # A profile without its own MTU must fall back to the conservative
+        # AmneziaWG default (1280), never plain WireGuard's 1420, which
+        # intermittently black-holes large transfers over obfuscated paths.
+        self.assertIn(
+            ["/usr/bin/ip", "link", "set", "mtu", "1280", "up", "dev", INTERFACE_NAME], calls
+        )
         self.assertIn( ["/usr/bin/awg", "set", INTERFACE_NAME, "fwmark", NATIVE_ROUTING_MARK], calls)
         self.assertIn(
              ["/usr/bin/ip", "-4", "rule", "add", "not", "fwmark", NATIVE_ROUTING_MARK, "table", ROUTE_TABLE],

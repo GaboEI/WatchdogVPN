@@ -42,6 +42,17 @@ UAPI_SOCKET_DIR = Path("/run/amneziawg")
 SRC_VALID_MARK_PROC_DIR = Path("/proc/sys/net/ipv4/conf")
 HANDSHAKE_TIMEOUT_SECONDS = 180
 MAX_ERROR_DETAIL_LENGTH = 500
+# AmneziaWG's obfuscation (junk packets plus the S1/S2-sized magic headers its
+# configs carry) makes the encapsulated packet larger than plain WireGuard's,
+# so WireGuard's usual 1420 inner MTU sits right at the path black-hole boundary
+# over real transports such as Cloudflare WARP: small requests succeed while
+# large TLS transfers intermittently hang, and whether they get through depends
+# on fragile PMTUD/path state rather than being deterministic. 1280 (the IPv6
+# minimum MTU) is the conservative, universally routable default used when a
+# profile does not pin its own MTU; it is strictly safer than 1420 and cannot
+# black-hole where 1420 already worked, so it only makes AmneziaWG more reliable
+# across every distro. A profile-provided MTU still wins.
+DEFAULT_MTU = "1280"
 USERSPACE_LOG_TAIL_LINES = 20
 USERSPACE_LOG_TAIL_MAX_CHARS = 300
 SECRET_LINE_RE = re.compile(r"^\s*(?:PrivateKey|PresharedKey)\s*=", re.IGNORECASE)
@@ -452,7 +463,7 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
         for address in parsed.addresses:
             family = "-6" if ":" in address else "-4"
             self._run([ip_tool, family, "address", "add", address, "dev", INTERFACE_NAME])
-        mtu = parsed.mtu or "1420"
+        mtu = parsed.mtu or DEFAULT_MTU
         self._run([ip_tool, "link", "set", "mtu", mtu, "up", "dev", INTERFACE_NAME])
         if parsed.table != "off":
             self._configure_routes(parsed.allowed_ips)
