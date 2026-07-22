@@ -24,6 +24,7 @@ Current evidence files:
 - `rockylinux9_baseline_20260722T0901Z.log`
 - `bridge_ssh_preflight_update_20260722T0902Z.log`
 - `fedora_workstation44_iso_vm_provenance_20260722T0920Z.log`
+- `fedora44_installed_baseline_20260722T1030Z.log`
 - `redhat_opensuse_vagrant_lab_20260722T084044Z.log`
 
 ## Vagrant Lab Findings
@@ -66,8 +67,8 @@ separate graphical VirtualBox VM named `Fedora Workstation 44` exists on
 `ubuntu-host` with EFI, 2 CPU, 6144 MB RAM, a 64 GB VDI, the verified ISO
 mounted, and `nic1=bridged` on `enp4s0` with `nic2=none`. VirtualBox 7.0.16
 reports `Unattended installation supported = no` for this Live ISO, so Fedora
-still needs an interactive install or another checksum-pinned automation route
-before it can produce an internal installed baseline.
+required an interactive install before it could produce an internal installed
+baseline.
 
 Actual RHEL should not be treated as a free automatic VM target. Red Hat
 Developer access can provide RHEL images, but it requires a Red Hat account and
@@ -97,6 +98,30 @@ come from WatchdogVPN installing or explicitly guiding these requirements, not
 from manual pre-installation or a prepared machine.
 
 ## Red Hat-Family Control Baselines
+
+Fedora 44 Workstation installed baseline:
+
+- `/etc/os-release`: `ID=fedora`, `VERSION_ID=44`,
+  `VARIANT_ID=workstation`.
+- Kernel: `6.19.10-300.fc44.x86_64`.
+- PID 1: systemd.
+- Network baseline: only `lo` and bridged `enp0s3`; default policy rules.
+- `/dev/net/tun` exists.
+- `NetworkManager`, `systemd-resolved`, `firewalld`, and `sshd` are active.
+- SELinux enabled and enforcing, targeted policy.
+- Present commands include `dnf`, `rpm`, `systemctl`, `systemd-run`, `sudo`,
+  `python3`, `curl`, `tar`, `ip`, `ss`, `ping`, `setpriv`, `git`,
+  `logrotate`, `nmcli`, `nft`, `iptables`, `ip6tables`, `openvpn`,
+  `modinfo`, `pkaction`, `resolvectl`, `firewall-cmd`, `getenforce`,
+  `ausearch`, `journalctl`, and `sshd`.
+- Missing command from the cross-distro audit inventory: `aa-status`.
+
+Fedora baseline caveat: this is an installed Fedora Workstation VM after the
+maintainer completed GNOME initial setup and explicitly authorized SSH
+enablement for audit access. `openssh-server` was already installed;
+`systemctl enable --now sshd`, `firewall-cmd --add-service=ssh --permanent` and
+`firewall-cmd --reload` were run manually in the guest before baseline capture.
+Do not represent this as an untouched post-install firewall baseline.
 
 AlmaLinux 9.7 official and RockyLinux 9 both provide bridge-only direct SSH
 baselines and can be used to audit the current Red Hat-family assumptions before
@@ -176,10 +201,12 @@ The next support-code tasks must treat these audit findings as gates:
 - The Fedora/RHEL-family adapter must not disable SELinux or firewalld. It must
   report SELinux enforcing state, firewalld active/inactive state, and the
   selected firewall backend clearly through doctor/support evidence.
-- Runtime tests on Red Hat-family systems must include one case with firewalld
-  inactive/missing tooling and one case with firewalld active and nft/iptables
-  frontends present. AlmaLinux 9 and RockyLinux 9 are suitable controls for
-  those two postures.
+- Runtime tests on Red Hat-family systems must include Fedora Workstation with
+  SELinux enforcing, systemd-resolved active, firewalld active and OpenVPN
+  already present; one EL9-like case with firewalld inactive/missing tooling;
+  and one EL9-like case with firewalld active and nft/iptables frontends
+  present. Fedora 44, AlmaLinux 9 and RockyLinux 9 are suitable controls for
+  those three postures.
 - openSUSE detection must handle `ID=opensuse-leap` and
   `ID=opensuse-tumbleweed` explicitly, including `ID_LIKE="suse opensuse"`.
 - openSUSE package installation must add a real `zypper` path in
@@ -206,7 +233,9 @@ The next support-code tasks must treat these audit findings as gates:
 
 ## Next Gate
 
-Task 23.6.1 should not close until the Fedora Workstation VM is installed or an
-equivalent checksum-pinned Fedora automation route produces an internal
-installed baseline. Tumbleweed remains optional unless the maintainer chooses it
-over Leap for openSUSE certification.
+Task 23.6.1 has enough installed Fedora/openSUSE/Red Hat-family baseline
+evidence to proceed to a closure review. That review must decide whether the
+manually SSH-prepared Fedora baseline is sufficient for the audit, or whether a
+second pristine console-captured Fedora baseline is required before Task 23.6.2.
+Tumbleweed remains optional unless the maintainer chooses it over Leap for
+openSUSE certification.
