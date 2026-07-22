@@ -79,7 +79,7 @@
       "identity": {"id_like_contains_any": ["rhel", "fedora"], "ids_include": ["rhel", "centos", "rocky", "almalinux"]},
       "kernel_policy": "distribution_default_at_certification_time",
       "recommended_representative": "almalinux-or-rocky",
-      "image_requirement": "official RHEL only with maintainer-provided Red Hat access; otherwise maintainer-approved AlmaLinux/RockyLinux control with reachable bridge SSH baseline",
+      "image_requirement": "official RHEL only with maintainer-provided Red Hat access; otherwise AlmaLinux 9 official and RockyLinux 9 bridge-SSH baselines are available as compatible controls",
       "rhel_note": "Actual RHEL requires maintainer-provided Red Hat Developer/subscription access; compatible clones are controls, not RHEL certification."
     }
   ]

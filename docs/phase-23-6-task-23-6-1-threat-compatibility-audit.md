@@ -20,6 +20,9 @@ The directory must remain `0700`; evidence files must remain `0600`.
 Current evidence files:
 
 - `opensuse_leap_baseline_20260722T0826Z.log`
+- `almalinux9_baseline_20260722T0900Z.log`
+- `rockylinux9_baseline_20260722T0901Z.log`
+- `bridge_ssh_preflight_update_20260722T0902Z.log`
 - `redhat_opensuse_vagrant_lab_20260722T084044Z.log`
 
 ## Vagrant Lab Findings
@@ -32,10 +35,21 @@ claim was attempted.
 | Target | Box | Result | Certification meaning |
 | --- | --- | --- | --- |
 | openSUSE Leap 15.6 | `opensuse/Leap-15.6.x86_64` `15.6.13.356` | Booted bridge-only and produced an internal baseline over direct SSH. | Usable as the current openSUSE baseline candidate. |
-| openSUSE Tumbleweed | `opensuse/Tumbleweed.x86_64` `1.0.20241025` | Imported and booted bridge-only, but did not expose a reachable SSH/IP path in this lab run. | Not sufficient for internal baseline evidence yet. |
-| AlmaLinux 9 official | `almalinux/9` `9.7.20260518` | Imported and booted bridge-only, but did not expose a reachable SSH/IP path in this lab run. | Useful topology check, not sufficient for internal Red Hat-family baseline evidence. |
-| RockyLinux 9 | `bento/rockylinux-9` `202510.26.0` | Imported and booted bridge-only, but did not expose a reachable SSH/IP path in this lab run. | Useful topology check, not sufficient for internal Red Hat-family baseline evidence. |
+| openSUSE Tumbleweed | `opensuse/Tumbleweed.x86_64` `1.0.20241025` | Imported and booted bridge-only. MAC/IP discovery found `192.168.0.215`, but SSH on port 22 refused the direct Vagrant key path. | Not sufficient for internal baseline evidence yet. |
+| AlmaLinux 9 official | `almalinux/9` `9.7.20260518` | Imported and booted bridge-only. MAC/IP discovery found `192.168.0.176`; direct SSH with the Vagrant key worked and produced an internal baseline. | Usable as a Red Hat/RHEL-compatible control baseline, not RHEL certification. |
+| RockyLinux 9 | `bento/rockylinux-9` `202510.26.0` | Imported and booted bridge-only. GuestInfo/MAC discovery found `192.168.0.150`; direct SSH with the Vagrant key worked and produced an internal baseline. | Usable as a second Red Hat/RHEL-compatible control baseline, not RHEL certification. |
 | AlmaLinux 9 bento | `bento/almalinux-9` `202511.24.0` | VirtualBox 7.0.16 rejected the OVF before boot because it contains an NVRAM hardware item with `ResourceType=32768`. | Box/provider incompatibility; not WatchdogVPN evidence. |
+
+The repeatable preflight for a usable VM baseline is:
+
+1. Verify `VBoxManage showvminfo` reports `nic1=bridged`, the expected
+   `bridgeadapter1`, and `nic2..nic4=none`.
+2. Record the VirtualBox adapter MAC.
+3. Prefer GuestInfo when present; otherwise do a bounded TCP/SSH sweep from
+   `ubuntu-host` and cross-check the resulting ARP entry against that MAC.
+4. Attempt direct SSH with the box's documented Vagrant key/user.
+5. Only if SSH works, record the internal baseline. If SSH is refused or the MAC
+   never produces an IP, the image is lab-incomplete and cannot support a green.
 
 Fedora official Vagrant Cloud names such as `fedora/44-cloud-base` were not
 available through `vagrant cloud box show` during discovery. Fedora's official
@@ -69,6 +83,50 @@ The openSUSE Leap 15.6 baseline shows:
 This is a strong dependency-provenance baseline: any future openSUSE green must
 come from WatchdogVPN installing or explicitly guiding these requirements, not
 from manual pre-installation or a prepared machine.
+
+## Red Hat-Family Control Baselines
+
+AlmaLinux 9.7 official and RockyLinux 9 both provide bridge-only direct SSH
+baselines and can be used to audit the current Red Hat-family assumptions before
+Fedora/RHEL certification.
+
+AlmaLinux 9.7 baseline:
+
+- `/etc/os-release`: `ID=almalinux`, `ID_LIKE="rhel centos fedora"`.
+- Kernel: `5.14.0-611.54.6.el9_7.x86_64`.
+- PID 1: systemd.
+- Network baseline: only `lo` and bridged `eth0`; default policy rules.
+- `/dev/net/tun` exists.
+- `NetworkManager` active; `systemd-resolved` and `firewalld` inactive.
+- SELinux enabled and enforcing, targeted policy.
+- Present commands include `dnf`, `rpm`, `systemctl`, `systemd-run`, `sudo`,
+  `python3`, `curl`, `tar`, `ip`, `ss`, `ping`, `setpriv`, `logrotate`,
+  `nmcli`, `modinfo`, `pkaction`, `getenforce`, `ausearch`, and `journalctl`.
+- Missing required WatchdogVPN commands include `git`, `nft`, `iptables`,
+  `ip6tables`, `openvpn`, `resolvectl`, `firewall-cmd`, and `aa-status`.
+
+RockyLinux 9.6 baseline:
+
+- `/etc/os-release`: `ID=rocky`, `ID_LIKE="rhel centos fedora"`.
+- Kernel: `5.14.0-570.52.1.el9_6.x86_64`.
+- PID 1: systemd.
+- Network baseline: only `lo` and bridged `enp0s3`; default policy rules.
+- `/dev/net/tun` exists.
+- `NetworkManager` active; `systemd-resolved` inactive; `firewalld` active.
+- SELinux enabled and enforcing, targeted policy.
+- Present commands include `dnf`, `rpm`, `systemctl`, `systemd-run`, `sudo`,
+  `python3`, `curl`, `tar`, `ip`, `ss`, `ping`, `setpriv`, `logrotate`,
+  `nmcli`, `nft`, `iptables`, `ip6tables`, `modinfo`, `pkaction`,
+  `firewall-cmd`, `getenforce`, `ausearch`, and `journalctl`.
+- Missing required WatchdogVPN commands include `git`, `openvpn`, and
+  `resolvectl`.
+
+AlmaLinux and RockyLinux are intentionally complementary controls. AlmaLinux
+proves the installer must not assume firewall tooling is already present on an
+EL9-like image. RockyLinux proves the product must coexist with an image where
+`firewalld`, `nft` and iptables frontends are already active/present. Both
+remain compatible controls only. They do not certify actual RHEL without a
+maintainer-provided Red Hat Developer/subscription path.
 
 ## Product Gaps Before Implementation
 
@@ -105,7 +163,8 @@ from manual pre-installation or a prepared machine.
 
 ## Next Gate
 
-Task 23.6.1 should not close until the Red Hat-family lab image path is
-observable by direct bridge SSH or an equivalent maintainer-approved console
-baseline. After that, implementation can proceed in Task 23.6.2 and Task
-23.6.3 without confusing lab-provider limits with WatchdogVPN support.
+Task 23.6.1 should not close until Fedora image selection is checksum-pinned or
+explicitly deferred, and until the captured openSUSE and Red Hat-family control
+baselines have been converted into concrete implementation gates for Task
+23.6.2 and Task 23.6.3. Tumbleweed remains optional unless the maintainer
+chooses it over Leap for openSUSE certification.
