@@ -18,7 +18,7 @@ claims to support:
 | Arch Linux | `arch` | 23.5 | **CERTIFIED / CLOSED** — default-kernel and packaged-LTS evidence complete; 9 functional rows + the 3 individually authorized Plan-B rows, with 5/5 resilient green |
 | CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CERTIFIED / CLOSED** — clean install/update provenance and full purge complete; 9 functional rows + the same 3 individually authorized Plan-B rows, with 5/5 resilient green |
 | Debian | `debian` | 23.5 | **CERTIFIED / CLOSED** — Debian 13.6 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
-| Ubuntu | `ubuntu` | 23.5 | Supported in code, un-certified on a clean VM |
+| Ubuntu | `ubuntu` | 23.5 | **CERTIFIED / CLOSED** - Ubuntu 24.04.4 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 
 Fedora/Red Hat-family systems, openSUSE, and a Debian/Ubuntu derivative are
 intentionally queued for Phase 23.6. Fedora now has a package/`dnf` foundation
@@ -874,3 +874,106 @@ formal non-green Plan-B/no-egress classifications for the externally blocked
 or limited compatibility protocols above. No resilient-profile failure was
 waived, no protocol was marked green without traffic, and no known HIGH/MEDIUM
 bug or accepted technical debt remains for Task 23.5.4.
+
+## Task 23.5.5 - Ubuntu certification closure (2026-07-22)
+
+Status: **CERTIFIED/CLOSED**. Ubuntu 24.04.4 LTS was certified in the fresh
+bridge-only VirtualBox VM `wdvpn-ubuntu-certification`, running on
+`ubuntu-host` with exactly one bridged adapter on `enp4s0`, no NAT adapter and
+no shared-folder path. The protected local Arch/CachyOS host network stack was
+not used for VPN, DNS, route, firewall or interface mutation. The installed
+certification checkout and source marker were `c73b001`.
+
+The Ubuntu dependency-provenance gate passed under the stricter "no helped
+machine" rule. OpenVPN was absent before product installation and present
+after the WatchdogVPN install/update path. The installer/update path supplied
+the supported Ubuntu runtime set through `apt`, including NetworkManager/nmcli,
+logrotate, OpenVPN, nftables, iptables, Polkit/systemd integration, curl, git,
+jq, Python 3, Python cryptography and the remaining supported runtime tools.
+Product-managed `sing-box` and `ck-client` were installed under
+`/usr/local/bin`. AmneziaWG remains the documented guided trust-boundary
+exception: the Ubuntu candidate followed the product/import-guided PPA flow
+(`ppa:amnezia/ppa`) and WatchdogVPN verified the backend before use, but AWG
+is not credited to normal silent installer dependency provisioning.
+
+All 12 private protocol fixtures were imported from the authoritative private
+set without committing or publishing raw profile material. The honest protocol
+result is the same certified disposition as Arch, CachyOS and Debian:
+
+- all five resilient rows passed truthful connection, normal TUN, local SOCKS
+  and local HTTP-proxy real traffic, then clean disconnect: VLESS, Trojan,
+  Hysteria2, AmneziaWG and OpenVPN+Cloak;
+- VMess, TUIC, SOCKS and HTTP provided useful compatibility traffic. SOCKS and
+  HTTP reproduced an Instagram-only timeout that also occurred against the
+  same upstream proxies with WatchdogVPN disconnected, so that destination
+  limitation is not a WatchdogVPN bug;
+- WireGuard plain remains the maintainer-confirmed ISP/provider block and is
+  not green;
+- Shadowsocks standard can create the expected runtime but consistently fails
+  useful egress under the known blocked/no-egress pattern. WatchdogVPN rejects
+  false green and cleans up;
+- plain OpenVPN was tested through WatchdogVPN and directly with
+  `/usr/sbin/openvpn`. The native process completed TLS 1.3, received
+  `PUSH_REPLY`, opened `tun0`, installed the pushed `def1` routes, initialized
+  the AES-256-GCM data channel and logged `Initialization Sequence Completed`,
+  but user traffic through the tunnel timed out or failed. WatchdogVPN
+  correctly refused a green result and cleaned back to standby. This is a
+  no-egress compatibility limitation, not a parser, dependency, permission,
+  driver, TUN, route, DNS, firewall, cleanup or health-check bug.
+
+The external provider lifecycle passed after enabling provider rotation
+explicitly for the test provider. The provider import/update path found 42
+nodes, connected a provider node, passed real Facebook/Instagram/YouTube egress
+before rotation, rotated to a different node and passed normal TUN, local SOCKS
+and local HTTP-proxy traffic after rotation. The provider was removed after the
+gate and the final provider list was empty.
+
+DNS/FakeIP passed on Ubuntu through the documented systemd-resolved link path.
+An initial `watchdog dns apply --yes --json` invocation without the required
+`--systemd-link` argument returned rc 70 and is recorded as harness misuse, not
+a product pass. The corrected command
+`watchdog dns apply --yes --json --systemd-link wdvpn-tun0` succeeded while
+connected, real traffic stayed reachable, `watchdog dns reset --yes --json`
+succeeded, and disconnect returned the VM to standby.
+
+Split tunneling passed with isolated process-path evidence. The test used a
+temporary copy of `/usr/bin/curl` at `/tmp/wdvpn-cert-curl` so the policy did
+not contaminate WatchdogVPN's own health-check process. `current` produced the
+VPN exit IP, `direct` produced the physical bridged exit IP, and `block`
+rejected target traffic while the WatchdogVPN connection remained healthy. The
+test rule was removed, app policy was disabled and the final state had no TUN,
+no non-default rules and only `eth0`.
+
+Panic sleep/wake, reboot and purge/reinstall gates passed. Panic sleep disabled
+the WatchdogVPN service, left the hibernate marker present, removed the
+WatchdogVPN kill switch and allowed direct GitHub recovery traffic; panic wake
+restored the service and removed the marker. Reboot returned to clean standby
+with doctor `FAIL=0`. Full uninstall removed product commands, unit files,
+runtime/config/state paths and managed network artifacts; reinstall from
+`install.sh --yes` restored the runtime and marker. A harness mistake ran one
+reinstall as `sudo ./install.sh`, which installed the user TUI wrapper for the
+wrong user context; this was corrected and revalidated by running the installer
+as `vagrant`, after which `/home/vagrant/.local/bin/VPN` was present and
+doctor reported `OK=132 WARN=3 FAIL=0`.
+
+One access-recovery incident is excluded from product credit. After the purge
+gate, the VM no longer accepted the prior SSH key. The disk was mounted offline
+from `ubuntu-host` to restore only `~vagrant/.ssh/authorized_keys`; no
+WatchdogVPN runtime, dependency, profile, route, DNS, firewall or product
+configuration was changed through that recovery. It is harness access repair,
+not a product dependency or green-path input.
+
+Final private evidence is stored under
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-5-5-ubuntu-certification`
+with zero permission violations: every directory is 0700 and every file is
+0600. The final Ubuntu state is standby/off, kill switch inactive, no TUN, only
+`eth0`, default `ip rule`, no unexpected product listeners and doctor `FAIL=0`.
+Known WARNs are not hidden: NTP was not active in the VM, one Polkit rule is
+not verifiable without privilege, and truth state is DOWN because no VPN is
+connected at rest.
+
+The final Ubuntu result is **certified for supported end-user operation** with
+formal non-green Plan-B/no-egress classifications only for the three externally
+blocked or limited compatibility protocols above. No resilient-profile failure
+was waived, no protocol was marked green without real traffic, and no known
+HIGH/MEDIUM bug or accepted technical debt remains for Task 23.5.5.
