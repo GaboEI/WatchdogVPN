@@ -12,6 +12,12 @@ This document defines how the product scripts should behave.
 - openSUSE support means installer/update package reconciliation is implemented
   through `zypper`; it is not a certification claim until the installed
   AppArmor/firewalld lifecycle and real-traffic evidence tasks close.
+- Debian/Ubuntu derivatives that do not report a native `ID` (for example Linux
+  Mint or Pop!_OS, reporting `ID_LIKE="ubuntu debian"` or `ID_LIKE="debian"`)
+  resolve to the Ubuntu or Debian adapter through a conservative `ID_LIKE`
+  fallback, mirroring the existing Arch-derivative fallback. Ubuntu takes
+  precedence when a derivative reports both, and only families with a shipped
+  adapter are accepted; derivative field certification remains a separate task.
 - Runtime behavior should be shared across distros.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.

@@ -32,3 +32,10 @@ Leap, Tumbleweed and the explicit `ID=opensuse` spelling. Adapter support means
 WatchdogVPN owns package reconciliation for those IDs; it is not a
 certification claim until the installed SELinux/AppArmor/firewalld lifecycle
 and real-traffic evidence tasks close.
+
+Derivatives that do not report a natively supported `ID` are resolved through a
+conservative `ID_LIKE` fallback: `arch` maps to the Arch adapter, `ubuntu` to
+the Ubuntu adapter and `debian` to the Debian adapter, with Ubuntu taking
+precedence when a derivative reports both (for example Linux Mint's
+`ID_LIKE="ubuntu debian"`). Every other `ID_LIKE` remains unsupported, so an
+unrelated or SUSE-like derivative is never silently promoted to supported.

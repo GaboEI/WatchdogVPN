@@ -120,4 +120,48 @@ detect_distro
 assert_eq "exampleos" "$DISTRO_ID" "unknown id"
 assert_eq "0" "$DISTRO_SUPPORTED" "unknown unsupported"
 
+# Debian/Ubuntu-derivative ID_LIKE fallback (Task 23.6.4). Only families with a
+# shipped adapter are accepted; Ubuntu is matched before Debian so a derivative
+# reporting both resolves to the Ubuntu adapter.
+write_os_release linuxmint \
+  'ID=linuxmint' \
+  'ID_LIKE="ubuntu debian"' \
+  'PRETTY_NAME="Linux Mint 22"'
+detect_distro
+assert_eq "linuxmint" "$DISTRO_ID" "mint id"
+assert_eq "1" "$DISTRO_SUPPORTED" "mint supported"
+assert_eq "0" "$DISTRO_FUTURE" "mint not future scope"
+assert_eq "ubuntu" "$DISTRO_ADAPTER_ID" "mint adapter (ubuntu wins over debian)"
+assert_eq "ubuntu" "$DISTRO_FAMILY" "mint family"
+assert_eq "$ROOT_DIR/distros/ubuntu.sh" "$(distro_adapter_path "$ROOT_DIR")" "mint adapter path"
+
+write_os_release elementary \
+  'ID=elementary' \
+  'ID_LIKE="ubuntu"' \
+  'PRETTY_NAME="elementary OS 8"'
+detect_distro
+assert_eq "1" "$DISTRO_SUPPORTED" "elementary supported"
+assert_eq "ubuntu" "$DISTRO_ADAPTER_ID" "elementary adapter"
+assert_eq "ubuntu" "$DISTRO_FAMILY" "elementary family"
+
+write_os_release debian_derivative \
+  'ID=exampledeb' \
+  'ID_LIKE="debian"' \
+  'PRETTY_NAME="Example Debian Derivative"'
+detect_distro
+assert_eq "exampledeb" "$DISTRO_ID" "debian-derivative id"
+assert_eq "1" "$DISTRO_SUPPORTED" "debian-derivative supported"
+assert_eq "debian" "$DISTRO_ADAPTER_ID" "debian-derivative adapter"
+assert_eq "debian" "$DISTRO_FAMILY" "debian-derivative family"
+assert_eq "$ROOT_DIR/distros/debian.sh" "$(distro_adapter_path "$ROOT_DIR")" "debian-derivative adapter path"
+
+# An unrelated ID_LIKE must never become supported through the fallback.
+write_os_release unrelated_like \
+  'ID=weirdos' \
+  'ID_LIKE="gentoo"' \
+  'PRETTY_NAME="WeirdOS"'
+detect_distro
+assert_eq "0" "$DISTRO_SUPPORTED" "unrelated id_like unsupported"
+assert_eq "weirdos" "$DISTRO_ADAPTER_ID" "unrelated id_like adapter remains explicit id"
+
 printf 'distro detection checks passed\n'

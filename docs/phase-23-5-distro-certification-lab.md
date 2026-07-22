@@ -28,9 +28,13 @@ installed lifecycle, real runtime, real traffic and teardown evidence remain
 pending. Task 23.6.3 implements the openSUSE package and `zypper` adapter path
 for explicit openSUSE IDs, but that likewise is not a certification green:
 AppArmor/firewalld, installed lifecycle, real runtime, real traffic and teardown
-evidence remain pending. The Debian/Ubuntu `ID_LIKE` fallback has not been
-implemented. A VM for one of those systems is useful only as future-lab
-preparation until its remaining adapter/threat gates close.
+evidence remain pending. The Debian/Ubuntu `ID_LIKE` fallback is implemented in
+Task 23.6.4: derivatives such as Linux Mint (`ID_LIKE="ubuntu debian"`) or a
+Debian-based system (`ID_LIKE="debian"`) resolve to the Ubuntu or Debian adapter
+respectively, with Ubuntu taking precedence and every unrelated `ID_LIKE` left
+unsupported. That is adapter-resolution only; the Debian/Ubuntu-derivative field
+certification remains Task 23.6.7. A VM for any of these systems is useful only
+as future-lab preparation until its remaining adapter/threat gates close.
 
 Task 23.6.1 audit notes live in
 `docs/phase-23-6-task-23-6-1-threat-compatibility-audit.md`. That task is

@@ -37,11 +37,27 @@ detect_distro() {
       DISTRO_FAMILY="suse"
       ;;
     *)
+      # Conservative ID_LIKE fallback for derivatives that do not report a
+      # natively supported ID. Only the families WatchdogVPN actually ships an
+      # adapter for are accepted; every other ID_LIKE stays unsupported. Ubuntu
+      # is matched before Debian because Ubuntu derivatives such as Linux Mint
+      # report ID_LIKE="ubuntu debian" and must use the Ubuntu adapter, while a
+      # pure Debian derivative reports ID_LIKE="debian" alone.
       case " $DISTRO_ID_LIKE " in
         *" arch "*)
           DISTRO_SUPPORTED=1
           DISTRO_ADAPTER_ID="arch"
           DISTRO_FAMILY="arch"
+          ;;
+        *" ubuntu "*)
+          DISTRO_SUPPORTED=1
+          DISTRO_ADAPTER_ID="ubuntu"
+          DISTRO_FAMILY="ubuntu"
+          ;;
+        *" debian "*)
+          DISTRO_SUPPORTED=1
+          DISTRO_ADAPTER_ID="debian"
+          DISTRO_FAMILY="debian"
           ;;
         *)
           DISTRO_SUPPORTED=0
