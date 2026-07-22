@@ -174,6 +174,11 @@ maintainer-provided Red Hat Developer/subscription path.
 
 ## Product Gaps Before Implementation
 
+Task 23.6.2 update: the Red Hat-family detector and `dnf` adapter are now
+implemented after this audit. The bullets below remain the Task 23.6.1
+pre-implementation findings that drove that work; they are not a claim that
+those gaps remain open after Task 23.6.2.
+
 - `lib/distro.sh` has future Red Hat-family handling for Fedora/RHEL/CentOS/
   Rocky/AlmaLinux, but openSUSE currently falls through to generic unsupported.
 - `distros/fedora.sh` exists as a future `dnf`/RPM package foundation, but the
@@ -240,9 +245,9 @@ The next support-code tasks must treat these audit findings as gates:
 
 ## Next Gate
 
-Next task: **Task 23.6.2 — `distros/fedora.sh` implementation**. Fedora 44,
-AlmaLinux 9 and RockyLinux 9 baselines are sufficient to design and test the
-Red Hat-family adapter gates, with the explicit caveat that Fedora SSH/firewalld
-access was manually enabled for audit access before baseline capture. Tumbleweed
-remains optional unless the maintainer chooses it over Leap for openSUSE
-certification.
+Task 23.6.2 now owns the Fedora/Red Hat-family implementation changes derived
+from this audit. Fedora 44, AlmaLinux 9 and RockyLinux 9 baselines remain the
+controls for certification planning, with the explicit caveat that Fedora
+SSH/firewalld access was manually enabled for audit access before baseline
+capture. Tumbleweed remains optional unless the maintainer chooses it over Leap
+for openSUSE certification.

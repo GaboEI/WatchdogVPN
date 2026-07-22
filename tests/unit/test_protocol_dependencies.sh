@@ -157,7 +157,7 @@ assert_contains "$ROOT_DIR/distros/arch.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE=
 
 # --- complete distro runtime package contract ---
 
-for required_cmd in git ss systemd-run getent useradd usermod sysctl modinfo nmcli nft iptables ip6tables ping pgrep; do
+for required_cmd in git ss systemd-run getent useradd usermod sysctl modinfo nmcli nft iptables ip6tables ping pgrep resolvectl; do
   assert_contains "$ROOT_DIR/lib/packages.sh" "$required_cmd" "required command inventory must include $required_cmd"
 done
 assert_contains "$ROOT_DIR/lib/common.sh" 'WATCHDOGVPN_COMMAND_PATHS:-/usr/local/sbin:/usr/sbin:/sbin' "command detection must search standard sbin paths outside user PATH"
@@ -168,15 +168,15 @@ for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo k
   assert_contains "$ROOT_DIR/distros/arch.sh" "$package" "Arch adapter must install $package"
 done
 for adapter in ubuntu debian; do
-  for package in git coreutils findutils grep gawk sed libc-bin passwd systemd sudo kmod ca-certificates nftables iptables iputils-ping procps; do
+  for package in git coreutils findutils grep gawk sed libc-bin passwd systemd sudo kmod ca-certificates nftables iptables iputils-ping procps systemd-resolved; do
     assert_contains "$ROOT_DIR/distros/$adapter.sh" "$package" "$adapter adapter must install $package"
   done
 done
-for package in git coreutils findutils grep gawk sed glibc-common shadow-utils systemd sudo kmod ca-certificates nftables iptables-nft iputils procps-ng openvpn NetworkManager polkit; do
-  assert_contains "$ROOT_DIR/distros/fedora.sh" "$package" "future Fedora adapter must pre-map $package"
+for package in git coreutils findutils grep gawk sed glibc-common shadow-utils systemd sudo kmod ca-certificates nftables iptables-nft iputils procps-ng openvpn NetworkManager polkit firewalld systemd-resolved; do
+  assert_contains "$ROOT_DIR/distros/fedora.sh" "$package" "Fedora adapter must map $package"
 done
-assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PACKAGE_MANAGER="dnf"' "future Fedora adapter must use dnf"
-assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "future Fedora adapter must map cryptography"
+assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PACKAGE_MANAGER="dnf"' "Fedora adapter must use dnf"
+assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "Fedora adapter must map cryptography"
 
 dnf_output="$(cd "$ROOT_DIR" && bash -c '
 set -euo pipefail
@@ -187,7 +187,7 @@ DISTRO_PACKAGE_MANAGER=dnf
 install_package_set nftables iputils
 ')"
 grep -Fqx 'sudo dnf install -y nftables iputils' <<<"$dnf_output" || {
-  printf 'FAIL: future Fedora package foundation must use non-interactive dnf install\n' >&2
+  printf 'FAIL: Fedora package adapter must use non-interactive dnf install\n' >&2
   exit 1
 }
 

@@ -65,9 +65,9 @@ write_os_release fedora \
   'ID=fedora' \
   'PRETTY_NAME="Fedora Linux"'
 detect_distro
-assert_eq "0" "$DISTRO_SUPPORTED" "fedora remains unsupported"
-assert_eq "1" "$DISTRO_FUTURE" "fedora future scope"
-assert_eq "fedora" "$DISTRO_ADAPTER_ID" "fedora foundation adapter"
+assert_eq "1" "$DISTRO_SUPPORTED" "fedora supported"
+assert_eq "0" "$DISTRO_FUTURE" "fedora not future scope"
+assert_eq "fedora" "$DISTRO_ADAPTER_ID" "fedora adapter"
 assert_eq "redhat" "$DISTRO_FAMILY" "fedora family"
 assert_eq "$ROOT_DIR/distros/fedora.sh" "$(distro_adapter_path "$ROOT_DIR")" "fedora adapter path"
 
@@ -75,10 +75,22 @@ write_os_release rhel \
   'ID=rhel' \
   'PRETTY_NAME="Red Hat Enterprise Linux"'
 detect_distro
-assert_eq "0" "$DISTRO_SUPPORTED" "rhel remains unsupported"
-assert_eq "1" "$DISTRO_FUTURE" "rhel future scope"
-assert_eq "fedora" "$DISTRO_ADAPTER_ID" "rhel foundation adapter"
+assert_eq "1" "$DISTRO_SUPPORTED" "rhel supported"
+assert_eq "0" "$DISTRO_FUTURE" "rhel not future scope"
+assert_eq "fedora" "$DISTRO_ADAPTER_ID" "rhel adapter"
 assert_eq "redhat" "$DISTRO_FAMILY" "rhel family"
+
+for redhat_id in centos rocky almalinux; do
+  write_os_release "$redhat_id" \
+    "ID=$redhat_id" \
+    'ID_LIKE="rhel centos fedora"' \
+    "PRETTY_NAME=\"$redhat_id\""
+  detect_distro
+  assert_eq "1" "$DISTRO_SUPPORTED" "$redhat_id supported"
+  assert_eq "0" "$DISTRO_FUTURE" "$redhat_id not future scope"
+  assert_eq "fedora" "$DISTRO_ADAPTER_ID" "$redhat_id adapter"
+  assert_eq "redhat" "$DISTRO_FAMILY" "$redhat_id family"
+done
 
 write_os_release unknown \
   'ID=exampleos' \

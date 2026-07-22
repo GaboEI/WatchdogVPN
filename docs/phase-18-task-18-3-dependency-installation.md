@@ -264,10 +264,10 @@ version provenance.
   repository/AUR trust step is guided and explicitly user-executed, with
   WatchdogVPN rechecking the resulting runtime. That exception does not extend
   to any other dependency.
-- Ubuntu, Debian and Arch adapters carry the complete contract. A Fedora/Red
-  Hat-family `dnf`/package adapter is laid down for Phase 23.6, but its presence
-  is not a support claim; SELinux, firewalld, lifecycle and installed
-  certification remain required before those systems can be accepted.
+- Ubuntu, Debian, Arch and Fedora/Red Hat-family adapters carry the complete
+  package contract. Fedora/Red Hat-family support means WatchdogVPN owns
+  `dnf` package reconciliation; it is not a certification claim until SELinux,
+  firewalld, lifecycle and real-traffic installed evidence close.
 
 The bootstrap boundary is deliberately narrow: a supported systemd-based
 Linux with Bash, its package manager, network access and usable root/sudo

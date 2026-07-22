@@ -254,11 +254,14 @@ if [[ "${DISTRO_SUPPORTED:-0}" == "1" ]]; then
     . "$adapter"
     mark_ok "distro adapter: distros/${DISTRO_ADAPTER_ID:-$DISTRO_ID}.sh"
     info "package manager: ${DISTRO_PACKAGE_MANAGER:-unknown}"
+    if [[ -n "${DISTRO_SUPPORT_NOTE:-}" ]]; then
+      mark_warn "$DISTRO_SUPPORT_NOTE"
+    fi
   else
     mark_fail "missing distro adapter: $adapter"
   fi
 elif [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
-  mark_fail "Red Hat-family support is planned for a future release"
+  mark_fail "distro support is planned for a future release"
 else
   mark_fail "unsupported distro for this release"
 fi
@@ -290,6 +293,22 @@ if systemd_unit_known NetworkManager.service; then
   [[ "$nm_state" == "active" ]] && mark_ok "NetworkManager active" || mark_warn "NetworkManager state: ${nm_state:-unknown}"
 else
   mark_fail "NetworkManager service not found"
+fi
+
+if [[ "${DISTRO_FAMILY:-}" == "redhat" ]]; then
+  if have_cmd getenforce; then
+    selinux_state="$(getenforce 2>/dev/null || true)"
+    info "SELinux state: ${selinux_state:-unknown}"
+  else
+    mark_warn "SELinux state unavailable: getenforce missing"
+  fi
+  if systemd_unit_known firewalld.service; then
+    firewall_state="$(systemd_active_state firewalld.service)"
+    firewall_enabled="$(systemd_enabled_state firewalld.service)"
+    info "firewalld: active=${firewall_state:-unknown} enabled=${firewall_enabled:-unknown}"
+  else
+    mark_warn "firewalld service not found"
+  fi
 fi
 
 section "Time and NTP"

@@ -27,10 +27,9 @@ detect_distro() {
       DISTRO_FAMILY="$DISTRO_ID"
       ;;
     fedora|rhel|centos|rocky|almalinux)
-      DISTRO_SUPPORTED=0
+      DISTRO_SUPPORTED=1
       DISTRO_ADAPTER_ID="fedora"
       DISTRO_FAMILY="redhat"
-      DISTRO_FUTURE=1
       ;;
     *)
       case " $DISTRO_ID_LIKE " in

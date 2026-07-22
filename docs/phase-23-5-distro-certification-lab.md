@@ -21,13 +21,14 @@ claims to support:
 | Ubuntu | `ubuntu` | 23.5 | **CERTIFIED / CLOSED** — Ubuntu 24.04.4 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 
 Fedora/Red Hat-family systems, openSUSE, and a Debian/Ubuntu derivative are
-intentionally queued for Phase 23.6. Fedora now has a package/`dnf` foundation
-in `distros/fedora.sh`, but the detector deliberately keeps Fedora, RHEL,
-CentOS, Rocky and AlmaLinux unsupported until SELinux/firewalld, installed
-lifecycle and certification close. openSUSE has no adapter or detector branch;
-the Debian/Ubuntu `ID_LIKE` fallback has not been implemented. A VM for one of
-those systems is useful only as future-lab preparation until its remaining
-adapter/threat gates close.
+intentionally queued for Phase 23.6. Task 23.6.2 implements the Fedora/Red
+Hat-family package and `dnf` adapter path for Fedora, RHEL, CentOS, RockyLinux
+and AlmaLinux, but that is not a certification green: SELinux/firewalld,
+installed lifecycle, real runtime, real traffic and teardown evidence remain
+pending. openSUSE has no adapter or detector branch; the Debian/Ubuntu
+`ID_LIKE` fallback has not been implemented. A VM for one of those systems is
+useful only as future-lab preparation until its remaining adapter/threat gates
+close.
 
 Task 23.6.1 audit notes live in
 `docs/phase-23-6-task-23-6-1-threat-compatibility-audit.md`. That task is

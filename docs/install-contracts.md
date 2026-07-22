@@ -4,10 +4,11 @@ This document defines how the product scripts should behave.
 
 ## Principles
 
-- One repository supports Ubuntu, Debian and Arch Linux.
-- Fedora/Red Hat-family package and `dnf` foundations exist, but support
-  remains future scope until SELinux/firewalld and installed certification
-  close.
+- One repository supports Ubuntu, Debian, Arch Linux and the Fedora/Red
+  Hat-family adapter path.
+- Fedora/Red Hat-family support means installer/update package reconciliation
+  is implemented through `dnf`; it is not a certification claim until the
+  installed SELinux/firewalld lifecycle and real-traffic evidence tasks close.
 - Runtime behavior should be shared across distros.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.
