@@ -29,6 +29,11 @@ the Debian/Ubuntu `ID_LIKE` fallback has not been implemented. A VM for one of
 those systems is useful only as future-lab preparation until its remaining
 adapter/threat gates close.
 
+Task 23.6.1 audit notes live in
+`docs/phase-23-6-task-23-6-1-threat-compatibility-audit.md`. That file records
+the first Red Hat-family/openSUSE Vagrant lab findings and does not certify any
+new distro.
+
 This lab does not promise support for every Linux distribution or arbitrary
 custom kernels. Certification records every distro release/kernel pair
 actually tested. The distribution-default kernel is the mandatory first
