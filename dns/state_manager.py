@@ -367,9 +367,19 @@ class SystemDNSStateManager:
         self.resolv_conf_path.write_text(content, encoding="utf-8")
 
     def _restore_resolv_conf(self, snapshot: DNSStateSnapshot) -> None:
+        # Repointing the symlink is not enough on its own: a resolver stack
+        # like openSUSE's netconfig/wicked writes a static target file once
+        # and never regenerates it, so apply_local_dns's direct write_text
+        # (which follows the symlink) permanently clobbers that file's
+        # content. Restoring only the symlink then leaves it pointed at the
+        # same file, still containing WatchdogVPN's own 127.0.0.1 entry -
+        # every DNS lookup breaks the moment the daemon's local resolver goes
+        # away on disconnect. Writing the captured content back afterward
+        # fixes that while staying a harmless no-op for resolver stacks (NM,
+        # dhcpcd) whose own restore step already regenerated the same bytes.
         if snapshot.resolv_conf_target:
             _replace_symlink(self.resolv_conf_path, Path(snapshot.resolv_conf_target))
-        elif snapshot.resolv_conf_content is not None:
+        if snapshot.resolv_conf_content is not None:
             self.resolv_conf_path.write_text(
                 snapshot.resolv_conf_content,
                 encoding="utf-8",

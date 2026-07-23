@@ -318,6 +318,35 @@ class DNSStateManagerTests(unittest.TestCase):
             manager.restore_state(snapshot)
             self.assertEqual(resolv_conf.read_text(encoding="utf-8"), original)
 
+    def test_resolv_conf_symlink_to_static_target_restores_content(self) -> None:
+        # openSUSE certification field bug: /etc/resolv.conf there is a
+        # symlink to /run/netconfig/resolv.conf, a plain file netconfig
+        # writes once and never regenerates on its own (unlike
+        # systemd-resolved's or NetworkManager's self-managed stubs).
+        # apply_local_dns's write_text follows the symlink and clobbers that
+        # target's content; restoring only the symlink (pointing right back
+        # at the same, still-clobbered file) left every DNS lookup broken
+        # the moment WatchdogVPN's local resolver went away on disconnect.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "netconfig-resolv.conf"
+            original = "nameserver 192.168.0.1\n"
+            target.write_text(original, encoding="utf-8")
+            resolv_conf = root / "resolv.conf"
+            resolv_conf.symlink_to(target)
+            manager = SystemDNSStateManager(
+                resolv_conf_path=resolv_conf,
+                runner=FakeRunner(),
+            )
+
+            snapshot = manager.apply_local_dns(LocalDNSEntryPoint(address="127.0.0.1"))
+
+            self.assertEqual(snapshot.inventory.manager, ResolverManager.RESOLV_CONF)
+            self.assertEqual(target.read_text(encoding="utf-8"), "nameserver 127.0.0.1\n")
+            manager.restore_state(snapshot)
+            self.assertEqual(resolv_conf.resolve(), target.resolve())
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+
     def test_unknown_manager_uses_dns_rescue_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = FakeRunner()
