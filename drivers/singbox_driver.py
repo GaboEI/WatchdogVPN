@@ -1193,7 +1193,28 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             for table in route_tables:
                 self._run_cleanup_command(["ip", "route", "flush", "table", table])
                 self._run_cleanup_command(["ip", "-6", "route", "flush", "table", table])
+        self._forget_networkmanager_tun_connection()
         self._clear_tun_cleanup_state()
+
+    def _forget_networkmanager_tun_connection(self) -> None:
+        # On a NetworkManager-managed system, NM auto-adopts a newly-seen
+        # interface like wdvpn-tun0 into its own persistent connection
+        # profile (autoconnect on by default). Merely killing the sing-box
+        # process (which releases the kernel TUN device) is not enough: NM
+        # keeps recreating the interface from that stored profile even
+        # after the owning process has fully exited, since NM's own desired
+        # state - not the kernel device's existence - drives it. Found live
+        # on a Rocky Linux 9 certification VM (Task 23.6.5b): after a normal
+        # disconnect, `ip link show wdvpn-tun0` still showed the interface
+        # (DOWN/NO-CARRIER), and a later daemon restart (`watchdog_panic
+        # wake`) then reported a critical runtime_mismatch because that
+        # leftover interface didn't match the persisted desired-off state.
+        # Deleting NM's connection profile - not just the kernel device -
+        # is what actually stops it from coming back. This is a no-op
+        # wherever NetworkManager is absent or never adopted the interface.
+        if not shutil.which("nmcli"):
+            return
+        self._run_cleanup_command(["nmcli", "con", "delete", "wdvpn-tun0"])
 
     def _append_log(self, message: str) -> None:
         _, log_path = self._ensure_runtime_paths()
