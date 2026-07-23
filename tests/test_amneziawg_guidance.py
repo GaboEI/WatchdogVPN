@@ -45,7 +45,12 @@ class AmneziaWGGuidanceTests(unittest.TestCase):
     def test_unknown_distro_offers_links_without_guessed_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os_release = Path(tmp) / "os-release"
-            os_release.write_text("ID=opensuse-tumbleweed\nNAME=openSUSE\n", encoding="utf-8")
+            # opensuse-tumbleweed used to be this fixture's stand-in for an
+            # unsupported distro, but Task 23.6.6 gave openSUSE its own real
+            # adapter with guidance commands - it is no longer "unknown".
+            # slackware has neither a native case nor a matching ID_LIKE, so
+            # it stays genuinely adapter-less.
+            os_release.write_text("ID=slackware\nNAME=Slackware\n", encoding="utf-8")
             script = (
                 'source "$1/lib/common.sh"; '
                 'source "$1/lib/distro.sh"; '
