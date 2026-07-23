@@ -19,6 +19,7 @@ from drivers.runtime_paths import (
     record_child_process,
     write_private_file,
 )
+from drivers.singbox_driver import VIRTUAL_INTERFACE_PREFIXES
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 
@@ -501,6 +502,71 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
                 f"sudo sysctl -w net.ipv4.conf.{INTERFACE_NAME}.src_valid_mark=1"
             )
 
+    def _detect_default_interface(self) -> str | None:
+        ip_tool = self.find_ip_tool()
+        if not ip_tool:
+            return None
+        result = subprocess.run(
+            [ip_tool, "route", "show", "default"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if "dev" not in parts:
+                continue
+            interface = parts[parts.index("dev") + 1]
+            if interface and not interface.startswith(VIRTUAL_INTERFACE_PREFIXES):
+                return interface
+        return None
+
+    def _rp_filter_value(self, scope: str) -> str | None:
+        path = SRC_VALID_MARK_PROC_DIR / scope / "rp_filter"
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+
+    def _ensure_rp_filter(self) -> None:
+        # The "table main suppress_prefixlength 0" rule above (needed so
+        # ordinary traffic uses the tunnel's default route instead of the
+        # main table's) has a side effect on the *physical* interface: the
+        # kernel's reverse-path check for the AmneziaWG server's own IP now
+        # resolves via the tunnel device instead of the interface the
+        # server's real, unencrypted response packets physically arrive on.
+        # Strict rp_filter (mode 1) treats that as spoofed and silently
+        # drops it - the connection looks fine (real process, real
+        # interface, sends handshake retries) but never receives a single
+        # byte back. Found live on a Rocky Linux 9 certification VM (Task
+        # 23.6.5b): confirmed by the AmneziaWG server's own `awg show`
+        # listing the peer with data received and sent but no completed
+        # handshake, and by TX-only interface counters on the client that
+        # only started incrementing RX once rp_filter was set to loose.
+        # Same sandboxing constraint as src_valid_mark: the daemon cannot
+        # write this itself, so fail fast with a clear, actionable message
+        # instead of a silent connect_failed ~30s later from the egress
+        # health check retry.
+        interface = self._detect_default_interface()
+        if interface is None:
+            return
+        all_value = self._rp_filter_value("all")
+        iface_value = self._rp_filter_value(interface)
+        if all_value is None and iface_value is None:
+            return
+        if all_value == "1" or iface_value == "1":
+            raise RuntimeError(
+                f"net.ipv4.conf.all.rp_filter={all_value} / "
+                f"net.ipv4.conf.{interface}.rp_filter={iface_value}: strict reverse-path "
+                "filtering blocks the AmneziaWG server's return traffic once default-route "
+                "policy routing is active (the physical interface's own reverse-path check "
+                "resolves via the tunnel instead of itself). Rerun ./install.sh or "
+                "./update.sh to reapply etc/sysctl.d/99-watchdogvpn.conf, or set it "
+                f"directly with: sudo sysctl -w net.ipv4.conf.{interface}.rp_filter=2"
+            )
+
     def _configure_routes(self, allowed_ips: list[str]) -> None:
         ip_tool = self.find_ip_tool()
         awg_tool = self.find_wg_tool()
@@ -515,6 +581,7 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
             self._run([ip_tool, "-4", "rule", "add", "not", "fwmark", NATIVE_ROUTING_MARK, "table", ROUTE_TABLE])
             self._run([ip_tool, "-4", "rule", "add", "table", "main", "suppress_prefixlength", "0"])
             self._ensure_src_valid_mark()
+            self._ensure_rp_filter()
         if default_v6:
             self._run([ip_tool, "-6", "route", "add", "::/0", "dev", INTERFACE_NAME, "table", ROUTE_TABLE])
             self._run([ip_tool, "-6", "rule", "add", "not", "fwmark", NATIVE_ROUTING_MARK, "table", ROUTE_TABLE])

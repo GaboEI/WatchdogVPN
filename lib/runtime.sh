@@ -48,6 +48,8 @@ SYSCTL_BASELINE_MANIFEST="$SYSCTL_BASELINE_DIR/manifest"
 SYSCTL_BASELINE_FILE="$SYSCTL_BASELINE_DIR/defaults.before"
 SRC_VALID_MARK_ALL_PATH="${WATCHDOGVPN_SRC_VALID_MARK_ALL_PATH:-/proc/sys/net/ipv4/conf/all/src_valid_mark}"
 SRC_VALID_MARK_DEFAULT_PATH="${WATCHDOGVPN_SRC_VALID_MARK_DEFAULT_PATH:-/proc/sys/net/ipv4/conf/default/src_valid_mark}"
+RP_FILTER_ALL_PATH="${WATCHDOGVPN_RP_FILTER_ALL_PATH:-/proc/sys/net/ipv4/conf/all/rp_filter}"
+RP_FILTER_DEFAULT_PATH="${WATCHDOGVPN_RP_FILTER_DEFAULT_PATH:-/proc/sys/net/ipv4/conf/default/rp_filter}"
 SYSCTL_INSTALLED_MARKER_PATH="${WATCHDOGVPN_VERSION_MARKER:-/usr/local/lib/watchdogvpn/installed-version}"
 
 # Historical WatchdogVPN-owned files removed from the shipped set before this
@@ -138,41 +140,122 @@ _read_src_valid_mark() {
   printf '%s\n' "$value"
 }
 
+# rp_filter is a 3-state tunable (0 off / 1 strict / 2 loose), unlike
+# src_valid_mark's boolean.
+_read_rp_filter() {
+  local path="$1" value
+  value="$(run_privileged_readonly cat "$path")" || return 1
+  [[ "$value" =~ ^[012]$ ]] || return 1
+  printf '%s\n' "$value"
+}
+
 _validated_sysctl_baseline() {
   local manifest="$1" version origin file_present all_value default_value
+  local rp_all_value rp_default_value
   version="$(run_privileged_readonly awk -F= '$1 == "version" {print $2}' "$manifest")" || return 1
   origin="$(run_privileged_readonly awk -F= '$1 == "origin" {print $2}' "$manifest")" || return 1
   file_present="$(run_privileged_readonly awk -F= '$1 == "file_present" {print $2}' "$manifest")" || return 1
   all_value="$(run_privileged_readonly awk -F= '$1 == "all_src_valid_mark" {print $2}' "$manifest")" || return 1
   default_value="$(run_privileged_readonly awk -F= '$1 == "default_src_valid_mark" {print $2}' "$manifest")" || return 1
-  [[ "$version" == "1" ]] || return 1
-  [[ "$origin" == "fresh" || "$origin" == "legacy-inferred" ]] || return 1
+  rp_all_value="$(run_privileged_readonly awk -F= '$1 == "all_rp_filter" {print $2}' "$manifest")" || return 1
+  rp_default_value="$(run_privileged_readonly awk -F= '$1 == "default_rp_filter" {print $2}' "$manifest")" || return 1
+  [[ "$version" == "2" ]] || return 1
+  [[ "$origin" == "fresh" || "$origin" == "legacy-inferred" || "$origin" == "migrated-v1" ]] || return 1
   [[ "$file_present" =~ ^[01]$ && "$all_value" =~ ^[01]$ && "$default_value" =~ ^[01]$ ]] || return 1
+  [[ "$rp_all_value" =~ ^[012]$ && "$rp_default_value" =~ ^[012]$ ]] || return 1
   [[ "$origin" != "legacy-inferred" || "$file_present $all_value $default_value" == "0 0 0" ]] || return 1
   [[ "$file_present" == "0" ]] || root_path_is_file "$SYSCTL_BASELINE_FILE" || return 1
-  printf '%s %s %s\n' "$file_present" "$all_value" "$default_value"
+  printf '%s %s %s %s %s\n' "$file_present" "$all_value" "$default_value" "$rp_all_value" "$rp_default_value"
+}
+
+# A v1 manifest (from before rp_filter was tracked) has file_present/
+# all_src_valid_mark/default_src_valid_mark but no rp_filter fields at all -
+# distinct from a v2 manifest simply failing validation for some other
+# reason. Only this specific, narrow shape should be treated as "needs
+# migration"; anything else stays a hard validation failure.
+_sysctl_baseline_is_migratable_v1() {
+  local manifest="$1" version file_present all_value default_value has_rp_all has_rp_default
+  version="$(run_privileged_readonly awk -F= '$1 == "version" {print $2}' "$manifest")" || return 1
+  file_present="$(run_privileged_readonly awk -F= '$1 == "file_present" {print $2}' "$manifest")" || return 1
+  all_value="$(run_privileged_readonly awk -F= '$1 == "all_src_valid_mark" {print $2}' "$manifest")" || return 1
+  default_value="$(run_privileged_readonly awk -F= '$1 == "default_src_valid_mark" {print $2}' "$manifest")" || return 1
+  has_rp_all="$(run_privileged_readonly awk -F= '$1 == "all_rp_filter" {print $2}' "$manifest")" || return 1
+  has_rp_default="$(run_privileged_readonly awk -F= '$1 == "default_rp_filter" {print $2}' "$manifest")" || return 1
+  [[ "$version" == "1" ]] || return 1
+  [[ "$file_present" =~ ^[01]$ && "$all_value" =~ ^[01]$ && "$default_value" =~ ^[01]$ ]] || return 1
+  [[ -z "$has_rp_all" && -z "$has_rp_default" ]] || return 1
+  return 0
 }
 
 capture_sysctl_defaults_baseline() {
-  local all_value default_value file_present=0 manifest_tmp origin="fresh"
+  local all_value default_value rp_all_value rp_default_value file_present=0 manifest_tmp origin="fresh"
   if root_path_is_file "$SYSCTL_BASELINE_MANIFEST"; then
-    _validated_sysctl_baseline "$SYSCTL_BASELINE_MANIFEST" >/dev/null || {
-      printf 'ERROR: invalid WatchdogVPN sysctl baseline: %s\n' "$SYSCTL_BASELINE_MANIFEST" >&2
-      return 1
-    }
-    printf '[KEEP] existing sysctl baseline: %s\n' "$SYSCTL_BASELINE_MANIFEST"
-    return 0
+    if _validated_sysctl_baseline "$SYSCTL_BASELINE_MANIFEST" >/dev/null; then
+      printf '[KEEP] existing sysctl baseline: %s\n' "$SYSCTL_BASELINE_MANIFEST"
+      return 0
+    fi
+    if _sysctl_baseline_is_migratable_v1 "$SYSCTL_BASELINE_MANIFEST"; then
+      # rp_filter was never touched by any release that only ever wrote a v1
+      # manifest, so the live value right now (before this run applies the
+      # product's own etc/sysctl.d/99-watchdogvpn.conf) is still the true,
+      # untouched baseline for it - the same reasoning as a fresh capture,
+      # just scoped to the fields v1 never recorded.
+      file_present="$(run_privileged_readonly awk -F= '$1 == "file_present" {print $2}' "$SYSCTL_BASELINE_MANIFEST")" || return 1
+      all_value="$(run_privileged_readonly awk -F= '$1 == "all_src_valid_mark" {print $2}' "$SYSCTL_BASELINE_MANIFEST")" || return 1
+      default_value="$(run_privileged_readonly awk -F= '$1 == "default_src_valid_mark" {print $2}' "$SYSCTL_BASELINE_MANIFEST")" || return 1
+      rp_all_value="$(_read_rp_filter "$RP_FILTER_ALL_PATH")" || {
+        printf 'ERROR: cannot read a valid all.rp_filter baseline\n' >&2
+        return 1
+      }
+      rp_default_value="$(_read_rp_filter "$RP_FILTER_DEFAULT_PATH")" || {
+        printf 'ERROR: cannot read a valid default.rp_filter baseline\n' >&2
+        return 1
+      }
+      origin="migrated-v1"
+      printf '[MIGRATE] add rp_filter to the existing sysctl baseline (v1 -> v2)\n'
+      if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+        printf '[DRY-RUN] capture sysctl baseline: origin=%s file_present=%s all=%s default=%s rp_all=%s rp_default=%s\n' \
+          "$origin" "$file_present" "$all_value" "$default_value" "$rp_all_value" "$rp_default_value"
+        return 0
+      fi
+      manifest_tmp="$(mktemp)"
+      {
+        printf 'version=2\n'
+        printf 'origin=%s\n' "$origin"
+        printf 'file_present=%s\n' "$file_present"
+        printf 'all_src_valid_mark=%s\n' "$all_value"
+        printf 'default_src_valid_mark=%s\n' "$default_value"
+        printf 'all_rp_filter=%s\n' "$rp_all_value"
+        printf 'default_rp_filter=%s\n' "$rp_default_value"
+      } >"$manifest_tmp"
+      run_step sudo install -m 0600 -o root -g root "$manifest_tmp" "$SYSCTL_BASELINE_MANIFEST"
+      rm -f -- "$manifest_tmp"
+      return 0
+    fi
+    printf 'ERROR: invalid WatchdogVPN sysctl baseline: %s\n' "$SYSCTL_BASELINE_MANIFEST" >&2
+    return 1
   fi
 
   if root_path_is_file "$SYSCTL_INSTALLED_MARKER_PATH"; then
     # Releases predating this baseline journal installed the product-specific
-    # file and forced both values to 1 without recording what they replaced.
-    # The kernel default is 0 for both booleans.  Recognize that one-time
-    # migration by the already-installed product marker; otherwise an update
-    # would misclassify WatchdogVPN's own residue as user configuration.
+    # file and forced src_valid_mark to 1 without recording what they
+    # replaced. The kernel default is 0 for both src_valid_mark booleans, and
+    # this same release is also the first to touch rp_filter at all, so its
+    # live value right now is still the untouched pre-WatchdogVPN baseline.
+    # Recognize that one-time migration by the already-installed product
+    # marker; otherwise an update would misclassify WatchdogVPN's own
+    # residue as user configuration.
     origin="legacy-inferred"
     all_value=0
     default_value=0
+    rp_all_value="$(_read_rp_filter "$RP_FILTER_ALL_PATH")" || {
+      printf 'ERROR: cannot read a valid all.rp_filter baseline\n' >&2
+      return 1
+    }
+    rp_default_value="$(_read_rp_filter "$RP_FILTER_DEFAULT_PATH")" || {
+      printf 'ERROR: cannot read a valid default.rp_filter baseline\n' >&2
+      return 1
+    }
     printf '[MIGRATE] infer pre-journal sysctl baseline from installed WatchdogVPN generation\n'
   else
     all_value="$(_read_src_valid_mark "$SRC_VALID_MARK_ALL_PATH")" || {
@@ -183,11 +266,19 @@ capture_sysctl_defaults_baseline() {
       printf 'ERROR: cannot read a valid default.src_valid_mark baseline\n' >&2
       return 1
     }
+    rp_all_value="$(_read_rp_filter "$RP_FILTER_ALL_PATH")" || {
+      printf 'ERROR: cannot read a valid all.rp_filter baseline\n' >&2
+      return 1
+    }
+    rp_default_value="$(_read_rp_filter "$RP_FILTER_DEFAULT_PATH")" || {
+      printf 'ERROR: cannot read a valid default.rp_filter baseline\n' >&2
+      return 1
+    }
     root_path_is_file "$SYSCTL_DEFAULTS_PATH" && file_present=1
   fi
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] capture sysctl baseline: origin=%s file_present=%s all=%s default=%s\n' \
-      "$origin" "$file_present" "$all_value" "$default_value"
+    printf '[DRY-RUN] capture sysctl baseline: origin=%s file_present=%s all=%s default=%s rp_all=%s rp_default=%s\n' \
+      "$origin" "$file_present" "$all_value" "$default_value" "$rp_all_value" "$rp_default_value"
     return 0
   fi
 
@@ -199,11 +290,13 @@ capture_sysctl_defaults_baseline() {
   fi
   manifest_tmp="$(mktemp)"
   {
-    printf 'version=1\n'
+    printf 'version=2\n'
     printf 'origin=%s\n' "$origin"
     printf 'file_present=%s\n' "$file_present"
     printf 'all_src_valid_mark=%s\n' "$all_value"
     printf 'default_src_valid_mark=%s\n' "$default_value"
+    printf 'all_rp_filter=%s\n' "$rp_all_value"
+    printf 'default_rp_filter=%s\n' "$rp_default_value"
   } >"$manifest_tmp"
   run_step sudo install -m 0600 -o root -g root "$manifest_tmp" "$SYSCTL_BASELINE_MANIFEST"
   rm -f -- "$manifest_tmp"
@@ -214,8 +307,13 @@ _write_src_valid_mark() {
   printf '%s\n' "$value" | sudo tee "$path" >/dev/null
 }
 
+_write_rp_filter() {
+  local path="$1" value="$2"
+  printf '%s\n' "$value" | sudo tee "$path" >/dev/null
+}
+
 restore_sysctl_defaults_baseline() {
-  local values file_present all_value default_value observed
+  local values file_present all_value default_value rp_all_value rp_default_value observed
   if ! root_path_is_file "$SYSCTL_BASELINE_MANIFEST"; then
     if root_path_is_file "$SYSCTL_INSTALLED_MARKER_PATH"; then
       if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
@@ -224,6 +322,13 @@ restore_sysctl_defaults_baseline() {
       fi
       capture_sysctl_defaults_baseline || return 1
     fi
+  fi
+  if root_path_is_file "$SYSCTL_BASELINE_MANIFEST" && _sysctl_baseline_is_migratable_v1 "$SYSCTL_BASELINE_MANIFEST"; then
+    if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+      printf '[DRY-RUN] migrate the v1 sysctl baseline to add rp_filter before restoration\n'
+      return 0
+    fi
+    capture_sysctl_defaults_baseline || return 1
   fi
   if ! root_path_is_file "$SYSCTL_BASELINE_MANIFEST"; then
     if ! root_path_exists "$SYSCTL_DEFAULTS_PATH"; then
@@ -241,10 +346,10 @@ restore_sysctl_defaults_baseline() {
     printf 'ERROR: WatchdogVPN sysctl baseline is invalid\n' >&2
     return 1
   }
-  read -r file_present all_value default_value <<<"$values"
+  read -r file_present all_value default_value rp_all_value rp_default_value <<<"$values"
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] restore sysctl baseline: file_present=%s all=%s default=%s\n' \
-      "$file_present" "$all_value" "$default_value"
+    printf '[DRY-RUN] restore sysctl baseline: file_present=%s all=%s default=%s rp_all=%s rp_default=%s\n' \
+      "$file_present" "$all_value" "$default_value" "$rp_all_value" "$rp_default_value"
     return 0
   fi
 
@@ -255,10 +360,16 @@ restore_sysctl_defaults_baseline() {
   fi
   _write_src_valid_mark "$SRC_VALID_MARK_ALL_PATH" "$all_value"
   _write_src_valid_mark "$SRC_VALID_MARK_DEFAULT_PATH" "$default_value"
+  _write_rp_filter "$RP_FILTER_ALL_PATH" "$rp_all_value"
+  _write_rp_filter "$RP_FILTER_DEFAULT_PATH" "$rp_default_value"
   observed="$(_read_src_valid_mark "$SRC_VALID_MARK_ALL_PATH")" || return 1
   [[ "$observed" == "$all_value" ]] || return 1
   observed="$(_read_src_valid_mark "$SRC_VALID_MARK_DEFAULT_PATH")" || return 1
   [[ "$observed" == "$default_value" ]] || return 1
+  observed="$(_read_rp_filter "$RP_FILTER_ALL_PATH")" || return 1
+  [[ "$observed" == "$rp_all_value" ]] || return 1
+  observed="$(_read_rp_filter "$RP_FILTER_DEFAULT_PATH")" || return 1
+  [[ "$observed" == "$rp_default_value" ]] || return 1
   if [[ "$file_present" == "1" ]]; then
     root_path_is_file "$SYSCTL_DEFAULTS_PATH" || return 1
     run_privileged_readonly cmp -s "$SYSCTL_BASELINE_FILE" "$SYSCTL_DEFAULTS_PATH" || return 1
