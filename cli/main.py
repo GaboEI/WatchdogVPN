@@ -4141,6 +4141,7 @@ def _split_tunnel_add_domain(args: argparse.Namespace) -> int:
         backup_path = store.replace_group(existing, backup_existing=True)
         group = store.add_rule(SPLIT_TUNNEL_DOMAIN_GROUP, rule)
 
+    notice = _policy_mutation_reconnect_notice()
     data = {
         "added": {
             **rule.to_dict(),
@@ -4149,6 +4150,7 @@ def _split_tunnel_add_domain(args: argparse.Namespace) -> int:
         "group": group.to_dict(),
         "backup_path": str(backup_path) if backup_path else None,
         "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+        "notice": notice,
     }
     if args.json:
         _print_json(data)
@@ -4159,6 +4161,8 @@ def _split_tunnel_add_domain(args: argparse.Namespace) -> int:
         print(f"Rule group: {group.name}")
         if backup_path:
             print(f"Backup: {backup_path}")
+        if notice:
+            print(f"Note: {notice}")
     return 0
 
 
@@ -4176,11 +4180,13 @@ def _split_tunnel_remove_domain(args: argparse.Namespace) -> int:
         )
     backup_path = store.replace_group(existing, backup_existing=True)
     group = store.remove_rule(SPLIT_TUNNEL_DOMAIN_GROUP, args.rule_id)
+    notice = _policy_mutation_reconnect_notice()
     data = {
         "removed": args.rule_id,
         "group": group.to_dict(),
         "backup_path": str(backup_path) if backup_path else None,
         "rollback_point": _group_backup_rollback("routing-rules", backup_path),
+        "notice": notice,
     }
     if args.json:
         _print_json(data)
@@ -4189,6 +4195,8 @@ def _split_tunnel_remove_domain(args: argparse.Namespace) -> int:
         print(f"Rule group: {group.name}")
         if backup_path:
             print(f"Backup: {backup_path}")
+        if notice:
+            print(f"Note: {notice}")
     return 0
 
 
@@ -4819,6 +4827,24 @@ def _rule_group_summary(group: RuleGroup) -> dict[str, object]:
     }
 
 
+def _policy_mutation_reconnect_notice() -> str | None:
+    # Route rules (app-policy/split-tunnel) are baked into the connecting
+    # profile's sing-box config once, at connect time - like most VPN
+    # clients, WatchdogVPN has no live hot-reload of an active session's
+    # routing rules. A mutation here only changes what the *next* connect
+    # will apply, so an active session must be told explicitly rather than
+    # silently keep enforcing the rules it started with.
+    try:
+        response = WatchdogIPCClient().status()
+    except WatchdogIPCError:
+        return None
+    if not response.ok:
+        return None
+    if str(response.payload.get("state", {}).get("status")) != "connected":
+        return None
+    return "the active session keeps its current routing rules; reconnect for this change to take effect"
+
+
 def _app_policy_status(args: argparse.Namespace) -> int:
     result = AppPolicyStore().load_or_disabled()
     data = _app_policy_status_data(result.policy, valid=result.valid, error=result.error)
@@ -4841,12 +4867,15 @@ def _app_policy_set_enabled(args: argparse.Namespace) -> int:
     policy = AppPolicy.from_dict(policy.to_dict())
     backup_path = _create_section_backup("app-policy")
     store.save(policy)
-    data = _app_policy_mutation_data(policy, backup_path)
+    notice = _policy_mutation_reconnect_notice()
+    data = {**_app_policy_mutation_data(policy, backup_path), "notice": notice}
     if args.json:
         _print_json(data)
     else:
         print(f"App policy {'enabled' if policy.enabled else 'disabled'}.")
         print(f"Backup: {backup_path}")
+        if notice:
+            print(f"Note: {notice}")
     return 0
 
 
@@ -4857,12 +4886,15 @@ def _app_policy_set_mode(args: argparse.Namespace) -> int:
     policy = AppPolicy.from_dict(policy.to_dict())
     backup_path = _create_section_backup("app-policy")
     store.save(policy)
-    data = _app_policy_mutation_data(policy, backup_path)
+    notice = _policy_mutation_reconnect_notice()
+    data = {**_app_policy_mutation_data(policy, backup_path), "notice": notice}
     if args.json:
         _print_json(data)
     else:
         print(f"App policy mode set to: {policy.mode.value}")
         print(f"Backup: {backup_path}")
+        if notice:
+            print(f"Note: {notice}")
     return 0
 
 
@@ -4873,12 +4905,15 @@ def _app_policy_set_default_action(args: argparse.Namespace) -> int:
     policy = AppPolicy.from_dict(policy.to_dict())
     backup_path = _create_section_backup("app-policy")
     store.save(policy)
-    data = _app_policy_mutation_data(policy, backup_path)
+    notice = _policy_mutation_reconnect_notice()
+    data = {**_app_policy_mutation_data(policy, backup_path), "notice": notice}
     if args.json:
         _print_json(data)
     else:
         print(f"App policy default action set to: {policy.default_action.value}")
         print(f"Backup: {backup_path}")
+        if notice:
+            print(f"Note: {notice}")
     return 0
 
 
@@ -4910,11 +4945,13 @@ def _app_policy_add(args: argparse.Namespace) -> int:
     policy = AppPolicy.from_dict(policy.to_dict())
     backup_path = _create_section_backup("app-policy")
     store.save(policy)
+    notice = _policy_mutation_reconnect_notice()
     data = {
         "added": rule.to_dict(),
         "policy": _app_policy_status_data(policy),
         "backup_path": str(backup_path),
         "rollback_point": _section_backup_rollback("app-policy", backup_path),
+        "notice": notice,
     }
     if args.json:
         _print_json(data)
@@ -4923,6 +4960,8 @@ def _app_policy_add(args: argparse.Namespace) -> int:
         print(f"Action: {_app_policy_action_value(rule.action)}")
         print(f"Confidence: {rule.match_confidence.value}")
         print(f"Backup: {backup_path}")
+        if notice:
+            print(f"Note: {notice}")
     return 0
 
 
@@ -4938,17 +4977,21 @@ def _app_policy_remove(args: argparse.Namespace) -> int:
     policy = AppPolicy.from_dict(policy.to_dict())
     backup_path = _create_section_backup("app-policy")
     store.save(policy)
+    notice = _policy_mutation_reconnect_notice()
     data = {
         "removed": args.rule_id,
         "policy": _app_policy_status_data(policy),
         "backup_path": str(backup_path),
         "rollback_point": _section_backup_rollback("app-policy", backup_path),
+        "notice": notice,
     }
     if args.json:
         _print_json(data)
     else:
         print(f"Removed app policy rule: {args.rule_id}")
         print(f"Backup: {backup_path}")
+        if notice:
+            print(f"Note: {notice}")
     return 0
 
 
@@ -4968,12 +5011,14 @@ def _app_policy_set_rule_enabled(args: argparse.Namespace) -> int:
     policy = AppPolicy.from_dict(policy.to_dict())
     backup_path = _create_section_backup("app-policy")
     store.save(policy)
+    notice = _policy_mutation_reconnect_notice()
     data = {
         "rule_id": args.rule_id,
         "enabled": bool(args.enabled),
         "policy": _app_policy_status_data(policy),
         "backup_path": str(backup_path),
         "rollback_point": _section_backup_rollback("app-policy", backup_path),
+        "notice": notice,
     }
     if args.json:
         _print_json(data)
@@ -4981,6 +5026,8 @@ def _app_policy_set_rule_enabled(args: argparse.Namespace) -> int:
         state = "enabled" if args.enabled else "disabled"
         print(f"App policy rule {state}: {args.rule_id}")
         print(f"Backup: {backup_path}")
+        if notice:
+            print(f"Note: {notice}")
     return 0
 
 
