@@ -222,6 +222,28 @@ class SystemDNSStateManager:
         else:
             raise DNSStateError("unsupported resolver manager")
 
+    def _nmcli_connection_property(self, name: str, prop: str) -> str:
+        # One property per call, not a single comma-joined -g query for all
+        # six: nmcli -g with multiple fields prints one line per field,
+        # blank for an empty/unset one (most commonly ipv4.dns itself, on
+        # any plain DHCP connection with no manual DNS override - the
+        # ordinary case, not an edge case). The shared runner strips the
+        # whole blob (self._run_command / _run_command), which eats a
+        # leading or trailing blank line whenever the first or last
+        # requested field is empty and shifts every value that follows by
+        # one position - so, for example, ipv4.ignore-auto-dns's "no"/"yes"
+        # would land in ipv4_dns instead. A later dns reset then feeds that
+        # garbage straight to `nmcli con mod ... ipv4.dns no`, which nmcli
+        # correctly rejects ("DNS server address is invalid"), leaving DNS
+        # not restored. Found live on a Rocky Linux 9 certification VM
+        # (Task 23.6.5b) - no prior distro certification ever exercised the
+        # real NetworkManager resolver branch with an active DHCP
+        # connection (Fedora/Ubuntu run systemd-resolved on top of NM, so
+        # they take the systemd-resolved branch instead; Debian's NM
+        # connection was loopback-only or dhcpcd-managed both times it was
+        # certified), so this was never caught before.
+        return self.runner(["nmcli", "-g", prop, "con", "show", name]).strip()
+
     def _save_network_manager_connections(
         self,
         inventory: ResolverInventory,
@@ -239,35 +261,21 @@ class SystemDNSStateManager:
             name, connection_type, device = fields[:3]
             if connection_type == "loopback" or device in {"", "lo"}:
                 continue
-            values = self.runner(
-                [
-                    "nmcli",
-                    "-g",
-                    ",".join(
-                        [
-                            "ipv4.dns",
-                            "ipv4.ignore-auto-dns",
-                            "ipv4.dns-search",
-                            "ipv6.dns",
-                            "ipv6.ignore-auto-dns",
-                            "ipv6.dns-search",
-                        ]
-                    ),
-                    "con",
-                    "show",
-                    name,
-                ]
-            ).splitlines()
-            values += [""] * (6 - len(values))
             states.append(
                 NetworkManagerConnectionState(
                     name=name,
-                    ipv4_dns=values[0],
-                    ipv4_ignore_auto_dns=values[1] or "no",
-                    ipv4_dns_search=values[2],
-                    ipv6_dns=values[3],
-                    ipv6_ignore_auto_dns=values[4] or "no",
-                    ipv6_dns_search=values[5],
+                    ipv4_dns=self._nmcli_connection_property(name, "ipv4.dns"),
+                    ipv4_ignore_auto_dns=self._nmcli_connection_property(
+                        name, "ipv4.ignore-auto-dns"
+                    )
+                    or "no",
+                    ipv4_dns_search=self._nmcli_connection_property(name, "ipv4.dns-search"),
+                    ipv6_dns=self._nmcli_connection_property(name, "ipv6.dns"),
+                    ipv6_ignore_auto_dns=self._nmcli_connection_property(
+                        name, "ipv6.ignore-auto-dns"
+                    )
+                    or "no",
+                    ipv6_dns_search=self._nmcli_connection_property(name, "ipv6.dns-search"),
                 )
             )
         return tuple(states)
