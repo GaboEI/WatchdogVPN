@@ -312,6 +312,47 @@ grep -Fq 'reached-end' <<<"$rocky_epel_present_output" || {
   exit 1
 }
 
+# Real Fedora keeps its from-source AmneziaWG guidance; the RHEL-family
+# branch swaps in tigro/amneziawg's prebuilt amneziawg-tools copr package
+# instead of building it too. DISTRO_ID is set before sourcing (unlike the
+# distro_prepare_package_repos tests above, which only read it at call time)
+# because the DISTRO_PYTHON/guidance conditionals below run at source time,
+# matching how install.sh/update.sh always call detect_distro before
+# sourcing the adapter.
+fedora_awg_guidance_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+DISTRO_ID=fedora
+source distros/fedora.sh
+printf "%s\n" "${DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS[@]}"
+')"
+grep -Fq 'make -C /tmp/amneziawg-tools/src' <<<"$fedora_awg_guidance_output" || {
+  printf 'FAIL: real Fedora AmneziaWG guidance must still build amneziawg-tools from source\n' >&2
+  exit 1
+}
+if grep -Fq 'dnf copr enable' <<<"$fedora_awg_guidance_output"; then
+  printf 'FAIL: real Fedora AmneziaWG guidance must not reference the RHEL-family copr\n' >&2
+  exit 1
+fi
+
+rocky_awg_guidance_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+DISTRO_ID=rocky
+source distros/fedora.sh
+printf "%s\n" "${DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS[@]}"
+')"
+grep -Fq 'dnf copr enable -y tigro/amneziawg' <<<"$rocky_awg_guidance_output" || {
+  printf 'FAIL: RHEL-family AmneziaWG guidance must enable the tigro/amneziawg copr for prebuilt amneziawg-tools\n' >&2
+  exit 1
+}
+grep -Fq 'amneziawg-go /tmp/amneziawg-go' <<<"$rocky_awg_guidance_output" || {
+  printf 'FAIL: RHEL-family AmneziaWG guidance must still build amneziawg-go from source (no prebuilt package)\n' >&2
+  exit 1
+}
+if grep -Fq 'make -C /tmp/amneziawg-tools/src' <<<"$rocky_awg_guidance_output"; then
+  printf 'FAIL: RHEL-family AmneziaWG guidance must not build amneziawg-tools from source when a prebuilt copr package exists\n' >&2
+  exit 1
+fi
+
 sbin_lookup_output="$(cd "$ROOT_DIR" && tmp="$(mktemp -d)" && bash -c '
 set -euo pipefail
 source lib/common.sh

@@ -51,16 +51,32 @@ distro_prepare_package_repos() {
     run_step sudo dnf install -y epel-release
   fi
 }
-# AmneziaWG has no official Fedora package (the upstream copr only ships
-# EPEL/RHEL builds), so the guided trust-boundary setup builds the userspace
-# stack from Amnezia's official source. The userspace amneziawg-go path is
-# deliberately preferred over the DKMS kernel module here: it needs no kernel
-# headers and is not blocked by Secure Boot module signing, so it strands far
-# fewer users while carrying identical real traffic. Migrate this guidance to a
-# real Fedora package if one becomes available upstream. WatchdogVPN never runs
-# these commands; it verifies awg and amneziawg-go afterwards.
+# AmneziaWG has no official Fedora package, so the guided trust-boundary
+# setup builds the userspace stack from Amnezia's official source. The
+# userspace amneziawg-go path is deliberately preferred over the DKMS kernel
+# module here: it needs no kernel headers and is not blocked by Secure Boot
+# module signing, so it strands far fewer users while carrying identical
+# real traffic. Migrate this guidance to a real Fedora package if one becomes
+# available upstream. WatchdogVPN never runs these commands; it verifies awg
+# and amneziawg-go afterwards.
 DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS=(
   "sudo dnf install -y golang git make gcc"
   "git clone https://github.com/amnezia-vpn/amneziawg-tools /tmp/amneziawg-tools && make -C /tmp/amneziawg-tools/src && sudo make -C /tmp/amneziawg-tools/src install"
   "git clone https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && (cd /tmp/amneziawg-go && make) && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
 )
+
+# The RHEL-family branch has a real advantage Fedora does not: tigro/amneziawg
+# (https://copr.fedorainfracloud.org/coprs/tigro/amneziawg/) publishes a
+# prebuilt amneziawg-tools binary for epel-9, so awg/awg-quick do not need to
+# be built from source here. It also ships amneziawg-dkms (a kernel module),
+# but the userspace amneziawg-go path is kept for the same reason as Fedora
+# (no kernel headers, no Secure Boot signing issue) - amneziawg-go itself has
+# no prebuilt package in that copr, so it is still built from source.
+# Verified end to end on a Rocky Linux 9.6 certification VM (Task 23.6.5b).
+if [[ "${DISTRO_ID:-}" != "fedora" ]]; then
+  DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS=(
+    "sudo dnf install -y dnf-plugins-core && sudo dnf copr enable -y tigro/amneziawg && sudo dnf install -y amneziawg-tools"
+    "sudo dnf install -y golang git make gcc"
+    "git clone https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && (cd /tmp/amneziawg-go && make) && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
+  )
+fi
