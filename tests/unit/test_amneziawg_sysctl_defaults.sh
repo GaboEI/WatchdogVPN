@@ -36,6 +36,8 @@ assert_contains "$RUNTIME_LIB" "install_root_file \"\$runtime_root/etc/sysctl.d/
   "install_sysctl_defaults must install the tracked sysctl.d file"
 assert_contains "$RUNTIME_LIB" "sudo sysctl -q -p \"\$SYSCTL_DEFAULTS_PATH\"" \
   "install_sysctl_defaults must apply the sysctl file at install/update time"
+assert_contains "$RUNTIME_LIB" "_ensure_default_interface_rp_filter" \
+  "install_sysctl_defaults must also nudge the detected default-route interface directly, since conf.default never reaches an already-existing physical NIC"
 assert_contains "$ROOT_DIR/uninstall.sh" "restore_sysctl_defaults_baseline" \
   "uninstall must restore the captured sysctl baseline before deleting runtime files"
 
@@ -166,6 +168,77 @@ assert_contains "$ROOT_DIR/uninstall.sh" "restore_sysctl_defaults_baseline" \
   restore_sysctl_defaults_baseline
   [[ "$(cat "$RP_FILTER_ALL_PATH")" == "1" && "$(cat "$RP_FILTER_DEFAULT_PATH")" == "2" ]] \
     || fail "restoring after a v1->v2 migration did not apply the captured rp_filter baseline"
+
+  # --- default-route interface: conf.default alone never reaches an
+  # already-existing physical NIC (Rocky Linux 9, Task 23.6.5b), so
+  # install/update must detect and nudge that interface directly, and
+  # remember its true original value for an exact uninstall restore. ---
+  RP_FILTER_CONF_DIR="$TMP_DIR/conf"
+  mkdir -p -- "$RP_FILTER_CONF_DIR/enp0s3" "$RP_FILTER_CONF_DIR/enp0s4"
+  printf '1\n' >"$RP_FILTER_CONF_DIR/enp0s3/rp_filter"
+  printf '0\n' >"$RP_FILTER_CONF_DIR/enp0s4/rp_filter"
+  FAKE_DEFAULT_INTERFACE="enp0s3"
+  _detect_default_interface() { printf '%s\n' "$FAKE_DEFAULT_INTERFACE"; }
+  FAKE_EXISTING_INTERFACES="enp0s3"
+  ip() {
+    if [[ "$1" == "link" && "$2" == "show" ]]; then
+      [[ " $FAKE_EXISTING_INTERFACES " == *" $3 "* ]]
+      return
+    fi
+    command ip "$@"
+  }
+
+  _ensure_default_interface_rp_filter
+  [[ "$(cat "$RP_FILTER_CONF_DIR/enp0s3/rp_filter")" == "2" ]] \
+    || fail "_ensure_default_interface_rp_filter must force the detected default interface to loose mode"
+
+  rm -rf -- "$SYSCTL_BASELINE_DIR"
+  mkdir -p -- "$SYSCTL_BASELINE_DIR"
+  rm -f -- "$SYSCTL_DEFAULTS_PATH"
+  printf '0\n' >"$SRC_VALID_MARK_ALL_PATH"
+  printf '0\n' >"$SRC_VALID_MARK_DEFAULT_PATH"
+  printf '0\n' >"$RP_FILTER_ALL_PATH"
+  printf '0\n' >"$RP_FILTER_DEFAULT_PATH"
+  printf '1\n' >"$RP_FILTER_CONF_DIR/enp0s3/rp_filter"
+  capture_sysctl_defaults_baseline
+  _ensure_default_interface_baseline_recorded
+  grep -Fxq 'default_interface=enp0s3' "$SYSCTL_BASELINE_MANIFEST" \
+    || fail "first observation of the default interface must be recorded in the manifest"
+  grep -Fxq 'default_interface_rp_filter=1' "$SYSCTL_BASELINE_MANIFEST" \
+    || fail "the interface's original rp_filter value must be recorded before it is forced to loose"
+
+  # Simulate install_sysctl_defaults() having already forced it to 2 on a
+  # prior run; re-observing the *same* interface must not re-capture "2" as
+  # if it were the original baseline.
+  printf '2\n' >"$RP_FILTER_CONF_DIR/enp0s3/rp_filter"
+  _ensure_default_interface_baseline_recorded
+  grep -Fxq 'default_interface_rp_filter=1' "$SYSCTL_BASELINE_MANIFEST" \
+    || fail "re-observing the same default interface must not overwrite its already-captured original value"
+
+  # The default interface changing (e.g. Ethernet -> Wi-Fi) must capture the
+  # newly-seen interface's own current value as its own fresh baseline.
+  FAKE_DEFAULT_INTERFACE="enp0s4"
+  _ensure_default_interface_baseline_recorded
+  grep -Fxq 'default_interface=enp0s4' "$SYSCTL_BASELINE_MANIFEST" \
+    || fail "a changed default interface must update the manifest to the newly-seen interface"
+  grep -Fxq 'default_interface_rp_filter=0' "$SYSCTL_BASELINE_MANIFEST" \
+    || fail "a changed default interface must capture its own current value, not reuse the old interface's"
+
+  # Restore must apply the captured interface baseline when that interface
+  # still exists, and skip it gracefully (without failing the whole
+  # restore) when it no longer does.
+  FAKE_DEFAULT_INTERFACE="enp0s4"
+  FAKE_EXISTING_INTERFACES="enp0s4"
+  printf '2\n' >"$RP_FILTER_CONF_DIR/enp0s4/rp_filter"
+  restore_sysctl_defaults_baseline
+  [[ "$(cat "$RP_FILTER_CONF_DIR/enp0s4/rp_filter")" == "0" ]] \
+    || fail "restore must apply the captured default-interface rp_filter baseline"
+
+  FAKE_EXISTING_INTERFACES=""
+  printf '2\n' >"$RP_FILTER_CONF_DIR/enp0s4/rp_filter"
+  restore_sysctl_defaults_baseline
+  [[ "$(cat "$RP_FILTER_CONF_DIR/enp0s4/rp_filter")" == "2" ]] \
+    || fail "restore must skip (not fail) a default-interface baseline whose interface no longer exists"
 )
 
 # The daemon runs under ProtectKernelTunables=true and cannot write kernel

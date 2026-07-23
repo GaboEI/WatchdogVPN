@@ -50,6 +50,7 @@ SRC_VALID_MARK_ALL_PATH="${WATCHDOGVPN_SRC_VALID_MARK_ALL_PATH:-/proc/sys/net/ip
 SRC_VALID_MARK_DEFAULT_PATH="${WATCHDOGVPN_SRC_VALID_MARK_DEFAULT_PATH:-/proc/sys/net/ipv4/conf/default/src_valid_mark}"
 RP_FILTER_ALL_PATH="${WATCHDOGVPN_RP_FILTER_ALL_PATH:-/proc/sys/net/ipv4/conf/all/rp_filter}"
 RP_FILTER_DEFAULT_PATH="${WATCHDOGVPN_RP_FILTER_DEFAULT_PATH:-/proc/sys/net/ipv4/conf/default/rp_filter}"
+RP_FILTER_CONF_DIR="${WATCHDOGVPN_RP_FILTER_CONF_DIR:-/proc/sys/net/ipv4/conf}"
 SYSCTL_INSTALLED_MARKER_PATH="${WATCHDOGVPN_VERSION_MARKER:-/usr/local/lib/watchdogvpn/installed-version}"
 
 # Historical WatchdogVPN-owned files removed from the shipped set before this
@@ -117,6 +118,99 @@ install_runtime_files() {
   install_systemd_units
 }
 
+# Detects the interface currently carrying the default IPv4 route - the same
+# interface whose reverse-path check drivers/amneziawg_driver.py's
+# _ensure_rp_filter() later verifies at connect time, using the same
+# detection logic and the same virtual-interface exclusion list
+# (drivers/singbox_driver.py:VIRTUAL_INTERFACE_PREFIXES) so both sides agree
+# on "the" interface. Does not need root: reading the routing table is an
+# ordinary operation, unlike writing to /proc/sys.
+_detect_default_interface() {
+  local ip_tool line part prev="" iface=""
+  ip_tool="$(command -v ip)" || return 0
+  line="$("$ip_tool" route show default 2>/dev/null | head -n1)"
+  [[ -n "$line" ]] || return 0
+  for part in $line; do
+    if [[ "$prev" == "dev" ]]; then
+      iface="$part"
+      break
+    fi
+    prev="$part"
+  done
+  [[ -n "$iface" ]] || return 0
+  case "$iface" in
+    lo* | tun* | tap* | wg* | wd* | ppp* | tailscale* | zt* | docker* | br-* | veth* | virbr* | podman*)
+      return 0
+      ;;
+  esac
+  printf '%s\n' "$iface"
+}
+
+_interface_rp_filter_path() {
+  printf '%s/%s/rp_filter\n' "$RP_FILTER_CONF_DIR" "$1"
+}
+
+_manifest_default_interface() {
+  run_privileged_readonly awk -F= '$1 == "default_interface" {print $2}' "$1"
+}
+
+# Records the current default-route interface's *original* rp_filter value in
+# the sysctl baseline manifest, but only the first time WatchdogVPN observes
+# that particular interface: capturing again after _ensure_default_interface_rp_filter
+# has already forced it to 2 would corrupt the baseline with WatchdogVPN's
+# own value instead of what was really there before install. If the default
+# interface changes on a later update run, the newly-seen interface's current
+# value becomes its own fresh baseline - the previous interface's forced
+# value is no longer tracked, the same class of limitation already accepted
+# for conf.default not reaching interfaces that pre-date it.
+_ensure_default_interface_baseline_recorded() {
+  local cur_iface recorded_iface cur_value manifest_tmp
+  cur_iface="$(_detect_default_interface)"
+  [[ -n "$cur_iface" ]] || return 0
+  cur_value="$(_read_rp_filter "$(_interface_rp_filter_path "$cur_iface")")" || return 0
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] record default-interface sysctl baseline: interface=%s rp_filter=%s\n' "$cur_iface" "$cur_value"
+    return 0
+  fi
+  root_path_is_file "$SYSCTL_BASELINE_MANIFEST" || return 0
+  recorded_iface="$(_manifest_default_interface "$SYSCTL_BASELINE_MANIFEST")" || return 1
+  [[ "$cur_iface" != "$recorded_iface" ]] || return 0
+  manifest_tmp="$(mktemp)"
+  run_privileged_readonly awk -F= '$1 != "default_interface" && $1 != "default_interface_rp_filter"' \
+    "$SYSCTL_BASELINE_MANIFEST" >"$manifest_tmp"
+  {
+    printf 'default_interface=%s\n' "$cur_iface"
+    printf 'default_interface_rp_filter=%s\n' "$cur_value"
+  } >>"$manifest_tmp"
+  run_step sudo install -m 0600 -o root -g root "$manifest_tmp" "$SYSCTL_BASELINE_MANIFEST"
+  rm -f -- "$manifest_tmp"
+  printf '[INFO] recorded default-interface sysctl baseline: interface=%s rp_filter=%s\n' "$cur_iface" "$cur_value"
+}
+
+# conf.default only templates *newly created* interfaces (see the sysctl.d
+# file's own comment) - a physical NIC that already exists at boot is
+# typically created by the kernel driver before systemd-sysctl.service ever
+# runs, so it never inherits this file's conf.default.rp_filter at all.
+# Confirmed live on Rocky Linux 9 (Task 23.6.5b): systemd-sysctl.service
+# finished four seconds before NetworkManager even saw the interface, yet a
+# full reboot afterward still left it strict. Nudging the currently-detected
+# default interface directly, on every install/update run, is what actually
+# makes this self-healing for the overwhelmingly common case where the
+# default interface does not change between install/update and connect time.
+# drivers/amneziawg_driver.py's _ensure_rp_filter() remains the connect-time
+# safety net for the remaining case: the default interface changed since the
+# last install/update ran.
+_ensure_default_interface_rp_filter() {
+  local iface
+  iface="$(_detect_default_interface)"
+  [[ -n "$iface" ]] || return 0
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] set net.ipv4.conf.%s.rp_filter=2\n' "$iface"
+    return 0
+  fi
+  _write_rp_filter "$(_interface_rp_filter_path "$iface")" "2"
+}
+
 # net.ipv4.conf.all.src_valid_mark must be 1 for AmneziaWG/WireGuard-style
 # fwmark default-route policy routing to pass return traffic. The daemon
 # runs under ProtectKernelTunables=true and cannot set this itself at
@@ -125,12 +219,15 @@ install_runtime_files() {
 install_sysctl_defaults() {
   local runtime_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
   capture_sysctl_defaults_baseline
+  _ensure_default_interface_baseline_recorded
   install_root_file "$runtime_root/etc/sysctl.d/99-watchdogvpn.conf" "$SYSCTL_DEFAULTS_PATH" 0644
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] sudo sysctl -p %s\n' "$SYSCTL_DEFAULTS_PATH"
+    _ensure_default_interface_rp_filter
     return 0
   fi
   run_step sudo sysctl -q -p "$SYSCTL_DEFAULTS_PATH"
+  _ensure_default_interface_rp_filter
 }
 
 _read_src_valid_mark() {
@@ -151,7 +248,7 @@ _read_rp_filter() {
 
 _validated_sysctl_baseline() {
   local manifest="$1" version origin file_present all_value default_value
-  local rp_all_value rp_default_value
+  local rp_all_value rp_default_value iface_name iface_rp_value
   version="$(run_privileged_readonly awk -F= '$1 == "version" {print $2}' "$manifest")" || return 1
   origin="$(run_privileged_readonly awk -F= '$1 == "origin" {print $2}' "$manifest")" || return 1
   file_present="$(run_privileged_readonly awk -F= '$1 == "file_present" {print $2}' "$manifest")" || return 1
@@ -159,13 +256,21 @@ _validated_sysctl_baseline() {
   default_value="$(run_privileged_readonly awk -F= '$1 == "default_src_valid_mark" {print $2}' "$manifest")" || return 1
   rp_all_value="$(run_privileged_readonly awk -F= '$1 == "all_rp_filter" {print $2}' "$manifest")" || return 1
   rp_default_value="$(run_privileged_readonly awk -F= '$1 == "default_rp_filter" {print $2}' "$manifest")" || return 1
+  # default_interface/default_interface_rp_filter are optional: they were
+  # added after some manifests already existed, and a machine with no
+  # detectable default route at capture time never gets them at all. Their
+  # absence is not a validation failure, just "no interface baseline yet".
+  iface_name="$(run_privileged_readonly awk -F= '$1 == "default_interface" {print $2}' "$manifest")" || return 1
+  iface_rp_value="$(run_privileged_readonly awk -F= '$1 == "default_interface_rp_filter" {print $2}' "$manifest")" || return 1
   [[ "$version" == "2" ]] || return 1
   [[ "$origin" == "fresh" || "$origin" == "legacy-inferred" || "$origin" == "migrated-v1" ]] || return 1
   [[ "$file_present" =~ ^[01]$ && "$all_value" =~ ^[01]$ && "$default_value" =~ ^[01]$ ]] || return 1
   [[ "$rp_all_value" =~ ^[012]$ && "$rp_default_value" =~ ^[012]$ ]] || return 1
+  [[ -z "$iface_rp_value" || "$iface_rp_value" =~ ^[012]$ ]] || return 1
   [[ "$origin" != "legacy-inferred" || "$file_present $all_value $default_value" == "0 0 0" ]] || return 1
   [[ "$file_present" == "0" ]] || root_path_is_file "$SYSCTL_BASELINE_FILE" || return 1
-  printf '%s %s %s %s %s\n' "$file_present" "$all_value" "$default_value" "$rp_all_value" "$rp_default_value"
+  printf '%s %s %s %s %s %s %s\n' "$file_present" "$all_value" "$default_value" "$rp_all_value" "$rp_default_value" \
+    "${iface_name:--}" "${iface_rp_value:--}"
 }
 
 # A v1 manifest (from before rp_filter was tracked) has file_present/
@@ -314,6 +419,7 @@ _write_rp_filter() {
 
 restore_sysctl_defaults_baseline() {
   local values file_present all_value default_value rp_all_value rp_default_value observed
+  local iface_name iface_rp_value
   if ! root_path_is_file "$SYSCTL_BASELINE_MANIFEST"; then
     if root_path_is_file "$SYSCTL_INSTALLED_MARKER_PATH"; then
       if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
@@ -346,10 +452,13 @@ restore_sysctl_defaults_baseline() {
     printf 'ERROR: WatchdogVPN sysctl baseline is invalid\n' >&2
     return 1
   }
-  read -r file_present all_value default_value rp_all_value rp_default_value <<<"$values"
+  read -r file_present all_value default_value rp_all_value rp_default_value iface_name iface_rp_value <<<"$values"
+  [[ "$iface_name" != "-" ]] || iface_name=""
+  [[ "$iface_rp_value" != "-" ]] || iface_rp_value=""
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] restore sysctl baseline: file_present=%s all=%s default=%s rp_all=%s rp_default=%s\n' \
-      "$file_present" "$all_value" "$default_value" "$rp_all_value" "$rp_default_value"
+    printf '[DRY-RUN] restore sysctl baseline: file_present=%s all=%s default=%s rp_all=%s rp_default=%s interface=%s interface_rp=%s\n' \
+      "$file_present" "$all_value" "$default_value" "$rp_all_value" "$rp_default_value" \
+      "${iface_name:-none}" "${iface_rp_value:-n/a}"
     return 0
   fi
 
@@ -370,6 +479,15 @@ restore_sysctl_defaults_baseline() {
   [[ "$observed" == "$rp_all_value" ]] || return 1
   observed="$(_read_rp_filter "$RP_FILTER_DEFAULT_PATH")" || return 1
   [[ "$observed" == "$rp_default_value" ]] || return 1
+  if [[ -n "$iface_name" ]]; then
+    if ip link show "$iface_name" >/dev/null 2>&1; then
+      _write_rp_filter "$(_interface_rp_filter_path "$iface_name")" "$iface_rp_value"
+      observed="$(_read_rp_filter "$(_interface_rp_filter_path "$iface_name")")" || return 1
+      [[ "$observed" == "$iface_rp_value" ]] || return 1
+    else
+      printf '[SKIP] default-interface sysctl baseline interface no longer exists: %s\n' "$iface_name"
+    fi
+  fi
   if [[ "$file_present" == "1" ]]; then
     root_path_is_file "$SYSCTL_DEFAULTS_PATH" || return 1
     run_privileged_readonly cmp -s "$SYSCTL_BASELINE_FILE" "$SYSCTL_DEFAULTS_PATH" || return 1
