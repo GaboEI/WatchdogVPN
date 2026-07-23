@@ -411,9 +411,19 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     @patch.object(OpenVPNCloakDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNCloakDriver, "find_ck_client_binary", return_value="/usr/bin/ck-client")
     @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
+    # recorded_children_terminated() genuinely checks /proc for the recorded
+    # PID's liveness (drivers/runtime_paths.py) - this test's real
+    # record_child_process() call durably records the Mock's hardcoded pid
+    # (1111) to disk, and without this patch the assertion below is only
+    # true by coincidence, whenever PID 1111 does not happen to belong to an
+    # unrelated real process on the machine running the suite at that
+    # moment. Found flaky for exactly that reason; not a defect in
+    # _teardown_children()'s own rollback logic, which is intentionally
+    # stricter than this test needs (see its docstring).
+    @patch("drivers.openvpn_cloak_driver.recorded_children_terminated", return_value=True)
     @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
     def test_connect_rolls_back_cloak_when_openvpn_spawn_fails(
-        self, popen_mock, _snapshot, _ck, _ovpn, _sleep
+        self, popen_mock, _terminated, _snapshot, _ck, _ovpn, _sleep
     ) -> None:
         cloak = self._live_process(1111)
         popen_mock.side_effect = [cloak, OSError("openvpn spawn failure")]
@@ -450,9 +460,14 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
     @patch.object(OpenVPNCloakDriver, "_capture_route_snapshot", return_value=True)
     @patch.object(OpenVPNCloakDriver, "_wait_for_ready", return_value=False)
     @patch.object(OpenVPNCloakDriver, "_cleanup_expected_interface", return_value=True)
+    # See the matching comment on test_connect_rolls_back_cloak_when_openvpn_spawn_fails:
+    # without this, the rollback assertion below only passes by coincidence,
+    # depending on whether the hardcoded PIDs (1111, 2222) happen to be free
+    # on the machine running the suite.
+    @patch("drivers.openvpn_cloak_driver.recorded_children_terminated", return_value=True)
     @patch("drivers.openvpn_cloak_driver.subprocess.Popen")
     def test_connect_rolls_back_both_children_when_readiness_fails(
-        self, popen_mock, _interface, _ready, _snapshot, _ck, _ovpn, _sleep
+        self, popen_mock, _terminated, _interface, _ready, _snapshot, _ck, _ovpn, _sleep
     ) -> None:
         cloak = self._live_process(1111)
         openvpn = self._live_process(2222)
