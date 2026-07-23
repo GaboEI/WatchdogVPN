@@ -16,6 +16,24 @@ DISTRO_BASE_PACKAGES=(
 DISTRO_DNS_PACKAGES=(bind-utils)
 DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"
 DISTRO_POLKIT_PACKAGE="polkit"
+
+# This adapter is shared by real Fedora and, via lib/distro.sh's native
+# rhel|centos|rocky|almalinux case, the whole RHEL-family. Real Fedora ships
+# every package this adapter declares (including openvpn) in its own repos.
+# The RHEL-family derivatives do not: openvpn and others are EPEL-only there,
+# so a plain `dnf install` of DISTRO_BASE_PACKAGES fails with "Unable to find
+# a match" on a stock Rocky/Alma/RHEL/CentOS image. Package reconciliation
+# (lib/packages.sh:validate_required_commands) calls this once before
+# installing DISTRO_BASE_PACKAGES; it is a no-op on real Fedora. Defined as a
+# function (not top-level code) so merely sourcing this adapter - which
+# doctor.sh also does, read-only - never mutates the system; only the
+# explicit call from install/update package reconciliation does.
+distro_prepare_package_repos() {
+  [[ "${DISTRO_ID:-}" == "fedora" ]] && return 0
+  if ! rpm -q epel-release >/dev/null 2>&1; then
+    run_step sudo dnf install -y epel-release
+  fi
+}
 # AmneziaWG has no official Fedora package (the upstream copr only ships
 # EPEL/RHEL builds), so the guided trust-boundary setup builds the userspace
 # stack from Amnezia's official source. The userspace amneziawg-go path is

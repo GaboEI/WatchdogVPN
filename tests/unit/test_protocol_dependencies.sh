@@ -179,6 +179,9 @@ for package in git coreutils findutils grep gawk sed glibc-common shadow-utils s
 done
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PACKAGE_MANAGER="dnf"' "Fedora adapter must use dnf"
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "Fedora adapter must map cryptography"
+assert_contains "$ROOT_DIR/distros/fedora.sh" 'distro_prepare_package_repos()' "Fedora adapter must define the RHEL-family EPEL repo hook"
+assert_contains "$ROOT_DIR/distros/fedora.sh" '[[ "${DISTRO_ID:-}" == "fedora" ]] && return 0' "EPEL hook must be a no-op on real Fedora"
+assert_contains "$ROOT_DIR/lib/packages.sh" 'declare -F distro_prepare_package_repos' "package validation must call the optional distro repo-prep hook before installing the base package set"
 for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps openvpn NetworkManager polkit firewalld systemd-resolved apparmor-utils python311; do
   assert_contains "$ROOT_DIR/distros/opensuse.sh" "$package" "openSUSE adapter must map $package"
 done
@@ -239,6 +242,73 @@ grep -Fq 'packages=runtime-one nftables iputils procps' <<<"$dependency_reconcil
 }
 grep -Fq 'required runtime packages, commands and kernel TUN device available' <<<"$dependency_reconcile_output" || {
   printf 'FAIL: dependency validation must re-check commands after package installation\n' >&2
+  exit 1
+}
+
+repo_prep_called_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source lib/common.sh
+source lib/packages.sh
+DISTRO_BASE_PACKAGES=(runtime-one)
+distro_prepare_package_repos() { printf "repo-prep-called\n"; }
+install_package_set() { return 0; }
+have_cmd() { return 0; }
+validate_required_commands
+' 2>&1)"
+grep -Fq 'repo-prep-called' <<<"$repo_prep_called_output" || {
+  printf 'FAIL: dependency validation must call an adapter-defined distro_prepare_package_repos hook before installing packages\n' >&2
+  exit 1
+}
+
+# Real Fedora must never attempt to enable EPEL: the hook is a no-op there.
+fedora_epel_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source distros/fedora.sh
+run_step() { printf "run_step:%s\n" "$*"; }
+DISTRO_ID=fedora
+distro_prepare_package_repos
+echo "reached-end"
+' 2>&1)"
+if grep -Fq 'epel-release' <<<"$fedora_epel_output"; then
+  printf 'FAIL: real Fedora must not attempt to enable EPEL\n' >&2
+  exit 1
+fi
+grep -Fq 'reached-end' <<<"$fedora_epel_output" || {
+  printf 'FAIL: distro_prepare_package_repos must return cleanly on real Fedora\n' >&2
+  exit 1
+}
+
+# A RHEL-family derivative without epel-release installed must enable it.
+rocky_epel_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source distros/fedora.sh
+run_step() { printf "run_step:%s\n" "$*"; }
+rpm() { return 1; }
+DISTRO_ID=rocky
+distro_prepare_package_repos
+' 2>&1)"
+grep -Fqx 'run_step:sudo dnf install -y epel-release' <<<"$rocky_epel_output" || {
+  printf 'FAIL: RHEL-family derivatives without epel-release must have it installed before package reconciliation\n' >&2
+  printf '%s\n' "$rocky_epel_output" >&2
+  exit 1
+}
+
+# Already having epel-release installed must not attempt to reinstall it.
+rocky_epel_present_output="$(cd "$ROOT_DIR" && bash -c '
+set -euo pipefail
+source distros/fedora.sh
+run_step() { printf "run_step:%s\n" "$*"; }
+rpm() { return 0; }
+DISTRO_ID=almalinux
+distro_prepare_package_repos
+echo "reached-end"
+' 2>&1)"
+if grep -Fq 'epel-release' <<<"$rocky_epel_present_output"; then
+  printf 'FAIL: distro_prepare_package_repos must not reinstall an already-present epel-release\n' >&2
+  exit 1
+fi
+grep -Fq 'reached-end' <<<"$rocky_epel_present_output" || {
+  printf 'FAIL: distro_prepare_package_repos must return cleanly when epel-release is already installed\n' >&2
   exit 1
 }
 

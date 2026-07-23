@@ -80,6 +80,17 @@ validate_required_commands() {
     return 1
   fi
 
+  # Optional adapter hook: some distro families need a repository enabled
+  # before DISTRO_BASE_PACKAGES resolves (for example RHEL-family
+  # derivatives sharing distros/fedora.sh need EPEL for openvpn). Most
+  # adapters do not define this function at all.
+  if declare -F distro_prepare_package_repos >/dev/null 2>&1; then
+    if ! distro_prepare_package_repos; then
+      fail "failed to prepare distro package repositories"
+      return 1
+    fi
+  fi
+
   # Always reconcile the complete package set. Installing it only when some
   # unrelated command is absent lets pre-existing developer state mask a
   # missing firewall, protocol, notification, or recovery dependency.
