@@ -183,4 +183,103 @@ if [[ ! -e "$disconnect_marker" ]]; then
   exit 1
 fi
 
+# --- regression: sudo itself cannot find watchdog_panic by bare name -----
+#
+# Found live on the same Rocky Linux 9 VM while validating the fix above,
+# during Task 23.6.5b's evidence closure pass: even with bin/watchdog_panic's
+# own internal PATH prepend in place, a real `sudo watchdog_panic sleep`
+# (bare name, exactly as documented in docs/security.md) still failed with
+# "sudo: watchdog_panic: command not found", because sudo's own secure_path
+# lookup of the script happens *before* the script ever runs, so nothing
+# inside the script can fix it. /etc/sudoers there: "Defaults secure_path =
+# /sbin:/bin:/usr/sbin:/usr/bin" - confirmed via `sudo which watchdog_panic`
+# failing while a plain (non-sudo) `command -v watchdog_panic` succeeded.
+
+SUDOERS_FRAGMENT="$ROOT_DIR/etc/sudoers.d/99-watchdogvpn-secure-path"
+[[ -f "$SUDOERS_FRAGMENT" ]] || {
+  echo "FAIL: missing $SUDOERS_FRAGMENT" >&2
+  exit 1
+}
+assert_contains "$SUDOERS_FRAGMENT" 'Defaults secure_path' \
+  "sudoers fragment must extend secure_path, not just document the problem"
+assert_contains "$SUDOERS_FRAGMENT" '/usr/local/bin' \
+  "sudoers fragment must add /usr/local/bin to secure_path"
+assert_contains "$SUDOERS_FRAGMENT" '/usr/local/sbin' \
+  "sudoers fragment must add /usr/local/sbin to secure_path"
+if command -v visudo >/dev/null 2>&1; then
+  visudo -cf "$SUDOERS_FRAGMENT" >/dev/null || {
+    echo "FAIL: $SUDOERS_FRAGMENT does not pass visudo -cf; a malformed sudoers.d file can break sudo system-wide" >&2
+    exit 1
+  }
+fi
+
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_sudoers_secure_path' \
+  "install_runtime_files must install the sudoers secure_path fix"
+assert_contains "$ROOT_DIR/lib/runtime.sh" "visudo -cf \"\$src\"" \
+  "install_sudoers_secure_path must validate the fragment before installing it"
+assert_contains "$ROOT_DIR/lib/runtime.sh" "visudo -cf \"\$dest\"" \
+  "install_sudoers_secure_path must re-validate the installed copy and remove it if that ever fails"
+assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /etc/sudoers.d/99-watchdogvpn-secure-path' \
+  "uninstall must remove the sudoers secure_path fragment"
+
+# --- behavioral: install_sudoers_secure_path() validates, installs, and
+#     fails safe if the installed copy somehow does not validate -----------
+
+if command -v visudo >/dev/null 2>&1; then
+(
+  set -euo pipefail
+  # shellcheck disable=SC1090
+  source "$ROOT_DIR/lib/install_files.sh"
+  # shellcheck disable=SC1090
+  source "$ROOT_DIR/lib/runtime.sh"
+
+  sudo() {
+    if [[ "$1" == "install" ]]; then
+      shift
+      local -a filtered=()
+      while (($#)); do
+        case "$1" in
+          -o | -g) shift 2 ;;
+          *) filtered+=("$1"); shift ;;
+        esac
+      done
+      command install "${filtered[@]}"
+      return
+    fi
+    "$@"
+  }
+  INSTALL_DRY_RUN=0
+
+  # Valid fragment: installs successfully and the installed copy itself
+  # independently passes visudo -cf (not just trusted because the source did).
+  CANDIDATE_ROOT="$TMP_DIR/candidate-valid"
+  mkdir -p "$CANDIDATE_ROOT/etc/sudoers.d"
+  cp "$SUDOERS_FRAGMENT" "$CANDIDATE_ROOT/etc/sudoers.d/99-watchdogvpn-secure-path"
+  WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT="$CANDIDATE_ROOT"
+  DEST="$TMP_DIR/installed-sudoers-fragment"
+  WATCHDOGVPN_SUDOERS_SECURE_PATH="$DEST"
+  install_sudoers_secure_path
+  [[ -f "$DEST" ]] || { echo "FAIL: install_sudoers_secure_path did not install a valid fragment" >&2; exit 1; }
+  visudo -cf "$DEST" >/dev/null || { echo "FAIL: installed fragment does not independently pass visudo -cf" >&2; exit 1; }
+
+  # Invalid fragment: must refuse to install anything at all, rather than
+  # ever leaving a broken sudoers.d file in place - this is the one failure
+  # mode that could break sudo system-wide if it silently proceeded.
+  BROKEN_ROOT="$TMP_DIR/candidate-broken"
+  mkdir -p "$BROKEN_ROOT/etc/sudoers.d"
+  printf 'this is not valid sudoers syntax {{{\n' >"$BROKEN_ROOT/etc/sudoers.d/99-watchdogvpn-secure-path"
+  WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT="$BROKEN_ROOT"
+  BROKEN_DEST="$TMP_DIR/installed-broken-fragment"
+  WATCHDOGVPN_SUDOERS_SECURE_PATH="$BROKEN_DEST"
+  if install_sudoers_secure_path 2>/dev/null; then
+    echo "FAIL: install_sudoers_secure_path must refuse a fragment that fails visudo -cf" >&2
+    exit 1
+  fi
+  [[ ! -e "$BROKEN_DEST" ]] || { echo "FAIL: a fragment that fails validation must never be installed" >&2; exit 1; }
+) || {
+  echo "FAIL: install_sudoers_secure_path behavioral test failed" >&2
+  exit 1
+}
+fi
+
 printf 'watchdog panic checks passed\n'
