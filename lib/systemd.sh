@@ -237,12 +237,16 @@ SYSTEMD_LEGACY_UNITS=(
 
 verify_systemd_units() {
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] systemd-analyze verify systemd/*.service systemd/*.timer\n'
+    printf '[DRY-RUN] systemd-analyze verify --man=no systemd/*.service systemd/*.timer\n'
     return 0
   fi
 
   if command -v systemd-analyze >/dev/null 2>&1; then
-    if ! sudo systemd-analyze verify "$ROOT_DIR"/systemd/*.service "$ROOT_DIR"/systemd/*.timer; then
+    # --man=no: unit correctness must not depend on man-db being installed.
+    # Documentation= is informational; some distros (e.g. openSUSE Leap
+    # minimal) don't ship `man` by default, and it is not a WatchdogVPN
+    # runtime dependency.
+    if ! sudo systemd-analyze verify --man=no "$ROOT_DIR"/systemd/*.service "$ROOT_DIR"/systemd/*.timer; then
       return 1
     fi
   else

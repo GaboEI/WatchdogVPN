@@ -177,11 +177,14 @@ for package in git coreutils findutils grep gawk sed glibc-common shadow-utils s
 done
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PACKAGE_MANAGER="dnf"' "Fedora adapter must use dnf"
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "Fedora adapter must map cryptography"
-for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps openvpn NetworkManager polkit firewalld systemd-resolved apparmor-utils; do
+for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps openvpn NetworkManager polkit firewalld systemd-resolved apparmor-utils python311; do
   assert_contains "$ROOT_DIR/distros/opensuse.sh" "$package" "openSUSE adapter must map $package"
 done
 assert_contains "$ROOT_DIR/distros/opensuse.sh" 'DISTRO_PACKAGE_MANAGER="zypper"' "openSUSE adapter must use zypper"
-assert_contains "$ROOT_DIR/distros/opensuse.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"' "openSUSE adapter must map cryptography"
+# openSUSE Leap's default python3 is 3.6, too old for the runtime, so the
+# adapter pins a modern interpreter and its matching cryptography package.
+assert_contains "$ROOT_DIR/distros/opensuse.sh" 'DISTRO_PYTHON="python3.11"' "openSUSE adapter must pin a modern Python interpreter"
+assert_contains "$ROOT_DIR/distros/opensuse.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python311-cryptography"' "openSUSE adapter must map cryptography for the pinned interpreter"
 assert_contains "$ROOT_DIR/lib/packages.sh" 'sudo zypper --non-interactive install --no-recommends ' "openSUSE package hint must match zypper install behavior"
 
 dnf_output="$(cd "$ROOT_DIR" && bash -c '

@@ -92,6 +92,23 @@ LOG_DIR="${WATCHDOGVPN_LOG_DIR:-/var/log/myvpn}"
 LOG_LINES="${WATCHDOGVPN_LOG_LINES:-80}"
 REPO_DIR="${WATCHDOGVPN_REPO_DIR:-$(pwd)}"
 
+# Resolve a Python interpreter that meets WatchdogVPN's minimum (3.9). openSUSE
+# Leap ships python3 -> 3.6, too old to import the product package, so prefer a
+# newer python3.X when the system default is inadequate. Mirrors
+# lib/common.sh:watchdogvpn_python for this standalone helper.
+resolve_python() {
+  local c
+  for c in "${WATCHDOGVPN_PYTHON:-}" python3 python3.13 python3.12 python3.11 python3.10 python3.9; do
+    [[ -n "$c" ]] || continue
+    command -v "$c" >/dev/null 2>&1 || continue
+    if "$c" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 9) else 1)' 2>/dev/null; then
+      command -v "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 WatchdogVPN maintenance commands
@@ -728,7 +745,7 @@ run_shell_report_command() {
 
 metrics_report_summary() {
   section "Observability metrics"
-  if ! PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY' 2>/dev/null | sanitize_stream; then
+  if ! PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" "$(resolve_python)" - <<'PY' 2>/dev/null | sanitize_stream; then
 from metrics.store import MetricsStore
 
 SAFE_COUNTER_PREFIXES = (

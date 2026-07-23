@@ -60,7 +60,7 @@ amneziawg_import_guidance_json() {
   local commands="" message
   commands="$(amneziawg_setup_commands 2>/dev/null || true)"
   message="$(amneziawg_import_guidance_text)"
-  python3 - \
+  "$(watchdogvpn_python)" - \
     "$(amneziawg_runtime_available && printf true || printf false)" \
     "${DISTRO_ID:-unknown}" \
     "${DISTRO_ADAPTER_ID:-unknown}" \

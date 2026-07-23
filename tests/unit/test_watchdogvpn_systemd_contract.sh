@@ -52,7 +52,7 @@ assert_contains "$SERVICE" "ProtectHome=read-only" "daemon unit must read the ra
 assert_contains "$SERVICE" "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK" "daemon unit must keep required socket families explicit"
 assert_not_contains "$SERVICE" "DynamicUser=true" "daemon unit must use the persistent dedicated service user"
 
-assert_contains "$ROOT_DIR/bin/watchdogvpn-daemon" "exec python3 -m daemon.main" "daemon wrapper must execute daemon.main"
+assert_contains "$ROOT_DIR/bin/watchdogvpn-daemon" 'exec "$(watchdogvpn_python)" -m daemon.main' "daemon wrapper must execute daemon.main via the resolved Python"
 assert_contains "$ROOT_DIR/lib/install_files.sh" "useradd --system --no-create-home --shell" "watchdogvpn user creation must not create a home directory"
 assert_not_contains "$ROOT_DIR/lib/install_files.sh" "create_owned_dir /var/lib/watchdogvpn" "install helper must not own the daemon state directory"
 assert_contains "$ROOT_DIR/lib/runtime.sh" "add_installing_user_to_watchdogvpn_group" "runtime install must authorize the installing user for shared daemon state and IPC"
@@ -65,6 +65,8 @@ assert_contains "$ROOT_DIR/lib/systemd.sh" "watchdogvpn.service" "new daemon uni
 assert_contains "$ROOT_DIR/.github/workflows/ci.yml" "useradd --system --no-create-home --shell /usr/sbin/nologin watchdogvpn" "CI verify must stub the watchdogvpn user"
 assert_contains "$ROOT_DIR/.github/workflows/ci.yml" "/usr/local/bin/watchdogvpn-daemon" "CI verify must stub the daemon wrapper"
 
+# shellcheck source=../../lib/common.sh
+. "$ROOT_DIR/lib/common.sh"
 # shellcheck source=../../lib/install_files.sh
 . "$ROOT_DIR/lib/install_files.sh"
 # shellcheck source=../../lib/runtime.sh
@@ -79,6 +81,6 @@ install_root_file() {
 PYTHON_PACKAGE_DIR="$TMP_DIR/python-runtime"
 install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main
 assert_contains "$TMP_DIR/watchdogvpn-daemon" "ROOT_DIR=$TMP_DIR/python-runtime" "installed daemon wrapper must pin the installed Python runtime path"
-assert_contains "$TMP_DIR/watchdogvpn-daemon" 'exec python3 -m daemon.main "$@"' "installed daemon wrapper must execute daemon.main"
+assert_contains "$TMP_DIR/watchdogvpn-daemon" "exec $(watchdogvpn_python) -m daemon.main \"\$@\"" "installed daemon wrapper must execute daemon.main via the resolved Python"
 
 echo "watchdogvpn systemd contract checks passed"

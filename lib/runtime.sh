@@ -268,15 +268,20 @@ restore_sysctl_defaults_baseline() {
 }
 
 install_python_module_wrapper() {
-  local dest="$1" module="$2" tmp quoted_root
+  local dest="$1" module="$2" tmp quoted_root py quoted_py
+  py="$(watchdogvpn_python)" || {
+    fail "no Python >=3.${WATCHDOGVPN_MIN_PYTHON_MINOR} interpreter available for the runtime launcher"
+    return 1
+  }
   tmp="$(mktemp)"
   printf -v quoted_root '%q' "$PYTHON_PACKAGE_DIR"
+  printf -v quoted_py '%q' "$py"
   {
     printf '#!/usr/bin/env bash\n'
     printf 'set -euo pipefail\n\n'
     printf 'ROOT_DIR=%s\n' "$quoted_root"
     printf 'export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"\n'
-    printf 'exec python3 -m %s "$@"\n' "$module"
+    printf 'exec %s -m %s "$@"\n' "$quoted_py" "$module"
   } >"$tmp"
   install_root_file "$tmp" "$dest" 0755
   rm -f "$tmp"
@@ -351,7 +356,7 @@ _validate_staged_python_runtime() {
       return 1
     }
   done
-  python3 -m compileall -q "$stage"
+  "$(watchdogvpn_python)" -m compileall -q "$stage"
 }
 
 migrate_watchdogvpn_shared_state() {

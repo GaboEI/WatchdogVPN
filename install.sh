@@ -269,7 +269,7 @@ validate_protocol_runtime_dependencies() {
 }
 
 validate_repo_runtime() {
-  python3 -m compileall -q "$ROOT_DIR/tui"
+  "$(watchdogvpn_python)" -m compileall -q "$ROOT_DIR/tui"
   bash "$ROOT_DIR/tests/syntax.sh" >/dev/null
   ok "repository runtime validated"
 }

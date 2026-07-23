@@ -112,7 +112,7 @@ check_repo_file() {
 
 socket_reachable() {
   local socket_path="$1"
-  python3 - "$socket_path" <<'PY'
+  "$(watchdogvpn_python)" - "$socket_path" <<'PY'
 import socket
 import sys
 
@@ -338,7 +338,7 @@ if [[ "${DISTRO_FAMILY:-}" == "suse" ]]; then
 fi
 
 section "Time and NTP"
-time_diag="$(PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 -m diagnostics.time_check 2>/dev/null || true)"
+time_diag="$(PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" "$(watchdogvpn_python)" -m diagnostics.time_check 2>/dev/null || true)"
 time_status="$(printf '%s\n' "$time_diag" | read_key_value STATUS)"
 time_message="$(printf '%s\n' "$time_diag" | read_key_value MESSAGE)"
 ntp_state="$(printf '%s\n' "$time_diag" | read_key_value NTP_STATE)"
@@ -611,7 +611,7 @@ else
 fi
 
 section "Capture Mode"
-capture_diag="$(PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 -m diagnostics.capture_mode_check 2>/dev/null || true)"
+capture_diag="$(PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" "$(watchdogvpn_python)" -m diagnostics.capture_mode_check 2>/dev/null || true)"
 capture_status="$(printf '%s\n' "$capture_diag" | read_key_value STATUS)"
 capture_message="$(printf '%s\n' "$capture_diag" | read_key_value MESSAGE)"
 capture_modes_value="$(printf '%s\n' "$capture_diag" | read_key_value CAPTURE_MODES)"

@@ -2,5 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../lib/common.sh
+. "$ROOT_DIR/lib/common.sh"
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m daemon.main "$@"
+exec "$(watchdogvpn_python)" -m daemon.main "$@"

@@ -33,7 +33,9 @@ package_hint_header() {
 }
 
 python_cryptography_available() {
-  python3 -c 'import cryptography' >/dev/null 2>&1
+  local py
+  py="$(watchdogvpn_python)" || return 1
+  "$py" -c 'import cryptography' >/dev/null 2>&1
 }
 
 # Encrypted backup support is shipped product functionality. A successful

@@ -3,7 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-python3 -m compileall -q "$ROOT_DIR/tui" "$ROOT_DIR/tests/unit/test_tui_modules.py"
+# shellcheck source=../lib/common.sh
+. "$ROOT_DIR/lib/common.sh"
+
+"$(watchdogvpn_python)" -m compileall -q "$ROOT_DIR/tui" "$ROOT_DIR/tests/unit/test_tui_modules.py"
 
 while IFS= read -r file; do
   bash -n "$file"

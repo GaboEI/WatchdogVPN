@@ -35,6 +35,44 @@ fail() {
   printf ' %s\n' "$*"
 }
 
+# Minimum Python (3.MINOR) WatchdogVPN's runtime requires. openSUSE Leap 15.x
+# ships `python3` -> 3.6 by default, which predates `from __future__ import
+# annotations`; instead of assuming the system `python3` is new enough (and
+# instead of retargeting the OS default, which system tools depend on), the
+# resolver below selects a modern interpreter the adapter has provided.
+WATCHDOGVPN_MIN_PYTHON_MINOR="${WATCHDOGVPN_MIN_PYTHON_MINOR:-9}"
+
+_watchdogvpn_python_ok() {
+  command -v "$1" >/dev/null 2>&1 || return 1
+  "$1" -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3, ${WATCHDOGVPN_MIN_PYTHON_MINOR}) else 1)" \
+    >/dev/null 2>&1
+}
+
+# Resolve the Python interpreter WatchdogVPN should use, printing its absolute
+# path. Resolution order: an explicit WATCHDOGVPN_PYTHON override, then the
+# DISTRO_PYTHON the loaded distro adapter declares (openSUSE pins python3.11),
+# then the system `python3` when it already meets the minimum (so Arch/Fedora/
+# Debian/Ubuntu behaviour is unchanged), then the newest available python3.X.
+# The result is cached per process. Returns non-zero when no adequate
+# interpreter exists (for example before the adapter has installed one).
+watchdogvpn_python() {
+  if [[ -n "${_WATCHDOGVPN_PYTHON_RESOLVED:-}" ]]; then
+    printf '%s\n' "$_WATCHDOGVPN_PYTHON_RESOLVED"
+    return 0
+  fi
+  local cand
+  for cand in "${WATCHDOGVPN_PYTHON:-}" "${DISTRO_PYTHON:-}" python3 \
+    python3.13 python3.12 python3.11 python3.10 python3.9; do
+    [[ -n "$cand" ]] || continue
+    if _watchdogvpn_python_ok "$cand"; then
+      _WATCHDOGVPN_PYTHON_RESOLVED="$(command -v "$cand")"
+      printf '%s\n' "$_WATCHDOGVPN_PYTHON_RESOLVED"
+      return 0
+    fi
+  done
+  return 1
+}
+
 print_installer_failure_recovery() {
   local rc="${1:-1}" operation="${2:-operation}" backup_root="${BACKUP_ROOT:-/var/backups/watchdogvpn}"
 

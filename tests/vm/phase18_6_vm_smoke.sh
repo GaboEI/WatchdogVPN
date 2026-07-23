@@ -318,8 +318,8 @@ verify_runtime_files() {
   section "Runtime files"
   cmp -s "$ROOT_DIR/bin/watchdogvpn" /usr/local/bin/watchdogvpn
   grep -Fq 'ROOT_DIR=/usr/local/lib/watchdogvpn' /usr/local/bin/watchdog
-  grep -Fq 'exec python3 -m cli.main "$@"' /usr/local/bin/watchdog
-  grep -Fq 'exec python3 -m daemon.main "$@"' /usr/local/bin/watchdogvpn-daemon
+  grep -Fq -- '-m cli.main "$@"' /usr/local/bin/watchdog
+  grep -Fq -- '-m daemon.main "$@"' /usr/local/bin/watchdogvpn-daemon
   systemctl show watchdogvpn.service -p ExecStart --value
   systemctl show watchdogvpn.service -p ExecStart --value | grep -Fq /usr/local/bin/watchdogvpn-daemon
 }
