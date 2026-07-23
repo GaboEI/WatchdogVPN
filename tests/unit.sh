@@ -31,6 +31,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT_DIR/tests/unit/test_uninstall_full_purge_backups.sh"
 "$ROOT_DIR/tests/unit/test_watchdog_panic.sh"
 "$ROOT_DIR/tests/unit/test_amneziawg_sysctl_defaults.sh"
+"$ROOT_DIR/tests/unit/test_watchdogvpn_python_resolver.sh"
 python3 "$ROOT_DIR/scripts/generate_cli_inventory.py" --check
 python3 "$ROOT_DIR/tests/unit/test_tui_modules.py"
 python3 "$ROOT_DIR/tests/test_tui_terminal_capabilities.py"

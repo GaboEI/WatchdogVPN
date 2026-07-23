@@ -35,12 +35,20 @@ fail() {
   printf ' %s\n' "$*"
 }
 
-# Minimum Python (3.MINOR) WatchdogVPN's runtime requires. openSUSE Leap 15.x
-# ships `python3` -> 3.6 by default, which predates `from __future__ import
-# annotations`; instead of assuming the system `python3` is new enough (and
-# instead of retargeting the OS default, which system tools depend on), the
-# resolver below selects a modern interpreter the adapter has provided.
-WATCHDOGVPN_MIN_PYTHON_MINOR="${WATCHDOGVPN_MIN_PYTHON_MINOR:-9}"
+# Minimum Python (3.MINOR) WatchdogVPN's runtime requires. The real floor is
+# 3.10: dataclass(slots=True), used pervasively across the whole codebase
+# (core/, dns/, rules/, drivers/, daemon/, etc.), was added in 3.10. Several
+# distros' default `python3` predate this: openSUSE Leap 15.x ships 3.6 (also
+# too old for `from __future__ import annotations`, which only needs 3.7+),
+# and RHEL9-family (RHEL/CentOS/Rocky/AlmaLinux) ships 3.9 as its platform
+# Python - new enough for `__future__ import annotations` but still one
+# minor version short of slots=True, which silently raised
+# "dataclass() got an unexpected keyword argument 'slots'" at daemon startup
+# before this floor was corrected to 10. Instead of assuming the system
+# `python3` is new enough (and instead of retargeting the OS default, which
+# system tools depend on), the resolver below selects a modern interpreter
+# the adapter has provided.
+WATCHDOGVPN_MIN_PYTHON_MINOR="${WATCHDOGVPN_MIN_PYTHON_MINOR:-10}"
 
 _watchdogvpn_python_ok() {
   command -v "$1" >/dev/null 2>&1 || return 1
@@ -62,7 +70,7 @@ watchdogvpn_python() {
   fi
   local cand
   for cand in "${WATCHDOGVPN_PYTHON:-}" "${DISTRO_PYTHON:-}" python3 \
-    python3.13 python3.12 python3.11 python3.10 python3.9; do
+    python3.14 python3.13 python3.12 python3.11 python3.10; do
     [[ -n "$cand" ]] || continue
     if _watchdogvpn_python_ok "$cand"; then
       _WATCHDOGVPN_PYTHON_RESOLVED="$(command -v "$cand")"

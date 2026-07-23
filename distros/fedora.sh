@@ -17,6 +17,23 @@ DISTRO_DNS_PACKAGES=(bind-utils)
 DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"
 DISTRO_POLKIT_PACKAGE="polkit"
 
+# RHEL9-family default python3 is 3.9 (RHEL9's platform Python), too old for
+# this codebase's pervasive use of dataclass(slots=True), a Python 3.10+
+# feature - unlike real Fedora, whose system python3 is already well past
+# 3.10. Pin the modern interpreter the runtime resolver
+# (lib/common.sh:watchdogvpn_python) should use; python3.11 and its matching
+# cryptography package ship directly in RHEL9 AppStream, no EPEL needed for
+# these two specifically. This does not retarget the OS default python3,
+# which system tools use. Plain variable assignment (not the
+# distro_prepare_package_repos function below) because it has no side
+# effect - safe to run whenever this adapter is merely sourced, same as
+# every other adapter variable.
+if [[ "${DISTRO_ID:-}" != "fedora" ]]; then
+  DISTRO_PYTHON="python3.11"
+  DISTRO_BASE_PACKAGES+=(python3.11)
+  DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3.11-cryptography"
+fi
+
 # This adapter is shared by real Fedora and, via lib/distro.sh's native
 # rhel|centos|rocky|almalinux case, the whole RHEL-family. Real Fedora ships
 # every package this adapter declares (including openvpn) in its own repos.
