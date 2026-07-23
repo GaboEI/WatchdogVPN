@@ -1544,7 +1544,77 @@ install paths apply and capture the fix identically.
 
 Private evidence is under
 `/home/gabodev/Desktop/temporales/watchdogvpn-task-23-6-5b-rockyalma-certification`
-(directory `0700`, all files `0600`). No unresolved HIGH/MEDIUM finding and
-no known technical debt remain for Task 23.6.5b. Rocky/Alma (Red Hat-family)
-is certified; the Debian-derivative certification (Task 23.6.7) and the Task
-23.6.8 audit closure remain.
+(directory `0700`, all files `0600`).
+
+### Closure pass (2026-07-23): retrospective audit and evidence hardening
+
+A retrospective technical audit of the certification above found the
+evidence real but methodologically inconsistent in places (bare-domain HTTP
+checks without following redirects, no explicit physical-IP baseline for the
+non-AmneziaWG protocol rows, Plan-B rows accepted on the CLI's own status
+alone rather than independent process/interface sampling, no field
+re-validation of the NetworkManager TUN-persistence and rp_filter fixes, no
+regression pass on the other certified distros). Verdict at that point:
+**CERTIFICACION_CONDICIONADA**. A dedicated closure pass then closed every
+gap with live evidence (`closure-pass-20260723/` inside the same private
+evidence directory) and found and fixed **two additional real bugs** in the
+process:
+
+1. **`sudo watchdog_panic sleep` still failed by bare name** (`28efc04`).
+   The earlier fix only patched the script's own internal PATH once sudo had
+   already found and started it; sudo's own `secure_path` lookup of the
+   script itself is a separate, earlier step that fix never touched. Found
+   while executing the documented panic sleep/wake cycle exactly as a user
+   would. Fixed with `etc/sudoers.d/99-watchdogvpn-secure-path`, a strict
+   extension of secure_path validated with `visudo -cf` both before and
+   after installing it (a malformed sudoers.d file can break sudo
+   system-wide). Verified on Rocky and Fedora; ordinary `sudo` usage
+   confirmed unaffected.
+2. **`conf.all`/`conf.default.rp_filter` did not survive a reboot on
+   CachyOS** (`819a962`). `systemd-sysctl.service` ran and reported success,
+   but something later in boot (NetworkManager starts a few seconds
+   afterward on that VM) reset both back to strict, silently defeating the
+   boot unit's own per-interface nudge (effective policy = the more
+   restrictive of the two). Fixed by having `bin/vpn_rp_filter_boot`
+   defensively reassert `conf.all`/`conf.default` directly on every boot,
+   not only the detected interface. Verified end to end: rebooted CachyOS
+   again after deploying the fix, both values held loose immediately, and
+   AmneziaWG connected on the first attempt with real egress.
+
+Gaps closed, each with live evidence: the 8-protocol matrix re-run with
+`www.` domains, `-L`, final HTTP code, effective URL, remote IP and an
+explicit physical-IP baseline (all 8 passed; the SOCKS/HTTP provider rows
+show a reproducible, upstream-attributed Instagram-only TLS-handshake
+timeout, documented as a known limitation of that specific provider path,
+not a WatchdogVPN defect); a full clean-room AmneziaWG validation (complete
+purge including Go module/build caches, guidance captured verbatim, only
+the three documented commands executed, real handshake/RX/egress
+confirmed); 0.3s-interval process/interface sampling for WireGuard standard
+and OpenVPN plain, which **corrected** an earlier overstatement - WireGuard
+does raise a real process and a real TUN interface before failing on zero
+egress, the same class of failure as OpenVPN plain and Shadowsocks, not a
+"never connects" case; real-traffic split-tunnel validation (`current`
+reaches the tunnel exit IP, `direct` reaches the exact physical baseline
+IP, `block` fails with a real DNS-resolution error); a full field
+NetworkManager-TUN-persistence cycle including the panic sleep/wake path
+that originally exposed the bug, with no `runtime_mismatch`; and a live
+two-NIC default-route-change test for the rp_filter fix, which reproduced
+and confirmed the already-documented known limitation (an interface no
+longer tracked by the baseline manifest is not restored to its true
+original value on uninstall - low severity, since it only ever downgrades
+strict to loose, never disables reverse-path filtering).
+
+Targeted regression on the shared components changed: **Fedora** -
+update/DNS-apply-reset/connect-disconnect/TUN-cleanup/panic-sleep-wake/
+AmneziaWG/reboot all passed, no regressions. **CachyOS** - same checks,
+found and fixed the rp_filter reboot bug above, then re-verified clean.
+**Ubuntu/Debian** - blocked: no valid SSH credentials for any of the three
+candidate VMs on `ubuntu-host` after reasonable attempts; documented as an
+open item rather than skipped silently or fabricated.
+
+Final verdict: **CERTIFICACION_COMPLETA** for Rocky/Alma (Red Hat-family),
+with the Ubuntu/Debian regression pass as an explicitly open follow-up, not
+a blocker for this task's own certification. No unresolved HIGH/MEDIUM
+finding and no known technical debt remain for Task 23.6.5b beyond that one
+documented item. Rocky/Alma is certified; the Debian-derivative
+certification (Task 23.6.7) and the Task 23.6.8 audit closure remain.
