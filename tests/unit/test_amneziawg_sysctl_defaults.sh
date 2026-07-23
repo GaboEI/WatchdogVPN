@@ -67,6 +67,49 @@ assert_contains "$ROOT_DIR/lib/systemd.sh" "watchdogvpn-rp-filter.service" \
 assert_contains "$ROOT_DIR/uninstall.sh" "remove_root_path /usr/local/bin/vpn_rp_filter_boot" \
   "uninstall must remove the installed rp_filter boot script"
 
+# Regression: found live on a CachyOS certification VM (Task 23.6.5b closure
+# pass) - etc/sysctl.d/99-watchdogvpn.conf's own conf.all/conf.default did
+# not survive a reboot there (systemd-sysctl.service ran successfully, but
+# something later in boot, most likely NetworkManager, reset them back to
+# strict), which silently defeated the boot script's own per-interface
+# nudge, since the effective policy for any interface is the more
+# restrictive of conf.all and its own value. The boot script must reassert
+# conf.all/conf.default directly too, not only the detected interface.
+assert_contains "$BOOT_SCRIPT" '$RP_FILTER_CONF_DIR/all/rp_filter' \
+  "boot script must also reassert conf.all.rp_filter, not just the detected interface"
+assert_contains "$BOOT_SCRIPT" '$RP_FILTER_CONF_DIR/default/rp_filter' \
+  "boot script must also reassert conf.default.rp_filter, not just the detected interface"
+
+(
+  TMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "$TMP_DIR"' EXIT
+  mkdir -p "$TMP_DIR/all" "$TMP_DIR/default" "$TMP_DIR/enp0s8"
+  printf '1\n' >"$TMP_DIR/all/rp_filter"
+  printf '1\n' >"$TMP_DIR/default/rp_filter"
+  printf '1\n' >"$TMP_DIR/enp0s8/rp_filter"
+  fakebin="$TMP_DIR/fakebin"
+  mkdir -p "$fakebin"
+  cat >"$fakebin/sudo" <<'EOF'
+#!/usr/bin/env bash
+"$@"
+EOF
+  cat >"$fakebin/ip" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "route" ]]; then
+  echo "default via 192.168.0.1 dev enp0s8 proto dhcp metric 100"
+fi
+EOF
+  chmod +x "$fakebin/sudo" "$fakebin/ip"
+  WATCHDOGVPN_RP_FILTER_CONF_DIR="$TMP_DIR" PATH="$fakebin:$PATH" \
+    bash "$BOOT_SCRIPT"
+  [[ "$(cat "$TMP_DIR/all/rp_filter")" == "2" ]] || fail "boot script did not reassert conf.all.rp_filter to loose"
+  [[ "$(cat "$TMP_DIR/default/rp_filter")" == "2" ]] || fail "boot script did not reassert conf.default.rp_filter to loose"
+  [[ "$(cat "$TMP_DIR/enp0s8/rp_filter")" == "2" ]] || fail "boot script did not reassert the detected interface's rp_filter to loose"
+) || {
+  echo "FAIL: boot script behavioral test failed" >&2
+  exit 1
+}
+
 (
   TMP_DIR="$(mktemp -d)"
   trap 'rm -rf "$TMP_DIR"' EXIT

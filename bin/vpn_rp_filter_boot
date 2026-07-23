@@ -24,8 +24,24 @@ set -euo pipefail
 # Also deliberately not routed through the daemon: it runs under
 # ProtectKernelTunables=true and cannot write to /proc/sys itself (see
 # drivers/amneziawg_driver.py's _ensure_rp_filter, which only ever reads it).
+#
+# Also reasserts conf.all/conf.default directly, not just the specific
+# interface: found live on a CachyOS certification VM (Task 23.6.5b closure
+# pass) - etc/sysctl.d/99-watchdogvpn.conf's own conf.all/conf.default
+# settings did not hold across a reboot (systemd-sysctl.service itself ran
+# and reported success, but something later in boot - most likely
+# NetworkManager, which starts a few seconds after systemd-sysctl.service on
+# that VM - reset them back to strict). Since the effective policy for any
+# interface is the *more restrictive* of conf.all and its own value, a
+# strict conf.all silently defeats this script's own per-interface nudge
+# even though the nudge itself still "succeeds". Reasserting all three
+# values here, defensively, does not depend on identifying that exact
+# culprit and costs nothing extra on distros where it was never a problem.
 
 RP_FILTER_CONF_DIR="${WATCHDOGVPN_RP_FILTER_CONF_DIR:-/proc/sys/net/ipv4/conf}"
+
+printf '2\n' | sudo tee "$RP_FILTER_CONF_DIR/all/rp_filter" >/dev/null
+printf '2\n' | sudo tee "$RP_FILTER_CONF_DIR/default/rp_filter" >/dev/null
 
 ip_tool="$(command -v ip || true)"
 [[ -n "$ip_tool" ]] || exit 0
