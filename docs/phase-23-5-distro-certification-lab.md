@@ -1302,12 +1302,31 @@ Protocol matrix - honest disposition, same as every other certified distro:
   regression.
 - Compatibility with useful real traffic: VMess, SOCKS, HTTP and TUIC, all
   3/3 green with no upstream anomalies this time.
-- Plan-B/no-egress (not green, all fail-closed correctly): standard
-  WireGuard and plain OpenVPN both returned authoritative `connect_failed`
-  (same ISP-level block already confirmed on every other certified distro);
-  standard Shadowsocks raised runtime but the daemon rejected it after
-  egress health failure, engaging the kill switch and returning cleanly to
-  standby on `disconnect`. None is a false green.
+- Plan-B/no-egress (not green, all fail-closed correctly, each verified with
+  live process/interface monitoring plus daemon logs, not just the terminal
+  CLI status - the maintainer specifically asked that this be checked rather
+  than taken at face value): standard WireGuard never brought up any network
+  interface at all during the ~30 s attempt (0.3 s-interval sampling caught
+  nothing beyond `lo`/`eth0`) before `connect_failed` - a real connection-level
+  failure, consistent with the maintainer's own confirmation from their ISP
+  that WireGuard is blocked more aggressively than the other two. Plain
+  OpenVPN raised a real native process and two TUN interfaces
+  (`tunwdriuwu0sg`, `wdvpn-tun0`) that stayed up for the full attempt - a
+  genuine handshake, not a stub - but the egress health check against
+  Facebook/Instagram/YouTube found 0/3 reachable on both the initial check
+  and one retry ~16 s later (`endpoint_censorship_or_network_interference_
+  suspected`), so it unwound to the same `connect_failed` label; the label
+  conflates "never connected" with "connected, zero egress" and only the
+  driver/interface evidence distinguishes the two here. Standard Shadowsocks
+  raised runtime and its *initial* health check actually passed
+  (`successful_targets=2`, real user traffic reached at least two of the
+  three sites) - the daemon's ongoing background monitoring then caught the
+  same 0/3 degradation ~42 s later and correctly failed closed
+  (`kill_switch_active`), consistent with the ISP's block acting on an
+  established session rather than the handshake itself. None is a false
+  green, and none is a WatchdogVPN defect - the app's own classification
+  (`endpoint_censorship_or_network_interference_suspected`) already names
+  the real cause correctly in both OpenVPN's and Shadowsocks's logs.
 
 Kill switch controlled-failure passed: the guarded field script reported
 `PHASE23_KILL_SWITCH_CONTROLLED_FAILURE_OK backend=nftables drop_delta=1` -
