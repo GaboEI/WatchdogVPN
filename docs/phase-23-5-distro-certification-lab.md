@@ -26,8 +26,11 @@ section below): bridge-only, SELinux enforcing, 9 functional rows plus 3 formal
 Plan-B rows with 5/5 resilient green, real traffic, clean teardown.** Task
 23.6.2 implemented the Fedora/Red Hat-family `dnf` adapter path shared by
 Fedora, RHEL, CentOS, RockyLinux and AlmaLinux; that certification now holds for
-Fedora, but the RHEL/CentOS/Rocky/Alma control targets remain uncertified (they
-were never field-tested), so the shared adapter's certification is partial.
+Fedora, and Task 23.6.5b (closure section below) additionally certified Rocky
+Linux 9 specifically. RHEL, CentOS Stream and AlmaLinux remain
+`COMPATIBILIDAD_INFERIDA_POR_FAMILIA` only (they share the same adapter code
+path but were never themselves field-tested), so the shared adapter's
+certification is partial.
 Task 23.6.3 implements the openSUSE package and `zypper` adapter path
 for explicit openSUSE IDs, but that likewise is not a certification green:
 AppArmor/firewalld, installed lifecycle, real runtime, real traffic and teardown
@@ -1378,7 +1381,7 @@ known technical debt remain for Task 23.6.6. openSUSE is certified; Task
 23.6.5b (Rocky/Alma, mandatory), the Debian-derivative (Task 23.6.7)
 certification, and the Task 23.6.8 audit closure, remain.
 
-## Task 23.6.5b - Red Hat-family (Rocky/Alma) field certification closure (2026-07-23)
+## Task 23.6.5b - Red Hat-family field certification closure: Rocky Linux 9 (2026-07-23)
 
 Status: **CERTIFIED/CLOSED**. Rocky Linux 9 (`ID=rocky`, `ID_LIKE="rhel
 centos fedora"`, SELinux enforcing, NetworkManager the live and only manager
@@ -1560,16 +1563,29 @@ gap with live evidence (`closure-pass-20260723/` inside the same private
 evidence directory) and found and fixed **two additional real bugs** in the
 process:
 
-1. **`sudo watchdog_panic sleep` still failed by bare name** (`28efc04`).
-   The earlier fix only patched the script's own internal PATH once sudo had
-   already found and started it; sudo's own `secure_path` lookup of the
-   script itself is a separate, earlier step that fix never touched. Found
-   while executing the documented panic sleep/wake cycle exactly as a user
-   would. Fixed with `etc/sudoers.d/99-watchdogvpn-secure-path`, a strict
-   extension of secure_path validated with `visudo -cf` both before and
-   after installing it (a malformed sudoers.d file can break sudo
-   system-wide). Verified on Rocky and Fedora; ordinary `sudo` usage
-   confirmed unaffected.
+1. **`sudo watchdog_panic sleep` still failed by bare name** (`28efc04`,
+   reverted and replaced, see below). The earlier fix only patched the
+   script's own internal PATH once sudo had already found and started it;
+   sudo's own `secure_path` lookup of the script itself is a separate,
+   earlier step that fix never touched. Found while executing the
+   documented panic sleep/wake cycle exactly as a user would. First fixed
+   with `etc/sudoers.d/99-watchdogvpn-secure-path`, extending `secure_path`
+   for every command on the system, not only WatchdogVPN's own. On review
+   this was judged too broad a change for the problem: it altered sudo's
+   behavior system-wide for every user and command, when a narrower fix
+   exists. A command-scoped `Defaults!cmnd_alias secure_path=...` rule was
+   tested as an alternative and empirically confirmed *not* to work - sudo
+   has to resolve which command is being run, from its bare name, before it
+   can even test whether a command-scoped rule applies, so a scoped
+   `secure_path` can never help resolve the bare name in the first place.
+   The sudoers.d fragment was reverted entirely (no sudoers modification of
+   any kind ships now) and replaced with the fix that actually needs no
+   privilege-boundary change at all: `docs/security.md`, `bin/watchdog_panic`'s
+   own usage text and runtime hints, and `doctor.sh`'s recovery hints all
+   consistently instruct invoking the command by its full installed path
+   (`sudo /usr/local/bin/watchdog_panic ...`), which needs no `secure_path`
+   resolution by sudo to begin with. Verified on Rocky: the full-path form
+   works with zero sudoers changes present.
 2. **`conf.all`/`conf.default.rp_filter` did not survive a reboot on
    CachyOS** (`819a962`). `systemd-sysctl.service` ran and reported success,
    but something later in boot (NetworkManager starts a few seconds
@@ -1612,9 +1628,57 @@ found and fixed the rp_filter reboot bug above, then re-verified clean.
 candidate VMs on `ubuntu-host` after reasonable attempts; documented as an
 open item rather than skipped silently or fabricated.
 
-Final verdict: **CERTIFICACION_COMPLETA** for Rocky/Alma (Red Hat-family),
+Final verdict, precise per distribution - only Rocky Linux 9 was ever
+physically installed, booted and exercised in this task; AlmaLinux 9,
+RHEL and CentOS Stream share the same `distros/fedora.sh` RHEL-family
+adapter code path but were never themselves booted or tested here:
+
+```
+Rocky Linux 9:            CERTIFICACION_COMPLETA
+AlmaLinux 9:               COMPATIBILIDAD_INFERIDA_POR_FAMILIA
+RHEL/CentOS Stream:        COMPATIBILIDAD_INFERIDA_POR_FAMILIA
+```
+
 with the Ubuntu/Debian regression pass as an explicitly open follow-up, not
-a blocker for this task's own certification. No unresolved HIGH/MEDIUM
+a blocker for Rocky Linux 9's own certification. No unresolved HIGH/MEDIUM
 finding and no known technical debt remain for Task 23.6.5b beyond that one
-documented item. Rocky/Alma is certified; the Debian-derivative
-certification (Task 23.6.7) and the Task 23.6.8 audit closure remain.
+documented item and the two flaky-test-fixture failures in
+`tests/test_openvpn_cloak_driver.py` (root-caused, fixed and verified - see
+below). The Debian-derivative certification (Task 23.6.7) and the Task
+23.6.8 audit closure remain.
+
+### Final clarification pass (2026-07-23): test-suite integrity and sudoers scope
+
+Before registering this task's closure, three points raised on review of the
+closure pass above were run down to ground truth:
+
+1. **Two failing tests in `tests/test_openvpn_cloak_driver.py`**
+   (`test_connect_rolls_back_cloak_when_openvpn_spawn_fails` and
+   `test_connect_rolls_back_both_children_when_readiness_fails`) were
+   flaky, not a product defect. Both tests' `Mock` child processes use
+   hardcoded PIDs (1111, 2222) that get durably recorded to a real runtime
+   directory via the real `record_child_process()`; `_teardown_children()`'s
+   rollback then calls the real `recorded_children_terminated()`, which
+   performs a genuine `/proc`-based liveness check against those PIDs by
+   design (it must never assume a child is dead on uncertain evidence). If
+   an unrelated real process on the machine running the suite happens to
+   hold PID 1111 or 2222 at that moment, the check correctly - by its own
+   stricter-than-strictly-necessary design - refuses to confirm the mock
+   children are gone, and the test's own rollback assertion fails. Classified
+   `test_obsoleto`: a test-fixture defect (asserting through a real `/proc`
+   check instead of isolating it), not a bug in `_teardown_children()`'s own
+   rollback logic, which behaves correctly and does not block this
+   certification. Fixed, not merely documented: both tests now patch
+   `drivers.openvpn_cloak_driver.recorded_children_terminated` to always
+   return `True`, removing the dependency on the real process table. Full
+   suite re-run clean after the fix: `Ran 1778 tests ... OK`.
+2. **Distro scope corrected** to the precise per-distribution table above -
+   only Rocky Linux 9 was physically certified in this task; AlmaLinux 9,
+   RHEL and CentOS Stream are family-inferred compatibility, not independent
+   physical certifications, since they were never themselves booted.
+3. **`etc/sudoers.d/99-watchdogvpn-secure-path` reverted** (see bug 8 above)
+   in favor of a fix with zero sudoers footprint: always invoke
+   `watchdog_panic` by its full installed path. No sudoers file ships with
+   WatchdogVPN at all as of this closure.
+
+Final verdict: **CERTIFICACION_COMPLETA_ROCKY_LINUX_9**.
