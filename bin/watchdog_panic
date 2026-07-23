@@ -22,10 +22,13 @@ KILL_SWITCH_NFT_TABLE="${KILL_SWITCH_NFT_TABLE:-watchdogvpn}"
 KILL_SWITCH_IPTABLES_CHAIN="${KILL_SWITCH_IPTABLES_CHAIN:-WATCHDOGVPN-OUTPUT}"
 
 # sudo's default secure_path strips /usr/local/bin on several distros
-# (confirmed on Rocky Linux 9, Task 23.6.5b). This script is routinely
-# invoked as `sudo watchdog_panic sleep`, and its own graceful
+# (confirmed on Rocky Linux 9, Task 23.6.5b) - this is a separate problem
+# from, and does not fix, the one below: it affects sudo's own lookup of
+# THIS script (see docs/security.md, hence the "always use the full path"
+# guidance there), not what happens once the script is already running.
+# Even invoked by full path, this script's own graceful
 # `watchdog disconnect` step below resolves "watchdog" by bare name - under
-# that stripped PATH, `have watchdog` silently returns false and the whole
+# a sudo-stripped PATH, `have watchdog` silently returns false and the whole
 # disconnect step (including clearing vpn_desired_state) never runs, even
 # though "Attempting a graceful disconnect..." already printed as if it had.
 # vpn_desired_state then stays "on", so the daemon's own fail-safe shutdown
@@ -41,14 +44,19 @@ usage() {
 WatchdogVPN panic button
 
 Usage:
-  watchdog_panic [sleep|wake|status]
+  sudo /usr/local/bin/watchdog_panic [sleep|wake|status]
+
+Always run this with the full path shown above, not just "watchdog_panic" -
+sudo's own secure_path excludes /usr/local/bin on several distros, so the
+bare command name can fail with "command not found" under sudo even though
+it resolves fine without it. The full path always works.
 
 Modes:
   sleep   Stop the WatchdogVPN daemon, remove kill switch firewall rules and
           domain-bypass routing state, and disable everything from starting
           again on its own - including across a reboot. Nothing is
           uninstalled. This stays in effect until you run
-          `watchdog_panic wake` yourself.
+          `sudo /usr/local/bin/watchdog_panic wake` yourself.
   wake    Undo `sleep`: re-enable and start the WatchdogVPN daemon again.
   status  Show whether WatchdogVPN is currently asleep.
 
@@ -98,7 +106,7 @@ status() {
   echo
   echo "== hibernate marker =="
   if [[ -e "$HIBERNATE_MARKER" ]]; then
-    echo "present: WatchdogVPN is asleep (run 'watchdog_panic wake' to resume)"
+    echo "present: WatchdogVPN is asleep (run 'sudo /usr/local/bin/watchdog_panic wake' to resume)"
     cat "$HIBERNATE_MARKER" 2>/dev/null || true
   else
     echo "absent"
@@ -169,7 +177,7 @@ sleep_watchdogvpn() {
   echo "WatchdogVPN is now completely asleep: daemon stopped, kill switch"
   echo "removed, domain-bypass routing cleared. Nothing was uninstalled."
   echo "install.sh/update.sh will not wake it back up on their own."
-  echo "Run 'watchdog_panic wake' when you want WatchdogVPN active again."
+  echo "Run 'sudo /usr/local/bin/watchdog_panic wake' when you want WatchdogVPN active again."
   echo
   status
 }

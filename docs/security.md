@@ -119,6 +119,27 @@ live domain-bypass routing state - without uninstalling anything, and it
 stays asleep across reboots and across running `install.sh`/`update.sh`
 again, until the user explicitly runs `watchdog_panic wake`.
 
+Always invoke it with the full installed path, not the bare command name:
+
+```
+sudo /usr/local/bin/watchdog_panic sleep
+sudo /usr/local/bin/watchdog_panic wake
+sudo /usr/local/bin/watchdog_panic status
+```
+
+This matters because it needs root. `sudo`'s own `secure_path` setting -
+separate from, and evaluated before, the invoked command's own `PATH` - is
+compiled to exclude `/usr/local/bin` on several distros (confirmed on Rocky
+Linux 9), so `sudo watchdog_panic sleep` (bare name) fails there with
+`sudo: watchdog_panic: command not found`, even though the same command
+resolves fine without `sudo`. A full path never needs that lookup at all,
+so it works everywhere regardless of a given distro's `secure_path`, with no
+system-wide sudoers change required. (Command-scoped `Defaults!cmnd
+secure_path=...` rules cannot help here either - `sudo` has to resolve which
+command is being run, from its bare name, before it can even test whether a
+command-scoped rule applies; confirmed empirically, not just by reading the
+sudoers manual.)
+
 Implemented as a dependency-light bash script, not a Python CLI command,
 on purpose: a panic button must still work if the daemon or the Python
 runtime it depends on is the thing behaving badly. It intentionally

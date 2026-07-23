@@ -60,7 +60,7 @@ assert_contains "$DOCTOR" 'mark_warn "daemon socket permission denied: $daemon_s
 assert_contains "$DOCTOR" 'recovery: run ./install.sh or ./update.sh to create the service user' "doctor must give service-user recovery hints"
 assert_contains "$DOCTOR" 'recovery: enable/start $daemon_unit, or run ./update.sh to refresh the service' "doctor must give daemon-state recovery hints"
 assert_contains "$DOCTOR" 'recovery: run ./update.sh to reinstall the current systemd unit' "doctor must give capability recovery hints"
-assert_contains "$DOCTOR" 'recovery: start $daemon_unit or run watchdog_panic wake if WatchdogVPN was put asleep' "doctor must give socket-missing recovery hints"
+assert_contains "$DOCTOR" "recovery: start \$daemon_unit or run 'sudo /usr/local/bin/watchdog_panic wake' if WatchdogVPN was put asleep" "doctor must give socket-missing recovery hints"
 assert_contains "$DOCTOR" 'for unit in "${SYSTEMD_UNITS[@]}"' "doctor must use the shared current systemd unit list"
 assert_contains "$DOCTOR" 'for unit in "${SYSTEMD_LEGACY_UNITS[@]}"' "doctor must use the shared legacy systemd unit list"
 assert_contains "$DOCTOR" 'legacy systemd unit present: $unit' "doctor must warn on legacy systemd units"

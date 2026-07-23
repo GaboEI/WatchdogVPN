@@ -116,46 +116,7 @@ install_runtime_files() {
     "$runtime_root/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" \
     /etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules \
     0644
-  install_sudoers_secure_path
   install_systemd_units
-}
-
-# sudo's own secure_path excludes /usr/local/bin (and /usr/local/sbin) on
-# several distros, breaking bare-name "sudo <command>" for every WatchdogVPN
-# privileged entry point (watchdog_panic, vpn_domain_bypass_rescue, etc.) -
-# confirmed on Rocky Linux 9 (Task 23.6.5b): /etc/sudoers there ships
-# "Defaults secure_path = /sbin:/bin:/usr/sbin:/usr/bin". bin/watchdog_panic's
-# own internal PATH prepend only helps once sudo has already found and
-# started the script; it cannot fix sudo's own lookup of the script itself,
-# so a real user typing the documented `sudo watchdog_panic sleep` still hit
-# "sudo: watchdog_panic: command not found" even after that earlier fix.
-#
-# A malformed sudoers.d file can break sudo system-wide, so this validates
-# the fragment with `visudo -cf` both before and after installing it, and
-# removes the installed copy immediately if it somehow fails the post-install
-# check, rather than ever leaving a broken sudoers.d file in place.
-install_sudoers_secure_path() {
-  local runtime_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
-  local src="$runtime_root/etc/sudoers.d/99-watchdogvpn-secure-path"
-  local dest="${WATCHDOGVPN_SUDOERS_SECURE_PATH:-/etc/sudoers.d/99-watchdogvpn-secure-path}"
-  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
-    printf '[DRY-RUN] validate and install %s\n' "$dest"
-    return 0
-  fi
-  if ! command -v visudo >/dev/null 2>&1; then
-    printf 'WARNING: visudo not found; skipping sudoers secure_path fix (sudo <cmd> may need a full path for privileged WatchdogVPN scripts)\n' >&2
-    return 0
-  fi
-  if ! visudo -cf "$src"; then
-    printf 'ERROR: sudoers secure_path fragment failed validation; not installing\n' >&2
-    return 1
-  fi
-  install_root_file "$src" "$dest" 0440
-  if ! sudo visudo -cf "$dest"; then
-    printf 'ERROR: installed sudoers secure_path fragment failed validation; removing it\n' >&2
-    run_step sudo rm -f -- "$dest"
-    return 1
-  fi
 }
 
 # Detects the interface currently carrying the default IPv4 route - the same

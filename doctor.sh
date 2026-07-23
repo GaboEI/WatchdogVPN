@@ -475,7 +475,7 @@ daemon_socket="${WATCHDOGVPN_SOCKET_PATH:-/run/watchdogvpn/control.sock}"
 hibernate_marker="${WATCHDOGVPN_HIBERNATE_MARKER:-/etc/watchdogvpn/.hibernating}"
 
 if [[ -e "$hibernate_marker" ]]; then
-  mark_warn "WatchdogVPN is asleep (watchdog_panic sleep was run); run 'watchdog_panic wake' to resume"
+  mark_warn "WatchdogVPN is asleep (watchdog_panic sleep was run); run 'sudo /usr/local/bin/watchdog_panic wake' to resume"
 fi
 
 if getent passwd watchdogvpn >/dev/null 2>&1; then
@@ -553,7 +553,7 @@ else
     info "daemon socket missing (expected while asleep): $daemon_socket"
   else
     mark_warn "daemon socket missing: $daemon_socket"
-    info "recovery: start $daemon_unit or run watchdog_panic wake if WatchdogVPN was put asleep"
+    info "recovery: start $daemon_unit or run 'sudo /usr/local/bin/watchdog_panic wake' if WatchdogVPN was put asleep"
   fi
 fi
 

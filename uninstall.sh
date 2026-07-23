@@ -214,7 +214,6 @@ remove_runtime_files() {
 
   remove_root_path /etc/logrotate.d/myvpn
   remove_root_path /etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules
-  remove_root_path /etc/sudoers.d/99-watchdogvpn-secure-path
 }
 
 remove_product_runtime_directories() {
