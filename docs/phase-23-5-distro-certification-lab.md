@@ -1377,3 +1377,174 @@ Private evidence is under
 known technical debt remain for Task 23.6.6. openSUSE is certified; Task
 23.6.5b (Rocky/Alma, mandatory), the Debian-derivative (Task 23.6.7)
 certification, and the Task 23.6.8 audit closure, remain.
+
+## Task 23.6.5b - Red Hat-family (Rocky/Alma) field certification closure (2026-07-23)
+
+Status: **CERTIFIED/CLOSED**. Rocky Linux 9 (`ID=rocky`, `ID_LIKE="rhel
+centos fedora"`, SELinux enforcing, NetworkManager the live and only manager
+of the guest's single interface) was certified in a bridge-only VM,
+`enp0s3`, no NAT. The protected Arch host network stack was not used for
+VPN/DNS/route/firewall/interface mutation throughout. Same disposition
+pattern as every prior certified distro: **9 functional rows + 3 formal
+Plan-B rows, 5/5 resilient green**, never "12 green".
+
+This was the deepest bug-finding task of Phase 23.6: **seven real, universal
+product bugs** (none Rocky-specific in mechanism - each would affect any
+distro/kernel/network-manager combination hitting the same code path) were
+found and fixed, each committed, pushed and CI-green before the matrix
+continued:
+
+1. **EPEL missing (`9cdcb2b`)**. RHEL-family derivatives need EPEL enabled
+   before several required packages (`nftables`, etc.) can be reconciled by
+   `dnf` at all - Fedora proper doesn't need this since its own repos already
+   carry them. Added `distro_prepare_package_repos()`, an optional adapter
+   hook called from `lib/packages.sh::validate_required_commands()` before
+   package installation; no-op on real Fedora, installs `epel-release` on
+   RHEL-family. Verified end to end by removing `epel-release` itself via
+   `update.sh --yes` and confirming it was correctly reinstalled.
+2. **Python floor wrong (`8f0424b`)**. The floor set during the openSUSE task
+   (`>= 3.9`, for `from __future__ import annotations`) was insufficient:
+   the codebase uses `dataclass(slots=True)` pervasively across dozens of
+   files, which needs Python **3.10**, not 3.9. This had never been caught
+   because every previously-certified distro's resolved interpreter already
+   happened to be 3.10+. Raised `WATCHDOGVPN_MIN_PYTHON_MINOR` to 10 and
+   pinned `distros/fedora.sh`'s RHEL-family branch to `python3.11`.
+3. **AmneziaWG copr guidance (`8a3babd`)**. Unlike Fedora (no prebuilt
+   `amneziawg-tools` package, from-source build required), RHEL-family can
+   use the `tigro/amneziawg` copr for a prebuilt `amneziawg-tools`
+   (independently verified to actually exist and publish RHEL/EPEL builds,
+   as opposed to `amnezia-vpn/amneziawg`, which does not have a copr at
+   all) - `amneziawg-go` (userspace) still has no prebuilt anywhere and
+   stays a from-source build. Added a RHEL-family-specific
+   `DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS` override.
+4. **NetworkManager DNS state corruption (`42f9f33`)**. This was the first
+   certification to ever exercise the real `NETWORK_MANAGER` resolver branch
+   against an active DHCP connection with no manual DNS override (Fedora/
+   Ubuntu both run systemd-resolved on top of NetworkManager instead;
+   Debian's NetworkManager connection was loopback-only both prior times).
+   `_save_network_manager_connections` queried all six DNS-related nmcli
+   properties in one comma-joined call and `.strip()`ed the result, which
+   silently eats a leading blank line whenever the *first* requested field
+   (`ipv4.dns`) is empty - the ordinary case for a plain DHCP connection,
+   not an edge case - shifting every later value one position and feeding a
+   corrupted value straight into `nmcli con mod ... ipv4.dns no` on
+   `dns reset`, which nmcli correctly rejected, leaving a stray
+   `nameserver 127.0.0.1` in `/etc/resolv.conf`. Fixed by querying each
+   property in its own separate call, so an empty result can never shift a
+   neighbor.
+5. **NetworkManager TUN-interface persistence (`04ed290`)**. NetworkManager
+   auto-adopts a newly-seen interface like `wdvpn-tun0` into its own
+   persistent, autoconnect-on connection profile; killing the owning process
+   alone does not stop NM from recreating the interface afterward, since
+   NM's own stored desired state drives it, not the kernel device's
+   existence. Initially logged as a cosmetic, not-worth-chasing observation
+   (a normal connect/disconnect cycle still worked correctly end to end),
+   but escalated to a real bug once a later daemon restart
+   (`watchdog_panic wake`) reported a **critical `runtime_mismatch`**
+   against the leftover interface, and the documented recovery step
+   (`watchdog disconnect`) could not clear it either, since NM kept
+   recreating it faster than the driver's own cleanup could matter.
+   `_cleanup_tun_residue()` now also deletes NetworkManager's stored
+   connection profile (`nmcli con delete`); this is shared TUN
+   infrastructure (native-policy mode's OpenVPN/OpenVPN+Cloak/AmneziaWG
+   companion delegate to the same driver instance), so the fix covers every
+   protocol, not only sing-box-native ones.
+6. **Panic sleep silently failing under sudo (`d1d0e4d`)**. `sudo`'s default
+   `secure_path` strips `/usr/local/bin` on Rocky (likely other distros
+   too). `watchdog_panic sleep`'s own graceful `watchdog disconnect` step
+   resolves `watchdog` by bare name; under `sudo watchdog_panic sleep`, that
+   silently failed and skipped the whole disconnect step - including
+   clearing `vpn_desired_state` - even though the script had already printed
+   as if it succeeded. The daemon's own fail-safe shutdown handler then
+   correctly, but very unhelpfully, re-applied the kill switch the command
+   exists to remove, leaving the user's Internet blocked after their own
+   rescue command. Never caught on Fedora/openSUSE because both of those
+   certifications only exercised panic sleep/wake from an already-
+   disconnected standby state. Fixed by prepending
+   `/usr/local/bin:/usr/local/sbin` to the script's own `PATH` at the top,
+   fixing every bare-name lookup in it.
+7. **Strict `rp_filter` silently dropping AmneziaWG return traffic (`d0a55ce`,
+   `ca2d0e6`, `bb9f86c`)**. The deepest investigation of the task. AmneziaWG
+   connected (real process, real interface, kill switch applied) but never
+   passed a byte of traffic on three different profiles, including a
+   genuinely fresh one - ruling out the profile contention pattern seen
+   earlier in Task 23.6.5. Root-caused via direct SSH access to the
+   AmneziaWG server: `awg show` showed the peer receiving data with no
+   completed handshake, and `ip -s link show` on the client showed TX
+   incrementing while RX stayed at 0. `_configure_routes()`'s
+   `ip rule ... table main suppress_prefixlength 0` (the standard
+   wg-quick/awg-quick default-route trick) makes the physical interface's
+   own reverse-path check for the server's address resolve via the tunnel
+   instead of itself, so strict `rp_filter` silently drops the server's real
+   response packets. Confirmed directly: manually loosening
+   `net.ipv4.conf.enp0s3.rp_filter` made RX jump immediately to real data.
+   The fix went through three layers as each one revealed the next gap: (a)
+   `etc/sysctl.d/99-watchdogvpn.conf` sets `rp_filter` to loose (2) plus a
+   driver-level `_ensure_rp_filter()` fail-fast at connect time; (b) found
+   deploying (a) live - `conf.default` only templates interfaces *created
+   after* the file is applied, and a machine's primary NIC is typically
+   created by the kernel driver before `systemd-sysctl.service` ever runs
+   (confirmed via journalctl timestamps: sysctl finished four seconds before
+   NetworkManager even saw `enp0s3`), so `install_sysctl_defaults()` now
+   also detects and directly nudges the live default-route interface on
+   every install/update run, with the sysctl baseline manifest extended to
+   track and restore that interface's true original value too; (c) found on
+   the very next plain reboot after (b) - the install/update-time nudge does
+   not survive an ordinary reboot on its own, so a small boot-time systemd
+   unit (`watchdogvpn-rp-filter.service` + `bin/vpn_rp_filter_boot`) now
+   reapplies it on every boot. Verified end to end after each layer: (a)+(b)
+   made connect fail *fast* (safety net firing correctly) instead of the old
+   silent ~30s hang, with a one-line manual `sysctl -w` then passing 9/9 real
+   egress checks; (c) made AmneziaWG connect and pass 9/9 real egress checks
+   automatically after a full reboot with **no manual intervention
+   whatsoever**.
+
+Dependency-provenance gate: removed and confirmed restored via
+`update.sh --yes`: `openvpn`, `nftables` (cascaded firewalld/iptables-nft/
+podman-stack, all intended or harmless), `logrotate`, `procps-ng`,
+`python3.11-cryptography`, `epel-release`, `git`. `iputils` required
+`sudo rpm -e --nodeps iputils` instead of `dnf remove`, since `dnf`'s
+dependency graph makes it a hard dependency of the live, active
+NetworkManager on this image (a 63-package cascade including NetworkManager
+itself) - removing it the normal way risked losing the SSH session
+entirely; `--nodeps` removed only the package files, NetworkManager stayed
+active throughout, and `update.sh`'s normal package reconciliation still
+correctly restored `ping` afterward. `epel-release`'s absence/restoration is
+a direct end-to-end validation of `distro_prepare_package_repos()` (bug 1
+above) on a real system, not just the bash unit test mock. `bind-utils`
+correctly not reclaimed, same no-current-consumer finding as Fedora.
+`doctor.sh` returned `FAIL=0` after every restoration.
+
+Kill switch controlled-failure passed: `drop_delta=1` on the `nftables`
+backend - forced physical traffic to `github.com` was blocked fail-closed
+(`curl` return code 7, `http_code=000`) with no leak during the attributed
+failure, before clean recovery.
+
+AmneziaWG (see bug 7 above) ultimately passed 9/9 real egress checks (TUN,
+local SOCKS, local HTTP proxy, each against Facebook/Instagram/YouTube) with
+real RX traffic (multi-megabyte), both immediately after the install/update-
+time fix and, separately, fully automatically after a reboot once the
+boot-time unit closed the last gap. Provider connectivity, DNS apply/reset,
+split-tunnel, panic sleep/wake (fixed above), reboot (disconnected and
+connected) and full-purge uninstall/baseline all passed against the same
+resilient/compatibility/Plan-B disposition pattern used throughout Phase
+23.6.
+
+Uninstall/baseline passed with exact restoration confirmed twice: a
+full-purge uninstall (`--yes --purge-config --purge-logs --purge-state
+--confirm-delete DELETE`) restored `net.ipv4.conf.all.rp_filter=0`,
+`net.ipv4.conf.default.rp_filter=1` and `net.ipv4.conf.enp0s3.rp_filter=1` -
+an *exact* match to the true pre-WatchdogVPN baseline captured on this VM's
+very first clean boot, before any manual diagnostic testing ever touched
+it - along with `src_valid_mark`, the sysctl.d file, the baseline manifest,
+the boot-time unit and its script, all removed cleanly. A subsequent fresh
+`install.sh --yes` (exercising the fresh-capture path rather than the
+migration path) reproduced the identical working result, confirming both
+install paths apply and capture the fix identically.
+
+Private evidence is under
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-6-5b-rockyalma-certification`
+(directory `0700`, all files `0600`). No unresolved HIGH/MEDIUM finding and
+no known technical debt remain for Task 23.6.5b. Rocky/Alma (Red Hat-family)
+is certified; the Debian-derivative certification (Task 23.6.7) and the Task
+23.6.8 audit closure remain.
