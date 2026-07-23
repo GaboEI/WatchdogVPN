@@ -80,6 +80,21 @@ assert_not_contains "$ROOT_DIR/bin/watchdog_panic" '|| echo "not-found"' \
 assert_not_contains "$ROOT_DIR/bin/vpn_domain_bypass_rescue" '|| echo "not-found"' \
   "must not double-print systemctl state; use '|| true' like doctor.sh does"
 
+# Regression: found live on a Rocky Linux 9 certification VM (Task
+# 23.6.5b). `sudo watchdog_panic sleep`'s own internal `watchdog disconnect`
+# step resolves "watchdog" by bare name; sudo's default secure_path on
+# several distros strips /usr/local/bin, so `have watchdog` silently
+# returned false there, the disconnect step never actually ran despite
+# printing as if it had, vpn_desired_state stayed "on", and the daemon's own
+# fail-safe shutdown handler then re-applied the very kill switch this
+# command exists to remove - confirmed live via
+# `sudo watchdog disconnect` -> "sudo: watchdog: command not found", and
+# `sudo journalctl -u watchdogvpn.service` showing
+# kill_switch_atomic_apply_succeeded during the same systemctl stop this
+# script triggers.
+assert_contains "$ROOT_DIR/bin/watchdog_panic" 'PATH="${WATCHDOGVPN_PANIC_PATH_PREFIX:-/usr/local/bin:/usr/local/sbin}:$PATH"' \
+  "panic script must extend its own PATH so bare-name lookups (watchdog, etc.) work even under sudo's stripped secure_path"
+
 # --- behavioral: enable_watchdogvpn_service_unless_hibernating() ---
 
 marker="$TMP_DIR/hibernating"
@@ -126,5 +141,46 @@ fi
   echo "FAIL: remove_kill_switch_rules must not fail when no firewall backend is available" >&2
   exit 1
 }
+
+# --- behavioral: sleep's graceful disconnect step must find "watchdog"
+#     even when invoked with sudo's stripped secure_path (Rocky regression
+#     above) - full subprocess run, not a sourced-function override, since
+#     bin/watchdog_panic is a standalone script, and this is exactly the
+#     "sudo watchdog_panic sleep" invocation shape that broke live. ---
+
+fakebin="$TMP_DIR/fakebin"
+mkdir -p "$fakebin"
+disconnect_marker="$TMP_DIR/watchdog-disconnect-called"
+
+cat >"$fakebin/watchdog" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "disconnect" ]]; then
+  : > "$disconnect_marker"
+fi
+exit 0
+EOF
+chmod +x "$fakebin/watchdog"
+
+# No-op stand-ins for every other external command sleep_watchdogvpn()
+# touches, so the full script can actually run to completion in this
+# sandbox without hitting real sudo/systemd/nft/iptables state.
+for stub in sudo systemctl nft iptables ip6tables pkill vpn_domain_bypass_rescue; do
+  cat >"$fakebin/$stub" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$fakebin/$stub"
+done
+
+rm -f "$disconnect_marker"
+WATCHDOGVPN_PANIC_PATH_PREFIX="$fakebin" \
+  HIBERNATE_MARKER="$TMP_DIR/hibernating-marker" \
+  PATH="/usr/bin:/bin" \
+  bash "$ROOT_DIR/bin/watchdog_panic" sleep >/dev/null 2>&1 || true
+
+if [[ ! -e "$disconnect_marker" ]]; then
+  echo "FAIL: sleep must invoke 'watchdog disconnect' via WATCHDOGVPN_PANIC_PATH_PREFIX even when the inherited PATH lacks it (the sudo secure_path scenario)" >&2
+  exit 1
+fi
 
 printf 'watchdog panic checks passed\n'

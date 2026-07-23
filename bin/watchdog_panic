@@ -21,6 +21,21 @@ HIBERNATE_MARKER="${HIBERNATE_MARKER:-/etc/watchdogvpn/.hibernating}"
 KILL_SWITCH_NFT_TABLE="${KILL_SWITCH_NFT_TABLE:-watchdogvpn}"
 KILL_SWITCH_IPTABLES_CHAIN="${KILL_SWITCH_IPTABLES_CHAIN:-WATCHDOGVPN-OUTPUT}"
 
+# sudo's default secure_path strips /usr/local/bin on several distros
+# (confirmed on Rocky Linux 9, Task 23.6.5b). This script is routinely
+# invoked as `sudo watchdog_panic sleep`, and its own graceful
+# `watchdog disconnect` step below resolves "watchdog" by bare name - under
+# that stripped PATH, `have watchdog` silently returns false and the whole
+# disconnect step (including clearing vpn_desired_state) never runs, even
+# though "Attempting a graceful disconnect..." already printed as if it had.
+# vpn_desired_state then stays "on", so the daemon's own fail-safe shutdown
+# handler (core/watchdog.py:shutdown) correctly - but unhelpfully, from
+# panic's perspective - re-applies the kill switch it was just told to
+# remove, defeating the rescue this command exists for. Prepending the
+# install path here, rather than hardcoding it in the disconnect call
+# below, fixes every bare-name lookup in this script the same way.
+PATH="${WATCHDOGVPN_PANIC_PATH_PREFIX:-/usr/local/bin:/usr/local/sbin}:$PATH"
+
 usage() {
   cat <<'USAGE'
 WatchdogVPN panic button
