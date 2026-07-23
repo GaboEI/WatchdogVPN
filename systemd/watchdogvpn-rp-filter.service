@@ -1,0 +1,13 @@
+[Unit]
+Description=WatchdogVPN reverse-path filter self-heal for the default-route interface
+Documentation=https://github.com/GaboEI/WatchdogVPN
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/vpn_rp_filter_boot
+
+[Install]
+WantedBy=multi-user.target

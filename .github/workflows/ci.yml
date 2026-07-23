@@ -39,6 +39,7 @@ jobs:
           fi
           sudo install -m 0755 -d /usr/local/bin /usr/local/sbin /etc/logrotate.d /var/log/myvpn
           sudo install -m 0755 /bin/true /usr/local/bin/watchdogvpn-daemon
+          sudo install -m 0755 /bin/true /usr/local/bin/vpn_rp_filter_boot
           sudo install -m 0700 sbin/vpn_domain_bypass_apply.sh /usr/local/sbin/vpn_domain_bypass_apply.sh
           sudo install -m 0644 etc/logrotate.d/myvpn /etc/logrotate.d/myvpn
           sudo systemd-analyze verify systemd/*.service systemd/*.timer 2>&1 | tee /tmp/watchdogvpn-systemd-verify.log

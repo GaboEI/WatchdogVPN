@@ -7,6 +7,7 @@ SYSTEMD_UNITS=(
   vpn-domain-bypass.timer
   myvpn-logrotate.service
   myvpn-logrotate.timer
+  watchdogvpn-rp-filter.service
 )
 
 # vpn-domain-bypass.timer is deliberately NOT in this list. It modifies live
@@ -28,10 +29,12 @@ SYSTEMD_UNITS=(
 # enable_watchdogvpn_service_unless_hibernating() instead.
 SYSTEMD_ENABLE_UNITS=(
   myvpn-logrotate.timer
+  watchdogvpn-rp-filter.service
 )
 
 SYSTEMD_COMMON_ENABLE_UNITS=(
   myvpn-logrotate.timer
+  watchdogvpn-rp-filter.service
 )
 
 vpn_domain_bypass_configured() {

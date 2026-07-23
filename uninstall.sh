@@ -161,6 +161,7 @@ remove_runtime_files() {
   remove_root_path /usr/local/bin/vpn_dns_rescue
   remove_root_path /usr/local/bin/vpn_domain_bypass_rescue
   remove_root_path /usr/local/bin/watchdog_panic
+  remove_root_path /usr/local/bin/vpn_rp_filter_boot
   remove_root_path /usr/local/bin/vpn_backend
   remove_root_path /usr/local/bin/vpn_manual_state
   remove_root_path /usr/local/bin/vpn_notify

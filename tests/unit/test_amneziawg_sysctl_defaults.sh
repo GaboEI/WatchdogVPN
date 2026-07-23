@@ -41,6 +41,32 @@ assert_contains "$RUNTIME_LIB" "_ensure_default_interface_rp_filter" \
 assert_contains "$ROOT_DIR/uninstall.sh" "restore_sysctl_defaults_baseline" \
   "uninstall must restore the captured sysctl baseline before deleting runtime files"
 
+# install/update.sh's own nudge only takes effect for the current boot
+# session; it does not survive a later, ordinary reboot on its own (a
+# physical NIC's rp_filter is fixed by the kernel driver before
+# systemd-sysctl.service ever runs, every boot, not just the one
+# install/update happened to run in). A boot-time unit is what actually
+# makes this self-healing across reboots, confirmed missing live on Rocky
+# Linux 9 (Task 23.6.5b).
+BOOT_SCRIPT="$ROOT_DIR/bin/vpn_rp_filter_boot"
+BOOT_UNIT="$ROOT_DIR/systemd/watchdogvpn-rp-filter.service"
+[[ -x "$BOOT_SCRIPT" ]] || fail "missing or non-executable boot-time rp_filter script: $BOOT_SCRIPT"
+[[ -f "$BOOT_UNIT" ]] || fail "missing boot-time rp_filter systemd unit: $BOOT_UNIT"
+assert_contains "$BOOT_UNIT" "ExecStart=/usr/local/bin/vpn_rp_filter_boot" \
+  "boot unit must run the installed rp_filter boot script"
+assert_contains "$BOOT_UNIT" "Type=oneshot" \
+  "boot unit must be a oneshot (no long-running process)"
+assert_contains "$BOOT_UNIT" "RemainAfterExit=yes" \
+  "boot unit must report itself active after its one-shot run completes"
+assert_contains "$BOOT_UNIT" "After=network-online.target" \
+  "boot unit must run after routing exists, so the default-route interface is detectable"
+assert_contains "$RUNTIME_LIB" 'install_root_file "$runtime_root/bin/vpn_rp_filter_boot" /usr/local/bin/vpn_rp_filter_boot 0755' \
+  "install_runtime_files must install the rp_filter boot script"
+assert_contains "$ROOT_DIR/lib/systemd.sh" "watchdogvpn-rp-filter.service" \
+  "the rp_filter boot unit must be registered for install and enable in lib/systemd.sh"
+assert_contains "$ROOT_DIR/uninstall.sh" "remove_root_path /usr/local/bin/vpn_rp_filter_boot" \
+  "uninstall must remove the installed rp_filter boot script"
+
 (
   TMP_DIR="$(mktemp -d)"
   trap 'rm -rf "$TMP_DIR"' EXIT

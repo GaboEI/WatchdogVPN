@@ -95,6 +95,7 @@ install_runtime_files() {
   install_root_file "$runtime_root/bin/vpn_dns_rescue" /usr/local/bin/vpn_dns_rescue 0755
   install_root_file "$runtime_root/bin/vpn_domain_bypass_rescue" /usr/local/bin/vpn_domain_bypass_rescue 0755
   install_root_file "$runtime_root/bin/watchdog_panic" /usr/local/bin/watchdog_panic 0755
+  install_root_file "$runtime_root/bin/vpn_rp_filter_boot" /usr/local/bin/vpn_rp_filter_boot 0755
   install_root_file "$runtime_root/bin/vpn_backend" /usr/local/bin/vpn_backend 0755
   install_root_file "$runtime_root/bin/vpn_manual_state" /usr/local/bin/vpn_manual_state 0755
   install_root_file "$runtime_root/bin/vpn_notify" /usr/local/bin/vpn_notify 0755

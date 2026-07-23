@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Reapplies the default-route interface's rp_filter fix on every boot (see
+# systemd/watchdogvpn-rp-filter.service). install.sh/update.sh already nudge
+# this once at install/update time (lib/runtime.sh::install_sysctl_defaults),
+# but that nudge does not survive a later, ordinary reboot on its own: a
+# physical NIC's own conf.<iface>.rp_filter is typically fixed by the kernel
+# driver before systemd-sysctl.service ever applies
+# etc/sysctl.d/99-watchdogvpn.conf's conf.default.rp_filter, so every boot -
+# not just the one install/update happened to run in - needs this reapplied.
+# Confirmed live on Rocky Linux 9 (Task 23.6.5b): a plain reboot after a
+# successful `update.sh` run still reverted the interface to strict.
+#
+# Deliberately a small, dependency-light standalone script - like
+# watchdog_panic, it does not source lib/*.sh (those live in the checked-out
+# repo, not next to the installed copy of this script) and duplicates the
+# same minimal detection logic as
+# lib/runtime.sh::_detect_default_interface()/_ensure_default_interface_rp_filter()
+# and drivers/amneziawg_driver.py::_detect_default_interface() instead, so
+# all three independently agree on "the" interface without needing a shared
+# import path across bash and Python.
+#
+# Also deliberately not routed through the daemon: it runs under
+# ProtectKernelTunables=true and cannot write to /proc/sys itself (see
+# drivers/amneziawg_driver.py's _ensure_rp_filter, which only ever reads it).
+
+RP_FILTER_CONF_DIR="${WATCHDOGVPN_RP_FILTER_CONF_DIR:-/proc/sys/net/ipv4/conf}"
+
+ip_tool="$(command -v ip || true)"
+[[ -n "$ip_tool" ]] || exit 0
+
+line="$("$ip_tool" route show default 2>/dev/null | head -n1)"
+[[ -n "$line" ]] || exit 0
+
+iface=""
+prev=""
+for part in $line; do
+  if [[ "$prev" == "dev" ]]; then
+    iface="$part"
+    break
+  fi
+  prev="$part"
+done
+[[ -n "$iface" ]] || exit 0
+
+case "$iface" in
+  lo* | tun* | tap* | wg* | wd* | ppp* | tailscale* | zt* | docker* | br-* | veth* | virbr* | podman*)
+    exit 0
+    ;;
+esac
+
+printf '2\n' | sudo tee "$RP_FILTER_CONF_DIR/$iface/rp_filter" >/dev/null
