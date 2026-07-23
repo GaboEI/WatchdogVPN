@@ -1186,3 +1186,175 @@ Private evidence is under
 known technical debt remain for Task 23.6.5. Fedora is certified; openSUSE
 (Task 23.6.6) and the Debian-derivative (Task 23.6.7) certifications, and the
 Task 23.6.8 audit closure, remain.
+
+## Task 23.6.6 - openSUSE field certification closure (2026-07-23)
+
+Status: **CERTIFIED/CLOSED**. openSUSE Leap 15.6 (`ID=opensuse-leap`, kernel
+`6.4.0-150600.23.22-default`, `wicked`/`wickedd` managing networking via
+`netconfig` - NetworkManager and systemd-resolved both installed but inactive,
+AppArmor present) was certified in the bridge-only VirtualBox VM
+`wdvpn-opensuse-leap-audit` on `ubuntu-host`, single bridged adapter on
+`eth0`/`enp0s3`, no NAT, guest IP `192.168.0.135`. The protected Arch host
+network stack was not used for VPN/DNS/route/firewall/interface mutation.
+
+Three real, universal product bugs (not openSUSE-specific in mechanism - each
+would affect any distro hitting the same code path) were found and fixed
+during this task, each committed, pushed and CI-green before the matrix
+continued:
+
+1. **Python interpreter resolver (`9106311`).** openSUSE Leap's default
+   `python3` is 3.6.15, too old for the codebase (`from __future__ import
+   annotations` needs 3.7+), so `install.sh`'s runtime validation failed
+   immediately - this had never been exercised before because every
+   previously-certified distro's default `python3` already happened to be
+   modern enough. Added `watchdogvpn_python()` to `lib/common.sh`: prefers an
+   adapter-declared `DISTRO_PYTHON`, falls back to system `python3` if >= 3.9
+   (non-regressive on every already-certified distro), else the newest
+   available `python3.9`-`python3.13`. Rewired every direct `python3` call
+   site (`lib/runtime.sh`, `lib/packages.sh`, `install.sh`, `update.sh`,
+   `doctor.sh`, `lib/amneziawg.sh`, `bin/watchdog`, `bin/watchdogvpn-daemon`,
+   `bin/watchdogvpn`, `tests/syntax.sh`) through it; `opensuse.sh` pins
+   `DISTRO_PYTHON=python3.11` and ships `python311`/`python311-cryptography`.
+2. **`systemd-analyze verify --man=no` (also `9106311`).** `systemd-analyze
+   verify` resolves each unit's `Documentation=man:...` reference by
+   default, which requires `man`/man-db - not a real WatchdogVPN runtime
+   dependency, and openSUSE Leap's minimal image doesn't ship it (unlike
+   Fedora/Arch, where it happened to already be present for unrelated
+   reasons). `install.sh` failed at "Systemd verification" with
+   `Command 'man logrotate(8)' failed with code 1`. Fixed by passing
+   `--man=no`, which still validates full unit correctness without depending
+   on man-db.
+3. **`dns reset` leaving system DNS permanently broken (`ae2fe81`).**
+   `dns/state_manager.py::_restore_resolv_conf` only re-pointed the
+   `/etc/resolv.conf` symlink back at its original target and skipped
+   restoring the captured content whenever a target was recorded. That's
+   correct for NetworkManager (its own dispatcher regenerates the target's
+   content once `nmcli` restore runs), but wrong for openSUSE's
+   `netconfig`/`wicked`, which writes `/run/netconfig/resolv.conf` once and
+   never regenerates it: `apply_local_dns`'s `write_text` follows the
+   symlink and overwrites that file's content directly, so restore left it
+   permanently reading `nameserver 127.0.0.1`. Confirmed live: after
+   `watchdog dns apply` -> `dns reset` -> a normal `disconnect`, system DNS
+   was completely broken (`getent hosts` failed on everything, nothing left
+   listening on `127.0.0.1:53`). Fixed by always writing the captured
+   content back after repointing the symlink (harmless no-op wherever
+   another resolver stack's own restore already regenerated the same
+   bytes). Added a regression test using a real symlink-to-static-file
+   `resolv.conf` - no existing test exercised that path; every prior
+   `RESOLV_CONF`-category test used a plain, non-symlinked file.
+
+One additional finding was investigated and resolved as **not a bug**:
+testing `split-tunnel` current/direct/block by mutating rules while already
+connected made each new action look like it silently had no effect. Root
+cause: app-policy/split-tunnel rules are baked into the connecting profile's
+sing-box config once, at connect time - same as most VPN clients, WatchdogVPN
+has no live hot-reload of an active session's routing rules, and `add`/
+`remove` only mutate the on-disk policy file with no daemon IPC call to
+trigger a live reconfiguration. Re-tested correctly (reconnect after each
+rule change): `current` -> tunnel exit `138.124.58.47`, `direct` -> true
+physical exit `178.66.128.30` (verified against a captured pre-connect
+baseline, not a same-session comparison, which is what caused the first,
+incorrect reading), `block` -> `http_code=000`/`exit=6`, all correct.
+Since silent no-notice was still a real UX gap, commit `c3a5880` adds an
+honest CLI notice ("the active session keeps its current routing rules;
+reconnect for this change to take effect") printed - and included as a JSON
+`notice` field - whenever a mutation runs while the daemon is connected,
+across every app-policy/split-tunnel mutating command.
+
+**AmneziaWG guided-setup added for openSUSE (`b4bb113`).** `opensuse.sh`
+carried no `DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS`, the same gap `fedora.sh` had
+before `3bf0276`. openSUSE has no official AmneziaWG package either, so the
+guided flow builds the userspace stack from Amnezia's official source
+(`amneziawg-tools` + `amneziawg-go`), preferring userspace over the DKMS
+kernel module for the same reason as Fedora (no kernel headers needed, not
+blocked by Secure Boot module signing). Validated end to end: removing the
+backend and running only the codified commands (`zypper install go gcc
+make`, then the two upstream `git clone` + `make` + `install` steps)
+produced working `awg`/`awg-quick`/`amneziawg-go`.
+
+Dependency-provenance gate: 8 required packages (`openvpn`, `nftables`,
+`iptables`, `firewalld`, `logrotate`, `procps`, `iputils`,
+`python311-cryptography`) were removed via `zypper remove` (a single batch,
+whose dependency cascade also swept up `NetworkManager`/`wpa_supplicant`/
+`apparmor-utils`/`python3-psutil` - all either separately declared in
+`opensuse.sh` and therefore correctly restored, or genuinely unrelated OS
+packages that WatchdogVPN never claimed to own). After removal, SSH stayed
+reachable (`wicked` - not the removed `NetworkManager` package - manages the
+live interface) and every required command/module was confirmed absent.
+`update.sh --yes` restored all of them; `bind-utils` (`dig`) was correctly
+not reclaimed - same historical auxiliary declaration with no runtime
+consumer already documented for Fedora. `sing-box`/`ck-client` install under
+`/usr/local/bin` as product-managed files. `doctor.sh` returned `FAIL=0`
+after restoration.
+
+Protocol matrix - honest disposition, same as every other certified distro:
+**9 functional rows plus 3 formal Plan-B rows, 5/5 resilient green**, never
+"12 green".
+
+- Resilient (all five passed truthful connection plus real TUN, local SOCKS
+  (`127.0.0.1:2080`) and local HTTP-proxy (`127.0.0.1:2081`) egress to
+  Facebook/Instagram/YouTube, then clean disconnect): VLESS, Trojan,
+  Hysteria2, OpenVPN+Cloak and AmneziaWG. AmneziaWG used a genuinely fresh,
+  never-used child profile (sourced from CachyOS, per the maintainer's
+  explicit confirmation it was currently unused) to avoid repeating the
+  shared-profile contention saga from Task 23.6.5; it passed 3/3 egress on
+  the first try plus a 100 MB sustained download with no MTU black-hole
+  regression.
+- Compatibility with useful real traffic: VMess, SOCKS, HTTP and TUIC, all
+  3/3 green with no upstream anomalies this time.
+- Plan-B/no-egress (not green, all fail-closed correctly): standard
+  WireGuard and plain OpenVPN both returned authoritative `connect_failed`
+  (same ISP-level block already confirmed on every other certified distro);
+  standard Shadowsocks raised runtime but the daemon rejected it after
+  egress health failure, engaging the kill switch and returning cleanly to
+  standby on `disconnect`. None is a false green.
+
+Kill switch controlled-failure passed: the guarded field script reported
+`PHASE23_KILL_SWITCH_CONTROLLED_FAILURE_OK backend=nftables drop_delta=1` -
+forced physical traffic was blocked fail-closed with no leak during the
+attributed failure, before clean recovery.
+
+Split tunneling passed (see the finding above): `current`, `direct` and
+`block` all produced the correct outcome once tested with a reconnect after
+each rule change, with WatchdogVPN's own connection healthy throughout.
+
+DNS apply/reset passed after the fix: `watchdog dns apply --yes` moved
+`/etc/resolv.conf` to `127.0.0.1` while real traffic stayed reachable, and
+`watchdog dns reset --yes` restored the exact original file content
+(including netconfig's comment header) - verified by disconnecting
+afterward and confirming `getent hosts` resolved normally again.
+
+Panic sleep/wake passed against its true rescue contract: `panic sleep`
+disabled the service, removed the WatchdogVPN firewall, left the hibernate
+marker, and restored direct Internet (verified against github.com, a
+non-DNS-filtered site); `panic wake` restored the service to standby.
+
+Reboot passed both disconnected (returned to standby, doctor `FAIL=0`,
+direct Internet reachable) and connected: the first connected-reboot attempt
+correctly revealed that `vpn_autoconnect_enabled` is a separate, off-by-default
+opt-in flag (`core/watchdog.py::startup`), not something `connect` sets
+implicitly - the daemon fail-closed via the kill switch instead of silently
+leaking, exactly as designed, when the flag was off. Not a bug: enabled it
+via `watchdog setup --autoconnect enable --yes --acknowledge-backup-warning`,
+reconnected, rebooted again, and the same VLESS profile auto-reconnected
+correctly with real VPN egress.
+
+Uninstall/baseline passed: the confirmed full purge (`--yes --purge-config
+--purge-logs --purge-state --confirm-delete DELETE`) removed every product
+command, unit, path, the `watchdogvpn` account/group and the installing
+user's membership (`userdel`'s "group not removed" message was expected
+mid-sequence noise - the explicit follow-up `groupdel` call in
+`remove_watchdogvpn_system_account` completed it, confirmed by `getent group
+watchdogvpn` and `id vagrant` afterward), the sysctl file (`src_valid_mark`
+restored to `0/0`), nftables tables, `ip rule` entries/table 880, and
+restored `/etc/resolv.conf` to the exact pre-install baseline content;
+direct Internet stayed reachable throughout. `sing-box`, `ck-client`,
+`awg`/`awg-quick` and `amneziawg-go` are intentionally preserved per the
+uninstall contract.
+
+Private evidence is under
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-6-6-opensuse-certification`
+(directory `0700`, all files `0600`). No unresolved HIGH/MEDIUM finding and no
+known technical debt remain for Task 23.6.6. openSUSE is certified; Task
+23.6.5b (Rocky/Alma, mandatory), the Debian-derivative (Task 23.6.7)
+certification, and the Task 23.6.8 audit closure, remain.
