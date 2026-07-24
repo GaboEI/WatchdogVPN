@@ -32,9 +32,11 @@ Linux 9 specifically. RHEL, CentOS Stream and AlmaLinux remain
 path but were never themselves field-tested), so the shared adapter's
 certification is partial.
 Task 23.6.3 implements the openSUSE package and `zypper` adapter path
-for explicit openSUSE IDs, but that likewise is not a certification green:
-AppArmor/firewalld, installed lifecycle, real runtime, real traffic and teardown
-evidence remain pending. The Debian/Ubuntu `ID_LIKE` fallback is implemented in
+for explicit openSUSE IDs, and openSUSE Leap 15.6 is now field-certified
+(Task 23.6.6, closure section below): AppArmor present, installed lifecycle,
+real runtime, real traffic and clean teardown. openSUSE Tumbleweed shares the
+adapter but remains `COMPATIBILIDAD_INFERIDA_POR_FAMILIA` until independently
+field-tested. The Debian/Ubuntu `ID_LIKE` fallback is implemented in
 Task 23.6.4: derivatives such as Linux Mint (`ID_LIKE="ubuntu debian"`) or a
 Debian-based system (`ID_LIKE="debian"`) resolve to the Ubuntu or Debian adapter
 respectively, with Ubuntu taking precedence and every unrelated `ID_LIKE` left

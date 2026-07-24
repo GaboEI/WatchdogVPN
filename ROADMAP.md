@@ -40,26 +40,21 @@ privileged network behavior from a CLI-first architecture. It focuses on:
 | DNS v2 | Implemented, wired into live runtime paths and audited |
 | Routing rules / connection modes | Implemented and audited |
 | Legacy provider/runtime cleanup | Completed |
+| Full CLI and field validation | Implemented and audited (Phases 22-23) |
+| Multi-distro certification | Field-certified on 8 Linux distributions (Phases 23.5-23.6); family-inferred distros documented, not claimed as certified |
 | Roadmap reconciliation | Completed after v2 scope expansion |
 
 ## Active v2 Work Ahead
 
-These items are planned phases, not all current user-facing features:
+Phases 12 through 23 are implemented and audited, including the full operator
+CLI (Phase 22) and CLI-backed field validation (Phase 23). Phases 23.5 and 23.6
+then field-certified WatchdogVPN across eight Linux distributions. The remaining
+work before a frozen `v2.0.0` is:
 
 | Order | Phase | Purpose |
 | --- | --- | --- |
-| 12 | Linux split tunneling and app policy | Route selected Linux processes through VPN, direct, auto-selected group or block |
-| 13 | Policy diagnostics and rule UX | Explain why traffic matches a rule and what action applies |
-| 14 | Node groups and auto-selection | Named groups with health-aware selection |
-| 15 | DNS/network-service hardening | Refine DNS diagnostics, time checks and LAN-service decisions |
-| 16 | Privacy-preserving observability | Aggregate visibility without silent sensitive history |
-| 17 | Backup, restore and safe sync | Versioned backup/restore, rollback and remote-sync threat review; automatic remote sync deferred |
-| 18 | Installer v2 migration | Runtime dependency installation and non-destructive update validation |
-| 19 | Routing mode and capture architecture | Align Rule/Global, Proxy/TUN/LAN and route actions before final CLI |
-| 20 | LAN sharing and gateway mode | Branch-gated LAN proxy/gateway capability for network operators |
-| 21 | Network context automation and diagnostics | Network-aware activation plus unified diagnostics before final CLI |
-| 22 | Full CLI | Complete operator surface after capabilities settle |
-| 23 | CLI-backed field validation | Real-machine validation before final TUI work |
+| 23.7 | GitHub-facing documentation realignment | Make public docs reflect exactly the distro support certified in Phases 23.5-23.6 |
+| 23.8 | Premium installation and maintenance experience | Calm, security-first install/update/doctor/uninstall terminal UX with no silent behavior change |
 | 24 | TUI premium experience | Rewire/polish the TUI over proven v2 behavior |
 | 25 | i18n | Translate after CLI/TUI user-facing surfaces stabilize |
 | 26 | Documentation and final cleanup | Final public docs, security notes and cleanup |

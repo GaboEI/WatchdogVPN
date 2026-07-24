@@ -6,13 +6,13 @@ metadata.
 ## Description
 
 ```text
-Linux resilience layer for VPN/proxy operations: real-state checks, DNS/routing safety, recovery, rotation and CLI/TUI control.
+Privileged local network control plane for Linux. Manages VPN/proxy routing, DNS policy, kill switch, recovery, node selection and leak protection through a daemon-backed CLI-first architecture.
 ```
 
 ## Website
 
 ```text
-https://github.com/GaboEI/WatchdogVPN
+https://github.com/GaboEI/WatchdogVPN/blob/main/docs/demo.md
 ```
 
 ## Topics
@@ -20,19 +20,20 @@ https://github.com/GaboEI/WatchdogVPN
 ```text
 linux
 vpn
-tui
 cli
+tui
+dns
 systemd
 networkmanager
 python
-dns
-networking
-sing-box
-wireguard
-openvpn
+bash
+automation
 resilience
 anti-censorship
 dpi
+wireguard
+openvpn
+sing-box
 ```
 
 ## Social Preview
