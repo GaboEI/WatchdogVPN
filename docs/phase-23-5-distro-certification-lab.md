@@ -1849,7 +1849,9 @@ Acceptance-criteria verification:
   files 0600 with zero violations.
 
 Live provenance re-validation of the AmneziaWG guided path (Linux Mint 22.3,
-maintainer-requested): the certified AmneziaWG green must come from the product,
+undertaken on the maintainer's provenance-standard guidance with a
+maintainer-provided fresh profile): the certified AmneziaWG green must come from
+the product,
 not from pre-existing machine state. AmneziaWG is the sole import-scoped guided
 trust-boundary exception - `install.sh` installs sing-box and Cloak itself but
 never installs AmneziaWG; the product instead detects an imported AmneziaWG
