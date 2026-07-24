@@ -1794,3 +1794,96 @@ Final verdict: **CERTIFICACION_COMPLETA_LINUX_MINT_22_3**. No resilient profile
 was waived, no protocol was marked green without real traffic, and no known
 HIGH/MEDIUM bug or accepted technical debt remains for Task 23.6.7. Task 23.6.8
 audit closure remains the next Phase 23.6 gate.
+
+## Task 23.6.8 - Phase 23.6 audit closure (2026-07-24)
+
+Status: **CLOSED**. Task 23.6.8 audited the complete Phase 23.6 record - Tasks
+23.6.1 through 23.6.7 plus 23.6.5b - from repository HEAD `8f65053`, following
+the same pattern as Task 23.5.6. The audit was documentation/read-only with
+respect to installed runtime on the protected local Arch host and on
+`ubuntu-host`: neither was used for any VPN, DNS, route, firewall, interface or
+network-service mutation. The one live-traffic component below ran on the
+disposable bridge-only Linux Mint test VM, where breaking the machine is
+explicitly in scope.
+
+Audited authority set: this repository document, the external Master Plan, the
+project memory directory and the handoff file. Local Arch, `origin/main`,
+`ubuntu-host` and the Linux Mint checkout were verified aligned at `8f65053`
+with clean working trees before this closure was written; the Rocky, Fedora,
+openSUSE and CachyOS test VMs were not reachable over SSH at audit time and, per
+the handoff, do not block this closure.
+
+Cross-distro disposition confirmed consistent and non-inflated across the whole
+record:
+
+- Fedora Workstation 44 (Task 23.6.5), openSUSE (Task 23.6.6), Rocky Linux 9
+  (Task 23.6.5b) and Linux Mint 22.3 (Task 23.6.7) are each physically field
+  certified with real evidence.
+- AlmaLinux 9, RHEL and CentOS Stream share the `distros/fedora.sh` adapter but
+  were never physically field-tested; they remain
+  `COMPATIBILIDAD_INFERIDA_POR_FAMILIA`. Debian/Ubuntu derivatives beyond Linux
+  Mint 22.3 remain `ID_LIKE`-inferred until separately field-tested.
+- No distro is recorded as "12 green"; the honest per-distro result stays 9
+  functional rows plus 3 formal non-green Plan-B/no-egress rows (WireGuard
+  plain, Shadowsocks standard, OpenVPN plain), with 5/5 resilient rows green.
+
+Acceptance-criteria verification:
+
+- No `shell=True` exists anywhere in the tree, adapters included (a `grep` over
+  `distros/`, `lib/distro.sh` and every `*.py` returned nothing); the new
+  adapters are pure shell data with no `eval` and correctly quoted guidance
+  strings.
+- SELinux/AppArmor findings from Task 23.6.1 are addressed: `doctor.sh` reports
+  SELinux (`getenforce`), AppArmor (`aa-status` plus `apparmor.service`) and
+  firewalld state read-only, and the field certifications ran under SELinux
+  enforcing (Fedora, Rocky) and with AppArmor present (openSUSE) without ever
+  lowering them for a green.
+- The non-mutating suites `tests/unit/test_distro_detection.sh`,
+  `tests/unit/test_protocol_dependencies.sh`, `tests/syntax.sh` and
+  `tests/unit.sh` pass; the Python suite is covered by green CI run
+  `30121397946` on `8f65053` (the roughly 15 local Arch failures are the known
+  host-environment daemon/subprocess cases and are green on CI).
+- Private evidence for every Phase 23.6 task (the
+  `...-task-23-6-3/-5/-5b/-6/-7` trees and this task's
+  `...-task-23-6-8-audit-closure` tree) was rechecked as directories 0700 and
+  files 0600 with zero violations.
+
+Live provenance re-validation of the AmneziaWG guided path (Linux Mint 22.3,
+maintainer-requested): the certified AmneziaWG green must come from the product,
+not from pre-existing machine state. AmneziaWG is the sole import-scoped guided
+trust-boundary exception - `install.sh` installs sing-box and Cloak itself but
+never installs AmneziaWG; the product instead detects an imported AmneziaWG
+profile, displays the distro-specific guided commands, and afterwards verifies
+`awg` tools plus the kernel module or `amneziawg-go`. To prove provenance the
+existing AmneziaWG runtime and its PPA source/keyring were fully purged from the
+Mint VM (`awg` absent, module gone, `watchdog doctor` correctly reporting
+`AmneziaWG tooling not fully detected`); a fresh maintainer-provided profile was
+staged privately (0600, sha256 verified) and imported, at which point the
+product displayed exactly the `distros/ubuntu.sh` guided PPA commands. Only
+those displayed commands were run - nothing manual outside the guide - after
+which `watchdog doctor` reported `AmneziaWG tooling detected`. The reconnected
+profile then passed rigorous egress on all three paths - direct TUN, owned SOCKS
+(127.0.0.1:2080) and owned HTTP proxy (127.0.0.1:2081) - each exiting through
+the tunnel IP `104.28.162.210`, distinct from the physical baseline
+`178.66.128.30`, with `www.facebook.com`, `www.instagram.com` and
+`www.youtube.com` all returning HTTP 200 and no leak. Disconnect left standby
+with zero leftover processes, interfaces, policy routes, nft tables or DNS
+override and `FAIL=0`. The AmneziaWG green is therefore product-guided and
+self-contained, and the Ubuntu-family guided path required no change, so no
+other distro's guidance was touched. The disposable test VM was returned to a
+pristine state: imported profile removed, staged profile deleted, and the
+temporary operator NOPASSWD sudoers drop-in used to drive the run removed (sudo
+password required again).
+
+Documentation correction found and fixed during this audit: the Task 23.6.5b
+section still described the cross-distro Ubuntu/Debian regression pass as an
+open follow-up, although Task 23.6.7's full Linux Mint 22.3 field certification
+- a strictly stronger validation - had already resolved it, as the Master Plan
+and external memory already recorded. The repository certification doc was
+brought in line (see the "Update (Task 23.6.8 audit closure...)" note in the
+Task 23.6.5b section).
+
+No repository runtime bug, unresolved HIGH or MEDIUM finding, accepted technical
+debt or evidence gap was found. With explicit maintainer approval, Phase 23.6 is
+closed directly on `main` - the same direct-to-main closure style as Task
+23.5.6, with no separate feature branch or merge commit for this phase.
