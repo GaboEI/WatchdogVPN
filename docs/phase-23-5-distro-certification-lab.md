@@ -1650,6 +1650,16 @@ documented item and the two flaky-test-fixture failures in
 below). The Debian-derivative certification (Task 23.6.7) and the Task
 23.6.8 audit closure remain.
 
+Update (Task 23.6.8 audit closure, 2026-07-24): the Ubuntu/Debian
+regression follow-up left open above is resolved. Task 23.6.7 field-certified
+Linux Mint 22.3 end to end through the `distros/ubuntu.sh` adapter (resolved by
+the `ID_LIKE` fallback), exercising the same shared components changed in Task
+23.6.5b - DNS apply/reset, full-path panic sleep/wake, TUN residue cleanup and
+reboot - with no regression. A full Debian/Ubuntu-family field certification is
+a strictly stronger validation than the deferred component-only regression
+pass, so the open item is closed rather than merely deferred. This matches the
+Master Plan Task 23.6.5b closure note.
+
 ### Final clarification pass (2026-07-23): test-suite integrity and sudoers scope
 
 Before registering this task's closure, three points raised on review of the
