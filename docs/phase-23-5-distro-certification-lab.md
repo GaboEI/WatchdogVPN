@@ -20,7 +20,7 @@ claims to support:
 | Debian | `debian` | 23.5 | **CERTIFIED / CLOSED** — Debian 13.6 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 | Ubuntu | `ubuntu` | 23.5 | **CERTIFIED / CLOSED** — Ubuntu 24.04.4 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 
-openSUSE and a Debian/Ubuntu derivative are intentionally queued for later
+openSUSE and a Debian/Ubuntu derivative were intentionally queued for later
 Phase 23.6 tasks. **Fedora itself is now field-certified (Task 23.6.5, closure
 section below): bridge-only, SELinux enforcing, 9 functional rows plus 3 formal
 Plan-B rows with 5/5 resilient green, real traffic, clean teardown.** Task
@@ -38,9 +38,12 @@ evidence remain pending. The Debian/Ubuntu `ID_LIKE` fallback is implemented in
 Task 23.6.4: derivatives such as Linux Mint (`ID_LIKE="ubuntu debian"`) or a
 Debian-based system (`ID_LIKE="debian"`) resolve to the Ubuntu or Debian adapter
 respectively, with Ubuntu taking precedence and every unrelated `ID_LIKE` left
-unsupported. That is adapter-resolution only; the Debian/Ubuntu-derivative field
-certification remains Task 23.6.7. A VM for any of these systems is useful only
-as future-lab preparation until its remaining adapter/threat gates close.
+unsupported. Linux Mint 22.3 is now physically certified through that Ubuntu
+fallback in Task 23.6.7 (closure section below). That certification applies to
+Linux Mint 22.3 itself; other Debian/Ubuntu derivatives remain compatibility
+inferred by their `ID_LIKE` mapping until they are independently field-tested.
+A VM for any remaining derivative is useful only as future-lab preparation until
+its own adapter/threat gates close.
 
 Task 23.6.1 audit notes live in
 `docs/phase-23-6-task-23-6-1-threat-compatibility-audit.md`. That task is
@@ -1682,3 +1685,89 @@ closure pass above were run down to ground truth:
    WatchdogVPN at all as of this closure.
 
 Final verdict: **CERTIFICACION_COMPLETA_ROCKY_LINUX_9**.
+
+## Task 23.6.7 - Linux Mint Debian/Ubuntu-derivative field certification (2026-07-24)
+
+Status: **CERTIFICACION_COMPLETA_LINUX_MINT_22_3**. Linux Mint 22.3 "Zena"
+was certified in the fresh bridge-only VirtualBox VM
+`wdvpn-linuxmint-23-6-7` on `ubuntu-host`, with exactly one bridged adapter on
+`enp4s0`, no NAT adapter, no shared folders, the ISO ejected, and guest IP
+`192.168.0.149`. The protected Arch host and the VirtualBox host were not used
+for VPN, DNS, route, firewall or interface mutation.
+
+The certification proved the Task 23.6.4 `ID_LIKE` fallback end to end on a
+real derivative, not by editing `/etc/os-release`: Linux Mint reports
+`ID=linuxmint` and `ID_LIKE="ubuntu debian"`, and WatchdogVPN resolved it to
+`DISTRO_ADAPTER_ID=ubuntu`, `DISTRO_FAMILY=ubuntu`, and
+`distros/ubuntu.sh`. This is a physical certification for Linux Mint 22.3 only.
+Other Debian/Ubuntu derivatives remain compatibility-inferred until independently
+field-tested.
+
+Dependency provenance passed through the WatchdogVPN installer/update contract.
+The clean Mint image did not ship every required tool; for example `git` was
+absent before product installation and present after the WatchdogVPN path. The
+Ubuntu adapter reconciled the supported `apt` runtime set, including
+NetworkManager/nmcli, logrotate, OpenVPN, nftables, iptables, Polkit/systemd
+integration, curl, git, Python 3, Python cryptography and the remaining runtime
+commands. Product-managed `sing-box` and `ck-client` were installed under
+`/usr/local/bin`. AmneziaWG remains the documented guided trust-boundary
+exception: on Linux Mint the Ubuntu adapter's guided PPA sequence
+(`ppa:amnezia/ppa`, running-kernel headers and `amneziawg`) was executed and
+verified before the AmneziaWG row was counted.
+
+The honest protocol disposition matches the other certified distro families:
+**9 functional rows plus 3 formal non-green Plan-B/no-egress rows, with 5/5
+resilient rows green**, never "12 green".
+
+- Resilient green with real normal TUN, local SOCKS and local HTTP-proxy egress
+  to Facebook, Instagram and YouTube on all three paths: VLESS, Trojan,
+  Hysteria2, OpenVPN+Cloak and AmneziaWG. The original AmneziaWG fixture was
+  not counted because the maintainer confirmed it may have been disabled; a new
+  dedicated profile was generated and then passed all 9 egress probes. The VM
+  used the native AmneziaWG kernel backend (`/usr/bin/awg`, `awg-quick`,
+  `watchdogvpn_awg`, `wdvpn-tun0`, MTU 1280).
+- Compatibility with useful real traffic: VMess and TUIC passed all 9 egress
+  probes. SOCKS and HTTP passed Facebook and YouTube on all three paths and
+  reproduced the same Instagram-only timeout pattern already documented on
+  other distros; this is useful compatibility traffic with a target/upstream
+  limitation, not a WatchdogVPN green for Instagram.
+- Formal Plan-B/no-egress, not green: standard WireGuard, standard Shadowsocks
+  and plain OpenVPN. WireGuard and plain OpenVPN ended in the known no-egress
+  pattern with no useful target traffic. Shadowsocks raised a connected runtime
+  but produced 0/3 useful probes on direct, SOCKS and HTTP paths in the final
+  evidence and returned to standby.
+
+DNS apply/reset passed through systemd-resolved using the connected
+`wdvpn-tun0` link: the first non-sudo apply attempt is recorded as harness
+misuse and not credited; the corrected `sudo watchdog dns apply --yes --json
+--systemd-link wdvpn-tun0` returned `status=applied`, real Facebook egress
+remained HTTP 200, and `sudo watchdog dns reset --yes --json` returned
+`status=restored`.
+
+Split tunneling passed with an isolated curl copy: `current` reached the VPN
+exit IP, `direct` reached the physical bridged exit IP, and `block` rejected
+the request while the WatchdogVPN connection stayed healthy. Panic sleep/wake
+passed using the full `/usr/local/bin/watchdog_panic` path: sleep stopped the
+service and left direct GitHub recovery traffic working, wake restored the
+service, and doctor returned `FAIL=0`. Reboot returned to the same bridge-only
+VM, `ID_LIKE` mapping intact, standby/off state, no TUN/proxy/kill switch and
+doctor `FAIL=0`.
+
+Full purge/reinstall passed after correcting a harness mistake. A first
+noninteractive uninstall attempt could not obtain sudo and is recorded as
+invalid. The corrected sudo uninstaller removed product commands, units, config,
+state and logs; a TTY reinstall as `gabodev` restored the runtime, installed the
+TUI wrapper under `/home/gabodev`, and after a fresh login session doctor
+reported `OK=136 WARN=2 FAIL=0` with `watchdog status` in standby.
+
+Private evidence is stored under
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-6-7-linuxmint-certification`
+with zero permission violations after final sync: directories `0700`, files
+`0600`. The final VM state is running, bridge-only, standby/off, kill switch
+inactive, no runtime artifacts, and installed source/marker aligned at
+`7be1cc3cea67b93e2b0e940ebf3c128b6c801dc4`.
+
+Final verdict: **CERTIFICACION_COMPLETA_LINUX_MINT_22_3**. No resilient profile
+was waived, no protocol was marked green without real traffic, and no known
+HIGH/MEDIUM bug or accepted technical debt remains for Task 23.6.7. Task 23.6.8
+audit closure remains the next Phase 23.6 gate.
