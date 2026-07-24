@@ -11,7 +11,7 @@
 - **Status:** v2.0.0 in active development (product line target; not a released
   tag). The installed CLI reports its own version via `watchdog version`
   (currently `v0.3.1`).
-- **Platform:** Linux
+- **Platform:** Linux — 8 distributions field-certified (see [Supported Platforms](#supported-platforms))
 - **Interface:** CLI first, TUI after CLI-backed validation
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 
@@ -154,6 +154,37 @@ work hardens those flows before the operator surface is frozen.
 
 Install, update, uninstall and restore flows must preserve user configuration
 unless the user explicitly approves destructive behavior.
+
+## Supported Platforms
+
+WatchdogVPN runs on Linux. This list reflects **what was actually field-tested** —
+a clean install on a real machine, real traffic through the tunnel, and a clean
+teardown — kept strictly separate from what is only *expected* to work because it
+shares an adapter. Family-inferred compatibility is never presented as a
+certification.
+
+**Certified (field-tested end to end):**
+
+| Distribution | Adapter / detection |
+| --- | --- |
+| Arch Linux | native |
+| CachyOS | Arch family via `ID_LIKE` |
+| Debian 13.6 | native |
+| Ubuntu 24.04.4 LTS | native |
+| Fedora Workstation 44 | Fedora/Red Hat-family adapter |
+| openSUSE Leap 15.6 | openSUSE adapter |
+| Rocky Linux 9 | Fedora/Red Hat-family adapter |
+| Linux Mint 22.3 | Ubuntu family via `ID_LIKE` |
+
+**Compatible by family, not yet individually certified:** AlmaLinux, RHEL and
+CentOS Stream (share the Red Hat-family adapter); openSUSE Tumbleweed; other
+Debian/Ubuntu derivatives beyond Linux Mint. These are expected to work but have
+not been field-tested, so they are not claimed as certified.
+
+Each certification exercises the full install/update, DNS apply/reset, kill
+switch, split tunnel, panic, reboot and purge/reinstall lifecycle plus real
+per-protocol egress on that release; details live in
+[docs/validation.md](docs/validation.md).
 
 ## Installation
 

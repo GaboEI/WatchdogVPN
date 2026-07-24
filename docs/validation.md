@@ -46,14 +46,29 @@ Current manually reported validation status:
 
 | Distribution | Status | Notes |
 | --- | --- | --- |
-| Ubuntu 24.04 | Passed | Real workstation validation. |
-| Arch Linux | Passed | Real non-virtualized machine validation. |
-| Debian | Passed | Real install flow including DNS tooling. |
-| CachyOS | Passed with observation | Real install flow including DNS tooling; VPN recovered after reboot. |
+| Arch Linux | Certified | Real non-virtualized workstation; default and packaged-LTS kernel evidence (Phase 23.5). |
+| CachyOS | Certified | Arch adapter via `ID_LIKE`; real install flow with advanced DNS; VPN recovered after reboot (Phase 23.5). |
+| Debian 13.6 | Certified | Fresh bridge-only VM; full lifecycle and real per-protocol egress (Phase 23.5). |
+| Ubuntu 24.04.4 LTS | Certified | Fresh bridge-only VM; full lifecycle and real per-protocol egress (Phase 23.5). |
+| Fedora Workstation 44 | Certified | SELinux enforcing; Fedora/Red Hat-family `dnf` adapter; full lifecycle and real egress (Phase 23.6). |
+| openSUSE Leap 15.6 | Certified | AppArmor present; `zypper` adapter; full lifecycle and real egress (Phase 23.6). |
+| Rocky Linux 9 | Certified | SELinux enforcing; Red Hat-family adapter; full lifecycle and real egress (Phase 23.6). |
+| Linux Mint 22.3 | Certified | Ubuntu adapter via `ID_LIKE`; full lifecycle and real egress (Phase 23.6). |
 
-The CachyOS result confirms that the Arch adapter works for a real install flow
-with advanced DNS. The installer gives reboot guidance if the tunnel remains
+Each "Certified" row means a clean install on a real machine passed the full
+install/update, DNS apply/reset, kill switch, split tunnel, panic, reboot and
+purge/reinstall lifecycle plus real per-protocol egress, with a clean teardown.
+The honest per-distro protocol result is 9 functional rows plus 3 formal
+non-green Plan-B/no-egress rows (plain WireGuard, standard Shadowsocks, plain
+OpenVPN), with 5/5 resilient profiles green; no distro is claimed as "12 green".
+The CachyOS result also confirms the Arch adapter works for a real install flow
+with advanced DNS, and the installer gives reboot guidance if the tunnel remains
 degraded after setup.
+
+Family-inferred, not yet individually certified: AlmaLinux, RHEL and CentOS
+Stream (share the Red Hat-family adapter); openSUSE Tumbleweed; other
+Debian/Ubuntu derivatives beyond Linux Mint. They share a certified adapter but
+have not themselves been field-tested, so they are not recorded as certified.
 
 ## Persistent Configuration Update Validation
 

@@ -7,17 +7,21 @@ This document defines how the product scripts should behave.
 - One repository supports Ubuntu, Debian, Arch Linux, the Fedora/Red
   Hat-family adapter path and the openSUSE adapter path.
 - Fedora/Red Hat-family support means installer/update package reconciliation
-  is implemented through `dnf`; it is not a certification claim until the
-  installed SELinux/firewalld lifecycle and real-traffic evidence tasks close.
+  is implemented through `dnf`. Fedora Workstation 44 and Rocky Linux 9 are
+  field-certified (Phase 23.6); AlmaLinux, RHEL and CentOS Stream share the same
+  adapter but remain family-inferred until individually field-tested.
 - openSUSE support means installer/update package reconciliation is implemented
-  through `zypper`; it is not a certification claim until the installed
-  AppArmor/firewalld lifecycle and real-traffic evidence tasks close.
+  through `zypper`. openSUSE Leap 15.6 is field-certified (Phase 23.6); openSUSE
+  Tumbleweed shares the adapter but remains family-inferred until individually
+  field-tested.
 - Debian/Ubuntu derivatives that do not report a native `ID` (for example Linux
   Mint or Pop!_OS, reporting `ID_LIKE="ubuntu debian"` or `ID_LIKE="debian"`)
   resolve to the Ubuntu or Debian adapter through a conservative `ID_LIKE`
   fallback, mirroring the existing Arch-derivative fallback. Ubuntu takes
   precedence when a derivative reports both, and only families with a shipped
-  adapter are accepted; derivative field certification remains a separate task.
+  adapter are accepted. Linux Mint 22.3 is field-certified through this Ubuntu
+  fallback (Phase 23.6); other derivatives remain family-inferred until
+  individually field-tested.
 - Runtime behavior should be shared across distros.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.
