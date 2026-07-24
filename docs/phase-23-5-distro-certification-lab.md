@@ -1753,6 +1753,19 @@ service, and doctor returned `FAIL=0`. Reboot returned to the same bridge-only
 VM, `ID_LIKE` mapping intact, standby/off state, no TUN/proxy/kill switch and
 doctor `FAIL=0`.
 
+External provider lifecycle and rotation were then closed on the same Mint VM
+after the initial summary exposed that gap. `watchdog provider add/update/list`
+successfully imported the current external subscription, provider rotation and
+selected nodes were enabled, a provider profile connected, and normal TUN,
+local SOCKS and local HTTP-proxy egress to Facebook, Instagram and YouTube
+passed before rotation. `watchdog rotate --force --json` changed the active
+profile on the first attempt, and all post-rotation egress probes again
+returned HTTP 200. The provider was removed after the gate; final `provider
+list` and provider-scoped `profile list` were empty, and final status was
+standby with inactive kill switch and no runtime artifacts. Earlier provider
+attempts that selected a direct-profile URL or an HTML page are retained as
+invalid harness/provenance evidence and not credited.
+
 Full purge/reinstall passed after correcting a harness mistake. A first
 noninteractive uninstall attempt could not obtain sudo and is recorded as
 invalid. The corrected sudo uninstaller removed product commands, units, config,
@@ -1765,7 +1778,7 @@ Private evidence is stored under
 with zero permission violations after final sync: directories `0700`, files
 `0600`. The final VM state is running, bridge-only, standby/off, kill switch
 inactive, no runtime artifacts, and installed source/marker aligned at
-`7be1cc3cea67b93e2b0e940ebf3c128b6c801dc4`.
+the Task 23.6.7 documentation commit.
 
 Final verdict: **CERTIFICACION_COMPLETA_LINUX_MINT_22_3**. No resilient profile
 was waived, no protocol was marked green without real traffic, and no known
