@@ -70,6 +70,36 @@ class AmneziaWGGuidanceTests(unittest.TestCase):
         self.assertEqual(guidance["commands"], [])
         self.assertIn("Official sources", guidance["message"])
 
+    def test_ubuntu_offers_from_source_fallback_for_unpackaged_releases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os_release = Path(tmp) / "os-release"
+            # Ubuntu 26.04 "resolute" has no AmneziaWG PPA series yet, so the
+            # packaged path 404s; the adapter must still offer a from-source
+            # userspace fallback so the release is not stranded.
+            os_release.write_text(
+                'ID=ubuntu\nVERSION_ID="26.04"\nVERSION_CODENAME=resolute\nNAME=Ubuntu\n',
+                encoding="utf-8",
+            )
+            script = (
+                'source "$1/lib/common.sh"; '
+                'source "$1/lib/distro.sh"; '
+                'OS_RELEASE_FILE="$2"; detect_distro; '
+                'adapter="$(distro_adapter_path "$1")"; source "$adapter"; '
+                'source "$1/lib/amneziawg.sh"; amneziawg_import_guidance_json'
+            )
+            result = subprocess.run(
+                ["bash", "-c", script, "test", str(ROOT_DIR), str(os_release)],
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+
+        guidance = json.loads(result.stdout)
+        self.assertEqual(guidance["distro_adapter"], "ubuntu")
+        self.assertIn("fallback_commands", guidance)
+        self.assertIn("amneziawg-go", "\n".join(guidance["fallback_commands"]))
+        self.assertIn("from source", guidance["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

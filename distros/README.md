@@ -21,6 +21,15 @@ commands. To support a new distribution, add or extend its adapter and the
 existing resolver mapping; do not add distro branches to the CLI or duplicate
 the guidance in Python.
 
+An adapter may also define an optional `DISTRO_AMNEZIAWG_FALLBACK_COMMANDS`
+array. It is shown under the primary commands as a from-source fallback for
+releases whose packaged path can fail — for example a brand-new Ubuntu series
+the AmneziaWG PPA has not published yet, which returns a 404 for that release.
+The Ubuntu and Debian adapters use it to offer a userspace `amneziawg-go` build
+that needs no prebuilt package, no kernel headers and no DKMS module, so it
+works on any release and kernel. Adapters that cannot fail this way leave it
+undefined.
+
 Every current or future adapter must also define the complete distro runtime
 package set and Python cryptography package. The package set must cover the
 atomic nftables backend, legacy iptables cleanup tooling, OpenVPN, ping,
