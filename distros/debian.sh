@@ -20,3 +20,12 @@ DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS=(
   "sudo apt-get update"
   "sudo apt-get install -y amneziawg"
 )
+# If the pinned AmneziaWG apt repository has no packages for this Debian/kernel
+# combination, fall back to building the userspace amneziawg-go runtime from
+# source: it needs no prebuilt package, no kernel headers and no DKMS module, so
+# it works on any release and kernel, mirroring the Fedora/openSUSE adapters.
+DISTRO_AMNEZIAWG_FALLBACK_COMMANDS=(
+  "sudo apt install -y golang-go git make gcc"
+  "git clone https://github.com/amnezia-vpn/amneziawg-tools /tmp/amneziawg-tools && make -C /tmp/amneziawg-tools/src && sudo make -C /tmp/amneziawg-tools/src install"
+  "git clone https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && (cd /tmp/amneziawg-go && make) && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
+)
