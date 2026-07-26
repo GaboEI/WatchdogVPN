@@ -124,3 +124,16 @@ openSUSE Tumbleweed) use a capability-and-freshness policy with a last-validated
 an evidence-expiry rule, not a numeric minimum. Derivatives are mapped by exact evidence
 (e.g. an Ubuntu codename), never by approximate equivalence; a rolling derivative uses its
 own rolling policy and evidence, never a borrowed stable version.
+
+## Realization
+
+Task 23.7.5.2 implements the pure domain of this contract in `compat/support_model.py`
+(package `compat/`), with L1 tests in `tests/test_compat_support_model.py`. The module is
+OS-independent, deterministic and policy-parametrized, and hardcodes no distribution or
+release. It defines the frozen state strings above, the deterministic non-overlapping
+precedence (disqualifiers first, then strongest evidence), the separate stable and rolling
+policies, evidence freshness with an injected clock and a data-supplied expiry, and the
+domain invariants — with an explicit `DomainError` on impossible input combinations rather
+than a silently-chosen state. The manifest, detection, `doctor`, the CLI and the
+provisioner integrate with this model in later frozen tasks; none of that integration
+exists yet.
