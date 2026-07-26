@@ -44,7 +44,8 @@ host's readiness for other protocols, nor the release's `support_classification`
   per-release CI, whose declared capability contract is resolvable in CI, and whose family
   is anchored by certified releases.
 - `family_inferred` — resolves to a family adapter via `ID`/`ID_LIKE`, shares the family
-  contract, but was never itself field-tested.
+  contract, was never itself field-tested, and the technical family has a current
+  qualifying certification anchor.
 - `experimental` — recognized by lineage but **future or not yet evaluated** (a release
   neither admitted nor expressly excluded, e.g. newer than the admitted set), or a rolling
   distribution whose evidence expired. Not a guarantee.
@@ -223,10 +224,21 @@ The manifest keeps semantic sources in a strict hierarchy:
 - `StableReleaseFacts` and `RollingFacts` are derived on demand by `compat_read.py`; the
   reader refuses to emit facts from a manifest whose primitive sections contradict each
   other.
+- `certification_qualifies_for_support` in `tools/compat_read.py` is the single
+  certification predicate used for `has_valid_field_certification`, family anchors,
+  rolling current evidence and `certified` promotion.
 - `repository_ci` records general repository CI only. `per_release_ci` is explicitly
   separate and remains `not_run` until Task 23.7.5.9 creates release-specific L1/L2
   evidence. Manual field-certification success is represented by certification records,
   not by CI fields.
+
+For the current `physical_field_certification` scope, a certification qualifies only when
+it is `current=true`, references exactly one stable release or rolling snapshot coherent
+with its distribution, has non-empty global evidence, contains exactly every protocol in
+the manifest, has evidence on every protocol result, records `green` for all
+`resilient`/`compatibility` protocols and records `formal_non_green` for the exact
+protocols whose category is `formal_non_green`. `failed`, `not_run` and `not_applicable`
+never qualify under this scope. Other scopes are not accepted in schema version 1.
 
 Initial manifest content is conservative and sourced from the Phase 23.5/23.6/23.7.5
 record: the eight physically certified distributions/releases/snapshots are represented

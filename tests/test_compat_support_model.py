@@ -64,6 +64,7 @@ def rolling(**overrides) -> RollingFacts:
         eol_or_withdrawn=False,
         is_derivative=False, has_own_evidence=True, family_inference_allowed=False,
         has_valid_field_certification=False,
+        family_has_certified_anchor=True,
         last_validated=None,
     )
     base.update(overrides)
@@ -80,6 +81,7 @@ class StableClassificationTests(unittest.TestCase):
             ("excluded", stable(expressly_excluded=True), SupportClassification.UNSUPPORTED),
             ("certified", stable(admitted=True, has_valid_field_certification=True), SupportClassification.CERTIFIED),
             ("derivative_inferred", stable(is_derivative=True, has_own_evidence=False, family_inference_allowed=True), SupportClassification.FAMILY_INFERRED),
+            ("derivative_without_anchor", stable(is_derivative=True, has_own_evidence=False, family_inference_allowed=True, family_has_certified_anchor=False), SupportClassification.EXPERIMENTAL),
             ("future", stable(future_or_unevaluated=True), SupportClassification.EXPERIMENTAL),
             ("supported", stable(admitted=True), SupportClassification.SUPPORTED),
             ("admitted_but_ci_red", stable(admitted=True, ci_green=False), SupportClassification.EXPERIMENTAL),
@@ -152,6 +154,11 @@ class RollingClassificationTests(unittest.TestCase):
             ("absent_evidence", rolling(last_validated=None), SupportClassification.EXPERIMENTAL),
             ("certified", rolling(last_validated=NOW - timedelta(days=1), has_valid_field_certification=True), SupportClassification.CERTIFIED),
             ("derivative_inferred", rolling(is_derivative=True, has_own_evidence=False, family_inference_allowed=True), SupportClassification.FAMILY_INFERRED),
+            (
+                "derivative_without_anchor",
+                rolling(is_derivative=True, has_own_evidence=False, family_inference_allowed=True, family_has_certified_anchor=False),
+                SupportClassification.EXPERIMENTAL,
+            ),
             (
                 "derivative_lineage_without_inference",
                 rolling(is_derivative=True, has_own_evidence=False, family_inference_allowed=False),

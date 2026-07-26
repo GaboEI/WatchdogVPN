@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Bootstrap reader and strict validator for the compatibility manifest.
 
-This script is intentionally stdlib-only and Python 3.6 compatible. It must not
-import ``compat`` or any product module that may require the final runtime
-Python floor; installers need this reader before that runtime is prepared.
+This script is intentionally stdlib-only. Python 3.6 syntax target: verified.
+Python 3.6 runtime execution: not yet independently verified. It must not import
+``compat`` or any product module that may require the final runtime Python floor;
+installers need this reader before that runtime is prepared.
 """
 
 from __future__ import print_function
@@ -79,12 +80,14 @@ _ROLLING_FACT_KEYS = (
     "has_own_evidence",
     "family_inference_allowed",
     "has_valid_field_certification",
+    "family_has_certified_anchor",
 )
 
 _TOP_LEVEL_SCHEMA_PROPERTIES = tuple(sorted(_REQUIRED_TOP_LEVEL + _OPTIONAL_TOP_LEVEL))
 _PROTOCOL_DISPOSITIONS = ("green", "formal_non_green", "failed", "not_run", "not_applicable")
 _RELEASE_POLICY_STATES = ("admitted", "pending_evaluation", "excluded")
 _PER_RELEASE_CI_STATUSES = ("not_run", "green", "failed")
+_CERTIFICATION_SCOPES = ("physical_field_certification",)
 
 _ENTITY_KEYS = {
     "metadata": (
@@ -553,32 +556,119 @@ def _validate_distributions(manifest):
             _require_positive_int(rolling.get("evidence_expiry_seconds"), path + ".policy.rolling.evidence_expiry_seconds")
 
 
+def _expected_protocol_disposition(protocol):
+    category = protocol["category"]
+    if category == "formal_non_green":
+        return "formal_non_green"
+    if category in ("resilient", "compatibility"):
+        return "green"
+    raise ManifestError("unknown protocol category %r" % category)
+
+
+def _certification_qualification_error(manifest, cert_id):
+    cert = manifest["certifications"][cert_id]
+    distributions = manifest["distributions"]
+    releases = manifest["releases"]
+    protocols = manifest["protocols"]
+    distro_id = cert.get("distribution")
+    if distro_id not in distributions:
+        return "unknown distribution"
+    scope = cert.get("scope")
+    if scope not in _CERTIFICATION_SCOPES:
+        return "unknown certification scope"
+    if scope != "physical_field_certification":
+        return "scope does not qualify for support"
+    if cert.get("current") is not True:
+        return "certification is not current"
+    if not cert.get("evidence"):
+        return "certification evidence is empty"
+    has_release = "release" in cert
+    has_snapshot = "snapshot" in cert
+    if has_release == has_snapshot:
+        return "must contain exactly one of release or snapshot"
+    distro_model = distributions[distro_id]["release_model"]
+    if distro_model == "stable":
+        if not has_release:
+            return "stable certification must reference release"
+        release_id = cert["release"]
+        if release_id not in releases:
+            return "unknown release"
+        if releases[release_id]["distribution"] != distro_id:
+            return "release does not belong to distribution"
+    else:
+        if not has_snapshot:
+            return "rolling certification must reference snapshot"
+        if not cert.get("snapshot"):
+            return "rolling snapshot is empty"
+    results = cert.get("protocol_results")
+    if type(results) is not dict:
+        return "protocol_results must be an object"
+    if set(results.keys()) != set(protocols.keys()):
+        return "physical certification must contain exactly all manifest protocols"
+    for protocol_id, protocol in protocols.items():
+        result = results[protocol_id]
+        if type(result) is not dict:
+            return "protocol result %s must be an object" % protocol_id
+        disposition = result.get("disposition")
+        expected = _expected_protocol_disposition(protocol)
+        if disposition != expected:
+            return (
+                "protocol %s disposition %s does not match required %s"
+                % (protocol_id, disposition, expected)
+            )
+        if disposition in ("failed", "not_run", "not_applicable"):
+            return "protocol %s has non-qualifying disposition %s" % (protocol_id, disposition)
+        if not result.get("evidence"):
+            return "protocol %s evidence is empty" % protocol_id
+    return None
+
+
+def certification_qualifies_for_support(manifest, cert_id):
+    return _certification_qualification_error(manifest, cert_id) is None
+
+
+def _qualifying_certification_ids(manifest):
+    return sorted(
+        cert_id
+        for cert_id in manifest["certifications"]
+        if certification_qualifies_for_support(manifest, cert_id)
+    )
+
+
 def _release_certifications(manifest, release_id):
     release = manifest["releases"][release_id]
     distro_id = release["distribution"]
     result = []
     for cert_id, cert in manifest["certifications"].items():
-        if cert.get("current") is True and cert.get("distribution") == distro_id and cert.get("release") == release_id:
+        if (
+            certification_qualifies_for_support(manifest, cert_id)
+            and cert.get("distribution") == distro_id
+            and cert.get("release") == release_id
+        ):
             result.append(cert_id)
     return sorted(result)
 
 
 def _family_has_current_certification(manifest, family_id):
     distributions = manifest["distributions"]
-    releases = manifest["releases"]
-    for cert in manifest["certifications"].values():
-        if cert.get("current") is not True:
+    for cert_id, cert in manifest["certifications"].items():
+        if not certification_qualifies_for_support(manifest, cert_id):
             continue
         distro_id = cert.get("distribution")
-        if distro_id not in distributions:
-            continue
         if distributions[distro_id]["technical_family"] != family_id:
             continue
-        if "release" in cert and releases[cert["release"]]["distribution"] == distro_id:
-            return True
-        if "snapshot" in cert and distributions[distro_id]["release_model"] == "rolling":
-            return True
+        return True
     return False
+
+
+def _rolling_certifications(manifest, distro_id):
+    return sorted(
+        cert_id
+        for cert_id, cert in manifest["certifications"].items()
+        if certification_qualifies_for_support(manifest, cert_id)
+        and cert.get("distribution") == distro_id
+        and "snapshot" in cert
+    )
 
 
 def _per_release_ci_green(manifest, release_id):
@@ -790,7 +880,7 @@ def _validate_certifications(manifest):
         else:
             _require_str(cert["snapshot"], path + ".snapshot")
         _require_rfc3339_utc(cert.get("date"), path + ".date")
-        _require_str(cert.get("scope"), path + ".scope")
+        _require_enum(cert.get("scope"), _CERTIFICATION_SCOPES, path + ".scope")
         _require_str(cert.get("evidence"), path + ".evidence")
         _require_bool(cert.get("current"), path + ".current")
         results = _require_obj(cert.get("protocol_results"), path + ".protocol_results")
@@ -815,11 +905,9 @@ def _validate_certifications(manifest):
             if "evidence" in result and result["evidence"] is not None:
                 _require_str(result["evidence"], result_path + ".evidence")
         if cert["current"] and cert["scope"] == "physical_field_certification":
-            if not any(r["disposition"] == "green" for r in results.values()):
-                raise ManifestError("%s current physical certification has no green protocol result" % path)
-            formal = [pid for pid, r in results.items() if r["disposition"] == "formal_non_green"]
-            if len(results) >= 12 and set(results.keys()) == set(protocols.keys()) and not formal:
-                raise ManifestError("%s enumerates all protocols without formal non-green results" % path)
+            reason = _certification_qualification_error(manifest, cert_id)
+            if reason is not None:
+                raise ManifestError("%s does not qualify for support: %s" % (path, reason))
 
 
 def _validate_validation_metadata(manifest):
@@ -847,6 +935,11 @@ def _validate_validation_metadata(manifest):
             cert = certifications[cert_id]
             if key != "default" and cert["distribution"] != key:
                 raise ManifestError("rolling policy %s references certification for %s" % (key, cert["distribution"]))
+            if key != "default" and not certification_qualifies_for_support(manifest, cert_id):
+                raise ManifestError(
+                    "rolling policy %s references non-qualifying certification %r"
+                    % (key, cert_id)
+                )
         if key != "default" and key not in distributions:
             raise ManifestError("rolling policy references unknown distribution %r" % key)
         if key != "default" and distributions[key]["release_model"] != "rolling":
@@ -859,11 +952,23 @@ def _validate_validation_metadata(manifest):
             distro_last = distro_policy.get("last_validated")
             if policy_last != distro_last:
                 raise ManifestError("rolling policy %s last_validated diverges from distribution policy" % key)
-            current_refs = [cert_id for cert_id in policy.get("evidence_refs", []) if certifications[cert_id]["current"]]
-            if current_refs and policy_last is None:
-                raise ManifestError("rolling policy %s has current evidence but no last_validated" % key)
-            if not current_refs and policy_last is not None:
-                raise ManifestError("rolling policy %s has last_validated without current evidence" % key)
+            qualifying_refs = _rolling_certifications(manifest, key)
+            policy_refs = sorted(policy.get("evidence_refs", []))
+            if policy_refs != qualifying_refs:
+                raise ManifestError(
+                    "rolling policy %s evidence_refs must equal qualifying certifications" % key
+                )
+            if qualifying_refs:
+                latest = max(certifications[cert_id]["date"] for cert_id in qualifying_refs)
+                if policy_last != latest:
+                    raise ManifestError(
+                        "rolling policy %s last_validated must equal latest qualifying certification date"
+                        % key
+                    )
+            elif policy_last is not None:
+                raise ManifestError(
+                    "rolling policy %s has last_validated without qualifying certification" % key
+                )
     for distro_id, distro in distributions.items():
         if distro["release_model"] == "rolling" and distro_id not in rolling and "default" not in rolling:
             raise ManifestError("rolling distribution %s has no resolvable policy" % distro_id)
@@ -967,6 +1072,7 @@ def _rolling_facts(manifest, distro_id):
     policy = manifest["validation_metadata"]["rolling_policies"].get(distro_id, {})
     default_policy = manifest["validation_metadata"]["rolling_policies"].get("default", {})
     rolling_policy = distro["policy"]["rolling"]
+    qualifying_certs = _rolling_certifications(manifest, distro_id)
     last_validated = policy.get("last_validated", rolling_policy.get("last_validated"))
     expiry = policy.get("expiry_seconds", rolling_policy.get("evidence_expiry_seconds", default_policy.get("expiry_seconds")))
     facts = {
@@ -977,7 +1083,8 @@ def _rolling_facts(manifest, distro_id):
         "is_derivative": distro["lineage"]["is_derivative"],
         "has_own_evidence": distro["lineage"]["has_own_evidence"],
         "family_inference_allowed": distro["lineage"]["family_inference_allowed"],
-        "has_valid_field_certification": bool(policy.get("evidence_refs", [])),
+        "has_valid_field_certification": bool(qualifying_certs),
+        "family_has_certified_anchor": _family_has_current_certification(manifest, distro["technical_family"]),
         "last_validated": _normalize_rfc3339_utc_to_naive(last_validated) if last_validated else None,
     }
     return {

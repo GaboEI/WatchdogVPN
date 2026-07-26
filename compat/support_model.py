@@ -138,8 +138,8 @@ class StableReleaseFacts:
 
     Derivative evidence is explicit and non-lossy: a derivative can share a
     technical family while still being barred from family-inferred support. Only
-    ``is_derivative and not has_own_evidence and family_inference_allowed``
-    reaches ``family_inferred``.
+    a derivative without own evidence, with explicit family inference allowed,
+    and with a certified family anchor reaches ``family_inferred``.
     """
     has_adapter: bool
     meets_technical_floor: bool
@@ -165,8 +165,9 @@ class RollingFacts:
     ``last_validated``/expiry freshness. Freshness governs only whether
     *non-certified* rolling evidence is current enough to justify ``supported``.
     A rolling derivative with no own evidence reaches ``family_inferred`` only
-    when ``family_inference_allowed`` is explicitly true; lineage-only rolling
-    derivatives are therefore experimental instead of inferred.
+    when ``family_inference_allowed`` is explicitly true and the family has a
+    certified anchor; lineage-only rolling derivatives are therefore
+    experimental instead of inferred.
     """
     has_adapter: bool
     meets_technical_floor: bool
@@ -176,6 +177,7 @@ class RollingFacts:
     has_own_evidence: bool
     family_inference_allowed: bool
     has_valid_field_certification: bool
+    family_has_certified_anchor: bool
     last_validated: datetime | None  # None → no validation evidence
 
 
@@ -266,7 +268,12 @@ def classify_support_stable(f: StableReleaseFacts) -> SupportClassification:
     # In contract. Strongest evidence first:
     if f.has_valid_field_certification:
         return SupportClassification.CERTIFIED
-    if f.is_derivative and not f.has_own_evidence and f.family_inference_allowed:
+    if (
+        f.is_derivative
+        and not f.has_own_evidence
+        and f.family_inference_allowed
+        and f.family_has_certified_anchor
+    ):
         return SupportClassification.FAMILY_INFERRED
     if f.future_or_unevaluated:
         return SupportClassification.EXPERIMENTAL
@@ -300,7 +307,12 @@ def classify_support_rolling(
         return SupportClassification.UNSUPPORTED
     if f.has_valid_field_certification:
         return SupportClassification.CERTIFIED
-    if f.is_derivative and not f.has_own_evidence and f.family_inference_allowed:
+    if (
+        f.is_derivative
+        and not f.has_own_evidence
+        and f.family_inference_allowed
+        and f.family_has_certified_anchor
+    ):
         return SupportClassification.FAMILY_INFERRED
     if freshness is FreshnessState.CURRENT:
         return SupportClassification.SUPPORTED

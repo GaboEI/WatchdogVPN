@@ -312,6 +312,25 @@ class ManifestValidCasesTests(unittest.TestCase):
         ubuntu_26 = StableReleaseFacts(**compat_read._stable_facts(manifest, "ubuntu_26_04")["facts"])
         self.assertIs(classify_support_stable(ubuntu_26), SupportClassification.EXPERIMENTAL)
 
+    def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
+        manifest = load_product()
+        self.assertEqual(len(manifest["certifications"]), 8)
+        for cert_id, cert in manifest["certifications"].items():
+            with self.subTest(cert_id=cert_id):
+                self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))
+                counts = {}
+                for result in cert["protocol_results"].values():
+                    counts[result["disposition"]] = counts.get(result["disposition"], 0) + 1
+                self.assertEqual(counts, {"green": 9, "formal_non_green": 3})
+                self.assertEqual(
+                    {
+                        protocol_id
+                        for protocol_id, result in cert["protocol_results"].items()
+                        if result["disposition"] == "formal_non_green"
+                    },
+                    {"wireguard", "shadowsocks", "openvpn"},
+                )
+
     def test_validated_manifest_can_emit_all_facts(self) -> None:
         manifest = load_product()
         compat_read.validate_manifest(manifest)
@@ -473,8 +492,34 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         self.assertFalse(facts["family_has_certified_anchor"])
         self.assertIs(
             classify_support_stable(StableReleaseFacts(**facts)),
+            SupportClassification.EXPERIMENTAL,
+        )
+
+    def test_family_inference_requires_qualifying_anchor(self) -> None:
+        manifest = self.product_copy()
+        alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
+        self.assertIs(classify_support_stable(alma), SupportClassification.FAMILY_INFERRED)
+        tumbleweed_data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
+        tumbleweed = RollingFacts(**tumbleweed_data["facts"])
+        self.assertIs(
+            classify_support_rolling(
+                tumbleweed,
+                expiry=timedelta(seconds=tumbleweed_data["expiry_seconds"]),
+                now=datetime(2026, 7, 26, 0, 0, 0),
+            ),
             SupportClassification.FAMILY_INFERRED,
         )
+
+        for cert in manifest["certifications"].values():
+            if manifest["distributions"][cert["distribution"]]["technical_family"] == "redhat_dnf":
+                cert["current"] = False
+        alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
+        self.assertIs(classify_support_stable(alma), SupportClassification.EXPERIMENTAL)
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_opensuse_leap_15_6"]["protocol_results"]["vless"]["disposition"] = "failed"
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(manifest)
 
     def test_derivative_cycles_and_ambiguous_or_borrowed_mapping_rejected(self) -> None:
         manifest = self.product_copy()
@@ -556,11 +601,82 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         cert = manifest["certifications"]["cert_ubuntu_24_04"]
         for result in cert["protocol_results"].values():
             result["disposition"] = "green"
-        self.assert_invalid(manifest, "without formal non-green")
+        self.assert_invalid(manifest, "disposition green does not match required formal_non_green")
         manifest = self.product_copy()
         cert = manifest["certifications"]["cert_ubuntu_24_04"]
         cert["protocols_included"] = list(manifest["protocols"])
         self.assert_invalid(manifest, "unknown key protocols_included")
+
+    def test_physical_certification_must_match_qualifying_profile(self) -> None:
+        manifest = self.product_copy()
+        cert = manifest["certifications"]["cert_ubuntu_24_04"]
+        cert["protocol_results"] = {
+            "vless": cert["protocol_results"]["vless"],
+        }
+        self.assert_invalid(manifest, "exactly all manifest protocols")
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["vless"]["disposition"] = "failed"
+        self.assert_invalid(manifest, "does not match required green")
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["vless"]["disposition"] = "not_run"
+        self.assert_invalid(manifest, "does not match required green")
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["wireguard"]["disposition"] = "green"
+        self.assert_invalid(manifest, "does not match required formal_non_green")
+
+        manifest = self.product_copy()
+        del manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["vless"]
+        self.assert_invalid(manifest, "exactly all manifest protocols")
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_ubuntu_24_04"]["scope"] = "partial_field_certification"
+        self.assert_invalid(manifest, "must be one of")
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_ubuntu_24_04"]["current"] = False
+        self.assertFalse(compat_read.certification_qualifies_for_support(manifest, "cert_ubuntu_24_04"))
+        self.assert_invalid(manifest, "evidence_refs must equal current certifications")
+
+    def test_rolling_evidence_uses_only_qualifying_current_certifications(self) -> None:
+        manifest = self.product_copy()
+        self.assertTrue(compat_read.certification_qualifies_for_support(manifest, "cert_arch_rolling"))
+        data = compat_read._rolling_facts(manifest, "arch")
+        self.assertTrue(data["facts"]["has_valid_field_certification"])
+        self.assertIs(
+            classify_support_rolling(
+                RollingFacts(**{**data["facts"], "last_validated": datetime.fromisoformat(data["facts"]["last_validated"])}),
+                expiry=timedelta(seconds=data["expiry_seconds"]),
+                now=datetime(2026, 7, 26, 0, 0, 0),
+            ),
+            SupportClassification.CERTIFIED,
+        )
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_arch_rolling"]["current"] = False
+        self.assert_invalid(manifest, "non-qualifying certification")
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_arch_rolling"]["protocol_results"]["vless"]["disposition"] = "failed"
+        self.assert_invalid(manifest, "does not match required green")
+
+        manifest = self.product_copy()
+        del manifest["certifications"]["cert_arch_rolling"]["protocol_results"]["vless"]
+        self.assert_invalid(manifest, "exactly all manifest protocols")
+
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["rolling_policies"]["arch"]["last_validated"] = "2026-07-23T00:00:00Z"
+        manifest["distributions"]["arch"]["policy"]["rolling"]["last_validated"] = "2026-07-23T00:00:00Z"
+        self.assert_invalid(manifest, "latest qualifying certification date")
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_arch_rolling"]["current"] = False
+        manifest["validation_metadata"]["rolling_policies"]["arch"]["evidence_refs"] = []
+        manifest["validation_metadata"]["rolling_policies"]["arch"]["last_validated"] = "2026-07-22T00:00:00Z"
+        manifest["distributions"]["arch"]["policy"]["rolling"]["last_validated"] = "2026-07-22T00:00:00Z"
+        self.assert_invalid(manifest, "without qualifying certification")
 
     def test_unknown_keys_inside_each_entity_type_are_rejected(self) -> None:
         mutations = [
