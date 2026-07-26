@@ -1,7 +1,7 @@
 # Phase 23.7.5 — Distribution Compatibility Contract (design)
 
-**Status:** DESIGN / in progress (Task 23.7.5.1 `diseño_y_contrato`). This document
-records the *contract* the implementation tasks of Phase 23.7.5 will follow. It is a
+**Status:** DESIGN — approved and frozen. Task 23.7.5.1 `diseño_y_contrato`: CLOSED. This
+document records the *contract* the implementation tasks of Phase 23.7.5 will follow. It is a
 design record, **not** a compatibility claim: it does not assert that any distribution or
 version is supported. Public support/compatibility statements are generated from the
 compatibility manifest, and only when the evidence and criteria of this phase justify
@@ -45,14 +45,28 @@ host's readiness for other protocols, nor the release's `support_classification`
   is anchored by certified releases.
 - `family_inferred` — resolves to a family adapter via `ID`/`ID_LIKE`, shares the family
   contract, but was never itself field-tested.
-- `experimental` — recognized by lineage but not admitted/verified/current (e.g. a release
-  newer than the admitted set, or a rolling distribution whose evidence expired). Not a
-  guarantee.
-- `unsupported` — no adapter, or the release is outside the contract (not admitted, EOL by
-  policy, or below the capability floor). The product stops early with a clear reason.
+- `experimental` — recognized by lineage but **future or not yet evaluated** (a release
+  neither admitted nor expressly excluded, e.g. newer than the admitted set), or a rolling
+  distribution whose evidence expired. Not a guarantee.
+- `unsupported` — **no adapter**, or the release is **expressly excluded** by policy,
+  **EOL/withdrawn** from support, or **below the technical capability floor**. The product
+  stops early with a clear reason.
 
 Support is **admitted-release + policy** based, not a continuous "minimum-to-maximum"
 range. A numerically intermediate release is not automatically `supported`.
+
+**Deterministic precedence (non-overlapping).** The generic phrase "not admitted" never
+yields both states:
+
+- Known family, **future or not-yet-evaluated** release (neither admitted nor excluded) →
+  `experimental`.
+- Rolling with **expired** evidence → `experimental`.
+- Release **expressly excluded** by policy → `unsupported`.
+- **EOL** release withdrawn from support → `unsupported`.
+- Release **below the technical floor** → `unsupported`.
+- Family **without an adapter** → `unsupported`.
+- **Admitted** release on an **incomplete machine** → keeps its `support_classification`;
+  the host becomes `needs_preparation`.
 
 ## Host and protocol states
 
