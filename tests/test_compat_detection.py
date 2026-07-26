@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import stat
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 from compat import detection
 from compat.support_model import CoreCapabilityStatus, ProtocolRuntimeStatus
@@ -36,14 +39,17 @@ def facts(manifest, text: str) -> detection.DistroFacts:
 
 
 def fixture_env(*, runner=None, files=None, paths=None, py=(3, 11, 0)):
-    return detection.ProbeEnvironment(
+    env = detection.ProbeEnvironment(
         runner=runner or detection.FakeCommandRunner(),
         files=files or {},
         existing_paths=paths or set(),
         machine_architecture="x86_64",
         kernel_release="6.8.0-test",
         python_version=py,
+        allow_host_fallback=False,
     )
+    env.manifest = product_manifest()
+    return env
 
 
 class OsReleaseParserTests(unittest.TestCase):
@@ -88,6 +94,9 @@ class OsReleaseParserTests(unittest.TestCase):
                 "ID=$(touch %s)\n" % marker,
                 "ID=`touch %s`\n" % marker,
                 "ID=$HOME\n",
+                'ID="$(touch %s)"\n' % marker,
+                'ID="`touch %s`"\n' % marker,
+                'ID="$HOME"\n',
             ):
                 with self.subTest(text=text):
                     with self.assertRaises(detection.DetectionError):
@@ -124,6 +133,36 @@ class OsReleaseParserTests(unittest.TestCase):
             etc.mkdir()
             with self.assertRaises(detection.DetectionError):
                 detection.read_os_release(etc_path=etc, usr_path=usr)
+            etc.rmdir()
+            broken = base / "missing-target"
+            etc.symlink_to(broken)
+            with self.assertRaises(detection.DetectionError):
+                detection.read_os_release(etc_path=etc, usr_path=usr)
+
+            etc.unlink()
+            etc.write_text("ID=ubuntu\n", encoding="utf-8")
+            os.chmod(etc, 0)
+            try:
+                with self.assertRaises(detection.DetectionError):
+                    detection.read_os_release(etc_path=etc, usr_path=usr)
+            finally:
+                os.chmod(etc, stat.S_IRUSR | stat.S_IWUSR)
+
+    def test_read_os_release_cli_error_has_exit_2_without_traceback(self) -> None:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as handle:
+            handle.write("ID=$(touch /tmp/watchdogvpn-pwn)\n")
+            handle.flush()
+            result = subprocess.run(
+                [sys.executable, str(TOOL), "--os-release", handle.name, "detect"],
+                cwd=str(ROOT),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("error:", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
 
 
 class DistributionResolutionTests(unittest.TestCase):
@@ -216,6 +255,12 @@ class CapabilityProbeTests(unittest.TestCase):
         self.assertEqual(set(by_id), set(manifest["technical_families"]["ubuntu_apt"]["core_capabilities"]))
         self.assertEqual(by_id["cap_systemd"].domain_status, "present")
         self.assertEqual(by_id["cap_network_manager"].domain_status, "present")
+        self.assertEqual(by_id["cap_kernel"].domain_status, "provisionable")
+        self.assertEqual(by_id["cap_package_manager"].domain_status, "provisionable")
+        self.assertEqual(by_id["cap_sudo"].domain_status, "provisionable")
+        self.assertEqual(by_id["cap_polkit"].domain_status, "provisionable")
+        self.assertEqual(by_id["cap_persistence"].domain_status, "provisionable")
+        self.assertEqual(by_id["cap_rollback"].domain_status, "provisionable")
         self.assertEqual(by_id["cap_tun"].domain_status, "provisionable")
         self.assertEqual(by_id["cap_nftables"].domain_status, "provisionable")
 
@@ -247,6 +292,7 @@ class CapabilityProbeTests(unittest.TestCase):
         )
         self.assertEqual(detection._probe_core("cap_python310", distro, inactive).domain_status, "provisionable")
         self.assertEqual(detection._probe_core("cap_architecture", distro, inactive).domain_status, "present")
+        self.assertEqual(detection._probe_core("cap_kernel", distro, inactive).domain_status, "provisionable")
         self.assertEqual(detection._probe_core("cap_systemd", distro, inactive).domain_status, "provisionable")
         self.assertEqual(detection._probe_core("cap_network_manager", distro, inactive).domain_status, "provisionable")
         self.assertEqual(detection._probe_core("cap_selinux", distro, inactive).domain_status, "present")
@@ -259,6 +305,24 @@ class CapabilityProbeTests(unittest.TestCase):
             machine_architecture="mips",
         )
         self.assertEqual(detection._probe_core("cap_architecture", distro_unknown_arch, inactive).domain_status, "provisionable")
+
+    def test_architecture_policy_comes_from_manifest(self) -> None:
+        manifest = product_manifest()
+        distro = detection.distro_facts_from_os_release(
+            osr("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n"),
+            manifest,
+            kernel_release="6.8.0-test",
+            machine_architecture="amd64",
+        )
+        env = fixture_env()
+        env.manifest = manifest
+        self.assertEqual(distro.machine_architecture, "x86_64")
+        self.assertEqual(detection._probe_core("cap_architecture", distro, env).domain_status, "present")
+
+        restricted = json.loads(json.dumps(manifest))
+        restricted["capabilities"]["core_host_capabilities"]["cap_architecture"]["supported_values"] = ["aarch64"]
+        env.manifest = restricted
+        self.assertEqual(detection._probe_core("cap_architecture", distro, env).domain_status, "provisionable")
 
     def test_protocol_runtime_results_are_orthogonal(self) -> None:
         manifest = product_manifest()
@@ -282,6 +346,55 @@ class CapabilityProbeTests(unittest.TestCase):
         self.assertEqual(report.host_readiness, "ready")
         self.assertEqual(report.protocol_readiness["vless"], "operable")
         self.assertEqual(report.protocol_readiness["amneziawg"], "provisionable")
+
+    def test_evaluate_rejects_incomplete_or_invalid_core_contract(self) -> None:
+        manifest = product_manifest()
+        distro = facts(manifest, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+        one_core = (detection.CapabilityResult("cap_systemd", "present", "present", "", "", ""),)
+        for core in (
+            (),
+            one_core,
+            ready_core(manifest, distro) + (detection.CapabilityResult("cap_systemd", "present", "present", "", "", ""),),
+            ready_core(manifest, distro) + (detection.CapabilityResult("cap_not_real", "present", "present", "", "", ""),),
+            tuple([detection.CapabilityResult("", "present", "present", "", "", "")] + list(ready_core(manifest, distro))[1:]),
+            tuple([object()] + list(ready_core(manifest, distro))[1:]),
+            tuple([detection.CapabilityResult("cap_systemd", "present", "bogus", "", "", "")] + list(ready_core(manifest, distro))[1:]),
+        ):
+            with self.subTest(core=core):
+                with self.assertRaises(detection.DetectionError):
+                    detection.evaluate(manifest, distro, core, present_protocols(manifest), now=datetime(2026, 7, 26))
+
+    def test_evaluate_rejects_incomplete_or_invalid_protocol_contract(self) -> None:
+        manifest = product_manifest()
+        distro = facts(manifest, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+        protocols = present_protocols(manifest)
+        for proto in (
+            (),
+            protocols[:-1],
+            protocols + (protocols[0],),
+            protocols + (detection.CapabilityResult("proto_not_real", "present", "present", "", "", ""),),
+            tuple([detection.CapabilityResult("proto_sing_box_runtime", "present", "bogus", "", "", "")] + list(protocols)[1:]),
+        ):
+            with self.subTest(proto=proto):
+                with self.assertRaises(detection.DetectionError):
+                    detection.evaluate(manifest, distro, ready_core(manifest, distro), proto, now=datetime(2026, 7, 26))
+
+    def test_host_readiness_not_ready_with_partial_required_capabilities(self) -> None:
+        manifest = product_manifest()
+        distro = facts(manifest, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+        env = fixture_env(files={"/proc/1/comm": "systemd\n"}, paths={"/dev/net/tun"})
+        core = detection.probe_core_capabilities(manifest, distro, env)
+        report = detection.evaluate(manifest, distro, core, present_protocols(manifest), now=datetime(2026, 7, 26))
+        self.assertEqual(report.host_readiness, "needs_preparation")
+
+    def test_fixture_without_host_fallback_does_not_observe_host_files(self) -> None:
+        env = detection.ProbeEnvironment(
+            runner=detection.FakeCommandRunner(),
+            allow_host_fallback=False,
+        )
+        self.assertIsNone(env.read_file("/proc/modules"))
+        self.assertIsNone(env.read_file("/sys/module/apparmor/parameters/enabled"))
+        self.assertFalse(env.exists("/dev/net/tun"))
 
 
 class ToolAndSecurityTests(unittest.TestCase):
@@ -332,6 +445,58 @@ class ToolAndSecurityTests(unittest.TestCase):
                 "resolvectl " + "dns",
             )
             self.assertNotRegex(text, "|".join(mutators))
+
+    def test_detect_current_accepts_injected_paths_env_and_clock(self) -> None:
+        manifest = product_manifest()
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as handle:
+            handle.write("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+            handle.flush()
+            env = fixture_env(files={"/proc/1/comm": "systemd\n"})
+            report = detection.detect_current(
+                manifest=manifest,
+                env=env,
+                etc_os_release_path=Path(handle.name),
+                usr_os_release_path=Path(handle.name),
+                now_provider=lambda: datetime(2026, 7, 26),
+            )
+            self.assertEqual(report.distro_facts.resolved_distribution, "ubuntu")
+            self.assertEqual(report.support_classification, "certified")
+
+
+class SafeCommandRunnerTests(unittest.TestCase):
+    def test_runner_limits_output_and_marks_truncation(self) -> None:
+        runner = detection.SafeCommandRunner(output_limit=8)
+        result = runner.run([sys.executable, "-c", "import sys; sys.stdout.write('x'*100); sys.stderr.write('e'*100)"], timeout=5)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.stdout, "x" * 8)
+        self.assertEqual(result.stderr, "e" * 8)
+        self.assertTrue(result.stdout_truncated)
+        self.assertTrue(result.stderr_truncated)
+
+    def test_runner_timeout_missing_permission_invalid_stdout_stderr_and_nonzero(self) -> None:
+        timeout = detection.SafeCommandRunner().run([sys.executable, "-c", "import time; time.sleep(2)"], timeout=0.1)
+        self.assertEqual(timeout.status, "timeout")
+        missing = detection.SafeCommandRunner().run(["definitely-missing-watchdogvpn-command"], timeout=1)
+        self.assertEqual(missing.status, "command_missing")
+        streams = detection.SafeCommandRunner().run(
+            [sys.executable, "-c", "import sys; sys.stdout.write('out'); sys.stderr.write('err')"],
+            timeout=5,
+        )
+        self.assertEqual(streams.stdout, "out")
+        self.assertEqual(streams.stderr, "err")
+        nonzero = detection.SafeCommandRunner().run([sys.executable, "-c", "import sys; sys.exit(7)"], timeout=5)
+        self.assertEqual(nonzero.status, "nonzero_exit")
+        invalid = detection.SafeCommandRunner().run([str(Path(tempfile.gettempdir()))], timeout=1)
+        self.assertEqual(invalid.status, "invalid_executable")
+        with mock.patch("compat.detection.shutil.which", side_effect=OSError("boom")):
+            oserror = detection.SafeCommandRunner().run(["probe"], timeout=1)
+        self.assertEqual(oserror.status, "unknown")
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\nexit 0\n")
+            handle.flush()
+            os.chmod(handle.name, stat.S_IRUSR | stat.S_IWUSR)
+            permission = detection.SafeCommandRunner().run([handle.name], timeout=1)
+            self.assertIn(permission.status, ("permission_denied", "unknown"))
 
 
 def ready_core(manifest, distro):

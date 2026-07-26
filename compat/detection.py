@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Callable, Mapping, Sequence
 
 from compat.support_model import (
@@ -38,7 +39,6 @@ _ARCH_ALIASES = {
     "x86-64": "x86_64",
     "arm64": "aarch64",
 }
-_SUPPORTED_ARCHES = {"x86_64", "aarch64"}
 
 
 class DetectionError(ValueError):
@@ -86,6 +86,8 @@ class CommandResult:
     stdout: str = ""
     stderr: str = ""
     reason: str = ""
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -145,38 +147,81 @@ class SafeCommandRunner:
             raise DetectionError("argv entries must be non-empty strings")
         if timeout <= 0:
             raise DetectionError("timeout must be positive")
+        if self.output_limit <= 0:
+            raise DetectionError("output_limit must be positive")
         program = argv[0]
-        if "/" not in program:
-            resolved = shutil.which(program, path=self.path)
-            if resolved is None:
-                return CommandResult(tuple(argv), "command_missing", reason="command not found")
-            command = [resolved] + list(argv[1:])
-        else:
-            command = list(argv)
-            if not os.path.exists(program):
-                return CommandResult(tuple(argv), "command_missing", reason="command not found")
-        env = {"PATH": self.path, "LC_ALL": "C", "LANG": "C"}
         try:
-            completed = subprocess.run(
-                command,
-                shell=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=timeout,
-                env=env,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            return CommandResult(tuple(argv), "timeout", reason="command timed out")
+            if "/" not in program:
+                resolved = shutil.which(program, path=self.path)
+                if resolved is None:
+                    return CommandResult(tuple(argv), "command_missing", reason="command not found")
+                command = [resolved] + list(argv[1:])
+            else:
+                command = list(argv)
+                if not os.path.exists(program):
+                    return CommandResult(tuple(argv), "command_missing", reason="command not found")
+                if not os.path.isfile(program):
+                    return CommandResult(tuple(argv), "invalid_executable", reason="executable is not a regular file")
+        except (OSError, ValueError) as exc:
+            return CommandResult(tuple(argv), "unknown", reason="executable resolution failed: %s" % exc)
+        env = {"PATH": self.path, "LC_ALL": "C", "LANG": "C"}
+        process = None
+        try:
+            with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+                process = subprocess.Popen(
+                    command,
+                    shell=False,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    env=env,
+                    text=False,
+                    close_fds=True,
+                )
+                try:
+                    process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    return CommandResult(tuple(argv), "timeout", reason="command timed out")
+                stdout, stdout_truncated = _read_limited_output(stdout_file, self.output_limit)
+                stderr, stderr_truncated = _read_limited_output(stderr_file, self.output_limit)
+        except FileNotFoundError:
+            return CommandResult(tuple(argv), "command_missing", reason="command not found")
         except PermissionError as exc:
             return CommandResult(tuple(argv), "permission_denied", reason=str(exc))
-        stdout = completed.stdout[: self.output_limit]
-        stderr = completed.stderr[: self.output_limit]
-        if completed.returncode != 0:
-            status = "permission_denied" if completed.returncode in (1, 13, 126) and "permission" in stderr.lower() else "nonzero_exit"
-            return CommandResult(tuple(argv), status, completed.returncode, stdout, stderr)
-        return CommandResult(tuple(argv), "ok", completed.returncode, stdout, stderr)
+        except (OSError, ValueError) as exc:
+            return CommandResult(tuple(argv), "unknown", reason="command execution failed: %s" % exc)
+        if process is None:
+            return CommandResult(tuple(argv), "unknown", reason="command did not start")
+        if process.returncode != 0:
+            status = "permission_denied" if process.returncode in (1, 13, 126) and "permission" in stderr.lower() else "nonzero_exit"
+            return CommandResult(
+                tuple(argv),
+                status,
+                process.returncode,
+                stdout,
+                stderr,
+                stdout_truncated=stdout_truncated,
+                stderr_truncated=stderr_truncated,
+            )
+        return CommandResult(
+            tuple(argv),
+            "ok",
+            process.returncode,
+            stdout,
+            stderr,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
+        )
+
+
+def _read_limited_output(handle, limit: int) -> tuple[str, bool]:
+    handle.seek(0)
+    data = handle.read(limit + 1)
+    truncated = len(data) > limit
+    if truncated:
+        data = data[:limit]
+    return data.decode("utf-8", errors="replace"), truncated
 
 
 class FakeCommandRunner:
@@ -215,6 +260,8 @@ def _parse_os_release_value(raw_value: str, source: str, line_number: int) -> st
         if len(raw_value) < 2 or raw_value[-1] != quote:
             raise DetectionError("%s:%d unterminated os-release quote" % (source, line_number))
         body = raw_value[1:-1]
+        if "$" in body or "`" in body:
+            raise DetectionError("%s:%d os-release expansion is not allowed" % (source, line_number))
         return _decode_quoted_value(body, quote, source, line_number)
     if any(token in raw_value for token in ("$", "`", "$(", "${")):
         raise DetectionError("%s:%d os-release expansion is not allowed" % (source, line_number))
@@ -250,25 +297,56 @@ def read_os_release(
     etc_path: Path = Path("/etc/os-release"),
     usr_path: Path = Path("/usr/lib/os-release"),
 ) -> OsReleaseData:
-    selected = etc_path if etc_path.exists() else usr_path
-    if not selected.exists():
+    etc_exists = _safe_exists(etc_path, "etc os-release")
+    if not etc_exists and _safe_is_symlink(etc_path, "etc os-release"):
+        raise DetectionError("os-release symlink is broken: %s" % etc_path)
+    selected = etc_path if etc_exists else usr_path
+    if not _safe_exists(selected, "os-release"):
+        if _safe_is_symlink(selected, "os-release"):
+            raise DetectionError("os-release symlink is broken: %s" % selected)
         raise DetectionError("os-release file not found")
     try:
         resolved = selected.resolve(strict=True)
     except OSError as exc:
         raise DetectionError("cannot resolve os-release path: %s" % exc) from exc
-    if selected.is_symlink() and resolved != usr_path.resolve(strict=False):
+    if _safe_is_symlink(selected, "os-release") and resolved != usr_path.resolve(strict=False):
         raise DetectionError("os-release symlink target is outside allowed paths")
-    if not resolved.is_file():
-        raise DetectionError("os-release target must be a regular file")
-    size = resolved.stat().st_size
+    try:
+        if not resolved.is_file():
+            raise DetectionError("os-release target must be a regular file")
+        size = resolved.stat().st_size
+    except DetectionError:
+        raise
+    except OSError as exc:
+        raise DetectionError("cannot stat os-release: %s" % exc) from exc
     if size > MAX_OS_RELEASE_BYTES:
         raise DetectionError("os-release exceeds %d byte limit" % MAX_OS_RELEASE_BYTES)
     try:
-        text = resolved.read_text(encoding="utf-8")
+        with resolved.open("rb") as handle:
+            raw = handle.read(MAX_OS_RELEASE_BYTES + 1)
+    except OSError as exc:
+        raise DetectionError("cannot read os-release: %s" % exc) from exc
+    if len(raw) > MAX_OS_RELEASE_BYTES:
+        raise DetectionError("os-release exceeds %d byte limit" % MAX_OS_RELEASE_BYTES)
+    try:
+        text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise DetectionError("os-release must be valid UTF-8: %s" % exc) from exc
     return parse_os_release_text(text, source=str(selected))
+
+
+def _safe_exists(path: Path, label: str) -> bool:
+    try:
+        return path.exists()
+    except OSError as exc:
+        raise DetectionError("cannot check %s existence: %s" % (label, exc)) from exc
+
+
+def _safe_is_symlink(path: Path, label: str) -> bool:
+    try:
+        return path.is_symlink()
+    except OSError as exc:
+        raise DetectionError("cannot check %s symlink status: %s" % (label, exc)) from exc
 
 
 def normalize_id(value: str | None) -> str | None:
@@ -464,6 +542,11 @@ def _find_release_by_distribution(manifest: Mapping, distro_id: str) -> str | No
     return candidates[0] if candidates else None
 
 
+def _supported_architectures(manifest: Mapping) -> set[str]:
+    values = manifest["capabilities"]["core_host_capabilities"]["cap_architecture"]["supported_values"]
+    return {normalize_arch(value) for value in values}
+
+
 class ProbeEnvironment:
     def __init__(
         self,
@@ -474,17 +557,23 @@ class ProbeEnvironment:
         machine_architecture: str | None = None,
         kernel_release: str | None = None,
         python_version: tuple[int, int, int] | None = None,
+        allow_host_fallback: bool = True,
     ):
         self.runner = runner or SafeCommandRunner()
         self.files = dict(files or {})
         self.existing_paths = set(existing_paths or set())
-        self.machine_architecture = normalize_arch(machine_architecture or platform.machine())
-        self.kernel_release = kernel_release or platform.release()
-        self.python_version = python_version or sys.version_info[:3]
+        self.allow_host_fallback = allow_host_fallback
+        self.machine_architecture = normalize_arch(
+            machine_architecture if machine_architecture is not None else (platform.machine() if allow_host_fallback else "")
+        )
+        self.kernel_release = kernel_release if kernel_release is not None else (platform.release() if allow_host_fallback else "")
+        self.python_version = python_version if python_version is not None else (sys.version_info[:3] if allow_host_fallback else (0, 0, 0))
 
     def read_file(self, path: str) -> str | None:
         if path in self.files:
             return self.files[path]
+        if not self.allow_host_fallback:
+            return None
         try:
             return Path(path).read_text(encoding="utf-8")
         except OSError:
@@ -493,7 +582,14 @@ class ProbeEnvironment:
             return None
 
     def exists(self, path: str) -> bool:
-        return path in self.existing_paths or Path(path).exists()
+        if path in self.existing_paths:
+            return True
+        if not self.allow_host_fallback:
+            return False
+        try:
+            return Path(path).exists()
+        except OSError:
+            return False
 
     def run(self, argv: Sequence[str], *, timeout: float = 2.0) -> CommandResult:
         return self.runner.run(argv, timeout=timeout)
@@ -501,6 +597,7 @@ class ProbeEnvironment:
 
 def probe_core_capabilities(manifest: Mapping, facts: DistroFacts, env: ProbeEnvironment | None = None) -> tuple[CapabilityResult, ...]:
     env = env or ProbeEnvironment()
+    env.manifest = manifest
     family_caps = []
     if facts.technical_family:
         family_caps = list(manifest["technical_families"][facts.technical_family]["core_capabilities"])
@@ -525,21 +622,29 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
     if capability_id == "cap_package_manager":
         command = {"apt": "apt-get", "dnf": "dnf", "zypper": "zypper", "pacman": "pacman"}.get(facts.package_manager or "")
         result = env.run([command, "--version"], timeout=2.0) if command else CommandResult((), "not_applicable")
+        if result.status == "ok":
+            return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip(), "command:" + " ".join(result.argv), "package manager binary observed; install transaction not verified")
         return _command_cap(capability_id, result, "package manager probe")
     if capability_id == "cap_architecture":
-        if facts.machine_architecture in _SUPPORTED_ARCHES:
-            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, facts.machine_architecture or "", "platform.machine", "architecture recognized")
+        if facts.machine_architecture in _supported_architectures(env.manifest):
+            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, facts.machine_architecture or "", "manifest.cap_architecture.supported_values", "architecture admitted by manifest")
         return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, facts.machine_architecture or "", "platform.machine", "architecture not recognized", "unknown")
     if capability_id == "cap_kernel":
-        return _cap(capability_id, "present" if env.kernel_release else "unknown", CoreCapabilityStatus.PRESENT if env.kernel_release else CoreCapabilityStatus.PROVISIONABLE, env.kernel_release or "", "platform.release", "kernel release observed")
+        return _cap(capability_id, "partial" if env.kernel_release else "unknown", CoreCapabilityStatus.PROVISIONABLE, env.kernel_release or "", "platform.release", "kernel release observed; required kernel capabilities not verified")
     if capability_id == "cap_python310":
         version = env.python_version
         ok = version >= (3, 10)
         return _cap(capability_id, "present" if ok else "absent", CoreCapabilityStatus.PRESENT if ok else CoreCapabilityStatus.PROVISIONABLE, "%d.%d.%d" % version[:3], "sys.version_info", "final Python floor check")
     if capability_id == "cap_sudo":
-        return _command_cap(capability_id, env.run(["sudo", "-V"], timeout=2.0), "sudo version probe")
+        result = env.run(["sudo", "-V"], timeout=2.0)
+        if result.status == "ok":
+            return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip(), "command:sudo -V", "sudo binary observed; usable elevation path not verified")
+        return _command_cap(capability_id, result, "sudo binary probe")
     if capability_id == "cap_polkit":
-        return _command_cap(capability_id, env.run(["pkaction", "--version"], timeout=2.0), "polkit probe")
+        result = env.run(["pkaction", "--version"], timeout=2.0)
+        if result.status == "ok":
+            return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip(), "command:pkaction --version", "polkit client observed; WatchdogVPN action path not verified")
+        return _command_cap(capability_id, result, "polkit client probe")
     if capability_id == "cap_network_manager":
         result = env.run(["nmcli", "-t", "-f", "RUNNING", "general"], timeout=2.0)
         if result.status == "ok" and result.stdout.strip().lower() == "running":
@@ -563,11 +668,13 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
         return _command_cap(capability_id, result, "nft version probe only; no rules applied")
     if capability_id == "cap_policy_routing":
         result = env.run(["ip", "rule", "show"], timeout=2.0)
+        if result.status == "ok":
+            return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip(), "command:ip rule show", "policy routing observable; rule creation not verified")
         return _command_cap(capability_id, result, "ip rule show read-only probe")
     if capability_id == "cap_persistence":
-        return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, "filesystem available", "static-readonly", "persistence surface is representable")
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "not-verified", "persistence cannot be demonstrated read-only in this task")
     if capability_id == "cap_rollback":
-        return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, "rollback contract files managed later", "static-readonly", "rollback surface is representable")
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "not-verified", "rollback cannot be demonstrated before provisioning records exist")
     if capability_id == "cap_selinux":
         result = env.run(["getenforce"], timeout=2.0)
         return _diagnostic_cap(capability_id, result, "SELinux diagnostic")
@@ -642,6 +749,8 @@ def evaluate(
     now: datetime,
 ) -> EvaluationReport:
     support = _support_classification(manifest, distro_facts, now=now)
+    _validate_core_capability_contract(manifest, distro_facts, core_capabilities)
+    _validate_protocol_capability_contract(manifest, protocol_capabilities)
     core_statuses = [CoreCapabilityStatus(cap.domain_status) for cap in core_capabilities]
     host = classify_host_readiness(core_statuses)
     protocol_status_map = {cap.capability_id: ProtocolRuntimeStatus(cap.domain_status) for cap in protocol_capabilities}
@@ -657,6 +766,70 @@ def evaluate(
         core_capabilities=tuple(core_capabilities),
         protocol_capabilities=tuple(protocol_capabilities),
     )
+
+
+def _validate_core_capability_contract(
+    manifest: Mapping,
+    distro_facts: DistroFacts,
+    core_capabilities: Sequence[CapabilityResult],
+) -> None:
+    if not distro_facts.technical_family:
+        raise DetectionError("cannot evaluate core capabilities without a resolved technical family")
+    expected = tuple(manifest["technical_families"][distro_facts.technical_family]["core_capabilities"])
+    _validate_capability_result_set(
+        core_capabilities,
+        expected,
+        set(manifest["capabilities"]["core_host_capabilities"]),
+        CoreCapabilityStatus,
+        "core_capabilities",
+    )
+
+
+def _validate_protocol_capability_contract(
+    manifest: Mapping,
+    protocol_capabilities: Sequence[CapabilityResult],
+) -> None:
+    expected = tuple(sorted(manifest["capabilities"]["protocol_capabilities"]))
+    _validate_capability_result_set(
+        protocol_capabilities,
+        expected,
+        set(manifest["capabilities"]["protocol_capabilities"]),
+        ProtocolRuntimeStatus,
+        "protocol_capabilities",
+    )
+
+
+def _validate_capability_result_set(
+    results: Sequence[CapabilityResult],
+    expected_ids: Sequence[str],
+    known_ids: set[str],
+    enum_cls,
+    label: str,
+) -> None:
+    if not results:
+        raise DetectionError("%s must not be empty" % label)
+    received = []
+    seen = set()
+    for index, result in enumerate(results):
+        if not isinstance(result, CapabilityResult):
+            raise DetectionError("%s[%d] must be CapabilityResult" % (label, index))
+        cap_id = result.capability_id
+        if type(cap_id) is not str or not cap_id:
+            raise DetectionError("%s[%d].capability_id must be a non-empty string" % (label, index))
+        if cap_id in seen:
+            raise DetectionError("%s contains duplicate capability %s" % (label, cap_id))
+        seen.add(cap_id)
+        if cap_id not in known_ids:
+            raise DetectionError("%s contains unknown capability %s" % (label, cap_id))
+        try:
+            enum_cls(result.domain_status)
+        except ValueError as exc:
+            raise DetectionError("%s.%s has invalid domain_status %r" % (label, cap_id, result.domain_status)) from exc
+        received.append(cap_id)
+    if set(received) != set(expected_ids):
+        missing = sorted(set(expected_ids) - set(received))
+        extra = sorted(set(received) - set(expected_ids))
+        raise DetectionError("%s contract mismatch missing=%s extra=%s" % (label, missing, extra))
 
 
 def _support_classification(manifest: Mapping, facts: DistroFacts, *, now: datetime) -> SupportClassification:
@@ -701,10 +874,17 @@ def load_product_manifest() -> Mapping:
     return manifest
 
 
-def detect_current(*, manifest: Mapping | None = None, env: ProbeEnvironment | None = None) -> EvaluationReport:
+def detect_current(
+    *,
+    manifest: Mapping | None = None,
+    env: ProbeEnvironment | None = None,
+    etc_os_release_path: Path = Path("/etc/os-release"),
+    usr_os_release_path: Path = Path("/usr/lib/os-release"),
+    now_provider: Callable[[], datetime] | None = None,
+) -> EvaluationReport:
     manifest = manifest or load_product_manifest()
     env = env or ProbeEnvironment()
-    os_release = read_os_release()
+    os_release = read_os_release(etc_path=etc_os_release_path, usr_path=usr_os_release_path)
     facts = distro_facts_from_os_release(
         os_release,
         manifest,
@@ -713,5 +893,7 @@ def detect_current(*, manifest: Mapping | None = None, env: ProbeEnvironment | N
     )
     core = probe_core_capabilities(manifest, facts, env)
     protocols = probe_protocol_capabilities(manifest, env)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = now_provider() if now_provider is not None else datetime.now(timezone.utc).replace(tzinfo=None)
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
     return evaluate(manifest, facts, core, protocols, now=now)

@@ -796,6 +796,22 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest["validation_metadata"]["repository_ci"]["unexpected"] = True
         self.assert_invalid(manifest, "unknown key")
 
+    def test_architecture_supported_values_are_required_and_strict(self) -> None:
+        manifest = self.product_copy()
+        self.assertEqual(
+            manifest["capabilities"]["core_host_capabilities"]["cap_architecture"]["supported_values"],
+            ["x86_64", "aarch64"],
+        )
+        manifest = self.product_copy()
+        manifest["capabilities"]["core_host_capabilities"]["cap_architecture"]["supported_values"] = []
+        self.assert_invalid(manifest, "must not be empty")
+        manifest = self.product_copy()
+        manifest["capabilities"]["core_host_capabilities"]["cap_architecture"]["supported_values"] = "x86_64"
+        self.assert_invalid(manifest, "must be a list")
+        manifest = self.product_copy()
+        manifest["capabilities"]["core_host_capabilities"]["cap_tun"]["supported_values"] = ["x86_64"]
+        self.assert_invalid(manifest, "only valid for cap_architecture")
+
     def test_file_size_limit_utf8_and_symlink_product_path(self) -> None:
         too_large = tempfile.NamedTemporaryFile(delete=False)
         try:
@@ -847,8 +863,8 @@ class BootstrapCompatibilityTests(unittest.TestCase):
         self.assertNotIn("compat.support_model", imported)
 
     def test_bootstrap_reader_parses_as_python_36(self) -> None:
-        source = TOOL.read_text(encoding="utf-8")
-        ast.parse(source, filename=str(TOOL), feature_version=(3, 6))
+        reader_text = TOOL.read_text(encoding="utf-8")
+        ast.parse(reader_text, filename=str(TOOL), feature_version=(3, 6))
 
 
 if __name__ == "__main__":

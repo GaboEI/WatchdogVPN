@@ -7,6 +7,10 @@
       },
       "cap_architecture": {
         "description": "Supported CPU architecture for selected methods",
+        "supported_values": [
+          "x86_64",
+          "aarch64"
+        ],
         "type": "required"
       },
       "cap_dns_backend": {

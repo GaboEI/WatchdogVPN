@@ -126,7 +126,7 @@ _ENTITY_KEYS = {
         "lineage_distribution",
         "mapping_type",
     ),
-    "capability": ("description", "type"),
+    "capability": ("description", "supported_values", "type"),
     "provisioning_method": ("exact_release_required", "kind", "mutates_system", "provenance"),
     "protocol": ("category", "evidence_policy", "required_protocol_capabilities"),
     "certification": (
@@ -483,6 +483,10 @@ def _validate_capabilities(manifest):
             path + ".type",
         )
         _require_str(cap.get("description"), path + ".description")
+        if cap_id == "cap_architecture":
+            _require_id_list(cap.get("supported_values"), path + ".supported_values")
+        elif "supported_values" in cap:
+            raise ManifestError("%s.supported_values is only valid for cap_architecture" % path)
     for cap_id, cap in capabilities["protocol_capabilities"].items():
         path = "capabilities.protocol_capabilities.%s" % cap_id
         _require_obj(cap, path)

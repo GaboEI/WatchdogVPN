@@ -74,6 +74,7 @@ def _fixture_env() -> detection.ProbeEnvironment:
         machine_architecture="x86_64",
         kernel_release="6.8.0-fixture",
         python_version=(3, 11, 0),
+        allow_host_fallback=False,
     )
 
 

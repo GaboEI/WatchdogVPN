@@ -310,18 +310,34 @@ model unless an explicit exclusion or floor/EOL policy says unsupported.
 
 Every external observation goes through `SafeCommandRunner`, which accepts only argv lists,
 uses `shell=False`, an explicit timeout, a controlled environment/locale, separated stdout
-and stderr, bounded output and normalized error kinds. Tests use `FakeCommandRunner`; the
-optional host smoke command is non-authoritative. Probes are read-only and never create
-interfaces, edit firewall/routing/DNS state, start services, install packages or execute
-manifest data.
+and stderr, bounded output and normalized error kinds. The runner writes stdout and stderr
+to separate temporary files and reads back only `output_limit + 1` bytes, so retained output
+is bounded and truncation is explicit via `stdout_truncated`/`stderr_truncated`. Tests use
+`FakeCommandRunner`; fixture environments set `allow_host_fallback=false`, so a missing
+fixture path cannot be read from the real host and a missing fixture `existing_paths` entry
+is absent. The optional host smoke command is non-authoritative. Probes are read-only and
+never create interfaces, edit firewall/routing/DNS state, start services, install packages
+or execute manifest data.
 
 Core host capability results and protocol runtime capability results are separate
 `CapabilityResult` records with `capability_id`, observed status, domain status, evidence,
-probe method, reason and error kind. Evidence that cannot prove a capability without a
-mutation is conservative: for example a visible `/dev/net/tun` or `nft --version` is
-partial/provisionable evidence, not proof that an interface can be created or a kill switch
-can be applied. Missing protocol runtimes affect only their protocols, so a certified and
-otherwise-ready host can report VLESS operable while AmneziaWG remains provisionable.
+probe method, reason and error kind. `evaluate()` first validates that the received core
+capability IDs match exactly the `core_capabilities` declared by the detected technical
+family, and that protocol capability IDs match exactly the manifest's protocol capability
+set. Empty, missing, duplicate, unknown, wrongly-typed or invalid-status results are
+`DetectionError`; a missing probe result is never silently converted to an absent runtime.
+
+Evidence that cannot prove a capability without a mutation is conservative: a visible
+`/dev/net/tun`, `nft --version`, `sudo -V`, `pkaction --version`, package-manager version
+output, `ip rule show`, a kernel release string, persistence and rollback surfaces are
+partial/unknown/provisionable unless a read-only check proves the actual contract. Missing
+protocol runtimes affect only their protocols, so a certified and otherwise-ready host can
+report VLESS operable while AmneziaWG remains provisionable.
+
+Architecture support policy is data, not detector code. The manifest's
+`cap_architecture.supported_values` declares the admitted normalized architectures; the
+detector keeps only universal normalization aliases such as `amd64 -> x86_64` and
+`arm64 -> aarch64`.
 
 The internal tool is:
 
