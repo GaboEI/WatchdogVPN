@@ -17,6 +17,10 @@
   "title": "WatchdogVPN Compatibility Manifest",
   "type": "object",
   "properties": {
+    "metadata": {
+      "description": "Bootstrap and authority metadata. Optional in the JSON Schema but accepted by the bootstrap reader.",
+      "type": "object"
+    },
     "schema_version": {
       "description": "Semantic version. Unknown major versions are rejected by the bootstrap reader.",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
@@ -31,7 +35,7 @@
       "type": "object"
     },
     "releases": {
-      "description": "Stable release facts that can feed compat.support_model.StableReleaseFacts without storing calculated classifications.",
+      "description": "Primitive stable release policy inputs and evidence references. StableReleaseFacts are derived by the bootstrap reader.",
       "type": "object"
     },
     "derivatives": {
@@ -59,7 +63,7 @@
       "type": "object"
     },
     "validation_metadata": {
-      "description": "Rolling freshness policies, CI refs and manifest-generation metadata.",
+      "description": "Rolling freshness policies, repository CI, future per-release CI placeholders and manifest-generation metadata.",
       "type": "object"
     }
   },

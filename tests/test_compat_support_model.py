@@ -48,7 +48,7 @@ def stable(**overrides) -> StableReleaseFacts:
         eol_or_withdrawn=False,
         vendor_maintained=True,
         ci_green=True,
-        is_derivative_without_own_evidence=False,
+        is_derivative=False, has_own_evidence=True, family_inference_allowed=False,
         has_valid_field_certification=False,
         family_has_certified_anchor=True,
     )
@@ -62,7 +62,7 @@ def rolling(**overrides) -> RollingFacts:
         meets_technical_floor=True,
         expressly_excluded=False,
         eol_or_withdrawn=False,
-        is_derivative_without_own_evidence=False,
+        is_derivative=False, has_own_evidence=True, family_inference_allowed=False,
         has_valid_field_certification=False,
         last_validated=None,
     )
@@ -79,7 +79,7 @@ class StableClassificationTests(unittest.TestCase):
             ("eol", stable(eol_or_withdrawn=True), SupportClassification.UNSUPPORTED),
             ("excluded", stable(expressly_excluded=True), SupportClassification.UNSUPPORTED),
             ("certified", stable(admitted=True, has_valid_field_certification=True), SupportClassification.CERTIFIED),
-            ("derivative_inferred", stable(is_derivative_without_own_evidence=True), SupportClassification.FAMILY_INFERRED),
+            ("derivative_inferred", stable(is_derivative=True, has_own_evidence=False, family_inference_allowed=True), SupportClassification.FAMILY_INFERRED),
             ("future", stable(future_or_unevaluated=True), SupportClassification.EXPERIMENTAL),
             ("supported", stable(admitted=True), SupportClassification.SUPPORTED),
             ("admitted_but_ci_red", stable(admitted=True, ci_green=False), SupportClassification.EXPERIMENTAL),
@@ -91,14 +91,14 @@ class StableClassificationTests(unittest.TestCase):
             ),
             (
                 "derivative_does_not_inherit_family_anchor",
-                stable(is_derivative_without_own_evidence=True, family_has_certified_anchor=True),
+                stable(is_derivative=True, has_own_evidence=False, family_inference_allowed=True, family_has_certified_anchor=True),
                 SupportClassification.FAMILY_INFERRED,
             ),
             # disqualifier precedence over higher-evidence facts:
             ("eol_beats_admitted", stable(eol_or_withdrawn=True, admitted=False, vendor_maintained=True), SupportClassification.UNSUPPORTED),
-            ("no_adapter_beats_derivative", stable(has_adapter=False, is_derivative_without_own_evidence=True), SupportClassification.UNSUPPORTED),
+            ("no_adapter_beats_derivative", stable(has_adapter=False, is_derivative=True, has_own_evidence=False, family_inference_allowed=True), SupportClassification.UNSUPPORTED),
             # a derivative with its own field cert is certified, not merely inferred:
-            ("certified_derivative", stable(admitted=True, has_valid_field_certification=True, is_derivative_without_own_evidence=False), SupportClassification.CERTIFIED),
+            ("certified_derivative", stable(admitted=True, has_valid_field_certification=True, is_derivative=False, has_own_evidence=True, family_inference_allowed=False), SupportClassification.CERTIFIED),
         ]
         for label, facts, expected in cases:
             with self.subTest(label):
@@ -110,7 +110,7 @@ class StableClassificationTests(unittest.TestCase):
         produced = {
             classify_support_stable(stable(admitted=True, has_valid_field_certification=True)),
             classify_support_stable(stable(admitted=True)),
-            classify_support_stable(stable(is_derivative_without_own_evidence=True)),
+            classify_support_stable(stable(is_derivative=True, has_own_evidence=False, family_inference_allowed=True)),
             classify_support_stable(stable(future_or_unevaluated=True)),
             classify_support_stable(stable(has_adapter=False)),
         }
@@ -136,7 +136,7 @@ class StableContradictionTests(unittest.TestCase):
             stable(future_or_unevaluated=True, eol_or_withdrawn=True),
             stable(has_valid_field_certification=True, has_adapter=False),
             stable(has_valid_field_certification=True, meets_technical_floor=False),
-            stable(has_valid_field_certification=True, is_derivative_without_own_evidence=True),
+            stable(has_valid_field_certification=True, is_derivative=True, has_own_evidence=False, family_inference_allowed=True),
         ]
         for facts in cases:
             with self.subTest(facts=facts):
@@ -151,7 +151,12 @@ class RollingClassificationTests(unittest.TestCase):
             ("expired", rolling(last_validated=NOW - timedelta(days=60)), SupportClassification.EXPERIMENTAL),
             ("absent_evidence", rolling(last_validated=None), SupportClassification.EXPERIMENTAL),
             ("certified", rolling(last_validated=NOW - timedelta(days=1), has_valid_field_certification=True), SupportClassification.CERTIFIED),
-            ("derivative_inferred", rolling(is_derivative_without_own_evidence=True), SupportClassification.FAMILY_INFERRED),
+            ("derivative_inferred", rolling(is_derivative=True, has_own_evidence=False, family_inference_allowed=True), SupportClassification.FAMILY_INFERRED),
+            (
+                "derivative_lineage_without_inference",
+                rolling(is_derivative=True, has_own_evidence=False, family_inference_allowed=False),
+                SupportClassification.EXPERIMENTAL,
+            ),
             ("excluded", rolling(expressly_excluded=True), SupportClassification.UNSUPPORTED),
             ("eol", rolling(eol_or_withdrawn=True), SupportClassification.UNSUPPORTED),
             ("no_adapter", rolling(has_adapter=False), SupportClassification.UNSUPPORTED),
@@ -172,6 +177,18 @@ class RollingClassificationTests(unittest.TestCase):
             SupportClassification.EXPERIMENTAL,
         )
 
+    def test_rolling_absent_evidence_does_not_become_supported_by_adapter_lineage(self) -> None:
+        facts = rolling(
+            is_derivative=True,
+            has_own_evidence=False,
+            family_inference_allowed=False,
+            last_validated=None,
+        )
+        self.assertIs(
+            classify_support_rolling(facts, expiry=EXPIRY, now=NOW),
+            SupportClassification.EXPERIMENTAL,
+        )
+
     def test_invalid_temporal_data_rejected_even_when_certified(self) -> None:
         # A winning disqualifier-free, strong-evidence branch (certified) must not
         # skip temporal validation.
@@ -180,7 +197,7 @@ class RollingClassificationTests(unittest.TestCase):
             classify_support_rolling(facts, expiry=EXPIRY, now=NOW)  # type: ignore[arg-type]
 
     def test_invalid_temporal_data_rejected_even_when_derivative_inferred(self) -> None:
-        facts = rolling(is_derivative_without_own_evidence=True, last_validated=NOW + timedelta(days=1))
+        facts = rolling(is_derivative=True, has_own_evidence=False, family_inference_allowed=True, last_validated=NOW + timedelta(days=1))
         with self.assertRaises(DomainError):
             classify_support_rolling(facts, expiry=EXPIRY, now=NOW)
 
@@ -363,7 +380,7 @@ class InvariantTests(unittest.TestCase):
         for facts in (
             stable(admitted=True, has_valid_field_certification=True),
             stable(admitted=True),
-            stable(is_derivative_without_own_evidence=True),
+            stable(is_derivative=True, has_own_evidence=False, family_inference_allowed=True),
             stable(future_or_unevaluated=True),
             stable(has_adapter=False),
         ):

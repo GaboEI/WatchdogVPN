@@ -1,8 +1,1094 @@
 {
+  "capabilities": {
+    "core_host_capabilities": {
+      "cap_apparmor": {
+        "description": "AppArmor reporting; never lowered for certification",
+        "type": "diagnostic_only"
+      },
+      "cap_architecture": {
+        "description": "Supported CPU architecture for selected methods",
+        "type": "required"
+      },
+      "cap_dns_backend": {
+        "description": "A supported DNS backend such as systemd-resolved, NetworkManager DNS, or resolv.conf",
+        "type": "alternative"
+      },
+      "cap_kernel": {
+        "description": "Linux kernel exposing the capabilities WatchdogVPN requires",
+        "type": "required"
+      },
+      "cap_network_manager": {
+        "description": "NetworkManager or an explicitly admitted equivalent",
+        "type": "alternative"
+      },
+      "cap_nftables": {
+        "description": "nftables backend required for the atomic kill switch",
+        "type": "required"
+      },
+      "cap_package_manager": {
+        "description": "Family package manager used for bootstrap and runtime packages",
+        "type": "required"
+      },
+      "cap_persistence": {
+        "description": "Installed state survives reboot and can be audited",
+        "type": "required"
+      },
+      "cap_policy_routing": {
+        "description": "ip rule and route capability required by capture and split tunnel",
+        "type": "required"
+      },
+      "cap_polkit": {
+        "description": "Polkit privileged-action support",
+        "type": "required"
+      },
+      "cap_python310": {
+        "description": "Final product runtime Python floor; bootstrap reader only requires Python 3.6",
+        "type": "provisionable"
+      },
+      "cap_rollback": {
+        "description": "Provisioner rollback and uninstall capability",
+        "type": "required"
+      },
+      "cap_selinux": {
+        "description": "SELinux reporting; never lowered for certification",
+        "type": "diagnostic_only"
+      },
+      "cap_sudo": {
+        "description": "Privilege elevation path",
+        "type": "required"
+      },
+      "cap_systemd": {
+        "description": "systemd init and service semantics",
+        "type": "required"
+      },
+      "cap_tun": {
+        "description": "/dev/net/tun support",
+        "type": "required"
+      }
+    },
+    "protocol_capabilities": {
+      "proto_amneziawg_runtime": {
+        "description": "awg tools plus AmneziaWG kernel module or amneziawg-go",
+        "type": "provisionable"
+      },
+      "proto_ck_client_runtime": {
+        "description": "Cloak ck-client runtime",
+        "type": "provisionable"
+      },
+      "proto_openvpn_runtime": {
+        "description": "OpenVPN runtime",
+        "type": "provisionable"
+      },
+      "proto_sing_box_runtime": {
+        "description": "sing-box runtime used by VLESS, Trojan, Hysteria2, VMess, TUIC, Shadowsocks, SOCKS and HTTP",
+        "type": "provisionable"
+      }
+    }
+  },
+  "certifications": {
+    "cert_arch_rolling": {
+      "current": true,
+      "date": "2026-07-22T00:00:00Z",
+      "distribution": "arch",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Arch certification closure and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "arch-default-and-lts-2026-07-22"
+    },
+    "cert_cachyos_rolling": {
+      "current": true,
+      "date": "2026-07-22T00:00:00Z",
+      "distribution": "cachyos",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md CachyOS certification closure and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "cachyos-2026-07-22"
+    },
+    "cert_debian_13": {
+      "current": true,
+      "date": "2026-07-22T00:00:00Z",
+      "distribution": "debian",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.5.4 Debian certification and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "release": "debian_13",
+      "scope": "physical_field_certification"
+    },
+    "cert_fedora_44": {
+      "current": true,
+      "date": "2026-07-22T00:00:00Z",
+      "distribution": "fedora",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.5 Fedora closure and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "release": "fedora_44",
+      "scope": "physical_field_certification"
+    },
+    "cert_linuxmint_22_3": {
+      "current": true,
+      "date": "2026-07-24T00:00:00Z",
+      "distribution": "linuxmint",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.7 Linux Mint 22.3 closure and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "release": "linuxmint_22_3",
+      "scope": "physical_field_certification"
+    },
+    "cert_opensuse_leap_15_6": {
+      "current": true,
+      "date": "2026-07-23T00:00:00Z",
+      "distribution": "opensuse_leap",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.6 openSUSE Leap closure and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "release": "opensuse_leap_15_6",
+      "scope": "physical_field_certification"
+    },
+    "cert_rocky_9": {
+      "current": true,
+      "date": "2026-07-23T00:00:00Z",
+      "distribution": "rocky",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.5b Rocky Linux 9 closure and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "release": "rocky_9",
+      "scope": "physical_field_certification"
+    },
+    "cert_ubuntu_24_04": {
+      "current": true,
+      "date": "2026-07-22T00:00:00Z",
+      "distribution": "ubuntu",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.5.5 Ubuntu certification and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "release": "ubuntu_24_04",
+      "scope": "physical_field_certification"
+    }
+  },
+  "derivatives": {
+    "cachyos_lineage": {
+      "base_version_gating": false,
+      "distribution": "cachyos",
+      "lineage_distribution": "arch",
+      "mapping_type": "rolling_lineage"
+    },
+    "kali_lineage": {
+      "base_version_gating": false,
+      "distribution": "kali",
+      "lineage_distribution": "debian",
+      "mapping_type": "rolling_lineage"
+    },
+    "linuxmint_ubuntu_codename": {
+      "codename_map": {
+        "zena": "ubuntu_24_04"
+      },
+      "distribution": "linuxmint",
+      "lineage_distribution": "ubuntu",
+      "mapping_type": "codename_map"
+    },
+    "opensuse_tumbleweed_lineage": {
+      "base_version_gating": false,
+      "distribution": "opensuse_tumbleweed",
+      "lineage_distribution": "opensuse_leap",
+      "mapping_type": "rolling_lineage"
+    }
+  },
+  "distributions": {
+    "almalinux": {
+      "id": "almalinux",
+      "lineage": {
+        "family_inference_allowed": true,
+        "has_own_evidence": false,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [],
+          "excluded_releases": [],
+          "pending_releases": [
+            "almalinux_9"
+          ]
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "arch": {
+      "id": "arch",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 2592000,
+          "expressly_excluded": false,
+          "last_validated": "2026-07-22T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "arch_pacman"
+    },
+    "cachyos": {
+      "id": "cachyos",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 2592000,
+          "expressly_excluded": false,
+          "last_validated": "2026-07-22T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "arch_pacman"
+    },
+    "centos_stream": {
+      "id": "centos_stream",
+      "lineage": {
+        "family_inference_allowed": true,
+        "has_own_evidence": false,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [],
+          "excluded_releases": [],
+          "pending_releases": [
+            "centos_stream_9"
+          ]
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "debian": {
+      "id": "debian",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "debian_13"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "debian_apt"
+    },
+    "fedora": {
+      "id": "fedora",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "fedora_44"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "kali": {
+      "id": "kali",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": false,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 2592000,
+          "expressly_excluded": false,
+          "last_validated": null,
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "debian_apt"
+    },
+    "linuxmint": {
+      "id": "linuxmint",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "linuxmint_22_3"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "ubuntu_apt"
+    },
+    "opensuse_leap": {
+      "id": "opensuse_leap",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "opensuse_leap_15_6"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "suse_zypper"
+    },
+    "opensuse_tumbleweed": {
+      "id": "opensuse_tumbleweed",
+      "lineage": {
+        "family_inference_allowed": true,
+        "has_own_evidence": false,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 2592000,
+          "expressly_excluded": false,
+          "last_validated": null,
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "suse_zypper"
+    },
+    "rhel": {
+      "id": "rhel",
+      "lineage": {
+        "family_inference_allowed": true,
+        "has_own_evidence": false,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [],
+          "excluded_releases": [],
+          "pending_releases": [
+            "rhel_9"
+          ]
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "rocky": {
+      "id": "rocky",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "rocky_9"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "ubuntu": {
+      "id": "ubuntu",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "ubuntu_24_04"
+          ],
+          "excluded_releases": [],
+          "pending_releases": [
+            "ubuntu_26_04"
+          ]
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "ubuntu_apt"
+    }
+  },
   "metadata": {
     "bootstrap_python_min": "3.6",
+    "bootstrap_python_runtime_note": "Python 3.6 syntax compatibility verified by AST parse; independent Python 3.6 runtime execution not yet verified on this host.",
+    "bootstrap_python_runtime_verified": false,
+    "bootstrap_python_syntax_verified": true,
     "max_manifest_bytes": 1048576,
     "source_authority": "Phase 23.7.5 design, Master Plan, repo certification docs, and external project memory as of 2026-07-26"
+  },
+  "protocols": {
+    "amneziawg": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_amneziawg_runtime"
+      ]
+    },
+    "http": {
+      "category": "compatibility",
+      "evidence_policy": "Useful real HTTP proxy traffic required",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "hysteria2": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "openvpn": {
+      "category": "formal_non_green",
+      "evidence_policy": "No false green: runtime/listener/TLS without egress remains non-green",
+      "required_protocol_capabilities": [
+        "proto_openvpn_runtime"
+      ]
+    },
+    "openvpn_cloak": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_openvpn_runtime",
+        "proto_ck_client_runtime"
+      ]
+    },
+    "shadowsocks": {
+      "category": "formal_non_green",
+      "evidence_policy": "No false green: runtime/listener without useful egress remains non-green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "socks": {
+      "category": "compatibility",
+      "evidence_policy": "Useful real SOCKS traffic required",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "trojan": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "tuic": {
+      "category": "compatibility",
+      "evidence_policy": "Useful real traffic required",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "vless": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "vmess": {
+      "category": "compatibility",
+      "evidence_policy": "Useful real traffic required",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "wireguard": {
+      "category": "formal_non_green",
+      "evidence_policy": "No false green: process/TUN/handshake without egress remains non-green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    }
+  },
+  "provisioning_methods": {
+    "apt_official_package": {
+      "exact_release_required": true,
+      "kind": "official_package",
+      "mutates_system": true,
+      "provenance": "Distribution official apt repository for the exact release"
+    },
+    "dnf_official_package": {
+      "exact_release_required": true,
+      "kind": "official_package",
+      "mutates_system": true,
+      "provenance": "Distribution official dnf repository for the exact release"
+    },
+    "external_repo_exact": {
+      "exact_release_required": true,
+      "kind": "external_repo_exact",
+      "mutates_system": true,
+      "provenance": "External repository explicitly compatible with the exact target release"
+    },
+    "official_artifact_pinned": {
+      "exact_release_required": true,
+      "kind": "official_artifact",
+      "mutates_system": true,
+      "provenance": "Official artifact with pinned version and integrity verification"
+    },
+    "pacman_official_package": {
+      "exact_release_required": true,
+      "kind": "official_package",
+      "mutates_system": true,
+      "provenance": "Distribution official pacman repository"
+    },
+    "pinned_source_build": {
+      "exact_release_required": true,
+      "kind": "pinned_source_build",
+      "mutates_system": true,
+      "provenance": "Pinned source build with integrity, installed-file manifest, rollback and uninstall"
+    },
+    "zypper_official_package": {
+      "exact_release_required": true,
+      "kind": "official_package",
+      "mutates_system": true,
+      "provenance": "Distribution official zypper repository for the exact release"
+    }
+  },
+  "releases": {
+    "almalinux_9": {
+      "distribution": "almalinux",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [],
+      "meets_technical_floor": true,
+      "policy_state": "pending_evaluation",
+      "vendor_maintained": true,
+      "version": "9"
+    },
+    "centos_stream_9": {
+      "distribution": "centos_stream",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [],
+      "meets_technical_floor": true,
+      "policy_state": "pending_evaluation",
+      "vendor_maintained": true,
+      "version": "9"
+    },
+    "debian_13": {
+      "codename": "trixie",
+      "distribution": "debian",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_debian_13"
+      ],
+      "meets_technical_floor": true,
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "13.6"
+    },
+    "fedora_44": {
+      "distribution": "fedora",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_fedora_44"
+      ],
+      "meets_technical_floor": true,
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "44"
+    },
+    "linuxmint_22_3": {
+      "codename": "zena",
+      "distribution": "linuxmint",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_linuxmint_22_3"
+      ],
+      "meets_technical_floor": true,
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "22.3"
+    },
+    "opensuse_leap_15_6": {
+      "distribution": "opensuse_leap",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_opensuse_leap_15_6"
+      ],
+      "meets_technical_floor": true,
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "15.6"
+    },
+    "rhel_9": {
+      "distribution": "rhel",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [],
+      "meets_technical_floor": true,
+      "policy_state": "pending_evaluation",
+      "vendor_maintained": true,
+      "version": "9"
+    },
+    "rocky_9": {
+      "distribution": "rocky",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_rocky_9"
+      ],
+      "meets_technical_floor": true,
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "9"
+    },
+    "ubuntu_24_04": {
+      "codename": "noble",
+      "distribution": "ubuntu",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_ubuntu_24_04"
+      ],
+      "meets_technical_floor": true,
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "24.04.4"
+    },
+    "ubuntu_26_04": {
+      "codename": "resolute",
+      "distribution": "ubuntu",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [],
+      "meets_technical_floor": true,
+      "policy_state": "pending_evaluation",
+      "vendor_maintained": true,
+      "version": "26.04"
+    }
   },
   "schema_version": "1.0.0",
   "technical_families": {
@@ -166,856 +1252,67 @@
       ]
     }
   },
-  "distributions": {
-    "almalinux": {
-      "id": "almalinux",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [],
-          "excluded_releases": [],
-          "pending_releases": [
-            "almalinux_9"
-          ]
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "redhat_dnf"
-    },
-    "arch": {
-      "id": "arch",
-      "policy": {
-        "inherits_family_support": false,
-        "rolling": {
-          "eol_or_withdrawn": false,
-          "evidence_expiry_seconds": 2592000,
-          "expressly_excluded": false,
-          "has_valid_field_certification": true,
-          "is_derivative_without_own_evidence": false,
-          "last_validated": "2026-07-22T00:00:00Z",
-          "meets_technical_floor": true
-        }
-      },
-      "release_model": "rolling",
-      "technical_family": "arch_pacman"
-    },
-    "cachyos": {
-      "id": "cachyos",
-      "policy": {
-        "inherits_family_support": false,
-        "rolling": {
-          "eol_or_withdrawn": false,
-          "evidence_expiry_seconds": 2592000,
-          "expressly_excluded": false,
-          "has_valid_field_certification": true,
-          "is_derivative_without_own_evidence": false,
-          "last_validated": "2026-07-22T00:00:00Z",
-          "meets_technical_floor": true
-        }
-      },
-      "release_model": "rolling",
-      "technical_family": "arch_pacman"
-    },
-    "centos_stream": {
-      "id": "centos_stream",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [],
-          "excluded_releases": [],
-          "pending_releases": [
-            "centos_stream_9"
-          ]
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "redhat_dnf"
-    },
-    "debian": {
-      "id": "debian",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [
-            "debian_13"
-          ],
-          "excluded_releases": [],
-          "pending_releases": []
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "debian_apt"
-    },
-    "fedora": {
-      "id": "fedora",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [
-            "fedora_44"
-          ],
-          "excluded_releases": [],
-          "pending_releases": []
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "redhat_dnf"
-    },
-    "kali": {
-      "id": "kali",
-      "policy": {
-        "inherits_family_support": false,
-        "rolling": {
-          "eol_or_withdrawn": false,
-          "evidence_expiry_seconds": 2592000,
-          "expressly_excluded": false,
-          "has_valid_field_certification": false,
-          "is_derivative_without_own_evidence": true,
-          "last_validated": null,
-          "meets_technical_floor": true
-        }
-      },
-      "release_model": "rolling",
-      "technical_family": "debian_apt"
-    },
-    "linuxmint": {
-      "id": "linuxmint",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [
-            "linuxmint_22_3"
-          ],
-          "excluded_releases": [],
-          "pending_releases": []
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "ubuntu_apt"
-    },
-    "opensuse_leap": {
-      "id": "opensuse_leap",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [
-            "opensuse_leap_15_6"
-          ],
-          "excluded_releases": [],
-          "pending_releases": []
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "suse_zypper"
-    },
-    "opensuse_tumbleweed": {
-      "id": "opensuse_tumbleweed",
-      "policy": {
-        "inherits_family_support": false,
-        "rolling": {
-          "eol_or_withdrawn": false,
-          "evidence_expiry_seconds": 2592000,
-          "expressly_excluded": false,
-          "has_valid_field_certification": false,
-          "is_derivative_without_own_evidence": true,
-          "last_validated": null,
-          "meets_technical_floor": true
-        }
-      },
-      "release_model": "rolling",
-      "technical_family": "suse_zypper"
-    },
-    "rhel": {
-      "id": "rhel",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [],
-          "excluded_releases": [],
-          "pending_releases": [
-            "rhel_9"
-          ]
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "redhat_dnf"
-    },
-    "rocky": {
-      "id": "rocky",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [
-            "rocky_9"
-          ],
-          "excluded_releases": [],
-          "pending_releases": []
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "redhat_dnf"
-    },
-    "ubuntu": {
-      "id": "ubuntu",
-      "policy": {
-        "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [
-            "ubuntu_24_04"
-          ],
-          "excluded_releases": [],
-          "pending_releases": [
-            "ubuntu_26_04"
-          ]
-        }
-      },
-      "release_model": "stable",
-      "technical_family": "ubuntu_apt"
-    }
-  },
-  "releases": {
-    "almalinux_9": {
-      "distribution": "almalinux",
-      "evidence_refs": [],
-      "policy_state": "pending_evaluation",
-      "stable_facts": {
-        "admitted": false,
-        "ci_green": false,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": false,
-        "is_derivative_without_own_evidence": true,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "9"
-    },
-    "centos_stream_9": {
-      "distribution": "centos_stream",
-      "evidence_refs": [],
-      "policy_state": "pending_evaluation",
-      "stable_facts": {
-        "admitted": false,
-        "ci_green": false,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": false,
-        "is_derivative_without_own_evidence": true,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "9"
-    },
-    "debian_13": {
-      "codename": "trixie",
-      "distribution": "debian",
-      "evidence_refs": [
-        "cert_debian_13"
-      ],
-      "policy_state": "admitted",
-      "stable_facts": {
-        "admitted": true,
-        "ci_green": true,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": true,
-        "is_derivative_without_own_evidence": false,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "13.6"
-    },
-    "fedora_44": {
-      "distribution": "fedora",
-      "evidence_refs": [
-        "cert_fedora_44"
-      ],
-      "policy_state": "admitted",
-      "stable_facts": {
-        "admitted": true,
-        "ci_green": true,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": true,
-        "is_derivative_without_own_evidence": false,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "44"
-    },
-    "linuxmint_22_3": {
-      "codename": "zena",
-      "distribution": "linuxmint",
-      "evidence_refs": [
-        "cert_linuxmint_22_3"
-      ],
-      "policy_state": "admitted",
-      "stable_facts": {
-        "admitted": true,
-        "ci_green": true,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": true,
-        "is_derivative_without_own_evidence": false,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "22.3"
-    },
-    "opensuse_leap_15_6": {
-      "distribution": "opensuse_leap",
-      "evidence_refs": [
-        "cert_opensuse_leap_15_6"
-      ],
-      "policy_state": "admitted",
-      "stable_facts": {
-        "admitted": true,
-        "ci_green": true,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": true,
-        "is_derivative_without_own_evidence": false,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "15.6"
-    },
-    "rhel_9": {
-      "distribution": "rhel",
-      "evidence_refs": [],
-      "policy_state": "pending_evaluation",
-      "stable_facts": {
-        "admitted": false,
-        "ci_green": false,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": false,
-        "is_derivative_without_own_evidence": true,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "9"
-    },
-    "rocky_9": {
-      "distribution": "rocky",
-      "evidence_refs": [
-        "cert_rocky_9"
-      ],
-      "policy_state": "admitted",
-      "stable_facts": {
-        "admitted": true,
-        "ci_green": true,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": true,
-        "is_derivative_without_own_evidence": false,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "9"
-    },
-    "ubuntu_24_04": {
-      "codename": "noble",
-      "distribution": "ubuntu",
-      "evidence_refs": [
-        "cert_ubuntu_24_04"
-      ],
-      "policy_state": "admitted",
-      "stable_facts": {
-        "admitted": true,
-        "ci_green": true,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": false,
-        "has_adapter": true,
-        "has_valid_field_certification": true,
-        "is_derivative_without_own_evidence": false,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "24.04.4"
-    },
-    "ubuntu_26_04": {
-      "codename": "resolute",
-      "distribution": "ubuntu",
-      "evidence_refs": [],
-      "policy_state": "pending_evaluation",
-      "stable_facts": {
-        "admitted": false,
-        "ci_green": false,
-        "eol_or_withdrawn": false,
-        "expressly_excluded": false,
-        "family_has_certified_anchor": true,
-        "future_or_unevaluated": true,
-        "has_adapter": true,
-        "has_valid_field_certification": false,
-        "is_derivative_without_own_evidence": false,
-        "meets_technical_floor": true,
-        "vendor_maintained": true
-      },
-      "version": "26.04"
-    }
-  },
-  "derivatives": {
-    "cachyos_lineage": {
-      "base_version_gating": false,
-      "distribution": "cachyos",
-      "lineage_distribution": "arch",
-      "mapping_type": "rolling_lineage"
-    },
-    "kali_lineage": {
-      "base_version_gating": false,
-      "distribution": "kali",
-      "lineage_distribution": "debian",
-      "mapping_type": "rolling_lineage"
-    },
-    "linuxmint_ubuntu_codename": {
-      "codename_map": {
-        "zena": "ubuntu_24_04"
-      },
-      "distribution": "linuxmint",
-      "lineage_distribution": "ubuntu",
-      "mapping_type": "codename_map"
-    },
-    "opensuse_tumbleweed_lineage": {
-      "base_version_gating": false,
-      "distribution": "opensuse_tumbleweed",
-      "lineage_distribution": "opensuse_leap",
-      "mapping_type": "rolling_lineage"
-    }
-  },
-  "capabilities": {
-    "core_host_capabilities": {
-      "cap_apparmor": {
-        "description": "AppArmor reporting; never lowered for certification",
-        "type": "diagnostic_only"
-      },
-      "cap_architecture": {
-        "description": "Supported CPU architecture for selected methods",
-        "type": "required"
-      },
-      "cap_dns_backend": {
-        "description": "A supported DNS backend such as systemd-resolved, NetworkManager DNS, or resolv.conf",
-        "type": "alternative"
-      },
-      "cap_kernel": {
-        "description": "Linux kernel exposing the capabilities WatchdogVPN requires",
-        "type": "required"
-      },
-      "cap_network_manager": {
-        "description": "NetworkManager or an explicitly admitted equivalent",
-        "type": "alternative"
-      },
-      "cap_nftables": {
-        "description": "nftables backend required for the atomic kill switch",
-        "type": "required"
-      },
-      "cap_package_manager": {
-        "description": "Family package manager used for bootstrap and runtime packages",
-        "type": "required"
-      },
-      "cap_persistence": {
-        "description": "Installed state survives reboot and can be audited",
-        "type": "required"
-      },
-      "cap_policy_routing": {
-        "description": "ip rule and route capability required by capture and split tunnel",
-        "type": "required"
-      },
-      "cap_polkit": {
-        "description": "Polkit privileged-action support",
-        "type": "required"
-      },
-      "cap_python310": {
-        "description": "Final product runtime Python floor; bootstrap reader only requires Python 3.6",
-        "type": "provisionable"
-      },
-      "cap_rollback": {
-        "description": "Provisioner rollback and uninstall capability",
-        "type": "required"
-      },
-      "cap_selinux": {
-        "description": "SELinux reporting; never lowered for certification",
-        "type": "diagnostic_only"
-      },
-      "cap_sudo": {
-        "description": "Privilege elevation path",
-        "type": "required"
-      },
-      "cap_systemd": {
-        "description": "systemd init and service semantics",
-        "type": "required"
-      },
-      "cap_tun": {
-        "description": "/dev/net/tun support",
-        "type": "required"
-      }
-    },
-    "protocol_capabilities": {
-      "proto_amneziawg_runtime": {
-        "description": "awg tools plus AmneziaWG kernel module or amneziawg-go",
-        "type": "provisionable"
-      },
-      "proto_ck_client_runtime": {
-        "description": "Cloak ck-client runtime",
-        "type": "provisionable"
-      },
-      "proto_openvpn_runtime": {
-        "description": "OpenVPN runtime",
-        "type": "provisionable"
-      },
-      "proto_sing_box_runtime": {
-        "description": "sing-box runtime used by VLESS, Trojan, Hysteria2, VMess, TUIC, Shadowsocks, SOCKS and HTTP",
-        "type": "provisionable"
-      }
-    }
-  },
-  "provisioning_methods": {
-    "apt_official_package": {
-      "exact_release_required": true,
-      "kind": "official_package",
-      "mutates_system": true,
-      "provenance": "Distribution official apt repository for the exact release"
-    },
-    "dnf_official_package": {
-      "exact_release_required": true,
-      "kind": "official_package",
-      "mutates_system": true,
-      "provenance": "Distribution official dnf repository for the exact release"
-    },
-    "external_repo_exact": {
-      "exact_release_required": true,
-      "kind": "external_repo_exact",
-      "mutates_system": true,
-      "provenance": "External repository explicitly compatible with the exact target release"
-    },
-    "official_artifact_pinned": {
-      "exact_release_required": true,
-      "kind": "official_artifact",
-      "mutates_system": true,
-      "provenance": "Official artifact with pinned version and integrity verification"
-    },
-    "pacman_official_package": {
-      "exact_release_required": true,
-      "kind": "official_package",
-      "mutates_system": true,
-      "provenance": "Distribution official pacman repository"
-    },
-    "pinned_source_build": {
-      "exact_release_required": true,
-      "kind": "pinned_source_build",
-      "mutates_system": true,
-      "provenance": "Pinned source build with integrity, installed-file manifest, rollback and uninstall"
-    },
-    "zypper_official_package": {
-      "exact_release_required": true,
-      "kind": "official_package",
-      "mutates_system": true,
-      "provenance": "Distribution official zypper repository for the exact release"
-    }
-  },
-  "protocols": {
-    "amneziawg": {
-      "category": "resilient",
-      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
-      "required_protocol_capabilities": [
-        "proto_amneziawg_runtime"
-      ]
-    },
-    "http": {
-      "category": "compatibility",
-      "evidence_policy": "Useful real HTTP proxy traffic required",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    },
-    "hysteria2": {
-      "category": "resilient",
-      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    },
-    "openvpn": {
-      "category": "formal_non_green",
-      "evidence_policy": "No false green: runtime/listener/TLS without egress remains non-green",
-      "required_protocol_capabilities": [
-        "proto_openvpn_runtime"
-      ]
-    },
-    "openvpn_cloak": {
-      "category": "resilient",
-      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
-      "required_protocol_capabilities": [
-        "proto_openvpn_runtime",
-        "proto_ck_client_runtime"
-      ]
-    },
-    "shadowsocks": {
-      "category": "formal_non_green",
-      "evidence_policy": "No false green: runtime/listener without useful egress remains non-green",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    },
-    "socks": {
-      "category": "compatibility",
-      "evidence_policy": "Useful real SOCKS traffic required",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    },
-    "trojan": {
-      "category": "resilient",
-      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    },
-    "tuic": {
-      "category": "compatibility",
-      "evidence_policy": "Useful real traffic required",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    },
-    "vless": {
-      "category": "resilient",
-      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    },
-    "vmess": {
-      "category": "compatibility",
-      "evidence_policy": "Useful real traffic required",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    },
-    "wireguard": {
-      "category": "formal_non_green",
-      "evidence_policy": "No false green: process/TUN/handshake without egress remains non-green",
-      "required_protocol_capabilities": [
-        "proto_sing_box_runtime"
-      ]
-    }
-  },
-  "certifications": {
-    "cert_arch_rolling": {
-      "current": true,
-      "date": "2026-07-22T00:00:00Z",
-      "distribution": "arch",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Arch certification closure and private evidence",
-      "protocols_included": [
-        "vless",
-        "trojan",
-        "hysteria2",
-        "amneziawg",
-        "openvpn_cloak",
-        "vmess",
-        "tuic",
-        "socks",
-        "http",
-        "wireguard",
-        "shadowsocks",
-        "openvpn"
-      ],
-      "scope": "physical_field_certification",
-      "snapshot": "arch-default-and-lts-2026-07-22"
-    },
-    "cert_cachyos_rolling": {
-      "current": true,
-      "date": "2026-07-22T00:00:00Z",
-      "distribution": "cachyos",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md CachyOS certification closure and private evidence",
-      "protocols_included": [
-        "vless",
-        "trojan",
-        "hysteria2",
-        "amneziawg",
-        "openvpn_cloak",
-        "vmess",
-        "tuic",
-        "socks",
-        "http",
-        "wireguard",
-        "shadowsocks",
-        "openvpn"
-      ],
-      "scope": "physical_field_certification",
-      "snapshot": "cachyos-2026-07-22"
-    },
-    "cert_debian_13": {
-      "current": true,
-      "date": "2026-07-22T00:00:00Z",
-      "distribution": "debian",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.5.4 Debian certification and private evidence",
-      "protocols_included": [
-        "vless",
-        "trojan",
-        "hysteria2",
-        "amneziawg",
-        "openvpn_cloak",
-        "vmess",
-        "tuic",
-        "socks",
-        "http",
-        "wireguard",
-        "shadowsocks",
-        "openvpn"
-      ],
-      "release": "debian_13",
-      "scope": "physical_field_certification"
-    },
-    "cert_fedora_44": {
-      "current": true,
-      "date": "2026-07-22T00:00:00Z",
-      "distribution": "fedora",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.5 Fedora closure and private evidence",
-      "protocols_included": [
-        "vless",
-        "trojan",
-        "hysteria2",
-        "amneziawg",
-        "openvpn_cloak",
-        "vmess",
-        "tuic",
-        "socks",
-        "http",
-        "wireguard",
-        "shadowsocks",
-        "openvpn"
-      ],
-      "release": "fedora_44",
-      "scope": "physical_field_certification"
-    },
-    "cert_linuxmint_22_3": {
-      "current": true,
-      "date": "2026-07-24T00:00:00Z",
-      "distribution": "linuxmint",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.7 Linux Mint 22.3 closure and private evidence",
-      "protocols_included": [
-        "vless",
-        "trojan",
-        "hysteria2",
-        "amneziawg",
-        "openvpn_cloak",
-        "vmess",
-        "tuic",
-        "socks",
-        "http",
-        "wireguard",
-        "shadowsocks",
-        "openvpn"
-      ],
-      "release": "linuxmint_22_3",
-      "scope": "physical_field_certification"
-    },
-    "cert_opensuse_leap_15_6": {
-      "current": true,
-      "date": "2026-07-23T00:00:00Z",
-      "distribution": "opensuse_leap",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.6 openSUSE Leap closure and private evidence",
-      "protocols_included": [
-        "vless",
-        "trojan",
-        "hysteria2",
-        "amneziawg",
-        "openvpn_cloak",
-        "vmess",
-        "tuic",
-        "socks",
-        "http",
-        "wireguard",
-        "shadowsocks",
-        "openvpn"
-      ],
-      "release": "opensuse_leap_15_6",
-      "scope": "physical_field_certification"
-    },
-    "cert_rocky_9": {
-      "current": true,
-      "date": "2026-07-23T00:00:00Z",
-      "distribution": "rocky",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.5b Rocky Linux 9 closure and private evidence",
-      "protocols_included": [
-        "vless",
-        "trojan",
-        "hysteria2",
-        "amneziawg",
-        "openvpn_cloak",
-        "vmess",
-        "tuic",
-        "socks",
-        "http",
-        "wireguard",
-        "shadowsocks",
-        "openvpn"
-      ],
-      "release": "rocky_9",
-      "scope": "physical_field_certification"
-    },
-    "cert_ubuntu_24_04": {
-      "current": true,
-      "date": "2026-07-22T00:00:00Z",
-      "distribution": "ubuntu",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.5.5 Ubuntu certification and private evidence",
-      "protocols_included": [
-        "vless",
-        "trojan",
-        "hysteria2",
-        "amneziawg",
-        "openvpn_cloak",
-        "vmess",
-        "tuic",
-        "socks",
-        "http",
-        "wireguard",
-        "shadowsocks",
-        "openvpn"
-      ],
-      "release": "ubuntu_24_04",
-      "scope": "physical_field_certification"
-    }
-  },
   "validation_metadata": {
-    "ci_status": {
-      "debian_13": true,
-      "fedora_44": true,
-      "linuxmint_22_3": true,
-      "opensuse_leap_15_6": true,
-      "rocky_9": true,
-      "ubuntu_24_04": true
-    },
     "doc_generation": {
       "public_claims_generated": false,
       "reason": "Task 23.7.5.12 owns public documentation generation"
+    },
+    "per_release_ci": {
+      "almalinux_9": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "centos_stream_9": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "debian_13": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "fedora_44": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "linuxmint_22_3": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "opensuse_leap_15_6": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "rhel_9": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "rocky_9": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "ubuntu_24_04": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "ubuntu_26_04": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      }
+    },
+    "repository_ci": {
+      "evidence": "Task closure records before Phase 23.7.5.3",
+      "latest_known_green": true,
+      "scope": "general repository CI; not a per-release L1/L2 compatibility matrix"
     },
     "rolling_policies": {
       "arch": {

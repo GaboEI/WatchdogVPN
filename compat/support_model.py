@@ -135,6 +135,11 @@ class StableReleaseFacts:
     frozen contract's ``supported`` definition, that the release's family is
     anchored by at least one certified release -- it is orthogonal to whether
     *this* release itself holds an individual certification.
+
+    Derivative evidence is explicit and non-lossy: a derivative can share a
+    technical family while still being barred from family-inferred support. Only
+    ``is_derivative and not has_own_evidence and family_inference_allowed``
+    reaches ``family_inferred``.
     """
     has_adapter: bool
     meets_technical_floor: bool
@@ -144,7 +149,9 @@ class StableReleaseFacts:
     eol_or_withdrawn: bool
     vendor_maintained: bool
     ci_green: bool
-    is_derivative_without_own_evidence: bool
+    is_derivative: bool
+    has_own_evidence: bool
+    family_inference_allowed: bool
     has_valid_field_certification: bool
     family_has_certified_anchor: bool
 
@@ -157,12 +164,17 @@ class RollingFacts:
     as on :class:`StableReleaseFacts`; it is intentionally **not** linked to
     ``last_validated``/expiry freshness. Freshness governs only whether
     *non-certified* rolling evidence is current enough to justify ``supported``.
+    A rolling derivative with no own evidence reaches ``family_inferred`` only
+    when ``family_inference_allowed`` is explicitly true; lineage-only rolling
+    derivatives are therefore experimental instead of inferred.
     """
     has_adapter: bool
     meets_technical_floor: bool
     expressly_excluded: bool
     eol_or_withdrawn: bool
-    is_derivative_without_own_evidence: bool
+    is_derivative: bool
+    has_own_evidence: bool
+    family_inference_allowed: bool
     has_valid_field_certification: bool
     last_validated: datetime | None  # None → no validation evidence
 
@@ -211,10 +223,14 @@ def _validate_common_evidence(f: StableReleaseFacts | RollingFacts) -> None:
         raise DomainError("a certified release must have an adapter")
     if f.has_valid_field_certification and not f.meets_technical_floor:
         raise DomainError("a release below the technical floor cannot be certified")
-    if f.has_valid_field_certification and f.is_derivative_without_own_evidence:
+    if f.has_valid_field_certification and f.is_derivative and not f.has_own_evidence:
         raise DomainError(
             "a derivative without its own evidence cannot hold a valid field certification"
         )
+    if not f.is_derivative and f.family_inference_allowed:
+        raise DomainError("family inference applies only to derivatives")
+    if not f.is_derivative and not f.has_own_evidence:
+        raise DomainError("a non-derivative release must carry its own evidence status")
 
 
 def _validate_stable(f: StableReleaseFacts) -> None:
@@ -250,7 +266,7 @@ def classify_support_stable(f: StableReleaseFacts) -> SupportClassification:
     # In contract. Strongest evidence first:
     if f.has_valid_field_certification:
         return SupportClassification.CERTIFIED
-    if f.is_derivative_without_own_evidence:
+    if f.is_derivative and not f.has_own_evidence and f.family_inference_allowed:
         return SupportClassification.FAMILY_INFERRED
     if f.future_or_unevaluated:
         return SupportClassification.EXPERIMENTAL
@@ -284,7 +300,7 @@ def classify_support_rolling(
         return SupportClassification.UNSUPPORTED
     if f.has_valid_field_certification:
         return SupportClassification.CERTIFIED
-    if f.is_derivative_without_own_evidence:
+    if f.is_derivative and not f.has_own_evidence and f.family_inference_allowed:
         return SupportClassification.FAMILY_INFERRED
     if freshness is FreshnessState.CURRENT:
         return SupportClassification.SUPPORTED

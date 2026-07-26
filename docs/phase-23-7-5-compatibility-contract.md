@@ -175,14 +175,20 @@ manifest lives at `compat/compatibility.json`; the documentation schema lives at
 The manifest is JSON with top-level `schema_version` and the separated collections frozen
 by the external design: `technical_families`, `distributions`, `releases`,
 `derivatives`, `capabilities`, `provisioning_methods`, `protocols`, `certifications` and
-`validation_metadata`. It stores facts and evidence references only. It deliberately does
-not store calculated `support_classification`, `host_readiness` or `protocol_readiness`
-values; those remain derived by the support model and future evaluators. The bootstrap
-validator rejects any such calculated-state key if it appears anywhere in the manifest.
+`validation_metadata`, plus optional bootstrap `metadata`. It stores primitive policy
+facts and evidence references only. It deliberately does not store calculated
+`support_classification`, `host_readiness`, `protocol_readiness` or hand-authored
+`stable_facts` values; those remain derived by the bootstrap reader, the support model and
+future evaluators. The bootstrap validator rejects any such calculated-state key if it
+appears anywhere in the manifest.
 
 Bootstrap constraints are explicit:
 
-- Minimum supported bootstrap Python: 3.6.
+- Minimum supported bootstrap Python syntax target: 3.6.
+- Python 3.6 syntax compatibility: verified by parsing `tools/compat_read.py` with the
+  Python 3.6 AST grammar.
+- Python 3.6 runtime execution: not yet independently verified on this host because no
+  `python3.6` interpreter is available.
 - Runtime dependencies: Python stdlib only (`json`, `argparse`, `os`, `re`, `datetime`).
 - No import of the `compat` package or `compat/support_model.py`.
 - No network, privileges, shell evaluation, `eval`, `source`, command generation or system
@@ -206,6 +212,22 @@ encoding support as a numeric range. Rolling distributions have freshness metada
 numeric minimum. Stable derivatives use exact codename mappings; rolling derivatives keep
 lineage/adapter sharing but disable borrowed stable-version gating.
 
+The manifest keeps semantic sources in a strict hierarchy:
+
+- Distribution policy lists and release `policy_state` are primitive policy inputs and
+  must be equivalent.
+- Release booleans (`meets_technical_floor`, `vendor_maintained`, `eol_or_withdrawn`),
+  distribution `lineage` (`is_derivative`, `has_own_evidence`,
+  `family_inference_allowed`), certifications and future per-release CI records are
+  primitive inputs.
+- `StableReleaseFacts` and `RollingFacts` are derived on demand by `compat_read.py`; the
+  reader refuses to emit facts from a manifest whose primitive sections contradict each
+  other.
+- `repository_ci` records general repository CI only. `per_release_ci` is explicitly
+  separate and remains `not_run` until Task 23.7.5.9 creates release-specific L1/L2
+  evidence. Manual field-certification success is represented by certification records,
+  not by CI fields.
+
 Initial manifest content is conservative and sourced from the Phase 23.5/23.6/23.7.5
 record: the eight physically certified distributions/releases/snapshots are represented
 with certification records; AlmaLinux, RHEL, CentOS Stream, openSUSE Tumbleweed, Kali and
@@ -214,6 +236,9 @@ support; Ubuntu 26.04 is represented as pending/not-yet-admitted evidence, not a
 certification. The protocol list records required runtimes and evidence policy, including
 the permanent distinction between functional rows and the three formal non-green Plan-B /
 no-egress rows; it does not claim that all twelve protocols are green across a family.
+Each certification stores per-protocol results with dispositions `green`,
+`formal_non_green`, `failed`, `not_run` or `not_applicable`, so listing twelve protocol IDs
+cannot be interpreted as twelve green results.
 
 The bootstrap interface is intentionally small and deterministic:
 

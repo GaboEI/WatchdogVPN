@@ -46,6 +46,7 @@ _REQUIRED_TOP_LEVEL = (
     "certifications",
     "validation_metadata",
 )
+_OPTIONAL_TOP_LEVEL = ("metadata",)
 
 _CALCULATED_STATE_KEYS = (
     "support_classification",
@@ -62,7 +63,9 @@ _STABLE_FACT_KEYS = (
     "eol_or_withdrawn",
     "vendor_maintained",
     "ci_green",
-    "is_derivative_without_own_evidence",
+    "is_derivative",
+    "has_own_evidence",
+    "family_inference_allowed",
     "has_valid_field_certification",
     "family_has_certified_anchor",
 )
@@ -72,9 +75,73 @@ _ROLLING_FACT_KEYS = (
     "meets_technical_floor",
     "expressly_excluded",
     "eol_or_withdrawn",
-    "is_derivative_without_own_evidence",
+    "is_derivative",
+    "has_own_evidence",
+    "family_inference_allowed",
     "has_valid_field_certification",
 )
+
+_TOP_LEVEL_SCHEMA_PROPERTIES = tuple(sorted(_REQUIRED_TOP_LEVEL + _OPTIONAL_TOP_LEVEL))
+_PROTOCOL_DISPOSITIONS = ("green", "formal_non_green", "failed", "not_run", "not_applicable")
+_RELEASE_POLICY_STATES = ("admitted", "pending_evaluation", "excluded")
+_PER_RELEASE_CI_STATUSES = ("not_run", "green", "failed")
+
+_ENTITY_KEYS = {
+    "metadata": (
+        "bootstrap_python_min",
+        "bootstrap_python_runtime_note",
+        "bootstrap_python_runtime_verified",
+        "bootstrap_python_syntax_verified",
+        "max_manifest_bytes",
+        "source_authority",
+    ),
+    "technical_family": ("adapter", "common_features", "core_capabilities", "package_manager", "provisioning_methods"),
+    "distribution": ("id", "lineage", "policy", "release_model", "technical_family"),
+    "lineage": ("family_inference_allowed", "has_own_evidence", "is_derivative"),
+    "stable_policy": ("admitted_releases", "excluded_releases", "pending_releases"),
+    "rolling_policy": (
+        "eol_or_withdrawn",
+        "evidence_expiry_seconds",
+        "expressly_excluded",
+        "last_validated",
+        "meets_technical_floor",
+    ),
+    "release": (
+        "codename",
+        "distribution",
+        "eol_or_withdrawn",
+        "evidence_refs",
+        "meets_technical_floor",
+        "policy_state",
+        "vendor_maintained",
+        "version",
+    ),
+    "derivative": (
+        "base_version_gating",
+        "codename_map",
+        "distribution",
+        "lineage_distribution",
+        "mapping_type",
+    ),
+    "capability": ("description", "type"),
+    "provisioning_method": ("exact_release_required", "kind", "mutates_system", "provenance"),
+    "protocol": ("category", "evidence_policy", "required_protocol_capabilities"),
+    "certification": (
+        "current",
+        "date",
+        "distribution",
+        "evidence",
+        "protocol_results",
+        "release",
+        "scope",
+        "snapshot",
+    ),
+    "protocol_result": ("disposition", "evidence"),
+    "rolling_policy_metadata": ("evidence_refs", "expiry_seconds", "last_validated"),
+    "repository_ci": ("evidence", "latest_known_green", "scope"),
+    "per_release_ci": ("evidence", "l1_l2_green", "status"),
+    "doc_generation": ("public_claims_generated", "reason"),
+}
 
 
 class ManifestError(ValueError):
@@ -226,6 +293,14 @@ def _require_object_ids(obj, path):
         _require_id(key, "%s key" % path)
 
 
+def _reject_unknown_keys(obj, allowed, path):
+    _require_obj(obj, path)
+    allowed_set = set(allowed)
+    for key in obj:
+        if key not in allowed_set:
+            raise ManifestError("%s has unknown key %s" % (path, key))
+
+
 def _require_rfc3339_utc(value, path):
     text = _require_str(value, path)
     match = _RFC3339_UTC_RE.match(text)
@@ -283,8 +358,29 @@ def _check_required_top_level(manifest):
         if key not in manifest:
             raise ManifestError("missing required top-level section: %s" % key)
     for key in manifest:
-        if key not in _REQUIRED_TOP_LEVEL and key != "metadata":
+        if key not in _REQUIRED_TOP_LEVEL and key not in _OPTIONAL_TOP_LEVEL:
             raise ManifestError("unknown top-level section: %s" % key)
+
+
+def _validate_documentation_schema(manifest):
+    schema = load_manifest_file(os.path.join(ROOT, "compat", "compatibility.schema.json"))
+    _require_obj(schema, "compatibility.schema.json")
+    if schema.get("additionalProperties") is not False:
+        raise ManifestError("schema must set additionalProperties:false at top level")
+    properties = _require_obj(schema.get("properties"), "schema.properties")
+    schema_props = set(properties.keys())
+    reader_props = set(_TOP_LEVEL_SCHEMA_PROPERTIES)
+    if schema_props != reader_props:
+        raise ManifestError(
+            "schema top-level properties diverge from reader: schema=%s reader=%s"
+            % (sorted(schema_props), sorted(reader_props))
+        )
+    required = set(_require_string_list(schema.get("required"), "schema.required"))
+    if required != set(_REQUIRED_TOP_LEVEL):
+        raise ManifestError("schema.required diverges from reader required sections")
+    for key in manifest:
+        if key not in schema_props:
+            raise ManifestError("manifest top-level key %s is not declared by schema" % key)
 
 
 def _check_unique_entity_ids(manifest):
@@ -321,6 +417,7 @@ def _check_unique_entity_ids(manifest):
 def _validate_metadata(manifest):
     metadata = manifest.get("metadata", {})
     _require_obj(metadata, "metadata")
+    _reject_unknown_keys(metadata, _ENTITY_KEYS["metadata"], "metadata")
     if "bootstrap_python_min" in metadata:
         if _require_str(metadata["bootstrap_python_min"], "metadata.bootstrap_python_min") != BOOTSTRAP_PYTHON_MIN:
             raise ManifestError("metadata.bootstrap_python_min must be %s" % BOOTSTRAP_PYTHON_MIN)
@@ -328,6 +425,21 @@ def _validate_metadata(manifest):
         limit = _require_positive_int(metadata["max_manifest_bytes"], "metadata.max_manifest_bytes")
         if limit != MAX_MANIFEST_BYTES:
             raise ManifestError("metadata.max_manifest_bytes must be %d" % MAX_MANIFEST_BYTES)
+    if "bootstrap_python_syntax_verified" in metadata:
+        _require_bool(
+            metadata["bootstrap_python_syntax_verified"],
+            "metadata.bootstrap_python_syntax_verified",
+        )
+    if "bootstrap_python_runtime_verified" in metadata:
+        _require_bool(
+            metadata["bootstrap_python_runtime_verified"],
+            "metadata.bootstrap_python_runtime_verified",
+        )
+    if "bootstrap_python_runtime_note" in metadata:
+        _require_str(
+            metadata["bootstrap_python_runtime_note"],
+            "metadata.bootstrap_python_runtime_note",
+        )
 
 
 def _validate_technical_families(manifest):
@@ -338,6 +450,7 @@ def _validate_technical_families(manifest):
     for family_id, family in families.items():
         path = "technical_families.%s" % family_id
         _require_obj(family, path)
+        _reject_unknown_keys(family, _ENTITY_KEYS["technical_family"], path)
         _require_str(family.get("adapter"), path + ".adapter")
         _require_enum(family.get("package_manager"), ("apt", "dnf", "zypper", "pacman"), path + ".package_manager")
         for cap_id in _require_id_list(family.get("core_capabilities"), path + ".core_capabilities"):
@@ -360,6 +473,7 @@ def _validate_capabilities(manifest):
     for cap_id, cap in capabilities["core_host_capabilities"].items():
         path = "capabilities.core_host_capabilities.%s" % cap_id
         _require_obj(cap, path)
+        _reject_unknown_keys(cap, _ENTITY_KEYS["capability"], path)
         _require_enum(
             cap.get("type"),
             ("required", "alternative", "optional", "provisionable", "incompatible", "diagnostic_only"),
@@ -369,6 +483,7 @@ def _validate_capabilities(manifest):
     for cap_id, cap in capabilities["protocol_capabilities"].items():
         path = "capabilities.protocol_capabilities.%s" % cap_id
         _require_obj(cap, path)
+        _reject_unknown_keys(cap, _ENTITY_KEYS["capability"], path)
         _require_enum(cap.get("type"), ("provisionable", "required", "optional"), path + ".type")
         _require_str(cap.get("description"), path + ".description")
 
@@ -379,6 +494,7 @@ def _validate_provisioning_methods(manifest):
     for method_id, method in methods.items():
         path = "provisioning_methods.%s" % method_id
         _require_obj(method, path)
+        _reject_unknown_keys(method, _ENTITY_KEYS["provisioning_method"], path)
         _require_enum(
             method.get("kind"),
             ("official_package", "external_repo_exact", "official_artifact", "pinned_source_build", "diagnostic_only"),
@@ -396,8 +512,18 @@ def _validate_distributions(manifest):
     for distro_id, distro in distributions.items():
         path = "distributions.%s" % distro_id
         _require_obj(distro, path)
+        _reject_unknown_keys(distro, _ENTITY_KEYS["distribution"], path)
         if _require_id(distro.get("id"), path + ".id") != distro_id:
             raise ManifestError("%s.id must match its object key" % path)
+        lineage = _require_obj(distro.get("lineage"), path + ".lineage")
+        _reject_unknown_keys(lineage, _ENTITY_KEYS["lineage"], path + ".lineage")
+        _require_bool(lineage.get("is_derivative"), path + ".lineage.is_derivative")
+        _require_bool(lineage.get("has_own_evidence"), path + ".lineage.has_own_evidence")
+        _require_bool(lineage.get("family_inference_allowed"), path + ".lineage.family_inference_allowed")
+        if not lineage["is_derivative"] and lineage["family_inference_allowed"]:
+            raise ManifestError("%s non-derivative cannot allow family inference" % path)
+        if not lineage["is_derivative"] and not lineage["has_own_evidence"]:
+            raise ManifestError("%s non-derivative must carry own-evidence status" % path)
         family_id = _require_id(distro.get("technical_family"), path + ".technical_family")
         if family_id not in families:
             raise ManifestError("%s references unknown technical family %r" % (path, family_id))
@@ -408,37 +534,98 @@ def _validate_distributions(manifest):
             raise ManifestError("%s.policy.inherits_family_support must be false" % path)
         if model == "stable":
             stable = _require_obj(policy.get("stable"), path + ".policy.stable")
+            _reject_unknown_keys(stable, _ENTITY_KEYS["stable_policy"], path + ".policy.stable")
             for field in ("admitted_releases", "pending_releases", "excluded_releases"):
                 _require_id_list(stable.get(field), path + ".policy.stable." + field, allow_empty=True)
             if "minimum_version" in stable:
                 raise ManifestError("%s must not encode support as a continuous range" % path)
         else:
             rolling = _require_obj(policy.get("rolling"), path + ".policy.rolling")
+            _reject_unknown_keys(rolling, _ENTITY_KEYS["rolling_policy"], path + ".policy.rolling")
             if "minimum_version" in rolling:
                 raise ManifestError("%s rolling policy must not declare a numeric minimum" % path)
-            if "last_validated" in rolling and rolling["last_validated"] is not None:
+            for field in ("meets_technical_floor", "expressly_excluded", "eol_or_withdrawn"):
+                _require_bool(rolling.get(field), path + ".policy.rolling." + field)
+            if "last_validated" not in rolling:
+                raise ManifestError("%s.policy.rolling missing last_validated" % path)
+            if rolling["last_validated"] is not None:
                 _require_rfc3339_utc(rolling["last_validated"], path + ".policy.rolling.last_validated")
-            if "evidence_expiry_seconds" in rolling:
-                _require_positive_int(rolling["evidence_expiry_seconds"], path + ".policy.rolling.evidence_expiry_seconds")
+            _require_positive_int(rolling.get("evidence_expiry_seconds"), path + ".policy.rolling.evidence_expiry_seconds")
 
 
-def _validate_stable_facts(facts, path):
-    _require_obj(facts, path)
-    for key in _STABLE_FACT_KEYS:
-        if key not in facts:
-            raise ManifestError("%s missing fact %s" % (path, key))
-        _require_bool(facts[key], "%s.%s" % (path, key))
-    for key in facts:
-        if key not in _STABLE_FACT_KEYS:
-            raise ManifestError("%s has unknown stable fact %s" % (path, key))
-    if facts["admitted"] and facts["expressly_excluded"]:
-        raise ManifestError("%s cannot be both admitted and expressly_excluded" % path)
-    if facts["admitted"] and facts["future_or_unevaluated"]:
-        raise ManifestError("%s cannot be both admitted and future_or_unevaluated" % path)
-    if facts["admitted"] and facts["eol_or_withdrawn"]:
-        raise ManifestError("%s cannot be both admitted and eol_or_withdrawn" % path)
-    if facts["has_valid_field_certification"] and facts["is_derivative_without_own_evidence"]:
-        raise ManifestError("%s cannot certify a derivative without own evidence" % path)
+def _release_certifications(manifest, release_id):
+    release = manifest["releases"][release_id]
+    distro_id = release["distribution"]
+    result = []
+    for cert_id, cert in manifest["certifications"].items():
+        if cert.get("current") is True and cert.get("distribution") == distro_id and cert.get("release") == release_id:
+            result.append(cert_id)
+    return sorted(result)
+
+
+def _family_has_current_certification(manifest, family_id):
+    distributions = manifest["distributions"]
+    releases = manifest["releases"]
+    for cert in manifest["certifications"].values():
+        if cert.get("current") is not True:
+            continue
+        distro_id = cert.get("distribution")
+        if distro_id not in distributions:
+            continue
+        if distributions[distro_id]["technical_family"] != family_id:
+            continue
+        if "release" in cert and releases[cert["release"]]["distribution"] == distro_id:
+            return True
+        if "snapshot" in cert and distributions[distro_id]["release_model"] == "rolling":
+            return True
+    return False
+
+
+def _per_release_ci_green(manifest, release_id):
+    ci = manifest["validation_metadata"]["per_release_ci"].get(release_id)
+    if ci is None:
+        return False
+    return ci["status"] == "green" and ci["l1_l2_green"] is True
+
+
+def _derive_stable_facts(manifest, release_id):
+    releases = manifest["releases"]
+    distributions = manifest["distributions"]
+    release = releases[release_id]
+    distro = distributions[release["distribution"]]
+    stable_policy = distro["policy"]["stable"]
+    policy_state = release["policy_state"]
+    in_admitted = release_id in stable_policy["admitted_releases"]
+    in_pending = release_id in stable_policy["pending_releases"]
+    in_excluded = release_id in stable_policy["excluded_releases"]
+    if sum(1 for value in (in_admitted, in_pending, in_excluded) if value) != 1:
+        raise ManifestError("release %s must appear in exactly one stable policy list" % release_id)
+    if in_admitted != (policy_state == "admitted"):
+        raise ManifestError("release %s policy list contradicts policy_state admitted" % release_id)
+    if in_excluded != (policy_state == "excluded"):
+        raise ManifestError("release %s policy list contradicts policy_state excluded" % release_id)
+    if in_pending != (policy_state == "pending_evaluation"):
+        raise ManifestError("release %s policy list contradicts policy_state pending_evaluation" % release_id)
+    lineage = distro["lineage"]
+    current_certs = _release_certifications(manifest, release_id)
+    evidence_refs = sorted(release.get("evidence_refs", []))
+    if evidence_refs != current_certs:
+        raise ManifestError("release %s evidence_refs must equal current certifications" % release_id)
+    return {
+        "has_adapter": True,
+        "meets_technical_floor": release["meets_technical_floor"],
+        "admitted": policy_state == "admitted",
+        "expressly_excluded": policy_state == "excluded",
+        "future_or_unevaluated": policy_state == "pending_evaluation",
+        "eol_or_withdrawn": release["eol_or_withdrawn"],
+        "vendor_maintained": release["vendor_maintained"],
+        "ci_green": _per_release_ci_green(manifest, release_id),
+        "is_derivative": lineage["is_derivative"],
+        "has_own_evidence": lineage["has_own_evidence"],
+        "family_inference_allowed": lineage["family_inference_allowed"],
+        "has_valid_field_certification": bool(current_certs),
+        "family_has_certified_anchor": _family_has_current_certification(manifest, distro["technical_family"]),
+    }
 
 
 def _validate_releases(manifest):
@@ -450,6 +637,7 @@ def _validate_releases(manifest):
     for release_id, release in releases.items():
         path = "releases.%s" % release_id
         _require_obj(release, path)
+        _reject_unknown_keys(release, _ENTITY_KEYS["release"], path)
         distro_id = _require_id(release.get("distribution"), path + ".distribution")
         if distro_id not in distributions:
             raise ManifestError("%s references unknown distribution %r" % (path, distro_id))
@@ -457,7 +645,9 @@ def _validate_releases(manifest):
             raise ManifestError("%s belongs to rolling distribution %r" % (path, distro_id))
         _require_str(release.get("version"), path + ".version")
         _require_enum(release.get("policy_state"), ("admitted", "pending_evaluation", "excluded"), path + ".policy_state")
-        _validate_stable_facts(release.get("stable_facts"), path + ".stable_facts")
+        _require_bool(release.get("meets_technical_floor"), path + ".meets_technical_floor")
+        _require_bool(release.get("vendor_maintained"), path + ".vendor_maintained")
+        _require_bool(release.get("eol_or_withdrawn"), path + ".eol_or_withdrawn")
         by_distro.setdefault(distro_id, set()).add(release_id)
         for cert_id in _require_id_list(release.get("evidence_refs", []), path + ".evidence_refs", allow_empty=True):
             if cert_id not in certifications:
@@ -484,6 +674,16 @@ def _validate_releases(manifest):
             raise ManifestError(
                 "distribution %s stable release policy does not match releases section" % distro_id
             )
+    for release_id in releases:
+        facts = _derive_stable_facts(manifest, release_id)
+        if facts["admitted"] and facts["expressly_excluded"]:
+            raise ManifestError("release %s derived facts contradict admitted/excluded" % release_id)
+        if facts["admitted"] and facts["future_or_unevaluated"]:
+            raise ManifestError("release %s derived facts contradict admitted/pending" % release_id)
+        if facts["admitted"] and facts["eol_or_withdrawn"]:
+            raise ManifestError("release %s derived facts contradict admitted/eol" % release_id)
+        if facts["has_valid_field_certification"] and facts["is_derivative"] and not facts["has_own_evidence"]:
+            raise ManifestError("release %s certifies a derivative without own evidence" % release_id)
 
 
 def _validate_derivatives(manifest):
@@ -496,6 +696,7 @@ def _validate_derivatives(manifest):
     for derivative_id, derivative in derivatives.items():
         path = "derivatives.%s" % derivative_id
         _require_obj(derivative, path)
+        _reject_unknown_keys(derivative, _ENTITY_KEYS["derivative"], path)
         distro_id = _require_id(derivative.get("distribution"), path + ".distribution")
         if distro_id not in distributions:
             raise ManifestError("%s references unknown distribution %r" % (path, distro_id))
@@ -503,6 +704,8 @@ def _validate_derivatives(manifest):
         if base_id not in distributions:
             raise ManifestError("%s references unknown lineage distribution %r" % (path, base_id))
         graph[distro_id] = base_id
+        if not distributions[distro_id]["lineage"]["is_derivative"]:
+            raise ManifestError("%s references a distribution not marked as derivative" % path)
         model = distributions[distro_id]["release_model"]
         mapping_type = _require_enum(derivative.get("mapping_type"), ("codename_map", "rolling_lineage"), path + ".mapping_type")
         if model == "stable":
@@ -547,6 +750,7 @@ def _validate_protocols(manifest):
     for protocol_id, protocol in protocols.items():
         path = "protocols.%s" % protocol_id
         _require_obj(protocol, path)
+        _reject_unknown_keys(protocol, _ENTITY_KEYS["protocol"], path)
         _require_enum(protocol.get("category"), ("resilient", "compatibility", "formal_non_green"), path + ".category")
         required = _require_id_list(protocol.get("required_protocol_capabilities"), path + ".required_protocol_capabilities")
         for cap_id in required:
@@ -564,36 +768,72 @@ def _validate_certifications(manifest):
     for cert_id, cert in certs.items():
         path = "certifications.%s" % cert_id
         _require_obj(cert, path)
+        _reject_unknown_keys(cert, _ENTITY_KEYS["certification"], path)
         distro_id = _require_id(cert.get("distribution"), path + ".distribution")
         if distro_id not in distributions:
             raise ManifestError("%s references unknown distribution %r" % (path, distro_id))
-        if "release" in cert:
+        has_release = "release" in cert
+        has_snapshot = "snapshot" in cert
+        if has_release == has_snapshot:
+            raise ManifestError("%s must contain exactly one of release or snapshot" % path)
+        distro_model = distributions[distro_id]["release_model"]
+        if distro_model == "stable" and not has_release:
+            raise ManifestError("%s stable distribution certification must reference release" % path)
+        if distro_model == "rolling" and not has_snapshot:
+            raise ManifestError("%s rolling distribution certification must reference snapshot" % path)
+        if has_release:
             release_id = _require_id(cert["release"], path + ".release")
             if release_id not in releases:
                 raise ManifestError("%s references unknown release %r" % (path, release_id))
             if releases[release_id]["distribution"] != distro_id:
                 raise ManifestError("%s release does not belong to distribution" % path)
-        elif "snapshot" in cert:
-            _require_str(cert["snapshot"], path + ".snapshot")
         else:
-            raise ManifestError("%s must reference a release or snapshot" % path)
+            _require_str(cert["snapshot"], path + ".snapshot")
         _require_rfc3339_utc(cert.get("date"), path + ".date")
         _require_str(cert.get("scope"), path + ".scope")
         _require_str(cert.get("evidence"), path + ".evidence")
         _require_bool(cert.get("current"), path + ".current")
-        included = _require_id_list(cert.get("protocols_included"), path + ".protocols_included")
-        for protocol_id in included:
+        results = _require_obj(cert.get("protocol_results"), path + ".protocol_results")
+        if "protocols_included" in cert:
+            raise ManifestError("%s must store per-protocol results, not protocols_included" % path)
+        if cert["scope"] == "physical_field_certification" and not results:
+            raise ManifestError("%s physical certification must include protocol results" % path)
+        seen = set()
+        for protocol_id, result in results.items():
+            _require_id(protocol_id, path + ".protocol_results key")
+            if protocol_id in seen:
+                raise ManifestError("%s duplicate protocol result %r" % (path, protocol_id))
+            seen.add(protocol_id)
             if protocol_id not in protocols:
                 raise ManifestError("%s references unknown protocol %r" % (path, protocol_id))
+            result_path = "%s.protocol_results.%s" % (path, protocol_id)
+            _require_obj(result, result_path)
+            _reject_unknown_keys(result, _ENTITY_KEYS["protocol_result"], result_path)
+            disposition = _require_enum(result.get("disposition"), _PROTOCOL_DISPOSITIONS, result_path + ".disposition")
+            if disposition in ("green", "formal_non_green", "failed") and not result.get("evidence"):
+                raise ManifestError("%s disposition %s requires evidence" % (result_path, disposition))
+            if "evidence" in result and result["evidence"] is not None:
+                _require_str(result["evidence"], result_path + ".evidence")
+        if cert["current"] and cert["scope"] == "physical_field_certification":
+            if not any(r["disposition"] == "green" for r in results.values()):
+                raise ManifestError("%s current physical certification has no green protocol result" % path)
+            formal = [pid for pid, r in results.items() if r["disposition"] == "formal_non_green"]
+            if len(results) >= 12 and set(results.keys()) == set(protocols.keys()) and not formal:
+                raise ManifestError("%s enumerates all protocols without formal non-green results" % path)
 
 
 def _validate_validation_metadata(manifest):
     metadata = _require_obj(manifest["validation_metadata"], "validation_metadata")
+    _reject_unknown_keys(metadata, ("rolling_policies", "repository_ci", "per_release_ci", "doc_generation"), "validation_metadata")
     rolling = _require_obj(metadata.get("rolling_policies"), "validation_metadata.rolling_policies")
     distributions = manifest["distributions"]
     certifications = manifest["certifications"]
+    if "default" not in rolling:
+        raise ManifestError("validation_metadata.rolling_policies missing default")
     for key, policy in rolling.items():
-        _require_obj(policy, "validation_metadata.rolling_policies.%s" % key)
+        policy_path = "validation_metadata.rolling_policies.%s" % key
+        _require_obj(policy, policy_path)
+        _reject_unknown_keys(policy, _ENTITY_KEYS["rolling_policy_metadata"], policy_path)
         _require_positive_int(policy.get("expiry_seconds"), "validation_metadata.rolling_policies.%s.expiry_seconds" % key)
         if "last_validated" in policy and policy["last_validated"] is not None:
             _require_rfc3339_utc(policy["last_validated"], "validation_metadata.rolling_policies.%s.last_validated" % key)
@@ -604,19 +844,63 @@ def _validate_validation_metadata(manifest):
         ):
             if cert_id not in certifications:
                 raise ManifestError("rolling policy %s references unknown certification %r" % (key, cert_id))
+            cert = certifications[cert_id]
+            if key != "default" and cert["distribution"] != key:
+                raise ManifestError("rolling policy %s references certification for %s" % (key, cert["distribution"]))
         if key != "default" and key not in distributions:
             raise ManifestError("rolling policy references unknown distribution %r" % key)
-    ci = _require_obj(metadata.get("ci_status"), "validation_metadata.ci_status")
-    for release_id, status in ci.items():
+        if key != "default" and distributions[key]["release_model"] != "rolling":
+            raise ManifestError("rolling policy %s does not reference a rolling distribution" % key)
+        if key != "default":
+            distro_policy = distributions[key]["policy"]["rolling"]
+            if policy["expiry_seconds"] != distro_policy["evidence_expiry_seconds"]:
+                raise ManifestError("rolling policy %s expiry diverges from distribution policy" % key)
+            policy_last = policy.get("last_validated")
+            distro_last = distro_policy.get("last_validated")
+            if policy_last != distro_last:
+                raise ManifestError("rolling policy %s last_validated diverges from distribution policy" % key)
+            current_refs = [cert_id for cert_id in policy.get("evidence_refs", []) if certifications[cert_id]["current"]]
+            if current_refs and policy_last is None:
+                raise ManifestError("rolling policy %s has current evidence but no last_validated" % key)
+            if not current_refs and policy_last is not None:
+                raise ManifestError("rolling policy %s has last_validated without current evidence" % key)
+    for distro_id, distro in distributions.items():
+        if distro["release_model"] == "rolling" and distro_id not in rolling and "default" not in rolling:
+            raise ManifestError("rolling distribution %s has no resolvable policy" % distro_id)
+    repo_ci = _require_obj(metadata.get("repository_ci"), "validation_metadata.repository_ci")
+    _reject_unknown_keys(repo_ci, _ENTITY_KEYS["repository_ci"], "validation_metadata.repository_ci")
+    _require_bool(repo_ci.get("latest_known_green"), "validation_metadata.repository_ci.latest_known_green")
+    _require_str(repo_ci.get("scope"), "validation_metadata.repository_ci.scope")
+    _require_str(repo_ci.get("evidence"), "validation_metadata.repository_ci.evidence")
+    per_release = _require_obj(metadata.get("per_release_ci"), "validation_metadata.per_release_ci")
+    for release_id, ci in per_release.items():
         if release_id not in manifest["releases"]:
-            raise ManifestError("ci_status references unknown release %r" % release_id)
-        _require_bool(status, "validation_metadata.ci_status.%s" % release_id)
+            raise ManifestError("per_release_ci references unknown release %r" % release_id)
+        ci_path = "validation_metadata.per_release_ci.%s" % release_id
+        _require_obj(ci, ci_path)
+        _reject_unknown_keys(ci, _ENTITY_KEYS["per_release_ci"], ci_path)
+        status = _require_enum(ci.get("status"), _PER_RELEASE_CI_STATUSES, ci_path + ".status")
+        _require_bool(ci.get("l1_l2_green"), ci_path + ".l1_l2_green")
+        if status == "green" and ci["l1_l2_green"] is not True:
+            raise ManifestError("%s green status requires l1_l2_green=true" % ci_path)
+        if status != "green" and ci["l1_l2_green"] is True:
+            raise ManifestError("%s l1_l2_green=true requires status green" % ci_path)
+        if ci.get("evidence") is not None:
+            _require_str(ci["evidence"], ci_path + ".evidence")
+    for release_id in manifest["releases"]:
+        if release_id not in per_release:
+            raise ManifestError("per_release_ci missing release %r" % release_id)
+    doc_generation = _require_obj(metadata.get("doc_generation"), "validation_metadata.doc_generation")
+    _reject_unknown_keys(doc_generation, _ENTITY_KEYS["doc_generation"], "validation_metadata.doc_generation")
+    _require_bool(doc_generation.get("public_claims_generated"), "validation_metadata.doc_generation.public_claims_generated")
+    _require_str(doc_generation.get("reason"), "validation_metadata.doc_generation.reason")
 
 
 def validate_manifest(manifest):
     _require_obj(manifest, "manifest")
     _walk_no_calculated_states(manifest, "manifest")
     _check_required_top_level(manifest)
+    _validate_documentation_schema(manifest)
     if _schema_major(manifest["schema_version"]) != SUPPORTED_SCHEMA_MAJOR:
         raise ManifestError("unsupported schema major: %s" % manifest["schema_version"])
     for section in _REQUIRED_TOP_LEVEL:
@@ -630,9 +914,9 @@ def validate_manifest(manifest):
     _validate_technical_families(manifest)
     _validate_protocols(manifest)
     _validate_certifications(manifest)
+    _validate_validation_metadata(manifest)
     _validate_releases(manifest)
     _validate_derivatives(manifest)
-    _validate_validation_metadata(manifest)
     return True
 
 
@@ -664,7 +948,7 @@ def _stable_facts(manifest, release_id):
     if release_id not in releases:
         raise QueryError(release_id)
     release = releases[release_id]
-    facts = release["stable_facts"].copy()
+    facts = _derive_stable_facts(manifest, release_id)
     return {
         "model": "stable",
         "release": release_id,
@@ -690,14 +974,10 @@ def _rolling_facts(manifest, distro_id):
         "meets_technical_floor": _require_bool(rolling_policy.get("meets_technical_floor"), "rolling.meets_technical_floor"),
         "expressly_excluded": _require_bool(rolling_policy.get("expressly_excluded"), "rolling.expressly_excluded"),
         "eol_or_withdrawn": _require_bool(rolling_policy.get("eol_or_withdrawn"), "rolling.eol_or_withdrawn"),
-        "is_derivative_without_own_evidence": _require_bool(
-            rolling_policy.get("is_derivative_without_own_evidence"),
-            "rolling.is_derivative_without_own_evidence",
-        ),
-        "has_valid_field_certification": _require_bool(
-            rolling_policy.get("has_valid_field_certification"),
-            "rolling.has_valid_field_certification",
-        ),
+        "is_derivative": distro["lineage"]["is_derivative"],
+        "has_own_evidence": distro["lineage"]["has_own_evidence"],
+        "family_inference_allowed": distro["lineage"]["family_inference_allowed"],
+        "has_valid_field_certification": bool(policy.get("evidence_refs", [])),
         "last_validated": _normalize_rfc3339_utc_to_naive(last_validated) if last_validated else None,
     }
     return {

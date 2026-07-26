@@ -67,6 +67,11 @@ def minimal_manifest() -> dict:
         "distributions": {
             "mini": {
                 "id": "mini",
+                "lineage": {
+                    "is_derivative": False,
+                    "has_own_evidence": True,
+                    "family_inference_allowed": False,
+                },
                 "technical_family": "mini_apt",
                 "release_model": "stable",
                 "policy": {
@@ -80,6 +85,11 @@ def minimal_manifest() -> dict:
             },
             "miniroll": {
                 "id": "miniroll",
+                "lineage": {
+                    "is_derivative": False,
+                    "has_own_evidence": True,
+                    "family_inference_allowed": False,
+                },
                 "technical_family": "mini_apt",
                 "release_model": "rolling",
                 "policy": {
@@ -88,8 +98,6 @@ def minimal_manifest() -> dict:
                         "meets_technical_floor": True,
                         "expressly_excluded": False,
                         "eol_or_withdrawn": False,
-                        "is_derivative_without_own_evidence": False,
-                        "has_valid_field_certification": False,
                         "last_validated": "2026-07-26T00:00:00Z",
                         "evidence_expiry_seconds": 2592000,
                     },
@@ -102,14 +110,18 @@ def minimal_manifest() -> dict:
                 "version": "1",
                 "policy_state": "admitted",
                 "evidence_refs": ["cert_mini_1"],
-                "stable_facts": stable_facts(admitted=True, has_valid_field_certification=True),
+                "meets_technical_floor": True,
+                "vendor_maintained": True,
+                "eol_or_withdrawn": False,
             },
             "mini_2": {
                 "distribution": "mini",
                 "version": "2",
                 "policy_state": "pending_evaluation",
                 "evidence_refs": [],
-                "stable_facts": stable_facts(future_or_unevaluated=True),
+                "meets_technical_floor": True,
+                "vendor_maintained": True,
+                "eol_or_withdrawn": False,
             },
         },
         "derivatives": {},
@@ -143,7 +155,26 @@ def minimal_manifest() -> dict:
                 "date": "2026-07-26T00:00:00Z",
                 "scope": "physical_field_certification",
                 "evidence": "private evidence",
-                "protocols_included": ["mini_proto"],
+                "protocol_results": {
+                    "mini_proto": {
+                        "disposition": "green",
+                        "evidence": "real traffic",
+                    }
+                },
+                "current": True,
+            },
+            "cert_miniroll": {
+                "distribution": "miniroll",
+                "snapshot": "miniroll-2026-07-26",
+                "date": "2026-07-26T00:00:00Z",
+                "scope": "physical_field_certification",
+                "evidence": "private rolling evidence",
+                "protocol_results": {
+                    "mini_proto": {
+                        "disposition": "green",
+                        "evidence": "real traffic",
+                    }
+                },
                 "current": True,
             }
         },
@@ -153,10 +184,22 @@ def minimal_manifest() -> dict:
                 "miniroll": {
                     "expiry_seconds": 2592000,
                     "last_validated": "2026-07-26T00:00:00Z",
-                    "evidence_refs": [],
+                    "evidence_refs": ["cert_miniroll"],
                 },
             },
-            "ci_status": {"mini_1": True},
+            "repository_ci": {
+                "latest_known_green": True,
+                "scope": "general repo CI",
+                "evidence": "test fixture",
+            },
+            "per_release_ci": {
+                "mini_1": {"status": "not_run", "l1_l2_green": False, "evidence": None},
+                "mini_2": {"status": "not_run", "l1_l2_green": False, "evidence": None},
+            },
+            "doc_generation": {
+                "public_claims_generated": False,
+                "reason": "fixture",
+            },
         },
     }
 
@@ -222,13 +265,12 @@ class ManifestValidCasesTests(unittest.TestCase):
     def test_support_model_facts_can_be_constructed_without_stored_classification(self) -> None:
         manifest = load_product()
         for release_id in ("ubuntu_24_04", "ubuntu_26_04", "almalinux_9"):
-            release = manifest["releases"][release_id]
-            facts = StableReleaseFacts(**release["stable_facts"])
+            facts = StableReleaseFacts(**compat_read._stable_facts(manifest, release_id)["facts"])
             result = classify_support_stable(facts)
             self.assertIsInstance(result, SupportClassification)
-        ubuntu = StableReleaseFacts(**manifest["releases"]["ubuntu_24_04"]["stable_facts"])
-        ubuntu_26 = StableReleaseFacts(**manifest["releases"]["ubuntu_26_04"]["stable_facts"])
-        alma = StableReleaseFacts(**manifest["releases"]["almalinux_9"]["stable_facts"])
+        ubuntu = StableReleaseFacts(**compat_read._stable_facts(manifest, "ubuntu_24_04")["facts"])
+        ubuntu_26 = StableReleaseFacts(**compat_read._stable_facts(manifest, "ubuntu_26_04")["facts"])
+        alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
         self.assertIs(classify_support_stable(ubuntu), SupportClassification.CERTIFIED)
         self.assertIs(classify_support_stable(ubuntu_26), SupportClassification.EXPERIMENTAL)
         self.assertIs(classify_support_stable(alma), SupportClassification.FAMILY_INFERRED)
@@ -246,6 +288,40 @@ class ManifestValidCasesTests(unittest.TestCase):
         )
         self.assertIs(result, SupportClassification.CERTIFIED)
         self.assertEqual(normalized, "2026-07-22T00:00:00")
+
+    def test_product_classification_examples_are_derived(self) -> None:
+        manifest = load_product()
+        cases = {
+            "kali": SupportClassification.EXPERIMENTAL,
+            "arch": SupportClassification.CERTIFIED,
+            "cachyos": SupportClassification.CERTIFIED,
+            "opensuse_tumbleweed": SupportClassification.FAMILY_INFERRED,
+        }
+        for distro_id, expected in cases.items():
+            data = compat_read._rolling_facts(manifest, distro_id)
+            if data["facts"]["last_validated"] is not None:
+                data["facts"]["last_validated"] = datetime.fromisoformat(data["facts"]["last_validated"])
+            result = classify_support_rolling(
+                RollingFacts(**data["facts"]),
+                expiry=timedelta(seconds=data["expiry_seconds"]),
+                now=datetime(2026, 7, 26, 0, 0, 0),
+            )
+            self.assertIs(result, expected, distro_id)
+        alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
+        self.assertIs(classify_support_stable(alma), SupportClassification.FAMILY_INFERRED)
+        ubuntu_26 = StableReleaseFacts(**compat_read._stable_facts(manifest, "ubuntu_26_04")["facts"])
+        self.assertIs(classify_support_stable(ubuntu_26), SupportClassification.EXPERIMENTAL)
+
+    def test_validated_manifest_can_emit_all_facts(self) -> None:
+        manifest = load_product()
+        compat_read.validate_manifest(manifest)
+        for release_id in manifest["releases"]:
+            data = compat_read._stable_facts(manifest, release_id)
+            self.assertEqual(data["model"], "stable")
+        for distro_id, distro in manifest["distributions"].items():
+            if distro["release_model"] == "rolling":
+                data = compat_read._rolling_facts(manifest, distro_id)
+                self.assertEqual(data["model"], "rolling")
 
     def test_cli_validate_get_list_facts_are_deterministic_json(self) -> None:
         validate = subprocess.run(
@@ -322,12 +398,21 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         del manifest["technical_families"]
         self.assert_invalid(manifest, "missing required")
 
+    def test_documentation_schema_matches_reader_top_level(self) -> None:
+        manifest = self.product_copy()
+        schema_path = ROOT / "compat" / "compatibility.schema.json"
+        schema = compat_read.load_manifest_file(str(schema_path))
+        self.assertEqual(set(schema["properties"]), set(compat_read._TOP_LEVEL_SCHEMA_PROPERTIES))
+        self.assertEqual(set(schema["required"]), set(compat_read._REQUIRED_TOP_LEVEL))
+        manifest["unexpected"] = {}
+        self.assert_invalid(manifest, "unknown top-level")
+
     def test_strict_boolean_and_integer_types(self) -> None:
         manifest = self.product_copy()
-        manifest["releases"]["ubuntu_24_04"]["stable_facts"]["admitted"] = "true"
+        manifest["releases"]["ubuntu_24_04"]["vendor_maintained"] = "true"
         self.assert_invalid(manifest, "boolean")
         manifest = self.product_copy()
-        manifest["releases"]["ubuntu_24_04"]["stable_facts"]["admitted"] = 1
+        manifest["releases"]["ubuntu_24_04"]["vendor_maintained"] = 1
         self.assert_invalid(manifest, "boolean")
         manifest = self.product_copy()
         manifest["validation_metadata"]["rolling_policies"]["default"]["expiry_seconds"] = True
@@ -355,6 +440,42 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest["protocols"]["vless"]["required_protocol_capabilities"] = ["missing_cap"]
         self.assert_invalid(manifest, "unknown protocol capability")
 
+    def test_policy_and_derived_fact_contradictions_are_rejected(self) -> None:
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["policy_state"] = "pending_evaluation"
+        self.assert_invalid(manifest, "contradicts policy_state")
+        manifest = self.product_copy()
+        manifest["distributions"]["ubuntu"]["policy"]["stable"]["admitted_releases"].remove("ubuntu_24_04")
+        manifest["distributions"]["ubuntu"]["policy"]["stable"]["pending_releases"].append("ubuntu_24_04")
+        self.assert_invalid(manifest, "contradicts policy_state")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["per_release_ci"]["ubuntu_24_04"]["status"] = "green"
+        manifest["validation_metadata"]["per_release_ci"]["ubuntu_24_04"]["l1_l2_green"] = False
+        self.assert_invalid(manifest, "green status requires")
+
+    def test_certification_evidence_must_match_facts_and_release_refs(self) -> None:
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_ubuntu_24_04"]["current"] = False
+        self.assert_invalid(manifest, "evidence_refs must equal current certifications")
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["evidence_refs"] = []
+        self.assert_invalid(manifest, "evidence_refs must equal current certifications")
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_26_04"]["evidence_refs"] = ["cert_ubuntu_24_04"]
+        self.assert_invalid(manifest, "evidence_refs must equal current certifications")
+
+    def test_family_anchor_requires_current_family_certification(self) -> None:
+        manifest = self.product_copy()
+        for cert_id, cert in manifest["certifications"].items():
+            if manifest["distributions"][cert["distribution"]]["technical_family"] == "redhat_dnf":
+                cert["current"] = False
+        facts = compat_read._stable_facts(manifest, "almalinux_9")["facts"]
+        self.assertFalse(facts["family_has_certified_anchor"])
+        self.assertIs(
+            classify_support_stable(StableReleaseFacts(**facts)),
+            SupportClassification.FAMILY_INFERRED,
+        )
+
     def test_derivative_cycles_and_ambiguous_or_borrowed_mapping_rejected(self) -> None:
         manifest = self.product_copy()
         manifest["derivatives"]["opensuse_tumbleweed_lineage"]["lineage_distribution"] = "opensuse_tumbleweed"
@@ -364,7 +485,7 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         self.assert_invalid(manifest, "outside lineage")
         manifest = self.product_copy()
         manifest["derivatives"]["kali_lineage"]["base_version"] = "13"
-        self.assert_invalid(manifest, "must not borrow")
+        self.assert_invalid(manifest, "unknown key base_version")
 
     def test_stable_and_rolling_policy_errors(self) -> None:
         manifest = self.product_copy()
@@ -372,10 +493,25 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         self.assert_invalid(manifest, "policy.stable")
         manifest = self.product_copy()
         manifest["distributions"]["ubuntu"]["policy"]["stable"]["minimum_version"] = "22.04"
-        self.assert_invalid(manifest, "continuous range")
+        self.assert_invalid(manifest, "unknown key minimum_version")
         manifest = self.product_copy()
         manifest["distributions"]["arch"]["policy"]["rolling"]["minimum_version"] = "1"
-        self.assert_invalid(manifest, "numeric minimum")
+        self.assert_invalid(manifest, "unknown key minimum_version")
+        manifest = self.product_copy()
+        del manifest["distributions"]["arch"]["policy"]["rolling"]["meets_technical_floor"]
+        self.assert_invalid(manifest, "meets_technical_floor")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["rolling_policies"]["default"]["expiry_seconds"] = None
+        self.assert_invalid(manifest, "integer")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["rolling_policies"]["rocky"] = {"expiry_seconds": 10, "evidence_refs": []}
+        self.assert_invalid(manifest, "rolling distribution")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["rolling_policies"]["arch"]["expiry_seconds"] = 60
+        self.assert_invalid(manifest, "expiry diverges")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["rolling_policies"]["arch"]["last_validated"] = None
+        self.assert_invalid(manifest, "diverges")
 
     def test_timestamp_and_expiry_errors(self) -> None:
         manifest = self.product_copy()
@@ -401,6 +537,52 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest = self.product_copy()
         manifest["releases"]["ubuntu_24_04"]["support_classification"] = "unsupported"
         self.assert_invalid(manifest, "calculated state")
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_ubuntu_24_04"]["release"] = "ubuntu_24_04"
+        manifest["certifications"]["cert_ubuntu_24_04"]["snapshot"] = "bad"
+        self.assert_invalid(manifest, "exactly one")
+        manifest = self.product_copy()
+        del manifest["certifications"]["cert_ubuntu_24_04"]["release"]
+        manifest["certifications"]["cert_ubuntu_24_04"]["snapshot"] = "bad"
+        self.assert_invalid(manifest, "stable distribution")
+        manifest = self.product_copy()
+        del manifest["certifications"]["cert_arch_rolling"]["snapshot"]
+        manifest["certifications"]["cert_arch_rolling"]["release"] = "ubuntu_24_04"
+        self.assert_invalid(manifest, "rolling distribution")
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["vless"]["disposition"] = "maybe"
+        self.assert_invalid(manifest, "must be one of")
+        manifest = self.product_copy()
+        cert = manifest["certifications"]["cert_ubuntu_24_04"]
+        for result in cert["protocol_results"].values():
+            result["disposition"] = "green"
+        self.assert_invalid(manifest, "without formal non-green")
+        manifest = self.product_copy()
+        cert = manifest["certifications"]["cert_ubuntu_24_04"]
+        cert["protocols_included"] = list(manifest["protocols"])
+        self.assert_invalid(manifest, "unknown key protocols_included")
+
+    def test_unknown_keys_inside_each_entity_type_are_rejected(self) -> None:
+        mutations = [
+            ("technical_families", "ubuntu_apt"),
+            ("distributions", "ubuntu"),
+            ("releases", "ubuntu_24_04"),
+            ("derivatives", "linuxmint_ubuntu_codename"),
+            ("provisioning_methods", "apt_official_package"),
+            ("protocols", "vless"),
+            ("certifications", "cert_ubuntu_24_04"),
+        ]
+        for section, entity_id in mutations:
+            with self.subTest(section=section):
+                manifest = self.product_copy()
+                manifest[section][entity_id]["unexpected"] = True
+                self.assert_invalid(manifest, "unknown key")
+        manifest = self.product_copy()
+        manifest["capabilities"]["core_host_capabilities"]["cap_tun"]["unexpected"] = True
+        self.assert_invalid(manifest, "unknown key")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["repository_ci"]["unexpected"] = True
+        self.assert_invalid(manifest, "unknown key")
 
     def test_file_size_limit_utf8_and_symlink_product_path(self) -> None:
         too_large = tempfile.NamedTemporaryFile(delete=False)
