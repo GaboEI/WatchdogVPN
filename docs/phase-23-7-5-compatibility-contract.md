@@ -213,6 +213,13 @@ encoding support as a numeric range. Rolling distributions have freshness metada
 numeric minimum. Stable derivatives use exact codename mappings; rolling derivatives keep
 lineage/adapter sharing but disable borrowed stable-version gating.
 
+Validation is phased inside the bootstrap reader: local structure, required fields and
+strict primitive types are checked first for distributions, releases, protocols and
+certifications; cross-section metadata and derived semantic invariants run only after that
+structure is known valid. Any structural miss that would otherwise surface as `KeyError`,
+`TypeError` or `IndexError` is converted to `ManifestError`, so the CLI fails as invalid
+manifest data rather than exposing an internal traceback.
+
 The manifest keeps semantic sources in a strict hierarchy:
 
 - Distribution policy lists and release `policy_state` are primitive policy inputs and
@@ -238,7 +245,12 @@ with its distribution, has non-empty global evidence, contains exactly every pro
 the manifest, has evidence on every protocol result, records `green` for all
 `resilient`/`compatibility` protocols and records `formal_non_green` for the exact
 protocols whose category is `formal_non_green`. `failed`, `not_run` and `not_applicable`
-never qualify under this scope. Other scopes are not accepted in schema version 1.
+never qualify under this scope. Other scopes are not accepted in schema version 1. The
+target must also remain policy-eligible: a stable release must be admitted, listed in
+`admitted_releases`, above the technical floor, not EOL/withdrawn and vendor-maintained;
+a rolling distribution must be above the technical floor, not expressly excluded and not
+EOL/withdrawn. A historical or current-looking certification for an ineligible target
+cannot produce a certified fact or a family anchor.
 
 Initial manifest content is conservative and sourced from the Phase 23.5/23.6/23.7.5
 record: the eight physically certified distributions/releases/snapshots are represented

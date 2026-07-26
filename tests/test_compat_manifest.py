@@ -402,6 +402,25 @@ class ManifestInvalidCasesTests(unittest.TestCase):
     def product_copy(self) -> dict:
         return copy.deepcopy(load_product())
 
+    def assert_cli_invalid(self, manifest: dict, fragment: str | None = None) -> None:
+        path = write_json_tmp(manifest)
+        try:
+            result = subprocess.run(
+                [sys.executable, str(TOOL), "--manifest", path, "validate"],
+                cwd=str(ROOT),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        finally:
+            os.unlink(path)
+        self.assertEqual(result.returncode, compat_read.EXIT_INVALID_MANIFEST, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("compatibility manifest invalid:", result.stderr)
+        if fragment is not None:
+            self.assertIn(fragment, result.stderr)
+
     def test_invalid_json_malformed_duplicate_trailing_nonfinite_and_top_type(self) -> None:
         self.assert_invalid("{", "invalid JSON")
         self.assert_invalid('{"schema_version":"1.0.0","schema_version":"1.0.1"}', "duplicate JSON key")
@@ -459,14 +478,35 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest["protocols"]["vless"]["required_protocol_capabilities"] = ["missing_cap"]
         self.assert_invalid(manifest, "unknown protocol capability")
 
+    def test_structural_corruption_is_manifest_error_and_cli_exit_2(self) -> None:
+        mutations = [
+            ("release_distribution", lambda m: m["releases"]["ubuntu_24_04"].pop("distribution"), "distribution"),
+            ("release_policy_state", lambda m: m["releases"]["ubuntu_24_04"].pop("policy_state"), "policy_state"),
+            ("release_floor", lambda m: m["releases"]["ubuntu_24_04"].pop("meets_technical_floor"), "meets_technical_floor"),
+            ("distribution_release_model", lambda m: m["distributions"]["ubuntu"].pop("release_model"), "release_model"),
+            ("protocol_category", lambda m: m["protocols"]["vless"].pop("category"), "category"),
+            ("cert_distribution", lambda m: m["certifications"]["cert_ubuntu_24_04"].pop("distribution"), "distribution"),
+            ("cert_release", lambda m: m["certifications"]["cert_ubuntu_24_04"].pop("release"), "exactly one"),
+            ("cert_protocol_results", lambda m: m["certifications"]["cert_ubuntu_24_04"].pop("protocol_results"), "protocol_results"),
+            ("release_distribution_wrong_type", lambda m: m["releases"]["ubuntu_24_04"].__setitem__("distribution", []), "string"),
+            ("protocol_category_wrong_type", lambda m: m["protocols"]["vless"].__setitem__("category", True), "string"),
+        ]
+        for label, mutate, fragment in mutations:
+            with self.subTest(label=label):
+                manifest = self.product_copy()
+                mutate(manifest)
+                with self.assertRaises(compat_read.ManifestError):
+                    compat_read.validate_manifest(manifest)
+                self.assert_cli_invalid(manifest, fragment)
+
     def test_policy_and_derived_fact_contradictions_are_rejected(self) -> None:
         manifest = self.product_copy()
         manifest["releases"]["ubuntu_24_04"]["policy_state"] = "pending_evaluation"
-        self.assert_invalid(manifest, "contradicts policy_state")
+        self.assert_invalid(manifest, "not admitted")
         manifest = self.product_copy()
         manifest["distributions"]["ubuntu"]["policy"]["stable"]["admitted_releases"].remove("ubuntu_24_04")
         manifest["distributions"]["ubuntu"]["policy"]["stable"]["pending_releases"].append("ubuntu_24_04")
-        self.assert_invalid(manifest, "contradicts policy_state")
+        self.assert_invalid(manifest, "not in admitted_releases")
         manifest = self.product_copy()
         manifest["validation_metadata"]["per_release_ci"]["ubuntu_24_04"]["status"] = "green"
         manifest["validation_metadata"]["per_release_ci"]["ubuntu_24_04"]["l1_l2_green"] = False
@@ -482,6 +522,47 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest = self.product_copy()
         manifest["releases"]["ubuntu_26_04"]["evidence_refs"] = ["cert_ubuntu_24_04"]
         self.assert_invalid(manifest, "evidence_refs must equal current certifications")
+
+    def test_stable_certification_requires_eligible_release_policy(self) -> None:
+        manifest = self.product_copy()
+        cert = copy.deepcopy(manifest["certifications"]["cert_ubuntu_24_04"])
+        cert["release"] = "ubuntu_26_04"
+        manifest["certifications"]["cert_ubuntu_26_04"] = cert
+        manifest["releases"]["ubuntu_26_04"]["evidence_refs"] = ["cert_ubuntu_26_04"]
+        self.assert_invalid(manifest, "not admitted")
+
+        manifest = self.product_copy()
+        release = manifest["releases"]["ubuntu_24_04"]
+        release["policy_state"] = "excluded"
+        distro_policy = manifest["distributions"]["ubuntu"]["policy"]["stable"]
+        distro_policy["admitted_releases"].remove("ubuntu_24_04")
+        distro_policy["excluded_releases"].append("ubuntu_24_04")
+        self.assert_invalid(manifest, "not admitted")
+
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["eol_or_withdrawn"] = True
+        self.assert_invalid(manifest, "EOL or withdrawn")
+
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["vendor_maintained"] = False
+        self.assert_invalid(manifest, "not vendor maintained")
+
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["meets_technical_floor"] = False
+        self.assert_invalid(manifest, "below the technical floor")
+
+    def test_rolling_certification_requires_eligible_distribution_policy(self) -> None:
+        manifest = self.product_copy()
+        manifest["distributions"]["arch"]["policy"]["rolling"]["expressly_excluded"] = True
+        self.assert_invalid(manifest, "expressly excluded")
+
+        manifest = self.product_copy()
+        manifest["distributions"]["arch"]["policy"]["rolling"]["eol_or_withdrawn"] = True
+        self.assert_invalid(manifest, "EOL or withdrawn")
+
+        manifest = self.product_copy()
+        manifest["distributions"]["arch"]["policy"]["rolling"]["meets_technical_floor"] = False
+        self.assert_invalid(manifest, "below the technical floor")
 
     def test_family_anchor_requires_current_family_certification(self) -> None:
         manifest = self.product_copy()
@@ -520,6 +601,21 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest["certifications"]["cert_opensuse_leap_15_6"]["protocol_results"]["vless"]["disposition"] = "failed"
         with self.assertRaises(compat_read.ManifestError):
             compat_read.validate_manifest(manifest)
+
+        manifest = self.product_copy()
+        manifest["certifications"]["cert_opensuse_leap_15_6"]["current"] = False
+        manifest["releases"]["opensuse_leap_15_6"]["evidence_refs"] = []
+        tumbleweed_data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
+        tumbleweed = RollingFacts(**tumbleweed_data["facts"])
+        self.assertFalse(tumbleweed.family_has_certified_anchor)
+        self.assertIs(
+            classify_support_rolling(
+                tumbleweed,
+                expiry=timedelta(seconds=tumbleweed_data["expiry_seconds"]),
+                now=datetime(2026, 7, 26, 0, 0, 0),
+            ),
+            SupportClassification.EXPERIMENTAL,
+        )
 
     def test_derivative_cycles_and_ambiguous_or_borrowed_mapping_rejected(self) -> None:
         manifest = self.product_copy()

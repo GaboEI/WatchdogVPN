@@ -593,13 +593,32 @@ def _certification_qualification_error(manifest, cert_id):
         release_id = cert["release"]
         if release_id not in releases:
             return "unknown release"
-        if releases[release_id]["distribution"] != distro_id:
+        release = releases[release_id]
+        if release["distribution"] != distro_id:
             return "release does not belong to distribution"
+        stable_policy = distributions[distro_id]["policy"]["stable"]
+        if release["policy_state"] != "admitted":
+            return "stable certification target release is not admitted"
+        if release_id not in stable_policy["admitted_releases"]:
+            return "stable certification target release is not in admitted_releases"
+        if release["meets_technical_floor"] is not True:
+            return "stable certification target release is below the technical floor"
+        if release["eol_or_withdrawn"] is not False:
+            return "stable certification target release is EOL or withdrawn"
+        if release["vendor_maintained"] is not True:
+            return "stable certification target release is not vendor maintained"
     else:
         if not has_snapshot:
             return "rolling certification must reference snapshot"
         if not cert.get("snapshot"):
             return "rolling snapshot is empty"
+        rolling_policy = distributions[distro_id]["policy"]["rolling"]
+        if rolling_policy["meets_technical_floor"] is not True:
+            return "rolling certification target is below the technical floor"
+        if rolling_policy["expressly_excluded"] is not False:
+            return "rolling certification target is expressly excluded"
+        if rolling_policy["eol_or_withdrawn"] is not False:
+            return "rolling certification target is EOL or withdrawn"
     results = cert.get("protocol_results")
     if type(results) is not dict:
         return "protocol_results must be an object"
@@ -718,7 +737,7 @@ def _derive_stable_facts(manifest, release_id):
     }
 
 
-def _validate_releases(manifest):
+def _validate_releases_structure(manifest):
     releases = manifest["releases"]
     distributions = manifest["distributions"]
     certifications = manifest["certifications"]
@@ -764,6 +783,10 @@ def _validate_releases(manifest):
             raise ManifestError(
                 "distribution %s stable release policy does not match releases section" % distro_id
             )
+
+
+def _validate_releases_semantics(manifest):
+    releases = manifest["releases"]
     for release_id in releases:
         facts = _derive_stable_facts(manifest, release_id)
         if facts["admitted"] and facts["expressly_excluded"]:
@@ -1002,26 +1025,34 @@ def _validate_validation_metadata(manifest):
 
 
 def validate_manifest(manifest):
-    _require_obj(manifest, "manifest")
-    _walk_no_calculated_states(manifest, "manifest")
-    _check_required_top_level(manifest)
-    _validate_documentation_schema(manifest)
-    if _schema_major(manifest["schema_version"]) != SUPPORTED_SCHEMA_MAJOR:
-        raise ManifestError("unsupported schema major: %s" % manifest["schema_version"])
-    for section in _REQUIRED_TOP_LEVEL:
-        if section != "schema_version":
-            _require_obj(manifest[section], section)
-    _validate_metadata(manifest)
-    _validate_capabilities(manifest)
-    _validate_provisioning_methods(manifest)
-    _check_unique_entity_ids(manifest)
-    _validate_distributions(manifest)
-    _validate_technical_families(manifest)
-    _validate_protocols(manifest)
-    _validate_certifications(manifest)
-    _validate_validation_metadata(manifest)
-    _validate_releases(manifest)
-    _validate_derivatives(manifest)
+    try:
+        _require_obj(manifest, "manifest")
+        _walk_no_calculated_states(manifest, "manifest")
+        _check_required_top_level(manifest)
+        _validate_documentation_schema(manifest)
+        if _schema_major(manifest["schema_version"]) != SUPPORTED_SCHEMA_MAJOR:
+            raise ManifestError("unsupported schema major: %s" % manifest["schema_version"])
+        for section in _REQUIRED_TOP_LEVEL:
+            if section != "schema_version":
+                _require_obj(manifest[section], section)
+        # Phase 1: local structure, required fields and strict primitive types.
+        _validate_metadata(manifest)
+        _validate_capabilities(manifest)
+        _validate_provisioning_methods(manifest)
+        _check_unique_entity_ids(manifest)
+        _validate_distributions(manifest)
+        _validate_technical_families(manifest)
+        _validate_protocols(manifest)
+        _validate_releases_structure(manifest)
+        _validate_certifications(manifest)
+        # Phase 2: cross-section metadata and derived semantic invariants.
+        _validate_validation_metadata(manifest)
+        _validate_releases_semantics(manifest)
+        _validate_derivatives(manifest)
+    except ManifestError:
+        raise
+    except (KeyError, TypeError, IndexError) as exc:
+        raise ManifestError("invalid manifest structure: %s" % exc)
     return True
 
 
