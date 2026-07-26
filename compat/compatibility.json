@@ -15,7 +15,7 @@
       },
       "cap_dns_backend": {
         "description": "A supported DNS backend such as systemd-resolved, NetworkManager DNS, or resolv.conf",
-        "type": "alternative"
+        "type": "required"
       },
       "cap_kernel": {
         "description": "Linux kernel exposing the capabilities WatchdogVPN requires",
@@ -23,7 +23,7 @@
       },
       "cap_network_manager": {
         "description": "NetworkManager or an explicitly admitted equivalent",
-        "type": "alternative"
+        "type": "required"
       },
       "cap_nftables": {
         "description": "nftables backend required for the atomic kill switch",

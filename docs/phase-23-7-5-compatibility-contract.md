@@ -290,34 +290,41 @@ The detector preserves raw and normalized host identity separately in `DistroFac
 `id_raw`, `id_normalized`, ordered `id_like_ordered`, `version_id`,
 `version_codename`, `ubuntu_codename`, `pretty_name`, resolved distribution/release,
 technical family, adapter, package manager, derivative/lineage evidence, kernel,
-architecture, os-release source and a resolution status. Support classification is not
-stored in these facts; it is derived by feeding manifest-derived stable/rolling facts into
+architecture, os-release source, mapped base release evidence, identity evidence,
+identity conflicts and a resolution status. Support classification is not stored in these
+facts; it is derived by feeding manifest-derived stable/rolling facts into
 `compat/support_model.py`.
 
 `os-release` parsing is stdlib-only and deliberately does not source shell data. It
 prefers `/etc/os-release`, falls back to `/usr/lib/os-release`, accepts only the normal
-symlink from the former to the latter, requires a regular UTF-8 file under a fixed size
-limit, rejects duplicate keys and malformed lines, and supports only explicit quoting and
-escape forms. `$VAR`, `${VAR}`, `$(...)` and backticks are data errors, not executable
-syntax.
+symlink from the former to the latter, opens the resolved target through a validated file
+descriptor with `O_NOFOLLOW` when available, verifies the descriptor with `fstat`, reads
+at most `MAX_OS_RELEASE_BYTES + 1` bytes, requires a regular UTF-8 file, rejects duplicate
+keys and malformed lines, and supports only explicit quoting and escape forms. `$VAR`,
+`${VAR}`, `$(...)` and backticks are data errors, not executable syntax.
 
 Distribution resolution uses manifest data only: exact `ID`/manifest `os_release_ids`,
 exact derivative mappings such as Linux Mint `UBUNTU_CODENAME`, rolling lineage without
 borrowed stable versions, and ordered `ID_LIKE` only to identify a family/adaptor when the
 distribution itself is not known. Unknown releases are not approximated to a nearby
 release; known but unenumerated stable releases remain experimental through the support
-model unless an explicit exclusion or floor/EOL policy says unsupported.
+model unless an explicit exclusion or floor/EOL policy says unsupported. Stable release
+identity is consensus-based: every present anchor (`VERSION_ID`, `VERSION_CODENAME`,
+`UBUNTU_CODENAME` and exact derivative mapping where applicable) is resolved
+independently, and contradictory anchors produce `release_identity_conflict`, which never
+promotes to certified, supported or family-inferred.
 
 Every external observation goes through `SafeCommandRunner`, which accepts only argv lists,
 uses `shell=False`, an explicit timeout, a controlled environment/locale, separated stdout
-and stderr, bounded output and normalized error kinds. The runner writes stdout and stderr
-to separate temporary files and reads back only `output_limit + 1` bytes, so retained output
-is bounded and truncation is explicit via `stdout_truncated`/`stderr_truncated`. Tests use
-`FakeCommandRunner`; fixture environments set `allow_host_fallback=false`, so a missing
-fixture path cannot be read from the real host and a missing fixture `existing_paths` entry
-is absent. The optional host smoke command is non-authoritative. Probes are read-only and
-never create interfaces, edit firewall/routing/DNS state, start services, install packages
-or execute manifest data.
+and stderr, bounded output and normalized error kinds. The runner starts a separate
+process session, sends stdin from `DEVNULL`, drains stdout/stderr incrementally through
+pipes while retaining at most `output_limit` bytes per stream, discards excess bytes while
+continuing to drain, marks truncation explicitly, and terminates the process group on
+timeout with TERM then KILL if needed. Tests use `FakeCommandRunner`; fixture environments
+set `allow_host_fallback=false`, so a missing fixture path cannot be read from the real
+host and a missing fixture `existing_paths` entry is absent. The optional host smoke
+command is non-authoritative. Probes are read-only and never create interfaces, edit
+firewall/routing/DNS state, start services, install packages or execute manifest data.
 
 Core host capability results and protocol runtime capability results are separate
 `CapabilityResult` records with `capability_id`, observed status, domain status, evidence,
@@ -326,11 +333,19 @@ capability IDs match exactly the `core_capabilities` declared by the detected te
 family, and that protocol capability IDs match exactly the manifest's protocol capability
 set. Empty, missing, duplicate, unknown, wrongly-typed or invalid-status results are
 `DetectionError`; a missing probe result is never silently converted to an absent runtime.
+Only core capabilities whose manifest `type` is `required` or `provisionable` participate
+in `host_readiness`; `optional` and `diagnostic_only` are reported without lowering the
+host state. Schema version 1 does not model alternative groups, so product capabilities
+that previously looked like alternatives are required until a later task adds explicit
+alternative-group semantics, and an unexpected `alternative` type is rejected by
+`evaluate()`.
 
 Evidence that cannot prove a capability without a mutation is conservative: a visible
 `/dev/net/tun`, `nft --version`, `sudo -V`, `pkaction --version`, package-manager version
 output, `ip rule show`, a kernel release string, persistence and rollback surfaces are
-partial/unknown/provisionable unless a read-only check proves the actual contract. Missing
+partial/unknown/provisionable unless a read-only check proves the actual contract.
+`permission_denied` is also treated as unverified/provisionable evidence in this read-only
+task, while preserving `error_kind=permission_denied` for later preparation logic. Missing
 protocol runtimes affect only their protocols, so a certified and otherwise-ready host can
 report VLESS operable while AmneziaWG remains provisionable.
 

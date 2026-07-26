@@ -8,10 +8,12 @@ import os
 from pathlib import Path
 import platform
 import re
+import selectors
 import shutil
+import signal
 import subprocess
 import sys
-import tempfile
+import time
 from typing import Callable, Mapping, Sequence
 
 from compat.support_model import (
@@ -72,6 +74,9 @@ class DistroFacts:
     is_derivative: bool
     lineage_distribution: str | None
     mapping_evidence: str | None
+    mapped_base_release: str | None
+    identity_evidence: Mapping[str, str]
+    identity_conflicts: tuple[str, ...]
     kernel_release: str | None
     machine_architecture: str | None
     os_release_source: str | None
@@ -167,24 +172,30 @@ class SafeCommandRunner:
         env = {"PATH": self.path, "LC_ALL": "C", "LANG": "C"}
         process = None
         try:
-            with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
-                process = subprocess.Popen(
-                    command,
-                    shell=False,
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                    env=env,
-                    text=False,
-                    close_fds=True,
+            process = subprocess.Popen(
+                command,
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                text=False,
+                close_fds=True,
+                start_new_session=True,
+            )
+            stdout, stderr, stdout_truncated, stderr_truncated, timed_out = _drain_process_output(
+                process, timeout=timeout, limit=self.output_limit
+            )
+            if timed_out:
+                return CommandResult(
+                    tuple(argv),
+                    "timeout",
+                    reason="command timed out",
+                    stdout=stdout,
+                    stderr=stderr,
+                    stdout_truncated=stdout_truncated,
+                    stderr_truncated=stderr_truncated,
                 )
-                try:
-                    process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-                    return CommandResult(tuple(argv), "timeout", reason="command timed out")
-                stdout, stdout_truncated = _read_limited_output(stdout_file, self.output_limit)
-                stderr, stderr_truncated = _read_limited_output(stderr_file, self.output_limit)
         except FileNotFoundError:
             return CommandResult(tuple(argv), "command_missing", reason="command not found")
         except PermissionError as exc:
@@ -215,13 +226,109 @@ class SafeCommandRunner:
         )
 
 
-def _read_limited_output(handle, limit: int) -> tuple[str, bool]:
-    handle.seek(0)
-    data = handle.read(limit + 1)
-    truncated = len(data) > limit
-    if truncated:
-        data = data[:limit]
-    return data.decode("utf-8", errors="replace"), truncated
+def _drain_process_output(process, *, timeout: float, limit: int):
+    selector = selectors.DefaultSelector()
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    truncated = {"stdout": False, "stderr": False}
+    streams = ((process.stdout, "stdout"), (process.stderr, "stderr"))
+    for stream, name in streams:
+        if stream is None:
+            continue
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ, name)
+    deadline = time.monotonic() + timeout
+    timed_out = False
+    try:
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                _terminate_process_group(process)
+                break
+            for key, _events in selector.select(timeout=min(0.1, remaining)):
+                name = key.data
+                try:
+                    chunk = os.read(key.fileobj.fileno(), 4096)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()
+                    continue
+                current = buffers[name]
+                keep = max(0, limit - len(current))
+                if keep:
+                    current.extend(chunk[:keep])
+                if len(chunk) > keep:
+                    truncated[name] = True
+            if process.poll() is not None and not selector.get_map():
+                break
+        if timed_out:
+            _drain_remaining(selector, buffers, truncated, limit)
+        else:
+            process.wait()
+    finally:
+        for key in list(selector.get_map().values()):
+            try:
+                selector.unregister(key.fileobj)
+            except Exception:
+                pass
+            try:
+                key.fileobj.close()
+            except Exception:
+                pass
+        selector.close()
+    return (
+        bytes(buffers["stdout"]).decode("utf-8", errors="replace"),
+        bytes(buffers["stderr"]).decode("utf-8", errors="replace"),
+        truncated["stdout"],
+        truncated["stderr"],
+        timed_out,
+    )
+
+
+def _drain_remaining(selector, buffers, truncated, limit: int) -> None:
+    for key in list(selector.get_map().values()):
+        name = key.data
+        while True:
+            try:
+                chunk = os.read(key.fileobj.fileno(), 4096)
+            except BlockingIOError:
+                break
+            except OSError:
+                break
+            if not chunk:
+                break
+            keep = max(0, limit - len(buffers[name]))
+            if keep:
+                buffers[name].extend(chunk[:keep])
+            if len(chunk) > keep:
+                truncated[name] = True
+
+
+def _terminate_process_group(process) -> None:
+    try:
+        pgid = os.getpgid(process.pid)
+        os.killpg(pgid, signal.SIGTERM)
+    except OSError:
+        try:
+            process.terminate()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=0.5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        pgid = os.getpgid(process.pid)
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    process.wait()
 
 
 class FakeCommandRunner:
@@ -309,30 +416,61 @@ def read_os_release(
         resolved = selected.resolve(strict=True)
     except OSError as exc:
         raise DetectionError("cannot resolve os-release path: %s" % exc) from exc
-    if _safe_is_symlink(selected, "os-release") and resolved != usr_path.resolve(strict=False):
+    try:
+        usr_resolved = usr_path.resolve(strict=False)
+    except OSError as exc:
+        raise DetectionError("cannot resolve fallback os-release path: %s" % exc) from exc
+    if _safe_is_symlink(selected, "os-release") and resolved != usr_resolved:
         raise DetectionError("os-release symlink target is outside allowed paths")
-    try:
-        if not resolved.is_file():
-            raise DetectionError("os-release target must be a regular file")
-        size = resolved.stat().st_size
-    except DetectionError:
-        raise
-    except OSError as exc:
-        raise DetectionError("cannot stat os-release: %s" % exc) from exc
-    if size > MAX_OS_RELEASE_BYTES:
-        raise DetectionError("os-release exceeds %d byte limit" % MAX_OS_RELEASE_BYTES)
-    try:
-        with resolved.open("rb") as handle:
-            raw = handle.read(MAX_OS_RELEASE_BYTES + 1)
-    except OSError as exc:
-        raise DetectionError("cannot read os-release: %s" % exc) from exc
-    if len(raw) > MAX_OS_RELEASE_BYTES:
-        raise DetectionError("os-release exceeds %d byte limit" % MAX_OS_RELEASE_BYTES)
+    raw = _read_regular_file_atomically(resolved)
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise DetectionError("os-release must be valid UTF-8: %s" % exc) from exc
     return parse_os_release_text(text, source=str(selected))
+
+
+def _read_regular_file_atomically(path: Path) -> bytes:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = None
+    try:
+        before = path.stat()
+        fd = os.open(str(path), flags)
+        after = os.fstat(fd)
+        if not stat_is_regular(after.st_mode):
+            raise DetectionError("os-release target must be a regular file")
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise DetectionError("os-release identity changed during read")
+        size = after.st_size
+        if size > MAX_OS_RELEASE_BYTES:
+            raise DetectionError("os-release exceeds %d byte limit" % MAX_OS_RELEASE_BYTES)
+        try:
+            raw = os.read(fd, MAX_OS_RELEASE_BYTES + 1)
+        except OSError as exc:
+            raise DetectionError("cannot read os-release: %s" % exc) from exc
+    except DetectionError:
+        raise
+    except OSError as exc:
+        raise DetectionError("cannot open/stat os-release: %s" % exc) from exc
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    if len(raw) > MAX_OS_RELEASE_BYTES:
+        raise DetectionError("os-release exceeds %d byte limit" % MAX_OS_RELEASE_BYTES)
+    return raw
+
+
+def stat_is_regular(mode: int) -> bool:
+    import stat
+
+    return stat.S_ISREG(mode)
 
 
 def _safe_exists(path: Path, label: str) -> bool:
@@ -413,6 +551,9 @@ def resolve_distribution(
     distro_id = os_release_id_map.get(id_normalized)
     status = "unknown_distribution"
     mapping_evidence = None
+    mapped_base_release = None
+    identity_evidence = {}
+    identity_conflicts = ()
     lineage_distribution = None
     resolved_release = None
     family_distro_id = None
@@ -453,7 +594,7 @@ def resolve_distribution(
                 lineage_distribution = derivative["lineage_distribution"]
                 mapping_evidence = mapping_evidence or derivative_id
         if distro_id is not None and release_model == "stable":
-            resolved_release, release_status = _resolve_stable_release(
+            resolved_release, release_status, identity_evidence, identity_conflicts, mapped_base_release = _resolve_stable_release(
                 manifest, distro_id, version_id, version_codename, ubuntu_codename
             )
             if release_status != "resolved":
@@ -477,6 +618,9 @@ def resolve_distribution(
         is_derivative=is_derivative,
         lineage_distribution=lineage_distribution,
         mapping_evidence=mapping_evidence,
+        mapped_base_release=mapped_base_release,
+        identity_evidence=identity_evidence,
+        identity_conflicts=identity_conflicts,
         kernel_release=kernel_release,
         machine_architecture=machine_architecture,
         os_release_source=os_release_source,
@@ -491,24 +635,66 @@ def _resolve_stable_release(
     version_codename: str | None,
     ubuntu_codename: str | None,
 ):
+    evidence = {}
+    conflicts = []
+    mapped_base_release = None
     distro = manifest["distributions"][distro_id]
+    derivative_mapping = None
     for derivative_id, derivative in manifest["derivatives"].items():
         if derivative["distribution"] == distro_id and derivative["mapping_type"] == "codename_map":
+            derivative_mapping = derivative
             codename = ubuntu_codename or version_codename
-            if codename in derivative["codename_map"]:
-                release_id = _find_release_for_distribution(
-                    manifest, distro_id, version_id, version_codename
-                )
-                if release_id is not None:
-                    return release_id, "resolved"
-                return None, "release_unknown"
-            return None, "derivative_mapping_unknown"
-    found = _find_release_for_distribution(manifest, distro_id, version_id, version_codename)
-    if found is not None:
-        return found, "resolved"
+            if not codename or codename not in derivative["codename_map"]:
+                return None, "derivative_mapping_unknown", evidence, tuple(conflicts), None
+            mapped_base_release = derivative["codename_map"][codename]
+            evidence["derivative_mapping"] = mapped_base_release
+            base_release = manifest["releases"].get(mapped_base_release)
+            if base_release is None:
+                conflicts.append("derivative mapping target %s is not an enumerated release" % mapped_base_release)
+            elif base_release["distribution"] != derivative["lineage_distribution"]:
+                conflicts.append("derivative mapping target %s is outside lineage distribution" % mapped_base_release)
+            elif base_release["policy_state"] != "admitted":
+                conflicts.append("derivative mapping target %s is not admitted" % mapped_base_release)
+            break
+
+    if version_id is not None:
+        release_id = _find_release_by_version(manifest, distro_id, version_id)
+        if release_id is not None:
+            evidence["version_id"] = release_id
+        else:
+            conflicts.append("VERSION_ID=%s does not match an enumerated release" % version_id)
+    if version_codename is not None:
+        release_id = _find_release_by_codename(manifest, distro_id, version_codename)
+        if release_id is not None:
+            evidence["version_codename"] = release_id
+        else:
+            conflicts.append("VERSION_CODENAME=%s does not match an enumerated release" % version_codename)
+    if ubuntu_codename is not None:
+        release_id = _find_release_by_codename(manifest, distro_id, ubuntu_codename)
+        if release_id is not None:
+            evidence["ubuntu_codename"] = release_id
+        else:
+            conflicts.append("UBUNTU_CODENAME=%s does not match an enumerated release" % ubuntu_codename)
+    resolved = sorted(set(evidence.values()) - ({mapped_base_release} if mapped_base_release else set()))
+    release_evidence = {
+        key: value
+        for key, value in evidence.items()
+        if key != "derivative_mapping"
+    }
+    release_ids = sorted(set(release_evidence.values()))
+    if len(release_ids) > 1:
+        conflicts.append("release anchors resolve to multiple releases: %s" % ",".join(release_ids))
+    if conflicts and (release_ids or mapped_base_release):
+        return None, "release_identity_conflict", evidence, tuple(conflicts), mapped_base_release
+    if len(release_ids) == 1:
+        return release_ids[0], "resolved", evidence, tuple(), mapped_base_release
+    if derivative_mapping is not None and mapped_base_release is not None:
+        # A derivative mapping proves lineage only; the derivative release still
+        # needs one of its own exact release anchors to identify a stable release.
+        return None, "release_unknown", evidence, tuple(conflicts), mapped_base_release
     if distro["release_model"] == "stable":
-        return None, "release_unknown"
-    return None, "resolved"
+        return None, "release_unknown", evidence, tuple(conflicts), mapped_base_release
+    return None, "resolved", evidence, tuple(conflicts), mapped_base_release
 
 
 def _os_release_id_map(manifest: Mapping) -> dict[str, str]:
@@ -519,22 +705,22 @@ def _os_release_id_map(manifest: Mapping) -> dict[str, str]:
     return result
 
 
-def _find_release_for_distribution(
-    manifest: Mapping,
-    distro_id: str,
-    version_id: str | None,
-    version_codename: str | None,
-) -> str | None:
+def _find_release_by_version(manifest: Mapping, distro_id: str, version_id: str) -> str | None:
     for release_id, release in manifest["releases"].items():
-        if release["distribution"] == distro_id and release["version"] == version_id:
-            return release_id
-        if (
-            release["distribution"] == distro_id
-            and version_codename is not None
-            and release.get("codename") == version_codename
-        ):
+        if release["distribution"] == distro_id and _version_anchor_matches(release["version"], version_id):
             return release_id
     return None
+
+
+def _find_release_by_codename(manifest: Mapping, distro_id: str, codename: str) -> str | None:
+    for release_id, release in manifest["releases"].items():
+        if release["distribution"] == distro_id and release.get("codename") == codename:
+            return release_id
+    return None
+
+
+def _version_anchor_matches(manifest_version: str, version_id: str) -> bool:
+    return manifest_version == version_id or manifest_version.startswith(version_id + ".")
 
 
 def _find_release_by_distribution(manifest: Mapping, distro_id: str) -> str | None:
@@ -682,7 +868,7 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
         text = env.read_file("/sys/module/apparmor/parameters/enabled")
         if text is not None:
             return _cap(capability_id, "present" if text.strip().upper() == "Y" else "absent", CoreCapabilityStatus.PRESENT, text.strip(), "read:/sys/module/apparmor/parameters/enabled", "AppArmor diagnostic")
-        return _cap(capability_id, "unknown", CoreCapabilityStatus.PRESENT, "", "read:/sys/module/apparmor/parameters/enabled", "AppArmor diagnostic unavailable")
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "read:/sys/module/apparmor/parameters/enabled", "AppArmor diagnostic unavailable")
     if capability_id == "cap_firewalld":
         result = env.run(["firewall-cmd", "--state"], timeout=2.0)
         return _diagnostic_cap(capability_id, result, "firewalld diagnostic")
@@ -693,14 +879,14 @@ def _command_cap(capability_id: str, result: CommandResult, reason: str) -> Capa
     if result.status == "ok":
         return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, result.stdout.strip(), "command:" + " ".join(result.argv), reason)
     if result.status == "permission_denied":
-        return _cap(capability_id, "unknown", CoreCapabilityStatus.PREPARATION_FAILED, result.stderr, "command:" + " ".join(result.argv), reason, result.status)
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stderr or result.reason, "command:" + " ".join(result.argv), reason, result.status)
     return _cap(capability_id, "absent" if result.status == "command_missing" else "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stderr or result.stdout, "command:" + " ".join(result.argv), reason, result.status)
 
 
 def _diagnostic_cap(capability_id: str, result: CommandResult, reason: str) -> CapabilityResult:
     if result.status == "ok":
         return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, result.stdout.strip(), "command:" + " ".join(result.argv), reason)
-    return _cap(capability_id, "unknown", CoreCapabilityStatus.PRESENT, result.stderr or result.stdout, "command:" + " ".join(result.argv), reason, result.status)
+    return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stderr or result.stdout or result.reason, "command:" + " ".join(result.argv), reason, result.status)
 
 
 def probe_protocol_capabilities(manifest: Mapping, env: ProbeEnvironment | None = None) -> tuple[CapabilityResult, ...]:
@@ -724,6 +910,16 @@ def _probe_protocol(capability_id: str, env: ProbeEnvironment) -> CapabilityResu
         awg = env.run(["awg", "--version"], timeout=2.0)
         go = env.run(["amneziawg-go", "--version"], timeout=2.0)
         module = env.read_file("/proc/modules") or ""
+        if awg.status == "permission_denied" or go.status == "permission_denied":
+            return _pcap(
+                capability_id,
+                "unknown",
+                ProtocolRuntimeStatus.PROVISIONABLE,
+                (awg.stderr or awg.reason or go.stderr or go.reason),
+                "command+read:/proc/modules",
+                "AmneziaWG runtime cannot be checked without permission",
+                "permission_denied",
+            )
         if awg.status == "ok" and ("amneziawg" in module or go.status == "ok"):
             return _pcap(capability_id, "present", ProtocolRuntimeStatus.PRESENT, "awg plus module/go observed", "command+read:/proc/modules", "AmneziaWG runtime present")
         if awg.status == "ok" or go.status == "ok" or "amneziawg" in module:
@@ -736,7 +932,7 @@ def _runtime_cap(capability_id: str, result: CommandResult, reason: str) -> Capa
     if result.status == "ok":
         return _pcap(capability_id, "present", ProtocolRuntimeStatus.PRESENT, result.stdout.strip(), "command:" + " ".join(result.argv), reason)
     if result.status == "permission_denied":
-        return _pcap(capability_id, "unknown", ProtocolRuntimeStatus.IMPOSSIBLE, result.stderr, "command:" + " ".join(result.argv), reason, result.status)
+        return _pcap(capability_id, "unknown", ProtocolRuntimeStatus.PROVISIONABLE, result.stderr or result.reason, "command:" + " ".join(result.argv), reason, result.status)
     return _pcap(capability_id, "absent" if result.status == "command_missing" else "unknown", ProtocolRuntimeStatus.PROVISIONABLE, result.stderr or result.stdout, "command:" + " ".join(result.argv), reason, result.status)
 
 
@@ -751,7 +947,7 @@ def evaluate(
     support = _support_classification(manifest, distro_facts, now=now)
     _validate_core_capability_contract(manifest, distro_facts, core_capabilities)
     _validate_protocol_capability_contract(manifest, protocol_capabilities)
-    core_statuses = [CoreCapabilityStatus(cap.domain_status) for cap in core_capabilities]
+    core_statuses = _host_readiness_statuses(manifest, core_capabilities)
     host = classify_host_readiness(core_statuses)
     protocol_status_map = {cap.capability_id: ProtocolRuntimeStatus(cap.domain_status) for cap in protocol_capabilities}
     protocol_readiness = {}
@@ -766,6 +962,24 @@ def evaluate(
         core_capabilities=tuple(core_capabilities),
         protocol_capabilities=tuple(protocol_capabilities),
     )
+
+
+def _host_readiness_statuses(manifest: Mapping, core_capabilities: Sequence[CapabilityResult]) -> list[CoreCapabilityStatus]:
+    capability_defs = manifest["capabilities"]["core_host_capabilities"]
+    statuses = []
+    for cap in core_capabilities:
+        cap_type = capability_defs[cap.capability_id]["type"]
+        if cap_type in ("required", "provisionable"):
+            statuses.append(CoreCapabilityStatus(cap.domain_status))
+        elif cap_type in ("diagnostic_only", "optional"):
+            continue
+        elif cap_type == "alternative":
+            raise DetectionError("alternative capability groups are not modeled in schema 1")
+        else:
+            raise DetectionError("unknown capability type %s for %s" % (cap_type, cap.capability_id))
+    if not statuses:
+        raise DetectionError("host readiness has no participating core capabilities")
+    return statuses
 
 
 def _validate_core_capability_contract(
@@ -833,6 +1047,8 @@ def _validate_capability_result_set(
 
 
 def _support_classification(manifest: Mapping, facts: DistroFacts, *, now: datetime) -> SupportClassification:
+    if facts.resolution_status == "release_identity_conflict":
+        return SupportClassification.UNSUPPORTED
     if facts.resolved_distribution is None:
         return SupportClassification.UNSUPPORTED
     distro = manifest["distributions"][facts.resolved_distribution]
@@ -894,6 +1110,8 @@ def detect_current(
     core = probe_core_capabilities(manifest, facts, env)
     protocols = probe_protocol_capabilities(manifest, env)
     now = now_provider() if now_provider is not None else datetime.now(timezone.utc).replace(tzinfo=None)
+    if not isinstance(now, datetime):
+        raise DetectionError("now_provider must return datetime")
     if now.tzinfo is not None:
         now = now.astimezone(timezone.utc).replace(tzinfo=None)
     return evaluate(manifest, facts, core, protocols, now=now)
