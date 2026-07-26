@@ -92,8 +92,16 @@ An exhausted provisioning chain on an in-contract distribution ends in `preparat
   backend, or retiring it, is an explicit future decision, out of scope here.
 - **Family diagnostics:** `cap_firewalld` is emitted for Red Hat/DNF and SUSE/Zypper
   families; `cap_apparmor` is emitted for Debian/APT, Ubuntu/APT and SUSE/Zypper. These
-  `diagnostic_only` results report honest `present`/`absent`/`unknown` observations in
+  `diagnostic_only` results report normalized observations in
   `EvaluationReport.core_capabilities` but do not participate in `host_readiness`.
+  SELinux accepts only `getenforce` states `enforcing`, `permissive` and `disabled`.
+  AppArmor accepts only `/sys/module/apparmor/parameters/enabled` values `Y` -> `active`
+  and `N` -> `inactive`; an absent or unreadable file is `unknown`, not the same as
+  demonstrated `inactive`. firewalld accepts `firewall-cmd --state` `running` -> `active`
+  and `not running` on stdout or stderr -> `inactive`; a missing `firewall-cmd` is treated
+  as observed `inactive` with `error_kind=command_missing`. Empty, truncated or unexpected
+  diagnostic output is `unknown` with `error_kind=malformed_output`; permission, timeout
+  and runner failures preserve the runner error kind.
 
 ## Provisioning: version-aware, strict chain, transactional
 
@@ -350,7 +358,10 @@ in `host_readiness`; `optional` and `diagnostic_only` are reported without lower
 host state. Schema version 1 does not model alternative groups, so product capabilities
 that previously looked like alternatives are required until a later task adds explicit
 alternative-group semantics, and an unexpected `alternative` type is rejected by
-`evaluate()`.
+`evaluate()`. For diagnostic-only capabilities, `domain_status=present` means the
+diagnostic was observed and parsed successfully, including inactive/disabled framework
+states; `domain_status=provisionable` means the diagnostic is indeterminate. Neither
+status changes `host_readiness`.
 
 Evidence that cannot prove a capability without a mutation is conservative: a visible
 `/dev/net/tun`, `nft --version`, `sudo -V`, `pkaction --version`, package-manager version

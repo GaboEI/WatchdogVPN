@@ -903,16 +903,11 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
     if capability_id == "cap_rollback":
         return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "not-verified", "rollback cannot be demonstrated before provisioning records exist")
     if capability_id == "cap_selinux":
-        result = env.run(["getenforce"], timeout=2.0)
-        return _diagnostic_cap(capability_id, result, "SELinux diagnostic")
+        return _probe_selinux(env)
     if capability_id == "cap_apparmor":
-        text = env.read_file("/sys/module/apparmor/parameters/enabled")
-        if text is not None:
-            return _cap(capability_id, "present" if text.strip().upper() == "Y" else "absent", CoreCapabilityStatus.PRESENT, text.strip(), "read:/sys/module/apparmor/parameters/enabled", "AppArmor diagnostic")
-        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "read:/sys/module/apparmor/parameters/enabled", "AppArmor diagnostic unavailable")
+        return _probe_apparmor(env)
     if capability_id == "cap_firewalld":
-        result = env.run(["firewall-cmd", "--state"], timeout=2.0)
-        return _diagnostic_cap(capability_id, result, "firewalld diagnostic")
+        return _probe_firewalld(env)
     return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "unknown", "no probe implemented", "unknown")
 
 
@@ -924,10 +919,53 @@ def _command_cap(capability_id: str, result: CommandResult, reason: str) -> Capa
     return _cap(capability_id, "absent" if result.status == "command_missing" else "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stderr or result.stdout, "command:" + " ".join(result.argv), reason, result.status)
 
 
-def _diagnostic_cap(capability_id: str, result: CommandResult, reason: str) -> CapabilityResult:
+def _probe_selinux(env: ProbeEnvironment) -> CapabilityResult:
+    result = env.run(["getenforce"], timeout=2.0)
     if result.status == "ok":
-        return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, result.stdout.strip(), "command:" + " ".join(result.argv), reason)
-    return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stderr or result.stdout or result.reason, "command:" + " ".join(result.argv), reason, result.status)
+        if result.stdout_truncated or result.stderr_truncated:
+            return _cap("cap_selinux", "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip(), "command:getenforce", "SELinux diagnostic output truncated", "malformed_output")
+        normalized = result.stdout.strip().lower()
+        states = {
+            "enforcing": "enforcing",
+            "permissive": "permissive",
+            "disabled": "disabled",
+        }
+        if normalized in states:
+            return _cap("cap_selinux", states[normalized], CoreCapabilityStatus.PRESENT, states[normalized], "command:getenforce", "SELinux state observed")
+        return _cap("cap_selinux", "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip(), "command:getenforce", "SELinux diagnostic output is not recognized", "malformed_output")
+    return _cap("cap_selinux", "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stderr or result.stdout or result.reason, "command:getenforce", "SELinux diagnostic unavailable", result.status)
+
+
+def _probe_apparmor(env: ProbeEnvironment) -> CapabilityResult:
+    path = "/sys/module/apparmor/parameters/enabled"
+    text = env.read_file(path)
+    if text is None:
+        error = "unknown" if env.exists(path) else "command_missing"
+        return _cap("cap_apparmor", "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "read:" + path, "AppArmor diagnostic unavailable", error)
+    normalized = text.strip()
+    if normalized == "Y":
+        return _cap("cap_apparmor", "active", CoreCapabilityStatus.PRESENT, "Y", "read:" + path, "AppArmor state observed")
+    if normalized == "N":
+        return _cap("cap_apparmor", "inactive", CoreCapabilityStatus.PRESENT, "N", "read:" + path, "AppArmor state observed")
+    return _cap("cap_apparmor", "unknown", CoreCapabilityStatus.PROVISIONABLE, normalized, "read:" + path, "AppArmor diagnostic output is not recognized", "malformed_output")
+
+
+def _probe_firewalld(env: ProbeEnvironment) -> CapabilityResult:
+    result = env.run(["firewall-cmd", "--state"], timeout=2.0)
+    method = "command:firewall-cmd --state"
+    if result.status == "command_missing":
+        return _cap("cap_firewalld", "inactive", CoreCapabilityStatus.PRESENT, result.reason, method, "firewalld command is not installed", "command_missing")
+    if result.status in ("permission_denied", "timeout", "invalid_executable", "unknown"):
+        return _cap("cap_firewalld", "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stderr or result.stdout or result.reason, method, "firewalld diagnostic unavailable", result.status)
+    if result.stdout_truncated or result.stderr_truncated:
+        return _cap("cap_firewalld", "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip() or result.stderr.strip(), method, "firewalld diagnostic output truncated", "malformed_output")
+    stdout = result.stdout.strip().lower()
+    stderr = result.stderr.strip().lower()
+    if result.status == "ok" and stdout == "running":
+        return _cap("cap_firewalld", "active", CoreCapabilityStatus.PRESENT, "running", method, "firewalld state observed")
+    if stdout == "not running" or stderr == "not running":
+        return _cap("cap_firewalld", "inactive", CoreCapabilityStatus.PRESENT, "not running", method, "firewalld state observed")
+    return _cap("cap_firewalld", "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip() or result.stderr.strip(), method, "firewalld diagnostic output is not recognized", "malformed_output")
 
 
 def probe_protocol_capabilities(manifest: Mapping, env: ProbeEnvironment | None = None) -> tuple[CapabilityResult, ...]:

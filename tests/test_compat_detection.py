@@ -447,9 +447,9 @@ class CapabilityProbeTests(unittest.TestCase):
         self.assertEqual(detection._probe_core("cap_kernel", distro, inactive).domain_status, "provisionable")
         self.assertEqual(detection._probe_core("cap_systemd", distro, inactive).domain_status, "provisionable")
         self.assertEqual(detection._probe_core("cap_network_manager", distro, inactive).domain_status, "provisionable")
-        self.assertEqual(detection._probe_core("cap_selinux", distro, inactive).domain_status, "present")
-        self.assertEqual(detection._probe_core("cap_firewalld", distro, inactive).domain_status, "provisionable")
-        self.assertEqual(detection._probe_core("cap_apparmor", distro, inactive).domain_status, "provisionable")
+        self.assertEqual(detection._probe_core("cap_selinux", distro, inactive).observed_status, "enforcing")
+        self.assertEqual(detection._probe_core("cap_firewalld", distro, inactive).observed_status, "inactive")
+        self.assertEqual(detection._probe_core("cap_apparmor", distro, inactive).observed_status, "unknown")
         distro_unknown_arch = detection.distro_facts_from_os_release(
             osr("ID=fedora\nVERSION_ID=44\n"),
             manifest,
@@ -477,13 +477,18 @@ class CapabilityProbeTests(unittest.TestCase):
                 by_id = {item.capability_id: item for item in core}
                 self.assertTrue(expected_diagnostics.issubset(by_id))
                 for cap_id in expected_diagnostics:
-                    self.assertEqual(by_id[cap_id].observed_status, "unknown")
-                    self.assertEqual(by_id[cap_id].domain_status, "provisionable")
+                    if cap_id == "cap_firewalld":
+                        self.assertEqual(by_id[cap_id].observed_status, "inactive")
+                        self.assertEqual(by_id[cap_id].domain_status, "present")
+                        self.assertEqual(by_id[cap_id].error_kind, "command_missing")
+                    else:
+                        self.assertEqual(by_id[cap_id].observed_status, "unknown")
+                        self.assertEqual(by_id[cap_id].domain_status, "provisionable")
                 readiness_core = tuple(
                     detection.CapabilityResult(
                         cap_id,
-                        "unknown" if cap_id in expected_diagnostics else "present",
-                        "provisionable" if cap_id in expected_diagnostics else "present",
+                        "unknown" if cap_id in expected_diagnostics and cap_id != "cap_firewalld" else "present",
+                        "provisionable" if cap_id in expected_diagnostics and cap_id != "cap_firewalld" else "present",
                         "fixture",
                         "fixture",
                         "fixture",
@@ -743,6 +748,150 @@ class ToolAndSecurityTests(unittest.TestCase):
                     usr_os_release_path=Path(handle.name),
                     now_provider=lambda: "2026-07-26",
                 )
+
+
+class DiagnosticProbeTests(unittest.TestCase):
+    def _distro(self, distro_id: str = "fedora") -> detection.DistroFacts:
+        text = {
+            "fedora": "ID=fedora\nVERSION_ID=44\n",
+            "opensuse": "ID=opensuse-leap\nVERSION_ID=15.6\nVERSION_CODENAME=agile\n",
+            "debian": "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n",
+            "ubuntu": "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n",
+        }[distro_id]
+        return facts(product_manifest(), text)
+
+    def _runner_env(self, command_result: detection.CommandResult) -> detection.ProbeEnvironment:
+        return fixture_env(runner=detection.FakeCommandRunner({command_result.argv: command_result}))
+
+    def test_selinux_normalizes_known_states(self) -> None:
+        cases = {
+            "Enforcing\n": "enforcing",
+            "Permissive": "permissive",
+            "Disabled": "disabled",
+            "  eNfOrCiNg  \n": "enforcing",
+        }
+        distro = self._distro("fedora")
+        for output, expected in cases.items():
+            with self.subTest(output=output):
+                env = self._runner_env(detection.CommandResult(("getenforce",), "ok", 0, output, ""))
+                result = detection._probe_core("cap_selinux", distro, env)
+                self.assertEqual(result.observed_status, expected)
+                self.assertEqual(result.domain_status, "present")
+                self.assertEqual(result.evidence, expected)
+                self.assertIsNone(result.error_kind)
+
+    def test_selinux_rejects_unrecognized_or_unavailable_output(self) -> None:
+        distro = self._distro("fedora")
+        malformed = (
+            detection.CommandResult(("getenforce",), "ok", 0, "", ""),
+            detection.CommandResult(("getenforce",), "ok", 0, "maybe\n", ""),
+            detection.CommandResult(("getenforce",), "ok", 0, "Enforcing", "", stdout_truncated=True),
+        )
+        for result in malformed:
+            with self.subTest(result=result):
+                cap = detection._probe_core("cap_selinux", distro, self._runner_env(result))
+                self.assertEqual(cap.observed_status, "unknown")
+                self.assertEqual(cap.domain_status, "provisionable")
+                self.assertEqual(cap.error_kind, "malformed_output")
+        for status in ("command_missing", "permission_denied", "timeout"):
+            with self.subTest(status=status):
+                cap = detection._probe_core(
+                    "cap_selinux",
+                    distro,
+                    self._runner_env(detection.CommandResult(("getenforce",), status, 1, "", "err", reason="err")),
+                )
+                self.assertEqual(cap.observed_status, "unknown")
+                self.assertEqual(cap.error_kind, status)
+
+    def test_apparmor_normalizes_kernel_parameter(self) -> None:
+        distro = self._distro("ubuntu")
+        cases = {
+            "Y\n": ("active", "present", None, "Y"),
+            "N": ("inactive", "present", None, "N"),
+            "  Y  \n": ("active", "present", None, "Y"),
+            "": ("unknown", "provisionable", "malformed_output", ""),
+            "maybe\n": ("unknown", "provisionable", "malformed_output", "maybe"),
+        }
+        for content, expected in cases.items():
+            with self.subTest(content=content):
+                cap = detection._probe_core(
+                    "cap_apparmor",
+                    distro,
+                    fixture_env(files={"/sys/module/apparmor/parameters/enabled": content}),
+                )
+                self.assertEqual((cap.observed_status, cap.domain_status, cap.error_kind, cap.evidence), expected)
+        absent = detection._probe_core("cap_apparmor", distro, fixture_env())
+        self.assertEqual(absent.observed_status, "unknown")
+        self.assertEqual(absent.error_kind, "command_missing")
+        unreadable = detection._probe_core(
+            "cap_apparmor",
+            distro,
+            fixture_env(paths={"/sys/module/apparmor/parameters/enabled"}),
+        )
+        self.assertEqual(unreadable.observed_status, "unknown")
+        self.assertEqual(unreadable.error_kind, "unknown")
+
+    def test_firewalld_normalizes_state_and_runner_errors(self) -> None:
+        distro = self._distro("fedora")
+        cases = (
+            (detection.CommandResult(("firewall-cmd", "--state"), "ok", 0, "running\n", ""), ("active", "present", None, "running")),
+            (detection.CommandResult(("firewall-cmd", "--state"), "nonzero_exit", 3, "not running\n", ""), ("inactive", "present", None, "not running")),
+            (detection.CommandResult(("firewall-cmd", "--state"), "nonzero_exit", 3, "", "not running\n"), ("inactive", "present", None, "not running")),
+            (detection.CommandResult(("firewall-cmd", "--state"), "command_missing", None, "", "", reason="missing"), ("inactive", "present", "command_missing", "missing")),
+            (detection.CommandResult(("firewall-cmd", "--state"), "permission_denied", 1, "", "denied"), ("unknown", "provisionable", "permission_denied", "denied")),
+            (detection.CommandResult(("firewall-cmd", "--state"), "timeout", None, "", "", reason="timeout"), ("unknown", "provisionable", "timeout", "timeout")),
+            (detection.CommandResult(("firewall-cmd", "--state"), "ok", 0, "starting\n", ""), ("unknown", "provisionable", "malformed_output", "starting")),
+            (detection.CommandResult(("firewall-cmd", "--state"), "ok", 0, "", ""), ("unknown", "provisionable", "malformed_output", "")),
+        )
+        for command_result, expected in cases:
+            with self.subTest(command_result=command_result):
+                cap = detection._probe_core("cap_firewalld", distro, self._runner_env(command_result))
+                self.assertEqual((cap.observed_status, cap.domain_status, cap.error_kind, cap.evidence), expected)
+
+    def test_diagnostic_states_do_not_change_host_readiness_and_json_preserves_details(self) -> None:
+        manifest = product_manifest()
+        cases = {
+            "fedora": (
+                "ID=fedora\nVERSION_ID=44\n",
+                ("cap_selinux", "enforcing", None, "enforcing"),
+                ("cap_firewalld", "active", None, "running"),
+            ),
+            "opensuse": (
+                "ID=opensuse-leap\nVERSION_ID=15.6\nVERSION_CODENAME=agile\n",
+                ("cap_apparmor", "active", None, "Y"),
+                ("cap_firewalld", "inactive", None, "not running"),
+            ),
+            "debian": (
+                "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n",
+                ("cap_apparmor", "inactive", None, "N"),
+            ),
+            "ubuntu": (
+                "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n",
+                ("cap_apparmor", "unknown", "malformed_output", "bad"),
+            ),
+        }
+        for name, data in cases.items():
+            with self.subTest(name=name):
+                distro = facts(manifest, data[0])
+                core = list(ready_core(manifest, distro))
+                by_id = {cap.capability_id: index for index, cap in enumerate(core)}
+                for cap_id, observed, error, evidence in data[1:]:
+                    core[by_id[cap_id]] = detection.CapabilityResult(
+                        cap_id,
+                        observed,
+                        "provisionable" if observed == "unknown" else "present",
+                        evidence,
+                        "fixture",
+                        "diagnostic fixture",
+                        error,
+                    )
+                report = detection.evaluate(manifest, distro, tuple(core), present_protocols(manifest), now=datetime(2026, 7, 26))
+                self.assertEqual(report.host_readiness, "ready")
+                core_json = {cap["capability_id"]: cap for cap in detection.to_jsonable(report)["core_capabilities"]}
+                for cap_id, observed, error, evidence in data[1:]:
+                    self.assertEqual(core_json[cap_id]["observed_status"], observed)
+                    self.assertEqual(core_json[cap_id]["error_kind"], error)
+                    self.assertEqual(core_json[cap_id]["evidence"], evidence)
 
 
 class SafeCommandRunnerTests(unittest.TestCase):
