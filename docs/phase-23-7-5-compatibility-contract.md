@@ -278,3 +278,60 @@ python3 tools/compat_read.py facts rolling-distribution <distribution-id>
 Successful commands emit stable JSON on stdout. Manifest-invalid failures return exit code
 2 with an error on stderr; missing queries return exit code 3; usage errors return exit
 code 1.
+
+## Detection And Capability Realization
+
+Task 23.7.5.4 adds an internal, read-only detection layer without wiring it into
+install/update, `doctor`, public CLI flows, provisioning or generated public claims. The
+implementation lives in `compat/detection.py`; the internal JSON tool lives at
+`tools/compat_probe.py`; L1 tests live at `tests/test_compat_detection.py`.
+
+The detector preserves raw and normalized host identity separately in `DistroFacts`:
+`id_raw`, `id_normalized`, ordered `id_like_ordered`, `version_id`,
+`version_codename`, `ubuntu_codename`, `pretty_name`, resolved distribution/release,
+technical family, adapter, package manager, derivative/lineage evidence, kernel,
+architecture, os-release source and a resolution status. Support classification is not
+stored in these facts; it is derived by feeding manifest-derived stable/rolling facts into
+`compat/support_model.py`.
+
+`os-release` parsing is stdlib-only and deliberately does not source shell data. It
+prefers `/etc/os-release`, falls back to `/usr/lib/os-release`, accepts only the normal
+symlink from the former to the latter, requires a regular UTF-8 file under a fixed size
+limit, rejects duplicate keys and malformed lines, and supports only explicit quoting and
+escape forms. `$VAR`, `${VAR}`, `$(...)` and backticks are data errors, not executable
+syntax.
+
+Distribution resolution uses manifest data only: exact `ID`/manifest `os_release_ids`,
+exact derivative mappings such as Linux Mint `UBUNTU_CODENAME`, rolling lineage without
+borrowed stable versions, and ordered `ID_LIKE` only to identify a family/adaptor when the
+distribution itself is not known. Unknown releases are not approximated to a nearby
+release; known but unenumerated stable releases remain experimental through the support
+model unless an explicit exclusion or floor/EOL policy says unsupported.
+
+Every external observation goes through `SafeCommandRunner`, which accepts only argv lists,
+uses `shell=False`, an explicit timeout, a controlled environment/locale, separated stdout
+and stderr, bounded output and normalized error kinds. Tests use `FakeCommandRunner`; the
+optional host smoke command is non-authoritative. Probes are read-only and never create
+interfaces, edit firewall/routing/DNS state, start services, install packages or execute
+manifest data.
+
+Core host capability results and protocol runtime capability results are separate
+`CapabilityResult` records with `capability_id`, observed status, domain status, evidence,
+probe method, reason and error kind. Evidence that cannot prove a capability without a
+mutation is conservative: for example a visible `/dev/net/tun` or `nft --version` is
+partial/provisionable evidence, not proof that an interface can be created or a kill switch
+can be applied. Missing protocol runtimes affect only their protocols, so a certified and
+otherwise-ready host can report VLESS operable while AmneziaWG remains provisionable.
+
+The internal tool is:
+
+```text
+python3 tools/compat_probe.py detect
+python3 tools/compat_probe.py capabilities
+python3 tools/compat_probe.py evaluate
+python3 tools/compat_probe.py report
+```
+
+It emits deterministic JSON, writes controlled errors to stderr, returns exit code 2 for
+manifest/detection errors, supports explicit fixture paths and a deterministic fixture-host
+mode for tests, and is not a public WatchdogVPN CLI.
