@@ -99,7 +99,7 @@ _ENTITY_KEYS = {
         "source_authority",
     ),
     "technical_family": ("adapter", "common_features", "core_capabilities", "package_manager", "provisioning_methods"),
-    "distribution": ("id", "lineage", "policy", "release_model", "technical_family"),
+    "distribution": ("id", "lineage", "os_release_ids", "policy", "release_model", "technical_family"),
     "lineage": ("family_inference_allowed", "has_own_evidence", "is_derivative"),
     "stable_policy": ("admitted_releases", "excluded_releases", "pending_releases"),
     "rolling_policy": (
@@ -512,12 +512,25 @@ def _validate_distributions(manifest):
     distributions = manifest["distributions"]
     families = manifest["technical_families"]
     _require_object_ids(distributions, "distributions")
+    os_release_id_owners = {}
     for distro_id, distro in distributions.items():
         path = "distributions.%s" % distro_id
         _require_obj(distro, path)
         _reject_unknown_keys(distro, _ENTITY_KEYS["distribution"], path)
         if _require_id(distro.get("id"), path + ".id") != distro_id:
             raise ManifestError("%s.id must match its object key" % path)
+        os_release_ids = _require_id_list(
+            distro.get("os_release_ids", [distro_id]),
+            path + ".os_release_ids",
+        )
+        for os_release_id in os_release_ids:
+            previous = os_release_id_owners.get(os_release_id)
+            if previous is not None:
+                raise ManifestError(
+                    "os-release ID %r is used by both %s and %s"
+                    % (os_release_id, previous, distro_id)
+                )
+            os_release_id_owners[os_release_id] = distro_id
         lineage = _require_obj(distro.get("lineage"), path + ".lineage")
         _reject_unknown_keys(lineage, _ENTITY_KEYS["lineage"], path + ".lineage")
         _require_bool(lineage.get("is_derivative"), path + ".lineage.is_derivative")

@@ -647,6 +647,9 @@
         "has_own_evidence": false,
         "is_derivative": true
       },
+      "os_release_ids": [
+        "centos"
+      ],
       "policy": {
         "inherits_family_support": false,
         "stable": {
