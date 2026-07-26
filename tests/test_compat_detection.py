@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import gc
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
 import stat
+import warnings
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -186,6 +188,38 @@ class OsReleaseParserTests(unittest.TestCase):
                     with self.assertRaises(detection.DetectionError):
                         detection._read_regular_file_atomically(path)
 
+    def test_read_os_release_reads_descriptor_until_eof_or_limit(self) -> None:
+        good_stat = os.stat_result((stat.S_IFREG | 0o644, 1, 10, 1, 1000, 1000, 8, 0, 0, 0))
+        path = Path("/tmp/watchdogvpn-os-release")
+        for chunks, expected in (
+            ([b"ID=ubu", b"ntu\n", b""], b"ID=ubuntu\n"),
+            ([b"ID=", b"de", b"bian", b"\n", b""], b"ID=debian\n"),
+            ([b"PRETTY_NAME=\"caf", "\u00e9".encode("utf-8"), b"\"\n", b""], 'PRETTY_NAME="caf\u00e9"\n'.encode("utf-8")),
+        ):
+            with self.subTest(chunks=chunks):
+                with mock.patch.object(Path, "stat", return_value=good_stat), \
+                    mock.patch("compat.detection.os.open", return_value=3), \
+                    mock.patch("compat.detection.os.fstat", return_value=good_stat), \
+                    mock.patch("compat.detection.os.read", side_effect=chunks), \
+                    mock.patch("compat.detection.os.close"):
+                    self.assertEqual(detection._read_regular_file_atomically(path), expected)
+
+        with mock.patch.object(Path, "stat", return_value=good_stat), \
+            mock.patch("compat.detection.os.open", return_value=3), \
+            mock.patch("compat.detection.os.fstat", return_value=good_stat), \
+            mock.patch("compat.detection.os.read", side_effect=[b"a" * detection.MAX_OS_RELEASE_BYTES, b"b"]), \
+            mock.patch("compat.detection.os.close"):
+            with self.assertRaises(detection.DetectionError):
+                detection._read_regular_file_atomically(path)
+
+        with mock.patch.object(Path, "stat", return_value=good_stat), \
+            mock.patch("compat.detection.os.open", return_value=3), \
+            mock.patch("compat.detection.os.fstat", return_value=good_stat), \
+            mock.patch("compat.detection.os.read", side_effect=[b"ID=ubuntu\n", OSError("read failed")]), \
+            mock.patch("compat.detection.os.close"):
+            with self.assertRaises(detection.DetectionError):
+                detection._read_regular_file_atomically(path)
+
     def test_read_os_release_resolve_errors_are_detection_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             base = Path(tempdir)
@@ -214,7 +248,7 @@ class DistributionResolutionTests(unittest.TestCase):
         "rocky": ("ID=rocky\nVERSION_ID=9\n", "rocky", "rocky_9", "certified"),
         "ubuntu_24": ("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "ubuntu", "ubuntu_24_04", "certified"),
         "mint": (
-            "ID=linuxmint\nID_LIKE=ubuntu\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=zena\n",
+            "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=noble\n",
             "linuxmint",
             "linuxmint_22_3",
             "certified",
@@ -240,12 +274,16 @@ class DistributionResolutionTests(unittest.TestCase):
 
     def test_mint_requires_exact_codename_mapping(self) -> None:
         manifest = product_manifest()
-        distro = facts(
-            manifest,
-            "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=unknown\nUBUNTU_CODENAME=unknown\n",
+        cases = (
+            "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\n",
+            "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=unknown\n",
+            "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=zena\n",
         )
-        self.assertEqual(distro.resolution_status, "derivative_mapping_unknown")
-        self.assertIsNone(distro.resolved_release)
+        for text in cases:
+            with self.subTest(text=text):
+                distro = facts(manifest, text)
+                self.assertEqual(distro.resolution_status, "derivative_mapping_unknown")
+                self.assertIsNone(distro.resolved_release)
 
     def test_kali_and_cachyos_do_not_borrow_parent_versions(self) -> None:
         manifest = product_manifest()
@@ -268,7 +306,7 @@ class DistributionResolutionTests(unittest.TestCase):
         cases = (
             ("ID=ubuntu\nVERSION_ID=99.99\nVERSION_CODENAME=noble\n", "release_identity_conflict"),
             ("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=incorrecto\n", "release_identity_conflict"),
-            ("ID=linuxmint\nVERSION_ID=99\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=zena\n", "release_identity_conflict"),
+            ("ID=linuxmint\nVERSION_ID=99\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=noble\n", "release_identity_conflict"),
         )
         for text, expected_status in cases:
             with self.subTest(text=text):
@@ -283,25 +321,41 @@ class DistributionResolutionTests(unittest.TestCase):
         manifest = product_manifest()
         by_version = facts(manifest, "ID=ubuntu\nVERSION_ID=24.04\n")
         self.assertEqual(by_version.resolved_release, "ubuntu_24_04")
+        no_prefix = facts(manifest, "ID=ubuntu\nVERSION_ID=24\n")
+        self.assertEqual(no_prefix.resolution_status, "release_unknown")
         by_codename = facts(manifest, "ID=ubuntu\nVERSION_CODENAME=noble\n")
         self.assertEqual(by_codename.resolved_release, "ubuntu_24_04")
         self.assertEqual(by_codename.identity_evidence["version_codename"], "ubuntu_24_04")
+        debian = facts(manifest, "ID=debian\nVERSION_ID=13\n")
+        self.assertEqual(debian.resolved_release, "debian_13")
+        debian_point = facts(manifest, "ID=debian\nVERSION_ID=13.6\n")
+        self.assertEqual(debian_point.resolution_status, "release_unknown")
+        mutated = json.loads(json.dumps(manifest))
+        mutated["releases"]["debian_13"]["os_release_version_ids"].append("13.6")
+        debian_point = facts(mutated, "ID=debian\nVERSION_ID=13.6\n")
+        self.assertEqual(debian_point.resolved_release, "debian_13")
 
     def test_mint_mapping_is_preserved_and_conflicts_are_explicit(self) -> None:
         manifest = product_manifest()
-        mint = facts(manifest, "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=zena\n")
+        mint = facts(manifest, "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=noble\n")
         self.assertEqual(mint.resolved_release, "linuxmint_22_3")
         self.assertEqual(mint.mapped_base_release, "ubuntu_24_04")
         self.assertEqual(mint.identity_evidence["derivative_mapping"], "ubuntu_24_04")
+        self.assertEqual(mint.identity_evidence["version_codename"], "linuxmint_22_3")
 
-        unknown = facts(manifest, "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=unknown\nUBUNTU_CODENAME=unknown\n")
+        unknown = facts(manifest, "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=unknown\n")
         self.assertEqual(unknown.resolution_status, "derivative_mapping_unknown")
 
         mutated = json.loads(json.dumps(manifest))
-        mutated["derivatives"]["linuxmint_ubuntu_codename"]["codename_map"]["zena"] = "ubuntu_26_04"
-        conflict = facts(mutated, "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=zena\n")
+        mutated["derivatives"]["linuxmint_ubuntu_codename"]["codename_map"]["noble"] = "ubuntu_26_04"
+        conflict = facts(mutated, "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=noble\n")
         self.assertEqual(conflict.resolution_status, "release_identity_conflict")
         self.assertEqual(conflict.mapped_base_release, "ubuntu_26_04")
+
+        incompatible = json.loads(json.dumps(manifest))
+        incompatible["derivatives"]["linuxmint_ubuntu_codename"]["codename_map"]["resolute"] = "ubuntu_26_04"
+        conflict = facts(incompatible, "ID=linuxmint\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=resolute\n")
+        self.assertEqual(conflict.resolution_status, "release_identity_conflict")
 
     def test_identity_conflict_cli_reports_json_without_promotion(self) -> None:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as handle:
@@ -678,7 +732,8 @@ class SafeCommandRunnerTests(unittest.TestCase):
             marker_path = marker.name
         os.unlink(marker_path)
         code = (
-            "import os, subprocess, sys, time\n"
+            "import os, subprocess, sys, time, warnings\n"
+            "warnings.simplefilter('ignore', ResourceWarning)\n"
             "marker = sys.argv[1]\n"
             "subprocess.Popen([sys.executable, '-c', "
             "\"import pathlib, sys, time; time.sleep(1); pathlib.Path(sys.argv[1]).write_text('alive')\", marker])\n"
@@ -690,6 +745,49 @@ class SafeCommandRunnerTests(unittest.TestCase):
 
         _time.sleep(1.3)
         self.assertFalse(Path(marker_path).exists())
+
+    def test_runner_timeout_applies_after_streams_close(self) -> None:
+        import time as _time
+
+        started = _time.monotonic()
+        result = detection.SafeCommandRunner().run(
+            [sys.executable, "-c", "import sys, time; sys.stdout.close(); sys.stderr.close(); time.sleep(2)"],
+            timeout=0.2,
+        )
+        elapsed = _time.monotonic() - started
+        self.assertEqual(result.status, "timeout")
+        self.assertLess(elapsed, 1.0)
+
+    def test_runner_kills_term_resistant_child_process_group(self) -> None:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as marker:
+            marker_path = marker.name
+        os.unlink(marker_path)
+        child = (
+            "import pathlib, signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(1)\n"
+            "pathlib.Path(sys.argv[1]).write_text('alive')\n"
+        )
+        parent = (
+            "import subprocess, sys, time, warnings\n"
+            "warnings.simplefilter('ignore', ResourceWarning)\n"
+            "subprocess.Popen([sys.executable, '-c', sys.argv[2], sys.argv[1]])\n"
+            "time.sleep(5)\n"
+        )
+        result = detection.SafeCommandRunner().run([sys.executable, "-c", parent, marker_path, child], timeout=0.2)
+        self.assertEqual(result.status, "timeout")
+        import time as _time
+
+        _time.sleep(1.3)
+        self.assertFalse(Path(marker_path).exists())
+
+    def test_runner_normalizes_drain_oserror(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            with mock.patch("compat.detection.os.read", side_effect=OSError("read failed")):
+                result = detection.SafeCommandRunner().run([sys.executable, "-c", "pass"], timeout=1)
+            gc.collect()
+        self.assertEqual(result.status, "unknown")
 
     def test_runner_does_not_use_unbounded_temporary_files(self) -> None:
         layer_text = (ROOT / "compat" / "detection.py").read_text(encoding="utf-8")

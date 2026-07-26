@@ -304,27 +304,33 @@ keys and malformed lines, and supports only explicit quoting and escape forms. `
 `${VAR}`, `$(...)` and backticks are data errors, not executable syntax.
 
 Distribution resolution uses manifest data only: exact `ID`/manifest `os_release_ids`,
-exact derivative mappings such as Linux Mint `UBUNTU_CODENAME`, rolling lineage without
-borrowed stable versions, and ordered `ID_LIKE` only to identify a family/adaptor when the
-distribution itself is not known. Unknown releases are not approximated to a nearby
-release; known but unenumerated stable releases remain experimental through the support
-model unless an explicit exclusion or floor/EOL policy says unsupported. Stable release
-identity is consensus-based: every present anchor (`VERSION_ID`, `VERSION_CODENAME`,
-`UBUNTU_CODENAME` and exact derivative mapping where applicable) is resolved
-independently, and contradictory anchors produce `release_identity_conflict`, which never
-promotes to certified, supported or family-inferred.
+exact stable release `os_release_version_ids`, exact derivative mappings such as Linux
+Mint's `UBUNTU_CODENAME`, rolling lineage without borrowed stable versions, and ordered
+`ID_LIKE` only to identify a family/adaptor when the distribution itself is not known.
+Unknown releases are not approximated to a nearby release; known but unenumerated stable
+releases remain experimental through the support model unless an explicit exclusion or
+floor/EOL policy says unsupported. Stable release identity is consensus-based: every
+present anchor is resolved independently. `VERSION_ID` is matched only against declared
+`os_release_version_ids`; `VERSION_CODENAME` is the distribution's own codename; and a
+stable derivative's base mapping declares its source explicitly, e.g.
+`mapping_source=ubuntu_codename` for Linux Mint. For Linux Mint 22.3, `VERSION_CODENAME`
+is `zena`, while `UBUNTU_CODENAME=noble` maps to `ubuntu_24_04`. Contradictory anchors
+produce `release_identity_conflict`, which never promotes to certified, supported or
+family-inferred.
 
 Every external observation goes through `SafeCommandRunner`, which accepts only argv lists,
 uses `shell=False`, an explicit timeout, a controlled environment/locale, separated stdout
 and stderr, bounded output and normalized error kinds. The runner starts a separate
-process session, sends stdin from `DEVNULL`, drains stdout/stderr incrementally through
-pipes while retaining at most `output_limit` bytes per stream, discards excess bytes while
-continuing to drain, marks truncation explicitly, and terminates the process group on
-timeout with TERM then KILL if needed. Tests use `FakeCommandRunner`; fixture environments
-set `allow_host_fallback=false`, so a missing fixture path cannot be read from the real
-host and a missing fixture `existing_paths` entry is absent. The optional host smoke
-command is non-authoritative. Probes are read-only and never create interfaces, edit
-firewall/routing/DNS state, start services, install packages or execute manifest data.
+process session, captures the PGID immediately, sends stdin from `DEVNULL`, drains
+stdout/stderr incrementally through pipes while retaining at most `output_limit` bytes per
+stream, keeps the timeout deadline active until both the process has exited and streams
+are closed, discards excess bytes while continuing to drain, marks truncation explicitly,
+and terminates the process group on timeout with TERM then KILL even if the leader already
+exited. Tests use `FakeCommandRunner`; fixture environments set `allow_host_fallback=false`,
+so a missing fixture path cannot be read from the real host and a missing fixture
+`existing_paths` entry is absent. The optional host smoke command is non-authoritative.
+Probes are read-only and never create interfaces, edit firewall/routing/DNS state, start
+services, install packages or execute manifest data.
 
 Core host capability results and protocol runtime capability results are separate
 `CapabilityResult` records with `capability_id`, observed status, domain status, evidence,

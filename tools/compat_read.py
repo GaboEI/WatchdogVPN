@@ -115,6 +115,7 @@ _ENTITY_KEYS = {
         "eol_or_withdrawn",
         "evidence_refs",
         "meets_technical_floor",
+        "os_release_version_ids",
         "policy_state",
         "vendor_maintained",
         "version",
@@ -124,6 +125,7 @@ _ENTITY_KEYS = {
         "codename_map",
         "distribution",
         "lineage_distribution",
+        "mapping_source",
         "mapping_type",
     ),
     "capability": ("description", "supported_values", "type"),
@@ -760,6 +762,7 @@ def _validate_releases_structure(manifest):
     certifications = manifest["certifications"]
     _require_object_ids(releases, "releases")
     by_distro = {}
+    os_release_version_owners = {}
     for release_id, release in releases.items():
         path = "releases.%s" % release_id
         _require_obj(release, path)
@@ -770,6 +773,17 @@ def _validate_releases_structure(manifest):
         if distributions[distro_id]["release_model"] != "stable":
             raise ManifestError("%s belongs to rolling distribution %r" % (path, distro_id))
         _require_str(release.get("version"), path + ".version")
+        for os_release_version_id in _require_string_list(
+            release.get("os_release_version_ids"),
+            path + ".os_release_version_ids",
+        ):
+            previous = os_release_version_owners.get((distro_id, os_release_version_id))
+            if previous is not None:
+                raise ManifestError(
+                    "%s.os_release_version_ids value %r is also used by release %s"
+                    % (path, os_release_version_id, previous)
+                )
+            os_release_version_owners[(distro_id, os_release_version_id)] = release_id
         _require_enum(release.get("policy_state"), ("admitted", "pending_evaluation", "excluded"), path + ".policy_state")
         _require_bool(release.get("meets_technical_floor"), path + ".meets_technical_floor")
         _require_bool(release.get("vendor_maintained"), path + ".vendor_maintained")
@@ -841,6 +855,11 @@ def _validate_derivatives(manifest):
         if model == "stable":
             if mapping_type != "codename_map":
                 raise ManifestError("%s stable derivative requires codename_map" % path)
+            _require_enum(
+                derivative.get("mapping_source"),
+                ("ubuntu_codename", "version_codename"),
+                path + ".mapping_source",
+            )
             codename_map = _require_obj(derivative.get("codename_map"), path + ".codename_map")
             if not codename_map:
                 raise ManifestError("%s.codename_map must not be empty" % path)
@@ -858,7 +877,7 @@ def _validate_derivatives(manifest):
         else:
             if mapping_type != "rolling_lineage":
                 raise ManifestError("%s rolling derivative requires rolling_lineage" % path)
-            if "codename_map" in derivative or "base_version" in derivative:
+            if "codename_map" in derivative or "base_version" in derivative or "mapping_source" in derivative:
                 raise ManifestError("%s rolling derivative must not borrow a stable version" % path)
             _require_bool(derivative.get("base_version_gating"), path + ".base_version_gating")
             if derivative["base_version_gating"]:

@@ -35,11 +35,11 @@
       "type": "object"
     },
     "releases": {
-      "description": "Primitive stable release policy inputs and evidence references. StableReleaseFacts are derived by the bootstrap reader.",
+      "description": "Primitive stable release policy inputs and evidence references. Each release stores an exact documented/certified version plus explicit os_release_version_ids accepted from /etc/os-release; StableReleaseFacts are derived by the bootstrap reader.",
       "type": "object"
     },
     "derivatives": {
-      "description": "Exact derivative mappings. Stable mappings use codenames; rolling lineages do not borrow stable versions.",
+      "description": "Exact derivative mappings. Stable mappings declare a mapping_source such as ubuntu_codename before using codename_map; rolling lineages do not borrow stable versions.",
       "type": "object"
     },
     "capabilities": {

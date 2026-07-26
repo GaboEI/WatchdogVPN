@@ -171,6 +171,7 @@ class SafeCommandRunner:
             return CommandResult(tuple(argv), "unknown", reason="executable resolution failed: %s" % exc)
         env = {"PATH": self.path, "LC_ALL": "C", "LANG": "C"}
         process = None
+        pgid = None
         try:
             process = subprocess.Popen(
                 command,
@@ -183,8 +184,12 @@ class SafeCommandRunner:
                 close_fds=True,
                 start_new_session=True,
             )
+            try:
+                pgid = os.getpgid(process.pid)
+            except OSError:
+                pgid = None
             stdout, stderr, stdout_truncated, stderr_truncated, timed_out = _drain_process_output(
-                process, timeout=timeout, limit=self.output_limit
+                process, pgid=pgid, timeout=timeout, limit=self.output_limit
             )
             if timed_out:
                 return CommandResult(
@@ -201,6 +206,20 @@ class SafeCommandRunner:
         except PermissionError as exc:
             return CommandResult(tuple(argv), "permission_denied", reason=str(exc))
         except (OSError, ValueError) as exc:
+            if process is not None:
+                _terminate_process_group(process, pgid)
+                try:
+                    process.wait(timeout=0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        process.kill()
+                        process.wait()
+                    except OSError:
+                        process.returncode = -signal.SIGKILL
+                except OSError:
+                    process.returncode = process.returncode if process.returncode is not None else -signal.SIGKILL
+                if process.returncode is None:
+                    process.returncode = -signal.SIGKILL
             return CommandResult(tuple(argv), "unknown", reason="command execution failed: %s" % exc)
         if process is None:
             return CommandResult(tuple(argv), "unknown", reason="command did not start")
@@ -226,7 +245,7 @@ class SafeCommandRunner:
         )
 
 
-def _drain_process_output(process, *, timeout: float, limit: int):
+def _drain_process_output(process, *, pgid: int | None, timeout: float, limit: int):
     selector = selectors.DefaultSelector()
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     truncated = {"stdout": False, "stderr": False}
@@ -243,7 +262,7 @@ def _drain_process_output(process, *, timeout: float, limit: int):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
-                _terminate_process_group(process)
+                _terminate_process_group(process, pgid)
                 break
             for key, _events in selector.select(timeout=min(0.1, remaining)):
                 name = key.data
@@ -263,10 +282,20 @@ def _drain_process_output(process, *, timeout: float, limit: int):
                     truncated[name] = True
             if process.poll() is not None and not selector.get_map():
                 break
+        while not timed_out and process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                _terminate_process_group(process, pgid)
+                break
+            try:
+                process.wait(timeout=min(0.1, remaining))
+            except subprocess.TimeoutExpired:
+                continue
         if timed_out:
             _drain_remaining(selector, buffers, truncated, limit)
-        else:
-            process.wait()
+        elif process.returncode is None:
+            process.wait(timeout=0)
     finally:
         for key in list(selector.get_map().values()):
             try:
@@ -306,29 +335,42 @@ def _drain_remaining(selector, buffers, truncated, limit: int) -> None:
                 truncated[name] = True
 
 
-def _terminate_process_group(process) -> None:
-    try:
-        pgid = os.getpgid(process.pid)
-        os.killpg(pgid, signal.SIGTERM)
-    except OSError:
+def _terminate_process_group(process, pgid: int | None) -> None:
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            pass
+    else:
         try:
             process.terminate()
         except OSError:
             pass
     try:
         process.wait(timeout=0.5)
-        return
     except subprocess.TimeoutExpired:
         pass
-    try:
-        pgid = os.getpgid(process.pid)
-        os.killpg(pgid, signal.SIGKILL)
-    except OSError:
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            try:
+                process.kill()
+            except OSError:
+                pass
+    else:
         try:
             process.kill()
         except OSError:
             pass
-    process.wait()
+    try:
+        process.wait()
+    except OSError:
+        pass
 
 
 class FakeCommandRunner:
@@ -448,10 +490,18 @@ def _read_regular_file_atomically(path: Path) -> bytes:
         size = after.st_size
         if size > MAX_OS_RELEASE_BYTES:
             raise DetectionError("os-release exceeds %d byte limit" % MAX_OS_RELEASE_BYTES)
-        try:
-            raw = os.read(fd, MAX_OS_RELEASE_BYTES + 1)
-        except OSError as exc:
-            raise DetectionError("cannot read os-release: %s" % exc) from exc
+        chunks = []
+        remaining = MAX_OS_RELEASE_BYTES + 1
+        while remaining > 0:
+            try:
+                chunk = os.read(fd, min(4096, remaining))
+            except OSError as exc:
+                raise DetectionError("cannot read os-release: %s" % exc) from exc
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
     except DetectionError:
         raise
     except OSError as exc:
@@ -643,7 +693,8 @@ def _resolve_stable_release(
     for derivative_id, derivative in manifest["derivatives"].items():
         if derivative["distribution"] == distro_id and derivative["mapping_type"] == "codename_map":
             derivative_mapping = derivative
-            codename = ubuntu_codename or version_codename
+            mapping_source = derivative["mapping_source"]
+            codename = ubuntu_codename if mapping_source == "ubuntu_codename" else version_codename
             if not codename or codename not in derivative["codename_map"]:
                 return None, "derivative_mapping_unknown", evidence, tuple(conflicts), None
             mapped_base_release = derivative["codename_map"][codename]
@@ -669,12 +720,6 @@ def _resolve_stable_release(
             evidence["version_codename"] = release_id
         else:
             conflicts.append("VERSION_CODENAME=%s does not match an enumerated release" % version_codename)
-    if ubuntu_codename is not None:
-        release_id = _find_release_by_codename(manifest, distro_id, ubuntu_codename)
-        if release_id is not None:
-            evidence["ubuntu_codename"] = release_id
-        else:
-            conflicts.append("UBUNTU_CODENAME=%s does not match an enumerated release" % ubuntu_codename)
     resolved = sorted(set(evidence.values()) - ({mapped_base_release} if mapped_base_release else set()))
     release_evidence = {
         key: value
@@ -706,9 +751,12 @@ def _os_release_id_map(manifest: Mapping) -> dict[str, str]:
 
 
 def _find_release_by_version(manifest: Mapping, distro_id: str, version_id: str) -> str | None:
+    matches = []
     for release_id, release in manifest["releases"].items():
-        if release["distribution"] == distro_id and _version_anchor_matches(release["version"], version_id):
-            return release_id
+        if release["distribution"] == distro_id and version_id in release["os_release_version_ids"]:
+            matches.append(release_id)
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
@@ -717,10 +765,6 @@ def _find_release_by_codename(manifest: Mapping, distro_id: str, codename: str) 
         if release["distribution"] == distro_id and release.get("codename") == codename:
             return release_id
     return None
-
-
-def _version_anchor_matches(manifest_version: str, version_id: str) -> bool:
-    return manifest_version == version_id or manifest_version.startswith(version_id + ".")
 
 
 def _find_release_by_distribution(manifest: Mapping, distro_id: str) -> str | None:

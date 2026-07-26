@@ -108,6 +108,7 @@ def minimal_manifest() -> dict:
             "mini_1": {
                 "distribution": "mini",
                 "version": "1",
+                "os_release_version_ids": ["1"],
                 "policy_state": "admitted",
                 "evidence_refs": ["cert_mini_1"],
                 "meets_technical_floor": True,
@@ -117,6 +118,7 @@ def minimal_manifest() -> dict:
             "mini_2": {
                 "distribution": "mini",
                 "version": "2",
+                "os_release_version_ids": ["2"],
                 "policy_state": "pending_evaluation",
                 "evidence_refs": [],
                 "meets_technical_floor": True,
@@ -249,9 +251,16 @@ class ManifestValidCasesTests(unittest.TestCase):
         self.assertIn("ubuntu_24_04", manifest["distributions"]["ubuntu"]["policy"]["stable"]["admitted_releases"])
         self.assertIn("ubuntu_26_04", manifest["distributions"]["ubuntu"]["policy"]["stable"]["pending_releases"])
         self.assertEqual(
-            manifest["derivatives"]["linuxmint_ubuntu_codename"]["codename_map"]["zena"],
+            manifest["derivatives"]["linuxmint_ubuntu_codename"]["mapping_source"],
+            "ubuntu_codename",
+        )
+        self.assertEqual(
+            manifest["derivatives"]["linuxmint_ubuntu_codename"]["codename_map"]["noble"],
             "ubuntu_24_04",
         )
+        self.assertEqual(manifest["releases"]["ubuntu_24_04"]["os_release_version_ids"], ["24.04"])
+        self.assertEqual(manifest["releases"]["debian_13"]["os_release_version_ids"], ["13"])
+        self.assertEqual(manifest["releases"]["linuxmint_22_3"]["os_release_version_ids"], ["22.3"])
         self.assertFalse(manifest["derivatives"]["kali_lineage"]["base_version_gating"])
         self.assertEqual(manifest["distributions"]["arch"]["release_model"], "rolling")
         self.assertTrue(manifest["certifications"]["cert_rocky_9"]["current"])
@@ -622,11 +631,17 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest["derivatives"]["opensuse_tumbleweed_lineage"]["lineage_distribution"] = "opensuse_tumbleweed"
         self.assert_invalid(manifest, "cycle")
         manifest = self.product_copy()
-        manifest["derivatives"]["linuxmint_ubuntu_codename"]["codename_map"]["zena"] = "debian_13"
+        manifest["derivatives"]["linuxmint_ubuntu_codename"]["codename_map"]["noble"] = "debian_13"
         self.assert_invalid(manifest, "outside lineage")
         manifest = self.product_copy()
         manifest["derivatives"]["kali_lineage"]["base_version"] = "13"
         self.assert_invalid(manifest, "unknown key base_version")
+        manifest = self.product_copy()
+        del manifest["derivatives"]["linuxmint_ubuntu_codename"]["mapping_source"]
+        self.assert_invalid(manifest, "mapping_source")
+        manifest = self.product_copy()
+        manifest["derivatives"]["linuxmint_ubuntu_codename"]["mapping_source"] = "pretty_name"
+        self.assert_invalid(manifest, "mapping_source")
 
     def test_stable_and_rolling_policy_errors(self) -> None:
         manifest = self.product_copy()
@@ -811,6 +826,20 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest = self.product_copy()
         manifest["capabilities"]["core_host_capabilities"]["cap_tun"]["supported_values"] = ["x86_64"]
         self.assert_invalid(manifest, "only valid for cap_architecture")
+
+    def test_release_os_release_version_ids_are_required_exact_and_unique(self) -> None:
+        manifest = self.product_copy()
+        del manifest["releases"]["ubuntu_24_04"]["os_release_version_ids"]
+        self.assert_invalid(manifest, "os_release_version_ids")
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["os_release_version_ids"] = []
+        self.assert_invalid(manifest, "must not be empty")
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["os_release_version_ids"] = ["24.04", "24.04"]
+        self.assert_invalid(manifest, "duplicate")
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_26_04"]["os_release_version_ids"] = ["24.04"]
+        self.assert_invalid(manifest, "also used by release")
 
     def test_file_size_limit_utf8_and_symlink_product_path(self) -> None:
         too_large = tempfile.NamedTemporaryFile(delete=False)

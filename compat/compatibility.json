@@ -570,10 +570,11 @@
     },
     "linuxmint_ubuntu_codename": {
       "codename_map": {
-        "zena": "ubuntu_24_04"
+        "noble": "ubuntu_24_04"
       },
       "distribution": "linuxmint",
       "lineage_distribution": "ubuntu",
+      "mapping_source": "ubuntu_codename",
       "mapping_type": "codename_map"
     },
     "opensuse_tumbleweed_lineage": {
@@ -995,6 +996,9 @@
       "eol_or_withdrawn": false,
       "evidence_refs": [],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "9"
+      ],
       "policy_state": "pending_evaluation",
       "vendor_maintained": true,
       "version": "9"
@@ -1004,6 +1008,9 @@
       "eol_or_withdrawn": false,
       "evidence_refs": [],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "9"
+      ],
       "policy_state": "pending_evaluation",
       "vendor_maintained": true,
       "version": "9"
@@ -1016,6 +1023,9 @@
         "cert_debian_13"
       ],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "13"
+      ],
       "policy_state": "admitted",
       "vendor_maintained": true,
       "version": "13.6"
@@ -1027,6 +1037,9 @@
         "cert_fedora_44"
       ],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "44"
+      ],
       "policy_state": "admitted",
       "vendor_maintained": true,
       "version": "44"
@@ -1039,6 +1052,9 @@
         "cert_linuxmint_22_3"
       ],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "22.3"
+      ],
       "policy_state": "admitted",
       "vendor_maintained": true,
       "version": "22.3"
@@ -1050,6 +1066,9 @@
         "cert_opensuse_leap_15_6"
       ],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "15.6"
+      ],
       "policy_state": "admitted",
       "vendor_maintained": true,
       "version": "15.6"
@@ -1059,6 +1078,9 @@
       "eol_or_withdrawn": false,
       "evidence_refs": [],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "9"
+      ],
       "policy_state": "pending_evaluation",
       "vendor_maintained": true,
       "version": "9"
@@ -1070,6 +1092,9 @@
         "cert_rocky_9"
       ],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "9"
+      ],
       "policy_state": "admitted",
       "vendor_maintained": true,
       "version": "9"
@@ -1082,6 +1107,9 @@
         "cert_ubuntu_24_04"
       ],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "24.04"
+      ],
       "policy_state": "admitted",
       "vendor_maintained": true,
       "version": "24.04.4"
@@ -1092,6 +1120,9 @@
       "eol_or_withdrawn": false,
       "evidence_refs": [],
       "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "26.04"
+      ],
       "policy_state": "pending_evaluation",
       "vendor_maintained": true,
       "version": "26.04"
