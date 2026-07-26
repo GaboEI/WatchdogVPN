@@ -57,6 +57,10 @@
         "description": "SELinux reporting; never lowered for certification",
         "type": "diagnostic_only"
       },
+      "cap_firewalld": {
+        "description": "firewalld reporting; never lowered for certification",
+        "type": "diagnostic_only"
+      },
       "cap_sudo": {
         "description": "Privilege elevation path",
         "type": "required"
@@ -1181,7 +1185,8 @@
         "cap_sudo",
         "cap_polkit",
         "cap_persistence",
-        "cap_rollback"
+        "cap_rollback",
+        "cap_apparmor"
       ],
       "package_manager": "apt",
       "provisioning_methods": [
@@ -1215,7 +1220,8 @@
         "cap_polkit",
         "cap_persistence",
         "cap_rollback",
-        "cap_selinux"
+        "cap_selinux",
+        "cap_firewalld"
       ],
       "package_manager": "dnf",
       "provisioning_methods": [
@@ -1249,7 +1255,8 @@
         "cap_polkit",
         "cap_persistence",
         "cap_rollback",
-        "cap_apparmor"
+        "cap_apparmor",
+        "cap_firewalld"
       ],
       "package_manager": "zypper",
       "provisioning_methods": [
@@ -1279,7 +1286,8 @@
         "cap_sudo",
         "cap_polkit",
         "cap_persistence",
-        "cap_rollback"
+        "cap_rollback",
+        "cap_apparmor"
       ],
       "package_manager": "apt",
       "provisioning_methods": [

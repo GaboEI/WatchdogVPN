@@ -82,7 +82,7 @@ An exhausted provisioning chain on an in-contract distribution ends in `preparat
 - **Core host capabilities** gate `host_readiness` (init/systemd, network manager, DNS
   backend, TUN, firewall backend, policy routing, kernel, architecture, Python floor,
   package manager, sudo, polkit, persistence, rollback, diagnostic surface; SELinux/
-  AppArmor reported and never lowered).
+  AppArmor and firewalld reported where family-relevant and never lowered).
 - **Protocol capabilities** gate only their own `protocol_readiness` (sing-box; openvpn;
   openvpn + ck-client; awg tools + kernel module or amneziawg-go). A missing protocol
   runtime never makes the whole host not-ready.
@@ -90,6 +90,10 @@ An exhausted provisioning chain on an in-contract distribution ends in `preparat
   switch (this reflects existing behavior — `doctor.sh` fails when `nft` is absent);
   `iptables` is diagnostic/legacy-cleanup only. Promoting iptables to an alternative
   backend, or retiring it, is an explicit future decision, out of scope here.
+- **Family diagnostics:** `cap_firewalld` is emitted for Red Hat/DNF and SUSE/Zypper
+  families; `cap_apparmor` is emitted for Debian/APT, Ubuntu/APT and SUSE/Zypper. These
+  `diagnostic_only` results report honest `present`/`absent`/`unknown` observations in
+  `EvaluationReport.core_capabilities` but do not participate in `host_readiness`.
 
 ## Provisioning: version-aware, strict chain, transactional
 
@@ -316,12 +320,14 @@ stable derivative's base mapping declares its source explicitly, e.g.
 `mapping_source=ubuntu_codename` for Linux Mint. For Linux Mint 22.3, `VERSION_CODENAME`
 is `zena`, while `UBUNTU_CODENAME=noble` maps to `ubuntu_24_04`. Contradictory anchors
 produce `release_identity_conflict`, which never promotes to certified, supported or
-family-inferred.
+family-inferred. Release codenames are strict strings with manifest ID format and are
+unique within their distribution; the same codename may appear in another distribution
+only when that distribution has its own non-conflicting release identity.
 
 Every external observation goes through `SafeCommandRunner`, which accepts only argv lists,
 uses `shell=False`, an explicit timeout, a controlled environment/locale, separated stdout
 and stderr, bounded output and normalized error kinds. The runner starts a separate
-process session, captures the PGID immediately, sends stdin from `DEVNULL`, drains
+process session, records `pgid=process.pid` immediately, sends stdin from `DEVNULL`, drains
 stdout/stderr incrementally through pipes while retaining at most `output_limit` bytes per
 stream, keeps the timeout deadline active until both the process has exited and streams
 are closed, discards excess bytes while continuing to drain, marks truncation explicitly,

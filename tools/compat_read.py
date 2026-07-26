@@ -763,6 +763,7 @@ def _validate_releases_structure(manifest):
     _require_object_ids(releases, "releases")
     by_distro = {}
     os_release_version_owners = {}
+    codename_owners = {}
     for release_id, release in releases.items():
         path = "releases.%s" % release_id
         _require_obj(release, path)
@@ -773,6 +774,15 @@ def _validate_releases_structure(manifest):
         if distributions[distro_id]["release_model"] != "stable":
             raise ManifestError("%s belongs to rolling distribution %r" % (path, distro_id))
         _require_str(release.get("version"), path + ".version")
+        if "codename" in release:
+            codename = _require_id(release.get("codename"), path + ".codename")
+            previous = codename_owners.get((distro_id, codename))
+            if previous is not None:
+                raise ManifestError(
+                    "%s.codename value %r is also used by release %s"
+                    % (path, codename, previous)
+                )
+            codename_owners[(distro_id, codename)] = release_id
         for os_release_version_id in _require_string_list(
             release.get("os_release_version_ids"),
             path + ".os_release_version_ids",

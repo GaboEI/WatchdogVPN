@@ -184,10 +184,7 @@ class SafeCommandRunner:
                 close_fds=True,
                 start_new_session=True,
             )
-            try:
-                pgid = os.getpgid(process.pid)
-            except OSError:
-                pgid = None
+            pgid = process.pid
             stdout, stderr, stdout_truncated, stderr_truncated, timed_out = _drain_process_output(
                 process, pgid=pgid, timeout=timeout, limit=self.output_limit
             )

@@ -458,6 +458,59 @@ class CapabilityProbeTests(unittest.TestCase):
         )
         self.assertEqual(detection._probe_core("cap_architecture", distro_unknown_arch, inactive).domain_status, "provisionable")
 
+    def test_family_diagnostics_are_emitted_without_degrading_readiness(self) -> None:
+        manifest = product_manifest()
+        cases = {
+            "ID=fedora\nVERSION_ID=44\n": {"cap_selinux", "cap_firewalld"},
+            "ID=rocky\nVERSION_ID=9\n": {"cap_selinux", "cap_firewalld"},
+            "ID=rhel\nVERSION_ID=9\n": {"cap_selinux", "cap_firewalld"},
+            "ID=opensuse-leap\nVERSION_ID=15.6\nVERSION_CODENAME=agile\n": {"cap_apparmor", "cap_firewalld"},
+            "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n": {"cap_apparmor"},
+            "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n": {"cap_apparmor"},
+            "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=noble\n": {"cap_apparmor"},
+        }
+        env = fixture_env()
+        for os_release_text, expected_diagnostics in cases.items():
+            with self.subTest(os_release=os_release_text):
+                distro = facts(manifest, os_release_text)
+                core = detection.probe_core_capabilities(manifest, distro, env)
+                by_id = {item.capability_id: item for item in core}
+                self.assertTrue(expected_diagnostics.issubset(by_id))
+                for cap_id in expected_diagnostics:
+                    self.assertEqual(by_id[cap_id].observed_status, "unknown")
+                    self.assertEqual(by_id[cap_id].domain_status, "provisionable")
+                readiness_core = tuple(
+                    detection.CapabilityResult(
+                        cap_id,
+                        "unknown" if cap_id in expected_diagnostics else "present",
+                        "provisionable" if cap_id in expected_diagnostics else "present",
+                        "fixture",
+                        "fixture",
+                        "fixture",
+                    )
+                    for cap_id in manifest["technical_families"][distro.technical_family]["core_capabilities"]
+                )
+                report = detection.evaluate(
+                    manifest,
+                    distro,
+                    readiness_core,
+                    present_protocols(manifest),
+                    now=datetime(2026, 7, 26),
+                )
+                self.assertEqual(report.host_readiness, "ready")
+
+    def test_all_productive_core_probe_branches_are_reachable_from_a_family(self) -> None:
+        manifest = product_manifest()
+        source = (ROOT / "compat" / "detection.py").read_text(encoding="utf-8")
+        probed_ids = set(__import__("re").findall(r'capability_id == "(cap_[a-z0-9_]+)"', source))
+        family_ids = {
+            cap_id
+            for family in manifest["technical_families"].values()
+            for cap_id in family["core_capabilities"]
+        }
+        self.assertTrue(probed_ids)
+        self.assertFalse(probed_ids - family_ids)
+
     def test_architecture_policy_comes_from_manifest(self) -> None:
         manifest = product_manifest()
         distro = detection.distro_facts_from_os_release(
@@ -780,6 +833,34 @@ class SafeCommandRunnerTests(unittest.TestCase):
 
         _time.sleep(1.3)
         self.assertFalse(Path(marker_path).exists())
+
+    def test_runner_kills_child_group_when_leader_exits_immediately(self) -> None:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as marker:
+            marker_path = marker.name
+        os.unlink(marker_path)
+        child = (
+            "import pathlib, signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(1)\n"
+            "pathlib.Path(sys.argv[1]).write_text('alive')\n"
+        )
+        parent = (
+            "import subprocess, sys, warnings\n"
+            "warnings.simplefilter('ignore', ResourceWarning)\n"
+            "subprocess.Popen([sys.executable, '-c', sys.argv[2], sys.argv[1]])\n"
+        )
+        result = detection.SafeCommandRunner().run([sys.executable, "-c", parent, marker_path, child], timeout=0.2)
+        self.assertEqual(result.status, "timeout")
+        import time as _time
+
+        _time.sleep(1.3)
+        self.assertFalse(Path(marker_path).exists())
+
+    def test_runner_uses_process_pid_as_group_id_without_getpgid_race(self) -> None:
+        with mock.patch("compat.detection.os.getpgid", side_effect=OSError("gone")) as getpgid:
+            result = detection.SafeCommandRunner().run([sys.executable, "-c", "pass"], timeout=1)
+        self.assertEqual(result.status, "ok")
+        getpgid.assert_not_called()
 
     def test_runner_normalizes_drain_oserror(self) -> None:
         with warnings.catch_warnings():

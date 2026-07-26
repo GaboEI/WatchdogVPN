@@ -261,6 +261,12 @@ class ManifestValidCasesTests(unittest.TestCase):
         self.assertEqual(manifest["releases"]["ubuntu_24_04"]["os_release_version_ids"], ["24.04"])
         self.assertEqual(manifest["releases"]["debian_13"]["os_release_version_ids"], ["13"])
         self.assertEqual(manifest["releases"]["linuxmint_22_3"]["os_release_version_ids"], ["22.3"])
+        self.assertIn("cap_firewalld", manifest["technical_families"]["redhat_dnf"]["core_capabilities"])
+        self.assertIn("cap_firewalld", manifest["technical_families"]["suse_zypper"]["core_capabilities"])
+        self.assertIn("cap_apparmor", manifest["technical_families"]["debian_apt"]["core_capabilities"])
+        self.assertIn("cap_apparmor", manifest["technical_families"]["ubuntu_apt"]["core_capabilities"])
+        self.assertIn("cap_apparmor", manifest["technical_families"]["suse_zypper"]["core_capabilities"])
+        self.assertNotIn("cap_firewalld", manifest["technical_families"]["ubuntu_apt"]["core_capabilities"])
         self.assertFalse(manifest["derivatives"]["kali_lineage"]["base_version_gating"])
         self.assertEqual(manifest["distributions"]["arch"]["release_model"], "rolling")
         self.assertTrue(manifest["certifications"]["cert_rocky_9"]["current"])
@@ -840,6 +846,20 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest = self.product_copy()
         manifest["releases"]["ubuntu_26_04"]["os_release_version_ids"] = ["24.04"]
         self.assert_invalid(manifest, "also used by release")
+
+    def test_release_codenames_are_valid_and_unique_within_distribution(self) -> None:
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_26_04"]["codename"] = "noble"
+        self.assert_invalid(manifest, "codename")
+        manifest = self.product_copy()
+        manifest["releases"]["linuxmint_22_3"]["codename"] = "noble"
+        compat_read.validate_manifest(manifest)
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["codename"] = ""
+        self.assert_invalid(manifest, "codename")
+        manifest = self.product_copy()
+        manifest["releases"]["ubuntu_24_04"]["codename"] = 24
+        self.assert_invalid(manifest, "codename")
 
     def test_file_size_limit_utf8_and_symlink_product_path(self) -> None:
         too_large = tempfile.NamedTemporaryFile(delete=False)
