@@ -163,3 +163,69 @@ A first review round hardened this realization:
 - Serialization round-trip and frozen-string coverage now include every public enum
   (`ReleaseModel`, `CoreCapabilityStatus`, `ProtocolRuntimeStatus`), plus a rejection test
   for an unauthorized `enum_cls` passed to `parse`.
+
+## Manifest Realization
+
+Task 23.7.5.3 realizes the manifest layer without integrating it into detection,
+install/update, `doctor`, the CLI, provisioning or public documentation. The product
+manifest lives at `compat/compatibility.json`; the documentation schema lives at
+`compat/compatibility.schema.json`; the bootstrap reader and strict validator live at
+`tools/compat_read.py`; L1 tests live at `tests/test_compat_manifest.py`.
+
+The manifest is JSON with top-level `schema_version` and the separated collections frozen
+by the external design: `technical_families`, `distributions`, `releases`,
+`derivatives`, `capabilities`, `provisioning_methods`, `protocols`, `certifications` and
+`validation_metadata`. It stores facts and evidence references only. It deliberately does
+not store calculated `support_classification`, `host_readiness` or `protocol_readiness`
+values; those remain derived by the support model and future evaluators. The bootstrap
+validator rejects any such calculated-state key if it appears anywhere in the manifest.
+
+Bootstrap constraints are explicit:
+
+- Minimum supported bootstrap Python: 3.6.
+- Runtime dependencies: Python stdlib only (`json`, `argparse`, `os`, `re`, `datetime`).
+- No import of the `compat` package or `compat/support_model.py`.
+- No network, privileges, shell evaluation, `eval`, `source`, command generation or system
+  mutation.
+- Unknown schema major, corrupt JSON, duplicate keys, invalid UTF-8, non-finite numbers,
+  top-level non-object, oversized files and product-path symlinks are rejected before any
+  query is served.
+
+Types are checked at the manifest boundary before any future model facts are built:
+booleans must be real JSON `true`/`false`; strings such as `"true"` and numbers such as
+`0`/`1` are rejected; integer fields reject booleans despite Python's `bool` subclassing
+`int`; IDs must be non-empty and match the stable manifest identifier grammar. Timestamps
+are stored as RFC 3339 UTC with a trailing `Z`; the reader normalizes them explicitly to
+naive UTC strings when emitting rolling facts for the pure support model. Rolling expiry is
+represented as positive integer seconds.
+
+The validator enforces referential integrity across families, distributions, releases,
+derivatives, capabilities, provisioning methods, protocols, certifications and validation
+metadata. Stable distributions enumerate admitted/pending/excluded releases instead of
+encoding support as a numeric range. Rolling distributions have freshness metadata and no
+numeric minimum. Stable derivatives use exact codename mappings; rolling derivatives keep
+lineage/adapter sharing but disable borrowed stable-version gating.
+
+Initial manifest content is conservative and sourced from the Phase 23.5/23.6/23.7.5
+record: the eight physically certified distributions/releases/snapshots are represented
+with certification records; AlmaLinux, RHEL, CentOS Stream, openSUSE Tumbleweed, Kali and
+non-certified derivative cases carry absent or inferred evidence rather than promoted
+support; Ubuntu 26.04 is represented as pending/not-yet-admitted evidence, not as a field
+certification. The protocol list records required runtimes and evidence policy, including
+the permanent distinction between functional rows and the three formal non-green Plan-B /
+no-egress rows; it does not claim that all twelve protocols are green across a family.
+
+The bootstrap interface is intentionally small and deterministic:
+
+```text
+python3 tools/compat_read.py validate
+python3 tools/compat_read.py get <dotted.path>
+python3 tools/compat_read.py list <dotted.object.path>
+python3 tools/compat_read.py resolve-reference <section> <id>
+python3 tools/compat_read.py facts stable-release <release-id>
+python3 tools/compat_read.py facts rolling-distribution <distribution-id>
+```
+
+Successful commands emit stable JSON on stdout. Manifest-invalid failures return exit code
+2 with an error on stderr; missing queries return exit code 3; usage errors return exit
+code 1.

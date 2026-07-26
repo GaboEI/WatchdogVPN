@@ -1,0 +1,67 @@
+{
+  "$id": "https://github.com/GaboEI/WatchdogVPN/compat/compatibility.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Documentation schema for WatchdogVPN Phase 23.7.5 compatibility manifest. Runtime bootstrap validation is implemented in tools/compat_read.py using only Python stdlib.",
+  "required": [
+    "schema_version",
+    "technical_families",
+    "distributions",
+    "releases",
+    "derivatives",
+    "capabilities",
+    "provisioning_methods",
+    "protocols",
+    "certifications",
+    "validation_metadata"
+  ],
+  "title": "WatchdogVPN Compatibility Manifest",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "description": "Semantic version. Unknown major versions are rejected by the bootstrap reader.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "type": "string"
+    },
+    "technical_families": {
+      "description": "Technical adapter/package-manager paths. They do not imply support for every derivative.",
+      "type": "object"
+    },
+    "distributions": {
+      "description": "Concrete distributions. Each declares its own stable or rolling policy.",
+      "type": "object"
+    },
+    "releases": {
+      "description": "Stable release facts that can feed compat.support_model.StableReleaseFacts without storing calculated classifications.",
+      "type": "object"
+    },
+    "derivatives": {
+      "description": "Exact derivative mappings. Stable mappings use codenames; rolling lineages do not borrow stable versions.",
+      "type": "object"
+    },
+    "capabilities": {
+      "description": "Separate core host capabilities and protocol capabilities.",
+      "required": [
+        "core_host_capabilities",
+        "protocol_capabilities"
+      ],
+      "type": "object"
+    },
+    "provisioning_methods": {
+      "description": "Reusable method definitions. Selection and execution are later tasks.",
+      "type": "object"
+    },
+    "protocols": {
+      "description": "Protocol runtime requirements. Each protocol must require at least one protocol capability.",
+      "type": "object"
+    },
+    "certifications": {
+      "description": "Physical certification records referencing a stable release or rolling snapshot.",
+      "type": "object"
+    },
+    "validation_metadata": {
+      "description": "Rolling freshness policies, CI refs and manifest-generation metadata.",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}
