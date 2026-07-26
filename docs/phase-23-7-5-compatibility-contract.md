@@ -137,3 +137,29 @@ domain invariants — with an explicit `DomainError` on impossible input combina
 than a silently-chosen state. The manifest, detection, `doctor`, the CLI and the
 provisioner integrate with this model in later frozen tasks; none of that integration
 exists yet.
+
+A first review round hardened this realization:
+
+- Stable `supported` now also requires an explicit `family_has_certified_anchor` fact
+  (per this contract's "whose family is anchored by certified releases" clause), so
+  admitted + vendor-maintained + CI-green alone is not enough; without a certified family
+  anchor the honest state is `experimental`, and a derivative never inherits the anchor.
+- `check_stable_invariants`/`check_rolling_invariants` no longer assert a hand-picked
+  subset of rules: they recompute the single precedence-determined classification for the
+  given facts and reject any `(facts, result)` pair that does not match it exactly,
+  including a wrongly-typed `result`. This makes them exhaustive against the whole
+  precedence, not just the four cases named in the design's examples.
+- Rolling temporal evidence (`expiry`, `now`, `last_validated`) is now validated
+  unconditionally, before any branch is evaluated, so invalid temporal data is rejected
+  even when a disqualifier, a certification, or a derivative-inferred fact would otherwise
+  decide the result first. The model adopts an explicit timezone policy: every datetime
+  must be naive; an aware datetime, a non-positive `expiry`, or a wrong type is a
+  `DomainError`, never a `TypeError`. `has_valid_field_certification` is documented as a
+  fact whose currency was already evaluated externally (by the field-certification
+  process) — it is intentionally not re-derived from rolling freshness.
+- `classify_host_readiness` now rejects an empty core-capability sequence as a
+  `DomainError`: an empty contract means no core capabilities were declared, not that the
+  host is ready.
+- Serialization round-trip and frozen-string coverage now include every public enum
+  (`ReleaseModel`, `CoreCapabilityStatus`, `ProtocolRuntimeStatus`), plus a rejection test
+  for an unauthorized `enum_cls` passed to `parse`.

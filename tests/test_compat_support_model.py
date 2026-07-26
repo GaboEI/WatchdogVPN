@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import pathlib
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 
 from compat import (
     CoreCapabilityStatus,
@@ -16,6 +17,7 @@ from compat import (
     HostReadiness,
     ProtocolReadiness,
     ProtocolRuntimeStatus,
+    ReleaseModel,
     RollingFacts,
     StableReleaseFacts,
     SupportClassification,
@@ -48,6 +50,7 @@ def stable(**overrides) -> StableReleaseFacts:
         ci_green=True,
         is_derivative_without_own_evidence=False,
         has_valid_field_certification=False,
+        family_has_certified_anchor=True,
     )
     base.update(overrides)
     return StableReleaseFacts(**base)
@@ -81,6 +84,16 @@ class StableClassificationTests(unittest.TestCase):
             ("supported", stable(admitted=True), SupportClassification.SUPPORTED),
             ("admitted_but_ci_red", stable(admitted=True, ci_green=False), SupportClassification.EXPERIMENTAL),
             ("admitted_but_unmaintained", stable(admitted=True, vendor_maintained=False), SupportClassification.EXPERIMENTAL),
+            (
+                "admitted_maintained_ci_green_no_family_anchor",
+                stable(admitted=True, family_has_certified_anchor=False),
+                SupportClassification.EXPERIMENTAL,
+            ),
+            (
+                "derivative_does_not_inherit_family_anchor",
+                stable(is_derivative_without_own_evidence=True, family_has_certified_anchor=True),
+                SupportClassification.FAMILY_INFERRED,
+            ),
             # disqualifier precedence over higher-evidence facts:
             ("eol_beats_admitted", stable(eol_or_withdrawn=True, admitted=False, vendor_maintained=True), SupportClassification.UNSUPPORTED),
             ("no_adapter_beats_derivative", stable(has_adapter=False, is_derivative_without_own_evidence=True), SupportClassification.UNSUPPORTED),
@@ -148,8 +161,7 @@ class RollingClassificationTests(unittest.TestCase):
             with self.subTest(label):
                 result = classify_support_rolling(facts, expiry=EXPIRY, now=NOW)
                 self.assertIs(result, expected)
-                freshness = evaluate_freshness(facts.last_validated, EXPIRY, NOW)
-                check_rolling_invariants(facts, result, freshness=freshness)
+                check_rolling_invariants(facts, result, expiry=EXPIRY, now=NOW)
 
     def test_local_capability_does_not_substitute_support_evidence(self) -> None:
         # No host-capability input exists on the rolling classifier: a "correct
@@ -159,6 +171,23 @@ class RollingClassificationTests(unittest.TestCase):
             classify_support_rolling(facts, expiry=EXPIRY, now=NOW),
             SupportClassification.EXPERIMENTAL,
         )
+
+    def test_invalid_temporal_data_rejected_even_when_certified(self) -> None:
+        # A winning disqualifier-free, strong-evidence branch (certified) must not
+        # skip temporal validation.
+        facts = rolling(has_valid_field_certification=True, last_validated="not-a-datetime")
+        with self.assertRaises(DomainError):
+            classify_support_rolling(facts, expiry=EXPIRY, now=NOW)  # type: ignore[arg-type]
+
+    def test_invalid_temporal_data_rejected_even_when_derivative_inferred(self) -> None:
+        facts = rolling(is_derivative_without_own_evidence=True, last_validated=NOW + timedelta(days=1))
+        with self.assertRaises(DomainError):
+            classify_support_rolling(facts, expiry=EXPIRY, now=NOW)
+
+    def test_invalid_temporal_data_rejected_even_with_a_disqualifier(self) -> None:
+        facts = rolling(has_adapter=False, last_validated=NOW + timedelta(days=1))
+        with self.assertRaises(DomainError):
+            classify_support_rolling(facts, expiry=EXPIRY, now=NOW)
 
 
 class FreshnessTests(unittest.TestCase):
@@ -181,6 +210,26 @@ class FreshnessTests(unittest.TestCase):
         with self.assertRaises(DomainError):
             evaluate_freshness(NOW, 30, NOW)  # type: ignore[arg-type]
 
+    def test_non_positive_expiry_is_domain_error(self) -> None:
+        with self.assertRaises(DomainError):
+            evaluate_freshness(NOW - timedelta(days=1), timedelta(0), NOW)
+        with self.assertRaises(DomainError):
+            evaluate_freshness(NOW - timedelta(days=1), timedelta(days=-1), NOW)
+
+    def test_timezone_aware_now_is_domain_error(self) -> None:
+        aware_now = NOW.replace(tzinfo=timezone.utc)
+        with self.assertRaises(DomainError):
+            evaluate_freshness(NOW - timedelta(days=1), EXPIRY, aware_now)
+
+    def test_timezone_aware_last_validated_is_domain_error(self) -> None:
+        aware_lv = (NOW - timedelta(days=1)).replace(tzinfo=timezone.utc)
+        with self.assertRaises(DomainError):
+            evaluate_freshness(aware_lv, EXPIRY, NOW)
+
+    def test_non_datetime_last_validated_is_domain_error(self) -> None:
+        with self.assertRaises(DomainError):
+            evaluate_freshness("2026-01-01", EXPIRY, NOW)  # type: ignore[arg-type]
+
 
 class HostReadinessTests(unittest.TestCase):
     def test_host_table(self) -> None:
@@ -192,11 +241,16 @@ class HostReadinessTests(unittest.TestCase):
             ("incompatible", [S.PRESENT, S.IMPOSSIBLE], HostReadiness.INCOMPATIBLE),
             ("impossible_wins", [S.PROVISIONABLE, S.PREPARATION_FAILED, S.IMPOSSIBLE], HostReadiness.INCOMPATIBLE),
             ("prep_failed_beats_provisionable", [S.PROVISIONABLE, S.PREPARATION_FAILED], HostReadiness.PREPARATION_FAILED),
-            ("empty_is_ready", [], HostReadiness.READY),
         ]
         for label, statuses, expected in cases:
             with self.subTest(label):
                 self.assertIs(classify_host_readiness(statuses), expected)
+
+    def test_empty_core_capabilities_is_domain_error(self) -> None:
+        # An empty sequence means no core-capability contract was supplied at
+        # all -- it must not be silently read as "ready".
+        with self.assertRaises(DomainError):
+            classify_host_readiness([])
 
     def test_exhausted_preparation_is_not_unsupported(self) -> None:
         # unsupported is not even a host state; an exhausted chain is preparation_failed.
@@ -264,7 +318,46 @@ class InvariantTests(unittest.TestCase):
             check_stable_invariants(stable(expressly_excluded=True), SupportClassification.EXPERIMENTAL)
         # rolling supported without current evidence
         with self.assertRaises(DomainError):
-            check_rolling_invariants(rolling(), SupportClassification.SUPPORTED, freshness=FreshnessState.EXPIRED)
+            check_rolling_invariants(rolling(), SupportClassification.SUPPORTED, expiry=EXPIRY, now=NOW)
+
+    def test_exhaustive_precedence_contradictions_raise(self) -> None:
+        # These are not in the four named rules above: the checkers must reject
+        # them anyway because they recompute the single precedence-determined
+        # result rather than consulting a partial rule list.
+        # (a) contradictory facts themselves (admitted + expressly_excluded).
+        with self.assertRaises(DomainError):
+            check_stable_invariants(
+                stable(admitted=True, expressly_excluded=True), SupportClassification.SUPPORTED
+            )
+        # (b) stable EOL asserted as experimental (precedence says unsupported).
+        with self.assertRaises(DomainError):
+            check_stable_invariants(stable(eol_or_withdrawn=True), SupportClassification.EXPERIMENTAL)
+        # (c) stable admitted+maintained+CI-green but no family anchor, asserted supported.
+        with self.assertRaises(DomainError):
+            check_stable_invariants(
+                stable(admitted=True, family_has_certified_anchor=False), SupportClassification.SUPPORTED
+            )
+        # (d) rolling without an adapter, asserted supported.
+        with self.assertRaises(DomainError):
+            check_rolling_invariants(
+                rolling(has_adapter=False), SupportClassification.SUPPORTED, expiry=EXPIRY, now=NOW
+            )
+        # (e) rolling below the technical floor, asserted family_inferred.
+        with self.assertRaises(DomainError):
+            check_rolling_invariants(
+                rolling(meets_technical_floor=False),
+                SupportClassification.FAMILY_INFERRED,
+                expiry=EXPIRY,
+                now=NOW,
+            )
+        # (f) a wrongly-typed result.
+        with self.assertRaises(DomainError):
+            check_stable_invariants(stable(), "supported")  # type: ignore[arg-type]
+        with self.assertRaises(DomainError):
+            check_rolling_invariants(rolling(), "supported", expiry=EXPIRY, now=NOW)  # type: ignore[arg-type]
+        # (g) a valid enum member, but different from the precedence-determined one.
+        with self.assertRaises(DomainError):
+            check_stable_invariants(stable(future_or_unevaluated=True), SupportClassification.UNSUPPORTED)
 
     def test_classifier_output_always_satisfies_invariants(self) -> None:
         for facts in (
@@ -292,9 +385,26 @@ class SerializationTests(unittest.TestCase):
             [s.value for s in ProtocolReadiness],
             ["operable", "provisionable", "absent", "unsupported_here"],
         )
+        self.assertEqual([s.value for s in ReleaseModel], ["stable", "rolling"])
+        self.assertEqual(
+            [s.value for s in CoreCapabilityStatus],
+            ["present", "provisionable", "preparation_failed", "impossible"],
+        )
+        self.assertEqual(
+            [s.value for s in ProtocolRuntimeStatus],
+            ["present", "provisionable", "absent", "impossible"],
+        )
 
     def test_round_trip(self) -> None:
-        for enum_cls in (SupportClassification, HostReadiness, ProtocolReadiness, FreshnessState):
+        for enum_cls in (
+            SupportClassification,
+            HostReadiness,
+            ProtocolReadiness,
+            ReleaseModel,
+            FreshnessState,
+            CoreCapabilityStatus,
+            ProtocolRuntimeStatus,
+        ):
             for member in enum_cls:
                 self.assertEqual(to_value(member), member.value)
                 self.assertIs(parse(enum_cls, member.value), member)
@@ -304,6 +414,13 @@ class SerializationTests(unittest.TestCase):
             parse(SupportClassification, "definitely_not_a_state")
         with self.assertRaises(DomainError):
             to_value("supported")  # a raw string is not a state
+
+    def test_parse_rejects_unauthorized_enum_cls(self) -> None:
+        class _NotARegisteredEnum(Enum):
+            X = "x"
+
+        with self.assertRaises(DomainError):
+            parse(_NotARegisteredEnum, "x")
 
 
 class NoHardcodedReleasesTests(unittest.TestCase):

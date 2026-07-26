@@ -126,7 +126,16 @@ def parse(enum_cls: type[Enum], value: str) -> Enum:
 
 @dataclass(frozen=True)
 class StableReleaseFacts:
-    """Policy/evidence facts about one discrete stable release."""
+    """Policy/evidence facts about one discrete stable release.
+
+    ``has_valid_field_certification`` represents an individual certification whose
+    currency was already evaluated *externally* (by the field-certification process
+    itself, Task 23.7.5.11); this pure model never re-derives its validity from a
+    clock. ``family_has_certified_anchor`` is the separate fact, required by the
+    frozen contract's ``supported`` definition, that the release's family is
+    anchored by at least one certified release -- it is orthogonal to whether
+    *this* release itself holds an individual certification.
+    """
     has_adapter: bool
     meets_technical_floor: bool
     admitted: bool
@@ -137,11 +146,18 @@ class StableReleaseFacts:
     ci_green: bool
     is_derivative_without_own_evidence: bool
     has_valid_field_certification: bool
+    family_has_certified_anchor: bool
 
 
 @dataclass(frozen=True)
 class RollingFacts:
-    """Policy/evidence facts about a rolling distribution (no numeric minimum)."""
+    """Policy/evidence facts about a rolling distribution (no numeric minimum).
+
+    ``has_valid_field_certification`` has the same externally-pre-evaluated meaning
+    as on :class:`StableReleaseFacts`; it is intentionally **not** linked to
+    ``last_validated``/expiry freshness. Freshness governs only whether
+    *non-certified* rolling evidence is current enough to justify ``supported``.
+    """
     has_adapter: bool
     meets_technical_floor: bool
     expressly_excluded: bool
@@ -154,6 +170,12 @@ class RollingFacts:
 # --------------------------------------------------------------------------- #
 # Evidence freshness (rolling). The clock is injected via ``now`` so the logic
 # is deterministic and testable; the expiry policy is data (a timedelta).
+#
+# Timezone policy (explicit): every datetime in this model must be naive (no
+# ``tzinfo``). This is a pure domain with no notion of timezone conversion;
+# callers must normalize to a single policy (e.g. UTC) before calling. An aware
+# datetime, a non-positive expiry, or a wrongly-typed value is a DomainError,
+# never a TypeError escaping from a comparison.
 # --------------------------------------------------------------------------- #
 
 def evaluate_freshness(
@@ -163,10 +185,18 @@ def evaluate_freshness(
 ) -> FreshnessState:
     if not isinstance(expiry, timedelta):
         raise DomainError("expiry must be a timedelta supplied as policy data")
+    if expiry <= timedelta(0):
+        raise DomainError("expiry must be a positive timedelta")
     if not isinstance(now, datetime):
         raise DomainError("the evaluation instant 'now' must be injected as a datetime")
+    if now.tzinfo is not None:
+        raise DomainError("'now' must be a naive datetime (explicit no-tzinfo policy)")
     if last_validated is None:
         return FreshnessState.ABSENT
+    if not isinstance(last_validated, datetime):
+        raise DomainError("'last_validated' must be a datetime or None")
+    if last_validated.tzinfo is not None:
+        raise DomainError("'last_validated' must be a naive datetime (explicit no-tzinfo policy)")
     if now < last_validated:
         raise DomainError("evaluation instant precedes last_validated (validated in the future)")
     return FreshnessState.EXPIRED if (now - last_validated) > expiry else FreshnessState.CURRENT
@@ -224,10 +254,11 @@ def classify_support_stable(f: StableReleaseFacts) -> SupportClassification:
         return SupportClassification.FAMILY_INFERRED
     if f.future_or_unevaluated:
         return SupportClassification.EXPERIMENTAL
-    if f.admitted and f.vendor_maintained and f.ci_green:
+    if f.admitted and f.vendor_maintained and f.ci_green and f.family_has_certified_anchor:
         return SupportClassification.SUPPORTED
     # Recognized and in contract, but not certified/inferred/future/supported
-    # (e.g. admitted but CI not green): the honest state is experimental.
+    # (e.g. admitted but CI not green, or admitted without a certified family
+    # anchor): the honest state is experimental.
     return SupportClassification.EXPERIMENTAL
 
 
@@ -238,6 +269,11 @@ def classify_support_rolling(
     now: datetime,
 ) -> SupportClassification:
     _validate_common_evidence(f)
+    # Temporal evidence is validated unconditionally, before any branching, so an
+    # invalid expiry/now/last_validated is rejected even when a disqualifier, a
+    # certification or a derivative-inferred fact would otherwise decide the
+    # result without ever needing the freshness value.
+    freshness = evaluate_freshness(f.last_validated, expiry, now)
     if not f.has_adapter:
         return SupportClassification.UNSUPPORTED
     if not f.meets_technical_floor:
@@ -250,7 +286,6 @@ def classify_support_rolling(
         return SupportClassification.CERTIFIED
     if f.is_derivative_without_own_evidence:
         return SupportClassification.FAMILY_INFERRED
-    freshness = evaluate_freshness(f.last_validated, expiry, now)
     if freshness is FreshnessState.CURRENT:
         return SupportClassification.SUPPORTED
     # expired or absent evidence → experimental
@@ -283,6 +318,11 @@ def classify_host_readiness(
     required_core_statuses: Sequence[CoreCapabilityStatus],
 ) -> HostReadiness:
     statuses = tuple(required_core_statuses)
+    if not statuses:
+        raise DomainError(
+            "a host must declare at least one required core capability; an empty "
+            "sequence means no core-capability contract was supplied, not readiness"
+        )
     for s in statuses:
         if not isinstance(s, CoreCapabilityStatus):
             raise DomainError(f"not a CoreCapabilityStatus: {s!r}")
@@ -318,41 +358,49 @@ def classify_protocol_readiness(
 
 
 # --------------------------------------------------------------------------- #
-# Domain invariants. The classifiers already honor these by construction; these
-# checkers re-assert them for a (facts, result) pair so tests can prove any
-# hand-built contradiction is rejected rather than silently accepted.
+# Domain invariants. Rather than re-asserting a partial, hand-picked subset of
+# rules, these checkers recompute the single precedence-determined result for
+# ``f`` (which also re-validates ``f`` for internal contradictions) and reject
+# ANY ``result`` that does not match it exactly -- including a wrongly-typed
+# value. This is exhaustive by construction: it cannot accept a (facts, result)
+# pair that contradicts the official precedence, because it never consults a
+# separate, potentially-incomplete list of named rules.
 # --------------------------------------------------------------------------- #
 
 def check_stable_invariants(f: StableReleaseFacts, result: SupportClassification) -> None:
-    # 1. certified requires physical evidence.
-    if result is SupportClassification.CERTIFIED and not f.has_valid_field_certification:
-        raise DomainError("certified requires a valid field certification")
-    # 2. supported (stable) requires an admitted release.
-    if result is SupportClassification.SUPPORTED and not f.admitted:
-        raise DomainError("stable 'supported' requires an admitted release")
-    # 3. family_inferred cannot carry a valid individual certification.
-    if result is SupportClassification.FAMILY_INFERRED and f.has_valid_field_certification:
-        raise DomainError("family_inferred cannot hold a valid individual certification")
-    # 4. experimental cannot represent an expressly-excluded release.
-    if result is SupportClassification.EXPERIMENTAL and f.expressly_excluded:
-        raise DomainError("experimental cannot represent an expressly-excluded release")
-    # A no-adapter or below-floor release can only be unsupported.
-    if (not f.has_adapter or not f.meets_technical_floor) and result is not SupportClassification.UNSUPPORTED:
-        raise DomainError("a release without an adapter or below the floor must be unsupported")
+    """Raise DomainError unless ``result`` is exactly what the precedence determines for ``f``."""
+    if not isinstance(f, StableReleaseFacts):
+        raise DomainError(f"not StableReleaseFacts: {f!r}")
+    if not isinstance(result, SupportClassification):
+        raise DomainError(f"not a SupportClassification: {result!r}")
+    expected = classify_support_stable(f)  # re-validates f; raises on internal contradictions
+    if result is not expected:
+        raise DomainError(
+            f"result {result.value!r} contradicts the precedence-determined "
+            f"{expected.value!r} for {f!r}"
+        )
 
 
 def check_rolling_invariants(
     f: RollingFacts,
     result: SupportClassification,
     *,
-    freshness: FreshnessState,
+    expiry: timedelta,
+    now: datetime,
 ) -> None:
-    if result is SupportClassification.CERTIFIED and not f.has_valid_field_certification:
-        raise DomainError("certified requires a valid field certification")
-    if result is SupportClassification.FAMILY_INFERRED and f.has_valid_field_certification:
-        raise DomainError("family_inferred cannot hold a valid individual certification")
-    if result is SupportClassification.EXPERIMENTAL and f.expressly_excluded:
-        raise DomainError("experimental cannot represent an expressly-excluded release")
-    # 2. supported (rolling) requires current validation evidence.
-    if result is SupportClassification.SUPPORTED and freshness is not FreshnessState.CURRENT:
-        raise DomainError("rolling 'supported' requires current validation evidence")
+    """Raise DomainError unless ``result`` is exactly what the precedence determines for ``f``.
+
+    ``expiry``/``now`` are required (not a pre-computed ``freshness``) so that
+    temporal-data validation always runs here too, on every call, regardless of
+    which branch would end up deciding the result.
+    """
+    if not isinstance(f, RollingFacts):
+        raise DomainError(f"not RollingFacts: {f!r}")
+    if not isinstance(result, SupportClassification):
+        raise DomainError(f"not a SupportClassification: {result!r}")
+    expected = classify_support_rolling(f, expiry=expiry, now=now)  # re-validates f and evidence timing
+    if result is not expected:
+        raise DomainError(
+            f"result {result.value!r} contradicts the precedence-determined "
+            f"{expected.value!r} for {f!r}"
+        )
