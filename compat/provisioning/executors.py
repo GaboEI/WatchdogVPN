@@ -186,8 +186,10 @@ class CanaryExecutor(Executor):
             return VerificationResult(status="verification_failed", error_kind="path_policy_violation", error=str(exc))
         try:
             identity = stat_identity(validated)
-        except OSError as exc:
+        except FileNotFoundError as exc:
             return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
+        except OSError as exc:
+            return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
         if identity["is_symlink"]:
             return VerificationResult(status="verification_failed", error_kind="unexpected_symlink", error="target is a symlink")
         if not identity["is_regular"]:
@@ -198,8 +200,10 @@ class CanaryExecutor(Executor):
             return VerificationResult(status="verification_failed", error_kind="unexpected_nlink", error="st_nlink is %d, expected 1" % identity["nlink"])
         try:
             actual = validated.read_bytes()
+        except FileNotFoundError as exc:
+            return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
         except OSError as exc:
-            return VerificationResult(status="verification_failed", error_kind="unreadable", error=str(exc))
+            return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
         expected_sha256 = step.intent["content_sha256"]
         actual_sha256 = hashlib.sha256(actual).hexdigest()
         if actual_sha256 != expected_sha256:
@@ -240,8 +244,10 @@ class CanaryExecutor(Executor):
                 return VerificationResult(status="verification_failed", error_kind="path_policy_violation", error=str(exc))
             try:
                 identity = stat_identity(validated)
-            except OSError as exc:
+            except FileNotFoundError as exc:
                 return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
+            except OSError as exc:
+                return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
             if identity["is_symlink"] or not identity["is_regular"]:
                 return VerificationResult(status="verification_failed", error_kind="unexpected_file_type", error=str(validated))
             if identity["nlink"] != 1:
@@ -249,8 +255,10 @@ class CanaryExecutor(Executor):
             expected_sha256 = step.intent.get("content_sha256")
             try:
                 actual_sha256 = hashlib.sha256(validated.read_bytes()).hexdigest()
+            except FileNotFoundError as exc:
+                return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
             except OSError as exc:
-                return VerificationResult(status="verification_failed", error_kind="unreadable", error=str(exc))
+                return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
             if expected_sha256 is not None and actual_sha256 != expected_sha256:
                 return VerificationResult(status="verification_failed", error_kind="content_mismatch", error="sha256 mismatch at %s" % validated)
         return VerificationResult(status="verified", evidence={"steps": len(plan.steps)})
@@ -259,6 +267,12 @@ class CanaryExecutor(Executor):
         return "canary marker and companion files present with expected content, permissions and no symlinks"
 
     def inspect_step(self, step: StepRecord, context: ExecutionContext) -> Mapping[str, object]:
+        """Read-only inspection used by resume/recovery decisions. A genuine
+        absence (``FileNotFoundError``) is reported as ``exists: False``; any
+        other ``OSError`` (permission denied, stale handle, I/O error, ...)
+        is reported as an explicit ``inspect_error`` with ``exists: None`` --
+        callers must never treat that as confirmed absence, which would let
+        recovery retry-from-scratch over a resource it simply couldn't see."""
         path = Path(step.target)
         try:
             validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
@@ -266,15 +280,19 @@ class CanaryExecutor(Executor):
             return {"exists": None, "is_symlink": None, "content_matches": None, "path_policy_error": str(exc)}
         try:
             lstat_result = validated.lstat()
-        except OSError:
+        except FileNotFoundError:
             return {"exists": False, "is_symlink": False, "content_matches": None}
+        except OSError as exc:
+            return {"exists": None, "is_symlink": None, "content_matches": None, "inspect_error": str(exc)}
         if stat.S_ISLNK(lstat_result.st_mode):
             return {"exists": True, "is_symlink": True, "content_matches": None}
         expected_sha256 = step.intent.get("content_sha256")
         try:
             actual_sha256 = hashlib.sha256(validated.read_bytes()).hexdigest()
-        except OSError:
-            return {"exists": True, "is_symlink": False, "content_matches": None}
+        except FileNotFoundError:
+            return {"exists": False, "is_symlink": False, "content_matches": None}
+        except OSError as exc:
+            return {"exists": True, "is_symlink": False, "content_matches": None, "inspect_error": str(exc)}
         return {"exists": True, "is_symlink": False, "content_matches": actual_sha256 == expected_sha256}
 
 

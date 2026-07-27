@@ -29,6 +29,7 @@ class TransactionState(Enum):
     RECOVERING = "recovering"
     UNINSTALL_PLANNED = "uninstall_planned"
     UNINSTALLING = "uninstalling"
+    REVOKING_OWNERSHIP = "revoking_ownership"
     UNINSTALLED = "uninstalled"
     UNINSTALL_FAILED = "uninstall_failed"
 
@@ -73,10 +74,13 @@ TRANSACTION_TRANSITIONS: Mapping[TransactionState, frozenset[TransactionState]] 
             TransactionState.VERIFYING,
             TransactionState.ROLLING_BACK,
             TransactionState.RECOVERY_REQUIRED,
+            TransactionState.UNINSTALLING,
+            TransactionState.REVOKING_OWNERSHIP,
         }
     ),
     TransactionState.UNINSTALL_PLANNED: frozenset({TransactionState.UNINSTALLING}),
-    TransactionState.UNINSTALLING: frozenset({TransactionState.UNINSTALLED, TransactionState.UNINSTALL_FAILED}),
+    TransactionState.UNINSTALLING: frozenset({TransactionState.REVOKING_OWNERSHIP, TransactionState.UNINSTALL_FAILED}),
+    TransactionState.REVOKING_OWNERSHIP: frozenset({TransactionState.UNINSTALLED, TransactionState.UNINSTALL_FAILED}),
     TransactionState.UNINSTALLED: frozenset(),
     TransactionState.UNINSTALL_FAILED: frozenset({TransactionState.RECOVERY_REQUIRED}),
 }

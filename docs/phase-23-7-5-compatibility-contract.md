@@ -903,17 +903,117 @@ without starting 23.7.5.6b:
   --apply`/`uninstall --apply`/`recover`; `plan`, `prepare`/`uninstall` without
   `--apply`, and `status` create neither the sandbox nor the provisioning state root.
 
-### Gates and evidence
+### Second security/correctness hardening round
+
+A second, deeper maintainer review of the first hardening round found further real
+gaps, closed in the same `compat/provisioning` package on top of the already-committed
+first round, again without starting 23.7.5.6b:
+
+1. **Ownership revocation phase**: uninstall now has an explicit `REVOKING_OWNERSHIP`
+   transaction state between `UNINSTALLING` and `UNINSTALLED`. The uninstall journal
+   persists an exact, immutable snapshot of the ownership set that authorized the plan
+   (`TransactionJournal.owned_snapshot`), which participates in the uninstall
+   `plan_digest` (`digest.canonical_ownership_record_mapping`) so any tampering with
+   that snapshot at rest is detected. Recovery reconstructs the uninstall plan from this
+   journal-owned snapshot -- never the live ownership file, which may already be gone
+   by the time recovery runs. Once all resources are confirmed removed,
+   `engine._revoke_ownership_and_verify()` durably deletes the ownership file and
+   re-verifies its absence (idempotent, safely retriable) before the transaction may
+   ever reach `UNINSTALLED`. `engine.validate_ownership_authority()` additionally
+   rejects any ownership record still citing a source transaction whose OWN uninstall
+   already progressed past resource removal (`_capability_has_completed_uninstall`) --
+   stale bookkeeping left behind by a crash between "resources gone" and "ownership
+   revoked" is never trusted as authority again, even if a since-recreated file happens
+   to match the recorded hash. The maintainer's exact mandatory security scenario
+   (install, interrupt uninstall between removal and revocation, manually recreate the
+   removed file with the identical hash, uninstall again) is covered by a dedicated
+   test: the manual file survives untouched and the result is `ownership_invalid`.
+2. **Symlink/uid-safe private state and lock**: `storage.ensure_private_dir()` no
+   longer trusts `Path.is_dir()` (which follows symlinks); every directory component is
+   opened with `O_NOFOLLOW` and verified via `fstat` (real directory, owned by our own
+   uid, `0700` -- tightened via `fchmod` on the already-verified descriptor, never a
+   separate lstat-then-chmod race window) before ever being written into. The lock file
+   is opened with `O_RDWR|O_CREAT|O_NOFOLLOW`, and `fstat`-verified (regular file,
+   `st_nlink == 1`, owned by our uid) BEFORE any `fchmod` or content write -- a symlink
+   (`ELOOP`), a directory (`EISDIR`) or a hard-linked victim file are all rejected
+   untouched, never chmod'd or overwritten. A newly created directory's parent is
+   `fsync`'d.
+3. **`UNDOING` as an explicit recovery boundary**: this closed a real, previously
+   undetected bug -- `_run_rollback()`'s membership check against
+   `UNDOABLE_STEP_STATES` deliberately excludes `UNDOING` (it is not itself undoable,
+   it is *in progress*), so a step left in `UNDOING` by a prior crash was silently
+   skipped by the loop, letting `_run_rollback` report `rollback_ok=True` while that
+   step's real resource was never confirmed undone. `_run_rollback` now inspects a
+   resumed `UNDOING` step's real state first: absent means the undo already completed
+   and only the `UNDONE` write never landed; present-and-matching means retry; a
+   symlink, a content divergence, or an inspection error all become a durable
+   `UNDO_FAILED` (residual), never a silent skip.
+4. **`DurabilityError` after a visible effect**: a directory-fsync failure right after
+   a genuine create is no longer folded into a generic `apply_failed` (which would
+   attempt an automatic rollback of a step not even in `UNDOABLE_STEP_STATES`,
+   potentially leaking the file with zero residuals reported). It now drives the
+   transaction straight to `RECOVERY_REQUIRED` with the step deliberately left exactly
+   where its write-ahead journal entry already placed it (`APPLYING`), so the existing
+   `APPLYING`-resume recovery machinery -- unchanged -- correctly resolves it on the
+   next pass (re-verify and finish committing, since the file is really there). A new
+   `PrepareStatus.RECOVERY_REQUIRED` result never reports a clean `PREPARATION_FAILED`,
+   always has non-empty `residuals`, and a later real (unmocked) recovery pass
+   demonstrably completes to `COMMITTED`.
+5. **Never confusing errors with absence**: every place that decided "does this
+   resource exist" now distinguishes a genuine `FileNotFoundError` from any other
+   `OSError` (permission denied, stale handle, I/O error). `CanaryExecutor.inspect_step`
+   reports a non-`FileNotFoundError` as an explicit `inspect_error` (`exists: None`),
+   never `exists: False`; `_run_uninstall_loop`'s own inspection and its final
+   "verify only absence" check use a single explicit `os.lstat` catching only
+   `FileNotFoundError`, never `Path.exists()`/`Path.is_symlink()` (which silently
+   swallow any `OSError` into `False`). No injected `PermissionError`, `OSError(EIO)` or
+   `OSError(ESTALE)` can result in a false `VERIFIED`/`UNINSTALLED`.
+6. **Idempotency tied to the full plan**: `already_provisioned` now additionally loads
+   the source transaction's own journal and requires its `plan_digest` to match
+   `compute_plan_digest(plan)` for the CURRENT decision exactly -- since `plan_digest`
+   already encodes capability/dependency id, resolved target, architecture, support
+   classification, selected method, executor and selected asset together with the step
+   list, a change in any of those fields since commit now correctly falls through to
+   `ownership_conflict` instead of a stale `already_provisioned`.
+7. **Full metadata and drift detection**: `_finalize_provenance()` now re-validates
+   each resource's path and re-inspects its real identity immediately before commit;
+   a stat failure raises instead of ever recording fabricated `None` metadata, driving
+   the transaction to `RECOVERY_REQUIRED` rather than a false `COMMITTED`. Uninstall now
+   compares each resource's current uid/gid/mode/hard-link-count/canonical path against
+   its `OwnershipRecord` (`engine._detect_ownership_drift`) immediately before the
+   unlink; any drift (a `chmod`, a `chown`, an added hard link, or a re-pointed path)
+   refuses the removal with no unlink attempted (content-hash drift was already
+   detected by the pre-existing `remove_file_if_owned` check).
+8. **Mandatory canary confinement policy**: `paths.validate_lab_root()` is a new,
+   independent confinement check (deliberately not `validate_target_path`, which
+   requires its allowed root to already exist) applied to the `--sandbox`/
+   `--state-root` CLI arguments in `tools/compat_provision.py` before either argument
+   is ever touched: rejects a relative path, `..`, the filesystem root, every reserved
+   system root (`/etc`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/boot`, `/dev`,
+   `/proc`, `/sys`), the real product's own state directory
+   (`/var/lib/watchdogvpn`) or anything under it, `$HOME` itself (a private
+   subdirectory *under* `$HOME` remains allowed, since one test VM's `tmpfiles.d`
+   empties `/tmp` on every boot), and a symlink at the leaf or any existing ancestor
+   component -- checked with real `os.open`/`is_symlink()` before ever calling
+   `Path.resolve()` (which would otherwise silently follow a symlink). Both CLI
+   arguments are now validated before either is ever created, closing a real ordering
+   bug caught by the new tests themselves (the original code created the sandbox
+   before validating `--state-root`).
 
 L1 (`tests/test_compat_transactional_provisioning.py`) covers the maintainer's full
 35-item checklist plus offline/network-declaration and executor-exception-containment
-cases, plus a further set of tests for every point in the hardening round above
-(identifier validation, strict ownership deserialization, path-policy choke points,
-private storage permissions, durability-failure handling, ownership metadata capture,
-`selected_asset` persistence/tampering, ownership-authority binding including the
-pre-commit-publication window, exact idempotency, lock-protected recovery, and the
-uninstall digest/state-machine boundaries including the discovered
-`ExecutorNotRegisteredError` recovery bug) -- 76 tests total in this module. The standalone harness
+cases, the first hardening round (identifier validation, strict ownership
+deserialization, path-policy choke points, private storage permissions,
+durability-failure handling, ownership metadata capture, `selected_asset`
+persistence/tampering, ownership-authority binding including the pre-commit-publication
+window, exact idempotency, lock-protected recovery, and the uninstall digest/
+state-machine boundaries including the discovered `ExecutorNotRegisteredError` recovery
+bug), and now the second hardening round above (ownership revocation including the
+mandatory security scenario, symlink/uid-safe state and lock, the `UNDOING` recovery
+boundary including the newly discovered rollback-skip bug, `DurabilityError` after a
+visible effect, errors never confused with absence, idempotency tied to the full plan,
+full metadata/drift detection, and canary confinement including the newly discovered
+validation-ordering bug) -- 118 tests total in this module. The standalone harness
 (`tests/vm/phase23_7_5_6a_transactional_provisioning_validation.py`) reproduces, with
 real separate OS processes (including two genuine `SIGKILL`s), lock exclusion between
 processes, apply+verify, idempotent re-apply, rollback via an injected failure, both
@@ -961,6 +1061,27 @@ list, repository sources, running-service set, and `/var/lib/watchdogvpn` conten
 were identical before and after (network diff limited to the DHCP lease timer, as
 before); real filesystem permissions under the persistent state root were confirmed
 `0700` for directories and `0600` for the lock/journal/ownership files.
+
+For the second hardening round, `worker`'s `--kill-after` gained two further
+checkpoints exercising the `UNDOING` recovery boundary for real:
+`undoing_before_unlink` (step 0 applied+verified, step 1 forced to fail, the
+transaction moved to `rolling_back`, step 0 durably written to `UNDOING`, then killed
+before the real unlink of its resource is even attempted) and
+`undoing_after_unlink_before_undone` (same, but the real unlink genuinely happens
+first, then the kill lands before the durable `UNDONE` write). `prepare-uninstall-
+reboot-checkpoint`/`recover-uninstall-after-reboot` gained a mandatory `--checkpoint`
+flag with three values -- `after_unlink_before_applied` (the original scenario),
+`after_verify_before_revoke` (both resources genuinely removed and verified, the
+journal durably moved to `revoking_ownership`, then killed before ownership is ever
+actually revoked) and `after_revoke_before_uninstalled` (same, but ownership genuinely
+revoked for real, then killed before the durable `uninstalled` write) -- each using its
+own dedicated `capability_id` so multiple checkpoints can be prepared independently
+before a single shared reboot, exactly as the maintainer's correction allowed.
+
+### Second hardening round: real VM re-validation
+
+TODO(23.7.5.6a-round-2-vm): filled in after the maintainer-authorized real reboot
+re-validation on `wdvpn-linuxmint-23-6-7` against this round's commit completes.
 
 ### Out of scope (unchanged in this task)
 

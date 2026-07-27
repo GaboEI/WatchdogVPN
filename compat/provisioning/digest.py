@@ -11,7 +11,7 @@ from collections.abc import Mapping
 import hashlib
 import json
 
-from compat.provisioning.model import ProvisioningPlan, UninstallPlan
+from compat.provisioning.model import OwnershipRecord, ProvisioningPlan, UninstallPlan
 
 
 def canonical_plan_mapping(plan: ProvisioningPlan) -> dict:
@@ -46,10 +46,36 @@ def compute_plan_digest(plan: ProvisioningPlan) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def canonical_ownership_record_mapping(record: OwnershipRecord) -> dict:
+    candidate = record.candidate
+    return {
+        "capability_id": record.capability_id,
+        "product_owned": record.product_owned,
+        "created_by_transaction": record.created_by_transaction,
+        "executor_id": record.executor_id,
+        "executor_version": record.executor_version,
+        "candidate": {
+            "artifact_type": candidate.artifact_type,
+            "resource_identity": candidate.resource_identity,
+            "pre_existing": candidate.pre_existing,
+            "method_id": candidate.method_id,
+            "integrity": candidate.integrity,
+            "uid": candidate.uid,
+            "gid": candidate.gid,
+            "mode": candidate.mode,
+        },
+    }
+
+
 def canonical_uninstall_plan_mapping(plan: UninstallPlan) -> dict:
     return {
         "capability_id": plan.capability_id,
         "target_transaction_id": plan.target_transaction_id,
+        # The exact ownership set that authorized this plan participates in
+        # the digest: recovery must detect any divergence between the
+        # journal's immutable snapshot and what it originally authorized,
+        # never silently re-deriving a different authorization set.
+        "ownership_records": [canonical_ownership_record_mapping(record) for record in plan.ownership_records],
         "steps": [
             {
                 "sequence": step.sequence,

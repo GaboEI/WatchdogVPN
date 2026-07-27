@@ -14,6 +14,7 @@ from collections.abc import Mapping as MappingABC
 import dataclasses
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 from typing import Mapping, Sequence
@@ -91,6 +92,7 @@ class TransactionJournal:
     steps: tuple[StepRecord, ...]
     selected_asset: Mapping[str, object] | None = None
     ownership_candidates: tuple[Mapping[str, object], ...] = ()
+    owned_snapshot: tuple[OwnershipRecord, ...] = ()
     provenance: Mapping[str, object] | None = None
     failure: Mapping[str, object] | None = None
     recovery: Mapping[str, object] | None = None
@@ -167,7 +169,9 @@ def read_journal(state_root: Path, transaction_id: str) -> TransactionJournal:
 
 def list_transaction_ids(state_root: Path) -> list[str]:
     directory = transactions_dir(state_root)
-    if not directory.exists():
+    try:
+        os.lstat(directory)
+    except FileNotFoundError:
         return []
     return sorted(entry.stem for entry in directory.glob("*.json"))
 
@@ -195,11 +199,15 @@ def write_ownership_records(state_root: Path, capability_id: str, records: Seque
 
 def read_ownership_records(state_root: Path, capability_id: str) -> list[OwnershipRecord]:
     path = ownership_path(state_root, capability_id)
-    if not path.exists():
-        return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise JournalError("cannot read ownership records %s: %s" % (path, exc)) from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
         raise JournalError("cannot read ownership records %s: %s" % (path, exc)) from exc
     if not isinstance(data, list):
         raise JournalError("ownership records %s must be a JSON array" % path)
@@ -316,6 +324,7 @@ def to_jsonable(journal: TransactionJournal) -> dict:
         "steps": [_step_to_jsonable(step) for step in journal.steps],
         "selected_asset": redact_for_journal(journal.selected_asset) if journal.selected_asset is not None else None,
         "ownership_candidates": [redact_for_journal(item) for item in journal.ownership_candidates],
+        "owned_snapshot": [redact_for_journal(_ownership_to_jsonable(record)) for record in journal.owned_snapshot],
         "provenance": redact_for_journal(journal.provenance) if journal.provenance is not None else None,
         "failure": redact_for_journal(journal.failure) if journal.failure is not None else None,
         "recovery": redact_for_journal(journal.recovery) if journal.recovery is not None else None,
@@ -365,6 +374,7 @@ def from_jsonable(data: object) -> TransactionJournal:
             steps=tuple(_step_from_jsonable(item) for item in _require_list(data, "steps")),
             selected_asset=_require_optional_mapping(data, "selected_asset"),
             ownership_candidates=tuple(_require_list(data, "ownership_candidates", default=[])),
+            owned_snapshot=tuple(_ownership_from_jsonable(item) for item in _require_list(data, "owned_snapshot", default=[])),
             provenance=data.get("provenance"),
             failure=data.get("failure"),
             recovery=data.get("recovery"),

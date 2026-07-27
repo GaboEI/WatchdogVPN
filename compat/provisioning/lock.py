@@ -12,18 +12,53 @@ import errno
 import fcntl
 import json
 import os
+import stat as stat_module
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from compat.provisioning.errors import ProvisionerLockHeldError
+from compat.provisioning.errors import PathPolicyError, ProvisionerLockHeldError
 from compat.provisioning.storage import ensure_private_dir
 
 LOCK_FILE_NAME = "provisioner.lock"
 DEFAULT_TIMEOUT_SECONDS = 5.0
 DEFAULT_POLL_INTERVAL_SECONDS = 0.05
+
+_LOCK_OPEN_FLAGS = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _open_and_verify_lock_fd(lock_path: Path) -> int:
+    """Open the lock file with ``O_NOFOLLOW`` and verify its identity via
+    ``fstat`` BEFORE any ``fchmod`` or content mutation -- a symlink at
+    ``lock_path`` (ELOOP), a directory (``IsADirectoryError``), a hardlinked
+    file (``st_nlink != 1``), or a file owned by a different uid must all be
+    rejected untouched; the victim they point to must never be chmod'd,
+    truncated or written to."""
+    expected_uid = os.getuid()
+    try:
+        fd = os.open(str(lock_path), _LOCK_OPEN_FLAGS, 0o600)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise PathPolicyError("lock path is a symlink, refusing: %s" % lock_path) from exc
+        if exc.errno == errno.EISDIR:
+            raise PathPolicyError("lock path is a directory, refusing: %s" % lock_path) from exc
+        raise PathPolicyError("cannot open lock path %s: %s" % (lock_path, exc)) from exc
+    try:
+        st = os.fstat(fd)
+        if not stat_module.S_ISREG(st.st_mode):
+            raise PathPolicyError("lock path %s is not a regular file, refusing" % lock_path)
+        if st.st_nlink != 1:
+            raise PathPolicyError("lock path %s has unexpected hard link count %d, refusing" % (lock_path, st.st_nlink))
+        if st.st_uid != expected_uid:
+            raise PathPolicyError("lock path %s is owned by uid %d, expected %d, refusing" % (lock_path, st.st_uid, expected_uid))
+        if stat_module.S_IMODE(st.st_mode) != 0o600:
+            os.fchmod(fd, 0o600)
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
 
 
 @contextmanager
@@ -45,9 +80,9 @@ def acquire_provisioner_lock(
     """
     lock_path = Path(lock_path)
     ensure_private_dir(lock_path.parent)
-    handle = open(lock_path, "a+")
+    fd = _open_and_verify_lock_fd(lock_path)
+    handle = os.fdopen(fd, "r+", encoding="utf-8")
     try:
-        os.fchmod(handle.fileno(), 0o600)
         deadline = time.monotonic() + timeout
         while True:
             try:

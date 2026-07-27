@@ -30,6 +30,10 @@ CANARY_FORBIDDEN_ROOTS: tuple[Path, ...] = (
     Path("/sbin"),
     Path("/lib"),
     Path("/lib64"),
+    Path("/boot"),
+    Path("/dev"),
+    Path("/proc"),
+    Path("/sys"),
 )
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -175,3 +179,65 @@ def stat_identity(path: Path) -> dict:
         "is_symlink": stat_module.S_ISLNK(lstat_result.st_mode),
         "is_regular": stat_module.S_ISREG(lstat_result.st_mode),
     }
+
+
+def _real_product_state_dir() -> Path | None:
+    """The real product's own system state directory (``/var/lib/watchdogvpn``),
+    imported lazily to avoid an import-time dependency from ``compat`` onto
+    ``config``. Returns ``None`` if that module is unavailable for any
+    reason -- the lab-confinement check simply skips that one comparison
+    rather than failing to import."""
+    try:
+        from config import paths as config_paths
+    except ImportError:
+        return None
+    return getattr(config_paths, "SYSTEM_CONFIG_DIR", None)
+
+
+def validate_lab_root(path: Path, *, label: str) -> Path:
+    """Confinement policy for the canary lab harness's ``--sandbox``/
+    ``--state-root`` CLI arguments -- deliberately stricter and independent
+    from ``validate_target_path`` (which requires its allowed root to
+    already exist): these arguments may legitimately name a path that does
+    not exist yet, so every check here must work before any mutation.
+
+    Rejects: a relative path, a ``..`` component, the filesystem root, any
+    of the reserved system roots (``/etc``, ``/usr``, ``/bin``, ``/sbin``,
+    ``/lib``, ``/lib64``, ``/boot``, ``/dev``, ``/proc``, ``/sys``), the
+    real product's own state directory (``/var/lib/watchdogvpn``) or
+    anything under it, ``$HOME`` itself (a private subdirectory *under*
+    ``$HOME`` remains allowed, since some hosts wipe ``/tmp`` on every
+    boot), and a symlink at the leaf or at any existing ancestor component
+    (checked BEFORE any resolution, which would otherwise silently follow
+    it). Returns the resolved, canonical path only once every check has
+    passed."""
+    raw = Path(path)
+    if not raw.is_absolute():
+        raise PathPolicyError("%s must be an absolute path: %s" % (label, raw))
+    if ".." in raw.parts:
+        raise PathPolicyError("%s must not contain '..' components: %s" % (label, raw))
+
+    current = Path(raw.anchor)
+    for part in raw.relative_to(raw.anchor).parts:
+        current = current / part
+        if current.is_symlink():
+            raise PathPolicyError("%s has a symlink component, refusing: %s" % (label, current))
+        if not current.exists():
+            break
+
+    resolved = raw.resolve(strict=False)
+    if resolved == Path("/"):
+        raise PathPolicyError("%s must not be the filesystem root" % label)
+    if resolved == Path.home():
+        raise PathPolicyError("%s must not be $HOME itself (a subdirectory under it is fine): %s" % (label, raw))
+    for forbidden in CANARY_FORBIDDEN_ROOTS:
+        if resolved == forbidden or _is_under(resolved, forbidden):
+            raise PathPolicyError("%s must not be a reserved system path (%s): %s" % (label, forbidden, raw))
+    real_product_state_dir = _real_product_state_dir()
+    if real_product_state_dir is not None:
+        resolved_product_dir = Path(real_product_state_dir).resolve(strict=False)
+        if resolved == resolved_product_dir or _is_under(resolved, resolved_product_dir):
+            raise PathPolicyError(
+                "%s must not overlap the real product state directory %s: %s" % (label, resolved_product_dir, raw)
+            )
+    return resolved

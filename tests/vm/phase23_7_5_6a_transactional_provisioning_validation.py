@@ -120,7 +120,9 @@ def cmd_worker(args) -> int:
         journal = journal.with_state(TransactionState.APPLYING, now=_now())
         journal_mod.write_journal(state_root, journal)
 
-        if args.kill_after == "rolling_back_pending":
+        if args.kill_after in (
+            "rolling_back_pending", "undoing_before_unlink", "undoing_after_unlink_before_undone",
+        ):
             # Step 0 applies and verifies for real (its resource stays on
             # disk); step 1 is forced to fail so the transaction must move
             # to rolling_back with step 0's undo still pending when killed.
@@ -154,6 +156,24 @@ def cmd_worker(args) -> int:
 
             journal = journal.with_state(TransactionState.ROLLING_BACK, now=_now())
             journal_mod.write_journal(state_root, journal)  # durable: step 0's resource still present, undo pending
+
+            if args.kill_after == "rolling_back_pending":
+                os.kill(os.getpid(), signal.SIGKILL)  # never returns
+
+            # Both remaining checkpoints resume from step 0 already durably
+            # in UNDOING -- the exact "UNDOING" recovery boundary (point 3).
+            record0 = record0.with_state(StepState.UNDOING)
+            journal = journal.with_step(record0)
+            journal_mod.write_journal(state_root, journal)  # durable: UNDOING written, real unlink not yet attempted
+
+            if args.kill_after == "undoing_before_unlink":
+                os.kill(os.getpid(), signal.SIGKILL)  # never returns
+
+            # undoing_after_unlink_before_undone: perform the REAL unlink
+            # (bypassing undo_step's own journal write for UNDONE), then
+            # crash before that durable transition ever lands.
+            marker_path = Path(record0.undo_record["path"])
+            remove_file_if_owned(marker_path, expected_sha256=record0.undo_record.get("expected_sha256"))
             os.kill(os.getpid(), signal.SIGKILL)  # never returns
 
         step0 = plan.steps[0]
@@ -435,7 +455,7 @@ def cmd_recover_after_reboot(args) -> int:
     evidence.record("post_recovery_sandbox", files=post_recovery_sandbox)
 
     remaining_for_capability = [f for f in post_recovery_sandbox if f.startswith("cap_vm_reboot.")]
-    if checkpoint == "rolling_back_pending":
+    if checkpoint in ("rolling_back_pending", "undoing_before_unlink", "undoing_after_unlink_before_undone"):
         expected_action, expected_state = "rollback", TransactionState.PREPARATION_FAILED
         ok = decision.action.value == expected_action and final.state == expected_state and not remaining_for_capability
     else:
@@ -452,16 +472,43 @@ def cmd_recover_after_reboot(args) -> int:
     return 0
 
 
+UNINSTALL_CHECKPOINTS = ("after_unlink_before_applied", "after_verify_before_revoke", "after_revoke_before_uninstalled")
+
+
+def _find_pending_uninstall_transaction_id(state_root: Path, capability_id: str) -> str:
+    """The uninstall journal's own transaction_id is a freshly minted random
+    id (see engine._build_uninstall_plan), never derived from the checkpoint
+    name -- find it by scanning for the one pending "uninstall" journal that
+    targets this exact capability_id."""
+    for transaction_id in journal_mod.list_pending_transaction_ids(state_root):
+        journal = journal_mod.read_journal(state_root, transaction_id)
+        if journal.operation == "uninstall" and journal.capability_id == capability_id:
+            return transaction_id
+    raise SystemExit("no pending uninstall transaction found for capability_id=%r" % capability_id)
+
+
 def cmd_uninstall_worker(args) -> int:
-    """Internal: starts a real uninstall of an already-committed capability,
-    performs the REAL unlink of its marker resource, then self-kills with
-    SIGKILL before the journal ever records that step as APPLIED -- the
-    exact "uninstall interrupted after unlink and before journal write"
-    boundary."""
+    """Internal: starts a real uninstall of an already-committed capability
+    and self-kills with SIGKILL at one of three real boundaries:
+
+    after_unlink_before_applied  -- the REAL unlink of the marker resource
+                                     happens, then crash before the journal
+                                     ever records that step as APPLIED.
+    after_verify_before_revoke   -- both resources are REALLY removed and
+                                     verified (all steps VERIFIED), the
+                                     journal is durably moved to
+                                     REVOKING_OWNERSHIP, then crash before
+                                     ownership is ever actually revoked.
+    after_revoke_before_uninstalled -- same, but ownership IS actually
+                                     revoked for real, then crash before the
+                                     journal ever records UNINSTALLED.
+    """
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
     capability_id = args.capability_id
-    transaction_id = "vm-uninstall-reboot"
+    checkpoint = args.checkpoint
+    env = _env(sandbox, state_root)
+    transaction_id = "vm-uninstall-reboot-%s" % checkpoint
     with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(state_root), transaction_id=transaction_id, timeout=10.0):
         owned = [r for r in journal_mod.read_ownership_records(state_root, capability_id) if r.product_owned]
         plan = engine._build_uninstall_plan(capability_id, owned)
@@ -470,63 +517,82 @@ def cmd_uninstall_worker(args) -> int:
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
         journal_mod.write_journal(state_root, journal)
 
-        marker_index = next(i for i, s in enumerate(plan.steps) if s.intent["resource_identity"].endswith(".marker"))
-        record = journal.step(marker_index)
-        record = record.with_state(StepState.APPLYING, started_at=_now())
-        journal = journal.with_step(record)
-        journal_mod.write_journal(state_root, journal)  # write-ahead: durable before the real unlink
+        if checkpoint == "after_unlink_before_applied":
+            marker_index = next(i for i, s in enumerate(plan.steps) if s.intent["resource_identity"].endswith(".marker"))
+            record = journal.step(marker_index)
+            record = record.with_state(StepState.APPLYING, started_at=_now())
+            journal = journal.with_step(record)
+            journal_mod.write_journal(state_root, journal)  # write-ahead: durable before the real unlink
+            path = Path(record.intent["resource_identity"])
+            remove_file_if_owned(path, expected_sha256=record.intent.get("expected_sha256"))  # the REAL unlink happens here
+            os.kill(os.getpid(), signal.SIGKILL)  # never returns: crash before APPLIED is ever journaled
 
-        path = Path(record.intent["resource_identity"])
-        remove_file_if_owned(path, expected_sha256=record.intent.get("expected_sha256"))  # the REAL unlink happens here
+        # after_verify_before_revoke / after_revoke_before_uninstalled: run
+        # the real removal loop to completion (both resources genuinely
+        # gone, both steps VERIFIED) before reaching the ownership-revocation
+        # boundary itself.
+        journal, ok, residuals = engine._run_uninstall_loop(state_root, journal, env.context)
+        if not ok:
+            raise SystemExit("uninstall-worker's real removal loop did not complete: %r" % residuals)
+        journal = journal.with_state(TransactionState.REVOKING_OWNERSHIP, now=_now())
+        journal_mod.write_journal(state_root, journal)  # durable: all resources gone, ownership not yet revoked
 
-        os.kill(os.getpid(), signal.SIGKILL)  # never returns: crash before APPLIED is ever journaled
+        if checkpoint == "after_verify_before_revoke":
+            os.kill(os.getpid(), signal.SIGKILL)  # never returns
+
+        # after_revoke_before_uninstalled: perform the REAL revocation, then
+        # crash before the journal ever records UNINSTALLED.
+        revoked, revoke_error = engine._revoke_ownership_and_verify(state_root, capability_id)
+        if not revoked:
+            raise SystemExit("uninstall-worker's real ownership revocation did not complete: %s" % revoke_error)
+        os.kill(os.getpid(), signal.SIGKILL)  # never returns
     return 0
 
 
 def cmd_prepare_uninstall_reboot_checkpoint(args) -> int:
     """Commits a real prepare transaction, then runs a real subprocess that
-    starts uninstalling it and SIGKILLs itself immediately after the real
-    unlink but before the journal records APPLIED for that step. Reboot the
-    host for real afterward, then run recover-uninstall-after-reboot."""
+    starts uninstalling it and SIGKILLs itself at the requested checkpoint
+    (see cmd_uninstall_worker). Reboot the host for real afterward, then run
+    recover-uninstall-after-reboot with the same --checkpoint. Each
+    checkpoint uses its own dedicated capability_id, so several checkpoints
+    can be prepared independently before a single shared reboot."""
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
     sandbox.mkdir(parents=True, exist_ok=True)
-    capability_id = "cap_vm_uninstall_reboot"
-    evidence_path = Path(args.evidence) if args.evidence else (state_root.parent / "uninstall_reboot_prep_evidence.json")
+    checkpoint = args.checkpoint
+    capability_id = "cap_vm_uninstall_reboot_%s" % checkpoint
+    evidence_path = Path(args.evidence) if args.evidence else (state_root.parent / ("uninstall_reboot_prep_evidence_%s.json" % checkpoint))
     evidence = Evidence(evidence_path)
     evidence.record("boot_id_before_reboot", boot_id=_read_boot_id())
 
     env = _env(sandbox, state_root)
-    prepare_outcome = engine.prepare(_decision(capability_id, "dep_vm_uninstall_reboot"), env, apply=True)
+    prepare_outcome = engine.prepare(_decision(capability_id, "dep_vm_uninstall_reboot_%s" % checkpoint), env, apply=True)
     evidence.record("prepare_committed", status=prepare_outcome.status.value, transaction_id=prepare_outcome.transaction_id)
     if prepare_outcome.status.value != "committed":
         raise SystemExit("prepare for uninstall-reboot scenario did not commit: %r" % prepare_outcome)
 
     argv = [
         sys.executable, __file__, "--sandbox", str(sandbox), "--state-root", str(state_root),
-        "uninstall-worker", "--capability-id", capability_id,
+        "uninstall-worker", "--capability-id", capability_id, "--checkpoint", checkpoint,
     ]
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
     killed_by_sigkill = proc.returncode == -signal.SIGKILL
     evidence.record(
-        "uninstall_worker_killed", returncode=proc.returncode, killed_by_sigkill=killed_by_sigkill,
+        "uninstall_worker_killed", checkpoint=checkpoint, returncode=proc.returncode, killed_by_sigkill=killed_by_sigkill,
         stdout=proc.stdout[-2000:], stderr=proc.stderr[-2000:],
     )
     if not killed_by_sigkill:
         raise SystemExit("uninstall worker did not die by SIGKILL (rc=%s); aborting harness" % proc.returncode)
 
-    pending_ids = journal_mod.list_pending_transaction_ids(state_root)
-    uninstall_ids = [tid for tid in pending_ids if journal_mod.read_journal(state_root, tid).operation == "uninstall"]
-    if len(uninstall_ids) != 1:
-        raise SystemExit("expected exactly one pending uninstall transaction, found: %r" % uninstall_ids)
-    transaction_id = uninstall_ids[0]
+    transaction_id = _find_pending_uninstall_transaction_id(state_root, capability_id)
     pending = journal_mod.read_journal(state_root, transaction_id)
     evidence.record("pre_reboot_journal_state", transaction_id=transaction_id, state=pending.state.value, plan_digest=pending.plan_digest)
     evidence.record("pre_reboot_sandbox", files=sorted(p.name for p in sandbox.iterdir()) if sandbox.exists() else [])
     evidence.flush()
     print(
-        "prepared pending uninstall transaction %s (state=%s); now reboot the HOST OS for real "
-        "(e.g. `sudo reboot`), log back in, then run: recover-uninstall-after-reboot" % (transaction_id, pending.state.value)
+        "prepared pending uninstall transaction %s at checkpoint %s (state=%s); now reboot the HOST OS for real "
+        "(e.g. `sudo reboot`), log back in, then run: recover-uninstall-after-reboot --checkpoint %s"
+        % (transaction_id, checkpoint, pending.state.value, checkpoint)
     )
     return 0
 
@@ -534,22 +600,16 @@ def cmd_prepare_uninstall_reboot_checkpoint(args) -> int:
 def cmd_recover_uninstall_after_reboot(args) -> int:
     """Does NOT wipe sandbox/state-root: recovers the exact pending uninstall
     transaction prepare-uninstall-reboot-checkpoint left behind before a
-    real reboot."""
+    real reboot, for the given --checkpoint."""
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
-    evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / "uninstall-recovery-after-reboot.json"))
+    checkpoint = args.checkpoint
+    capability_id = "cap_vm_uninstall_reboot_%s" % checkpoint
+    evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / ("uninstall-recovery-after-reboot-%s.json" % checkpoint)))
     evidence.record("boot_id_after_reboot", boot_id=_read_boot_id())
 
-    pending_ids = journal_mod.list_pending_transaction_ids(state_root)
-    uninstall_ids = [tid for tid in pending_ids if journal_mod.read_journal(state_root, tid).operation == "uninstall"]
-    if len(uninstall_ids) != 1:
-        raise SystemExit(
-            "expected exactly one pending uninstall transaction after reboot, found: %r "
-            "(did prepare-uninstall-reboot-checkpoint run first?)" % uninstall_ids
-        )
-    transaction_id = uninstall_ids[0]
+    transaction_id = _find_pending_uninstall_transaction_id(state_root, capability_id)
     pre_recovery = journal_mod.read_journal(state_root, transaction_id)
-    capability_id = pre_recovery.capability_id
     evidence.record("pre_recovery_state", transaction_id=transaction_id, state=pre_recovery.state.value, plan_digest=pre_recovery.plan_digest)
     evidence.record("pre_recovery_sandbox", files=sorted(p.name for p in sandbox.iterdir()) if sandbox.exists() else [])
 
@@ -600,7 +660,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-root", required=True)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    checkpoints = ("write_ahead_applying", "after_apply_before_verify", "after_verify_before_commit", "rolling_back_pending")
+    checkpoints = (
+        "write_ahead_applying", "after_apply_before_verify", "after_verify_before_commit", "rolling_back_pending",
+        "undoing_before_unlink", "undoing_after_unlink_before_undone",
+    )
 
     worker = sub.add_parser("worker", help="internal: runs a real apply, self-killing at --kill-after")
     worker.add_argument("--capability-id", required=True)
@@ -623,14 +686,16 @@ def build_parser() -> argparse.ArgumentParser:
     recover_after_reboot.add_argument("--evidence", help="evidence JSON output path")
     recover_after_reboot.set_defaults(func=cmd_recover_after_reboot)
 
-    uninstall_worker = sub.add_parser("uninstall-worker", help="internal: starts a real uninstall, unlinks for real, then self-kills before the journal records APPLIED")
+    uninstall_worker = sub.add_parser("uninstall-worker", help="internal: starts a real uninstall, self-kills at --checkpoint")
     uninstall_worker.add_argument("--capability-id", required=True)
+    uninstall_worker.add_argument("--checkpoint", required=True, choices=UNINSTALL_CHECKPOINTS)
     uninstall_worker.set_defaults(func=cmd_uninstall_worker)
 
     prepare_uninstall_reboot = sub.add_parser(
         "prepare-uninstall-reboot-checkpoint",
-        help="commit a real prepare, then kill -9 a real uninstall after unlink/before journal write; then reboot the host for real",
+        help="commit a real prepare, then kill -9 a real uninstall at --checkpoint; then reboot the host for real",
     )
+    prepare_uninstall_reboot.add_argument("--checkpoint", required=True, choices=UNINSTALL_CHECKPOINTS)
     prepare_uninstall_reboot.add_argument("--evidence", help="evidence JSON output path")
     prepare_uninstall_reboot.set_defaults(func=cmd_prepare_uninstall_reboot_checkpoint)
 
@@ -638,6 +703,7 @@ def build_parser() -> argparse.ArgumentParser:
         "recover-uninstall-after-reboot",
         help="does NOT wipe state; recovers the pending uninstall left by prepare-uninstall-reboot-checkpoint after a real reboot",
     )
+    recover_uninstall_after_reboot.add_argument("--checkpoint", required=True, choices=UNINSTALL_CHECKPOINTS)
     recover_uninstall_after_reboot.add_argument("--evidence", help="evidence JSON output path")
     recover_uninstall_after_reboot.set_defaults(func=cmd_recover_uninstall_after_reboot)
 

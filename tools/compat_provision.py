@@ -29,6 +29,7 @@ from compat.provisioning.executors import (
     ExecutionContext,
     TrustedExecutorRegistry,
 )
+from compat.provisioning.paths import validate_lab_root
 
 EXIT_USAGE = 1
 EXIT_PROVISIONING_ERROR = 2
@@ -71,11 +72,15 @@ def _build_env(args, *, mutating: bool) -> engine.ProvisioningEnvironment:
     """``mutating`` gates whether the sandbox root is created. Read-only
     operations (``plan``, ``prepare``/``uninstall`` without ``--apply``,
     ``status``) must never create the sandbox or provisioning state root --
-    root creation happens only on an explicitly authorized mutating path."""
-    sandbox = Path(args.sandbox).resolve()
+    root creation happens only on an explicitly authorized mutating path.
+    ``validate_lab_root`` is mandatory confinement, enforced before any
+    mutation and regardless of ``mutating``: neither argument may be the
+    filesystem root, a reserved system path, the real product's own state
+    directory, ``$HOME`` itself, or a symlink at any component."""
+    sandbox = validate_lab_root(Path(args.sandbox), label="--sandbox")
+    state_root = validate_lab_root(Path(args.state_root), label="--state-root")
     if mutating:
         sandbox.mkdir(parents=True, exist_ok=True)
-    state_root = Path(args.state_root).resolve()
     registry = TrustedExecutorRegistry()
     registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=CanaryExecutor())
     context = ExecutionContext(allowed_roots=(sandbox,), now=_now)
