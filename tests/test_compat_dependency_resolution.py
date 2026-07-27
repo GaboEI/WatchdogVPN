@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -75,6 +76,47 @@ def resolve(manifest_data, distro, dependency_id, *caps, provider=None):
         dependency_id,
         availability=provider or resolver.StaticAvailabilityProvider.all_available(),
     )
+
+
+def shell_default(path: str, name: str) -> str:
+    text = (ROOT / path).read_text(encoding="utf-8")
+    match = re.search(r'%s="\$\{%s:-([^}]+)\}"' % (re.escape(name), re.escape(name)), text)
+    if not match:
+        raise AssertionError("missing shell default %s in %s" % (name, path))
+    return match.group(1)
+
+
+def shell_scalar(path: str, name: str) -> str:
+    text = (ROOT / path).read_text(encoding="utf-8")
+    match = re.search(r'^%s="([^"]+)"' % re.escape(name), text, re.MULTILINE)
+    if not match:
+        raise AssertionError("missing shell scalar %s in %s" % (name, path))
+    return match.group(1)
+
+
+def shell_array(path: str, name: str) -> list[str]:
+    text = (ROOT / path).read_text(encoding="utf-8")
+    match = re.search(r'^%s=\(\n(.*?)\n\)' % re.escape(name), text, re.MULTILINE | re.DOTALL)
+    if match:
+        lines = match.group(1).splitlines()
+    else:
+        inline = re.search(r'^%s=\(([^)]*)\)' % re.escape(name), text, re.MULTILINE)
+        if not inline:
+            raise AssertionError("missing shell array %s in %s" % (name, path))
+        lines = [inline.group(1)]
+    body = []
+    for line in lines:
+        line = line.split("#", 1)[0].strip()
+        if line:
+            body.extend(item.strip("'\"") for item in line.split())
+    return body
+
+
+def packages_for_candidate(manifest_data, dependency_id: str, method_id: str) -> list[str]:
+    for candidate in manifest_data["dependency_requirements"][dependency_id]["method_chain"]:
+        if candidate["id"] == method_id:
+            return list(candidate.get("package_names", ()))
+    raise AssertionError("missing candidate %s" % method_id)
 
 
 class DependencyResolverTests(unittest.TestCase):
@@ -193,18 +235,69 @@ class DependencyResolverTests(unittest.TestCase):
         distro = facts(m, "ID=fedora\nVERSION_ID=44\n", arch="mips")
         decision = resolve(m, distro, "dep_openvpn_runtime", cap("proto_openvpn_runtime"))
         self.assertEqual(decision.resolution_status, "no_safe_route")
-        rpm = [item for item in decision.rejected_candidates if item.method_id == "openvpn_rpm_official"][0]
+        rpm = [item for item in decision.rejected_candidates if item.method_id == "openvpn_dnf_fedora_official"][0]
         self.assertEqual(rpm.reason, "architecture_not_supported")
 
     def test_source_without_pin_and_artifact_without_integrity_are_not_executable(self) -> None:
         m = manifest()
         distro = facts(m, "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
         decision = resolve(m, distro, "dep_amneziawg_runtime", cap("proto_amneziawg_runtime"))
-        source = [item for item in decision.rejected_candidates if item.method_id == "amneziawg_pinned_source_build_stable_future"][0]
+        source = [item for item in decision.rejected_candidates if item.method_id == "amneziawg_pinned_source_build_apt_stable_future"][0]
         self.assertEqual(source.reason, "pin_metadata_incomplete")
 
         broken = json.loads(json.dumps(m))
         del broken["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0]["integrity"]["x86_64"]
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+    def test_artifact_pins_match_legacy_constants_and_assets(self) -> None:
+        m = manifest()
+        sing = m["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0]
+        cloak = m["dependency_requirements"]["dep_ck_client_runtime"]["method_chain"][0]
+        self.assertEqual(sing["version"], shell_default("lib/singbox.sh", "SINGBOX_VERSION"))
+        self.assertEqual(cloak["version"], shell_default("lib/cloak.sh", "CLOAK_VERSION"))
+        self.assertEqual(sing["integrity"]["x86_64"], shell_default("lib/singbox.sh", "SINGBOX_SHA256_LINUX_AMD64"))
+        self.assertEqual(sing["integrity"]["aarch64"], shell_default("lib/singbox.sh", "SINGBOX_SHA256_LINUX_ARM64"))
+        self.assertEqual(cloak["integrity"]["x86_64"], shell_default("lib/cloak.sh", "CLOAK_SHA256_LINUX_AMD64"))
+        self.assertEqual(cloak["integrity"]["aarch64"], shell_default("lib/cloak.sh", "CLOAK_SHA256_LINUX_ARM64"))
+        self.assertEqual(
+            {asset["asset_name"] for asset in sing["assets"]},
+            {
+                "sing-box-1.13.14-linux-amd64-glibc.tar.gz",
+                "sing-box-1.13.14-linux-arm64.tar.gz",
+            },
+        )
+        self.assertEqual(
+            {asset["asset_name"] for asset in cloak["assets"]},
+            {
+                "ck-client-linux-amd64-v2.12.0",
+                "ck-client-linux-arm64-v2.12.0",
+            },
+        )
+        self.assertEqual({asset["expected_executable"] for asset in sing["assets"]}, {"sing-box"})
+        self.assertEqual({asset["expected_executable"] for asset in cloak["assets"]}, {"ck-client"})
+
+    def test_manifest_rejects_artifact_placeholders_and_unsafe_expected_files(self) -> None:
+        m = manifest()
+        broken = json.loads(json.dumps(m))
+        candidate = broken["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0]
+        candidate["integrity"]["x86_64"] = "0" * 64
+        candidate["assets"][0]["sha256"] = "0" * 64
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        broken["dependency_requirements"]["dep_ck_client_runtime"]["method_chain"][0]["expected_files"][0] = "../ck-client"
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        broken["dependency_requirements"]["dep_ck_client_runtime"]["method_chain"][0]["assets"] = broken["dependency_requirements"]["dep_ck_client_runtime"]["method_chain"][0]["assets"][:1]
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        broken["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][1]["version"] = "9.9.9"
         with self.assertRaises(compat_read.ManifestError):
             compat_read.validate_manifest(broken)
 
@@ -235,6 +328,57 @@ class DependencyResolverTests(unittest.TestCase):
             "not_evaluated_due_to_higher_priority_unknown",
             {item.reason for item in decision.rejected_candidates},
         )
+
+    def test_static_metadata_rejection_happens_before_provider(self) -> None:
+        m = manifest()
+        distro = facts(m, "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
+
+        class SpyProvider(resolver.StaticAvailabilityProvider):
+            def __init__(self):
+                super().__init__(default_status=resolver.AvailabilityStatus.TIMEOUT.value)
+                self.calls = []
+
+            def source_revision_available(self, candidate, target_id):
+                self.calls.append((candidate.method_id, target_id))
+                return resolver.AvailabilityObservation(resolver.AvailabilityStatus.TIMEOUT.value, reason="should not be called")
+
+        provider = SpyProvider()
+        decision = resolver.resolve_dependency(
+            m,
+            distro,
+            support(m, distro),
+            (cap("proto_amneziawg_runtime"),),
+            "dep_amneziawg_runtime",
+            availability=provider,
+        )
+        self.assertEqual(provider.calls, [])
+        self.assertIn("pin_metadata_incomplete", {item.reason for item in decision.rejected_candidates})
+        self.assertEqual(decision.resolution_status, "no_safe_route")
+
+    def test_amneziawg_source_build_is_componentized_and_family_specific(self) -> None:
+        m = manifest()
+        source_candidates = [
+            candidate
+            for candidate in m["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"]
+            if candidate["kind"] == "pinned_source_build"
+        ]
+        self.assertGreaterEqual(len(source_candidates), 4)
+        for candidate in source_candidates:
+            with self.subTest(candidate=candidate["id"]):
+                components = {component["component_id"]: component for component in candidate["components"]}
+                self.assertEqual(set(components), {"amneziawg_tools", "amneziawg_go"})
+                self.assertIn("awg", components["amneziawg_tools"]["expected_outputs"])
+                self.assertIn("awg-quick", components["amneziawg_tools"]["expected_outputs"])
+                self.assertIn("amneziawg-go", components["amneziawg_go"]["expected_outputs"])
+                self.assertEqual(components["amneziawg_tools"]["repository"], "https://github.com/amnezia-vpn/amneziawg-tools")
+                self.assertEqual(components["amneziawg_go"]["repository"], "https://github.com/amnezia-vpn/amneziawg-go")
+                self.assertEqual(components["amneziawg_tools"]["revision"], "unresolved")
+                self.assertEqual(components["amneziawg_go"]["revision"], "unresolved")
+        by_id = {candidate["id"]: candidate for candidate in source_candidates}
+        self.assertIn("golang-go", by_id["amneziawg_pinned_source_build_apt_stable_future"]["build_dependencies"])
+        self.assertIn("golang", by_id["amneziawg_pinned_source_build_dnf_stable_future"]["build_dependencies"])
+        self.assertIn("go", by_id["amneziawg_pinned_source_build_zypper_stable_future"]["build_dependencies"])
+        self.assertIn("go", by_id["amneziawg_pinned_source_build_pacman_rolling_future"]["build_dependencies"])
 
     def test_provider_validates_package_target_and_bad_provider_results(self) -> None:
         m = manifest()
@@ -293,6 +437,53 @@ class DependencyResolverTests(unittest.TestCase):
         self.assertEqual(raised.resolution_status, "availability_unknown")
         self.assertEqual(raised.error_kind, "provider_error")
 
+    def test_provider_evidence_is_preserved_by_package(self) -> None:
+        m = manifest()
+        distro = facts(m, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+        provider = resolver.StaticAvailabilityProvider.all_available()
+        decision = resolver.resolve_dependency(
+            m,
+            distro,
+            support(m, distro),
+            (cap("cap_base_runtime_commands"),),
+            "dep_base_runtime_commands",
+            availability=provider,
+        )
+        package_records = [item for item in decision.availability_observations if item["operation"] == "package_exists"]
+        self.assertGreater(len(package_records), 2)
+        self.assertIn("package_name", package_records[0])
+        self.assertEqual(decision.provider_type, "static_fixture")
+        self.assertFalse(decision.provider_authoritative)
+
+    def test_fedora_and_rhel_family_epel_are_separated(self) -> None:
+        m = manifest()
+        fedora = facts(m, "ID=fedora\nVERSION_ID=44\n")
+        rocky = facts(m, "ID=rocky\nVERSION_ID=9\n")
+        fedora_decision = resolve(m, fedora, "dep_openvpn_runtime", cap("proto_openvpn_runtime"))
+        self.assertEqual(fedora_decision.selected_method_id, "openvpn_dnf_fedora_official")
+        rocky_decision = resolve(m, rocky, "dep_openvpn_runtime", cap("proto_openvpn_runtime"))
+        self.assertEqual(rocky_decision.selected_method_id, "openvpn_epel_rhel9_exact")
+        self.assertNotEqual(rocky_decision.selected_method_id, "openvpn_dnf_fedora_official")
+
+        provider = resolver.StaticAvailabilityProvider(
+            {
+                ("repository_supports_exact_target", "openvpn_epel_rhel9_exact", "rocky_9", None): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNKNOWN.value,
+                    reason="EPEL availability unknown",
+                )
+            },
+            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+        )
+        unknown = resolver.resolve_dependency(
+            m,
+            rocky,
+            support(m, rocky),
+            (cap("proto_openvpn_runtime"),),
+            "dep_openvpn_runtime",
+            availability=provider,
+        )
+        self.assertEqual(unknown.resolution_status, "availability_unknown")
+
     def test_capability_observation_and_support_inputs_are_strict(self) -> None:
         m = manifest()
         distro = facts(m, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
@@ -330,6 +521,46 @@ class DependencyResolverTests(unittest.TestCase):
                 distro,
                 "invented",
                 (cap("proto_openvpn_runtime"),),
+                "dep_openvpn_runtime",
+                availability=resolver.StaticAvailabilityProvider.all_available(),
+            )
+
+    def test_capability_status_must_match_core_or_protocol_enum(self) -> None:
+        m = manifest()
+        distro = facts(m, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+        with self.assertRaises(resolver.DependencyResolutionError):
+            resolver.resolve_dependency(
+                m,
+                distro,
+                support(m, distro),
+                (detection.CapabilityResult("cap_nftables", "absent", "absent", "fixture", "fixture", "fixture"),),
+                "dep_nftables",
+                availability=resolver.StaticAvailabilityProvider.all_available(),
+            )
+        with self.assertRaises(resolver.DependencyResolutionError):
+            resolver.resolve_dependency(
+                m,
+                distro,
+                support(m, distro),
+                (detection.CapabilityResult("cap_nftables", "present", "operable", "fixture", "fixture", "fixture"),),
+                "dep_nftables",
+                availability=resolver.StaticAvailabilityProvider.all_available(),
+            )
+        with self.assertRaises(resolver.DependencyResolutionError):
+            resolver.resolve_dependency(
+                m,
+                distro,
+                support(m, distro),
+                (
+                    detection.CapabilityResult(
+                        "proto_openvpn_runtime",
+                        "absent",
+                        "preparation_failed",
+                        "fixture",
+                        "fixture",
+                        "fixture",
+                    ),
+                ),
                 "dep_openvpn_runtime",
                 availability=resolver.StaticAvailabilityProvider.all_available(),
             )
@@ -418,7 +649,7 @@ class DependencyResolverTests(unittest.TestCase):
 
     def test_dependency_catalog_covers_legacy_inventory_surface(self) -> None:
         m = manifest()
-        expected = {
+        expected_capabilities = {
             "cap_python310",
             "cap_python_cryptography",
             "cap_polkit",
@@ -432,35 +663,38 @@ class DependencyResolverTests(unittest.TestCase):
             "cap_base_runtime_commands",
         }
         self.assertEqual(
-            expected,
+            expected_capabilities,
             {requirement["capability_id"] for requirement in m["dependency_requirements"].values()},
         )
-        package_union = {
-            package
-            for requirement in m["dependency_requirements"].values()
-            for candidate in requirement["method_chain"]
-            for package in candidate.get("package_names", ())
-        }
-        frozen_legacy_subset = {
-            "bash",
-            "git",
-            "curl",
-            "python3-cryptography",
-            "python-cryptography",
-            "python311-cryptography",
-            "polkitd",
-            "polkit",
-            "dnsutils",
-            "bind-utils",
-            "bind",
-            "network-manager",
-            "NetworkManager",
-            "networkmanager",
-            "nftables",
-            "openvpn",
-            "amneziawg",
-        }
-        self.assertTrue(frozen_legacy_subset.issubset(package_union))
+        apt_base = shell_array("distros/ubuntu.sh", "DISTRO_BASE_PACKAGES")
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_apt_stable"), apt_base)
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_apt_kali_rolling"), apt_base)
+        self.assertEqual(
+            packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_apt_stable"),
+            [shell_scalar("distros/ubuntu.sh", "DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE")],
+        )
+        self.assertEqual(packages_for_candidate(m, "dep_polkit_runtime", "polkit_apt_stable"), [shell_scalar("distros/ubuntu.sh", "DISTRO_POLKIT_PACKAGE")])
+        self.assertEqual(packages_for_candidate(m, "dep_dns_runtime_package", "dns_runtime_apt_stable"), shell_array("distros/ubuntu.sh", "DISTRO_DNS_PACKAGES"))
+
+        fedora_base = shell_array("distros/fedora.sh", "DISTRO_BASE_PACKAGES")
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_dnf_fedora_official"), fedora_base)
+        rhel_base = fedora_base + ["python3.11"]
+        rhel_base.remove("openvpn")
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_dnf_rhel9_official"), rhel_base)
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_epel_rhel9_exact"), ["openvpn"])
+        self.assertEqual(packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_dnf_fedora_official"), ["python3-cryptography"])
+        self.assertEqual(packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_dnf_rhel9_official"), ["python3.11-cryptography"])
+
+        suse_base = shell_array("distros/opensuse.sh", "DISTRO_BASE_PACKAGES")
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_zypper_stable"), suse_base)
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_zypper_tumbleweed_rolling"), suse_base)
+        self.assertEqual(packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_zypper_stable"), [shell_scalar("distros/opensuse.sh", "DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE")])
+        self.assertEqual(packages_for_candidate(m, "dep_dns_runtime_package", "dns_runtime_zypper_stable"), shell_array("distros/opensuse.sh", "DISTRO_DNS_PACKAGES"))
+
+        arch_base = shell_array("distros/arch.sh", "DISTRO_BASE_PACKAGES")
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_pacman_rolling"), arch_base)
+        self.assertEqual(packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_pacman_rolling"), [shell_scalar("distros/arch.sh", "DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE")])
+        self.assertEqual(packages_for_candidate(m, "dep_dns_runtime_package", "dns_runtime_pacman_rolling"), shell_array("distros/arch.sh", "DISTRO_DNS_PACKAGES"))
 
     def test_cli_operations_emit_json_and_unknown_dependency_is_exit_2(self) -> None:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as handle:

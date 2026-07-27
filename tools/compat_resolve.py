@@ -65,6 +65,12 @@ def _fixture_env() -> detection.ProbeEnvironment:
                 ("amneziawg-go", "--version"): detection.CommandResult(("amneziawg-go", "--version"), "command_missing"),
                 ("getenforce",): detection.CommandResult(("getenforce",), "ok", 0, "Disabled\n", ""),
                 ("firewall-cmd", "--state"): detection.CommandResult(("firewall-cmd", "--state"), "command_missing", reason="fixture missing"),
+                ("python3", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"): detection.CommandResult(("python3", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"), "ok", 0, "3.11.0\n", ""),
+                ("python3", "-c", "import cryptography; print(cryptography.__version__)"): detection.CommandResult(("python3", "-c", "import cryptography; print(cryptography.__version__)"), "ok", 0, "42.0.0\n", ""),
+                ("python3.11", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"): detection.CommandResult(("python3.11", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"), "ok", 0, "3.11.0\n", ""),
+                ("python3.11", "-c", "import cryptography; print(cryptography.__version__)"): detection.CommandResult(("python3.11", "-c", "import cryptography; print(cryptography.__version__)"), "ok", 0, "42.0.0\n", ""),
+                ("python", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"): detection.CommandResult(("python", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"), "ok", 0, "3.11.0\n", ""),
+                ("python", "-c", "import cryptography; print(cryptography.__version__)"): detection.CommandResult(("python", "-c", "import cryptography; print(cryptography.__version__)"), "ok", 0, "42.0.0\n", ""),
             }
         ),
         files={

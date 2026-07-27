@@ -33,6 +33,7 @@ _PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.:-]*$")
 _SHA256_RE = re.compile(r"^[A-Fa-f0-9]{64}$")
 _GIT_COMMIT_RE = re.compile(r"^[A-Fa-f0-9]{40}$")
 _HTTPS_URL_RE = re.compile(r"^https://[^/@\s]+(?:[/:?#][^\s]*)?$")
+_SAFE_RELATIVE_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+:-]*$")
 _VERSION_RE = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 _RFC3339_UTC_RE = re.compile(
     r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T"
@@ -138,6 +139,7 @@ _ENTITY_KEYS = {
     "dependency_requirement": ("capability_id", "description", "method_chain"),
     "method_candidate": (
         "architectures",
+        "assets",
         "build_dependencies",
         "compatible_targets",
         "evidence",
@@ -156,11 +158,35 @@ _ENTITY_KEYS = {
         "priority",
         "provider",
         "repository",
+        "repository_package",
         "revision",
         "revision_type",
+        "runtime_python",
+        "signing_key_provenance",
+        "exposed_package_names",
+        "official_download_base",
+        "components",
         "target_identity",
         "target_scope",
         "version",
+    ),
+    "artifact_asset": (
+        "architecture",
+        "archive_or_binary_kind",
+        "asset_name",
+        "expected_executable",
+        "official_download_base",
+        "sha256",
+    ),
+    "runtime_python": ("cryptography_package", "executable", "package"),
+    "source_component": (
+        "build_dependencies",
+        "component_id",
+        "expected_outputs",
+        "postcondition",
+        "repository",
+        "revision",
+        "revision_type",
     ),
     "compatible_target": ("own_release", "series", "target_id"),
     "repository": ("id", "series", "url"),
@@ -358,11 +384,35 @@ def _require_sha256(value, path):
     text = _require_str(value, path)
     if not _SHA256_RE.match(text):
         raise ManifestError("%s must be a 64-character hexadecimal SHA-256" % path)
+    if len(set(text.lower())) == 1:
+        raise ManifestError("%s must not be a repeated-character placeholder hash" % path)
     return text
 
 
 def _is_git_commit(value):
     return type(value) is str and _GIT_COMMIT_RE.match(value)
+
+
+def _require_safe_expected_path(value, path):
+    text = _require_str(value, path)
+    if text.startswith("/") or ".." in text.split("/"):
+        raise ManifestError("%s must be a safe relative file name/path" % path)
+    if not _SAFE_RELATIVE_PATH_RE.match(text):
+        raise ManifestError("%s contains unsafe characters" % path)
+    return text
+
+
+def _require_safe_expected_paths(value, path):
+    values = _require_list(value, path)
+    if not values:
+        raise ManifestError("%s must not be empty" % path)
+    seen = set()
+    for index, item in enumerate(values):
+        text = _require_safe_expected_path(item, "%s[%d]" % (path, index))
+        if text in seen:
+            raise ManifestError("%s contains duplicate expected path %r" % (path, text))
+        seen.add(text)
+    return values
 
 
 def _require_object_ids(obj, path):
@@ -600,6 +650,7 @@ def _validate_dependency_requirements(manifest):
     supported_arches = set(core_caps["cap_architecture"]["supported_values"])
     allowed_statuses = ("implemented", "not_implemented", "future_task")
     global_candidate_ids = {}
+    artifact_versions = {}
     _require_object_ids(requirements, "dependency_requirements")
     for requirement_id, requirement in requirements.items():
         path = "dependency_requirements.%s" % requirement_id
@@ -713,6 +764,12 @@ def _validate_dependency_requirements(manifest):
                 raise ManifestError("%s.postcondition references unknown capability" % cand_path)
             if postcondition != cap_id:
                 raise ManifestError("%s.postcondition must equal requirement capability_id" % cand_path)
+            if "runtime_python" in candidate:
+                runtime_python = _require_obj(candidate.get("runtime_python"), cand_path + ".runtime_python")
+                _reject_unknown_keys(runtime_python, _ENTITY_KEYS["runtime_python"], cand_path + ".runtime_python")
+                _require_package_name(runtime_python.get("executable"), cand_path + ".runtime_python.executable")
+                _require_package_name(runtime_python.get("package"), cand_path + ".runtime_python.package")
+                _require_package_name(runtime_python.get("cryptography_package"), cand_path + ".runtime_python.cryptography_package")
             if kind in ("official_package_exact", "external_repo_exact"):
                 pm = _require_enum(candidate.get("package_manager"), ("apt", "dnf", "zypper", "pacman"), cand_path + ".package_manager")
                 for family_id in scope["technical_families"]:
@@ -749,7 +806,7 @@ def _validate_dependency_requirements(manifest):
                         raise ManifestError("%s targets unknown release %r" % (target_path, target_id))
                     if distributions[releases[target_id]["distribution"]]["release_model"] != "stable":
                         raise ManifestError("%s target_id must be a stable release" % target_path)
-                    if releases[target_id].get("codename") != series:
+                    if releases[target_id].get("codename") and releases[target_id].get("codename") != series:
                         raise ManifestError("%s series must match target release codename" % target_path)
                     if target_identity == "mapped_base_release":
                         if own_release is None:
@@ -764,9 +821,25 @@ def _validate_dependency_requirements(manifest):
                             raise ManifestError("%s target_id must be in candidate stable scope" % target_path)
             elif "provider" in candidate or "repository" in candidate or "compatible_targets" in candidate:
                 raise ManifestError("%s repository fields are only valid for external_repo_exact" % cand_path)
+            if kind == "external_repo_exact":
+                if "repository_package" in candidate:
+                    _require_package_name(candidate.get("repository_package"), cand_path + ".repository_package")
+                if "signing_key_provenance" in candidate:
+                    _require_str(candidate.get("signing_key_provenance"), cand_path + ".signing_key_provenance")
+                if "exposed_package_names" in candidate:
+                    _require_package_list(candidate.get("exposed_package_names"), cand_path + ".exposed_package_names")
+            elif "repository_package" in candidate or "signing_key_provenance" in candidate or "exposed_package_names" in candidate:
+                raise ManifestError("%s repository prerequisite fields are only valid for external_repo_exact" % cand_path)
             if kind == "official_artifact_pinned":
                 _require_https_url(candidate.get("official_provenance"), cand_path + ".official_provenance")
-                _require_str(candidate.get("version"), cand_path + ".version")
+                version = _require_str(candidate.get("version"), cand_path + ".version")
+                _require_https_url(candidate.get("official_download_base"), cand_path + ".official_download_base")
+                executable = _require_safe_expected_path(candidate.get("expected_executable"), cand_path + ".expected_executable")
+                version_key = (requirement_id, executable)
+                previous_version = artifact_versions.get(version_key)
+                if previous_version is not None and previous_version != version:
+                    raise ManifestError("%s artifact version diverges from sibling candidate" % cand_path)
+                artifact_versions[version_key] = version
                 integrity = _require_obj(candidate.get("integrity"), cand_path + ".integrity")
                 _require_enum(integrity.get("type"), ("sha256", "signature"), cand_path + ".integrity.type")
                 if integrity["type"] == "sha256":
@@ -777,8 +850,9 @@ def _validate_dependency_requirements(manifest):
                 else:
                     for field in ("signature", "key_fingerprint", "key_provenance", "verification_policy"):
                         _require_str(integrity.get(field), cand_path + ".integrity." + field)
-                _require_string_list(candidate.get("expected_files"), cand_path + ".expected_files")
-            elif "version" in candidate or "integrity" in candidate or "expected_files" in candidate:
+                _require_safe_expected_paths(candidate.get("expected_files"), cand_path + ".expected_files")
+                _validate_artifact_assets(candidate, arches, cand_path)
+            elif "version" in candidate or "integrity" in candidate or "expected_files" in candidate or "assets" in candidate or "official_download_base" in candidate or "expected_executable" in candidate:
                 raise ManifestError("%s artifact fields are only valid for official_artifact_pinned" % cand_path)
             if kind == "pinned_source_build":
                 _require_https_url(candidate.get("official_provenance"), cand_path + ".official_provenance")
@@ -787,8 +861,10 @@ def _validate_dependency_requirements(manifest):
                 if revision != "unresolved" and candidate["revision_type"] == "commit" and not _is_git_commit(revision):
                     raise ManifestError("%s.revision must be an immutable Git commit" % cand_path)
                 _require_package_list(candidate.get("build_dependencies"), cand_path + ".build_dependencies")
-                _require_string_list(candidate.get("expected_outputs"), cand_path + ".expected_outputs")
-            elif "revision_type" in candidate or "revision" in candidate or "build_dependencies" in candidate or "expected_outputs" in candidate:
+                _require_safe_expected_paths(candidate.get("expected_outputs"), cand_path + ".expected_outputs")
+                if "components" in candidate:
+                    _validate_source_components(candidate, cand_path)
+            elif "revision_type" in candidate or "revision" in candidate or "build_dependencies" in candidate or "expected_outputs" in candidate or "components" in candidate:
                 raise ManifestError("%s source-build fields are only valid for pinned_source_build" % cand_path)
 
 
@@ -818,6 +894,57 @@ def _validate_mapped_base_target(manifest, own_release, target_id, series, path)
         )
     if releases[target_id]["distribution"] != derivative["lineage_distribution"]:
         raise ManifestError("%s target_id is outside derivative lineage distribution" % path)
+
+
+def _validate_artifact_assets(candidate, arches, path):
+    assets = _require_list(candidate.get("assets"), path + ".assets")
+    by_arch = {}
+    for index, asset in enumerate(assets):
+        asset_path = "%s.assets[%d]" % (path, index)
+        _require_obj(asset, asset_path)
+        _reject_unknown_keys(asset, _ENTITY_KEYS["artifact_asset"], asset_path)
+        arch = _require_id(asset.get("architecture"), asset_path + ".architecture")
+        if arch in by_arch:
+            raise ManifestError("%s duplicates architecture %s" % (asset_path, arch))
+        by_arch[arch] = asset
+        if arch not in arches:
+            raise ManifestError("%s architecture is outside candidate architectures" % asset_path)
+        _require_str(asset.get("asset_name"), asset_path + ".asset_name")
+        _require_enum(asset.get("archive_or_binary_kind"), ("tar.gz", "binary"), asset_path + ".archive_or_binary_kind")
+        _require_https_url(asset.get("official_download_base"), asset_path + ".official_download_base")
+        _require_sha256(asset.get("sha256"), asset_path + ".sha256")
+        _require_safe_expected_path(asset.get("expected_executable"), asset_path + ".expected_executable")
+        if asset["official_download_base"] != candidate["official_download_base"]:
+            raise ManifestError("%s official_download_base must match candidate" % asset_path)
+        if asset["expected_executable"] != candidate["expected_executable"]:
+            raise ManifestError("%s expected_executable must match candidate" % asset_path)
+        if asset["sha256"] != candidate["integrity"].get(arch):
+            raise ManifestError("%s sha256 must match integrity entry" % asset_path)
+    if set(by_arch) != set(arches):
+        raise ManifestError("%s.assets must contain exactly one asset for each architecture" % path)
+
+
+def _validate_source_components(candidate, path):
+    components = _require_list(candidate.get("components"), path + ".components")
+    if not components:
+        raise ManifestError("%s.components must not be empty" % path)
+    seen = set()
+    for index, component in enumerate(components):
+        comp_path = "%s.components[%d]" % (path, index)
+        _require_obj(component, comp_path)
+        _reject_unknown_keys(component, _ENTITY_KEYS["source_component"], comp_path)
+        component_id = _require_id(component.get("component_id"), comp_path + ".component_id")
+        if component_id in seen:
+            raise ManifestError("%s duplicate component_id %s" % (comp_path, component_id))
+        seen.add(component_id)
+        _require_https_url(component.get("repository"), comp_path + ".repository")
+        _require_enum(component.get("revision_type"), ("commit",), comp_path + ".revision_type")
+        revision = _require_str(component.get("revision"), comp_path + ".revision")
+        if revision != "unresolved" and not _is_git_commit(revision):
+            raise ManifestError("%s.revision must be an immutable Git commit" % comp_path)
+        _require_package_list(component.get("build_dependencies"), comp_path + ".build_dependencies")
+        _require_safe_expected_paths(component.get("expected_outputs"), comp_path + ".expected_outputs")
+        _require_id(component.get("postcondition"), comp_path + ".postcondition")
 
 
 def _validate_distributions(manifest):

@@ -859,18 +859,53 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
     if capability_id == "cap_kernel":
         return _cap(capability_id, "partial" if env.kernel_release else "unknown", CoreCapabilityStatus.PROVISIONABLE, env.kernel_release or "", "platform.release", "kernel release observed; required kernel capabilities not verified")
     if capability_id == "cap_python310":
-        version = env.python_version
+        executable = _runtime_python_executable(env.manifest, facts)
+        result = env.run([executable, "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"], timeout=2.0)
+        if result.status != "ok":
+            return _command_cap(capability_id, result, "runtime Python executable probe")
+        version = _parse_python_version(result.stdout.strip())
+        if version is None:
+            return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, result.stdout.strip(), "command:" + " ".join(result.argv), "runtime Python version malformed", "malformed_output")
         ok = version >= (3, 10)
-        return _cap(capability_id, "present" if ok else "absent", CoreCapabilityStatus.PRESENT if ok else CoreCapabilityStatus.PROVISIONABLE, "%d.%d.%d" % version[:3], "sys.version_info", "final Python floor check")
+        return _cap(capability_id, "present" if ok else "absent", CoreCapabilityStatus.PRESENT if ok else CoreCapabilityStatus.PROVISIONABLE, "runtime_python_executable=%s runtime_python_version=%s" % (executable, result.stdout.strip()), "command:" + " ".join(result.argv), "final Python floor check")
     if capability_id == "cap_python_cryptography":
-        result = env.run(["python3", "-c", "import cryptography; print(cryptography.__version__)"], timeout=2.0)
+        executable = _runtime_python_executable(env.manifest, facts)
+        result = env.run([executable, "-c", "import cryptography; print(cryptography.__version__)"], timeout=2.0)
         if result.status == "ok":
-            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, result.stdout.strip(), "command:python3 -c import cryptography", "cryptography module import observed")
+            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, "runtime_python_executable=%s cryptography_version=%s" % (executable, result.stdout.strip()), "command:" + " ".join(result.argv), "cryptography module import observed")
         return _command_cap(capability_id, result, "cryptography module import probe")
     if capability_id == "cap_base_runtime_commands":
-        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "manifest:dependency_requirements.dep_base_runtime_commands", "base runtime package inventory is resolved declaratively; host reconciliation belongs to provisioning")
+        required = (
+            "bash", "git", "python3", "curl", "tar", "ip", "ss", "systemctl",
+            "systemd-run", "sudo", "logrotate", "awk", "sed", "grep", "find",
+            "sort", "sha256sum", "install", "getent", "useradd", "usermod",
+            "openvpn", "setpriv", "sysctl", "modinfo", "nmcli", "nft",
+            "iptables", "ip6tables", "ping", "pgrep", "resolvectl",
+        )
+        present = []
+        missing = []
+        unknown = []
+        for command in required:
+            result = env.run([command, "--version"], timeout=1.0)
+            if result.status == "command_missing":
+                missing.append(command)
+            elif result.status in ("ok", "nonzero_exit"):
+                present.append(command)
+            else:
+                unknown.append(command)
+        evidence = "present_commands=%s missing_commands=%s unknown_commands=%s" % (
+            ",".join(present),
+            ",".join(missing),
+            ",".join(unknown),
+        )
+        if not missing and not unknown:
+            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, evidence, "required_commands read-only command resolution", "required command surface observed; package provenance not verified")
+        return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, evidence, "required_commands read-only command resolution", "required command surface incomplete or not fully observable")
     if capability_id == "cap_dns_runtime_package":
-        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "manifest:dependency_requirements.dep_dns_runtime_package", "DNS package requirement is resolved declaratively when backend package support is needed")
+        resolv = env.read_file("/etc/resolv.conf") or ""
+        if "systemd" in resolv.lower():
+            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, "systemd-resolved backend marker", "read:/etc/resolv.conf", "selected DNS backend does not require an extra helper package in this probe")
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "resolv.conf observed" if resolv else "", "read:/etc/resolv.conf", "DNS helper package need is conditional on unresolved backend selection")
     if capability_id == "cap_sudo":
         result = env.run(["sudo", "-V"], timeout=2.0)
         if result.status == "ok":
@@ -918,6 +953,36 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
     if capability_id == "cap_firewalld":
         return _probe_firewalld(env)
     return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "unknown", "no probe implemented", "unknown")
+
+
+def _parse_python_version(value: str) -> tuple[int, int, int] | None:
+    match = re.match(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$", value)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def _runtime_python_executable(manifest: Mapping, facts: DistroFacts) -> str:
+    for candidate in manifest["dependency_requirements"]["dep_python_runtime"]["method_chain"]:
+        runtime = candidate.get("runtime_python")
+        if not runtime:
+            continue
+        if _candidate_matches_facts(candidate, facts):
+            return runtime["executable"]
+    return "python3"
+
+
+def _candidate_matches_facts(candidate: Mapping, facts: DistroFacts) -> bool:
+    scope = candidate["target_scope"]
+    if facts.technical_family not in scope["technical_families"]:
+        return False
+    if candidate["target_identity"] == "resolved_release":
+        return facts.release_model == "stable" and facts.resolved_release in scope["stable_releases"]
+    if candidate["target_identity"] == "rolling_distribution":
+        return facts.release_model == "rolling" and facts.resolved_distribution in scope["rolling_distributions"]
+    if candidate["target_identity"] == "mapped_base_release":
+        return facts.release_model == "stable" and facts.resolved_release in scope["stable_releases"] and bool(facts.mapped_base_release)
+    return False
 
 
 def _command_cap(capability_id: str, result: CommandResult, reason: str) -> CapabilityResult:

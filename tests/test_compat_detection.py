@@ -54,6 +54,32 @@ def fixture_env(*, runner=None, files=None, paths=None, py=(3, 11, 0)):
     return env
 
 
+class PythonRuntimeRunner:
+    def __init__(self, versions=None, cryptography=None):
+        self.versions = dict(versions or {})
+        self.cryptography = dict(cryptography or {})
+        self.calls = []
+
+    def run(self, argv, *, timeout):
+        key = tuple(argv)
+        self.calls.append(key)
+        executable = argv[0]
+        script = argv[2] if len(argv) >= 3 and argv[1] == "-c" else ""
+        if "sys.version_info" in script:
+            value = self.versions.get(executable)
+            if value is None:
+                return detection.CommandResult(key, "command_missing", reason="fake missing")
+            return detection.CommandResult(key, "ok", 0, value + "\n", "")
+        if "cryptography" in script:
+            value = self.cryptography.get(executable)
+            if value is None:
+                return detection.CommandResult(key, "command_missing", reason="fake missing")
+            if value == "malformed":
+                return detection.CommandResult(key, "malformed_output", 1, "", "malformed")
+            return detection.CommandResult(key, "ok", 0, value + "\n", "")
+        return detection.CommandResult(key, "command_missing", reason="fake missing")
+
+
 class OsReleaseParserTests(unittest.TestCase):
     def test_valid_quoting_and_ordered_id_like(self) -> None:
         parsed = osr(
@@ -457,6 +483,56 @@ class CapabilityProbeTests(unittest.TestCase):
             machine_architecture="mips",
         )
         self.assertEqual(detection._probe_core("cap_architecture", distro_unknown_arch, inactive).domain_status, "provisionable")
+
+    def test_runtime_python_executable_is_selected_by_exact_target(self) -> None:
+        manifest = product_manifest()
+        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9\n")
+        runner = PythonRuntimeRunner(versions={"python3": "3.9.18", "python3.11": "3.11.9"})
+        env = fixture_env(runner=runner)
+        result = detection._probe_core("cap_python310", rocky, env)
+        self.assertEqual(result.domain_status, "present")
+        self.assertIn("runtime_python_executable=python3.11", result.evidence)
+        self.assertTrue(any(call[0] == "python3.11" for call in runner.calls))
+        self.assertFalse(any(call[0] == "python3" for call in runner.calls))
+
+        fedora = facts(manifest, "ID=fedora\nVERSION_ID=44\n")
+        runner = PythonRuntimeRunner(versions={"python3": "3.11.9", "python3.11": "3.11.9"})
+        env = fixture_env(runner=runner)
+        result = detection._probe_core("cap_python310", fedora, env)
+        self.assertEqual(result.domain_status, "present")
+        self.assertIn("runtime_python_executable=python3", result.evidence)
+
+    def test_python_cryptography_uses_the_selected_runtime_only(self) -> None:
+        manifest = product_manifest()
+        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9\n")
+        env = fixture_env(runner=PythonRuntimeRunner(cryptography={"python3": "42.0.0"}))
+        result = detection._probe_core("cap_python_cryptography", rocky, env)
+        self.assertEqual(result.domain_status, "provisionable")
+        self.assertEqual(result.error_kind, "command_missing")
+
+        env = fixture_env(runner=PythonRuntimeRunner(cryptography={"python3.11": "42.0.0"}))
+        result = detection._probe_core("cap_python_cryptography", rocky, env)
+        self.assertEqual(result.domain_status, "present")
+        self.assertIn("runtime_python_executable=python3.11", result.evidence)
+
+        fedora = facts(manifest, "ID=fedora\nVERSION_ID=44\n")
+        env = fixture_env(runner=PythonRuntimeRunner(cryptography={"python3.11": "42.0.0"}))
+        result = detection._probe_core("cap_python_cryptography", fedora, env)
+        self.assertEqual(result.domain_status, "provisionable")
+        self.assertEqual(result.error_kind, "command_missing")
+
+    def test_runtime_python_missing_or_malformed_is_controlled(self) -> None:
+        manifest = product_manifest()
+        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9\n")
+        env = fixture_env(runner=PythonRuntimeRunner())
+        missing = detection._probe_core("cap_python310", rocky, env)
+        self.assertEqual(missing.domain_status, "provisionable")
+        self.assertEqual(missing.error_kind, "command_missing")
+
+        env = fixture_env(runner=PythonRuntimeRunner(versions={"python3.11": "not-a-version"}))
+        malformed = detection._probe_core("cap_python310", rocky, env)
+        self.assertEqual(malformed.domain_status, "provisionable")
+        self.assertEqual(malformed.error_kind, "malformed_output")
 
     def test_family_diagnostics_are_emitted_without_degrading_readiness(self) -> None:
         manifest = product_manifest()

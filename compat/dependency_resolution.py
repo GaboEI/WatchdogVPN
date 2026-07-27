@@ -102,6 +102,9 @@ class ResolutionDecision:
     rejected_candidates: tuple[CandidateRejection, ...]
     evidence: tuple[str, ...]
     reason: str
+    provider_type: str
+    provider_authoritative: bool
+    availability_observations: tuple[Mapping, ...]
     error_kind: str | None = None
 
 
@@ -114,6 +117,8 @@ class ResolutionReport:
     support_classification: str
     machine_architecture: str | None
     decisions: tuple[ResolutionDecision, ...]
+    provider_type: str
+    provider_authoritative: bool
 
 
 class AvailabilityProvider:
@@ -236,6 +241,8 @@ def resolve_dependency(
     observed = _capability_status(manifest, capability_results, requirement.capability_id)
     chain_ids = tuple(candidate.method_id for candidate in requirement.method_chain)
     common = _decision_common(distro_facts, support_classification, requirement, observed, chain_ids)
+    common["provider_type"] = getattr(provider, "provider_type", provider.__class__.__name__)
+    common["provider_authoritative"] = bool(getattr(provider, "authoritative", False))
     if support_classification == "unsupported" or distro_facts.resolved_distribution is None:
         return ResolutionDecision(
             **common,
@@ -245,6 +252,7 @@ def resolve_dependency(
             execution_ready=False,
             rejected_candidates=(),
             evidence=(),
+            availability_observations=(),
             reason="target distribution is outside the compatibility contract",
             error_kind="out_of_contract",
         )
@@ -257,6 +265,7 @@ def resolve_dependency(
             execution_ready=True,
             rejected_candidates=(),
             evidence=("observed capability already present",),
+            availability_observations=(),
             reason="dependency already satisfied on this host",
         )
     if observed is None:
@@ -268,6 +277,7 @@ def resolve_dependency(
             execution_ready=False,
             rejected_candidates=(),
             evidence=(),
+            availability_observations=(),
             reason="capability observation is missing for required dependency",
             error_kind="capability_observation_missing",
         )
@@ -280,6 +290,7 @@ def resolve_dependency(
             execution_ready=False,
             rejected_candidates=(),
             evidence=(),
+            availability_observations=(),
             reason="observed capability state is explicitly impossible here",
             error_kind="capability_impossible",
         )
@@ -292,6 +303,7 @@ def resolve_dependency(
             execution_ready=False,
             rejected_candidates=(),
             evidence=(),
+            availability_observations=(),
             reason="capability preparation has already failed before dependency resolution",
             error_kind="preparation_failed",
         )
@@ -303,7 +315,18 @@ def resolve_dependency(
             rejections.append(rejection)
             continue
         assert target_id is not None
-        availability_result = _check_candidate_availability(provider, candidate, target_id)
+        if not _candidate_has_complete_security_metadata(candidate):
+            rejections.append(
+                CandidateRejection(
+                    candidate.method_id,
+                    candidate.kind,
+                    "pin_metadata_incomplete",
+                    "method lacks complete pin or integrity metadata",
+                    "pin_metadata_incomplete",
+                )
+            )
+            continue
+        availability_result, observations = _check_candidate_availability(provider, candidate, target_id)
         if availability_result.status != AvailabilityStatus.AVAILABLE.value:
             rejection = (
                 CandidateRejection(
@@ -334,20 +357,10 @@ def resolve_dependency(
                     execution_ready=False,
                     rejected_candidates=tuple(rejections),
                     evidence=(availability_result.evidence,) if availability_result.evidence else (),
+                    availability_observations=tuple(observations),
                     reason="higher-priority candidate availability is indeterminate",
                     error_kind=availability_result.error_kind or availability_result.status,
                 )
-            continue
-        if not _candidate_has_complete_security_metadata(candidate):
-            rejections.append(
-                CandidateRejection(
-                    candidate.method_id,
-                    candidate.kind,
-                    "pin_metadata_incomplete",
-                    "method lacks complete pin or integrity metadata",
-                    "pin_metadata_incomplete",
-                )
-            )
             continue
         execution_ready = False
         return ResolutionDecision(
@@ -362,6 +375,7 @@ def resolve_dependency(
             execution_ready=execution_ready,
             rejected_candidates=tuple(rejections),
             evidence=tuple(candidate.data.get("evidence", ())) + (availability_result.evidence,),
+            availability_observations=tuple(observations),
             reason=(
                 "method selected but execution belongs to a later transactional provisioning task"
                 if not execution_ready
@@ -377,6 +391,7 @@ def resolve_dependency(
         execution_ready=False,
         rejected_candidates=tuple(rejections),
         evidence=(),
+        availability_observations=(),
         reason="no candidate in the declared chain qualified for this exact target",
         error_kind="no_safe_route",
     )
@@ -390,6 +405,7 @@ def resolve_all(
     *,
     availability: AvailabilityProvider | None = None,
 ) -> ResolutionReport:
+    provider = availability or AvailabilityProvider()
     decisions = []
     for dependency_id in sorted(manifest.get("dependency_requirements", {})):
         decisions.append(
@@ -399,7 +415,7 @@ def resolve_all(
                 support_classification,
                 capability_results,
                 dependency_id,
-                availability=availability,
+                availability=provider,
             )
         )
     return ResolutionReport(
@@ -410,6 +426,8 @@ def resolve_all(
         support_classification=support_classification,
         machine_architecture=distro_facts.machine_architecture,
         decisions=tuple(decisions),
+        provider_type=getattr(provider, "provider_type", provider.__class__.__name__),
+        provider_authoritative=bool(getattr(provider, "authoritative", False)),
     )
 
 
@@ -450,6 +468,8 @@ def _decision_common(
         "machine_architecture": facts.machine_architecture,
         "observed_capability_status": observed,
         "candidate_chain": chain_ids,
+        "provider_type": "unknown_only",
+        "provider_authoritative": False,
     }
 
 
@@ -461,7 +481,9 @@ def _validate_support_classification(value: str) -> None:
 
 
 def _capability_status(manifest: Mapping, results: Sequence[CapabilityResult], capability_id: str) -> str | None:
-    all_caps = set(manifest["capabilities"]["core_host_capabilities"]) | set(manifest["capabilities"]["protocol_capabilities"])
+    core_caps = set(manifest["capabilities"]["core_host_capabilities"])
+    protocol_caps = set(manifest["capabilities"]["protocol_capabilities"])
+    all_caps = core_caps | protocol_caps
     if capability_id not in all_caps:
         raise DependencyResolutionError("dependency references unknown capability: %s" % capability_id)
     matches = []
@@ -477,7 +499,11 @@ def _capability_status(manifest: Mapping, results: Sequence[CapabilityResult], c
     if len(matches) > 1:
         raise DependencyResolutionError("duplicate capability result for %s" % capability_id)
     status = matches[0].domain_status
-    valid = {item.value for item in CoreCapabilityStatus} | {item.value for item in ProtocolRuntimeStatus}
+    valid = (
+        {item.value for item in CoreCapabilityStatus}
+        if capability_id in core_caps
+        else {item.value for item in ProtocolRuntimeStatus}
+    )
     if status not in valid:
         raise DependencyResolutionError("invalid domain_status for %s: %s" % (capability_id, status))
     return status
@@ -521,30 +547,38 @@ def _check_candidate_availability(
     provider: AvailabilityProvider,
     candidate: MethodCandidate,
     target_id: str,
-) -> AvailabilityObservation:
+) -> tuple[AvailabilityObservation, list[Mapping]]:
     if candidate.kind == "official_package_exact":
         return _all_packages_exist(provider, candidate, target_id)
     if candidate.kind == "external_repo_exact":
         if not _external_repo_target_is_compatible(candidate, target_id):
-            return AvailabilityObservation(
+            result = AvailabilityObservation(
                 AvailabilityStatus.UNAVAILABLE.value,
                 evidence="compatible_targets=%s target=%s repository_series=%s"
                 % (candidate.data.get("compatible_targets", []), target_id, candidate.data.get("repository", {}).get("series")),
                 reason="target_release_not_explicitly_compatible",
                 error_kind="target_release_not_explicitly_compatible",
             )
-        repo = _provider_call(provider.repository_supports_exact_target, candidate, target_id)
+            return result, [_observation_record("repository_supports_exact_target", candidate, target_id, None, result)]
+        repo = _provider_call(provider, provider.repository_supports_exact_target, candidate, target_id)
+        observations = [_observation_record("repository_supports_exact_target", candidate, target_id, None, repo)]
         if repo.status != AvailabilityStatus.AVAILABLE.value:
-            return repo
-        return _all_packages_exist(provider, candidate, target_id)
+            return repo, observations
+        packages, package_observations = _all_packages_exist(provider, candidate, target_id)
+        return packages, observations + package_observations
     if candidate.kind == "official_artifact_pinned":
-        artifact = _provider_call(provider.artifact_exists, candidate, target_id)
+        artifact = _provider_call(provider, provider.artifact_exists, candidate, target_id)
+        observations = [_observation_record("artifact_exists", candidate, target_id, None, artifact)]
         if artifact.status != AvailabilityStatus.AVAILABLE.value:
-            return artifact
-        return _provider_call(provider.artifact_integrity_metadata_available, candidate, target_id)
+            return artifact, observations
+        integrity = _provider_call(provider, provider.artifact_integrity_metadata_available, candidate, target_id)
+        observations.append(_observation_record("artifact_integrity_metadata_available", candidate, target_id, None, integrity))
+        return integrity, observations
     if candidate.kind == "pinned_source_build":
-        return _provider_call(provider.source_revision_available, candidate, target_id)
-    return AvailabilityObservation(AvailabilityStatus.MALFORMED_RESPONSE.value, reason="unknown method kind")
+        source = _provider_call(provider, provider.source_revision_available, candidate, target_id)
+        return source, [_observation_record("source_revision_available", candidate, target_id, None, source)]
+    result = AvailabilityObservation(AvailabilityStatus.MALFORMED_RESPONSE.value, reason="unknown method kind")
+    return result, [_observation_record("unknown", candidate, target_id, None, result)]
 
 
 def _external_repo_target_is_compatible(candidate: MethodCandidate, target_id: str) -> bool:
@@ -559,20 +593,22 @@ def _all_packages_exist(
     provider: AvailabilityProvider,
     candidate: MethodCandidate,
     target_id: str,
-) -> AvailabilityObservation:
+) -> tuple[AvailabilityObservation, list[Mapping]]:
+    observations = []
     for package_name in candidate.data.get("package_names", ()):
-        result = _provider_call(provider.package_exists, candidate, target_id, package_name)
+        result = _provider_call(provider, provider.package_exists, candidate, target_id, package_name)
+        observations.append(_observation_record("package_exists", candidate, target_id, package_name, result))
         if result.status != AvailabilityStatus.AVAILABLE.value:
             return AvailabilityObservation(
                 result.status,
                 evidence=result.evidence,
                 reason=result.reason or "package unavailable: %s" % package_name,
                 error_kind=result.error_kind,
-            )
-    return AvailabilityObservation(AvailabilityStatus.AVAILABLE.value, evidence="all declared packages available")
+            ), observations
+    return AvailabilityObservation(AvailabilityStatus.AVAILABLE.value, evidence="all declared packages available"), observations
 
 
-def _provider_call(func, candidate: MethodCandidate, target_id: str, package_name: str | None = None) -> AvailabilityObservation:
+def _provider_call(provider: AvailabilityProvider, func, candidate: MethodCandidate, target_id: str, package_name: str | None = None) -> AvailabilityObservation:
     try:
         if package_name is None:
             result = func(candidate, target_id)
@@ -611,7 +647,39 @@ def _provider_call(func, candidate: MethodCandidate, target_id: str, package_nam
             reason="availability provider returned invalid error_kind",
             error_kind="provider_error",
         )
+    if bool(getattr(provider, "authoritative", False)) and result.status == AvailabilityStatus.AVAILABLE.value and not result.evidence:
+        return AvailabilityObservation(
+            AvailabilityStatus.PROVIDER_ERROR.value,
+            reason="authoritative provider returned available without evidence",
+            error_kind="provider_error",
+        )
     return result
+
+
+def _observation_record(
+    operation: str,
+    candidate: MethodCandidate,
+    target_id: str,
+    package_name: str | None,
+    result: AvailabilityObservation,
+) -> Mapping:
+    record = {
+        "operation": operation,
+        "method_id": candidate.method_id,
+        "target": target_id,
+        "status": result.status,
+        "evidence": result.evidence,
+        "reason": result.reason,
+        "error_kind": result.error_kind,
+    }
+    if package_name is not None:
+        record["package_name"] = package_name
+    if candidate.kind == "official_artifact_pinned":
+        record["architecture"] = ",".join(candidate.architectures)
+        record["assets"] = candidate.data.get("assets", ())
+    if candidate.kind == "external_repo_exact":
+        record["repository"] = candidate.data.get("repository", {})
+    return record
 
 
 def _availability_blocks_chain(status: str) -> bool:
@@ -645,7 +713,12 @@ def _candidate_has_complete_security_metadata(candidate: MethodCandidate) -> boo
         return False
     if candidate.kind == "pinned_source_build":
         revision = candidate.data.get("revision")
-        return candidate.data.get("revision_type") == "commit" and _is_git_commit(revision)
+        if candidate.data.get("revision_type") != "commit" or not _is_git_commit(revision):
+            return False
+        for component in candidate.data.get("components", ()):
+            if component.get("revision_type") != "commit" or not _is_git_commit(component.get("revision")):
+                return False
+        return True
     return True
 
 

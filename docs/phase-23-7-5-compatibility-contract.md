@@ -419,9 +419,18 @@ version 1 accepts these method kinds:
 - `external_repo_exact` — provider, repository identity, exact `compatible_targets`,
   package names, architectures, evidence and postcondition.
 - `official_artifact_pinned` — official provenance, pinned version, per-architecture
-  integrity metadata and expected files.
+  asset metadata, integrity metadata and expected files. The current sing-box data is
+  pinned to `1.13.14` with assets
+  `sing-box-1.13.14-linux-amd64-glibc.tar.gz` and
+  `sing-box-1.13.14-linux-arm64.tar.gz`; Cloak is pinned to `2.12.0` with assets
+  `ck-client-linux-amd64-v2.12.0` and `ck-client-linux-arm64-v2.12.0`. The SHA-256
+  values are validated against the legacy constants in `lib/singbox.sh` and
+  `lib/cloak.sh`; placeholder hashes are rejected.
 - `pinned_source_build` — official provenance, revision type, revision, build
-  dependencies and expected outputs. A placeholder or unresolved revision is not
+  dependencies and expected outputs. AmneziaWG is modeled as two components,
+  `amneziawg-tools` (`awg`, `awg-quick`) and `amneziawg-go` (transport), each with its own
+  repository, immutable commit field, build dependencies and postcondition. A tag alone,
+  placeholder, unresolved revision or one pinned component with the other unpinned is not
   executable.
 
 `tools/compat_read.py` validates the new section while remaining Python-3.6 syntax-target,
@@ -433,6 +442,14 @@ security fields, target identity/scope mismatches, duplicate global candidate ID
 unsafe package names, non-HTTPS or credentialed URLs, malformed SHA-256 hashes, mapped-base
 targets not authorized by derivative mappings, stable rules applied to rolling targets,
 rolling rules applied to stable targets, and arbitrary command-looking evidence.
+
+The final Python runtime is target-specific data rather than a hardcoded probe:
+Ubuntu/Debian/Mint/Kali use `python3` with `python3-cryptography`; Fedora 44 uses
+`python3` with `python3-cryptography`; Rocky/Alma/RHEL/CentOS Stream 9 use `python3.11`
+with `python3.11-cryptography`; openSUSE Leap/Tumbleweed use `python3.11` from package
+`python311` with `python311-cryptography`; Arch/CachyOS use `python` with
+`python-cryptography`. Detection probes `cap_python310` and `cap_python_cryptography`
+against that selected interpreter only and records the executable and observed versions.
 
 The resolver consumes:
 
@@ -470,15 +487,19 @@ Selection is strict and deterministic:
    stable release, exact rolling distribution, or explicitly authorized mapped base release.
 5. `external_repo_exact` additionally requires the exact `(target_id, repository.series)`
    pair to be present in `compatible_targets`; nearby series never qualify.
-6. Availability comes only from an injected `AvailabilityProvider`; `unknown`, `timeout`,
+6. Static eligibility is evaluated before any provider call: exact scope/target,
+   architecture, method coherence, pins/integrity/postcondition and implementation status.
+   A statically invalid source pin or artifact hash is rejected without consulting
+   availability.
+7. Availability comes only from an injected `AvailabilityProvider`; `unknown`, `timeout`,
    `permission_denied`, `malformed_response` and `provider_error` block the chain and mark
    lower-priority candidates as `not_evaluated_due_to_higher_priority_unknown`.
-7. Conclusive rejections such as `unavailable`, target mismatch, architecture mismatch and
+8. Conclusive rejections such as `unavailable`, target mismatch, architecture mismatch and
    incomplete pin metadata allow the chain to continue.
-8. The first eligible and available candidate can be selected, but
+9. The first eligible and available candidate can be selected, but
    `execution_ready=false` throughout this task because the transactional provisioner and
    executor registry belong to 23.7.5.6a.
-9. If the chain exhausts after conclusive rejections, the result is `no_safe_route`; if a
+10. If the chain exhausts after conclusive rejections, the result is `no_safe_route`; if a
    higher-priority candidate cannot be verified, the result is `availability_unknown`.
 
 Support and dependency resolution stay orthogonal. Ubuntu 26.04 can receive an honest
@@ -500,8 +521,24 @@ PPA candidate because no `(ubuntu_26_04, noble)` target is authorized; the sourc
 recorded as a future pinned source build, but its revision is intentionally unresolved and
 therefore not executable.
 
+Fedora and RHEL-family targets are split where the legacy adapter split matters. Fedora 44
+can use DNF official package candidates for OpenVPN. Rocky/Alma/RHEL/CentOS Stream 9 do
+not treat EPEL-only packages as official DNF packages; their OpenVPN path is an
+`external_repo_exact` EPEL 9 candidate with repository package, signing-key provenance and
+package exposure represented as data. Unknown EPEL availability blocks the chain instead
+of falling back to a Fedora rule.
+
+Provider observations are preserved per operation. Multi-package methods record a
+`package_exists` observation for each package; external repos keep both repository target
+evidence and package evidence; artifacts keep asset existence and integrity metadata by
+architecture. Provider type and whether the evidence is authoritative live in both the
+CLI wrapper and the domain report/decision.
+
 The provider-backed matrix is L1, not real ecosystem evidence. The focused real L2 harness
 is separate and requires disposable container infrastructure supplied explicitly through
 `WATCHDOGVPN_REAL_L2=1`; without such infrastructure it reports a skipped limitation. L2
-checks must never be presented as kernel, TUN, firewall, protocol or physical
-certification evidence.
+checks create throwaway Docker/Podman containers, read `/etc/os-release`, confirm the
+package manager and run read-only package queries (`apt-cache`, `dnf`, `zypper`,
+`pacman`) after metadata refreshes only inside the disposable container when needed. They
+record image, stdout, stderr, exit code, timeout and status, and must never be presented as
+kernel, TUN, firewall, protocol or physical certification evidence.
