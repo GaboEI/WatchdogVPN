@@ -23,6 +23,17 @@ class PathPolicyError(ProvisioningError):
     """Raised when a target path violates the path-protection contract."""
 
 
+class IdentifierError(ProvisioningError):
+    """Raised when a transaction_id/capability_id/dependency_id (or any other
+    identifier used to build a persistent path) fails the identifier grammar."""
+
+
+class DurabilityError(ProvisioningError):
+    """Raised when an action's own effect succeeded but its containing
+    directory could not be durably fsynced. Callers must never declare the
+    action verified/committed/undone/uninstalled when this is raised."""
+
+
 class ProvisionerLockHeldError(ProvisioningError):
     """Raised when the global provisioner lock is held by another process."""
 

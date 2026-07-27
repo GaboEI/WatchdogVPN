@@ -818,11 +818,102 @@ already-uninstalled (or never-owned) capability is a safe, idempotent
 `nothing_to_uninstall`, never an error that corrupts state. `--force` is out of scope
 for this task.
 
+### Security and correctness hardening (post-6a correction round)
+
+A follow-up review of the initial 6a implementation found several real gaps between
+the "quick" transactional infrastructure and what a genuinely hostile or crash-prone
+environment requires. All of the following were closed in the same
+`compat/provisioning` package, on top of the already-committed 6a implementation,
+without starting 23.7.5.6b:
+
+- **Identifier validation** (`paths.py:validate_identifier`): `transaction_id`,
+  `capability_id` and `dependency_id` are validated (non-empty, bounded length,
+  `[A-Za-z0-9_-]` only, no `/`, `\`, NUL, `.`/`..`) at every point they are used to
+  build a filename -- `journal.py`'s `transaction_path`/`history_path`/`ownership_path`,
+  journal/ownership deserialization, and `CanaryExecutor.plan_steps`. A persistent path
+  is never built directly from an unvalidated identifier.
+- **Strict ownership deserialization**: `OwnershipRecord`/`OwnershipCandidate` JSON is
+  validated field-by-field (exact booleans, absolute `resource_identity` without `..`,
+  non-negative `uid`/`gid`, a valid file `mode`, a lowercase sha256 `integrity` when
+  present) and rejects any unknown field in either the record or its `candidate`
+  object -- there is no admitted-but-unvalidated schema surface.
+- **Path policy at every choke point**: `validate_target_path` now gates
+  `verify_step`, `undo_step`, `inspect_step`, `verify_postcondition` (all in
+  `executors.py`) and every uninstall step (`engine._run_uninstall_loop`), not just
+  `apply_step`. A forged out-of-sandbox target anywhere in a journal/ownership record
+  is rejected as `path_policy_violation` before any read/write/delete, never just at
+  the original apply.
+- **Private storage** (`compat/provisioning/storage.py`, new module): journals,
+  ownership records and the lock file are written through a dedicated
+  `atomic_write_private`/`ensure_private_dir` primitive -- directories `0700`, files
+  `0600` -- and never through `config.persistence`'s shared-group (`0660`/`02770`
+  setgid) primitive, regardless of where `state_root` happens to live (including under
+  `/var/lib/watchdogvpn`).
+- **Durability**: `create_file_exclusive` and `remove_file_if_owned` (`paths.py`) now
+  fsync the parent directory after the create/unlink, reusing the same
+  `fsync_parent_directory` primitive as journal writes; a directory-fsync failure
+  raises `DurabilityError` and is never absorbed into a false "applied"/"verified"/
+  "undone" outcome.
+- **Full ownership/verification metadata**: `OwnershipCandidate` now captures
+  `uid`/`gid`/`mode` at commit time (`engine._finalize_provenance`), and
+  `verify_step`/`verify_postcondition` additionally check `st_nlink == 1` (rejecting a
+  hard-linked target) and recheck content hash, not just existence.
+- **`selected_asset` persistence**: the prepare journal now stores `plan.selected_asset`
+  (already part of `plan_digest`); recovery reconstructs the plan with that exact
+  value, so a real resolver decision with a concrete asset recovers correctly, and a
+  tampered `selected_asset` is caught as a `plan_digest_mismatch`.
+- **Ownership bound to a committed transaction** (`engine.validate_ownership_authority`):
+  before any ownership record is trusted as uninstall/idempotency authority, its
+  `created_by_transaction` must load, be `committed`, be a `prepare` operation for the
+  same `capability_id`, and its provenance must match the *entire* current ownership
+  set exactly (resource identity, integrity, artifact type, executor id/version,
+  method id) -- an orphaned, partial or divergent record, or one bound to a
+  non-committed journal, invalidates the whole set. This closes the window where a
+  crash between `_finalize_provenance` (ownership written) and the journal's own
+  transition to `committed` could otherwise be read as a valid uninstall right;
+  `uninstall()` refuses with a dedicated `ownership_invalid` status and zero mutation
+  in that case.
+- **Exact idempotency**: `already_provisioned` now requires the *same* source
+  transaction, executor id/version, method id, exact resource-path set (no
+  more/fewer), matching hash, matching `uid`/`gid`/`mode`, and a freshly re-verified
+  postcondition -- a partial match (e.g. one of two owned resources, or a mode drift
+  with unchanged content) is `ownership_conflict`, never a silent "close enough".
+- **Recovery under mandatory lock**: `recover_pending()` is now the public entry point
+  that acquires the provisioner lock itself (`finally`-released); the original
+  lock-assuming logic moved to an internal `_recover_pending_locked()`, which
+  `prepare()`/`uninstall()` call directly since they already hold the lock. A
+  concurrent external `recover_pending()` call now correctly raises
+  `ProvisionerLockHeldError` instead of racing another mutator.
+- **Uninstall plan digest + full recovery state machine**: the uninstall journal's
+  plan is now reverified (`engine._uninstall_source_matches`) -- both against the
+  current ownership file's content and against a committed source -- before the very
+  first unlink and again on every recovery pass; a divergence blocks with no deletion.
+  `_run_uninstall_loop` (`engine.py`) now handles each boundary explicitly: `planned`
+  writes ahead to `applying` before the first unlink attempt; resuming `applying`
+  inspects the real target first (absent → already done, present-and-matching → retry,
+  symlink or hash divergence → fail, never delete); `applied` never re-executes an
+  unlink, only advancing to `verifying`; `verifying` checks *only* absence. This also
+  surfaced and fixed a real latent bug: recovery of any pending uninstall previously
+  crashed with `ExecutorNotRegisteredError` (it tried to resolve an executor for the
+  uninstall journal's synthetic `uninstall`/`uninstall` method before ever checking
+  `journal.operation`), which meant an interrupted uninstall could never actually be
+  recovered through `recover_pending()` at all.
+- **Dry-run truly read-only**: `tools/compat_provision.py`'s `_build_env()` now takes
+  an explicit `mutating` flag and only creates the sandbox directory for `prepare
+  --apply`/`uninstall --apply`/`recover`; `plan`, `prepare`/`uninstall` without
+  `--apply`, and `status` create neither the sandbox nor the provisioning state root.
+
 ### Gates and evidence
 
 L1 (`tests/test_compat_transactional_provisioning.py`) covers the maintainer's full
 35-item checklist plus offline/network-declaration and executor-exception-containment
-cases. The standalone harness
+cases, plus a further set of tests for every point in the hardening round above
+(identifier validation, strict ownership deserialization, path-policy choke points,
+private storage permissions, durability-failure handling, ownership metadata capture,
+`selected_asset` persistence/tampering, ownership-authority binding including the
+pre-commit-publication window, exact idempotency, lock-protected recovery, and the
+uninstall digest/state-machine boundaries including the discovered
+`ExecutorNotRegisteredError` recovery bug) -- 76 tests total in this module. The standalone harness
 (`tests/vm/phase23_7_5_6a_transactional_provisioning_validation.py`) reproduces, with
 real separate OS processes (including two genuine `SIGKILL`s), lock exclusion between
 processes, apply+verify, idempotent re-apply, rollback via an injected failure, both

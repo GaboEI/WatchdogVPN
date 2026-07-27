@@ -11,6 +11,7 @@ package, repository, network, DNS, firewall or service is ever touched.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import signal
 import stat
@@ -24,10 +25,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from compat.dependency_resolution import ResolutionDecision
-from compat.provisioning import engine, journal as journal_mod, lock as lock_mod
+from compat.dependency_resolution import ResolutionDecision, SelectedArtifact
+from compat.provisioning import engine, journal as journal_mod, lock as lock_mod, storage as storage_mod
 from compat.provisioning.engine import PrepareStatus, ProvisioningEnvironment
-from compat.provisioning.errors import InvalidTransitionError, PathPolicyError, ProvisionerLockHeldError
+from compat.provisioning.errors import (
+    DurabilityError,
+    IdentifierError,
+    InvalidTransitionError,
+    JournalError,
+    PathPolicyError,
+    ProvisionerLockHeldError,
+)
 from compat.provisioning.executors import (
     CANARY_EXECUTOR_VERSION,
     CANARY_METHOD_KIND,
@@ -39,13 +47,19 @@ from compat.provisioning.executors import (
 )
 from compat.provisioning.digest import compute_plan_digest
 from compat.provisioning.model import (
+    OwnershipCandidate,
+    OwnershipRecord,
+    ProvisioningPlan,
+    ProvisioningStep,
     RecoveryAction,
     StepState,
     TransactionState,
+    UninstallPlan,
     VerificationResult,
     transition_step,
     transition_transaction,
 )
+from compat.provisioning import paths as paths_mod
 from compat.provisioning.paths import canary_forbidden_roots, validate_target_path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -622,6 +636,594 @@ class ExecutorErrorWrappingTests(unittest.TestCase):
         self.assertEqual(outcome.status, PrepareStatus.PREPARATION_FAILED)
         journal = journal_mod.read_journal(self.harness.state_root, outcome.transaction_id)
         self.assertEqual(journal.steps[0].error_kind, "executor_error")
+
+
+def _valid_ownership_payload(**overrides) -> dict:
+    candidate = {
+        "artifact_type": "file", "resource_identity": "/tmp/x", "pre_existing": False,
+        "method_id": "canary_method", "source": None, "version": None, "integrity": "a" * 64,
+        "uid": 0, "gid": 0, "mode": 0o600, "post_install_fingerprint": None,
+    }
+    candidate.update(overrides.pop("candidate", {}))
+    payload = {
+        "capability_id": "cap_x", "product_owned": True, "created_by_transaction": None,
+        "executor_id": "e", "executor_version": "1", "recorded_at": _now(), "candidate": candidate,
+    }
+    payload.update(overrides)
+    return payload
+
+
+class IdentifierValidationTests(unittest.TestCase):
+    """Point 1: central validation for transaction_id/capability_id/dependency_id."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+
+    def test_rejects_path_traversal_empty_and_none(self) -> None:
+        for bad in ("../../etc/passwd", "a/b", "a\\b", "", ".", "..", "/abs", "a\x00b", None, "x" * 200):
+            with self.subTest(bad=bad):
+                with self.assertRaises(IdentifierError):
+                    paths_mod.validate_identifier(bad, field="transaction_id")
+
+    def test_accepts_realistic_ids(self) -> None:
+        for good in ("cap_python310", "proto_amneziawg_runtime", "a" * 128, "abc-DEF_123"):
+            self.assertEqual(paths_mod.validate_identifier(good, field="capability_id"), good)
+
+    def test_journal_path_helpers_reject_malicious_ids(self) -> None:
+        state_root = self.tmp / "state"
+        with self.assertRaises(IdentifierError):
+            journal_mod.transaction_path(state_root, "../../etc/passwd")
+        with self.assertRaises(IdentifierError):
+            journal_mod.history_path(state_root, "../evil")
+        with self.assertRaises(IdentifierError):
+            journal_mod.ownership_path(state_root, "../../evil")
+
+    def test_ownership_deserialization_rejects_path_traversal_created_by_transaction(self) -> None:
+        state_root = self.tmp / "state"
+        payload = [_valid_ownership_payload(created_by_transaction="../../etc/passwd")]
+        path = journal_mod.ownership_path(state_root, "cap_x")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaises(JournalError):
+            journal_mod.read_ownership_records(state_root, "cap_x")
+
+    def test_ownership_deserialization_rejects_unknown_field(self) -> None:
+        state_root = self.tmp / "state"
+        payload = [_valid_ownership_payload(extra_backdoor_field=1)]
+        path = journal_mod.ownership_path(state_root, "cap_x")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaises(JournalError):
+            journal_mod.read_ownership_records(state_root, "cap_x")
+
+    def test_ownership_deserialization_rejects_non_bool_product_owned(self) -> None:
+        state_root = self.tmp / "state"
+        payload = [_valid_ownership_payload(product_owned="true")]
+        path = journal_mod.ownership_path(state_root, "cap_x")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaises(JournalError):
+            journal_mod.read_ownership_records(state_root, "cap_x")
+
+    def test_ownership_deserialization_rejects_relative_resource_identity(self) -> None:
+        state_root = self.tmp / "state"
+        payload = [_valid_ownership_payload(candidate={"resource_identity": "relative/path"})]
+        path = journal_mod.ownership_path(state_root, "cap_x")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaises(JournalError):
+            journal_mod.read_ownership_records(state_root, "cap_x")
+
+    def test_ownership_deserialization_rejects_negative_uid_and_bad_mode(self) -> None:
+        state_root = self.tmp / "state"
+        for bad_candidate in ({"uid": -1}, {"mode": 0o100000}, {"integrity": "not-a-hash"}):
+            with self.subTest(bad_candidate=bad_candidate):
+                payload = [_valid_ownership_payload(candidate=dict(bad_candidate))]
+                path = journal_mod.ownership_path(state_root, "cap_x")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaises(JournalError):
+                    journal_mod.read_ownership_records(state_root, "cap_x")
+
+
+class PathPolicyChokePointTests(unittest.TestCase):
+    """Point 3: every path operation (verify/undo/inspect/postcondition/uninstall)
+    goes through validate_target_path, never a raw journal/ownership path."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def _outside_target(self) -> Path:
+        outside_dir = self.tmp / "outside"
+        outside_dir.mkdir(exist_ok=True)
+        outside_file = outside_dir / "evil.marker"
+        outside_file.write_bytes(b"evil")
+        return outside_file
+
+    def test_verify_step_rejects_path_outside_allowlist(self) -> None:
+        outside = self._outside_target()
+        record = journal_mod.StepRecord(sequence=0, step_id="s", action_type="create_file", state=StepState.APPLIED, intent={"content": "x", "content_sha256": "0" * 64}, target=str(outside))
+        execution = engine.ExecutionResult(status="applied", observed={"path": str(outside)})
+        result = self.harness.executor.verify_step(record, execution, self.harness.context)
+        self.assertEqual(result.status, "verification_failed")
+        self.assertEqual(result.error_kind, "path_policy_violation")
+
+    def test_undo_step_rejects_path_outside_allowlist(self) -> None:
+        outside = self._outside_target()
+        record = journal_mod.StepRecord(sequence=0, step_id="s", action_type="create_file", state=StepState.APPLIED, intent={"content": "x", "content_sha256": "0" * 64}, target=str(outside))
+        execution = engine.ExecutionResult(status="applied", undo_record={"path": str(outside), "expected_sha256": "0" * 64})
+        result = self.harness.executor.undo_step(record, execution, self.harness.context)
+        self.assertEqual(result.status, "undo_failed")
+        self.assertEqual(result.error_kind, "path_policy_violation")
+        self.assertTrue(outside.exists())
+
+    def test_inspect_step_rejects_path_outside_allowlist(self) -> None:
+        outside = self._outside_target()
+        record = journal_mod.StepRecord(sequence=0, step_id="s", action_type="create_file", state=StepState.PLANNED, intent={"content": "x", "content_sha256": "0" * 64}, target=str(outside))
+        observed = self.harness.executor.inspect_step(record, self.harness.context)
+        self.assertIn("path_policy_error", observed)
+        self.assertIsNone(observed["exists"])
+
+    def test_verify_postcondition_rejects_path_outside_allowlist(self) -> None:
+        outside = self._outside_target()
+        plan = ProvisioningPlan(
+            capability_id="cap_x", dependency_id="dep_x", resolved_target="t", architecture="x86_64",
+            support_classification="certified", selected_method_id="canary_method", selected_method_kind=CANARY_METHOD_KIND,
+            postcondition="x", executor_id=self.harness.executor.executor_id, executor_version=CANARY_EXECUTOR_VERSION,
+            steps=(ProvisioningStep(sequence=0, step_id="s", action_type="create_file", intent={"content_sha256": "0" * 64}, target=str(outside)),),
+        )
+        result = self.harness.executor.verify_postcondition(plan, self.harness.context)
+        self.assertEqual(result.status, "verification_failed")
+        self.assertEqual(result.error_kind, "path_policy_violation")
+
+    def test_run_uninstall_loop_rejects_forged_out_of_allowlist_target(self) -> None:
+        outside = self._outside_target()
+        step = ProvisioningStep(sequence=0, step_id="uninstall_0", action_type="remove_file", intent={"resource_identity": str(outside), "expected_sha256": None}, target=str(outside))
+        plan = UninstallPlan(
+            capability_id="cap_x", transaction_id="forgedtxn", target_transaction_id="",
+            ownership_records=(
+                OwnershipRecord(
+                    capability_id="cap_x",
+                    candidate=OwnershipCandidate(artifact_type="file", resource_identity=str(outside), pre_existing=False),
+                    product_owned=True, created_by_transaction=None, executor_id="e", executor_version="1", recorded_at=_now(),
+                ),
+            ),
+            steps=(step,),
+        )
+        journal = engine._initial_uninstall_journal(plan, now_value=_now())
+        journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
+        with mock.patch("compat.provisioning.engine._uninstall_source_matches", return_value=True):
+            result_journal, ok, residuals = engine._run_uninstall_loop(self.harness.state_root, journal, self.harness.context)
+        self.assertFalse(ok)
+        self.assertTrue(outside.exists())
+        self.assertEqual(result_journal.step(0).error_kind, "path_policy_violation")
+
+
+class PrivateStorageTests(unittest.TestCase):
+    """Point 4: provisioning state is always 0700/0600, never the shared-group
+    config.persistence primitive, regardless of where state_root lives."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def test_state_root_directories_are_owner_only(self) -> None:
+        decision = self.harness.decision(capability_id="cap_perms_dir")
+        outcome = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        for directory in (
+            self.harness.state_root,
+            journal_mod.transactions_dir(self.harness.state_root),
+            journal_mod.ownership_dir(self.harness.state_root),
+        ):
+            self.assertEqual(oct(stat.S_IMODE(directory.stat().st_mode)), "0o700")
+
+    def test_provisioning_journal_module_never_uses_the_shared_group_primitive(self) -> None:
+        source = (ROOT / "compat" / "provisioning" / "journal.py").read_text(encoding="utf-8")
+        self.assertNotIn("import config.persistence", source)
+        self.assertNotIn("from config.persistence import", source)
+        self.assertNotIn("SHARED_FILE_MODE", source)
+
+    def test_ensure_private_dir_never_widens_existing_permissions(self) -> None:
+        target = self.tmp / "already_there"
+        target.mkdir(mode=0o750)
+        os.chmod(target, 0o750)
+        storage_mod.ensure_private_dir(target)
+        self.assertEqual(oct(stat.S_IMODE(target.stat().st_mode)), "0o750")
+
+
+class DurabilityTests(unittest.TestCase):
+    """Point 11: fsync the parent directory after create/unlink; a fsync
+    failure must never be silently declared durable/verified/undone."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+
+    def test_create_file_exclusive_raises_durability_error_when_directory_fsync_fails(self) -> None:
+        target = self.tmp / "x.marker"
+        with mock.patch("compat.provisioning.paths.fsync_parent_directory", side_effect=DurabilityError("boom")):
+            with self.assertRaises(DurabilityError):
+                paths_mod.create_file_exclusive(target, b"data")
+        self.assertTrue(target.exists())
+
+    def test_remove_file_if_owned_raises_durability_error_when_directory_fsync_fails(self) -> None:
+        target = self.tmp / "x.marker"
+        target.write_bytes(b"data")
+        with mock.patch("compat.provisioning.paths.fsync_parent_directory", side_effect=DurabilityError("boom")):
+            with self.assertRaises(DurabilityError):
+                paths_mod.remove_file_if_owned(target)
+        self.assertFalse(target.exists())
+
+    def test_apply_never_falsely_commits_when_directory_durability_fails(self) -> None:
+        harness = _Harness(self.tmp)
+        decision = harness.decision(capability_id="cap_durability")
+        with mock.patch("compat.provisioning.paths.fsync_parent_directory", side_effect=DurabilityError("boom")):
+            outcome = engine.prepare(decision, harness.env, apply=True)
+        self.assertNotEqual(outcome.status, PrepareStatus.COMMITTED)
+
+
+class OwnershipMetadataTests(unittest.TestCase):
+    """Point 12: ownership records capture uid/gid/mode/hash/type; final
+    postcondition rechecks content, not just existence; st_nlink == 1."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def test_ownership_records_capture_uid_gid_mode(self) -> None:
+        decision = self.harness.decision(capability_id="cap_metadata")
+        outcome = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, "cap_metadata")
+        self.assertEqual(len(records), 2)
+        for record in records:
+            self.assertEqual(record.candidate.uid, os.getuid())
+            self.assertEqual(record.candidate.gid, os.getgid())
+            self.assertEqual(record.candidate.mode, 0o600)
+            self.assertIsNotNone(record.candidate.integrity)
+
+    def test_verify_step_rejects_hardlinked_target(self) -> None:
+        decision = self.harness.decision(capability_id="cap_nlink")
+        plan, executor = engine.build_plan(decision, registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.harness.context)
+        journal = engine._initial_journal(plan, transaction_id="nlinktxn", now_value=_now())
+        record = journal.step(0).with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
+        result = executor.apply_step(record, self.harness.context)
+        target_path = Path(result.observed["path"])
+        hardlink = target_path.with_name(target_path.name + ".hardlink")
+        os.link(target_path, hardlink)
+        self.addCleanup(lambda: hardlink.unlink(missing_ok=True))
+        verification = executor.verify_step(record, result, self.harness.context)
+        self.assertEqual(verification.status, "verification_failed")
+        self.assertEqual(verification.error_kind, "unexpected_nlink")
+
+
+class SelectedAssetPersistenceTests(unittest.TestCase):
+    """Point 10: selected_asset is persisted in the prepare journal and
+    reconstructed exactly during recovery; tampering breaks the digest."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def _decision_with_asset(self, capability_id: str) -> ResolutionDecision:
+        decision = self.harness.decision(capability_id)
+        asset = SelectedArtifact(
+            architecture="x86_64", asset_name="pkg.tar.zst", archive_or_binary_kind="archive",
+            official_download_base="https://example.invalid/", sha256="a" * 64, expected_executable="pkg",
+        )
+        return dataclasses.replace(decision, selected_asset=asset)
+
+    def test_selected_asset_is_persisted_and_survives_recovery(self) -> None:
+        decision = self._decision_with_asset("cap_asset")
+        plan, _executor = engine.build_plan(decision, registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.harness.context)
+        journal = engine._initial_journal(plan, transaction_id="assettxn", now_value=_now())
+        self.assertIsNotNone(journal.selected_asset)
+        journal_mod.write_journal(self.harness.state_root, journal)
+        reloaded = journal_mod.read_journal(self.harness.state_root, "assettxn")
+        self.assertEqual(reloaded.selected_asset["asset_name"], "pkg.tar.zst")
+
+        journal = journal.with_state(TransactionState.AUTHORIZED, now=_now())
+        journal = journal.with_state(TransactionState.APPLYING, now=_now())
+        journal_mod.write_journal(self.harness.state_root, journal)  # crashed before any step began
+
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
+        self.assertEqual(reports[0].action, RecoveryAction.RESUME)
+        final = journal_mod.read_journal(self.harness.state_root, "assettxn")
+        self.assertEqual(final.state, TransactionState.COMMITTED)
+
+    def test_tampered_selected_asset_causes_digest_mismatch_on_recovery(self) -> None:
+        decision = self._decision_with_asset("cap_asset_tamper")
+        plan, _executor = engine.build_plan(decision, registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.harness.context)
+        journal = engine._initial_journal(plan, transaction_id="assettampertxn", now_value=_now())
+        journal = journal.with_state(TransactionState.AUTHORIZED, now=_now())
+        journal = journal.with_state(TransactionState.APPLYING, now=_now())
+        tampered_asset = dict(journal.selected_asset)
+        tampered_asset["sha256"] = "b" * 64
+        journal = dataclasses.replace(journal, selected_asset=tampered_asset)
+        journal_mod.write_journal(self.harness.state_root, journal)
+
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
+        self.assertEqual(reports[0].action, RecoveryAction.REQUIRE_MANUAL)
+        final = journal_mod.read_journal(self.harness.state_root, "assettampertxn")
+        self.assertEqual(final.state, TransactionState.RECOVERY_REQUIRED)
+
+
+class OwnershipAuthorityBindingTests(unittest.TestCase):
+    """Points 2, 8: no uninstall right may exist without a full, exact match
+    against one committed 'prepare' transaction's own provenance."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def test_uninstall_refuses_ownership_record_bound_to_nonexistent_transaction(self) -> None:
+        decision = self.harness.decision(capability_id="cap_orphan")
+        outcome = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, "cap_orphan")
+        forged = [dataclasses.replace(r, created_by_transaction="ffffffffffffffffffffffffffffffff") for r in records]
+        journal_mod.write_ownership_records(self.harness.state_root, "cap_orphan", forged)
+
+        result = engine.uninstall("cap_orphan", self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertEqual(result.error_kind, "ownership_invalid")
+        self.assertTrue((self.harness.sandbox / "cap_orphan.marker").exists())
+        self.assertTrue((self.harness.sandbox / "cap_orphan.companion").exists())
+
+    def test_uninstall_refuses_ownership_published_before_commit(self) -> None:
+        decision = self.harness.decision(capability_id="cap_precommit")
+        plan, executor = engine.build_plan(decision, registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.harness.context)
+        journal = engine._initial_journal(plan, transaction_id="precommittxn", now_value=_now())
+        journal = journal.with_state(TransactionState.AUTHORIZED, now=_now())
+        journal = journal.with_state(TransactionState.APPLYING, now=_now())
+        journal, apply_ok = engine._apply_and_verify(self.harness.state_root, journal, plan, executor, self.harness.context)
+        self.assertTrue(apply_ok)
+        self.assertEqual(journal.state, TransactionState.VERIFYING)
+        engine._finalize_provenance(self.harness.state_root, journal, plan, executor, _now())
+        journal_mod.write_journal(self.harness.state_root, journal)  # crash: still VERIFYING, never COMMITTED
+
+        result = engine.uninstall("cap_precommit", self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+
+
+class ExactIdempotencyTests(unittest.TestCase):
+    """Point 9: already_provisioned requires an exact match on every field,
+    never a partial/any() match."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def test_partial_ownership_set_is_a_conflict_not_already_provisioned(self) -> None:
+        decision = self.harness.decision(capability_id="cap_partial_idem")
+        outcome = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, "cap_partial_idem")
+        self.assertEqual(len(records), 2)
+        journal_mod.write_ownership_records(self.harness.state_root, "cap_partial_idem", records[:1])
+
+        second = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(second.status, PrepareStatus.OWNERSHIP_CONFLICT)
+
+    def test_mode_drift_on_owned_resource_is_a_conflict_not_already_provisioned(self) -> None:
+        decision = self.harness.decision(capability_id="cap_mode_drift")
+        outcome = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        marker_path = self.harness.sandbox / "cap_mode_drift.marker"
+        os.chmod(marker_path, 0o644)
+
+        second = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(second.status, PrepareStatus.OWNERSHIP_CONFLICT)
+
+
+class RecoveryLockTests(unittest.TestCase):
+    """Point 5: recover_pending() acquires the lock itself; the internal
+    _recover_pending_locked() never does (prepare()/uninstall() already hold it)."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def test_public_recover_pending_acquires_the_lock_itself(self) -> None:
+        lock_path = journal_mod.lock_path(self.harness.state_root)
+        with lock_mod.acquire_provisioner_lock(lock_path, transaction_id="holder", timeout=1.0):
+            with self.assertRaises(ProvisionerLockHeldError):
+                engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context, lock_timeout=0.2)
+
+    def test_internal_recover_pending_locked_does_not_acquire_the_lock(self) -> None:
+        lock_path = journal_mod.lock_path(self.harness.state_root)
+        holder_script = self.tmp / "holder.py"
+        holder_script.write_text(
+            "import sys, time\n"
+            "sys.path.insert(0, %r)\n"
+            "from pathlib import Path\n"
+            "from compat.provisioning.lock import acquire_provisioner_lock\n"
+            "with acquire_provisioner_lock(Path(%r), transaction_id='holder', timeout=2.0):\n"
+            "    print('ACQUIRED', flush=True)\n"
+            "    time.sleep(1.5)\n" % (str(ROOT), str(lock_path))
+        )
+        proc = subprocess.Popen([sys.executable, str(holder_script)], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.stdout.close)
+        line = proc.stdout.readline()
+        self.assertEqual(line.strip(), "ACQUIRED")
+        try:
+            reports = engine._recover_pending_locked(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
+            self.assertEqual(reports, [])
+        finally:
+            proc.wait(5)
+
+
+class UninstallRecoveryStateMachineTests(unittest.TestCase):
+    """Points 6, 7: uninstall plan digest reverified before the first unlink
+    and during recovery; each boundary handled explicitly, never re-executing
+    an unlink once APPLIED/VERIFYING has been durably recorded."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def _prepare_committed(self, capability_id: str) -> None:
+        decision = self.harness.decision(capability_id)
+        outcome = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+
+    def _build_uninstall_journal(self, capability_id: str) -> journal_mod.TransactionJournal:
+        owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
+        plan = engine._build_uninstall_plan(capability_id, owned)
+        journal = engine._initial_uninstall_journal(plan, now_value=_now())
+        return journal.with_state(TransactionState.UNINSTALLING, now=_now())
+
+    def _marker_step_index(self, journal) -> int:
+        return next(i for i, s in enumerate(journal.steps) if s.intent["resource_identity"].endswith(".marker"))
+
+    def test_uninstall_plan_digest_mismatch_blocks_recovery(self) -> None:
+        capability_id = "cap_uninstall_digest"
+        self._prepare_committed(capability_id)
+        journal = self._build_uninstall_journal(capability_id)
+        journal = dataclasses.replace(journal, plan_digest="0" * 64)
+        journal_mod.write_journal(self.harness.state_root, journal)
+
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
+        self.assertEqual(reports[0].action, RecoveryAction.REQUIRE_MANUAL)
+        final = journal_mod.read_journal(self.harness.state_root, journal.transaction_id)
+        self.assertEqual(final.state, TransactionState.UNINSTALL_FAILED)
+        self.assertTrue((self.harness.sandbox / ("%s.marker" % capability_id)).exists())
+        self.assertTrue((self.harness.sandbox / ("%s.companion" % capability_id)).exists())
+
+    def test_applied_step_never_re_executes_unlink(self) -> None:
+        capability_id = "cap_uninstall_applied"
+        self._prepare_committed(capability_id)
+        journal = self._build_uninstall_journal(capability_id)
+        marker_index = self._marker_step_index(journal)
+        marker_path = Path(journal.steps[marker_index].intent["resource_identity"])
+        marker_path.unlink()
+        impostor_content = b"someone else re-created this after the unlink"
+        marker_path.write_bytes(impostor_content)
+        record = journal.step(marker_index).with_state(StepState.APPLYING, started_at=_now())
+        journal = journal.with_step(record)
+        record = record.with_state(StepState.APPLIED, completed_at=_now())
+        journal = journal.with_step(record)
+        journal_mod.write_journal(self.harness.state_root, journal)
+
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
+        self.assertEqual(reports[0].action, RecoveryAction.REQUIRE_MANUAL)
+        self.assertEqual(marker_path.read_bytes(), impostor_content)
+        final = journal_mod.read_journal(self.harness.state_root, journal.transaction_id)
+        self.assertEqual(final.step(marker_index).state, StepState.VERIFY_FAILED)
+
+    def test_verifying_boundary_never_reattempts_unlink_and_completes(self) -> None:
+        capability_id = "cap_uninstall_verifying"
+        self._prepare_committed(capability_id)
+        journal = self._build_uninstall_journal(capability_id)
+        marker_index = self._marker_step_index(journal)
+        marker_path = Path(journal.steps[marker_index].intent["resource_identity"])
+        marker_path.unlink()
+        record = journal.step(marker_index).with_state(StepState.APPLYING, started_at=_now())
+        journal = journal.with_step(record)
+        record = record.with_state(StepState.APPLIED, completed_at=_now())
+        journal = journal.with_step(record)
+        record = record.with_state(StepState.VERIFYING)
+        journal = journal.with_step(record)
+        journal_mod.write_journal(self.harness.state_root, journal)
+
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
+        self.assertEqual(reports[0].action, RecoveryAction.RESUME)
+        final = journal_mod.read_journal(self.harness.state_root, journal.transaction_id)
+        self.assertEqual(final.state, TransactionState.UNINSTALLED)
+        self.assertEqual(journal_mod.read_ownership_records(self.harness.state_root, capability_id), [])
+
+    def test_symlink_at_target_during_uninstall_resume_is_rejected(self) -> None:
+        capability_id = "cap_uninstall_symlink"
+        self._prepare_committed(capability_id)
+        journal = self._build_uninstall_journal(capability_id)
+        marker_index = self._marker_step_index(journal)
+        marker_path = Path(journal.steps[marker_index].intent["resource_identity"])
+        marker_path.unlink()
+        outside = self.tmp / "outside_target"
+        outside.write_bytes(b"x")
+        marker_path.symlink_to(outside)
+        self.addCleanup(lambda: marker_path.unlink(missing_ok=True))
+        record = journal.step(marker_index).with_state(StepState.APPLYING, started_at=_now())
+        journal = journal.with_step(record)
+        journal_mod.write_journal(self.harness.state_root, journal)
+
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
+        self.assertEqual(reports[0].action, RecoveryAction.REQUIRE_MANUAL)
+        self.assertTrue(marker_path.is_symlink())
+        self.assertTrue(outside.exists())
+        final = journal_mod.read_journal(self.harness.state_root, journal.transaction_id)
+        self.assertEqual(final.step(marker_index).error_kind, "path_policy_violation")
+
+
+class DryRunReadOnlyTests(unittest.TestCase):
+    """Point 13: plan / prepare without --apply / uninstall without --apply /
+    status must never create the sandbox or the provisioning state root."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.sandbox = self.tmp / "sandbox"
+        self.state_root = self.tmp / "state"
+
+    def _parse(self, *argv: str):
+        import tools.compat_provision as compat_provision_tool
+
+        return compat_provision_tool, compat_provision_tool.build_parser().parse_args(
+            ["--sandbox", str(self.sandbox), "--state-root", str(self.state_root), *argv]
+        )
+
+    def _assert_nothing_created(self) -> None:
+        self.assertFalse(self.sandbox.exists())
+        self.assertFalse(self.state_root.exists())
+
+    def test_plan_does_not_create_sandbox_or_state_root(self) -> None:
+        tool, args = self._parse("plan", "cap_x", "dep_x")
+        tool.cmd_plan(args)
+        self._assert_nothing_created()
+
+    def test_prepare_without_apply_does_not_create_sandbox_or_state_root(self) -> None:
+        tool, args = self._parse("prepare", "cap_x", "dep_x")
+        tool.cmd_prepare(args)
+        self._assert_nothing_created()
+
+    def test_status_does_not_create_sandbox_or_state_root(self) -> None:
+        tool, args = self._parse("status")
+        tool.cmd_status(args)
+        self._assert_nothing_created()
+
+    def test_uninstall_without_apply_does_not_create_sandbox_or_state_root(self) -> None:
+        tool, args = self._parse("uninstall", "cap_x")
+        tool.cmd_uninstall(args)
+        self._assert_nothing_created()
+
+    def test_prepare_with_apply_does_create_sandbox_and_state_root(self) -> None:
+        tool, args = self._parse("prepare", "--apply", "cap_x", "dep_x")
+        tool.cmd_prepare(args)
+        self.assertTrue(self.sandbox.exists())
+        self.assertTrue(self.state_root.exists())
 
 
 if __name__ == "__main__":

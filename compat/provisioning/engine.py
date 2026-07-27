@@ -14,7 +14,9 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from enum import Enum
+import os
 from pathlib import Path
+import stat as stat_module
 import uuid
 from typing import Sequence
 
@@ -26,7 +28,9 @@ from compat.provisioning.digest import compute_plan_digest, compute_uninstall_pl
 from compat.provisioning.errors import (
     ExecutionNotReadyError,
     ExecutorNotRegisteredError,
-    OwnershipError,
+    IdentifierError,
+    JournalError,
+    PathPolicyError,
     ProvisioningError,
 )
 from compat.provisioning.executors import ExecutionContext, Executor, TrustedExecutorRegistry
@@ -45,7 +49,7 @@ from compat.provisioning.model import (
     UninstallPlan,
     VerificationResult,
 )
-from compat.provisioning.paths import remove_file_if_owned
+from compat.provisioning.paths import remove_file_if_owned, stat_identity, validate_target_path
 
 NEEDS_RECOVERY_ATTENTION = frozenset(
     {
@@ -70,6 +74,7 @@ class PrepareStatus(Enum):
     ALREADY_PRESENT = "already_present"
     ALREADY_PROVISIONED = "already_provisioned"
     OWNERSHIP_CONFLICT = "ownership_conflict"
+    OWNERSHIP_INVALID = "ownership_invalid"
     COMMITTED = "committed"
     PREPARATION_FAILED = "preparation_failed"
     ROLLBACK_FAILED = "rollback_failed"
@@ -201,6 +206,75 @@ def dry_run(
 
 
 # --------------------------------------------------------------------------
+# Ownership authority: no ownership record grants uninstall/idempotency
+# authority unless it is traceable, in full, to one committed "prepare"
+# transaction's own provenance (points 2 and 8-alternative).
+# --------------------------------------------------------------------------
+
+
+def _load_committed_source_journal(state_root: Path, transaction_id: str, *, capability_id: str) -> TransactionJournal | None:
+    try:
+        journal = journal_mod.read_journal(state_root, transaction_id)
+    except (JournalError, IdentifierError):
+        return None
+    if journal.state != TransactionState.COMMITTED or journal.operation != "prepare" or journal.capability_id != capability_id:
+        return None
+    if not isinstance(journal.provenance, dict):
+        return None
+    return journal
+
+
+def validate_ownership_authority(state_root: Path, capability_id: str, records: Sequence[OwnershipRecord]) -> bool:
+    """Full-set-exact validation binding every product-owned record to one
+    committed "prepare" transaction's own provenance. Never trusts a record
+    in isolation -- an orphaned, partial or divergent record, or one bound to
+    a non-committed/mismatched journal, invalidates the entire set."""
+    owned = [record for record in records if record.product_owned]
+    if not owned:
+        return True
+
+    transaction_ids = {record.created_by_transaction for record in owned}
+    if len(transaction_ids) != 1 or None in transaction_ids:
+        return False
+    transaction_id = next(iter(transaction_ids))
+
+    journal = _load_committed_source_journal(state_root, transaction_id, capability_id=capability_id)
+    if journal is None:
+        return False
+
+    provenance_records = journal.provenance.get("ownership_records")
+    if not isinstance(provenance_records, list):
+        return False
+    provenance_by_identity = {}
+    for item in provenance_records:
+        if not isinstance(item, dict) or "resource_identity" not in item:
+            return False
+        provenance_by_identity[item["resource_identity"]] = item
+
+    if set(provenance_by_identity) != {record.candidate.resource_identity for record in owned}:
+        return False
+
+    for record in owned:
+        expected = provenance_by_identity.get(record.candidate.resource_identity)
+        if expected is None:
+            return False
+        if expected.get("integrity") != record.candidate.integrity:
+            return False
+        if expected.get("artifact_type") != record.candidate.artifact_type:
+            return False
+        if expected.get("executor_id") != record.executor_id or expected.get("executor_version") != record.executor_version:
+            return False
+        if expected.get("method_id") != record.candidate.method_id:
+            return False
+        if record.executor_id != journal.executor.get("id") or record.executor_version != journal.executor.get("version"):
+            return False
+        if record.candidate.method_id != journal.selected_method.get("id"):
+            return False
+
+    return True
+
+
+# --------------------------------------------------------------------------
 # Idempotency
 # --------------------------------------------------------------------------
 
@@ -211,12 +285,16 @@ def check_idempotency(
     context: ExecutionContext,
     *,
     existing_ownership: Sequence[OwnershipRecord],
+    state_root: Path,
 ) -> IdempotencyCheck:
     inspections = []
     for step in plan.steps:
         record = StepRecord(sequence=step.sequence, step_id=step.step_id, action_type=step.action_type, state=StepState.PLANNED, intent=step.intent, target=step.target)
         observed = executor.inspect_step(record, context)
         inspections.append({"step_id": step.step_id, **dict(observed)})
+
+    if any(item.get("path_policy_error") for item in inspections):
+        return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
 
     any_exist = any(item.get("exists") for item in inspections)
     if not any_exist:
@@ -229,13 +307,52 @@ def check_idempotency(
     if any_symlink or any_mismatch or not all_match:
         return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
 
-    owned_by_this_executor = any(
-        record.product_owned and record.executor_id == executor.executor_id and record.executor_version == executor.executor_version
+    # Exact match only: same source (committed) transaction, same executor
+    # id/version, same method, same number of resources, same paths, same
+    # hashes, same uid/gid/mode, and a fully re-verified postcondition. A
+    # partial match is a conflict, never a silent "close enough".
+    owned_by_this_plan = [
+        record
         for record in existing_ownership
-    )
-    if owned_by_this_executor:
-        return IdempotencyCheck(IdempotencyOutcome.ALREADY_PROVISIONED, inspections)
-    return IdempotencyCheck(IdempotencyOutcome.ALREADY_PRESENT, inspections)
+        if record.product_owned
+        and record.executor_id == executor.executor_id
+        and record.executor_version == executor.executor_version
+        and record.candidate.method_id == plan.selected_method_id
+    ]
+    if not owned_by_this_plan:
+        return IdempotencyCheck(IdempotencyOutcome.ALREADY_PRESENT, inspections)
+    if len(owned_by_this_plan) != len(plan.steps):
+        return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+
+    if not validate_ownership_authority(state_root, plan.capability_id, owned_by_this_plan):
+        return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+
+    expected_targets = {step.target for step in plan.steps}
+    owned_targets = {record.candidate.resource_identity for record in owned_by_this_plan}
+    if expected_targets != owned_targets:
+        return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+
+    intent_by_target = {step.target: step.intent for step in plan.steps}
+    for record in owned_by_this_plan:
+        expected_sha256 = intent_by_target.get(record.candidate.resource_identity, {}).get("content_sha256")
+        if record.candidate.integrity != expected_sha256:
+            return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+        try:
+            identity = stat_identity(Path(record.candidate.resource_identity))
+        except OSError:
+            return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+        if record.candidate.uid is not None and record.candidate.uid != identity["uid"]:
+            return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+        if record.candidate.gid is not None and record.candidate.gid != identity["gid"]:
+            return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+        if record.candidate.mode is not None and record.candidate.mode != identity["mode"]:
+            return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+
+    postcondition = _safe_postcondition(executor, plan, context)
+    if postcondition.status != "verified":
+        return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+
+    return IdempotencyCheck(IdempotencyOutcome.ALREADY_PROVISIONED, inspections)
 
 
 # --------------------------------------------------------------------------
@@ -310,6 +427,8 @@ def _run_apply_loop(state_root: Path, journal: TransactionJournal, plan: Provisi
             result = _safe_apply(executor, record, context)
         elif record.state == StepState.APPLYING:
             observed = _safe_inspect(executor, record, context)
+            if observed.get("path_policy_error"):
+                raise ProvisioningError("step %s failed path policy during resume inspection: %s" % (record.step_id, observed["path_policy_error"]))
             if observed.get("is_symlink"):
                 raise ProvisioningError("step %s is ambiguous for resume: unexpected symlink" % record.step_id)
             if observed.get("exists") and observed.get("content_matches") is True:
@@ -397,12 +516,20 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
     records = []
     for step in journal.steps:
         undo_record = step.undo_record or {}
+        resource_identity = undo_record.get("path", step.target or "")
+        try:
+            identity = stat_identity(Path(resource_identity))
+        except OSError:
+            identity = {"uid": None, "gid": None, "mode": None}
         candidate = OwnershipCandidate(
             artifact_type="file",
-            resource_identity=undo_record.get("path", step.target or ""),
+            resource_identity=resource_identity,
             pre_existing=False,
             method_id=plan.selected_method_id,
             integrity=undo_record.get("expected_sha256"),
+            uid=identity.get("uid"),
+            gid=identity.get("gid"),
+            mode=identity.get("mode"),
             post_install_fingerprint=undo_record.get("expected_sha256"),
         )
         records.append(
@@ -425,6 +552,12 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
                 "resource_identity": r.candidate.resource_identity,
                 "artifact_type": r.candidate.artifact_type,
                 "integrity": r.candidate.integrity,
+                "uid": r.candidate.uid,
+                "gid": r.candidate.gid,
+                "mode": r.candidate.mode,
+                "executor_id": r.executor_id,
+                "executor_version": r.executor_version,
+                "method_id": r.candidate.method_id,
             }
             for r in records
         ],
@@ -460,6 +593,7 @@ def _initial_journal(plan: ProvisioningPlan, *, transaction_id: str, now_value: 
             StepRecord(sequence=s.sequence, step_id=s.step_id, action_type=s.action_type, state=StepState.PLANNED, intent=s.intent, target=s.target)
             for s in plan.steps
         ),
+        selected_asset=plan.selected_asset,
     )
 
 
@@ -479,7 +613,7 @@ def prepare(decision: ResolutionDecision, env: ProvisioningEnvironment, *, apply
 
     transaction_id = _new_transaction_id()
     with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(env.state_root), transaction_id=transaction_id, timeout=env.lock_timeout):
-        recovery_reports = recover_pending(env.state_root, env.registry, env.expected_executor_version, env.context)
+        recovery_reports = _recover_pending_locked(env.state_root, env.registry, env.expected_executor_version, env.context)
         blocking = [item for item in recovery_reports if item.action == RecoveryAction.REQUIRE_MANUAL]
         if blocking:
             return PrepareOutcome(
@@ -489,7 +623,7 @@ def prepare(decision: ResolutionDecision, env: ProvisioningEnvironment, *, apply
             )
 
         existing_ownership = journal_mod.read_ownership_records(env.state_root, plan.capability_id)
-        idempotency = check_idempotency(plan, executor, env.context, existing_ownership=existing_ownership)
+        idempotency = check_idempotency(plan, executor, env.context, existing_ownership=existing_ownership, state_root=env.state_root)
         if idempotency.outcome == IdempotencyOutcome.ALREADY_PRESENT:
             return PrepareOutcome(PrepareStatus.ALREADY_PRESENT, plan, None, "capability already present before WatchdogVPN; no write performed, no uninstall right granted")
         if idempotency.outcome == IdempotencyOutcome.ALREADY_PROVISIONED:
@@ -617,7 +751,28 @@ def recover_pending(
     registry: TrustedExecutorRegistry,
     expected_executor_version: str,
     context: ExecutionContext,
+    *,
+    lock_timeout: float = lock_mod.DEFAULT_TIMEOUT_SECONDS,
 ) -> list[RecoveryDecision]:
+    """Public recovery entry point. Acquires the single machine-wide
+    provisioner lock itself for the whole recovery pass and releases it in a
+    ``finally`` -- recovery must never run concurrently with another
+    recovery pass, nor with a ``prepare()``/``uninstall()`` in progress.
+    ``prepare()``/``uninstall()`` call the internal ``_recover_pending_locked``
+    directly since they already hold this same lock."""
+    transaction_id = "recovery-%s" % _new_transaction_id()
+    with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(state_root), transaction_id=transaction_id, timeout=lock_timeout):
+        return _recover_pending_locked(state_root, registry, expected_executor_version, context)
+
+
+def _recover_pending_locked(
+    state_root: Path,
+    registry: TrustedExecutorRegistry,
+    expected_executor_version: str,
+    context: ExecutionContext,
+) -> list[RecoveryDecision]:
+    """Internal recovery pass. Callers MUST already hold the provisioner
+    lock -- this function never acquires it itself."""
     decisions: list[RecoveryDecision] = []
     for transaction_id in journal_mod.list_transaction_ids(state_root):
         try:
@@ -648,6 +803,14 @@ def _recover_one(
         journal_mod.write_journal(state_root, journal)
         return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, journal.recovery["reason"])
 
+    if journal.operation == "uninstall":
+        # Uninstall journals carry a synthetic selected_method ("uninstall")
+        # that is never registered in the trusted executor registry -- an
+        # uninstall's own recovery never dispatches through an Executor at
+        # all (see _run_uninstall_loop), so it must never attempt to
+        # resolve one.
+        return _recover_uninstall(state_root, journal, context)
+
     try:
         executor = registry.resolve(
             method_kind=journal.selected_method["kind"],
@@ -659,9 +822,6 @@ def _recover_one(
             journal = journal.with_state(TransactionState.RECOVERY_REQUIRED, now=now(), recovery={"reason": str(exc)})
             journal_mod.write_journal(state_root, journal)
         return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, str(exc))
-
-    if journal.operation == "uninstall":
-        return _recover_uninstall(state_root, journal, executor, context)
 
     try:
         steps = executor.plan_steps(capability_id=journal.capability_id, dependency_id=journal.dependency_id, context=context)
@@ -677,6 +837,7 @@ def _recover_one(
             executor_id=journal.executor["id"],
             executor_version=journal.executor["version"],
             steps=steps,
+            selected_asset=journal.selected_asset,
         )
     except (ValueError, KeyError) as exc:
         if journal.state != TransactionState.RECOVERY_REQUIRED:
@@ -741,6 +902,8 @@ def _inspect_recovery_boundary(journal: TransactionJournal, executor: Executor, 
         for step in journal.steps:
             if step.state == StepState.UNDOING:
                 observed = _safe_inspect(executor, step, context)
+                if observed.get("path_policy_error"):
+                    return _Verdict.AMBIGUOUS, "step %s failed path policy during rollback recovery: %s" % (step.step_id, observed["path_policy_error"])
                 if observed.get("is_symlink"):
                     return _Verdict.AMBIGUOUS, "step %s shows an unexpected symlink during rollback recovery" % step.step_id
                 if observed.get("exists") and observed.get("content_matches") is False:
@@ -755,6 +918,8 @@ def _inspect_recovery_boundary(journal: TransactionJournal, executor: Executor, 
                 return _Verdict.RESUME_ROLLBACK, "step %s was mid-undo; resuming rollback" % step.step_id
             if step.state == StepState.APPLYING:
                 observed = _safe_inspect(executor, step, context)
+                if observed.get("path_policy_error"):
+                    return _Verdict.AMBIGUOUS, "step %s failed path policy during recovery inspection: %s" % (step.step_id, observed["path_policy_error"])
                 if observed.get("is_symlink"):
                     return _Verdict.AMBIGUOUS, "step %s shows an unexpected symlink" % step.step_id
                 if not observed.get("exists"):
@@ -775,6 +940,8 @@ def _inspect_recovery_boundary(journal: TransactionJournal, executor: Executor, 
         for step in journal.steps:
             if step.state == StepState.APPLYING:
                 observed = _safe_inspect(executor, step, context)
+                if observed.get("path_policy_error"):
+                    return _Verdict.AMBIGUOUS, "step %s failed path policy during uninstall recovery: %s" % (step.step_id, observed["path_policy_error"])
                 if observed.get("is_symlink"):
                     return _Verdict.AMBIGUOUS, "step %s shows an unexpected symlink during uninstall recovery" % step.step_id
         return _Verdict.RESUME_ROLLBACK, "resuming uninstall in progress"
@@ -782,7 +949,7 @@ def _inspect_recovery_boundary(journal: TransactionJournal, executor: Executor, 
     return _Verdict.AMBIGUOUS, "unrecognized transaction state for recovery: %s" % journal.state.value
 
 
-def _recover_uninstall(state_root: Path, journal: TransactionJournal, executor: Executor, context: ExecutionContext) -> RecoveryDecision:
+def _recover_uninstall(state_root: Path, journal: TransactionJournal, context: ExecutionContext) -> RecoveryDecision:
     now = context.now
     for step in journal.steps:
         if step.state == StepState.VERIFY_FAILED or step.state == StepState.APPLY_FAILED:
@@ -831,6 +998,24 @@ def _build_uninstall_plan(capability_id: str, owned: Sequence[OwnershipRecord]) 
     )
 
 
+def _uninstall_source_matches(state_root: Path, journal: TransactionJournal) -> bool:
+    """Re-derives the uninstall plan from the CURRENT ownership file (still
+    intact until the uninstall fully completes) and confirms both that it is
+    still traceable to a committed source transaction, and that its digest
+    still matches what this journal recorded when it was created -- a
+    divergence in either direction means recovery, never a blind unlink."""
+    owned = [record for record in journal_mod.read_ownership_records(state_root, journal.capability_id) if record.product_owned]
+    if not owned:
+        return False
+    if not validate_ownership_authority(state_root, journal.capability_id, owned):
+        return False
+    try:
+        candidate_plan = _build_uninstall_plan(journal.capability_id, owned)
+    except ValueError:
+        return False
+    return compute_uninstall_plan_digest(candidate_plan) == journal.plan_digest
+
+
 def _initial_uninstall_journal(plan: UninstallPlan, *, now_value: str) -> TransactionJournal:
     return TransactionJournal(
         schema_version=journal_mod.SCHEMA_VERSION,
@@ -841,7 +1026,7 @@ def _initial_uninstall_journal(plan: UninstallPlan, *, now_value: str) -> Transa
         updated_at=now_value,
         plan_digest=compute_uninstall_plan_digest(plan),
         capability_id=plan.capability_id,
-        dependency_id="n/a",
+        dependency_id="unspecified",
         target=plan.target_transaction_id or "n/a",
         architecture="n/a",
         support_classification="n/a",
@@ -854,39 +1039,98 @@ def _initial_uninstall_journal(plan: UninstallPlan, *, now_value: str) -> Transa
     )
 
 
+def _mark_uninstall_step_failed(record: StepRecord, error_kind: str, error: str, *, now_value: str) -> StepRecord:
+    if record.state == StepState.PLANNED:
+        record = record.with_state(StepState.APPLYING, started_at=now_value)
+    return record.with_state(StepState.APPLY_FAILED, completed_at=now_value, error_kind=error_kind, error=error)
+
+
 def _run_uninstall_loop(state_root: Path, journal: TransactionJournal, context: ExecutionContext) -> tuple[TransactionJournal, bool, list[str]]:
+    """Explicit boundary-by-boundary uninstall state machine:
+
+    PLANNED       -> write-ahead APPLYING, then attempt the unlink.
+    APPLYING      -> (resume) inspect real state first: absent means the
+                     unlink most likely already landed (or nothing was ever
+                     there) -- go straight to APPLIED, never re-unlink;
+                     present-and-matching means retry the unlink; a symlink
+                     or hash divergence is a failure, never a silent delete.
+    APPLIED       -> never re-executes the unlink: APPLIED -> VERIFYING only.
+    VERIFYING     -> verifies ONLY absence; never re-attempts removal.
+    """
     now = context.now
+    if not _uninstall_source_matches(state_root, journal):
+        return journal, False, ["plan_digest_mismatch"]
+
     residuals: list[str] = []
     ok = True
     for step in journal.steps:
         record = journal.step(step.sequence)
         if record.state == StepState.VERIFIED:
             continue
-        if record.state == StepState.PLANNED:
-            record = record.with_state(StepState.APPLYING, started_at=now())
-            journal = journal.with_step(record)
-            journal_mod.write_journal(state_root, journal)
 
         path = Path(record.intent["resource_identity"])
-        expected_sha256 = record.intent.get("expected_sha256")
         try:
-            remove_file_if_owned(path, expected_sha256=expected_sha256)
-        except Exception as exc:  # noqa: BLE001 - ownership drift or OS error must not raise out of the loop
-            record = record.with_state(StepState.APPLY_FAILED, completed_at=now(), error_kind="ownership_drift", error=str(exc))
+            validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+        except PathPolicyError as exc:
+            record = _mark_uninstall_step_failed(record, "path_policy_violation", str(exc), now_value=now())
             journal = journal.with_step(record)
             journal_mod.write_journal(state_root, journal)
             residuals.append(record.step_id)
             ok = False
             continue
 
-        record = record.with_state(StepState.APPLIED, completed_at=now())
-        journal = journal.with_step(record)
-        journal_mod.write_journal(state_root, journal)
-        record = record.with_state(StepState.VERIFYING)
-        journal = journal.with_step(record)
-        journal_mod.write_journal(state_root, journal)
+        expected_sha256 = record.intent.get("expected_sha256")
 
-        if path.exists():
+        if record.state == StepState.PLANNED:
+            record = record.with_state(StepState.APPLYING, started_at=now())
+            journal = journal.with_step(record)
+            journal_mod.write_journal(state_root, journal)  # write-ahead before the irreversible unlink
+
+        if record.state == StepState.APPLYING:
+            try:
+                lstat_result = os.lstat(validated)
+            except OSError:
+                exists = False
+                is_symlink = False
+            else:
+                exists = True
+                is_symlink = stat_module.S_ISLNK(lstat_result.st_mode)
+
+            if not exists:
+                # Already gone: either a prior crashed attempt already
+                # completed the unlink, or there was never anything here.
+                # Either way, never attempt to unlink an absent path again.
+                record = record.with_state(StepState.APPLIED, completed_at=now())
+                journal = journal.with_step(record)
+                journal_mod.write_journal(state_root, journal)
+            elif is_symlink:
+                record = _mark_uninstall_step_failed(record, "unexpected_symlink", "target is a symlink during uninstall recovery", now_value=now())
+                journal = journal.with_step(record)
+                journal_mod.write_journal(state_root, journal)
+                residuals.append(record.step_id)
+                ok = False
+                continue
+            else:
+                try:
+                    remove_file_if_owned(validated, expected_sha256=expected_sha256)
+                except Exception as exc:  # noqa: BLE001 - ownership drift or OS error must not raise out of the loop
+                    record = _mark_uninstall_step_failed(record, "ownership_drift", str(exc), now_value=now())
+                    journal = journal.with_step(record)
+                    journal_mod.write_journal(state_root, journal)
+                    residuals.append(record.step_id)
+                    ok = False
+                    continue
+                record = record.with_state(StepState.APPLIED, completed_at=now())
+                journal = journal.with_step(record)
+                journal_mod.write_journal(state_root, journal)
+
+        if record.state == StepState.APPLIED:
+            record = record.with_state(StepState.VERIFYING)
+            journal = journal.with_step(record)
+            journal_mod.write_journal(state_root, journal)
+
+        # VERIFYING: verify ONLY absence -- never re-attempt removal here.
+        if validated.is_symlink() or validated.exists():
             record = record.with_state(StepState.VERIFY_FAILED, completed_at=now(), error_kind="residual", error="path still exists after removal")
             journal = journal.with_step(record)
             journal_mod.write_journal(state_root, journal)
@@ -908,13 +1152,19 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
             "no product-owned resources recorded for capability %s; nothing to uninstall" % capability_id,
             error_kind="nothing_to_uninstall",
         )
+    if not validate_ownership_authority(env.state_root, capability_id, owned):
+        return PrepareOutcome(
+            PrepareStatus.OWNERSHIP_INVALID, None, None,
+            "ownership records for capability %s do not correspond, in full, to any committed transaction; refusing to uninstall" % capability_id,
+            error_kind="ownership_invalid",
+        )
 
     if not apply:
         return PrepareOutcome(PrepareStatus.DRY_RUN, None, None, "uninstall dry-run: %d resource(s) would be removed" % len(owned))
 
     transaction_id = _new_transaction_id()
     with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(env.state_root), transaction_id=transaction_id, timeout=env.lock_timeout):
-        recovery_reports = recover_pending(env.state_root, env.registry, env.expected_executor_version, env.context)
+        recovery_reports = _recover_pending_locked(env.state_root, env.registry, env.expected_executor_version, env.context)
         blocking = [item for item in recovery_reports if item.action == RecoveryAction.REQUIRE_MANUAL]
         if blocking:
             return PrepareOutcome(
@@ -926,6 +1176,12 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
         owned = [record for record in journal_mod.read_ownership_records(env.state_root, capability_id) if record.product_owned]
         if not owned:
             return PrepareOutcome(PrepareStatus.OUT_OF_CONTRACT, None, None, "nothing to uninstall", error_kind="nothing_to_uninstall")
+        if not validate_ownership_authority(env.state_root, capability_id, owned):
+            return PrepareOutcome(
+                PrepareStatus.OWNERSHIP_INVALID, None, None,
+                "ownership records for capability %s do not correspond, in full, to any committed transaction; refusing to uninstall" % capability_id,
+                error_kind="ownership_invalid",
+            )
 
         plan = _build_uninstall_plan(capability_id, owned)
         now = env.context.now

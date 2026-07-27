@@ -26,7 +26,13 @@ from typing import Callable, Mapping, Sequence
 from compat.provisioning.errors import ExecutorNotRegisteredError, PathPolicyError, ProvisioningError
 from compat.provisioning.journal import StepRecord
 from compat.provisioning.model import ExecutionResult, ProvisioningPlan, ProvisioningStep, RollbackResult, VerificationResult
-from compat.provisioning.paths import create_file_exclusive, remove_file_if_owned, validate_target_path
+from compat.provisioning.paths import (
+    create_file_exclusive,
+    remove_file_if_owned,
+    stat_identity,
+    validate_identifier,
+    validate_target_path,
+)
 
 
 @dataclass(frozen=True)
@@ -128,6 +134,8 @@ class CanaryExecutor(Executor):
         return self._requires_network
 
     def plan_steps(self, *, capability_id: str, dependency_id: str, context: ExecutionContext) -> tuple[ProvisioningStep, ...]:
+        validate_identifier(capability_id, field="capability_id")
+        validate_identifier(dependency_id, field="dependency_id")
         sandbox = context.allowed_roots[0]
         marker_path = sandbox / ("%s.marker" % capability_id)
         companion_path = sandbox / ("%s.companion" % capability_id)
@@ -173,37 +181,52 @@ class CanaryExecutor(Executor):
     def verify_step(self, step: StepRecord, execution: ExecutionResult, context: ExecutionContext) -> VerificationResult:
         path = Path(execution.observed.get("path", step.target))
         try:
-            lstat_result = path.lstat()
+            validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+        except PathPolicyError as exc:
+            return VerificationResult(status="verification_failed", error_kind="path_policy_violation", error=str(exc))
+        try:
+            identity = stat_identity(validated)
         except OSError as exc:
             return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
-        if stat.S_ISLNK(lstat_result.st_mode):
+        if identity["is_symlink"]:
             return VerificationResult(status="verification_failed", error_kind="unexpected_symlink", error="target is a symlink")
-        if not stat.S_ISREG(lstat_result.st_mode):
+        if not identity["is_regular"]:
             return VerificationResult(status="verification_failed", error_kind="not_regular_file", error="target is not a regular file")
-        mode = stat.S_IMODE(lstat_result.st_mode)
-        if mode != 0o600:
-            return VerificationResult(status="verification_failed", error_kind="unexpected_mode", error="mode is %o, expected 0600" % mode)
+        if identity["mode"] != 0o600:
+            return VerificationResult(status="verification_failed", error_kind="unexpected_mode", error="mode is %o, expected 0600" % identity["mode"])
+        if identity["nlink"] != 1:
+            return VerificationResult(status="verification_failed", error_kind="unexpected_nlink", error="st_nlink is %d, expected 1" % identity["nlink"])
         try:
-            actual = path.read_bytes()
+            actual = validated.read_bytes()
         except OSError as exc:
             return VerificationResult(status="verification_failed", error_kind="unreadable", error=str(exc))
         expected_sha256 = step.intent["content_sha256"]
         actual_sha256 = hashlib.sha256(actual).hexdigest()
         if actual_sha256 != expected_sha256:
             return VerificationResult(status="verification_failed", error_kind="content_mismatch", error="sha256 mismatch")
-        return VerificationResult(status="verified", evidence={"path": str(path), "sha256": actual_sha256, "mode": oct(mode)})
+        return VerificationResult(
+            status="verified",
+            evidence={
+                "path": str(validated), "sha256": actual_sha256, "mode": oct(identity["mode"]),
+                "uid": identity["uid"], "gid": identity["gid"], "nlink": identity["nlink"],
+            },
+        )
 
     def undo_step(self, step: StepRecord, execution: ExecutionResult, context: ExecutionContext) -> RollbackResult:
         undo_record = execution.undo_record or {}
         path = Path(undo_record.get("path", step.target))
+        try:
+            validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+        except PathPolicyError as exc:
+            return RollbackResult(status="undo_failed", residual=True, error_kind="path_policy_violation", error=str(exc))
         expected_sha256 = undo_record.get("expected_sha256")
         try:
-            removed = remove_file_if_owned(path, expected_sha256=expected_sha256)
+            removed = remove_file_if_owned(validated, expected_sha256=expected_sha256)
         except PathPolicyError as exc:
             return RollbackResult(status="undo_failed", residual=True, error_kind="ownership_mismatch", error=str(exc))
         except OSError as exc:
             return RollbackResult(status="undo_failed", residual=True, error_kind="os_error", error=str(exc))
-        return RollbackResult(status="undone", residual=False, evidence={"path": str(path), "removed": removed})
+        return RollbackResult(status="undone", residual=False, evidence={"path": str(validated), "removed": removed})
 
     def reconstruct_undo_record(self, step: StepRecord) -> Mapping[str, object]:
         return {"path": step.target, "expected_content": step.intent["content"], "expected_sha256": step.intent["content_sha256"]}
@@ -212,11 +235,24 @@ class CanaryExecutor(Executor):
         for step in plan.steps:
             path = Path(step.target)
             try:
-                lstat_result = path.lstat()
+                validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+            except PathPolicyError as exc:
+                return VerificationResult(status="verification_failed", error_kind="path_policy_violation", error=str(exc))
+            try:
+                identity = stat_identity(validated)
             except OSError as exc:
                 return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
-            if stat.S_ISLNK(lstat_result.st_mode) or not stat.S_ISREG(lstat_result.st_mode):
-                return VerificationResult(status="verification_failed", error_kind="unexpected_file_type", error=str(path))
+            if identity["is_symlink"] or not identity["is_regular"]:
+                return VerificationResult(status="verification_failed", error_kind="unexpected_file_type", error=str(validated))
+            if identity["nlink"] != 1:
+                return VerificationResult(status="verification_failed", error_kind="unexpected_nlink", error="st_nlink is %d, expected 1" % identity["nlink"])
+            expected_sha256 = step.intent.get("content_sha256")
+            try:
+                actual_sha256 = hashlib.sha256(validated.read_bytes()).hexdigest()
+            except OSError as exc:
+                return VerificationResult(status="verification_failed", error_kind="unreadable", error=str(exc))
+            if expected_sha256 is not None and actual_sha256 != expected_sha256:
+                return VerificationResult(status="verification_failed", error_kind="content_mismatch", error="sha256 mismatch at %s" % validated)
         return VerificationResult(status="verified", evidence={"steps": len(plan.steps)})
 
     def postcondition_description(self) -> str:
@@ -225,14 +261,18 @@ class CanaryExecutor(Executor):
     def inspect_step(self, step: StepRecord, context: ExecutionContext) -> Mapping[str, object]:
         path = Path(step.target)
         try:
-            lstat_result = path.lstat()
+            validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+        except PathPolicyError as exc:
+            return {"exists": None, "is_symlink": None, "content_matches": None, "path_policy_error": str(exc)}
+        try:
+            lstat_result = validated.lstat()
         except OSError:
             return {"exists": False, "is_symlink": False, "content_matches": None}
         if stat.S_ISLNK(lstat_result.st_mode):
             return {"exists": True, "is_symlink": True, "content_matches": None}
         expected_sha256 = step.intent.get("content_sha256")
         try:
-            actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+            actual_sha256 = hashlib.sha256(validated.read_bytes()).hexdigest()
         except OSError:
             return {"exists": True, "is_symlink": False, "content_matches": None}
         return {"exists": True, "is_symlink": False, "content_matches": actual_sha256 == expected_sha256}

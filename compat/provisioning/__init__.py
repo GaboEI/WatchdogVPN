@@ -25,10 +25,13 @@ from compat.provisioning.engine import (
     prepare,
     recover_pending,
     uninstall,
+    validate_ownership_authority,
 )
 from compat.provisioning.errors import (
+    DurabilityError,
     ExecutionNotReadyError,
     ExecutorNotRegisteredError,
+    IdentifierError,
     InvalidTransitionError,
     JournalError,
     OwnershipError,
@@ -65,12 +68,14 @@ from compat.provisioning.model import (
     transition_step,
     transition_transaction,
 )
+from compat.provisioning.paths import validate_identifier, validate_target_path
 
 __all__ = [
     "CANARY_EXECUTOR_ID",
     "CANARY_EXECUTOR_VERSION",
     "CANARY_METHOD_KIND",
     "CanaryExecutor",
+    "DurabilityError",
     "ExecutionContext",
     "ExecutionNotReadyError",
     "ExecutionResult",
@@ -78,6 +83,7 @@ __all__ = [
     "ExecutorNotRegisteredError",
     "IdempotencyCheck",
     "IdempotencyOutcome",
+    "IdentifierError",
     "InvalidTransitionError",
     "JournalError",
     "OwnershipCandidate",
@@ -115,4 +121,7 @@ __all__ = [
     "transition_step",
     "transition_transaction",
     "uninstall",
+    "validate_identifier",
+    "validate_ownership_authority",
+    "validate_target_path",
 ]

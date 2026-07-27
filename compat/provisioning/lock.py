@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Iterator
 
 from compat.provisioning.errors import ProvisionerLockHeldError
+from compat.provisioning.storage import ensure_private_dir
 
 LOCK_FILE_NAME = "provisioner.lock"
 DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -43,7 +44,7 @@ def acquire_provisioner_lock(
     second mutating provisioner.
     """
     lock_path = Path(lock_path)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(lock_path.parent)
     handle = open(lock_path, "a+")
     try:
         os.fchmod(handle.fileno(), 0o600)

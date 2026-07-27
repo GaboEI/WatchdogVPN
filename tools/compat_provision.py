@@ -67,9 +67,14 @@ def _lab_decision(capability_id: str, dependency_id: str, *, execution_ready: bo
     )
 
 
-def _build_env(args) -> engine.ProvisioningEnvironment:
+def _build_env(args, *, mutating: bool) -> engine.ProvisioningEnvironment:
+    """``mutating`` gates whether the sandbox root is created. Read-only
+    operations (``plan``, ``prepare``/``uninstall`` without ``--apply``,
+    ``status``) must never create the sandbox or provisioning state root --
+    root creation happens only on an explicitly authorized mutating path."""
     sandbox = Path(args.sandbox).resolve()
-    sandbox.mkdir(parents=True, exist_ok=True)
+    if mutating:
+        sandbox.mkdir(parents=True, exist_ok=True)
     state_root = Path(args.state_root).resolve()
     registry = TrustedExecutorRegistry()
     registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=CanaryExecutor())
@@ -84,7 +89,7 @@ def _print(value) -> None:
 
 
 def cmd_plan(args) -> int:
-    env = _build_env(args)
+    env = _build_env(args, mutating=False)
     decision = _lab_decision(args.capability_id, args.dependency_id)
     description = engine.dry_run(decision, registry=env.registry, expected_executor_version=env.expected_executor_version, context=env.context)
     _print(description)
@@ -92,7 +97,7 @@ def cmd_plan(args) -> int:
 
 
 def cmd_prepare(args) -> int:
-    env = _build_env(args)
+    env = _build_env(args, mutating=args.apply)
     decision = _lab_decision(args.capability_id, args.dependency_id)
     outcome = engine.prepare(decision, env, apply=args.apply)
     _print(
@@ -109,14 +114,14 @@ def cmd_prepare(args) -> int:
 
 
 def cmd_recover(args) -> int:
-    env = _build_env(args)
+    env = _build_env(args, mutating=True)
     reports = engine.recover_pending(env.state_root, env.registry, env.expected_executor_version, env.context)
     _print([{"transaction_id": r.transaction_id, "action": r.action.value, "reason": r.reason} for r in reports])
     return 0
 
 
 def cmd_uninstall(args) -> int:
-    env = _build_env(args)
+    env = _build_env(args, mutating=args.apply)
     outcome = engine.uninstall(args.capability_id, env, apply=args.apply)
     _print(
         {
@@ -131,7 +136,7 @@ def cmd_uninstall(args) -> int:
 
 
 def cmd_status(args) -> int:
-    env = _build_env(args)
+    env = _build_env(args, mutating=False)
     ids = journal_mod.list_transaction_ids(env.state_root)
     report = []
     for transaction_id in ids:
