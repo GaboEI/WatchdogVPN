@@ -586,13 +586,31 @@ exception type, not from a generic non-zero-returncode assumption. Only a
 demonstrated `image_not_found` pull result may excuse the `optional_image` Ubuntu
 26.04 target; every other pull outcome (including `timeout`, `runtime_error`,
 `registry_error`, `authentication_error` and `unknown`) still fails the real L2 gate
-like any other target. The package-manager lookup distinguishes a normal absent
-binary (`manager_unavailable`, a non-zero `command -v` with no infrastructure
-markers in stderr) from a real container-runtime infrastructure failure
-(`runtime_error`, detected from stderr markers such as "no such container" or
-"is not running") and from a timeout; `os-release` identity parsing is skipped
-entirely (never attempted against stdout) unless the read phase both executed and
-returned exit code zero.
+like any other target. Classification precedence is deliberate:
+`runtime_error` (container-runtime infrastructure markers), `authentication_error`
+and `registry_error` are checked **before** `image_not_found`, so a message that
+happens to combine an absence phrase with an auth/network marker (real registries
+routinely do this — e.g. Docker's "repository does not exist or may require
+'docker login'") is never misclassified as a plain missing image. `image_not_found`
+itself only accepts unambiguous evidence: the literal `manifest unknown` /
+`not found: manifest` phrasing, or the exact requested image identifier appearing
+together with both `manifest` and `not found` in the same message; generic phrases
+such as "manifest for", "repository does not exist" or "no such image" are
+deliberately not sufficient proof on their own. The package-manager lookup
+distinguishes a normal absent binary (`manager_unavailable`) from a real
+container-runtime infrastructure failure (`runtime_error`, detected from stderr
+markers such as "no such container" or "is not running") from a timeout from an
+inconclusive result (`unknown`): `manager_unavailable` requires the *exact* POSIX
+`command -v` not-found return code with both stdout and stderr genuinely empty;
+any other non-zero return code (e.g. 126/127 from the wrapping shell itself) or
+unrecognized stderr text is `unknown`, never assumed to mean "absent". The package
+query for APT requires the full positive contract — executed, exit code zero, and
+a real `Candidate:` line — before ever reporting `available`; a non-zero return
+code can never resolve to `available` even when stdout happens to contain
+text that looks like a valid candidate line, and such a query correctly prevents
+the whole package-query aggregate from reporting `available`. `os-release`
+identity parsing is skipped entirely (never attempted against stdout) unless the
+read phase both executed and returned exit code zero.
 
 The evidence object records target, image, runtime, container name, pull, create,
 start, os-release, package-manager, metadata-refresh, per-package query, cleanup,

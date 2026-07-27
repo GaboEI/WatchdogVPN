@@ -34,18 +34,20 @@ RUNTIME_INFRA_ERROR_MARKERS = (
     "cannot connect to the docker daemon",
 )
 MISSING_CONTAINER_MARKERS = ("no such container",)
+# Only unambiguous manifest-absence phrasing may ever produce image_not_found.
+# Generic phrases such as "manifest for", "repository does not exist" or
+# "no such image" are deliberately excluded: real registries reuse them for
+# both a genuinely missing image AND an unauthenticated/private one, so they
+# are not sufficient proof on their own.
 PULL_IMAGE_NOT_FOUND_MARKERS = (
     "manifest unknown",
-    "manifest for",
     "not found: manifest",
-    "repository does not exist",
-    "no such image",
 )
 PULL_AUTH_MARKERS = (
     "unauthorized",
     "authentication required",
-    "requires 'docker login'",
-    "requires 'podman login'",
+    "docker login",
+    "podman login",
     "no basic auth credentials",
 )
 PULL_REGISTRY_MARKERS = (
@@ -53,11 +55,16 @@ PULL_REGISTRY_MARKERS = (
     "dial tcp",
     "connection refused",
     "tls handshake",
+    "tls",
     "i/o timeout",
+    "timeout",
     "temporary failure in name resolution",
+    "dns",
     "network is unreachable",
+    "network unreachable",
     "context deadline exceeded",
 )
+MANAGER_NOT_FOUND_RETURNCODE = 1
 
 
 CASES = (
@@ -142,7 +149,16 @@ def _finalize(phase: dict, status: str, reason: str) -> dict:
     return phase
 
 
-def classify_pull_result(phase: dict) -> tuple[str, str]:
+def _looks_like_unambiguous_image_not_found(stdout: str, stderr: str, image: str | None) -> bool:
+    if _looks_like(PULL_IMAGE_NOT_FOUND_MARKERS, stdout, stderr):
+        return True
+    if not image:
+        return False
+    haystack = ((stdout or "") + "\n" + (stderr or "")).lower()
+    return "manifest" in haystack and "not found" in haystack and image.lower() in haystack
+
+
+def classify_pull_result(phase: dict, image: str | None = None) -> tuple[str, str]:
     if phase["runtime_status"] == "timeout":
         return "timeout", "image pull timed out"
     if phase["runtime_status"] == "runtime_error":
@@ -150,14 +166,18 @@ def classify_pull_result(phase: dict) -> tuple[str, str]:
     if phase["returncode"] == 0:
         return "available", "image pulled successfully"
     stdout, stderr = phase.get("stdout") or "", phase.get("stderr") or ""
+    # Precedence matters: an infrastructure failure, an authentication
+    # requirement or a registry/network problem must never be shadowed by an
+    # image-not-found marker that happens to co-occur in the same message
+    # (real registries routinely combine both in one error string).
     if _looks_like_runtime_infra_error(stderr):
         return "runtime_error", "container runtime reported an infrastructure error during pull"
-    if _looks_like(PULL_IMAGE_NOT_FOUND_MARKERS, stdout, stderr):
-        return "image_not_found", "registry reported the image or manifest does not exist"
     if _looks_like(PULL_AUTH_MARKERS, stdout, stderr):
         return "authentication_error", "registry requires authentication"
     if _looks_like(PULL_REGISTRY_MARKERS, stdout, stderr):
         return "registry_error", "registry or network connectivity failed"
+    if _looks_like_unambiguous_image_not_found(stdout, stderr, image):
+        return "image_not_found", "registry unambiguously reported the image or manifest does not exist"
     return "unknown", "image pull failed for an unrecognized reason"
 
 
@@ -203,7 +223,13 @@ def classify_package_manager(phase: dict) -> tuple[str, str]:
     if returncode != 0:
         if _looks_like_runtime_infra_error(stderr):
             return "runtime_error", "container runtime reported an infrastructure error during manager lookup"
-        return "manager_unavailable", "package manager executable not found"
+        # Only the normal POSIX "command -v" not-found return code, with
+        # both streams truly empty, counts as a demonstrated absence. Any
+        # other return code (e.g. 126/127 from the wrapping shell itself)
+        # or unrecognized stderr text is inconclusive, not a proven absence.
+        if returncode == MANAGER_NOT_FOUND_RETURNCODE and not stdout.strip() and not stderr.strip():
+            return "manager_unavailable", "package manager executable not found"
+        return "unknown", "manager lookup failed with an unrecognized return code"
     if not stdout.strip():
         return "malformed_response", "package manager path was empty"
     return "available", "package manager path observed"
@@ -218,6 +244,14 @@ def classify_package_query(phase: dict, kind: str, package_name: str) -> tuple[s
     if returncode != 0 and _looks_like_runtime_infra_error(stderr):
         return "runtime_error", "container runtime reported an infrastructure error during package query"
     if kind == "apt":
+        # "available" requires the full positive contract: the process
+        # executed, exited zero, AND a real Candidate line was observed.
+        # A non-zero returncode can never end in "available", even if
+        # stdout happens to contain what looks like a valid Candidate line.
+        if returncode != 0:
+            if "Candidate: (none)" in stdout:
+                return "unavailable", "APT candidate missing"
+            return "unknown", "APT query failed with a non-zero return code"
         if "Candidate: (none)" in stdout:
             return "unavailable", "APT candidate missing"
         if "Candidate:" in stdout and package_name in stdout:
@@ -374,7 +408,7 @@ def execute_l2_case(runtime: str, case: dict, name: str) -> dict:
     result = _base_result(runtime, case, name)
     try:
         pull = _run_phase(runtime, ["pull", case["image"]])
-        status, reason = classify_pull_result(pull)
+        status, reason = classify_pull_result(pull, case["image"])
         _finalize(pull, status, reason)
         result["pull"] = pull
         if status != "available":
@@ -515,6 +549,52 @@ class L2ParserTests(unittest.TestCase):
     def test_pull_classifies_unknown_for_unrecognized_failure(self) -> None:
         phase = {"runtime_status": "executed", "returncode": 125, "stdout": "", "stderr": "an unrecognized internal error occurred"}
         self.assertEqual(classify_pull_result(phase)[0], "unknown")
+
+    def test_pull_unambiguous_manifest_unknown_is_image_not_found(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "Error response from daemon: manifest unknown: manifest unknown"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "image_not_found")
+
+    def test_pull_repository_does_not_exist_with_docker_login_is_authentication_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "pull access denied for privaterepo, repository does not exist or may require 'docker login'"}
+        self.assertEqual(classify_pull_result(phase, "privaterepo")[0], "authentication_error")
+
+    def test_pull_manifest_for_with_dial_tcp_is_registry_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "manifest for ubuntu:26.04 not found: dial tcp: lookup registry-1.docker.io: no such host"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "registry_error")
+
+    def test_pull_manifest_unknown_with_unauthorized_is_authentication_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "Error response from daemon: manifest unknown: unauthorized: authentication required"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "authentication_error")
+
+    def test_pull_absence_with_dns_error_is_registry_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "manifest unknown: no such host: temporary failure in name resolution"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "registry_error")
+
+    def test_pull_unrecognized_message_is_unknown(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "an internal daemon error occurred"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "unknown")
+
+    def test_pull_exact_image_not_found_without_generic_marker_is_image_not_found(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "manifest ubuntu:26.04 not found in registry-1.docker.io/library/ubuntu"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "image_not_found")
+
+    def test_only_unambiguous_manifest_unknown_case_excuses_optional_image(self) -> None:
+        optional_case = dict(CASES[1])
+        mixed_messages = (
+            ("Error response from daemon: manifest unknown: manifest unknown", "image_not_found"),
+            ("pull access denied for privaterepo, repository does not exist or may require 'docker login'", "authentication_error"),
+            ("manifest for ubuntu:26.04 not found: dial tcp: lookup registry-1.docker.io: no such host", "registry_error"),
+            ("Error response from daemon: manifest unknown: unauthorized: authentication required", "authentication_error"),
+            ("manifest unknown: no such host: temporary failure in name resolution", "registry_error"),
+            ("an internal daemon error occurred", "unknown"),
+        )
+        for stderr, expected_status in mixed_messages:
+            phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": stderr}
+            status, _ = classify_pull_result(phase, optional_case["image"])
+            with self.subTest(stderr=stderr):
+                self.assertEqual(status, expected_status)
+                excused = is_optional_image_exception(optional_case, {"pull": {"status": status}})
+                self.assertEqual(excused, expected_status == "image_not_found")
 
     def test_only_image_not_found_excuses_optional_image(self) -> None:
         optional_case = dict(CASES[1])
@@ -763,6 +843,34 @@ class L2ParserTests(unittest.TestCase):
         phase = {"runtime_status": "timeout", "returncode": None, "stdout": "", "stderr": ""}
         self.assertEqual(classify_package_manager(phase)[0], "timeout")
 
+    def test_manager_normal_absence_is_manager_unavailable(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "manager_unavailable")
+
+    def test_manager_rc_126_is_unknown(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 126, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "unknown")
+
+    def test_manager_rc_127_with_shell_error_is_unknown(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 127, "stdout": "", "stderr": "sh: line 1: command: not found"}
+        self.assertEqual(classify_package_manager(phase)[0], "unknown")
+
+    def test_manager_rc_1_with_unrecognized_stderr_is_unknown(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "some unexpected shell warning"}
+        self.assertEqual(classify_package_manager(phase)[0], "unknown")
+
+    def test_manager_infra_marker_is_runtime_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 126, "stdout": "", "stderr": "Error: watchdogvpn-x is not running"}
+        self.assertEqual(classify_package_manager(phase)[0], "runtime_error")
+
+    def test_manager_success_with_path_is_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "/usr/bin/apt-get\n", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "available")
+
+    def test_manager_success_with_empty_path_is_malformed(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "malformed_response")
+
     def test_manager_lookup_runs_command_inside_shell(self) -> None:
         calls = []
 
@@ -795,6 +903,18 @@ class L2ParserTests(unittest.TestCase):
         phase = {"runtime_status": "executed", "returncode": 0, "stdout": "openvpn:\n  Candidate: (none)\n", "stderr": ""}
         status, _ = classify_package_query(phase, "apt", "openvpn")
         self.assertEqual(status, "unavailable")
+
+    def test_apt_nonzero_returncode_with_valid_looking_stdout_is_not_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "python3:\n  Candidate: 1.0\n", "stderr": ""}
+        status, _ = classify_package_query(phase, "apt", "python3")
+        self.assertNotEqual(status, "available")
+        self.assertEqual(status, "unknown")
+
+    def test_apt_aggregate_is_not_available_when_one_query_has_nonzero_returncode(self) -> None:
+        good = {"status": "available"}
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "python3:\n  Candidate: 1.0\n", "stderr": ""}
+        status, _ = classify_package_query(phase, "apt", "python3")
+        self.assertEqual(aggregate_package_status([good, {"status": status}]), "unknown")
 
     def test_one_missing_package_fails_aggregate(self) -> None:
         self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "unavailable"}]), "unavailable")
