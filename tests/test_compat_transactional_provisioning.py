@@ -1592,39 +1592,53 @@ class ErrorsNeverConfusedWithAbsenceTests(unittest.TestCase):
         self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
 
     def test_inspect_step_reports_inspect_error_not_absence_on_permission_error(self) -> None:
+        # validate_target_path is bypassed here: pathlib's Path.is_symlink()
+        # error-swallowing behavior for a raised OSError changed between
+        # Python versions (verified to differ between 3.12 and 3.14), so its
+        # own internal lstat use is not a reliable thing to leave "live" in
+        # a test that specifically targets inspect_step's OWN existence
+        # check -- bypassing it removes that cross-version ambiguity.
         capability_id = "cap_err_inspect"
         self._committed(capability_id)
-        record = journal_mod.StepRecord(sequence=0, step_id="s", action_type="create_file", state=StepState.PLANNED, intent={"content_sha256": "0" * 64}, target=str(self.harness.sandbox / ("%s.marker" % capability_id)))
-        with mock.patch("pathlib.Path.lstat", side_effect=PermissionError(errno.EACCES, "Permission denied")):
-            observed = self.harness.executor.inspect_step(record, self.harness.context)
+        marker_path = self.harness.sandbox / ("%s.marker" % capability_id)
+        record = journal_mod.StepRecord(sequence=0, step_id="s", action_type="create_file", state=StepState.PLANNED, intent={"content_sha256": "0" * 64}, target=str(marker_path))
+        with mock.patch("compat.provisioning.executors.validate_target_path", side_effect=lambda path, **kw: Path(path)):
+            with mock.patch("pathlib.Path.lstat", side_effect=PermissionError(errno.EACCES, "Permission denied")):
+                observed = self.harness.executor.inspect_step(record, self.harness.context)
         self.assertIsNone(observed["exists"])
         self.assertIn("inspect_error", observed)
 
-    def test_uninstall_loop_never_reports_verified_when_verifying_stat_raises_permission_error(self) -> None:
+    def test_uninstall_loop_never_reports_verified_when_applying_stat_raises_permission_error(self) -> None:
         capability_id = "cap_err_uninstall_verify"
         self._committed(capability_id)
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
         plan = engine._build_uninstall_plan(capability_id, owned)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
-
         marker_index = next(i for i, s in enumerate(journal.steps) if s.intent["resource_identity"].endswith(".marker"))
-        real_lstat = os.lstat
         marker_str = journal.steps[marker_index].intent["resource_identity"]
+        real_lstat = os.lstat
 
         def faulty_lstat(path, *a, **kw):
             if str(path) == marker_str:
                 raise OSError(errno.EIO, "Input/output error")
             return real_lstat(path, *a, **kw)
 
-        with mock.patch("compat.provisioning.engine.os.lstat", side_effect=faulty_lstat):
-            journal, ok, residuals = engine._run_uninstall_loop(self.harness.state_root, journal, self.harness.context)
+        with mock.patch("compat.provisioning.engine.validate_target_path", side_effect=lambda path, **kw: Path(path)):
+            with mock.patch("compat.provisioning.engine.os.lstat", side_effect=faulty_lstat):
+                journal, ok, residuals = engine._run_uninstall_loop(self.harness.state_root, journal, self.harness.context)
         self.assertFalse(ok)
         self.assertIn(journal.steps[marker_index].step_id, residuals)
         self.assertEqual(journal.steps[marker_index].error_kind, "inspection_error")
         self.assertNotEqual(journal.steps[marker_index].state, StepState.VERIFIED)
 
     def test_uninstall_final_verification_never_confirms_removed_on_estale(self) -> None:
+        # The marker step is placed directly at the VERIFYING boundary with
+        # its resource already genuinely removed (as a prior real unlink
+        # would leave it), isolating exactly the FINAL absence-verification
+        # lstat call from the earlier APPLYING-boundary and drift-check
+        # lstat calls -- validate_target_path is bypassed for the same
+        # cross-version-ambiguity reason as the test above.
         capability_id = "cap_err_estale"
         self._committed(capability_id)
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
@@ -1633,18 +1647,25 @@ class ErrorsNeverConfusedWithAbsenceTests(unittest.TestCase):
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
         marker_index = next(i for i, s in enumerate(journal.steps) if s.intent["resource_identity"].endswith(".marker"))
         marker_str = journal.steps[marker_index].intent["resource_identity"]
+
+        record = journal.step(marker_index).with_state(StepState.APPLYING, started_at=_now())
+        journal = journal.with_step(record)
+        Path(marker_str).unlink()  # the real removal already happened
+        record = record.with_state(StepState.APPLIED, completed_at=_now())
+        journal = journal.with_step(record)
+        record = record.with_state(StepState.VERIFYING)
+        journal = journal.with_step(record)
+
         real_lstat = os.lstat
-        calls = {"n": 0}
 
         def faulty_lstat(path, *a, **kw):
             if str(path) == marker_str:
-                calls["n"] += 1
-                if calls["n"] > 1:  # let the removal-boundary lstat through, fail the final verify lstat
-                    raise OSError(errno.ESTALE, "Stale file handle")
+                raise OSError(errno.ESTALE, "Stale file handle")
             return real_lstat(path, *a, **kw)
 
-        with mock.patch("compat.provisioning.engine.os.lstat", side_effect=faulty_lstat):
-            journal, ok, residuals = engine._run_uninstall_loop(self.harness.state_root, journal, self.harness.context)
+        with mock.patch("compat.provisioning.engine.validate_target_path", side_effect=lambda path, **kw: Path(path)):
+            with mock.patch("compat.provisioning.engine.os.lstat", side_effect=faulty_lstat):
+                journal, ok, residuals = engine._run_uninstall_loop(self.harness.state_root, journal, self.harness.context)
         self.assertFalse(ok)
         self.assertEqual(journal.steps[marker_index].error_kind, "inspection_error")
         self.assertNotEqual(journal.steps[marker_index].state, StepState.VERIFIED)
