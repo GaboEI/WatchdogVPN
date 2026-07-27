@@ -862,6 +862,15 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
         version = env.python_version
         ok = version >= (3, 10)
         return _cap(capability_id, "present" if ok else "absent", CoreCapabilityStatus.PRESENT if ok else CoreCapabilityStatus.PROVISIONABLE, "%d.%d.%d" % version[:3], "sys.version_info", "final Python floor check")
+    if capability_id == "cap_python_cryptography":
+        result = env.run(["python3", "-c", "import cryptography; print(cryptography.__version__)"], timeout=2.0)
+        if result.status == "ok":
+            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, result.stdout.strip(), "command:python3 -c import cryptography", "cryptography module import observed")
+        return _command_cap(capability_id, result, "cryptography module import probe")
+    if capability_id == "cap_base_runtime_commands":
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "manifest:dependency_requirements.dep_base_runtime_commands", "base runtime package inventory is resolved declaratively; host reconciliation belongs to provisioning")
+    if capability_id == "cap_dns_runtime_package":
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "manifest:dependency_requirements.dep_dns_runtime_package", "DNS package requirement is resolved declaratively when backend package support is needed")
     if capability_id == "cap_sudo":
         result = env.run(["sudo", "-V"], timeout=2.0)
         if result.status == "ok":

@@ -1,4 +1,4 @@
-"""Focused non-mutating L2-style dependency-resolution checks.
+"""Focused non-mutating L1 dependency-resolution matrix checks.
 
 These tests exercise the per-release resolver matrix with an injected
 availability provider. They deliberately do not start containers, run package
@@ -55,13 +55,13 @@ def support(manifest_data, facts):
     ).support_classification
 
 
-class FocusedDependencyL2ContractTests(unittest.TestCase):
+class FocusedDependencyMatrixContractTests(unittest.TestCase):
     CASES = {
-        "ubuntu_24": ("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "dep_openvpn_runtime", "openvpn_apt_official"),
-        "ubuntu_26": ("ID=ubuntu\nVERSION_ID=26.04\nVERSION_CODENAME=resolute\n", "dep_sing_box_runtime", "sing_box_official_artifact"),
-        "debian_13": ("ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n", "dep_openvpn_runtime", "openvpn_apt_official"),
+        "ubuntu_24": ("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "dep_openvpn_runtime", "openvpn_apt_stable_official"),
+        "ubuntu_26": ("ID=ubuntu\nVERSION_ID=26.04\nVERSION_CODENAME=resolute\n", "dep_sing_box_runtime", "sing_box_official_artifact_stable"),
+        "debian_13": ("ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n", "dep_openvpn_runtime", "openvpn_apt_stable_official"),
         "fedora_44": ("ID=fedora\nVERSION_ID=44\n", "dep_openvpn_runtime", "openvpn_rpm_official"),
-        "opensuse_leap": ("ID=opensuse-leap\nVERSION_ID=15.6\n", "dep_openvpn_runtime", "openvpn_zypper_official"),
+        "opensuse_leap": ("ID=opensuse-leap\nVERSION_ID=15.6\n", "dep_openvpn_runtime", "openvpn_zypper_stable_official"),
         "arch_rolling": ("ID=arch\nID_LIKE=arch\n", "dep_openvpn_runtime", "openvpn_pacman_official"),
     }
 

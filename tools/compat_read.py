@@ -29,6 +29,10 @@ EXIT_INVALID_MANIFEST = 2
 EXIT_NOT_FOUND = 3
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*(?:-[a-z0-9_]+)*$")
+_PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+_.:-]*$")
+_SHA256_RE = re.compile(r"^[A-Fa-f0-9]{64}$")
+_GIT_COMMIT_RE = re.compile(r"^[A-Fa-f0-9]{40}$")
+_HTTPS_URL_RE = re.compile(r"^https://[^/@\s]+(?:[/:?#][^\s]*)?$")
 _VERSION_RE = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 _RFC3339_UTC_RE = re.compile(
     r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T"
@@ -135,8 +139,7 @@ _ENTITY_KEYS = {
     "method_candidate": (
         "architectures",
         "build_dependencies",
-        "compatible_releases",
-        "compatible_series",
+        "compatible_targets",
         "evidence",
         "expected_executable",
         "expected_files",
@@ -159,6 +162,8 @@ _ENTITY_KEYS = {
         "target_scope",
         "version",
     ),
+    "compatible_target": ("own_release", "series", "target_id"),
+    "repository": ("id", "series", "url"),
     "target_scope": ("rolling_distributions", "stable_releases", "technical_families"),
     "protocol": ("category", "evidence_policy", "required_protocol_capabilities"),
     "certification": (
@@ -320,6 +325,44 @@ def _require_id_list(value, path, allow_empty=False):
             raise ManifestError("%s contains duplicate id %r" % (path, text))
         seen.add(text)
     return values
+
+
+def _require_package_name(value, path):
+    text = _require_str(value, path)
+    if not _PACKAGE_NAME_RE.match(text):
+        raise ManifestError("%s is not a safe package name: %r" % (path, text))
+    return text
+
+
+def _require_package_list(value, path):
+    values = _require_list(value, path)
+    if not values:
+        raise ManifestError("%s must not be empty" % path)
+    seen = set()
+    for index, item in enumerate(values):
+        text = _require_package_name(item, "%s[%d]" % (path, index))
+        if text in seen:
+            raise ManifestError("%s contains duplicate package %r" % (path, text))
+        seen.add(text)
+    return values
+
+
+def _require_https_url(value, path):
+    text = _require_str(value, path)
+    if not _HTTPS_URL_RE.match(text):
+        raise ManifestError("%s must be an absolute HTTPS URL without credentials" % path)
+    return text
+
+
+def _require_sha256(value, path):
+    text = _require_str(value, path)
+    if not _SHA256_RE.match(text):
+        raise ManifestError("%s must be a 64-character hexadecimal SHA-256" % path)
+    return text
+
+
+def _is_git_commit(value):
+    return type(value) is str and _GIT_COMMIT_RE.match(value)
 
 
 def _require_object_ids(obj, path):
@@ -556,6 +599,7 @@ def _validate_dependency_requirements(manifest):
     families = manifest["technical_families"]
     supported_arches = set(core_caps["cap_architecture"]["supported_values"])
     allowed_statuses = ("implemented", "not_implemented", "future_task")
+    global_candidate_ids = {}
     _require_object_ids(requirements, "dependency_requirements")
     for requirement_id, requirement in requirements.items():
         path = "dependency_requirements.%s" % requirement_id
@@ -575,6 +619,13 @@ def _validate_dependency_requirements(manifest):
             _require_obj(candidate, cand_path)
             _reject_unknown_keys(candidate, _ENTITY_KEYS["method_candidate"], cand_path)
             candidate_id = _require_id(candidate.get("id"), cand_path + ".id")
+            previous_owner = global_candidate_ids.get(candidate_id)
+            if previous_owner is not None:
+                raise ManifestError(
+                    "%s candidate id %r is also used by %s"
+                    % (cand_path, candidate_id, previous_owner)
+                )
+            global_candidate_ids[candidate_id] = path
             if candidate_id in seen_candidate_ids:
                 raise ManifestError("%s has duplicate candidate id %r" % (path, candidate_id))
             seen_candidate_ids.add(candidate_id)
@@ -598,6 +649,7 @@ def _validate_dependency_requirements(manifest):
                 ("resolved_release", "rolling_distribution", "mapped_base_release"),
                 cand_path + ".target_identity",
             )
+            target_identity = candidate["target_identity"]
             scope = _require_obj(candidate.get("target_scope"), cand_path + ".target_scope")
             _reject_unknown_keys(scope, _ENTITY_KEYS["target_scope"], cand_path + ".target_scope")
             for family_id in _require_id_list(scope.get("technical_families"), cand_path + ".target_scope.technical_families"):
@@ -612,6 +664,11 @@ def _validate_dependency_requirements(manifest):
                     raise ManifestError("%s targets unknown stable release %r" % (cand_path, release_id))
                 if distributions[releases[release_id]["distribution"]]["release_model"] != "stable":
                     raise ManifestError("%s stable release target %r is not stable" % (cand_path, release_id))
+                if releases[release_id]["distribution"] not in distributions:
+                    raise ManifestError("%s stable release target %r has unknown owner" % (cand_path, release_id))
+                owner_family = distributions[releases[release_id]["distribution"]]["technical_family"]
+                if owner_family not in scope["technical_families"]:
+                    raise ManifestError("%s stable target %r belongs to family %s outside scope" % (cand_path, release_id, owner_family))
             for distro_id in _require_id_list(
                 scope.get("rolling_distributions", []),
                 cand_path + ".target_scope.rolling_distributions",
@@ -621,6 +678,29 @@ def _validate_dependency_requirements(manifest):
                     raise ManifestError("%s targets unknown rolling distribution %r" % (cand_path, distro_id))
                 if distributions[distro_id]["release_model"] != "rolling":
                     raise ManifestError("%s rolling target %r is not rolling" % (cand_path, distro_id))
+                if distributions[distro_id]["technical_family"] not in scope["technical_families"]:
+                    raise ManifestError("%s rolling target %r belongs to family outside scope" % (cand_path, distro_id))
+            stable_targets = scope.get("stable_releases", [])
+            rolling_targets = scope.get("rolling_distributions", [])
+            if target_identity == "resolved_release":
+                if not stable_targets:
+                    raise ManifestError("%s resolved_release requires stable_releases" % cand_path)
+                if rolling_targets:
+                    raise ManifestError("%s resolved_release must not target rolling distributions" % cand_path)
+            elif target_identity == "rolling_distribution":
+                if not rolling_targets:
+                    raise ManifestError("%s rolling_distribution requires rolling_distributions" % cand_path)
+                if stable_targets:
+                    raise ManifestError("%s rolling_distribution must not target stable releases" % cand_path)
+            elif target_identity == "mapped_base_release":
+                if not stable_targets:
+                    raise ManifestError("%s mapped_base_release requires derivative stable_releases" % cand_path)
+                if rolling_targets:
+                    raise ManifestError("%s mapped_base_release must not target rolling distributions" % cand_path)
+                for release_id in stable_targets:
+                    owner = distributions[releases[release_id]["distribution"]]
+                    if owner["lineage"]["is_derivative"] is not True:
+                        raise ManifestError("%s mapped_base_release target %r is not derivative" % (cand_path, release_id))
             arches = _require_id_list(candidate.get("architectures"), cand_path + ".architectures")
             for arch in arches:
                 if arch not in supported_arches:
@@ -628,46 +708,116 @@ def _validate_dependency_requirements(manifest):
             evidence = _require_string_list(candidate.get("evidence"), cand_path + ".evidence")
             if any((";" in item or "&&" in item or "|" in item) for item in evidence):
                 raise ManifestError("%s evidence must be references, not commands" % cand_path)
-            _require_id(candidate.get("postcondition"), cand_path + ".postcondition")
-            if candidate["postcondition"] not in all_caps:
+            postcondition = _require_id(candidate.get("postcondition"), cand_path + ".postcondition")
+            if postcondition not in all_caps:
                 raise ManifestError("%s.postcondition references unknown capability" % cand_path)
+            if postcondition != cap_id:
+                raise ManifestError("%s.postcondition must equal requirement capability_id" % cand_path)
             if kind in ("official_package_exact", "external_repo_exact"):
                 pm = _require_enum(candidate.get("package_manager"), ("apt", "dnf", "zypper", "pacman"), cand_path + ".package_manager")
                 for family_id in scope["technical_families"]:
                     if families[family_id]["package_manager"] != pm:
                         raise ManifestError("%s package_manager diverges from family %s" % (cand_path, family_id))
-                _require_string_list(candidate.get("package_names"), cand_path + ".package_names")
+                _require_package_list(candidate.get("package_names"), cand_path + ".package_names")
             elif "package_manager" in candidate or "package_names" in candidate:
                 raise ManifestError("%s package fields are only valid for package/repo methods" % cand_path)
             if kind == "external_repo_exact":
                 _require_str(candidate.get("provider"), cand_path + ".provider")
                 repository = _require_obj(candidate.get("repository"), cand_path + ".repository")
-                for field in ("id", "url", "series"):
-                    _require_str(repository.get(field), cand_path + ".repository." + field)
-                _require_string_list(candidate.get("compatible_series"), cand_path + ".compatible_series")
-                _require_id_list(candidate.get("compatible_releases"), cand_path + ".compatible_releases", allow_empty=True)
-            elif "provider" in candidate or "repository" in candidate or "compatible_series" in candidate or "compatible_releases" in candidate:
+                _reject_unknown_keys(repository, _ENTITY_KEYS["repository"], cand_path + ".repository")
+                _require_id(repository.get("id"), cand_path + ".repository.id")
+                _require_https_url(repository.get("url"), cand_path + ".repository.url")
+                repo_series = _require_id(repository.get("series"), cand_path + ".repository.series")
+                compatible_targets = _require_list(candidate.get("compatible_targets"), cand_path + ".compatible_targets")
+                seen_compatible = set()
+                for target_index, target in enumerate(compatible_targets):
+                    target_path = "%s.compatible_targets[%d]" % (cand_path, target_index)
+                    _require_obj(target, target_path)
+                    _reject_unknown_keys(target, _ENTITY_KEYS["compatible_target"], target_path)
+                    target_id = _require_id(target.get("target_id"), target_path + ".target_id")
+                    series = _require_id(target.get("series"), target_path + ".series")
+                    if series != repo_series:
+                        raise ManifestError("%s.series must equal repository.series" % target_path)
+                    own_release = None
+                    if "own_release" in target:
+                        own_release = _require_id(target.get("own_release"), target_path + ".own_release")
+                    key = (own_release, target_id, series)
+                    if key in seen_compatible:
+                        raise ManifestError("%s contains duplicate compatible target" % target_path)
+                    seen_compatible.add(key)
+                    if target_id not in releases:
+                        raise ManifestError("%s targets unknown release %r" % (target_path, target_id))
+                    if distributions[releases[target_id]["distribution"]]["release_model"] != "stable":
+                        raise ManifestError("%s target_id must be a stable release" % target_path)
+                    if releases[target_id].get("codename") != series:
+                        raise ManifestError("%s series must match target release codename" % target_path)
+                    if target_identity == "mapped_base_release":
+                        if own_release is None:
+                            raise ManifestError("%s mapped_base_release requires own_release" % target_path)
+                        if own_release not in stable_targets:
+                            raise ManifestError("%s own_release must be in candidate stable scope" % target_path)
+                        _validate_mapped_base_target(manifest, own_release, target_id, series, target_path)
+                    else:
+                        if own_release is not None:
+                            raise ManifestError("%s own_release is only valid for mapped_base_release" % target_path)
+                        if target_id not in stable_targets:
+                            raise ManifestError("%s target_id must be in candidate stable scope" % target_path)
+            elif "provider" in candidate or "repository" in candidate or "compatible_targets" in candidate:
                 raise ManifestError("%s repository fields are only valid for external_repo_exact" % cand_path)
             if kind == "official_artifact_pinned":
-                _require_str(candidate.get("official_provenance"), cand_path + ".official_provenance")
+                _require_https_url(candidate.get("official_provenance"), cand_path + ".official_provenance")
                 _require_str(candidate.get("version"), cand_path + ".version")
                 integrity = _require_obj(candidate.get("integrity"), cand_path + ".integrity")
                 _require_enum(integrity.get("type"), ("sha256", "signature"), cand_path + ".integrity.type")
-                for arch in arches:
-                    if arch not in integrity:
-                        raise ManifestError("%s.integrity missing architecture %s" % (cand_path, arch))
-                    _require_str(integrity[arch], cand_path + ".integrity." + arch)
+                if integrity["type"] == "sha256":
+                    for arch in arches:
+                        if arch not in integrity:
+                            raise ManifestError("%s.integrity missing architecture %s" % (cand_path, arch))
+                        _require_sha256(integrity[arch], cand_path + ".integrity." + arch)
+                else:
+                    for field in ("signature", "key_fingerprint", "key_provenance", "verification_policy"):
+                        _require_str(integrity.get(field), cand_path + ".integrity." + field)
                 _require_string_list(candidate.get("expected_files"), cand_path + ".expected_files")
             elif "version" in candidate or "integrity" in candidate or "expected_files" in candidate:
                 raise ManifestError("%s artifact fields are only valid for official_artifact_pinned" % cand_path)
             if kind == "pinned_source_build":
-                _require_str(candidate.get("official_provenance"), cand_path + ".official_provenance")
+                _require_https_url(candidate.get("official_provenance"), cand_path + ".official_provenance")
                 _require_enum(candidate.get("revision_type"), ("tag", "commit"), cand_path + ".revision_type")
-                _require_str(candidate.get("revision"), cand_path + ".revision")
-                _require_string_list(candidate.get("build_dependencies"), cand_path + ".build_dependencies")
+                revision = _require_str(candidate.get("revision"), cand_path + ".revision")
+                if revision != "unresolved" and candidate["revision_type"] == "commit" and not _is_git_commit(revision):
+                    raise ManifestError("%s.revision must be an immutable Git commit" % cand_path)
+                _require_package_list(candidate.get("build_dependencies"), cand_path + ".build_dependencies")
                 _require_string_list(candidate.get("expected_outputs"), cand_path + ".expected_outputs")
             elif "revision_type" in candidate or "revision" in candidate or "build_dependencies" in candidate or "expected_outputs" in candidate:
                 raise ManifestError("%s source-build fields are only valid for pinned_source_build" % cand_path)
+
+
+def _validate_mapped_base_target(manifest, own_release, target_id, series, path):
+    releases = manifest["releases"]
+    distributions = manifest["distributions"]
+    derivatives = manifest["derivatives"]
+    if own_release not in releases:
+        raise ManifestError("%s own_release references unknown release %r" % (path, own_release))
+    own_distribution = releases[own_release]["distribution"]
+    owner = distributions[own_distribution]
+    if owner["lineage"]["is_derivative"] is not True:
+        raise ManifestError("%s own_release distribution is not derivative" % path)
+    matches = [
+        derivative
+        for derivative in derivatives.values()
+        if derivative["distribution"] == own_distribution and derivative["mapping_type"] == "codename_map"
+    ]
+    if len(matches) != 1:
+        raise ManifestError("%s own_release must have exactly one codename mapping" % path)
+    derivative = matches[0]
+    mapped = derivative["codename_map"].get(series)
+    if mapped != target_id:
+        raise ManifestError(
+            "%s target_id %r is not authorized by derivative mapping for series %r"
+            % (path, target_id, series)
+        )
+    if releases[target_id]["distribution"] != derivative["lineage_distribution"]:
+        raise ManifestError("%s target_id is outside derivative lineage distribution" % path)
 
 
 def _validate_distributions(manifest):

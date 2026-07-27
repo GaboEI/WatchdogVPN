@@ -154,7 +154,7 @@ def minimal_manifest() -> dict:
                         "target_scope": {
                             "technical_families": ["mini_apt"],
                             "stable_releases": ["mini_1", "mini_2"],
-                            "rolling_distributions": ["miniroll"],
+                            "rolling_distributions": [],
                         },
                         "architectures": ["x86_64"],
                         "package_manager": "apt",
@@ -670,7 +670,7 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         self.assert_invalid(manifest, "cycle")
         manifest = self.product_copy()
         manifest["derivatives"]["linuxmint_ubuntu_codename"]["codename_map"]["noble"] = "debian_13"
-        self.assert_invalid(manifest, "outside lineage")
+        self.assert_invalid(manifest, "not authorized by derivative mapping")
         manifest = self.product_copy()
         manifest["derivatives"]["kali_lineage"]["base_version"] = "13"
         self.assert_invalid(manifest, "unknown key base_version")

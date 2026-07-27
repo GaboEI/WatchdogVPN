@@ -398,13 +398,15 @@ uninstall or generated public claims. The declarative catalog lives in the new m
 section `dependency_requirements`; the domain and selection engine live in
 `compat/dependency_resolution.py`; the internal JSON tool lives at
 `tools/compat_resolve.py`; focused L1 tests live in
-`tests/test_compat_dependency_resolution.py`; and a non-mutating L2-style matrix lives in
-`tests/test_compat_dependency_l2.py`.
+`tests/test_compat_dependency_resolution.py`; a provider-backed L1 matrix lives in
+`tests/test_compat_dependency_matrix.py`; and the real focused L2 harness lives in
+`tests/test_compat_dependency_l2_real.py`.
 
 The manifest catalog maps a `dependency_requirement` to exactly one capability and an
 explicit `method_chain`. The initial catalog covers the dependency surface used by the
-current installer/runtime inventory: NetworkManager, nftables, OpenVPN, sing-box,
-Cloak `ck-client`, and AmneziaWG runtime. It also records evidence from
+current installer/runtime inventory: base runtime commands/packages, final Python,
+Python `cryptography`, polkit, DNS helper packages, NetworkManager, nftables,
+OpenVPN, sing-box, Cloak `ck-client`, and AmneziaWG runtime. It also records evidence from
 `lib/packages.sh`, `lib/singbox.sh`, `lib/cloak.sh`, `lib/amneziawg.sh` and the legacy
 `distros/debian.sh` AmneziaWG guidance, but those files are not modified or called by this
 task.
@@ -414,7 +416,7 @@ version 1 accepts these method kinds:
 
 - `official_package_exact` — package manager, exact target scope, package names,
   architectures, evidence and postcondition.
-- `external_repo_exact` — provider, repository identity, exact compatible releases/series,
+- `external_repo_exact` — provider, repository identity, exact `compatible_targets`,
   package names, architectures, evidence and postcondition.
 - `official_artifact_pinned` — official provenance, pinned version, per-architecture
   integrity metadata and expected files.
@@ -427,9 +429,10 @@ stdlib-only and independent from the modern resolver module. It rejects empty ch
 duplicate priorities, unknown method kinds, unknown capabilities, unknown method refs,
 unknown releases/distributions/families, package managers that diverge from the targeted
 family, architectures outside `cap_architecture.supported_values`, missing kind-specific
-security fields, stable rules applied to rolling targets without an explicit rolling
-scope, rolling rules applied to stable targets without an exact stable release scope, and
-arbitrary command-looking evidence.
+security fields, target identity/scope mismatches, duplicate global candidate IDs,
+unsafe package names, non-HTTPS or credentialed URLs, malformed SHA-256 hashes, mapped-base
+targets not authorized by derivative mappings, stable rules applied to rolling targets,
+rolling rules applied to stable targets, and arbitrary command-looking evidence.
 
 The resolver consumes:
 
@@ -449,10 +452,12 @@ python3 tools/compat_resolve.py explain <dependency-id>
 python3 tools/compat_resolve.py matrix
 ```
 
-All commands accept the same explicit fixture boundary as `compat_probe.py` plus
-`--missing-capability` for deterministic absent-capability tests. The tool emits JSON,
-writes controlled errors to stderr and returns exit code 2 for manifest/detection/resolver
-errors.
+All commands accept the same explicit fixture boundary as `compat_probe.py`. Normal
+execution uses the unknown-only availability provider and never fabricates package,
+artifact or repository availability. `--availability available` and
+`--missing-capability` are accepted only together with `--fixture-host`. The tool emits
+JSON with provider metadata (`type` and `authoritative`), writes controlled errors to
+stderr and returns exit code 2 for manifest/detection/resolver errors.
 
 Selection is strict and deterministic:
 
@@ -463,16 +468,18 @@ Selection is strict and deterministic:
 3. Candidates are evaluated only in ascending manifest `priority`.
 4. A candidate must match the exact technical family, architecture and either the exact
    stable release, exact rolling distribution, or explicitly authorized mapped base release.
-5. `external_repo_exact` additionally requires the effective target to be present in
-   `compatible_releases`; nearby series never qualify.
-6. Availability comes only from an injected `AvailabilityProvider`; unknown, timeout,
-   permission denied or malformed provider results are distinct from unavailable.
-7. The first eligible and available candidate is selected, but `execution_ready=false`
-   unless its implementation status and security metadata allow a future provisioner to
-   execute it. In this task, selected methods remain non-executable because the
-   transactional provisioner belongs to 23.7.5.6a.
-8. If the chain exhausts, the result is `no_safe_route` or `availability_unknown`, with all
-   rejected candidates and reasons preserved.
+5. `external_repo_exact` additionally requires the exact `(target_id, repository.series)`
+   pair to be present in `compatible_targets`; nearby series never qualify.
+6. Availability comes only from an injected `AvailabilityProvider`; `unknown`, `timeout`,
+   `permission_denied`, `malformed_response` and `provider_error` block the chain and mark
+   lower-priority candidates as `not_evaluated_due_to_higher_priority_unknown`.
+7. Conclusive rejections such as `unavailable`, target mismatch, architecture mismatch and
+   incomplete pin metadata allow the chain to continue.
+8. The first eligible and available candidate can be selected, but
+   `execution_ready=false` throughout this task because the transactional provisioner and
+   executor registry belong to 23.7.5.6a.
+9. If the chain exhausts after conclusive rejections, the result is `no_safe_route`; if a
+   higher-priority candidate cannot be verified, the result is `availability_unknown`.
 
 Support and dependency resolution stay orthogonal. Ubuntu 26.04 can receive an honest
 method analysis while staying `experimental`; `family_inferred` distributions are not
@@ -487,15 +494,14 @@ and CachyOS never receives an Arch version.
 
 The Debian/Ubuntu `focal` pin is now represented as data and rejected by policy for
 Debian 13: the legacy `amneziawg_debian_legacy_focal_ppa` candidate records `series=focal`
-but has no `compatible_releases` entry for `debian_13`, so resolution rejects it with
+but has an empty `compatible_targets` list, so resolution rejects it with
 `target_release_not_explicitly_compatible`. Ubuntu 26.04 similarly rejects the `noble`
-PPA candidate because `ubuntu_26_04` is not explicitly compatible; the source fallback is
+PPA candidate because no `(ubuntu_26_04, noble)` target is authorized; the source fallback is
 recorded as a future pinned source build, but its revision is intentionally unresolved and
 therefore not executable.
 
-The focused L2-style tests in this task are deliberately non-mutating and provider-backed.
-They prove exact resolver behavior for Ubuntu 24.04, Ubuntu 26.04, Debian 13, Fedora 44,
-openSUSE Leap 15.6 and Arch rolling, plus exact rejection of Debian `focal` and Ubuntu
-26.04 `noble`. They do not claim container, kernel, TUN, firewall, protocol or physical
-certification evidence; real container/package ecosystem checks remain a later matrix task
-unless separately authorized in an isolated environment.
+The provider-backed matrix is L1, not real ecosystem evidence. The focused real L2 harness
+is separate and requires disposable container infrastructure supplied explicitly through
+`WATCHDOGVPN_REAL_L2=1`; without such infrastructure it reports a skipped limitation. L2
+checks must never be presented as kernel, TUN, firewall, protocol or physical
+certification evidence.

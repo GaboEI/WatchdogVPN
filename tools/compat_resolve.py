@@ -123,9 +123,18 @@ def _context(args):
 
 
 def _provider(args) -> resolver.AvailabilityProvider:
-    if args.availability == "unknown":
+    if not args.fixture_host:
         return resolver.AvailabilityProvider()
-    return resolver.StaticAvailabilityProvider.all_available()
+    if args.availability == "available":
+        return resolver.StaticAvailabilityProvider.all_available()
+    return resolver.StaticAvailabilityProvider()
+
+
+def _provider_metadata(provider: resolver.AvailabilityProvider) -> dict:
+    return {
+        "type": getattr(provider, "provider_type", provider.__class__.__name__),
+        "authoritative": bool(getattr(provider, "authoritative", False)),
+    }
 
 
 def _print(value) -> None:
@@ -134,42 +143,47 @@ def _print(value) -> None:
 
 def cmd_dependency(args) -> int:
     manifest, facts, support, capabilities = _context(args)
+    provider = _provider(args)
     decision = resolver.resolve_dependency(
         manifest,
         facts,
         support,
         capabilities,
         args.dependency_id,
-        availability=_provider(args),
+        availability=provider,
     )
-    _print(decision)
+    _print({"provider": _provider_metadata(provider), "decision": decision})
     return 0
 
 
 def cmd_all(args) -> int:
     manifest, facts, support, capabilities = _context(args)
-    _print(resolver.resolve_all(manifest, facts, support, capabilities, availability=_provider(args)))
+    provider = _provider(args)
+    _print({"provider": _provider_metadata(provider), "report": resolver.resolve_all(manifest, facts, support, capabilities, availability=provider)})
     return 0
 
 
 def cmd_explain(args) -> int:
     manifest, facts, support, capabilities = _context(args)
+    provider = _provider(args)
     decision = resolver.resolve_dependency(
         manifest,
         facts,
         support,
         capabilities,
         args.dependency_id,
-        availability=_provider(args),
+        availability=provider,
     )
-    _print(resolver.explain_resolution(decision))
+    _print({"provider": _provider_metadata(provider), "explanation": resolver.explain_resolution(decision)})
     return 0
 
 
 def cmd_matrix(args) -> int:
     manifest, facts, support, capabilities = _context(args)
-    report = resolver.resolve_all(manifest, facts, support, capabilities, availability=_provider(args))
+    provider = _provider(args)
+    report = resolver.resolve_all(manifest, facts, support, capabilities, availability=provider)
     payload = {
+        "provider": _provider_metadata(provider),
         "target": {
             "distribution": report.resolved_distribution,
             "release": report.resolved_release,
@@ -196,7 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--usr-os-release", help="explicit /usr/lib/os-release fallback fixture path")
     parser.add_argument("--fixture-host", action="store_true", help="use deterministic read-only fixture probes")
     parser.add_argument("--missing-capability", action="append", help="force a capability result absent in fixture mode")
-    parser.add_argument("--availability", choices=("available", "unknown"), default="available")
+    parser.add_argument("--availability", choices=("available", "unknown"), default="unknown")
     sub = parser.add_subparsers(dest="command", required=True)
     dependency = sub.add_parser("dependency")
     dependency.add_argument("dependency_id")
@@ -212,6 +226,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not args.fixture_host and args.availability == "available":
+        print("error: --availability available requires --fixture-host", file=sys.stderr)
+        return EXIT_USAGE
+    if not args.fixture_host and args.missing_capability:
+        print("error: --missing-capability requires --fixture-host", file=sys.stderr)
+        return EXIT_USAGE
     try:
         return args.func(args)
     except (compat_read.ManifestError, detection.DetectionError, resolver.DependencyResolutionError, ValueError) as exc:
