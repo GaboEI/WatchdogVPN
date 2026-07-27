@@ -119,6 +119,42 @@ def cmd_worker(args) -> int:
         journal = journal.with_state(TransactionState.APPLYING, now=_now())
         journal_mod.write_journal(state_root, journal)
 
+        if args.kill_after == "rolling_back_pending":
+            # Step 0 applies and verifies for real (its resource stays on
+            # disk); step 1 is forced to fail so the transaction must move
+            # to rolling_back with step 0's undo still pending when killed.
+            step0 = plan.steps[0]
+            record0 = journal.step(step0.sequence)
+            record0 = record0.with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
+            journal = journal.with_step(record0)
+            journal_mod.write_journal(state_root, journal)
+            result0 = executor.apply_step(record0, env.context)
+            record0 = record0.with_state(StepState.APPLIED, completed_at=_now(), undo_record=result0.undo_record)
+            journal = journal.with_step(record0)
+            journal_mod.write_journal(state_root, journal)
+            record0 = record0.with_state(StepState.VERIFYING)
+            journal = journal.with_step(record0)
+            verification0 = executor.verify_step(record0, result0, env.context)
+            record0 = record0.with_state(StepState.VERIFIED, completed_at=_now(), verification=verification0.evidence)
+            journal = journal.with_step(record0)
+            journal_mod.write_journal(state_root, journal)
+
+            step1 = plan.steps[1]
+            record1 = journal.step(step1.sequence)
+            record1 = record1.with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
+            journal = journal.with_step(record1)
+            journal_mod.write_journal(state_root, journal)
+            record1 = record1.with_state(
+                StepState.APPLY_FAILED, completed_at=_now(),
+                error_kind="forced_for_reboot_rollback_test", error="forced failure to reach rolling_back before reboot",
+            )
+            journal = journal.with_step(record1)
+            journal_mod.write_journal(state_root, journal)
+
+            journal = journal.with_state(TransactionState.ROLLING_BACK, now=_now())
+            journal_mod.write_journal(state_root, journal)  # durable: step 0's resource still present, undo pending
+            os.kill(os.getpid(), signal.SIGKILL)  # never returns
+
         step0 = plan.steps[0]
         record = journal.step(step0.sequence)
 
@@ -281,18 +317,14 @@ def cmd_run_all(args) -> int:
     evidence.record("recovery_after_process_restart", note="demonstrated by steps 5/6 above: recover_pending runs in the supervisor's own process, separate from the killed worker")
 
     # 8/9. Recovery/rollback after a full OS reboot require an actual reboot
-    # of the host this harness runs on and are intentionally NOT executed
-    # automatically; see --reboot-checkpoint below for the second half of
-    # that specific scenario.
-    if args.reboot_checkpoint:
-        transaction_id = "vm-reboot-%s" % args.reboot_checkpoint
-        pending = journal_mod.list_pending_transaction_ids(state_root)
-        if transaction_id in pending:
-            reports = engine.recover_pending(state_root, env.registry, env.expected_executor_version, env.context)
-            matching = [r for r in reports if r.transaction_id == transaction_id]
-            evidence.record("recovery_after_reboot", transaction_id=transaction_id, action=matching[0].action.value if matching else "none")
-        else:
-            evidence.record("recovery_after_reboot_setup", note="no pending pre-reboot transaction found; run --prepare-reboot-checkpoint before rebooting")
+    # of the host this harness runs on. They are not part of this local,
+    # state-wiping matrix; use `prepare-reboot-checkpoint` then a real host
+    # reboot then `recover-after-reboot` instead (see module docstring).
+    evidence.record(
+        "reboot_scenarios_note",
+        note="recovery/rollback after a literal OS reboot use the dedicated "
+        "prepare-reboot-checkpoint / recover-after-reboot subcommands on a real host, not run-all",
+    )
 
     # 10/11. Uninstall + preservation of a pre-existing capability.
     uninstall_outcome = engine.uninstall("cap_vm_apply", env, apply=True)
@@ -340,16 +372,82 @@ def cmd_run_all(args) -> int:
     return 0
 
 
+def _read_boot_id() -> str | None:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
 def cmd_prepare_reboot_checkpoint(args) -> int:
-    """Run this, then reboot the host, then run run-all with
-    --reboot-checkpoint matching the one used here."""
+    """Run this, then reboot the host for real (not just restart this
+    process), then run recover-after-reboot with the same --checkpoint."""
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
     sandbox.mkdir(parents=True, exist_ok=True)
     transaction_id = "vm-reboot-%s" % args.checkpoint
-    _run_worker_and_expect_kill(sandbox, state_root, "cap_vm_reboot", "dep_vm_reboot", transaction_id, args.checkpoint, Evidence(state_root.parent / "reboot_prep_evidence.json"))
-    print("prepared pending transaction %s at checkpoint %s; reboot the host now, then run: "
-          "run-all --reboot-checkpoint %s" % (transaction_id, args.checkpoint, args.checkpoint))
+    evidence_path = Path(args.evidence) if args.evidence else (state_root.parent / "reboot_prep_evidence.json")
+    evidence = Evidence(evidence_path)
+    evidence.record("boot_id_before_reboot", boot_id=_read_boot_id())
+    _run_worker_and_expect_kill(sandbox, state_root, "cap_vm_reboot", "dep_vm_reboot", transaction_id, args.checkpoint, evidence)
+    pending = journal_mod.read_journal(state_root, transaction_id)
+    evidence.record("pre_reboot_journal_state", transaction_id=transaction_id, state=pending.state.value, plan_digest=pending.plan_digest)
+    evidence.record("pre_reboot_sandbox", files=sorted(p.name for p in sandbox.iterdir()) if sandbox.exists() else [])
+    evidence.flush()
+    print("prepared pending transaction %s at checkpoint %s (state=%s); now reboot the HOST OS for real "
+          "(e.g. `sudo reboot`), log back in, then run: recover-after-reboot --checkpoint %s"
+          % (transaction_id, args.checkpoint, pending.state.value, args.checkpoint))
+    return 0
+
+
+def cmd_recover_after_reboot(args) -> int:
+    """Does NOT wipe sandbox/state-root: recovers the exact pending
+    transaction prepare-reboot-checkpoint left behind before a real reboot."""
+    sandbox = Path(args.sandbox)
+    state_root = Path(args.state_root)
+    checkpoint = args.checkpoint
+    transaction_id = "vm-reboot-%s" % checkpoint
+    evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / "recovery-after-reboot.json"))
+    evidence.record("boot_id_after_reboot", boot_id=_read_boot_id())
+
+    pending_before = journal_mod.list_pending_transaction_ids(state_root)
+    if transaction_id not in pending_before:
+        raise SystemExit(
+            "expected pending transaction %r not found after reboot (pending: %r); did "
+            "prepare-reboot-checkpoint --checkpoint %s run before the reboot?" % (transaction_id, pending_before, checkpoint)
+        )
+    pre_recovery = journal_mod.read_journal(state_root, transaction_id)
+    evidence.record("pre_recovery_state", transaction_id=transaction_id, state=pre_recovery.state.value, plan_digest=pre_recovery.plan_digest)
+    evidence.record("pre_recovery_sandbox", files=sorted(p.name for p in sandbox.iterdir()) if sandbox.exists() else [])
+
+    env = _env(sandbox, state_root)
+    reports = engine.recover_pending(state_root, env.registry, env.expected_executor_version, env.context)
+    matching = [r for r in reports if r.transaction_id == transaction_id]
+    if not matching:
+        raise SystemExit("recover_pending produced no decision for %r (reports: %r)" % (transaction_id, reports))
+    decision = matching[0]
+    evidence.record("recovery_decision", transaction_id=transaction_id, action=decision.action.value, reason=decision.reason)
+
+    final = journal_mod.read_journal(state_root, transaction_id)
+    post_recovery_sandbox = sorted(p.name for p in sandbox.iterdir()) if sandbox.exists() else []
+    evidence.record("post_recovery_state", state=final.state.value)
+    evidence.record("post_recovery_sandbox", files=post_recovery_sandbox)
+
+    remaining_for_capability = [f for f in post_recovery_sandbox if f.startswith("cap_vm_reboot.")]
+    if checkpoint == "rolling_back_pending":
+        expected_action, expected_state = "rollback", TransactionState.PREPARATION_FAILED
+        ok = decision.action.value == expected_action and final.state == expected_state and not remaining_for_capability
+    else:
+        expected_action, expected_state = "resume", TransactionState.COMMITTED
+        ok = decision.action.value == expected_action and final.state == expected_state and len(remaining_for_capability) == 2
+    evidence.record(
+        "result", ok=ok, expected_action=expected_action, expected_state=expected_state.value,
+        actual_action=decision.action.value, actual_state=final.state.value, remaining_for_capability=remaining_for_capability,
+    )
+    evidence.flush()
+    if not ok:
+        raise SystemExit("recovery-after-reboot did not match expectations; see %s" % evidence.path)
+    print("PHASE23_7_5_6A_VM_REBOOT_RECOVERY_OK checkpoint=%s evidence=%s" % (checkpoint, evidence.path))
     return 0
 
 
@@ -368,21 +466,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-root", required=True)
     sub = parser.add_subparsers(dest="command", required=True)
 
+    checkpoints = ("write_ahead_applying", "after_apply_before_verify", "after_verify_before_commit", "rolling_back_pending")
+
     worker = sub.add_parser("worker", help="internal: runs a real apply, self-killing at --kill-after")
     worker.add_argument("--capability-id", required=True)
     worker.add_argument("--dependency-id", required=True)
     worker.add_argument("--transaction-id", required=True)
-    worker.add_argument("--kill-after", required=True, choices=("write_ahead_applying", "after_apply_before_verify", "after_verify_before_commit"))
+    worker.add_argument("--kill-after", required=True, choices=checkpoints)
     worker.set_defaults(func=cmd_worker)
 
-    run_all = sub.add_parser("run-all", help="run the full local VM-equivalent validation matrix")
+    run_all = sub.add_parser("run-all", help="run the full local VM-equivalent validation matrix (wipes sandbox/state-root first)")
     run_all.add_argument("--evidence", help="evidence JSON output path")
-    run_all.add_argument("--reboot-checkpoint", choices=("write_ahead_applying", "after_apply_before_verify", "after_verify_before_commit"), default=None)
     run_all.set_defaults(func=cmd_run_all)
 
-    reboot_prep = sub.add_parser("prepare-reboot-checkpoint", help="prepare a pending transaction, kill -9 it, then you reboot the host manually")
-    reboot_prep.add_argument("--checkpoint", required=True, choices=("write_ahead_applying", "after_apply_before_verify", "after_verify_before_commit"))
+    reboot_prep = sub.add_parser("prepare-reboot-checkpoint", help="prepare a pending transaction, kill -9 it; then reboot the host for real")
+    reboot_prep.add_argument("--checkpoint", required=True, choices=checkpoints)
+    reboot_prep.add_argument("--evidence", help="evidence JSON output path")
     reboot_prep.set_defaults(func=cmd_prepare_reboot_checkpoint)
+
+    recover_after_reboot = sub.add_parser("recover-after-reboot", help="does NOT wipe state; recovers the pending transaction left by prepare-reboot-checkpoint after a real reboot")
+    recover_after_reboot.add_argument("--checkpoint", required=True, choices=checkpoints)
+    recover_after_reboot.add_argument("--evidence", help="evidence JSON output path")
+    recover_after_reboot.set_defaults(func=cmd_recover_after_reboot)
 
     return parser
 
