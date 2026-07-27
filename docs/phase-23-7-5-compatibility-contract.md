@@ -1080,8 +1080,63 @@ before a single shared reboot, exactly as the maintainer's correction allowed.
 
 ### Second hardening round: real VM re-validation
 
-TODO(23.7.5.6a-round-2-vm): filled in after the maintainer-authorized real reboot
-re-validation on `wdvpn-linuxmint-23-6-7` against this round's commit completes.
+Executed for real on `wdvpn-linuxmint-23-6-7` against commit `be365c1` (the second
+hardening round plus a cross-Python-version test fix -- see below). The pre-existing
+clean snapshot (`pre-23.7.5.6a-reboot-validation`) was restored first, L1 was re-run on
+the VM (Python 3.12.3), a NEW dedicated snapshot for this round
+(`pre-23.7.5.6a-round2-reboot-validation`) was then taken, and all six of the
+maintainer's required scenarios were prepared independently (each with its own
+capability_id/journal) before a single shared real reboot:
+
+1. `after_apply_before_verify` (apply) -- resumed and committed; both canary files
+   present, `OwnershipRecord` written.
+2. `undoing_before_unlink` (rollback, crash before the real unlink of step 0's
+   resource even starts) -- resumed rollback, reached `preparation_failed`, step 0
+   `UNDONE`, zero residuals, sandbox empty.
+3. `undoing_after_unlink_before_undone` (rollback, the real unlink already happened,
+   crash before the durable `UNDONE` write) -- resumed rollback, reached
+   `preparation_failed`, step 0 `UNDONE` without any repeated unlink attempt, sandbox
+   empty.
+4. `after_unlink_before_applied` (uninstall, the real unlink already happened, crash
+   before the journal records `APPLIED`) -- resumed, reached `uninstalled`, ownership
+   record deleted, sandbox empty.
+5. `after_verify_before_revoke` (uninstall, both resources genuinely removed and
+   verified, crash before ownership is ever actually revoked) -- resumed, reached
+   `uninstalled`, ownership record deleted, sandbox empty.
+6. `after_revoke_before_uninstalled` (uninstall, ownership genuinely revoked for real,
+   crash before the durable `uninstalled` write) -- resumed, reached `uninstalled`,
+   ownership record deleted, sandbox empty.
+
+`boot_id` (`85471f15-...` before, `f5fb3176-...` after) confirmed one genuine `sudo
+reboot`, not a process restart. Package list, repository sources, running-service set
+and `/var/lib/watchdogvpn` content hashes were identical before and after (the only
+network diff was the expected DHCP lease timer); real filesystem permissions on the
+persistent state root (`$HOME/wdvpn-6a-round2-hardening-vm/*/state`) were confirmed
+`0700` for `transactions`/`ownership` and the state root itself, `0600` for
+`provisioner.lock` and every journal/ownership file. A residual scan across all six
+scenario directories found only the exact expected sandbox/state-root contents for
+each outcome (populated sandbox for the committed apply scenario, empty sandboxes for
+every rollback/uninstall scenario) -- no stray files, no leaked ownership records, no
+package/repository/service/network/protocol state anywhere. The VM was powered off and
+the round's snapshot restored and confirmed as current (`VBoxManage snapshot list`
+with `*`) afterward; neither snapshot was deleted. Private evidence (`0700`/`0600`) at
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-7-5-6a-round2-reboot-validation`.
+
+This VM run also caught a real, environment-dependent test bug (fixed in commit
+`be365c1`, on top of `53c6dd0`): three of the "errors never confused with absence" L1
+tests injected a `PermissionError`/`OSError` by mocking `Path.lstat`/`os.lstat`
+unconditionally (or by call-count) for a target path that `validate_target_path`'s own
+ancestor symlink-walk also touches for the exact same path. `pathlib.Path.is_symlink()`'s
+internal error-swallowing behavior for a raised `OSError` differs between Python 3.12.3
+(the VM) and 3.14 (the maintainer's host) -- 3.12 propagates it, 3.14 silently returns
+`False` -- so the same test produced a clean `inspect_error`/`inspection_error` result on
+one Python version and an uncaught exception or a mislabeled `ownership_drift` (caused by
+the mock also firing inside the point-7 drift-detection stat call) on the other. The
+fix bypasses `validate_target_path` in those specific tests (mocking it as a pass-through)
+so the injected fault applies unambiguously to only the single call each test actually
+targets, independent of any pathlib version quirk. This was a test-only fragility, not an
+engine defect -- the underlying `inspect_step`/`_run_uninstall_loop` behavior was already
+correct on both platforms once the tests isolated the right call.
 
 ### Out of scope (unchanged in this task)
 
