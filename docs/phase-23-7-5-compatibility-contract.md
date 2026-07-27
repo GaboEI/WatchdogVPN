@@ -647,3 +647,202 @@ alongside the rest of the dependency-resolution public surface, so a future
 availability provider can implement the structured artifact-identity contract (§7)
 through the package's published internal API instead of importing
 `compat.dependency_resolution` directly.
+
+## Transactional Provisioning Realization (Task 23.7.5.6a)
+
+Task 23.7.5.6a adds the generic transactional-provisioning infrastructure that will
+execute a resolver's `execution_ready=true` decision, without migrating any legacy
+consumer, without registering a production executor, and without changing any public
+support-classification claim. The implementation lives in the `compat/provisioning`
+package (`model.py`, `digest.py`, `journal.py`, `lock.py`, `paths.py`, `executors.py`,
+`engine.py`); the internal fixture/VM tool lives at `tools/compat_provision.py`; L1
+tests live in `tests/test_compat_transactional_provisioning.py`; a standalone,
+non-auto-discovered real-process/real-`SIGKILL` validation harness lives at
+`tests/vm/phase23_7_5_6a_transactional_provisioning_validation.py` (deliberately not
+named `test_*.py` so the routine `python3 -m unittest discover tests` gate never
+executes a hard process kill automatically).
+
+### Domain model and state machines
+
+`compat/provisioning/model.py` defines immutable/validated types
+(`ProvisioningPlan`, `ProvisioningStep`, `ExecutionResult`, `VerificationResult`,
+`RollbackResult`, `RecoveryDecision`, `OwnershipCandidate`, `OwnershipRecord`,
+`ProvenanceRecord`, `UninstallPlan`) plus two explicit, table-driven state machines:
+`TransactionState` (`planned` → `authorized` → `applying` → `verifying` → `committed`
+→ `uninstall_planned` → `uninstalling` → `uninstalled`/`uninstall_failed`, with
+`rolling_back` → `rolled_back` → `preparation_failed` or `rollback_failed`, and
+`recovery_required` → `recovering` as the ambiguity-resolution path) and `StepState`
+(`planned` → `applying` → `applied`/`apply_failed` → `verifying` →
+`verified`/`verify_failed` → `undoing` → `undone`/`undo_failed`). Every transition is
+validated against an explicit allow-list; an impossible jump (`planned`→`committed`,
+`committed`→`applying`, `rolled_back`→`verifying`, `uninstalled`→`applying`, or any
+step-level equivalent) raises `InvalidTransitionError` before any journal write, never
+silently changing state.
+
+### Plan determinism
+
+`compat/provisioning/digest.py` computes a stable SHA-256 `plan_digest` over a
+canonical, sorted-key JSON representation of the plan (capability/dependency id,
+resolved target, architecture, support classification, selected method id/kind,
+selected asset, postcondition, executor id/version, and the ordered step list). Apply,
+recovery, rollback and uninstall all recompute this digest and compare it against the
+journal's stored value before proceeding; a mismatch (a manifest/method change since
+the transaction started) blocks with `recovery_required` and never reinterprets an
+in-flight transaction under a changed plan.
+
+### Trusted executors, never manifest-driven
+
+`compat/provisioning/executors.py` defines `TrustedExecutorRegistry`, keyed by
+`(method_kind, method_id)` with an `executor_version` cross-check, mapping to a
+concrete, code-registered `Executor` object. There is no dynamic import, no
+manifest-supplied module/class name, no `eval`/`exec`, and no shell invocation
+anywhere in the resolution path (`tests/test_compat_transactional_provisioning.py`
+scans the package source for exactly these tokens). A manifest `implementation_status
+= implemented` entry is never sufficient on its own: `build_plan()` additionally
+requires `ResolutionDecision.execution_ready == true`, an exact
+`(method_kind, method_id)` registry match, the registered executor's own
+`supported_method_kind` to agree with the decision's `selected_method_kind`, and a
+concrete resolved target/architecture; anything short of all four is
+`recipe_not_implemented` (unregistered/kind-mismatched) or `out_of_contract`
+(`execution_ready=false`), with zero mutation either way.
+
+No production executor is registered in this task -- no AmneziaWG, no source build,
+no real package manager, no real repository, no real artifact download. The only
+registered executor is the lab-only `CanaryExecutor`, confined to an injected sandbox
+root, which creates two small synthetic files (a marker and a companion) and verifies
+their existence, exact content hash, permissions (`0600`) and absence of a symlink.
+It is registered only by test and VM-harness code, never by a normal-user code path.
+
+### Path protection
+
+`compat/provisioning/paths.py` requires an absolute path, rejects `..` components,
+the filesystem root, and empty paths, checks every ancestor path component for an
+unexpected symlink (rejecting both an intermediate and a final symlink), supports an
+explicit allow-list of roots plus a forbidden-roots list (`$HOME`, `/etc`, `/usr`,
+`/bin`, `/sbin`, `/lib`, `/lib64` during the canary executor), and creates files with
+`O_CREAT | O_EXCL | O_NOFOLLOW` so a concurrent or pre-existing target (including a
+dangling symlink) is refused rather than silently replaced. Removal
+(`remove_file_if_owned`) refuses a symlink or non-regular file outright and verifies
+the recorded SHA-256 before deleting anything, raising a controlled ownership-drift
+error otherwise.
+
+### Lock, journal and durable storage
+
+`compat/provisioning/lock.py` is a dedicated machine-wide `fcntl.flock` lock, distinct
+from `config.persistence`'s restore-transaction lock/journal (that one triggers its
+own backup/restore recovery side effects on any `file_lock` use under the shared
+config directory, which the provisioner must never couple into). Acquisition is
+non-blocking with a bounded retry timeout; a held lock raises a controlled
+`ProvisionerLockHeldError` carrying the holder's PID/transaction id (informational
+only -- the kernel `flock`, not this metadata, is the actual exclusion mechanism); the
+lock file itself is created `0600`. `apply`, `rollback`, `recovery` and `uninstall` all
+take this same lock; `dry-run` never touches it (and therefore can never block).
+
+`compat/provisioning/journal.py` defines its own schema (`schema_version`,
+`transaction_id`, `operation`, `state`, timestamps, `plan_digest`, capability/
+dependency/target/architecture/`support_classification`, selected method, executor,
+per-step records, ownership candidates, provenance, failure, recovery), reusing only
+`config.persistence`'s atomic-write/`fsync`/parent-directory-`fsync` primitives -- not
+the restore-transaction journal itself. Every step and transaction write goes through
+this same atomic-write path, so a journal file is 0600 and a torn write is impossible
+(temp file + `fsync` + `os.replace` + parent-directory `fsync`). Write-ahead is
+literal: `step.state = applying` is written durably *before* the executor's action
+runs; the result (`undo_record`) and `step.state = applied` are written immediately
+after; `step.state = verified` (with evidence) is written after verification. A
+corrupt journal, an unknown `schema_version`, or a structurally invalid document is
+converted to `JournalError` and surfaces as a blocking `recovery_required` decision --
+the file is never deleted to "unstick" the provisioner. Sensitive-looking journal
+content (keys named like `password`/`token`/`secret`/`credential`, or a URL with
+embedded credentials) is redacted before being written.
+
+### Dry-run and explicit authorization
+
+`prepare(decision, env, apply=False)` builds the exact same plan `apply=True` would,
+describes it (steps, targets, intents, planned verification, planned rollback,
+`plan_digest`) and returns without ever acquiring the lock, writing a journal, creating
+a lock file, or touching the sandbox -- verified by a before/after full-tree filesystem
+snapshot comparison in L1. `apply=True` is the only authorization signal; nothing
+(including a profile import) can set it implicitly.
+
+### Idempotency and ownership
+
+Before starting a new transaction, `check_idempotency()` inspects every planned step's
+real-world state: nothing present → proceed; everything present and matching, with a
+durable `OwnershipRecord` from the same executor/version → `already_provisioned` (no
+duplication); everything present and matching, with **no** ownership record →
+`already_present` (pre-existing, no write, no uninstall right ever granted for it);
+anything partially present, mismatched, or a symlink → `ownership_conflict` /
+`preparation_failed` with evidence, never a silent overwrite. `OwnershipRecord`s (one
+list per `capability_id`, at `provisioning/ownership/<capability_id>.json`, `0600`)
+are written only once a transaction reaches `committed`, and record artifact type,
+resource identity, `pre_existing`, method/executor id and version, integrity hash and
+the committing transaction id.
+
+### Rollback, interruption and recovery
+
+On any apply/verify failure, the transaction moves to `rolling_back` and every already
+`applied`/`verified` step is undone in reverse sequence order using only its recorded,
+structured `undo_record` -- never a stored command string. A partial rollback failure
+does not stop the loop early: every undoable step is still attempted, and every
+failure is recorded as an explicit residual; `rolled_back` (residuals empty) leads to
+`preparation_failed`, while any residual leads to `rollback_failed` with the journal
+preserved for manual review. `SIGINT`/`SIGTERM` during apply are caught by an
+in-process guard that stops before the next step and drives the same rollback path
+(`error_kind=interrupted`); `SIGKILL` cannot be caught by definition and is instead
+proven safe through recovery, including in the standalone VM harness, which sends a
+real, uncatchable `SIGKILL` to a child process at each of the three write-ahead
+boundaries (before apply, after apply before verify, after verify before commit) and
+confirms the next `recover_pending()` call -- in a completely separate process --
+resumes and commits correctly every time. Recovery itself, run at the start of any new
+mutating operation, scans every non-terminal transaction, revalidates its
+`plan_digest`, and for each step in `applying`/`verifying`/`applied` state inspects the
+real target (never trusting the stale journal alone): a demonstrated match resumes
+forward, a demonstrated absence retries the (idempotent, `O_EXCL`-guarded) action from
+scratch, and any divergence or unexpected symlink is `recovery_required` with **no**
+further automatic mutation. A rollback/uninstall attempt that already failed once is
+never silently retried; it is surfaced for manual review instead.
+
+### Uninstall
+
+Uninstall is its own transaction (`uninstall_planned` → `uninstalling` →
+`uninstalled`/`uninstall_failed`, its own lock acquisition, its own recovery pass) that
+can only ever target resources with a durable, `product_owned=true` `OwnershipRecord`;
+a capability with no such record (including every pre-existing one, since
+`already_present` never creates one) returns a controlled `nothing_to_uninstall` with
+zero filesystem interaction, structurally guaranteeing pre-existing components are
+never touched. Each removal step re-verifies the resource's SHA-256 against the
+recorded integrity value immediately before deleting it; a changed resource is
+`ownership_drift`, the step fails, the resource is left untouched, and the transaction
+reports `uninstall_failed` with explicit residuals. A second uninstall of an
+already-uninstalled (or never-owned) capability is a safe, idempotent
+`nothing_to_uninstall`, never an error that corrupts state. `--force` is out of scope
+for this task.
+
+### Gates and evidence
+
+L1 (`tests/test_compat_transactional_provisioning.py`) covers the maintainer's full
+35-item checklist plus offline/network-declaration and executor-exception-containment
+cases. The standalone harness
+(`tests/vm/phase23_7_5_6a_transactional_provisioning_validation.py`) reproduces, with
+real separate OS processes (including two genuine `SIGKILL`s), lock exclusion between
+processes, apply+verify, idempotent re-apply, rollback via an injected failure, both
+`SIGKILL` checkpoints plus recovery, uninstall, pre-existing preservation, symlink
+rejection and a final residual scan -- confined entirely to an injected sandbox and
+state root, touching no package manager, repository, network, DNS, firewall, service
+or protocol. It also supports a `prepare-reboot-checkpoint` / `--reboot-checkpoint`
+pair for exercising recovery/rollback across a literal host reboot on a disposable
+machine, which this task's local run does not itself perform (that needs an actual
+disposable VM and reboot cycle, outside a routine local gate run).
+
+### Out of scope (unchanged in this task)
+
+No production executor was registered. `lib/amneziawg.sh`,
+`diagnostics/amneziawg_guidance.py`, `distros/*.sh`, `lib/packages.sh`,
+`lib/singbox.sh`, `lib/cloak.sh`, `install.sh`, `update.sh`, `uninstall.sh`,
+`doctor.sh`, `README.md`, `ROADMAP.md` and `.github/workflows/*` were not touched. No
+package was installed, no repository was added, nothing was downloaded or built, and
+no public support-classification claim changed. `profile add` was not modified and
+does not start preparation. `cli/main.py` was not modified in this task; the minimal
+`watchdog runtime plan/prepare/recover/uninstall/status` CLI surface described in the
+task authorization remains available for a future task to add without needing further
+engine changes.
