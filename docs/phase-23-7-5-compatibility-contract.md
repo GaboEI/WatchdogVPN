@@ -389,3 +389,113 @@ python3 tools/compat_probe.py report
 It emits deterministic JSON, writes controlled errors to stderr, returns exit code 2 for
 manifest/detection errors, supports explicit fixture paths and a deterministic fixture-host
 mode for tests, and is not a public WatchdogVPN CLI.
+
+## Dependency Resolution Realization
+
+Task 23.7.5.5 adds a pure internal dependency-method resolver without wiring it into
+install/update, `doctor`, public CLI flows, provisioning, AmneziaWG migration, rollback,
+uninstall or generated public claims. The declarative catalog lives in the new manifest
+section `dependency_requirements`; the domain and selection engine live in
+`compat/dependency_resolution.py`; the internal JSON tool lives at
+`tools/compat_resolve.py`; focused L1 tests live in
+`tests/test_compat_dependency_resolution.py`; and a non-mutating L2-style matrix lives in
+`tests/test_compat_dependency_l2.py`.
+
+The manifest catalog maps a `dependency_requirement` to exactly one capability and an
+explicit `method_chain`. The initial catalog covers the dependency surface used by the
+current installer/runtime inventory: NetworkManager, nftables, OpenVPN, sing-box,
+Cloak `ck-client`, and AmneziaWG runtime. It also records evidence from
+`lib/packages.sh`, `lib/singbox.sh`, `lib/cloak.sh`, `lib/amneziawg.sh` and the legacy
+`distros/debian.sh` AmneziaWG guidance, but those files are not modified or called by this
+task.
+
+Each method candidate is structured data, never an executable shell recipe. Schema
+version 1 accepts these method kinds:
+
+- `official_package_exact` — package manager, exact target scope, package names,
+  architectures, evidence and postcondition.
+- `external_repo_exact` — provider, repository identity, exact compatible releases/series,
+  package names, architectures, evidence and postcondition.
+- `official_artifact_pinned` — official provenance, pinned version, per-architecture
+  integrity metadata and expected files.
+- `pinned_source_build` — official provenance, revision type, revision, build
+  dependencies and expected outputs. A placeholder or unresolved revision is not
+  executable.
+
+`tools/compat_read.py` validates the new section while remaining Python-3.6 syntax-target,
+stdlib-only and independent from the modern resolver module. It rejects empty chains,
+duplicate priorities, unknown method kinds, unknown capabilities, unknown method refs,
+unknown releases/distributions/families, package managers that diverge from the targeted
+family, architectures outside `cap_architecture.supported_values`, missing kind-specific
+security fields, stable rules applied to rolling targets without an explicit rolling
+scope, rolling rules applied to stable targets without an exact stable release scope, and
+arbitrary command-looking evidence.
+
+The resolver consumes:
+
+```text
+manifest + DistroFacts + support_classification + observed CapabilityResult records
+```
+
+and returns `ResolutionDecision` records inside a `ResolutionReport`. It preserves the
+target distribution/release/family, support classification, observed capability status,
+ordered candidate chain, selected method, execution readiness, rejected candidates,
+evidence, reason and controlled error kind. The stable JSON interface is:
+
+```text
+python3 tools/compat_resolve.py dependency <dependency-id>
+python3 tools/compat_resolve.py all
+python3 tools/compat_resolve.py explain <dependency-id>
+python3 tools/compat_resolve.py matrix
+```
+
+All commands accept the same explicit fixture boundary as `compat_probe.py` plus
+`--missing-capability` for deterministic absent-capability tests. The tool emits JSON,
+writes controlled errors to stderr and returns exit code 2 for manifest/detection/resolver
+errors.
+
+Selection is strict and deterministic:
+
+1. If the capability is already present, the dependency is `already_present` and no method
+   is selected.
+2. If `support_classification=unsupported` or no concrete distribution resolved, the
+   result is `out_of_contract` with no executable plan.
+3. Candidates are evaluated only in ascending manifest `priority`.
+4. A candidate must match the exact technical family, architecture and either the exact
+   stable release, exact rolling distribution, or explicitly authorized mapped base release.
+5. `external_repo_exact` additionally requires the effective target to be present in
+   `compatible_releases`; nearby series never qualify.
+6. Availability comes only from an injected `AvailabilityProvider`; unknown, timeout,
+   permission denied or malformed provider results are distinct from unavailable.
+7. The first eligible and available candidate is selected, but `execution_ready=false`
+   unless its implementation status and security metadata allow a future provisioner to
+   execute it. In this task, selected methods remain non-executable because the
+   transactional provisioner belongs to 23.7.5.6a.
+8. If the chain exhausts, the result is `no_safe_route` or `availability_unknown`, with all
+   rejected candidates and reasons preserved.
+
+Support and dependency resolution stay orthogonal. Ubuntu 26.04 can receive an honest
+method analysis while staying `experimental`; `family_inferred` distributions are not
+promoted by a package candidate; and an `unsupported` target never receives a plan.
+
+Stable and rolling remain separated. Stable candidates use the exact `resolved_release`
+and release list from the manifest. Rolling candidates use the concrete rolling
+distribution, never a borrowed stable version. Linux Mint 22.3 may use its mapped Ubuntu
+base only when a candidate declares `target_identity=mapped_base_release` and explicitly
+lists `ubuntu_24_04` as compatible. Kali never receives Debian Stable methods by lineage,
+and CachyOS never receives an Arch version.
+
+The Debian/Ubuntu `focal` pin is now represented as data and rejected by policy for
+Debian 13: the legacy `amneziawg_debian_legacy_focal_ppa` candidate records `series=focal`
+but has no `compatible_releases` entry for `debian_13`, so resolution rejects it with
+`target_release_not_explicitly_compatible`. Ubuntu 26.04 similarly rejects the `noble`
+PPA candidate because `ubuntu_26_04` is not explicitly compatible; the source fallback is
+recorded as a future pinned source build, but its revision is intentionally unresolved and
+therefore not executable.
+
+The focused L2-style tests in this task are deliberately non-mutating and provider-backed.
+They prove exact resolver behavior for Ubuntu 24.04, Ubuntu 26.04, Debian 13, Fedora 44,
+openSUSE Leap 15.6 and Arch rolling, plus exact rejection of Debian `focal` and Ubuntu
+26.04 `noble`. They do not claim container, kernel, TUN, firewall, protocol or physical
+certification evidence; real container/package ecosystem checks remain a later matrix task
+unless separately authorized in an isolated environment.
