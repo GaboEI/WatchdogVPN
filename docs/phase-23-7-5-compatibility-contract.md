@@ -939,6 +939,29 @@ identical before and after across both scenarios, and `/var/lib/watchdogvpn` (th
 product's state directory) was untouched throughout -- confirming the sandbox/state-root
 isolation held even under a real reboot on a machine that also runs the real product.
 
+A third pair, `prepare-uninstall-reboot-checkpoint` / `recover-uninstall-after-reboot`,
+was added for the security/correctness hardening round above: it commits a real prepare
+transaction, then runs a real subprocess that performs the REAL unlink of the owned
+marker resource and self-kills with `SIGKILL` before the journal ever records that step
+as `APPLIED` -- the exact "uninstall interrupted after unlink and before journal write"
+boundary. All three reboot scenarios were re-executed for real on `wdvpn-linuxmint-23-6-7`
+against the hardened commit: `after_apply_before_verify` resumed and committed;
+`rolling_back_pending` resumed its rollback to `preparation_failed` with no residuals;
+and the new uninstall scenario resumed (`recovery_decision.action == "resume"`), reached
+`uninstalled`, and deleted the ownership record, with the sandbox left empty -- proving
+the `_recover_one`/`_recover_uninstall` fix (see the hardening section above) actually
+recovers a real interrupted uninstall across a genuine reboot, not just in a unit test.
+This run also surfaced a VM configuration fact worth recording: this host's
+`/usr/lib/tmpfiles.d/tmp.conf` uses `D /tmp ... 30d`, which empties `/tmp` on every boot
+(not just after 30 days of inactivity), so the harness's sandbox/state-root must live
+under a persistent path (e.g. under `$HOME`) for any reboot-crossing scenario on this
+particular VM -- unrelated to the provisioning engine itself, but necessary to know when
+re-running this validation. `boot_id` was confirmed different before/after; package
+list, repository sources, running-service set, and `/var/lib/watchdogvpn` content hashes
+were identical before and after (network diff limited to the DHCP lease timer, as
+before); real filesystem permissions under the persistent state root were confirmed
+`0700` for directories and `0600` for the lock/journal/ownership files.
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,
