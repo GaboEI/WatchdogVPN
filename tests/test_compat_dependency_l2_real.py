@@ -64,7 +64,12 @@ PULL_REGISTRY_MARKERS = (
     "network unreachable",
     "context deadline exceeded",
 )
-MANAGER_NOT_FOUND_RETURNCODE = 1
+# POSIX only guarantees a non-zero exit status for "command -v" when the
+# target is not found; it does not fix the exact value. 1 and 127 are the
+# clean, no-output results admitted here as a demonstrated absence for the
+# shell implementations this contract covers (dash, bash and similar
+# POSIX-compatible shells), not "the exact POSIX code".
+MANAGER_NOT_FOUND_RETURNCODES = frozenset((1, 127))
 
 
 CASES = (
@@ -223,11 +228,11 @@ def classify_package_manager(phase: dict) -> tuple[str, str]:
     if returncode != 0:
         if _looks_like_runtime_infra_error(stderr):
             return "runtime_error", "container runtime reported an infrastructure error during manager lookup"
-        # Only the normal POSIX "command -v" not-found return code, with
-        # both streams truly empty, counts as a demonstrated absence. Any
-        # other return code (e.g. 126/127 from the wrapping shell itself)
-        # or unrecognized stderr text is inconclusive, not a proven absence.
-        if returncode == MANAGER_NOT_FOUND_RETURNCODE and not stdout.strip() and not stderr.strip():
+        # Only a clean 1/127 with both streams truly empty counts as a
+        # demonstrated absence. 126 (POSIX: "found but not executable") and
+        # any 1/127 with non-empty output are inconclusive, not a proven
+        # absence.
+        if returncode in MANAGER_NOT_FOUND_RETURNCODES and not stdout.strip() and not stderr.strip():
             return "manager_unavailable", "package manager executable not found"
         return "unknown", "manager lookup failed with an unrecognized return code"
     if not stdout.strip():
@@ -845,6 +850,10 @@ class L2ParserTests(unittest.TestCase):
 
     def test_manager_normal_absence_is_manager_unavailable(self) -> None:
         phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "manager_unavailable")
+
+    def test_manager_clean_rc_127_absence_is_manager_unavailable(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 127, "stdout": "", "stderr": ""}
         self.assertEqual(classify_package_manager(phase)[0], "manager_unavailable")
 
     def test_manager_rc_126_is_unknown(self) -> None:

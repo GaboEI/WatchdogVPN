@@ -600,10 +600,16 @@ deliberately not sufficient proof on their own. The package-manager lookup
 distinguishes a normal absent binary (`manager_unavailable`) from a real
 container-runtime infrastructure failure (`runtime_error`, detected from stderr
 markers such as "no such container" or "is not running") from a timeout from an
-inconclusive result (`unknown`): `manager_unavailable` requires the *exact* POSIX
-`command -v` not-found return code with both stdout and stderr genuinely empty;
-any other non-zero return code (e.g. 126/127 from the wrapping shell itself) or
-unrecognized stderr text is `unknown`, never assumed to mean "absent". The package
+inconclusive result (`unknown`). POSIX only guarantees a non-zero exit status for
+`command -v` when the target is not found; it does not fix the exact value. `1` and
+`127`, with both stdout and stderr genuinely empty, are the clean, no-output
+results admitted here as a demonstrated absence for the shell implementations this
+contract covers (dash, bash and similar POSIX-compatible shells) — not "the exact
+POSIX code". Return code `126` (POSIX: "found but not executable") and any `1`/`127`
+result carrying non-empty output are `unknown`, never assumed to mean "absent". A
+superior alternative would normalize the result inside the shell command itself via
+a controlled sentinel; that is not required while admitting `{1, 127}` with empty
+streams resolves the current contract unambiguously. The package
 query for APT requires the full positive contract — executed, exit code zero, and
 a real `Candidate:` line — before ever reporting `available`; a non-zero return
 code can never resolve to `available` even when stdout happens to contain
