@@ -534,6 +534,42 @@ class CapabilityProbeTests(unittest.TestCase):
         self.assertEqual(malformed.domain_status, "provisionable")
         self.assertEqual(malformed.error_kind, "malformed_output")
 
+    def test_runtime_python_policy_missing_does_not_fallback_to_python3(self) -> None:
+        manifest = product_manifest()
+        unknown = facts(manifest, "ID=ubuntu\nVERSION_ID=25.04\nVERSION_CODENAME=plucky\n")
+        runner = PythonRuntimeRunner(versions={"python3": "3.11.9"}, cryptography={"python3": "42.0.0"})
+        env = fixture_env(runner=runner)
+        result = detection._probe_core("cap_python310", unknown, env)
+        self.assertEqual(result.domain_status, "provisionable")
+        self.assertEqual(result.error_kind, "runtime_python_policy_missing")
+        self.assertEqual(runner.calls, [])
+        crypto = detection._probe_core("cap_python_cryptography", unknown, env)
+        self.assertEqual(crypto.error_kind, "runtime_python_policy_missing")
+        self.assertEqual(runner.calls, [])
+
+    def test_dns_runtime_package_uses_manifest_backend_policy(self) -> None:
+        manifest = product_manifest()
+        distro = facts(manifest, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+        systemd = fixture_env(files={"/etc/resolv.conf": "# systemd-resolved\nnameserver 127.0.0.53\n"})
+        result = detection._probe_core("cap_dns_runtime_package", distro, systemd)
+        self.assertEqual(result.domain_status, "present")
+        self.assertIn("backend=systemd_resolved", result.evidence)
+
+        nm = fixture_env(files={"/etc/resolv.conf": "# NetworkManager\nnameserver 1.1.1.1\n"})
+        result = detection._probe_core("cap_dns_runtime_package", distro, nm)
+        self.assertEqual(result.domain_status, "present")
+        self.assertIn("backend=networkmanager", result.evidence)
+
+        static = fixture_env(files={"/etc/resolv.conf": "nameserver 9.9.9.9\n"})
+        result = detection._probe_core("cap_dns_runtime_package", distro, static)
+        self.assertEqual(result.domain_status, "present")
+        self.assertIn("backend=static_resolv_conf", result.evidence)
+
+        unknown = fixture_env(files={"/etc/resolv.conf": ""})
+        result = detection._probe_core("cap_dns_runtime_package", distro, unknown)
+        self.assertEqual(result.domain_status, "provisionable")
+        self.assertEqual(result.error_kind, "dns_backend_unknown")
+
     def test_family_diagnostics_are_emitted_without_degrading_readiness(self) -> None:
         manifest = product_manifest()
         cases = {

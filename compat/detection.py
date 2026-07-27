@@ -859,7 +859,10 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
     if capability_id == "cap_kernel":
         return _cap(capability_id, "partial" if env.kernel_release else "unknown", CoreCapabilityStatus.PROVISIONABLE, env.kernel_release or "", "platform.release", "kernel release observed; required kernel capabilities not verified")
     if capability_id == "cap_python310":
-        executable = _runtime_python_executable(env.manifest, facts)
+        status, runtime = _runtime_python_policy(env.manifest, facts)
+        if status != "exact_runtime_policy_resolved" or runtime is None:
+            return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "manifest.dep_python_runtime.runtime_python", status, status)
+        executable = runtime["executable"]
         result = env.run([executable, "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"], timeout=2.0)
         if result.status != "ok":
             return _command_cap(capability_id, result, "runtime Python executable probe")
@@ -869,7 +872,10 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
         ok = version >= (3, 10)
         return _cap(capability_id, "present" if ok else "absent", CoreCapabilityStatus.PRESENT if ok else CoreCapabilityStatus.PROVISIONABLE, "runtime_python_executable=%s runtime_python_version=%s" % (executable, result.stdout.strip()), "command:" + " ".join(result.argv), "final Python floor check")
     if capability_id == "cap_python_cryptography":
-        executable = _runtime_python_executable(env.manifest, facts)
+        status, runtime = _runtime_python_policy(env.manifest, facts)
+        if status != "exact_runtime_policy_resolved" or runtime is None:
+            return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "", "manifest.dep_python_runtime.runtime_python", status, status)
+        executable = runtime["executable"]
         result = env.run([executable, "-c", "import cryptography; print(cryptography.__version__)"], timeout=2.0)
         if result.status == "ok":
             return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, "runtime_python_executable=%s cryptography_version=%s" % (executable, result.stdout.strip()), "command:" + " ".join(result.argv), "cryptography module import observed")
@@ -902,10 +908,14 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
             return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, evidence, "required_commands read-only command resolution", "required command surface observed; package provenance not verified")
         return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, evidence, "required_commands read-only command resolution", "required command surface incomplete or not fully observable")
     if capability_id == "cap_dns_runtime_package":
-        resolv = env.read_file("/etc/resolv.conf") or ""
-        if "systemd" in resolv.lower():
-            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, "systemd-resolved backend marker", "read:/etc/resolv.conf", "selected DNS backend does not require an extra helper package in this probe")
-        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "resolv.conf observed" if resolv else "", "read:/etc/resolv.conf", "DNS helper package need is conditional on unresolved backend selection")
+        backend, evidence = _detect_dns_backend(env)
+        policy = env.manifest["capabilities"]["core_host_capabilities"][capability_id]["dns_backend_policy"]
+        helper_requirement = policy[backend]["helper_requirement"]
+        if helper_requirement in ("satisfied_by_backend", "optional"):
+            return _cap(capability_id, "present", CoreCapabilityStatus.PRESENT, evidence, "manifest.dns_backend_policy+read:/etc/resolv.conf", "DNS backend does not require an extra helper package")
+        if helper_requirement == "unknown":
+            return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, evidence, "manifest.dns_backend_policy+read:/etc/resolv.conf", "DNS backend could not be determined", "dns_backend_unknown")
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, evidence, "manifest.dns_backend_policy", "DNS helper package requirement needs a package-specific probe")
     if capability_id == "cap_sudo":
         result = env.run(["sudo", "-V"], timeout=2.0)
         if result.status == "ok":
@@ -924,10 +934,10 @@ def _probe_core(capability_id: str, facts: DistroFacts, env: ProbeEnvironment) -
             return _cap(capability_id, "absent", CoreCapabilityStatus.PROVISIONABLE, result.stdout, "nmcli general", "NetworkManager is not running")
         return _command_cap(capability_id, result, "NetworkManager not proven active")
     if capability_id == "cap_dns_backend":
-        resolv = env.read_file("/etc/resolv.conf")
-        if resolv and "systemd" in resolv.lower():
-            return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, "systemd marker in resolv.conf", "read:/etc/resolv.conf", "DNS backend is partial read-only evidence")
-        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, "resolv.conf observed" if resolv else "", "read:/etc/resolv.conf", "DNS backend not authoritatively proven")
+        backend, evidence = _detect_dns_backend(env)
+        if backend != "unknown":
+            return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, evidence, "read:/etc/resolv.conf", "DNS backend detected with read-only evidence")
+        return _cap(capability_id, "unknown", CoreCapabilityStatus.PROVISIONABLE, evidence, "read:/etc/resolv.conf", "DNS backend not authoritatively proven")
     if capability_id == "cap_tun":
         if env.exists("/dev/net/tun"):
             return _cap(capability_id, "partial", CoreCapabilityStatus.PROVISIONABLE, "/dev/net/tun exists", "stat:/dev/net/tun", "TUN node visible; no interface created")
@@ -962,14 +972,40 @@ def _parse_python_version(value: str) -> tuple[int, int, int] | None:
     return int(match.group(1)), int(match.group(2)), int(match.group(3))
 
 
-def _runtime_python_executable(manifest: Mapping, facts: DistroFacts) -> str:
+def _runtime_python_policy(manifest: Mapping, facts: DistroFacts) -> tuple[str, Mapping | None]:
+    matches = []
     for candidate in manifest["dependency_requirements"]["dep_python_runtime"]["method_chain"]:
         runtime = candidate.get("runtime_python")
         if not runtime:
             continue
         if _candidate_matches_facts(candidate, facts):
-            return runtime["executable"]
-    return "python3"
+            matches.append(runtime)
+    if len(matches) == 1:
+        return "exact_runtime_policy_resolved", matches[0]
+    if len(matches) > 1:
+        return "runtime_python_policy_ambiguous", None
+    return "runtime_python_policy_missing", None
+
+
+def _runtime_python_executable(manifest: Mapping, facts: DistroFacts) -> str | None:
+    status, runtime = _runtime_python_policy(manifest, facts)
+    if status != "exact_runtime_policy_resolved" or runtime is None:
+        return None
+    return runtime["executable"]
+
+
+def _detect_dns_backend(env: ProbeEnvironment) -> tuple[str, str]:
+    resolv = env.read_file("/etc/resolv.conf") or ""
+    lowered = resolv.lower()
+    if "systemd" in lowered or env.exists("/run/systemd/resolve/stub-resolv.conf"):
+        return "systemd_resolved", "backend=systemd_resolved resolv.conf=%s" % ("observed" if resolv else "absent")
+    if "networkmanager" in lowered or "network manager" in lowered:
+        return "networkmanager", "backend=networkmanager resolv.conf=observed"
+    for line in resolv.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("nameserver "):
+            return "static_resolv_conf", "backend=static_resolv_conf nameserver=observed"
+    return "unknown", "backend=unknown resolv.conf=%s" % ("observed" if resolv else "absent")
 
 
 def _candidate_matches_facts(candidate: Mapping, facts: DistroFacts) -> bool:

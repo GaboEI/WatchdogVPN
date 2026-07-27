@@ -427,11 +427,12 @@ version 1 accepts these method kinds:
   values are validated against the legacy constants in `lib/singbox.sh` and
   `lib/cloak.sh`; placeholder hashes are rejected.
 - `pinned_source_build` — official provenance, revision type, revision, build
-  dependencies and expected outputs. AmneziaWG is modeled as two components,
-  `amneziawg-tools` (`awg`, `awg-quick`) and `amneziawg-go` (transport), each with its own
-  repository, immutable commit field, build dependencies and postcondition. A tag alone,
-  placeholder, unresolved revision or one pinned component with the other unpinned is not
-  executable.
+  dependencies and expected outputs. AmneziaWG is modeled as exactly two components,
+  `amneziawg_tools` (`awg`, `awg-quick`) and `amneziawg_transport` (`amneziawg-go` or a
+  future admitted module transport), each with its own repository, immutable commit field,
+  build dependencies and internal postcondition. The aggregate source build has no
+  top-level revision; unresolved component revisions keep the method at
+  `pin_metadata_incomplete` and the provider is not consulted.
 
 `tools/compat_read.py` validates the new section while remaining Python-3.6 syntax-target,
 stdlib-only and independent from the modern resolver module. It rejects empty chains,
@@ -450,6 +451,18 @@ with `python3.11-cryptography`; openSUSE Leap/Tumbleweed use `python3.11` from p
 `python311` with `python311-cryptography`; Arch/CachyOS use `python` with
 `python-cryptography`. Detection probes `cap_python310` and `cap_python_cryptography`
 against that selected interpreter only and records the executable and observed versions.
+If no exact policy matches, or if policies overlap, the probes return conservative
+`provisionable` results with `runtime_python_policy_missing` or
+`runtime_python_policy_ambiguous`; they do not fall back to `python3` or any incidental
+interpreter.
+
+DNS helper readiness is conditional on an observed backend and manifest policy, not a
+universal package gap. The manifest declares `dns_backend_policy` for
+`cap_dns_runtime_package`: `systemd_resolved` and `networkmanager` satisfy the helper
+requirement through the backend, `static_resolv_conf` makes the helper optional, and
+`unknown` remains provisionable with `dns_backend_unknown`. The detector reports the
+separate backend evidence through `cap_dns_backend` and only marks the helper capability
+present when the backend policy allows it.
 
 The resolver consumes:
 
@@ -491,15 +504,20 @@ Selection is strict and deterministic:
    architecture, method coherence, pins/integrity/postcondition and implementation status.
    A statically invalid source pin or artifact hash is rejected without consulting
    availability.
-7. Availability comes only from an injected `AvailabilityProvider`; `unknown`, `timeout`,
+7. Artifact candidates select exactly one `SelectedArtifact` for the host architecture
+   before the provider is called. The observation records only that effective asset
+   (`architecture`, `asset_name`, archive/binary kind, download base, SHA-256 and expected
+   executable), and provider evidence that claims a different asset or architecture is a
+   controlled provider error.
+8. Availability comes only from an injected `AvailabilityProvider`; `unknown`, `timeout`,
    `permission_denied`, `malformed_response` and `provider_error` block the chain and mark
    lower-priority candidates as `not_evaluated_due_to_higher_priority_unknown`.
-8. Conclusive rejections such as `unavailable`, target mismatch, architecture mismatch and
+9. Conclusive rejections such as `unavailable`, target mismatch, architecture mismatch and
    incomplete pin metadata allow the chain to continue.
-9. The first eligible and available candidate can be selected, but
+10. The first eligible and available candidate can be selected, but
    `execution_ready=false` throughout this task because the transactional provisioner and
    executor registry belong to 23.7.5.6a.
-10. If the chain exhausts after conclusive rejections, the result is `no_safe_route`; if a
+11. If the chain exhausts after conclusive rejections, the result is `no_safe_route`; if a
    higher-priority candidate cannot be verified, the result is `availability_unknown`.
 
 Support and dependency resolution stay orthogonal. Ubuntu 26.04 can receive an honest
@@ -523,22 +541,34 @@ therefore not executable.
 
 Fedora and RHEL-family targets are split where the legacy adapter split matters. Fedora 44
 can use DNF official package candidates for OpenVPN. Rocky/Alma/RHEL/CentOS Stream 9 do
-not treat EPEL-only packages as official DNF packages; their OpenVPN path is an
-`external_repo_exact` EPEL 9 candidate with repository package, signing-key provenance and
-package exposure represented as data. Unknown EPEL availability blocks the chain instead
-of falling back to a Fedora rule.
+not treat EPEL-only packages as official DNF packages. For the complete base runtime
+surface, the RHEL-family chain uses a single composite `external_repo_exact` candidate
+that represents the official target repositories, exact EPEL 9 prerequisite, the
+`epel-release` bootstrap package, OpenVPN from EPEL and the remaining official package
+set. The resolver records separate provider observations for repository support,
+repository package availability, EPEL-exposed OpenVPN and every declared package. A
+partial subset can never satisfy `cap_base_runtime_commands`; unknown EPEL availability
+blocks the chain, and unavailable EPEL or missing official packages exhausts to
+`no_safe_route`.
 
 Provider observations are preserved per operation. Multi-package methods record a
 `package_exists` observation for each package; external repos keep both repository target
-evidence and package evidence; artifacts keep asset existence and integrity metadata by
-architecture. Provider type and whether the evidence is authoritative live in both the
-CLI wrapper and the domain report/decision.
+evidence, repository package evidence and package evidence; artifacts keep asset
+existence and integrity metadata for the selected architecture. Provider type and whether
+the evidence is authoritative live in both the CLI wrapper and the domain report/decision.
+Each decision also exposes `all_availability_observations`, preserving every provider
+consultation across rejected candidates, selected candidates, `availability_unknown` and
+`no_safe_route`.
 
 The provider-backed matrix is L1, not real ecosystem evidence. The focused real L2 harness
 is separate and requires disposable container infrastructure supplied explicitly through
 `WATCHDOGVPN_REAL_L2=1`; without such infrastructure it reports a skipped limitation. L2
-checks create throwaway Docker/Podman containers, read `/etc/os-release`, confirm the
-package manager and run read-only package queries (`apt-cache`, `dnf`, `zypper`,
-`pacman`) after metadata refreshes only inside the disposable container when needed. They
-record image, stdout, stderr, exit code, timeout and status, and must never be presented as
+checks create uniquely named throwaway Docker/Podman containers and remove them in
+`finally`, read `/etc/os-release`, validate expected ID/version/codename, confirm the
+package manager and query each package separately (`apt-cache`, `dnf`, `zypper`,
+`pacman`) after metadata refreshes only inside the disposable container when needed. A
+refresh failure yields `unknown` and cannot continue as available; APT requires candidate
+or package metadata; aggregate availability is `available` only when every package has
+evidence. The harness records pull/run, refresh, os-release, package-manager and per-package
+stdout, stderr, exit code, timeout, image and status, and must never be presented as
 kernel, TUN, firewall, protocol or physical certification evidence.

@@ -366,19 +366,34 @@ class DependencyResolverTests(unittest.TestCase):
         for candidate in source_candidates:
             with self.subTest(candidate=candidate["id"]):
                 components = {component["component_id"]: component for component in candidate["components"]}
-                self.assertEqual(set(components), {"amneziawg_tools", "amneziawg_go"})
+                self.assertEqual(set(components), {"amneziawg_tools", "amneziawg_transport"})
                 self.assertIn("awg", components["amneziawg_tools"]["expected_outputs"])
                 self.assertIn("awg-quick", components["amneziawg_tools"]["expected_outputs"])
-                self.assertIn("amneziawg-go", components["amneziawg_go"]["expected_outputs"])
+                self.assertIn("amneziawg-go", components["amneziawg_transport"]["expected_outputs"])
                 self.assertEqual(components["amneziawg_tools"]["repository"], "https://github.com/amnezia-vpn/amneziawg-tools")
-                self.assertEqual(components["amneziawg_go"]["repository"], "https://github.com/amnezia-vpn/amneziawg-go")
+                self.assertEqual(components["amneziawg_transport"]["repository"], "https://github.com/amnezia-vpn/amneziawg-go")
                 self.assertEqual(components["amneziawg_tools"]["revision"], "unresolved")
-                self.assertEqual(components["amneziawg_go"]["revision"], "unresolved")
+                self.assertEqual(components["amneziawg_transport"]["revision"], "unresolved")
         by_id = {candidate["id"]: candidate for candidate in source_candidates}
         self.assertIn("golang-go", by_id["amneziawg_pinned_source_build_apt_stable_future"]["build_dependencies"])
         self.assertIn("golang", by_id["amneziawg_pinned_source_build_dnf_stable_future"]["build_dependencies"])
         self.assertIn("go", by_id["amneziawg_pinned_source_build_zypper_stable_future"]["build_dependencies"])
         self.assertIn("go", by_id["amneziawg_pinned_source_build_pacman_rolling_future"]["build_dependencies"])
+
+        broken = json.loads(json.dumps(m))
+        broken["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][1]["component_id"] = "amneziawg_go"
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        broken["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][0]["expected_outputs"] = ["awg-quick"]
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        broken["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][1]["postcondition"] = "arbitrary_runtime"
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
 
     def test_provider_validates_package_target_and_bad_provider_results(self) -> None:
         m = manifest()
@@ -483,6 +498,181 @@ class DependencyResolverTests(unittest.TestCase):
             availability=provider,
         )
         self.assertEqual(unknown.resolution_status, "availability_unknown")
+
+    def test_rhel_base_runtime_requires_official_packages_and_epel_together(self) -> None:
+        m = manifest()
+        rocky = facts(m, "ID=rocky\nVERSION_ID=9\n")
+        candidate_id = "base_runtime_dnf_rhel9_with_epel_exact"
+        full = resolve(m, rocky, "dep_base_runtime_commands", cap("cap_base_runtime_commands"))
+        self.assertEqual(full.selected_method_id, candidate_id)
+        self.assertIn("openvpn", packages_for_candidate(m, "dep_base_runtime_commands", candidate_id))
+
+        provider = resolver.StaticAvailabilityProvider(
+            {
+                ("repository_supports_exact_target", candidate_id, "rocky_9", None): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNKNOWN.value,
+                    reason="EPEL unknown",
+                )
+            },
+            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+        )
+        unknown = resolve(m, rocky, "dep_base_runtime_commands", cap("cap_base_runtime_commands"), provider=provider)
+        self.assertEqual(unknown.resolution_status, "availability_unknown")
+
+        provider = resolver.StaticAvailabilityProvider(
+            {
+                ("repository_supports_exact_target", candidate_id, "rocky_9", None): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    reason="EPEL unavailable",
+                )
+            },
+            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+        )
+        unavailable = resolve(m, rocky, "dep_base_runtime_commands", cap("cap_base_runtime_commands"), provider=provider)
+        self.assertEqual(unavailable.resolution_status, "no_safe_route")
+        self.assertTrue(unavailable.all_availability_observations)
+
+        provider = resolver.StaticAvailabilityProvider(
+            {
+                ("package_exists", candidate_id, "rocky_9", "bash"): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    reason="official package missing",
+                )
+            },
+            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+        )
+        missing_official = resolve(m, rocky, "dep_base_runtime_commands", cap("cap_base_runtime_commands"), provider=provider)
+        self.assertEqual(missing_official.resolution_status, "no_safe_route")
+
+        provider = resolver.StaticAvailabilityProvider(
+            {
+                ("package_exists", candidate_id, "rocky_9", "openvpn"): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    reason="EPEL OpenVPN missing",
+                )
+            },
+            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+        )
+        missing_epel_package = resolve(m, rocky, "dep_base_runtime_commands", cap("cap_base_runtime_commands"), provider=provider)
+        self.assertEqual(missing_epel_package.resolution_status, "no_safe_route")
+        self.assertTrue(missing_epel_package.all_availability_observations)
+
+    def test_artifact_provider_receives_selected_asset_for_current_architecture(self) -> None:
+        m = manifest()
+        ubuntu_x86 = facts(m, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", arch="x86_64")
+        decision = resolve(m, ubuntu_x86, "dep_sing_box_runtime", cap("proto_sing_box_runtime"))
+        self.assertEqual(decision.selected_asset.architecture, "x86_64")
+        self.assertEqual(decision.selected_asset.asset_name, "sing-box-1.13.14-linux-amd64-glibc.tar.gz")
+        self.assertTrue(decision.all_availability_observations[0]["asset"]["asset_name"].endswith("amd64-glibc.tar.gz"))
+
+        ubuntu_arm = facts(m, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", arch="aarch64")
+        decision = resolve(m, ubuntu_arm, "dep_sing_box_runtime", cap("proto_sing_box_runtime"))
+        self.assertEqual(decision.selected_asset.architecture, "aarch64")
+        self.assertEqual(decision.selected_asset.asset_name, "sing-box-1.13.14-linux-arm64.tar.gz")
+
+        provider = resolver.StaticAvailabilityProvider(
+            {
+                (
+                    "artifact_exists",
+                    "sing_box_official_artifact_stable",
+                    "ubuntu_24_04",
+                    "sing-box-1.13.14-linux-amd64-glibc.tar.gz",
+                ): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence="architecture=aarch64 asset_name=sing-box-1.13.14-linux-arm64.tar.gz",
+                )
+            },
+            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+        )
+        mismatched = resolve(m, ubuntu_x86, "dep_sing_box_runtime", cap("proto_sing_box_runtime"), provider=provider)
+        self.assertEqual(mismatched.resolution_status, "availability_unknown")
+        self.assertEqual(mismatched.error_kind, "provider_error")
+
+        broken = json.loads(json.dumps(m))
+        broken["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0]["assets"] = [
+            asset
+            for asset in broken["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0]["assets"]
+            if asset["architecture"] != "x86_64"
+        ]
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        asset = dict(broken["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0]["assets"][0])
+        broken["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0]["assets"].append(asset)
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+    def test_all_availability_observations_accumulate_across_chain(self) -> None:
+        m = manifest()
+        distro = facts(m, "ID=rocky\nVERSION_ID=9\n")
+        mutated = json.loads(json.dumps(m))
+        first = mutated["dependency_requirements"]["dep_openvpn_runtime"]["method_chain"][0]
+        first["id"] = "openvpn_rocky_official_fixture"
+        first["target_scope"]["stable_releases"] = ["rocky_9"]
+        first["target_scope"]["technical_families"] = ["redhat_dnf"]
+        first["package_manager"] = "dnf"
+        provider = resolver.StaticAvailabilityProvider(
+            {
+                ("package_exists", "openvpn_rocky_official_fixture", "rocky_9", "openvpn"): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    reason="official unavailable",
+                ),
+                ("repository_supports_exact_target", "openvpn_epel_rhel9_exact", "rocky_9", None): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    reason="repo unavailable",
+                ),
+            },
+            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+        )
+        # Use a temporary lower artifact candidate to prove selected decisions keep earlier observations.
+        artifact = dict(mutated["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0])
+        artifact["id"] = "openvpn_fixture_artifact"
+        artifact["priority"] = 99
+        artifact["postcondition"] = "proto_openvpn_runtime"
+        artifact["method_ref"] = "official_artifact_pinned"
+        artifact["kind"] = "official_artifact_pinned"
+        mutated["dependency_requirements"]["dep_openvpn_runtime"]["method_chain"].append(artifact)
+        compat_read.validate_manifest(mutated)
+        decision = resolver.resolve_dependency(
+            mutated,
+            distro,
+            support(mutated, distro),
+            (cap("proto_openvpn_runtime"),),
+            "dep_openvpn_runtime",
+            availability=provider,
+        )
+        self.assertEqual(decision.selected_method_id, "openvpn_fixture_artifact")
+        self.assertGreaterEqual(len(decision.all_availability_observations), 3)
+        self.assertEqual(decision.all_availability_observations[0]["method_id"], "openvpn_rocky_official_fixture")
+        self.assertEqual(decision.all_availability_observations[-1]["operation"], "artifact_integrity_metadata_available")
+
+    def test_manifest_validates_runtime_python_policy_exactness(self) -> None:
+        m = manifest()
+        broken = json.loads(json.dumps(m))
+        candidate = broken["dependency_requirements"]["dep_python_runtime"]["method_chain"][0]
+        candidate["package_names"] = ["python3-other"]
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        broken["dependency_requirements"]["dep_python_cryptography"]["method_chain"][0]["runtime_python"]["cryptography_package"] = "python3-other"
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        duplicate = dict(broken["dependency_requirements"]["dep_python_runtime"]["method_chain"][0])
+        duplicate["id"] = "python_runtime_duplicate"
+        duplicate["priority"] = 99
+        broken["dependency_requirements"]["dep_python_runtime"]["method_chain"].append(duplicate)
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        reordered = json.loads(json.dumps(m))
+        reordered["dependency_requirements"]["dep_python_runtime"]["method_chain"].reverse()
+        compat_read.validate_manifest(reordered)
+        distro = facts(reordered, "ID=rocky\nVERSION_ID=9\n")
+        self.assertEqual(detection._runtime_python_executable(reordered, distro), "python3.11")
 
     def test_capability_observation_and_support_inputs_are_strict(self) -> None:
         m = manifest()
@@ -679,9 +869,7 @@ class DependencyResolverTests(unittest.TestCase):
         fedora_base = shell_array("distros/fedora.sh", "DISTRO_BASE_PACKAGES")
         self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_dnf_fedora_official"), fedora_base)
         rhel_base = fedora_base + ["python3.11"]
-        rhel_base.remove("openvpn")
-        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_dnf_rhel9_official"), rhel_base)
-        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_epel_rhel9_exact"), ["openvpn"])
+        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_dnf_rhel9_with_epel_exact"), rhel_base)
         self.assertEqual(packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_dnf_fedora_official"), ["python3-cryptography"])
         self.assertEqual(packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_dnf_rhel9_official"), ["python3.11-cryptography"])
 

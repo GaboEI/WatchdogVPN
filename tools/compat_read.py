@@ -134,7 +134,7 @@ _ENTITY_KEYS = {
         "mapping_source",
         "mapping_type",
     ),
-    "capability": ("description", "supported_values", "type"),
+    "capability": ("description", "dns_backend_policy", "supported_values", "type"),
     "provisioning_method": ("exact_release_required", "kind", "mutates_system", "provenance"),
     "dependency_requirement": ("capability_id", "description", "method_chain"),
     "method_candidate": (
@@ -159,8 +159,6 @@ _ENTITY_KEYS = {
         "provider",
         "repository",
         "repository_package",
-        "revision",
-        "revision_type",
         "runtime_python",
         "signing_key_provenance",
         "exposed_package_names",
@@ -188,6 +186,7 @@ _ENTITY_KEYS = {
         "revision",
         "revision_type",
     ),
+    "dns_backend_policy_entry": ("helper_requirement",),
     "compatible_target": ("own_release", "series", "target_id"),
     "repository": ("id", "series", "url"),
     "target_scope": ("rolling_distributions", "stable_releases", "technical_families"),
@@ -613,12 +612,32 @@ def _validate_capabilities(manifest):
             _require_id_list(cap.get("supported_values"), path + ".supported_values")
         elif "supported_values" in cap:
             raise ManifestError("%s.supported_values is only valid for cap_architecture" % path)
+        if cap_id == "cap_dns_runtime_package":
+            _validate_dns_backend_policy(cap.get("dns_backend_policy"), path + ".dns_backend_policy")
+        elif "dns_backend_policy" in cap:
+            raise ManifestError("%s.dns_backend_policy is only valid for cap_dns_runtime_package" % path)
     for cap_id, cap in capabilities["protocol_capabilities"].items():
         path = "capabilities.protocol_capabilities.%s" % cap_id
         _require_obj(cap, path)
         _reject_unknown_keys(cap, _ENTITY_KEYS["capability"], path)
         _require_enum(cap.get("type"), ("provisionable", "required", "optional"), path + ".type")
         _require_str(cap.get("description"), path + ".description")
+
+
+def _validate_dns_backend_policy(policy, path):
+    policy = _require_obj(policy, path)
+    required = {"systemd_resolved", "networkmanager", "static_resolv_conf", "unknown"}
+    if set(policy) != required:
+        raise ManifestError("%s must define exactly %s" % (path, sorted(required)))
+    for backend, entry in policy.items():
+        entry_path = "%s.%s" % (path, backend)
+        _require_obj(entry, entry_path)
+        _reject_unknown_keys(entry, _ENTITY_KEYS["dns_backend_policy_entry"], entry_path)
+        _require_enum(
+            entry.get("helper_requirement"),
+            ("satisfied_by_backend", "optional", "required_package", "unknown"),
+            entry_path + ".helper_requirement",
+        )
 
 
 def _validate_provisioning_methods(manifest):
@@ -856,16 +875,87 @@ def _validate_dependency_requirements(manifest):
                 raise ManifestError("%s artifact fields are only valid for official_artifact_pinned" % cand_path)
             if kind == "pinned_source_build":
                 _require_https_url(candidate.get("official_provenance"), cand_path + ".official_provenance")
-                _require_enum(candidate.get("revision_type"), ("tag", "commit"), cand_path + ".revision_type")
-                revision = _require_str(candidate.get("revision"), cand_path + ".revision")
-                if revision != "unresolved" and candidate["revision_type"] == "commit" and not _is_git_commit(revision):
-                    raise ManifestError("%s.revision must be an immutable Git commit" % cand_path)
+                if "components" not in candidate:
+                    _require_enum(candidate.get("revision_type"), ("tag", "commit"), cand_path + ".revision_type")
+                    revision = _require_str(candidate.get("revision"), cand_path + ".revision")
+                    if revision != "unresolved" and candidate["revision_type"] == "commit" and not _is_git_commit(revision):
+                        raise ManifestError("%s.revision must be an immutable Git commit" % cand_path)
+                elif "revision" in candidate or "revision_type" in candidate:
+                    raise ManifestError("%s aggregate source build must pin component revisions, not top-level revision" % cand_path)
                 _require_package_list(candidate.get("build_dependencies"), cand_path + ".build_dependencies")
                 _require_safe_expected_paths(candidate.get("expected_outputs"), cand_path + ".expected_outputs")
                 if "components" in candidate:
                     _validate_source_components(candidate, cand_path)
             elif "revision_type" in candidate or "revision" in candidate or "build_dependencies" in candidate or "expected_outputs" in candidate or "components" in candidate:
                 raise ManifestError("%s source-build fields are only valid for pinned_source_build" % cand_path)
+    _validate_runtime_python_policies(manifest)
+
+
+def _target_keys_for_candidate(candidate):
+    identity = candidate["target_identity"]
+    scope = candidate["target_scope"]
+    if identity == "resolved_release":
+        return {("stable", release_id) for release_id in scope["stable_releases"]}
+    if identity == "rolling_distribution":
+        return {("rolling", distro_id) for distro_id in scope["rolling_distributions"]}
+    return set()
+
+
+def _validate_runtime_python_policies(manifest):
+    requirements = manifest["dependency_requirements"]
+    if "dep_python_runtime" not in requirements or "dep_python_cryptography" not in requirements:
+        if "dep_python_runtime" not in requirements and "dep_python_cryptography" not in requirements:
+            return
+        raise ManifestError("Python runtime and cryptography requirements must both exist")
+    runtime_by_target = {}
+    for index, candidate in enumerate(requirements["dep_python_runtime"]["method_chain"]):
+        path = "dependency_requirements.dep_python_runtime.method_chain[%d]" % index
+        runtime = candidate.get("runtime_python")
+        if runtime is None:
+            raise ManifestError("%s.runtime_python is required" % path)
+        if runtime["package"] not in candidate["package_names"]:
+            raise ManifestError("%s.runtime_python.package must be included in package_names" % path)
+        for target in _target_keys_for_candidate(candidate):
+            if target in runtime_by_target:
+                raise ManifestError("%s overlaps Python runtime policy for %s" % (path, target[1]))
+            runtime_by_target[target] = runtime
+    crypto_by_target = {}
+    for index, candidate in enumerate(requirements["dep_python_cryptography"]["method_chain"]):
+        path = "dependency_requirements.dep_python_cryptography.method_chain[%d]" % index
+        runtime = candidate.get("runtime_python")
+        if runtime is None:
+            raise ManifestError("%s.runtime_python is required" % path)
+        if runtime["cryptography_package"] not in candidate["package_names"]:
+            raise ManifestError("%s.runtime_python.cryptography_package must be included in package_names" % path)
+        for target in _target_keys_for_candidate(candidate):
+            if target in crypto_by_target:
+                raise ManifestError("%s overlaps Python cryptography policy for %s" % (path, target[1]))
+            crypto_by_target[target] = runtime
+    expected_targets = {
+        ("stable", release_id)
+        for release_id, release in manifest["releases"].items()
+        if manifest["distributions"][release["distribution"]]["release_model"] == "stable"
+    }
+    expected_targets.update(
+        ("rolling", distro_id)
+        for distro_id, distro in manifest["distributions"].items()
+        if distro["release_model"] == "rolling"
+    )
+    if set(runtime_by_target) != expected_targets:
+        missing = sorted(target[1] for target in expected_targets - set(runtime_by_target))
+        extra = sorted(target[1] for target in set(runtime_by_target) - expected_targets)
+        raise ManifestError("Python runtime policy target mismatch missing=%s extra=%s" % (missing, extra))
+    if set(crypto_by_target) != expected_targets:
+        missing = sorted(target[1] for target in expected_targets - set(crypto_by_target))
+        extra = sorted(target[1] for target in set(crypto_by_target) - expected_targets)
+        raise ManifestError("Python cryptography policy target mismatch missing=%s extra=%s" % (missing, extra))
+    for target in expected_targets:
+        runtime = runtime_by_target[target]
+        crypto = crypto_by_target[target]
+        if runtime["executable"] != crypto["executable"]:
+            raise ManifestError("Python executable diverges for target %s" % (target[1],))
+        if runtime["cryptography_package"] != crypto["cryptography_package"]:
+            raise ManifestError("Python cryptography package diverges for target %s" % (target[1],))
 
 
 def _validate_mapped_base_target(manifest, own_release, target_id, series, path):
@@ -945,6 +1035,24 @@ def _validate_source_components(candidate, path):
         _require_package_list(component.get("build_dependencies"), comp_path + ".build_dependencies")
         _require_safe_expected_paths(component.get("expected_outputs"), comp_path + ".expected_outputs")
         _require_id(component.get("postcondition"), comp_path + ".postcondition")
+    if candidate.get("postcondition") == "proto_amneziawg_runtime":
+        _validate_amneziawg_source_components(components, path)
+
+
+def _validate_amneziawg_source_components(components, path):
+    by_id = {component["component_id"]: component for component in components}
+    if set(by_id) != {"amneziawg_tools", "amneziawg_transport"}:
+        raise ManifestError("%s AmneziaWG source build must contain amneziawg_tools and amneziawg_transport" % path)
+    tools = by_id["amneziawg_tools"]
+    transport = by_id["amneziawg_transport"]
+    if "awg" not in tools["expected_outputs"]:
+        raise ManifestError("%s.amneziawg_tools expected_outputs must include awg" % path)
+    if tools["postcondition"] != "amneziawg_tools_present":
+        raise ManifestError("%s.amneziawg_tools postcondition is not defined" % path)
+    if "amneziawg-go" not in transport["expected_outputs"] and "amneziawg" not in transport["expected_outputs"]:
+        raise ManifestError("%s.amneziawg_transport expected_outputs must include amneziawg-go or amneziawg" % path)
+    if transport["postcondition"] != "amneziawg_transport_present":
+        raise ManifestError("%s.amneziawg_transport postcondition is not defined" % path)
 
 
 def _validate_distributions(manifest):

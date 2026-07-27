@@ -83,7 +83,21 @@
       },
       "cap_dns_runtime_package": {
         "description": "Distribution DNS helper package required when the selected DNS backend needs package support",
-        "type": "provisionable"
+        "type": "provisionable",
+        "dns_backend_policy": {
+          "systemd_resolved": {
+            "helper_requirement": "satisfied_by_backend"
+          },
+          "networkmanager": {
+            "helper_requirement": "satisfied_by_backend"
+          },
+          "static_resolv_conf": {
+            "helper_requirement": "optional"
+          },
+          "unknown": {
+            "helper_requirement": "unknown"
+          }
+        }
       }
     },
     "protocol_capabilities": {
@@ -797,17 +811,27 @@
           }
         },
         {
+          "id": "base_runtime_dnf_rhel9_with_epel_exact",
+          "priority": 4,
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_prerequisite_exact",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "centos_stream_9",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
           "architectures": [
             "x86_64",
             "aarch64"
           ],
-          "evidence": [
-            "lib/packages.sh package inventory audit"
-          ],
-          "id": "base_runtime_dnf_rhel9_official",
-          "implementation_status": "not_implemented",
-          "kind": "official_package_exact",
-          "method_ref": "dnf_official_package",
           "package_manager": "dnf",
           "package_names": [
             "bash",
@@ -831,6 +855,7 @@
             "NetworkManager",
             "logrotate",
             "libnotify",
+            "openvpn",
             "util-linux",
             "polkit",
             "nftables",
@@ -841,92 +866,45 @@
             "systemd-resolved",
             "python3.11"
           ],
-          "postcondition": "cap_base_runtime_commands",
-          "priority": 4,
-          "runtime_python": {
-            "cryptography_package": "python3.11-cryptography",
-            "executable": "python3.11",
-            "package": "python3.11"
-          },
-          "target_identity": "resolved_release",
-          "target_scope": {
-            "rolling_distributions": [],
-            "stable_releases": [
-              "almalinux_9",
-              "centos_stream_9",
-              "rhel_9",
-              "rocky_9"
-            ],
-            "technical_families": [
-              "redhat_dnf"
-            ]
-          }
-        },
-        {
-          "architectures": [
-            "x86_64",
-            "aarch64"
-          ],
-          "compatible_targets": [
-            {
-              "series": "epel9",
-              "target_id": "almalinux_9"
-            },
-            {
-              "series": "epel9",
-              "target_id": "centos_stream_9"
-            },
-            {
-              "series": "epel9",
-              "target_id": "rhel_9"
-            },
-            {
-              "series": "epel9",
-              "target_id": "rocky_9"
-            }
-          ],
-          "evidence": [
-            "lib/packages.sh package inventory audit"
-          ],
-          "exposed_package_names": [
-            "openvpn"
-          ],
-          "id": "base_runtime_epel_rhel9_exact",
-          "implementation_status": "not_implemented",
-          "kind": "external_repo_exact",
-          "method_ref": "external_repo_prerequisite_exact",
-          "package_manager": "dnf",
-          "package_names": [
-            "openvpn"
-          ],
-          "postcondition": "cap_base_runtime_commands",
-          "priority": 5,
+          "repository_package": "epel-release",
           "provider": "fedora_epel",
           "repository": {
             "id": "epel_9",
-            "series": "epel9",
-            "url": "https://dl.fedoraproject.org/pub/epel/"
+            "url": "https://dl.fedoraproject.org/pub/epel/",
+            "series": "epel9"
           },
-          "repository_package": "epel-release",
-          "runtime_python": {
-            "cryptography_package": "python3.11-cryptography",
-            "executable": "python3.11",
-            "package": "python3.11"
-          },
+          "compatible_targets": [
+            {
+              "target_id": "rocky_9",
+              "series": "epel9"
+            },
+            {
+              "target_id": "almalinux_9",
+              "series": "epel9"
+            },
+            {
+              "target_id": "rhel_9",
+              "series": "epel9"
+            },
+            {
+              "target_id": "centos_stream_9",
+              "series": "epel9"
+            }
+          ],
           "signing_key_provenance": "Fedora EPEL release package for EL9",
-          "target_identity": "resolved_release",
-          "target_scope": {
-            "rolling_distributions": [],
-            "stable_releases": [
-              "almalinux_9",
-              "centos_stream_9",
-              "rhel_9",
-              "rocky_9"
-            ],
-            "technical_families": [
-              "redhat_dnf"
-            ]
-          }
+          "exposed_package_names": [
+            "openvpn"
+          ],
+          "runtime_python": {
+            "executable": "python3.11",
+            "package": "python3.11",
+            "cryptography_package": "python3.11-cryptography"
+          },
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_base_runtime_commands",
+          "evidence": [
+            "distros/fedora.sh RHEL-family branch requires EPEL before complete base runtime package reconciliation because openvpn is EPEL-only"
+          ]
         },
         {
           "architectures": [
@@ -976,7 +954,7 @@
             "python311"
           ],
           "postcondition": "cap_base_runtime_commands",
-          "priority": 6,
+          "priority": 5,
           "runtime_python": {
             "cryptography_package": "python311-cryptography",
             "executable": "python3.11",
@@ -1041,7 +1019,7 @@
             "python311"
           ],
           "postcondition": "cap_base_runtime_commands",
-          "priority": 7,
+          "priority": 6,
           "runtime_python": {
             "cryptography_package": "python311-cryptography",
             "executable": "python3.11",
@@ -1102,7 +1080,7 @@
             "procps-ng"
           ],
           "postcondition": "cap_base_runtime_commands",
-          "priority": 8,
+          "priority": 7,
           "runtime_python": {
             "cryptography_package": "python-cryptography",
             "executable": "python",
@@ -3064,7 +3042,7 @@
                 "make",
                 "gcc"
               ],
-              "component_id": "amneziawg_go",
+              "component_id": "amneziawg_transport",
               "expected_outputs": [
                 "amneziawg-go"
               ],
@@ -3089,8 +3067,6 @@
           "official_provenance": "https://github.com/amnezia-vpn",
           "postcondition": "proto_amneziawg_runtime",
           "priority": 4,
-          "revision": "unresolved",
-          "revision_type": "commit",
           "target_identity": "resolved_release",
           "target_scope": {
             "rolling_distributions": [],
@@ -3142,7 +3118,7 @@
                 "make",
                 "gcc"
               ],
-              "component_id": "amneziawg_go",
+              "component_id": "amneziawg_transport",
               "expected_outputs": [
                 "amneziawg-go"
               ],
@@ -3167,8 +3143,6 @@
           "official_provenance": "https://github.com/amnezia-vpn",
           "postcondition": "proto_amneziawg_runtime",
           "priority": 5,
-          "revision": "unresolved",
-          "revision_type": "commit",
           "target_identity": "resolved_release",
           "target_scope": {
             "rolling_distributions": [],
@@ -3220,7 +3194,7 @@
                 "make",
                 "gcc"
               ],
-              "component_id": "amneziawg_go",
+              "component_id": "amneziawg_transport",
               "expected_outputs": [
                 "amneziawg-go"
               ],
@@ -3245,8 +3219,6 @@
           "official_provenance": "https://github.com/amnezia-vpn",
           "postcondition": "proto_amneziawg_runtime",
           "priority": 6,
-          "revision": "unresolved",
-          "revision_type": "commit",
           "target_identity": "resolved_release",
           "target_scope": {
             "rolling_distributions": [],
@@ -3294,7 +3266,7 @@
                 "make",
                 "gcc"
               ],
-              "component_id": "amneziawg_go",
+              "component_id": "amneziawg_transport",
               "expected_outputs": [
                 "amneziawg-go"
               ],
@@ -3319,8 +3291,6 @@
           "official_provenance": "https://github.com/amnezia-vpn",
           "postcondition": "proto_amneziawg_runtime",
           "priority": 7,
-          "revision": "unresolved",
-          "revision_type": "commit",
           "target_identity": "rolling_distribution",
           "target_scope": {
             "rolling_distributions": [
@@ -3368,7 +3338,7 @@
                 "make",
                 "gcc"
               ],
-              "component_id": "amneziawg_go",
+              "component_id": "amneziawg_transport",
               "expected_outputs": [
                 "amneziawg-go"
               ],
@@ -3393,8 +3363,6 @@
           "official_provenance": "https://github.com/amnezia-vpn",
           "postcondition": "proto_amneziawg_runtime",
           "priority": 8,
-          "revision": "unresolved",
-          "revision_type": "commit",
           "target_identity": "rolling_distribution",
           "target_scope": {
             "rolling_distributions": [
@@ -3442,7 +3410,7 @@
                 "make",
                 "gcc"
               ],
-              "component_id": "amneziawg_go",
+              "component_id": "amneziawg_transport",
               "expected_outputs": [
                 "amneziawg-go"
               ],
@@ -3467,8 +3435,6 @@
           "official_provenance": "https://github.com/amnezia-vpn",
           "postcondition": "proto_amneziawg_runtime",
           "priority": 9,
-          "revision": "unresolved",
-          "revision_type": "commit",
           "target_identity": "rolling_distribution",
           "target_scope": {
             "rolling_distributions": [
