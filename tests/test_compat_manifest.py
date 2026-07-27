@@ -129,15 +129,46 @@ def minimal_manifest() -> dict:
         "derivatives": {},
         "capabilities": {
             "core_host_capabilities": {
-                "cap_systemd": {"type": "required", "description": "systemd"}
+                "cap_systemd": {"type": "required", "description": "systemd"},
+                "cap_architecture": {
+                    "type": "required",
+                    "description": "architecture",
+                    "supported_values": ["x86_64"],
+                },
             },
             "protocol_capabilities": {
                 "proto_runtime": {"type": "provisionable", "description": "runtime"}
             },
         },
+        "dependency_requirements": {
+            "dep_runtime": {
+                "capability_id": "proto_runtime",
+                "description": "fixture runtime",
+                "method_chain": [
+                    {
+                        "id": "runtime_apt_official",
+                        "priority": 10,
+                        "kind": "official_package_exact",
+                        "method_ref": "apt_official_package",
+                        "target_identity": "resolved_release",
+                        "target_scope": {
+                            "technical_families": ["mini_apt"],
+                            "stable_releases": ["mini_1", "mini_2"],
+                            "rolling_distributions": ["miniroll"],
+                        },
+                        "architectures": ["x86_64"],
+                        "package_manager": "apt",
+                        "package_names": ["mini-runtime"],
+                        "implementation_status": "not_implemented",
+                        "postcondition": "proto_runtime",
+                        "evidence": ["fixture package catalog"],
+                    }
+                ],
+            }
+        },
         "provisioning_methods": {
             "apt_official_package": {
-                "kind": "official_package",
+                "kind": "official_package_exact",
                 "exact_release_required": True,
                 "mutates_system": True,
                 "provenance": "official apt",
@@ -239,6 +270,7 @@ class ManifestValidCasesTests(unittest.TestCase):
             "releases",
             "derivatives",
             "capabilities",
+            "dependency_requirements",
             "provisioning_methods",
             "protocols",
             "certifications",

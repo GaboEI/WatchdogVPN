@@ -42,6 +42,7 @@ _REQUIRED_TOP_LEVEL = (
     "releases",
     "derivatives",
     "capabilities",
+    "dependency_requirements",
     "provisioning_methods",
     "protocols",
     "certifications",
@@ -130,6 +131,35 @@ _ENTITY_KEYS = {
     ),
     "capability": ("description", "supported_values", "type"),
     "provisioning_method": ("exact_release_required", "kind", "mutates_system", "provenance"),
+    "dependency_requirement": ("capability_id", "description", "method_chain"),
+    "method_candidate": (
+        "architectures",
+        "build_dependencies",
+        "compatible_releases",
+        "compatible_series",
+        "evidence",
+        "expected_executable",
+        "expected_files",
+        "expected_outputs",
+        "id",
+        "implementation_status",
+        "integrity",
+        "kind",
+        "method_ref",
+        "official_provenance",
+        "package_manager",
+        "package_names",
+        "postcondition",
+        "priority",
+        "provider",
+        "repository",
+        "revision",
+        "revision_type",
+        "target_identity",
+        "target_scope",
+        "version",
+    ),
+    "target_scope": ("rolling_distributions", "stable_releases", "technical_families"),
     "protocol": ("category", "evidence_policy", "required_protocol_capabilities"),
     "certification": (
         "current",
@@ -395,6 +425,7 @@ def _check_unique_entity_ids(manifest):
         "distributions",
         "releases",
         "derivatives",
+        "dependency_requirements",
         "provisioning_methods",
         "protocols",
         "certifications",
@@ -506,12 +537,137 @@ def _validate_provisioning_methods(manifest):
         _reject_unknown_keys(method, _ENTITY_KEYS["provisioning_method"], path)
         _require_enum(
             method.get("kind"),
-            ("official_package", "external_repo_exact", "official_artifact", "pinned_source_build", "diagnostic_only"),
+            ("official_package_exact", "external_repo_exact", "official_artifact_pinned", "pinned_source_build", "diagnostic_only"),
             path + ".kind",
         )
         _require_bool(method.get("exact_release_required"), path + ".exact_release_required")
         _require_bool(method.get("mutates_system"), path + ".mutates_system")
         _require_str(method.get("provenance"), path + ".provenance")
+
+
+def _validate_dependency_requirements(manifest):
+    requirements = manifest["dependency_requirements"]
+    core_caps = manifest["capabilities"]["core_host_capabilities"]
+    protocol_caps = manifest["capabilities"]["protocol_capabilities"]
+    all_caps = set(core_caps) | set(protocol_caps)
+    methods = manifest["provisioning_methods"]
+    releases = manifest["releases"]
+    distributions = manifest["distributions"]
+    families = manifest["technical_families"]
+    supported_arches = set(core_caps["cap_architecture"]["supported_values"])
+    allowed_statuses = ("implemented", "not_implemented", "future_task")
+    _require_object_ids(requirements, "dependency_requirements")
+    for requirement_id, requirement in requirements.items():
+        path = "dependency_requirements.%s" % requirement_id
+        _require_obj(requirement, path)
+        _reject_unknown_keys(requirement, _ENTITY_KEYS["dependency_requirement"], path)
+        cap_id = _require_id(requirement.get("capability_id"), path + ".capability_id")
+        if cap_id not in all_caps:
+            raise ManifestError("%s references unknown capability %r" % (path, cap_id))
+        _require_str(requirement.get("description"), path + ".description")
+        chain = _require_list(requirement.get("method_chain"), path + ".method_chain")
+        if not chain:
+            raise ManifestError("%s.method_chain must not be empty" % path)
+        seen_priorities = set()
+        seen_candidate_ids = set()
+        for index, candidate in enumerate(chain):
+            cand_path = "%s.method_chain[%d]" % (path, index)
+            _require_obj(candidate, cand_path)
+            _reject_unknown_keys(candidate, _ENTITY_KEYS["method_candidate"], cand_path)
+            candidate_id = _require_id(candidate.get("id"), cand_path + ".id")
+            if candidate_id in seen_candidate_ids:
+                raise ManifestError("%s has duplicate candidate id %r" % (path, candidate_id))
+            seen_candidate_ids.add(candidate_id)
+            priority = _require_positive_int(candidate.get("priority"), cand_path + ".priority")
+            if priority in seen_priorities:
+                raise ManifestError("%s has duplicate method priority %d" % (path, priority))
+            seen_priorities.add(priority)
+            method_ref = _require_id(candidate.get("method_ref"), cand_path + ".method_ref")
+            if method_ref not in methods:
+                raise ManifestError("%s references unknown provisioning method %r" % (cand_path, method_ref))
+            kind = _require_enum(
+                candidate.get("kind"),
+                ("official_package_exact", "external_repo_exact", "official_artifact_pinned", "pinned_source_build"),
+                cand_path + ".kind",
+            )
+            if methods[method_ref]["kind"] != kind:
+                raise ManifestError("%s kind diverges from provisioning method %s" % (cand_path, method_ref))
+            _require_enum(candidate.get("implementation_status"), allowed_statuses, cand_path + ".implementation_status")
+            _require_enum(
+                candidate.get("target_identity"),
+                ("resolved_release", "rolling_distribution", "mapped_base_release"),
+                cand_path + ".target_identity",
+            )
+            scope = _require_obj(candidate.get("target_scope"), cand_path + ".target_scope")
+            _reject_unknown_keys(scope, _ENTITY_KEYS["target_scope"], cand_path + ".target_scope")
+            for family_id in _require_id_list(scope.get("technical_families"), cand_path + ".target_scope.technical_families"):
+                if family_id not in families:
+                    raise ManifestError("%s targets unknown family %r" % (cand_path, family_id))
+            for release_id in _require_id_list(
+                scope.get("stable_releases", []),
+                cand_path + ".target_scope.stable_releases",
+                allow_empty=True,
+            ):
+                if release_id not in releases:
+                    raise ManifestError("%s targets unknown stable release %r" % (cand_path, release_id))
+                if distributions[releases[release_id]["distribution"]]["release_model"] != "stable":
+                    raise ManifestError("%s stable release target %r is not stable" % (cand_path, release_id))
+            for distro_id in _require_id_list(
+                scope.get("rolling_distributions", []),
+                cand_path + ".target_scope.rolling_distributions",
+                allow_empty=True,
+            ):
+                if distro_id not in distributions:
+                    raise ManifestError("%s targets unknown rolling distribution %r" % (cand_path, distro_id))
+                if distributions[distro_id]["release_model"] != "rolling":
+                    raise ManifestError("%s rolling target %r is not rolling" % (cand_path, distro_id))
+            arches = _require_id_list(candidate.get("architectures"), cand_path + ".architectures")
+            for arch in arches:
+                if arch not in supported_arches:
+                    raise ManifestError("%s architecture %r is not admitted by cap_architecture" % (cand_path, arch))
+            evidence = _require_string_list(candidate.get("evidence"), cand_path + ".evidence")
+            if any((";" in item or "&&" in item or "|" in item) for item in evidence):
+                raise ManifestError("%s evidence must be references, not commands" % cand_path)
+            _require_id(candidate.get("postcondition"), cand_path + ".postcondition")
+            if candidate["postcondition"] not in all_caps:
+                raise ManifestError("%s.postcondition references unknown capability" % cand_path)
+            if kind in ("official_package_exact", "external_repo_exact"):
+                pm = _require_enum(candidate.get("package_manager"), ("apt", "dnf", "zypper", "pacman"), cand_path + ".package_manager")
+                for family_id in scope["technical_families"]:
+                    if families[family_id]["package_manager"] != pm:
+                        raise ManifestError("%s package_manager diverges from family %s" % (cand_path, family_id))
+                _require_string_list(candidate.get("package_names"), cand_path + ".package_names")
+            elif "package_manager" in candidate or "package_names" in candidate:
+                raise ManifestError("%s package fields are only valid for package/repo methods" % cand_path)
+            if kind == "external_repo_exact":
+                _require_str(candidate.get("provider"), cand_path + ".provider")
+                repository = _require_obj(candidate.get("repository"), cand_path + ".repository")
+                for field in ("id", "url", "series"):
+                    _require_str(repository.get(field), cand_path + ".repository." + field)
+                _require_string_list(candidate.get("compatible_series"), cand_path + ".compatible_series")
+                _require_id_list(candidate.get("compatible_releases"), cand_path + ".compatible_releases", allow_empty=True)
+            elif "provider" in candidate or "repository" in candidate or "compatible_series" in candidate or "compatible_releases" in candidate:
+                raise ManifestError("%s repository fields are only valid for external_repo_exact" % cand_path)
+            if kind == "official_artifact_pinned":
+                _require_str(candidate.get("official_provenance"), cand_path + ".official_provenance")
+                _require_str(candidate.get("version"), cand_path + ".version")
+                integrity = _require_obj(candidate.get("integrity"), cand_path + ".integrity")
+                _require_enum(integrity.get("type"), ("sha256", "signature"), cand_path + ".integrity.type")
+                for arch in arches:
+                    if arch not in integrity:
+                        raise ManifestError("%s.integrity missing architecture %s" % (cand_path, arch))
+                    _require_str(integrity[arch], cand_path + ".integrity." + arch)
+                _require_string_list(candidate.get("expected_files"), cand_path + ".expected_files")
+            elif "version" in candidate or "integrity" in candidate or "expected_files" in candidate:
+                raise ManifestError("%s artifact fields are only valid for official_artifact_pinned" % cand_path)
+            if kind == "pinned_source_build":
+                _require_str(candidate.get("official_provenance"), cand_path + ".official_provenance")
+                _require_enum(candidate.get("revision_type"), ("tag", "commit"), cand_path + ".revision_type")
+                _require_str(candidate.get("revision"), cand_path + ".revision")
+                _require_string_list(candidate.get("build_dependencies"), cand_path + ".build_dependencies")
+                _require_string_list(candidate.get("expected_outputs"), cand_path + ".expected_outputs")
+            elif "revision_type" in candidate or "revision" in candidate or "build_dependencies" in candidate or "expected_outputs" in candidate:
+                raise ManifestError("%s source-build fields are only valid for pinned_source_build" % cand_path)
 
 
 def _validate_distributions(manifest):
@@ -1091,6 +1247,7 @@ def validate_manifest(manifest):
         _validate_protocols(manifest)
         _validate_releases_structure(manifest)
         _validate_certifications(manifest)
+        _validate_dependency_requirements(manifest)
         # Phase 2: cross-section metadata and derived semantic invariants.
         _validate_validation_metadata(manifest)
         _validate_releases_semantics(manifest)

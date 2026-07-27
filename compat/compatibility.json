@@ -588,6 +588,718 @@
       "mapping_type": "rolling_lineage"
     }
   },
+  "dependency_requirements": {
+    "dep_network_manager": {
+      "capability_id": "cap_network_manager",
+      "description": "NetworkManager runtime package selected by exact family and target",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES network-manager or NetworkManager"
+          ],
+          "id": "network_manager_apt_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "network-manager"
+          ],
+          "postcondition": "cap_network_manager",
+          "priority": 10,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh Red Hat family DISTRO_BASE_PACKAGES NetworkManager"
+          ],
+          "id": "network_manager_dnf_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "NetworkManager"
+          ],
+          "postcondition": "cap_network_manager",
+          "priority": 20,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "centos_stream_9",
+              "fedora_44",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh openSUSE DISTRO_BASE_PACKAGES NetworkManager"
+          ],
+          "id": "network_manager_zypper_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "NetworkManager"
+          ],
+          "postcondition": "cap_network_manager",
+          "priority": 30,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh Arch family DISTRO_BASE_PACKAGES networkmanager"
+          ],
+          "id": "network_manager_pacman_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "package_manager": "pacman",
+          "package_names": [
+            "networkmanager"
+          ],
+          "postcondition": "cap_network_manager",
+          "priority": 40,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          }
+        }
+      ]
+    },
+    "dep_nftables": {
+      "capability_id": "cap_nftables",
+      "description": "nftables package for the kill-switch backend contract",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES nftables"
+          ],
+          "id": "nftables_apt_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "nftables"
+          ],
+          "postcondition": "cap_nftables",
+          "priority": 10,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh non-apt families DISTRO_BASE_PACKAGES nftables"
+          ],
+          "id": "nftables_native_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "nftables"
+          ],
+          "postcondition": "cap_nftables",
+          "priority": 20,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "centos_stream_9",
+              "fedora_44",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh openSUSE DISTRO_BASE_PACKAGES nftables"
+          ],
+          "id": "nftables_zypper_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "nftables"
+          ],
+          "postcondition": "cap_nftables",
+          "priority": 30,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh Arch DISTRO_BASE_PACKAGES nftables"
+          ],
+          "id": "nftables_pacman_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "package_manager": "pacman",
+          "package_names": [
+            "nftables"
+          ],
+          "postcondition": "cap_nftables",
+          "priority": 40,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          }
+        }
+      ]
+    },
+    "dep_openvpn_runtime": {
+      "capability_id": "proto_openvpn_runtime",
+      "description": "OpenVPN runtime package selected only for exact targets",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh required_commands openvpn"
+          ],
+          "id": "openvpn_apt_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 10,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "distros/fedora.sh and distros/opensuse.sh OpenVPN package paths"
+          ],
+          "id": "openvpn_rpm_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 20,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "centos_stream_9",
+              "fedora_44",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "distros/opensuse.sh OpenVPN package path"
+          ],
+          "id": "openvpn_zypper_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 30,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "distros/arch.sh OpenVPN package path"
+          ],
+          "id": "openvpn_pacman_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "package_manager": "pacman",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 40,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          }
+        }
+      ]
+    },
+    "dep_sing_box_runtime": {
+      "capability_id": "proto_sing_box_runtime",
+      "description": "sing-box runtime from official pinned upstream artifacts",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/singbox.sh SINGBOX_VERSION and pinned hashes"
+          ],
+          "expected_files": [
+            "sing-box"
+          ],
+          "id": "sing_box_official_artifact",
+          "implementation_status": "not_implemented",
+          "integrity": {
+            "aarch64": "4742df6a4314e8ecc41736849fca6d73b8f9e91b6e8b06ee794ff17ba180579e",
+            "type": "sha256",
+            "x86_64": "aae9172317c61760aae3dafcde889b2e51b7ea590c40d2b3c7ccdeae14b361b6"
+          },
+          "kind": "official_artifact_pinned",
+          "method_ref": "official_artifact_pinned",
+          "official_provenance": "https://github.com/SagerNet/sing-box/releases",
+          "postcondition": "proto_sing_box_runtime",
+          "priority": 10,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "kali",
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [
+              "almalinux_9",
+              "centos_stream_9",
+              "debian_13",
+              "fedora_44",
+              "linuxmint_22_3",
+              "opensuse_leap_15_6",
+              "rhel_9",
+              "rocky_9",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "arch_pacman",
+              "debian_apt",
+              "redhat_dnf",
+              "suse_zypper",
+              "ubuntu_apt"
+            ]
+          },
+          "version": "1.13.14"
+        }
+      ]
+    },
+    "dep_ck_client_runtime": {
+      "capability_id": "proto_ck_client_runtime",
+      "description": "Cloak ck-client runtime from official pinned upstream artifacts",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/cloak.sh CLOAK_VERSION and pinned hashes"
+          ],
+          "expected_files": [
+            "ck-client"
+          ],
+          "id": "ck_client_official_artifact",
+          "implementation_status": "not_implemented",
+          "integrity": {
+            "aarch64": "4aa5e9a16864caed73e374fe87a5bc853043aa2c06fbd89e329ff1f623bf5f71",
+            "type": "sha256",
+            "x86_64": "ceabde7e13cf0e9dd7f53f811d6f24c1246755911b06aa40fb541041016348e3"
+          },
+          "kind": "official_artifact_pinned",
+          "method_ref": "official_artifact_pinned",
+          "official_provenance": "https://github.com/cbeuw/Cloak/releases",
+          "postcondition": "proto_ck_client_runtime",
+          "priority": 10,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "kali",
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [
+              "almalinux_9",
+              "centos_stream_9",
+              "debian_13",
+              "fedora_44",
+              "linuxmint_22_3",
+              "opensuse_leap_15_6",
+              "rhel_9",
+              "rocky_9",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "arch_pacman",
+              "debian_apt",
+              "redhat_dnf",
+              "suse_zypper",
+              "ubuntu_apt"
+            ]
+          },
+          "version": "2.12.0"
+        }
+      ]
+    },
+    "dep_amneziawg_runtime": {
+      "capability_id": "proto_amneziawg_runtime",
+      "description": "AmneziaWG runtime selection without borrowing nearby distribution series",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "distros/ubuntu.sh AmneziaWG PPA guidance for Ubuntu-family releases"
+          ],
+          "id": "amneziawg_ubuntu_ppa_exact",
+          "implementation_status": "not_implemented",
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_exact",
+          "package_manager": "apt",
+          "package_names": [
+            "amneziawg"
+          ],
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 10,
+          "provider": "AmneziaVPN Launchpad PPA",
+          "repository": {
+            "id": "amnezia_ubuntu_ppa_noble",
+            "series": "noble",
+            "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
+          },
+          "compatible_releases": [
+            "ubuntu_24_04"
+          ],
+          "compatible_series": [
+            "noble"
+          ],
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "Linux Mint 22.3 exact UBUNTU_CODENAME=noble mapping to ubuntu_24_04"
+          ],
+          "id": "amneziawg_mint_base_ppa_exact",
+          "implementation_status": "not_implemented",
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_exact",
+          "package_manager": "apt",
+          "package_names": [
+            "amneziawg"
+          ],
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 20,
+          "provider": "AmneziaVPN Launchpad PPA",
+          "repository": {
+            "id": "amnezia_ubuntu_ppa_noble_for_mint",
+            "series": "noble",
+            "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
+          },
+          "compatible_releases": [
+            "ubuntu_24_04"
+          ],
+          "compatible_series": [
+            "noble"
+          ],
+          "target_identity": "mapped_base_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "linuxmint_22_3"
+            ],
+            "technical_families": [
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "distros/debian.sh legacy focal PPA guidance requires exact-compatibility review"
+          ],
+          "id": "amneziawg_debian_legacy_focal_ppa",
+          "implementation_status": "not_implemented",
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_exact",
+          "package_manager": "apt",
+          "package_names": [
+            "amneziawg"
+          ],
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 30,
+          "provider": "AmneziaVPN Launchpad PPA",
+          "repository": {
+            "id": "amnezia_ubuntu_ppa_focal_legacy",
+            "series": "focal",
+            "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
+          },
+          "compatible_releases": [],
+          "compatible_series": [
+            "focal"
+          ],
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [
+              "debian_13"
+            ],
+            "technical_families": [
+              "debian_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "git",
+            "go",
+            "make",
+            "linux-headers"
+          ],
+          "evidence": [
+            "lib/amneziawg.sh upstream repositories",
+            "Task 23.6.5a found current clone fallback lacks pin and transactional contract"
+          ],
+          "expected_outputs": [
+            "awg",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_future",
+          "implementation_status": "future_task",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 40,
+          "revision": "unresolved",
+          "revision_type": "commit",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "kali",
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [
+              "almalinux_9",
+              "centos_stream_9",
+              "debian_13",
+              "fedora_44",
+              "linuxmint_22_3",
+              "opensuse_leap_15_6",
+              "rhel_9",
+              "rocky_9",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "arch_pacman",
+              "debian_apt",
+              "redhat_dnf",
+              "suse_zypper",
+              "ubuntu_apt"
+            ]
+          }
+        }
+      ]
+    }
+  },
   "distributions": {
     "almalinux": {
       "id": "almalinux",
@@ -953,13 +1665,13 @@
   "provisioning_methods": {
     "apt_official_package": {
       "exact_release_required": true,
-      "kind": "official_package",
+      "kind": "official_package_exact",
       "mutates_system": true,
       "provenance": "Distribution official apt repository for the exact release"
     },
     "dnf_official_package": {
       "exact_release_required": true,
-      "kind": "official_package",
+      "kind": "official_package_exact",
       "mutates_system": true,
       "provenance": "Distribution official dnf repository for the exact release"
     },
@@ -971,13 +1683,13 @@
     },
     "official_artifact_pinned": {
       "exact_release_required": true,
-      "kind": "official_artifact",
+      "kind": "official_artifact_pinned",
       "mutates_system": true,
       "provenance": "Official artifact with pinned version and integrity verification"
     },
     "pacman_official_package": {
       "exact_release_required": true,
-      "kind": "official_package",
+      "kind": "official_package_exact",
       "mutates_system": true,
       "provenance": "Distribution official pacman repository"
     },
@@ -989,7 +1701,7 @@
     },
     "zypper_official_package": {
       "exact_release_required": true,
-      "kind": "official_package",
+      "kind": "official_package_exact",
       "mutates_system": true,
       "provenance": "Distribution official zypper repository for the exact release"
     }

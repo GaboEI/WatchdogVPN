@@ -9,6 +9,7 @@
     "releases",
     "derivatives",
     "capabilities",
+    "dependency_requirements",
     "provisioning_methods",
     "protocols",
     "certifications",
@@ -48,6 +49,10 @@
         "core_host_capabilities",
         "protocol_capabilities"
       ],
+      "type": "object"
+    },
+    "dependency_requirements": {
+      "description": "Declarative dependency-to-method chains for the internal 23.7.5.5 resolver. These are data, not executable recipes.",
       "type": "object"
     },
     "provisioning_methods": {
