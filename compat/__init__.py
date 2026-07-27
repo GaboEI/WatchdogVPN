@@ -47,6 +47,22 @@ from compat.detection import (
     probe_protocol_capabilities,
     read_os_release,
 )
+from compat.dependency_resolution import (
+    AvailabilityObservation,
+    AvailabilityProvider,
+    AvailabilityStatus,
+    CandidateRejection,
+    DependencyRequirement,
+    DependencyResolutionError,
+    MethodCandidate,
+    ResolutionDecision,
+    ResolutionReport,
+    ResolutionStatus,
+    StaticAvailabilityProvider,
+    explain_resolution,
+    resolve_all,
+    resolve_dependency,
+)
 
 __all__ = [
     "CoreCapabilityStatus",
@@ -86,4 +102,18 @@ __all__ = [
     "probe_core_capabilities",
     "probe_protocol_capabilities",
     "read_os_release",
+    "AvailabilityObservation",
+    "AvailabilityProvider",
+    "AvailabilityStatus",
+    "CandidateRejection",
+    "DependencyRequirement",
+    "DependencyResolutionError",
+    "MethodCandidate",
+    "ResolutionDecision",
+    "ResolutionReport",
+    "ResolutionStatus",
+    "StaticAvailabilityProvider",
+    "explain_resolution",
+    "resolve_all",
+    "resolve_dependency",
 ]
