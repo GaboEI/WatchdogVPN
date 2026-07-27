@@ -21,6 +21,44 @@ TIMEOUT_SECONDS = 120
 OUTPUT_LIMIT = 12000
 CONTROLLED_MANAGERS = frozenset(("apt-get", "dnf", "zypper", "pacman"))
 
+# Markers used only to interpret already-failed (non-zero/exception) results.
+# A parser never overrides a runtime_status of "timeout" or "runtime_error"
+# coming from the process layer itself (subprocess.TimeoutExpired / OSError);
+# these lists only disambiguate a non-zero returncode that DID execute.
+RUNTIME_INFRA_ERROR_MARKERS = (
+    "no such container",
+    "is not running",
+    "oci runtime exec failed",
+    "oci runtime create failed",
+    "unable to start container process",
+    "cannot connect to the docker daemon",
+)
+MISSING_CONTAINER_MARKERS = ("no such container",)
+PULL_IMAGE_NOT_FOUND_MARKERS = (
+    "manifest unknown",
+    "manifest for",
+    "not found: manifest",
+    "repository does not exist",
+    "no such image",
+)
+PULL_AUTH_MARKERS = (
+    "unauthorized",
+    "authentication required",
+    "requires 'docker login'",
+    "requires 'podman login'",
+    "no basic auth credentials",
+)
+PULL_REGISTRY_MARKERS = (
+    "no such host",
+    "dial tcp",
+    "connection refused",
+    "tls handshake",
+    "i/o timeout",
+    "temporary failure in name resolution",
+    "network is unreachable",
+    "context deadline exceeded",
+)
+
 
 CASES = (
     {"target": "ubuntu_24_04", "image": "ubuntu:24.04", "id": "ubuntu", "version_id": "24.04", "codename": "noble", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt"},
@@ -53,63 +91,98 @@ def _trim(value) -> str:
     return value[:OUTPUT_LIMIT]
 
 
-def _phase(status: str, completed: subprocess.CompletedProcess[str] | None = None, *, reason: str = "") -> dict:
+def _looks_like(markers: tuple[str, ...], *texts: str) -> bool:
+    haystack = "\n".join((text or "") for text in texts).lower()
+    return any(marker in haystack for marker in markers)
+
+
+def _looks_like_runtime_infra_error(stderr: str) -> bool:
+    return _looks_like(RUNTIME_INFRA_ERROR_MARKERS, stderr)
+
+
+def _looks_like_missing_container_error(stderr: str) -> bool:
+    return _looks_like(MISSING_CONTAINER_MARKERS, stderr)
+
+
+def _phase(status: str) -> dict:
+    """Build a not-yet-executed phase stub with the full evidence contract."""
     return {
         "status": status,
-        "returncode": completed.returncode if completed is not None else None,
-        "stdout": _trim(completed.stdout) if completed is not None else "",
-        "stderr": _trim(completed.stderr) if completed is not None else "",
-        "reason": reason,
+        "runtime_status": "not_run",
+        "semantic_status": None,
+        "returncode": None,
+        "stdout": "",
+        "stderr": "",
+        "reason": "",
     }
 
 
 def _run_phase(runtime: str, args: list[str], *, timeout: int = TIMEOUT_SECONDS) -> dict:
+    """Execute a runtime command and return raw process-level evidence only.
+
+    This never inspects stdout/stderr content: runtime_status distinguishes
+    "the process could not be run to completion" (timeout, runtime_error)
+    from "executed" (a returncode exists, content may now be interpreted).
+    """
     try:
         completed = _run(runtime, args, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        return {
-            "status": "timeout",
-            "returncode": None,
-            "stdout": _trim(exc.stdout),
-            "stderr": _trim(exc.stderr),
-            "reason": "runtime command timed out",
-        }
+        return {"runtime_status": "timeout", "returncode": None, "stdout": _trim(exc.stdout), "stderr": _trim(exc.stderr)}
     except OSError as exc:
-        return {
-            "status": "unknown",
-            "returncode": None,
-            "stdout": "",
-            "stderr": str(exc),
-            "reason": "runtime execution failed",
-        }
-    return _phase("available" if completed.returncode == 0 else "unknown", completed)
+        return {"runtime_status": "runtime_error", "returncode": None, "stdout": "", "stderr": str(exc)}
+    return {"runtime_status": "executed", "returncode": completed.returncode, "stdout": _trim(completed.stdout), "stderr": _trim(completed.stderr)}
 
 
-def _cleanup_container(runtime: str, name: str) -> dict:
-    result = _run_phase(runtime, ["rm", "-f", name], timeout=30)
-    result["attempted"] = True
-    if result["status"] == "available":
-        result["status"] = "cleaned"
-        result["residual_possible"] = False
-    else:
-        result["residual_possible"] = True
-        if not result["reason"]:
-            result["reason"] = "container cleanup did not complete cleanly"
-    return result
+def _finalize(phase: dict, status: str, reason: str) -> dict:
+    """Merge a classifier's verdict into a raw phase, preserving semantic_status
+    as None whenever the process itself never reached completion."""
+    phase["status"] = status
+    phase["reason"] = reason
+    phase["semantic_status"] = status if phase.get("runtime_status") == "executed" else None
+    return phase
 
 
-def _extract_os_release(stdout: str) -> dict[str, str]:
-    values = {}
-    for raw in stdout.splitlines():
-        if "=" not in raw:
-            continue
-        key, value = raw.split("=", 1)
-        values[key] = value.strip().strip('"')
-    return values
+def classify_pull_result(phase: dict) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "image pull timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before the image pull completed"
+    if phase["returncode"] == 0:
+        return "available", "image pulled successfully"
+    stdout, stderr = phase.get("stdout") or "", phase.get("stderr") or ""
+    if _looks_like_runtime_infra_error(stderr):
+        return "runtime_error", "container runtime reported an infrastructure error during pull"
+    if _looks_like(PULL_IMAGE_NOT_FOUND_MARKERS, stdout, stderr):
+        return "image_not_found", "registry reported the image or manifest does not exist"
+    if _looks_like(PULL_AUTH_MARKERS, stdout, stderr):
+        return "authentication_error", "registry requires authentication"
+    if _looks_like(PULL_REGISTRY_MARKERS, stdout, stderr):
+        return "registry_error", "registry or network connectivity failed"
+    return "unknown", "image pull failed for an unrecognized reason"
 
 
-def classify_os_release(stdout: str, case: dict) -> tuple[str, str]:
-    values = _extract_os_release(stdout)
+def classify_lifecycle_phase(phase: dict, *, verb: str) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "container %s timed out" % verb
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed during %s" % verb
+    if phase["returncode"] == 0:
+        return "available", "container %s completed" % verb
+    if _looks_like_runtime_infra_error(phase.get("stderr") or ""):
+        return "runtime_error", "container runtime reported an infrastructure error during %s" % verb
+    return "unknown", "container %s failed" % verb
+
+
+def classify_os_release(phase: dict, case: dict) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "os-release read timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before os-release could be read"
+    if phase["returncode"] != 0:
+        if _looks_like_runtime_infra_error(phase.get("stderr") or ""):
+            return "runtime_error", "container runtime reported an infrastructure error while reading os-release"
+        return "unknown", "os-release read command failed"
+    values = _extract_os_release(phase.get("stdout") or "")
     if values.get("ID") != case["id"]:
         return "malformed_response", "ID mismatch"
     if case.get("version_id") and values.get("VERSION_ID") != case["version_id"]:
@@ -120,19 +193,30 @@ def classify_os_release(stdout: str, case: dict) -> tuple[str, str]:
     return "available", "os-release identity matched"
 
 
-def classify_package_manager(stdout: str, returncode: int | None) -> tuple[str, str]:
-    if returncode is None:
+def classify_package_manager(phase: dict) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
         return "timeout", "manager lookup timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before manager lookup completed"
+    returncode = phase["returncode"]
+    stderr, stdout = phase.get("stderr") or "", phase.get("stdout") or ""
     if returncode != 0:
-        return "unavailable", "package manager executable not found"
+        if _looks_like_runtime_infra_error(stderr):
+            return "runtime_error", "container runtime reported an infrastructure error during manager lookup"
+        return "manager_unavailable", "package manager executable not found"
     if not stdout.strip():
         return "malformed_response", "package manager path was empty"
     return "available", "package manager path observed"
 
 
-def classify_package_query(kind: str, package_name: str, stdout: str, stderr: str, returncode: int | None) -> tuple[str, str]:
-    if returncode is None:
+def classify_package_query(phase: dict, kind: str, package_name: str) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
         return "timeout", "query timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before the package query completed"
+    stdout, stderr, returncode = phase.get("stdout") or "", phase.get("stderr") or "", phase["returncode"]
+    if returncode != 0 and _looks_like_runtime_infra_error(stderr):
+        return "runtime_error", "container runtime reported an infrastructure error during package query"
     if kind == "apt":
         if "Candidate: (none)" in stdout:
             return "unavailable", "APT candidate missing"
@@ -166,9 +250,41 @@ def aggregate_package_status(items: list[dict]) -> str:
         return "available"
     if "timeout" in statuses:
         return "timeout"
+    if "runtime_error" in statuses:
+        return "runtime_error"
     if "unknown" in statuses or "malformed_response" in statuses:
         return "unknown"
     return "unavailable"
+
+
+def compute_overall_status(probe_aggregate: str, cleanup: dict) -> str:
+    """Fold cleanup outcome into a single gate-facing status without ever
+    hiding or replacing the primary probe result. "cleaned" and "not_needed"
+    (nothing existed to remove) are the only cleanup outcomes considered ok."""
+    cleanup_ok = cleanup.get("status") in ("cleaned", "not_needed") and not cleanup.get("residual_possible")
+    if cleanup_ok:
+        return probe_aggregate
+    if probe_aggregate == "available":
+        return "cleanup_failed"
+    return "%s_with_cleanup_failure" % probe_aggregate
+
+
+def is_optional_image_exception(case: dict, result: dict) -> bool:
+    """Only a demonstrated image_not_found pull result may excuse an
+    optional_image target (currently Ubuntu 26.04). Any other pull failure
+    (timeout, runtime_error, registry_error, authentication_error, unknown)
+    must still fail the real L2 gate like every other target."""
+    return bool(case.get("optional_image")) and result["pull"]["status"] == "image_not_found"
+
+
+def _extract_os_release(stdout: str) -> dict[str, str]:
+    values = {}
+    for raw in stdout.splitlines():
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        values[key] = value.strip().strip('"')
+    return values
 
 
 def _query_command(case: dict, package_name: str) -> str:
@@ -213,82 +329,127 @@ def _base_result(runtime: str, case: dict, name: str) -> dict:
         "package_manager": _phase("not_run"),
         "metadata_refresh": _phase("not_run"),
         "package_queries": [],
-        "cleanup": {"attempted": False, "status": "not_run", "returncode": None, "stdout": "", "stderr": "", "reason": "", "residual_possible": False},
-        "aggregate": "unknown",
+        "cleanup": {
+            "attempted": False,
+            "status": "not_run",
+            "runtime_status": "not_run",
+            "semantic_status": None,
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "reason": "",
+            "residual_possible": False,
+        },
+        "probe_aggregate": "unknown",
+        "overall_status": "unknown",
         "limitations": [],
     }
+
+
+def _classify_cleanup(phase: dict) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "container cleanup timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before cleanup completed"
+    if phase["returncode"] == 0:
+        return "cleaned", ""
+    stderr = phase.get("stderr") or ""
+    if _looks_like_missing_container_error(stderr):
+        return "not_needed", "no container existed to remove"
+    if _looks_like_runtime_infra_error(stderr):
+        return "runtime_error", "container runtime reported an infrastructure error during cleanup"
+    return "unknown", "container cleanup failed"
+
+
+def _cleanup_container(runtime: str, name: str) -> dict:
+    phase = _run_phase(runtime, ["rm", "-f", name], timeout=30)
+    status, reason = _classify_cleanup(phase)
+    _finalize(phase, status, reason)
+    phase["attempted"] = True
+    phase["residual_possible"] = status not in ("cleaned", "not_needed")
+    return phase
 
 
 def execute_l2_case(runtime: str, case: dict, name: str) -> dict:
     result = _base_result(runtime, case, name)
     try:
         pull = _run_phase(runtime, ["pull", case["image"]])
+        status, reason = classify_pull_result(pull)
+        _finalize(pull, status, reason)
         result["pull"] = pull
-        if pull["status"] != "available":
-            result["aggregate"] = "timeout" if pull["status"] == "timeout" else "unknown"
-            result["limitations"].append("image pull failed")
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("image pull failed: %s" % status)
             return result
+
         create = _run_phase(runtime, ["create", "--name", name, case["image"], "sleep", "600"])
+        status, reason = classify_lifecycle_phase(create, verb="create")
+        _finalize(create, status, reason)
         result["create"] = create
-        if create["status"] != "available":
-            result["aggregate"] = "timeout" if create["status"] == "timeout" else "unknown"
+        if status != "available":
+            result["probe_aggregate"] = status
             result["limitations"].append("container create failed")
             return result
+
         start = _run_phase(runtime, ["start", name])
+        status, reason = classify_lifecycle_phase(start, verb="start")
+        _finalize(start, status, reason)
         result["start"] = start
-        if start["status"] != "available":
-            result["aggregate"] = "timeout" if start["status"] == "timeout" else "unknown"
+        if status != "available":
+            result["probe_aggregate"] = status
             result["limitations"].append("container start failed")
             return result
+
         os_release = _run_phase(runtime, ["exec", name, "cat", "/etc/os-release"])
-        status, reason = classify_os_release(os_release["stdout"], case)
-        os_release["status"] = status
-        os_release["reason"] = reason
-        values = _extract_os_release(os_release["stdout"])
+        status, reason = classify_os_release(os_release, case)
+        _finalize(os_release, status, reason)
+        if os_release["runtime_status"] == "executed" and os_release["returncode"] == 0:
+            values = _extract_os_release(os_release["stdout"])
+        else:
+            values = {}
         os_release["observed_id"] = values.get("ID", "")
         os_release["observed_version_id"] = values.get("VERSION_ID", "")
         result["os_release"] = os_release
         if status != "available":
-            result["aggregate"] = "malformed_response"
+            result["probe_aggregate"] = status
             return result
+
         manager_command = _manager_command(case["manager"])
         manager = _run_phase(runtime, ["exec", name, "sh", "-lc", manager_command])
-        if manager["status"] == "timeout":
-            manager_status, manager_reason = "timeout", "manager lookup timed out"
-        elif manager["returncode"] is None:
-            manager_status, manager_reason = "unknown", "runtime failed during manager lookup"
-        else:
-            manager_status, manager_reason = classify_package_manager(manager["stdout"], manager["returncode"])
-        manager["status"] = manager_status
-        manager["reason"] = manager_reason
+        status, reason = classify_package_manager(manager)
+        _finalize(manager, status, reason)
         manager["command"] = manager_command
-        manager["path"] = manager["stdout"].strip()
+        manager["path"] = manager["stdout"].strip() if manager.get("returncode") == 0 else ""
         result["package_manager"] = manager
-        if manager_status != "available":
-            result["aggregate"] = "timeout" if manager_status == "timeout" else "unknown"
+        if status != "available":
+            result["probe_aggregate"] = status
             result["limitations"].append("package manager lookup failed")
             return result
+
         refresh_cmd = _refresh_command(case)
         refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd])
+        status, reason = classify_lifecycle_phase(refresh, verb="metadata refresh")
+        _finalize(refresh, status, reason)
         refresh["command"] = refresh_cmd
         result["metadata_refresh"] = refresh
-        if refresh["status"] != "available":
-            result["aggregate"] = "timeout" if refresh["status"] == "timeout" else "unknown"
+        if status != "available":
+            result["probe_aggregate"] = status
             result["limitations"].append("metadata refresh failed")
             return result
+
         package_statuses = []
         for package in case["packages"]:
             command = _query_command(case, package)
             query = _run_phase(runtime, ["exec", name, "sh", "-lc", command])
-            status, reason = classify_package_query(case["kind"], package, query["stdout"], query["stderr"], query["returncode"])
-            query["status"] = status
-            query["reason"] = reason
+            status, reason = classify_package_query(query, case["kind"], package)
+            _finalize(query, status, reason)
             query["package"] = package
             query["command"] = command
-            if package == "openvpn" and case.get("repository_id"):
+            if package == "openvpn" and case.get("repository_id") and query["runtime_status"] == "executed":
                 if "Everything//" in case["epel_repo_url"] or "$" in case["epel_repo_url"]:
                     query["status"] = "malformed_response"
                     query["reason"] = "EPEL repository URL is not exact"
+                    query["semantic_status"] = "malformed_response"
                 query["repository_id"] = case["repository_id"]
                 query["series"] = case["series"]
                 query["architecture"] = case["architecture"]
@@ -296,26 +457,99 @@ def execute_l2_case(runtime: str, case: dict, name: str) -> dict:
                 query["target"] = case["target"]
             package_statuses.append(query)
         result["package_queries"] = package_statuses
-        result["aggregate"] = aggregate_package_status(package_statuses)
+        result["probe_aggregate"] = aggregate_package_status(package_statuses)
         return result
     finally:
         result["cleanup"] = _cleanup_container(runtime, name)
+        result["overall_status"] = compute_overall_status(result["probe_aggregate"], result["cleanup"])
 
 
 class L2ParserTests(unittest.TestCase):
-    def test_refresh_failure_is_unknown(self) -> None:
-        self.assertEqual(aggregate_package_status([{"status": "unknown"}]), "unknown")
+    # --- pull classification (correction 1) ---
 
-    def test_apt_without_candidate_is_not_available(self) -> None:
-        status, _ = classify_package_query("apt", "openvpn", "openvpn:\n  Candidate: (none)\n", "", 0)
-        self.assertEqual(status, "unavailable")
+    def test_pull_success_is_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_pull_result(phase)[0], "available")
 
-    def test_one_missing_package_fails_aggregate(self) -> None:
-        self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "unavailable"}]), "unavailable")
+    def test_pull_classifies_image_not_found(self) -> None:
+        phase = {
+            "runtime_status": "executed",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error response from daemon: manifest for ubuntu:26.04 not found: manifest unknown: manifest unknown",
+        }
+        self.assertEqual(classify_pull_result(phase)[0], "image_not_found")
 
-    def test_wrong_os_release_is_malformed(self) -> None:
-        status, _ = classify_os_release("ID=debian\nVERSION_ID=13\n", CASES[0])
-        self.assertEqual(status, "malformed_response")
+    def test_pull_classifies_authentication_error(self) -> None:
+        phase = {
+            "runtime_status": "executed",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": 'Error response from daemon: Get "https://registry-1.docker.io/v2/": unauthorized: authentication required',
+        }
+        self.assertEqual(classify_pull_result(phase)[0], "authentication_error")
+
+    def test_pull_classifies_registry_error(self) -> None:
+        phase = {
+            "runtime_status": "executed",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": 'Error response from daemon: Get "https://registry-1.docker.io/v2/": dial tcp: lookup registry-1.docker.io: no such host',
+        }
+        self.assertEqual(classify_pull_result(phase)[0], "registry_error")
+
+    def test_pull_classifies_runtime_error_from_infra_marker(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "Cannot connect to the Docker daemon at unix:///var/run/docker.sock"}
+        self.assertEqual(classify_pull_result(phase)[0], "runtime_error")
+
+    def test_pull_classifies_runtime_error_from_oserror(self) -> None:
+        # _run_phase itself reports runtime_error when the runtime binary
+        # cannot even be invoked (OSError), independent of any stderr text.
+        phase = {"runtime_status": "runtime_error", "returncode": None, "stdout": "", "stderr": "runtime execution failed"}
+        self.assertEqual(classify_pull_result(phase)[0], "runtime_error")
+
+    def test_pull_classifies_timeout(self) -> None:
+        phase = {"runtime_status": "timeout", "returncode": None, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_pull_result(phase)[0], "timeout")
+
+    def test_pull_classifies_unknown_for_unrecognized_failure(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 125, "stdout": "", "stderr": "an unrecognized internal error occurred"}
+        self.assertEqual(classify_pull_result(phase)[0], "unknown")
+
+    def test_only_image_not_found_excuses_optional_image(self) -> None:
+        optional_case = dict(CASES[1])
+        self.assertTrue(is_optional_image_exception(optional_case, {"pull": {"status": "image_not_found"}}))
+        for other_status in ("timeout", "runtime_error", "registry_error", "authentication_error", "unknown"):
+            with self.subTest(status=other_status):
+                self.assertFalse(is_optional_image_exception(optional_case, {"pull": {"status": other_status}}))
+        non_optional_case = dict(CASES[0])
+        self.assertFalse(is_optional_image_exception(non_optional_case, {"pull": {"status": "image_not_found"}}))
+
+    # --- probe_aggregate / cleanup / overall_status (correction 2) ---
+
+    def test_success_result_preserves_phase_evidence(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
+                package = args[-1].split()[-1]
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-phases")
+        self.assertEqual(result["probe_aggregate"], "available")
+        self.assertEqual(result["overall_status"], "available")
+        self.assertEqual(result["cleanup"]["status"], "cleaned")
+        for key in ("target", "image", "runtime", "container_name", "pull", "create", "start", "os_release", "package_manager", "metadata_refresh", "package_queries", "cleanup", "probe_aggregate", "overall_status", "limitations"):
+            self.assertIn(key, result)
+        self.assertEqual(result["os_release"]["observed_id"], "ubuntu")
+        self.assertEqual(result["os_release"]["observed_version_id"], "24.04")
+        self.assertEqual(result["os_release"]["semantic_status"], "available")
+        self.assertEqual(result["package_manager"]["path"], "/usr/bin/apt-get")
+        self.assertTrue(result["package_queries"])
 
     def test_timeout_and_runtime_error_attempt_cleanup(self) -> None:
         calls = []
@@ -328,25 +562,206 @@ class L2ParserTests(unittest.TestCase):
 
         with mock.patch(__name__ + "._run", side_effect=fake_run):
             result = execute_l2_case("docker", CASES[0], "watchdogvpn-test")
-        self.assertEqual(result["aggregate"], "timeout")
+        self.assertEqual(result["probe_aggregate"], "timeout")
         self.assertEqual(result["pull"]["status"], "timeout")
         self.assertIn(("rm", "-f", "watchdogvpn-test"), calls)
         self.assertEqual(result["cleanup"]["status"], "cleaned")
+        self.assertEqual(result["overall_status"], "timeout")
 
-    def test_runtime_error_attempts_cleanup(self) -> None:
+    def test_pull_unrecognized_failure_is_unknown_end_to_end(self) -> None:
         calls = []
 
         def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
             calls.append(tuple(args))
             if args[0] == "pull":
-                return subprocess.CompletedProcess([runtime] + args, 125, "", "runtime error")
+                return subprocess.CompletedProcess([runtime] + args, 125, "", "an unrecognized internal error occurred")
             return subprocess.CompletedProcess([runtime] + args, 0, "", "")
 
         with mock.patch(__name__ + "._run", side_effect=fake_run):
             result = execute_l2_case("podman", CASES[0], "watchdogvpn-error")
-        self.assertEqual(result["aggregate"], "unknown")
+        self.assertEqual(result["probe_aggregate"], "unknown")
+        self.assertEqual(result["overall_status"], "unknown")
         self.assertIn(("rm", "-f", "watchdogvpn-error"), calls)
         self.assertEqual(result["cleanup"]["status"], "cleaned")
+
+    def test_cleanup_rc_nonzero_after_available_probe_yields_cleanup_failed(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "some cleanup problem")
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
+                package = args[-1].split()[-1]
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup-rc")
+        self.assertEqual(result["probe_aggregate"], "available")
+        self.assertTrue(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "cleanup_failed")
+
+    def test_cleanup_timeout_after_available_probe_yields_cleanup_failed(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "rm":
+                raise subprocess.TimeoutExpired(args, timeout)
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
+                package = args[-1].split()[-1]
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup-timeout")
+        self.assertEqual(result["probe_aggregate"], "available")
+        self.assertEqual(result["cleanup"]["status"], "timeout")
+        self.assertTrue(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "cleanup_failed")
+
+    def test_cleanup_oserror_after_available_probe_yields_cleanup_failed(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "rm":
+                raise OSError("runtime missing")
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
+                package = args[-1].split()[-1]
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup-oserror")
+        self.assertEqual(result["probe_aggregate"], "available")
+        self.assertEqual(result["cleanup"]["status"], "runtime_error")
+        self.assertTrue(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "cleanup_failed")
+
+    def test_timeout_probe_with_cleanup_failure_yields_timeout_with_cleanup_failure(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "pull":
+                raise subprocess.TimeoutExpired(args, timeout)
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "some cleanup problem")
+            return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-timeout-cleanup-fail")
+        self.assertEqual(result["probe_aggregate"], "timeout")
+        self.assertTrue(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "timeout_with_cleanup_failure")
+
+    def test_optional_image_missing_cleanup_not_needed_keeps_probe_aggregate(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "pull":
+                return subprocess.CompletedProcess(
+                    [runtime] + args, 1, "", "Error response from daemon: manifest for ubuntu:26.04 not found: manifest unknown: manifest unknown"
+                )
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "Error: No such container: watchdogvpn-optional")
+            return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[1], "watchdogvpn-optional")
+        self.assertEqual(result["pull"]["status"], "image_not_found")
+        self.assertEqual(result["probe_aggregate"], "image_not_found")
+        self.assertEqual(result["cleanup"]["status"], "not_needed")
+        self.assertFalse(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "image_not_found")
+        self.assertTrue(is_optional_image_exception(CASES[1], result))
+
+    def test_cleanup_statuses_are_observable_and_do_not_hide_primary_result(self) -> None:
+        cleanup_statuses = (
+            subprocess.CompletedProcess(["docker", "rm", "-f", "name"], 1, "out", "denied"),
+            subprocess.TimeoutExpired(["docker", "rm", "-f", "name"], 30, output="partial", stderr="slow"),
+            OSError("runtime missing"),
+        )
+        for failure in cleanup_statuses:
+            with self.subTest(failure=type(failure).__name__):
+                calls = []
+
+                def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+                    calls.append(tuple(args))
+                    if args[0] == "pull":
+                        raise subprocess.TimeoutExpired(args, timeout, output="pull", stderr="timeout")
+                    if args[0] == "rm":
+                        if isinstance(failure, BaseException):
+                            raise failure
+                        return failure
+                    return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+
+                with mock.patch(__name__ + "._run", side_effect=fake_run):
+                    result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup")
+                self.assertEqual(result["probe_aggregate"], "timeout")
+                self.assertEqual(result["pull"]["status"], "timeout")
+                self.assertTrue(result["cleanup"]["attempted"])
+                self.assertTrue(result["cleanup"]["residual_possible"])
+                self.assertEqual(result["overall_status"], "timeout_with_cleanup_failure")
+                self.assertIn(("rm", "-f", "watchdogvpn-cleanup"), calls)
+
+    # --- runtime status respected before content parsing (correction 3) ---
+
+    def test_os_release_timeout_is_preserved_without_parsing(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                raise subprocess.TimeoutExpired(args, timeout)
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-osrelease-timeout")
+        self.assertEqual(result["os_release"]["status"], "timeout")
+        self.assertIsNone(result["os_release"]["semantic_status"])
+        self.assertEqual(result["os_release"]["observed_id"], "")
+        self.assertEqual(result["probe_aggregate"], "timeout")
+
+    def test_os_release_runtime_error_is_preserved_without_parsing(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                raise OSError("runtime missing")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-osrelease-runtime-error")
+        self.assertEqual(result["os_release"]["status"], "runtime_error")
+        self.assertIsNone(result["os_release"]["semantic_status"])
+        self.assertEqual(result["os_release"]["observed_id"], "")
+        self.assertEqual(result["probe_aggregate"], "runtime_error")
+
+    def test_os_release_nonzero_returncode_is_not_parsed_as_identity(self) -> None:
+        # Even if stdout happened to contain something that looked like a
+        # coincidental identity match, a non-zero returncode must never be
+        # treated as a valid identity read.
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 1, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "cat: /etc/os-release: Permission denied")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-osrelease-nonzero")
+        self.assertEqual(result["os_release"]["status"], "unknown")
+        self.assertEqual(result["os_release"]["observed_id"], "")
+        self.assertEqual(result["probe_aggregate"], "unknown")
+
+    def test_wrong_os_release_is_malformed(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "ID=debian\nVERSION_ID=13\n", "stderr": ""}
+        status, _ = classify_os_release(phase, CASES[0])
+        self.assertEqual(status, "malformed_response")
+
+    def test_manager_distinguishes_absence_from_runtime_error(self) -> None:
+        absent = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(absent)[0], "manager_unavailable")
+        infra_failure = {"runtime_status": "executed", "returncode": 126, "stdout": "", "stderr": "Error: watchdogvpn-x is not running"}
+        self.assertEqual(classify_package_manager(infra_failure)[0], "runtime_error")
+
+    def test_manager_timeout(self) -> None:
+        phase = {"runtime_status": "timeout", "returncode": None, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "timeout")
 
     def test_manager_lookup_runs_command_inside_shell(self) -> None:
         calls = []
@@ -373,54 +788,16 @@ class L2ParserTests(unittest.TestCase):
         self.assertNotIn("$basearch", command)
         self.assertNotIn("Everything//", command)
 
-    def test_cleanup_statuses_are_observable_and_do_not_hide_primary_result(self) -> None:
-        cleanup_statuses = (
-            subprocess.CompletedProcess(["docker", "rm", "-f", "name"], 1, "out", "denied"),
-            subprocess.TimeoutExpired(["docker", "rm", "-f", "name"], 30, output="partial", stderr="slow"),
-            OSError("runtime missing"),
-        )
-        for failure in cleanup_statuses:
-            with self.subTest(failure=type(failure).__name__):
-                calls = []
+    def test_refresh_failure_is_unknown(self) -> None:
+        self.assertEqual(aggregate_package_status([{"status": "unknown"}]), "unknown")
 
-                def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
-                    calls.append(tuple(args))
-                    if args[0] == "pull":
-                        raise subprocess.TimeoutExpired(args, timeout, output="pull", stderr="timeout")
-                    if args[0] == "rm":
-                        if isinstance(failure, BaseException):
-                            raise failure
-                        return failure
-                    return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+    def test_apt_without_candidate_is_not_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "openvpn:\n  Candidate: (none)\n", "stderr": ""}
+        status, _ = classify_package_query(phase, "apt", "openvpn")
+        self.assertEqual(status, "unavailable")
 
-                with mock.patch(__name__ + "._run", side_effect=fake_run):
-                    result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup")
-                self.assertEqual(result["aggregate"], "timeout")
-                self.assertEqual(result["pull"]["status"], "timeout")
-                self.assertTrue(result["cleanup"]["attempted"])
-                self.assertTrue(result["cleanup"]["residual_possible"])
-                self.assertIn(("rm", "-f", "watchdogvpn-cleanup"), calls)
-
-    def test_success_result_preserves_phase_evidence(self) -> None:
-        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
-            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
-                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
-            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
-                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
-            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
-                package = args[-1].split()[-1]
-                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
-            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
-
-        with mock.patch(__name__ + "._run", side_effect=fake_run):
-            result = execute_l2_case("docker", CASES[0], "watchdogvpn-phases")
-        self.assertEqual(result["aggregate"], "available")
-        for key in ("target", "image", "runtime", "container_name", "pull", "create", "start", "os_release", "package_manager", "metadata_refresh", "package_queries", "cleanup", "aggregate", "limitations"):
-            self.assertIn(key, result)
-        self.assertEqual(result["os_release"]["observed_id"], "ubuntu")
-        self.assertEqual(result["os_release"]["observed_version_id"], "24.04")
-        self.assertEqual(result["package_manager"]["path"], "/usr/bin/apt-get")
-        self.assertTrue(result["package_queries"])
+    def test_one_missing_package_fails_aggregate(self) -> None:
+        self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "unavailable"}]), "unavailable")
 
 
 @unittest.skipUnless(REAL_L2_ENABLED, "WATCHDOGVPN_REAL_L2=1 not set")
@@ -432,15 +809,11 @@ class RealFocusedDependencyL2Tests(unittest.TestCase):
         for case in CASES:
             name = "watchdogvpn-l2-%s-%d" % (case["target"], int(time.time() * 1000))
             with self.subTest(target=case["target"], image=case["image"]):
-                try:
-                    result = execute_l2_case(runtime, case, name)
-                    aggregate = result["aggregate"]
-                    if case.get("optional_image") and result["pull"]["status"] != "available":
-                        self.assertIn("image pull failed", result["limitations"])
-                        continue
-                    self.assertEqual(aggregate, "available", result)
-                except AssertionError:
-                    raise
+                result = execute_l2_case(runtime, case, name)
+                if is_optional_image_exception(case, result):
+                    self.assertIn("image pull failed", result["limitations"][0])
+                    continue
+                self.assertEqual(result["overall_status"], "available", result)
 
 
 if __name__ == "__main__":

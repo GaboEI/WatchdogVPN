@@ -48,6 +48,7 @@ from compat.detection import (
     read_os_release,
 )
 from compat.dependency_resolution import (
+    ArtifactAvailabilityObservation,
     AvailabilityObservation,
     AvailabilityProvider,
     AvailabilityStatus,
@@ -58,6 +59,7 @@ from compat.dependency_resolution import (
     ResolutionDecision,
     ResolutionReport,
     ResolutionStatus,
+    SelectedArtifact,
     StaticAvailabilityProvider,
     explain_resolution,
     resolve_all,
@@ -102,6 +104,7 @@ __all__ = [
     "probe_core_capabilities",
     "probe_protocol_capabilities",
     "read_os_release",
+    "ArtifactAvailabilityObservation",
     "AvailabilityObservation",
     "AvailabilityProvider",
     "AvailabilityStatus",
@@ -112,6 +115,7 @@ __all__ = [
     "ResolutionDecision",
     "ResolutionReport",
     "ResolutionStatus",
+    "SelectedArtifact",
     "StaticAvailabilityProvider",
     "explain_resolution",
     "resolve_all",

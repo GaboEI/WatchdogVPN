@@ -568,15 +568,58 @@ is separate and requires disposable container infrastructure supplied explicitly
 checks create uniquely named throwaway Docker/Podman containers and remove them in
 `finally` through an observable cleanup result. Package-manager detection runs inside the
 container shell as `sh -lc 'command -v -- <controlled-manager>'`; the manager name comes
-only from the harness's internal table, stdout must contain a path, and runtime errors are
-distinguished from a missing manager. Rocky/EPEL queries use an exact architecture URL
+only from the harness's internal table. Rocky/EPEL queries use an exact architecture URL
 (`.../Everything/x86_64/` for the current harness target), never shell-expanded
-`$basearch`. The evidence object records target, image, runtime, container name, pull,
-create, start, os-release, package-manager, metadata-refresh, per-package query, cleanup,
-aggregate and limitations phases. Each phase stores bounded stdout/stderr, return code,
-status and reason. A refresh failure yields `unknown` and cannot continue as available;
-APT requires candidate or package metadata; aggregate availability is `available` only
-when every package has evidence. With `WATCHDOGVPN_REAL_L2=1`, required targets ending in
-`unknown`, `timeout` or `malformed_response` fail the L2 matrix; Ubuntu 26.04 image absence
-is the only optional limitation. These checks must never be presented as kernel, TUN,
-firewall, protocol or physical certification evidence.
+`$basearch`.
+
+Every runtime-level process call (pull, create, start, exec) first records a
+process-level `runtime_status` (`executed`, `timeout`, or `runtime_error` when the
+container runtime binary itself could not even be invoked) before any content parser
+runs; a content parser never overrides an already-known timeout or infrastructure
+error. Only when `runtime_status=executed` is the returncode/stdout/stderr content
+interpreted into the phase's final `status`, which is preserved alongside a
+`semantic_status` that stays `None` whenever the process never reached completion.
+The image `pull` phase has its own dedicated taxonomy —
+`available`/`image_not_found`/`timeout`/`runtime_error`/`authentication_error`/
+`registry_error`/`unknown` — derived from returncode, stdout, stderr and the raised
+exception type, not from a generic non-zero-returncode assumption. Only a
+demonstrated `image_not_found` pull result may excuse the `optional_image` Ubuntu
+26.04 target; every other pull outcome (including `timeout`, `runtime_error`,
+`registry_error`, `authentication_error` and `unknown`) still fails the real L2 gate
+like any other target. The package-manager lookup distinguishes a normal absent
+binary (`manager_unavailable`, a non-zero `command -v` with no infrastructure
+markers in stderr) from a real container-runtime infrastructure failure
+(`runtime_error`, detected from stderr markers such as "no such container" or
+"is not running") and from a timeout; `os-release` identity parsing is skipped
+entirely (never attempted against stdout) unless the read phase both executed and
+returned exit code zero.
+
+The evidence object records target, image, runtime, container name, pull, create,
+start, os-release, package-manager, metadata-refresh, per-package query, cleanup,
+`probe_aggregate`, `overall_status` and limitations. Each phase stores bounded
+stdout/stderr, return code, `runtime_status`, `semantic_status`, `status` and reason.
+Cleanup is tracked independently of the probe result: `cleanup.status` is `cleaned` on
+success, `not_needed` when the runtime reports no container existed to remove (e.g.
+after a pull failure, so an unnecessary cleanup attempt is never conflated with a real
+residual risk), or a failure status (`timeout`/`runtime_error`/`unknown`) with
+`residual_possible=true` otherwise. `overall_status` folds `probe_aggregate` and
+`cleanup` together without ever hiding or replacing the primary probe result: a
+successful probe with successful cleanup is `available`; a successful probe whose
+cleanup failed is `cleanup_failed`; any other probe result whose cleanup failed is
+`<probe_aggregate>_with_cleanup_failure` (e.g. `timeout_with_cleanup_failure`),
+preserving the original probe status rather than replacing it. A refresh failure
+yields `unknown`/`timeout`/`runtime_error` and cannot continue as available; APT
+requires candidate or package metadata; aggregate availability is `available` only
+when every package has evidence. With `WATCHDOGVPN_REAL_L2=1`, a required target must
+reach `overall_status=available` with `cleanup.status` in
+(`cleaned`, `not_needed`) and `residual_possible=false`; ending in `unknown`,
+`timeout`, `runtime_error`, `malformed_response` or `cleanup_failed` fails the L2
+matrix. Ubuntu 26.04 image absence, demonstrated specifically as a pull
+`image_not_found` result, is the only optional limitation. These checks must never be
+presented as kernel, TUN, firewall, protocol or physical certification evidence.
+
+`compat/__init__.py` exports `ArtifactAvailabilityObservation` and `SelectedArtifact`
+alongside the rest of the dependency-resolution public surface, so a future
+availability provider can implement the structured artifact-identity contract (§7)
+through the package's published internal API instead of importing
+`compat.dependency_resolution` directly.

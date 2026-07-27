@@ -1086,5 +1086,39 @@ class DependencyResolverTests(unittest.TestCase):
                 self.assertNotIn(token, source)
 
 
+class PackageArtifactContractExportTests(unittest.TestCase):
+    def test_package_exports_artifact_types_for_future_providers(self) -> None:
+        from compat import ArtifactAvailabilityObservation, SelectedArtifact
+
+        self.assertIs(ArtifactAvailabilityObservation, resolver.ArtifactAvailabilityObservation)
+        self.assertIs(SelectedArtifact, resolver.SelectedArtifact)
+
+        import compat
+
+        self.assertIn("ArtifactAvailabilityObservation", compat.__all__)
+        self.assertIn("SelectedArtifact", compat.__all__)
+
+        asset = SelectedArtifact(
+            architecture="x86_64",
+            asset_name="example-linux-amd64.tar.gz",
+            archive_or_binary_kind="tar_gz",
+            official_download_base="https://example.invalid/releases",
+            sha256="a" * 64,
+            expected_executable="example",
+        )
+        observation = ArtifactAvailabilityObservation(
+            "available",
+            evidence="future provider evidence",
+            target_id="example_target",
+            architecture=asset.architecture,
+            asset_name=asset.asset_name,
+            official_download_base=asset.official_download_base,
+            sha256=asset.sha256,
+            expected_executable=asset.expected_executable,
+        )
+        self.assertEqual(observation.status, "available")
+        self.assertEqual(observation.asset_name, asset.asset_name)
+
+
 if __name__ == "__main__":
     unittest.main()
