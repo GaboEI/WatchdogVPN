@@ -829,10 +829,24 @@ processes, apply+verify, idempotent re-apply, rollback via an injected failure, 
 `SIGKILL` checkpoints plus recovery, uninstall, pre-existing preservation, symlink
 rejection and a final residual scan -- confined entirely to an injected sandbox and
 state root, touching no package manager, repository, network, DNS, firewall, service
-or protocol. It also supports a `prepare-reboot-checkpoint` / `--reboot-checkpoint`
-pair for exercising recovery/rollback across a literal host reboot on a disposable
-machine, which this task's local run does not itself perform (that needs an actual
-disposable VM and reboot cycle, outside a routine local gate run).
+or protocol.
+
+It also has a dedicated `prepare-reboot-checkpoint` / `recover-after-reboot` pair
+(plus a `rolling_back_pending` checkpoint alongside the two `SIGKILL` checkpoints) for
+exercising recovery and rollback across a literal host reboot. This was executed for
+real on a disposable VM (`wdvpn-linuxmint-23-6-7`, snapshotted before and restored
+after): `prepare-reboot-checkpoint --checkpoint after_apply_before_verify` and
+`--checkpoint rolling_back_pending` each self-killed a real worker process with
+`SIGKILL`, the host was rebooted for real (`/proc/sys/kernel/random/boot_id` confirmed
+different before/after), and `recover-after-reboot` then confirmed: the journal
+survived the reboot with its `plan_digest` intact, the `after_apply_before_verify`
+transaction resumed and committed (both canary files present, an `OwnershipRecord`
+written), and the `rolling_back_pending` transaction resumed its rollback and reached
+`preparation_failed` with the canary file removed and no residuals. Package list,
+repository sources, running-service set and network configuration hashes/diffs were
+identical before and after across both scenarios, and `/var/lib/watchdogvpn` (the real
+product's state directory) was untouched throughout -- confirming the sandbox/state-root
+isolation held even under a real reboot on a machine that also runs the real product.
 
 ### Out of scope (unchanged in this task)
 
