@@ -846,7 +846,12 @@ def _validate_dependency_requirements(manifest):
                 if "signing_key_provenance" in candidate:
                     _require_str(candidate.get("signing_key_provenance"), cand_path + ".signing_key_provenance")
                 if "exposed_package_names" in candidate:
-                    _require_package_list(candidate.get("exposed_package_names"), cand_path + ".exposed_package_names")
+                    exposed = _require_package_list(candidate.get("exposed_package_names"), cand_path + ".exposed_package_names")
+                    if not exposed:
+                        raise ManifestError("%s.exposed_package_names must not be empty" % cand_path)
+                    package_names = candidate.get("package_names", [])
+                    if any(package not in package_names for package in exposed):
+                        raise ManifestError("%s.exposed_package_names must be a subset of package_names" % cand_path)
             elif "repository_package" in candidate or "signing_key_provenance" in candidate or "exposed_package_names" in candidate:
                 raise ManifestError("%s repository prerequisite fields are only valid for external_repo_exact" % cand_path)
             if kind == "official_artifact_pinned":
@@ -888,7 +893,70 @@ def _validate_dependency_requirements(manifest):
                     _validate_source_components(candidate, cand_path)
             elif "revision_type" in candidate or "revision" in candidate or "build_dependencies" in candidate or "expected_outputs" in candidate or "components" in candidate:
                 raise ManifestError("%s source-build fields are only valid for pinned_source_build" % cand_path)
+    _validate_rhel_base_runtime_composite(manifest)
     _validate_runtime_python_policies(manifest)
+
+
+def _stable_scope(candidate):
+    return set(candidate.get("target_scope", {}).get("stable_releases", ()))
+
+
+def _validate_rhel_base_runtime_composite(manifest):
+    requirements = manifest["dependency_requirements"]
+    if "dep_base_runtime_commands" not in requirements:
+        return
+    rhel_targets = {"rocky_9", "almalinux_9", "rhel_9", "centos_stream_9"}
+    if not (rhel_targets & set(manifest.get("releases", {}))):
+        return
+    matching = []
+    for index, candidate in enumerate(requirements["dep_base_runtime_commands"]["method_chain"]):
+        scope = _stable_scope(candidate)
+        if scope & rhel_targets:
+            matching.append((index, candidate))
+    if len(matching) != 1:
+        raise ManifestError("RHEL-family base runtime must use exactly one composite candidate")
+    index, candidate = matching[0]
+    path = "dependency_requirements.dep_base_runtime_commands.method_chain[%d]" % index
+    if candidate["id"] != "base_runtime_dnf_rhel9_with_epel_exact":
+        raise ManifestError("%s must be the RHEL-family composite candidate" % path)
+    if candidate["kind"] != "external_repo_exact":
+        raise ManifestError("%s must be external_repo_exact" % path)
+    if candidate.get("repository_package") is None:
+        raise ManifestError("%s.repository_package is required" % path)
+    package_names = set(candidate.get("package_names", ()))
+    exposed = set(candidate.get("exposed_package_names", ()))
+    if not exposed or not exposed <= package_names:
+        raise ManifestError("%s.exposed_package_names must be a non-empty subset of package_names" % path)
+    if "openvpn" not in exposed:
+        raise ManifestError("%s.exposed_package_names must include openvpn" % path)
+    required = {
+        "bash",
+        "git",
+        "coreutils",
+        "findutils",
+        "grep",
+        "gawk",
+        "sed",
+        "glibc-common",
+        "shadow-utils",
+        "systemd",
+        "sudo",
+        "kmod",
+        "ca-certificates",
+        "nftables",
+        "iptables-nft",
+        "iputils",
+        "procps-ng",
+        "NetworkManager",
+        "polkit",
+        "firewalld",
+        "systemd-resolved",
+        "python3.11",
+        "openvpn",
+    }
+    missing = sorted(required - package_names)
+    if missing:
+        raise ManifestError("%s missing required RHEL-family base packages %s" % (path, missing))
 
 
 def _target_keys_for_candidate(candidate):

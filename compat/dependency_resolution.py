@@ -53,6 +53,16 @@ class AvailabilityObservation:
 
 
 @dataclass(frozen=True)
+class ArtifactAvailabilityObservation(AvailabilityObservation):
+    target_id: str = ""
+    architecture: str = ""
+    asset_name: str = ""
+    official_download_base: str = ""
+    sha256: str = ""
+    expected_executable: str = ""
+
+
+@dataclass(frozen=True)
 class SelectedArtifact:
     architecture: str
     asset_name: str
@@ -197,13 +207,32 @@ class StaticAvailabilityProvider(AvailabilityProvider):
         return self._lookup("repository_supports_exact_target", candidate, target_id)
 
     def artifact_exists(self, candidate: MethodCandidate, target_id: str, selected_asset: SelectedArtifact) -> AvailabilityObservation:
-        return self._lookup("artifact_exists", candidate, target_id, selected_asset.asset_name)
+        return self._artifact_lookup("artifact_exists", candidate, target_id, selected_asset)
 
     def artifact_integrity_metadata_available(self, candidate: MethodCandidate, target_id: str, selected_asset: SelectedArtifact) -> AvailabilityObservation:
-        return self._lookup("artifact_integrity_metadata_available", candidate, target_id, selected_asset.asset_name)
+        return self._artifact_lookup("artifact_integrity_metadata_available", candidate, target_id, selected_asset)
 
     def source_revision_available(self, candidate: MethodCandidate, target_id: str) -> AvailabilityObservation:
         return self._lookup("source_revision_available", candidate, target_id)
+
+    def _artifact_lookup(self, operation: str, candidate: MethodCandidate, target_id: str, selected_asset: SelectedArtifact) -> AvailabilityObservation:
+        result = self._lookup(operation, candidate, target_id, selected_asset.asset_name)
+        if result.status != AvailabilityStatus.AVAILABLE.value:
+            return result
+        if isinstance(result, ArtifactAvailabilityObservation):
+            return result
+        return ArtifactAvailabilityObservation(
+            result.status,
+            evidence=result.evidence,
+            reason=result.reason,
+            error_kind=result.error_kind,
+            target_id=target_id,
+            architecture=selected_asset.architecture,
+            asset_name=selected_asset.asset_name,
+            official_download_base=selected_asset.official_download_base,
+            sha256=selected_asset.sha256,
+            expected_executable=selected_asset.expected_executable,
+        )
 
 
 def load_requirement(manifest: Mapping, dependency_id: str) -> DependencyRequirement:
@@ -724,25 +753,33 @@ def _provider_call(
             error_kind="provider_error",
         )
     if selected_asset is not None:
-        mismatch = _provider_asset_mismatch(result, selected_asset)
+        mismatch = _provider_asset_mismatch(result, target_id, selected_asset)
         if mismatch is not None:
             return AvailabilityObservation(
                 AvailabilityStatus.PROVIDER_ERROR.value,
                 reason=mismatch,
-                error_kind="provider_error",
+                error_kind="artifact_subject_mismatch",
                 evidence=result.evidence,
             )
     return result
 
 
-def _provider_asset_mismatch(result: AvailabilityObservation, selected_asset: SelectedArtifact) -> str | None:
+def _provider_asset_mismatch(result: AvailabilityObservation, target_id: str, selected_asset: SelectedArtifact) -> str | None:
     if result.status != AvailabilityStatus.AVAILABLE.value:
         return None
-    evidence = result.evidence or ""
-    if "architecture=" in evidence and ("architecture=%s" % selected_asset.architecture) not in evidence:
-        return "provider responded for a different artifact architecture"
-    if "asset_name=" in evidence and ("asset_name=%s" % selected_asset.asset_name) not in evidence:
-        return "provider responded for a different artifact asset"
+    if not isinstance(result, ArtifactAvailabilityObservation):
+        return "artifact provider returned available without structured artifact identity"
+    expected = {
+        "target_id": target_id,
+        "architecture": selected_asset.architecture,
+        "asset_name": selected_asset.asset_name,
+        "official_download_base": selected_asset.official_download_base,
+        "sha256": selected_asset.sha256,
+        "expected_executable": selected_asset.expected_executable,
+    }
+    for field, value in expected.items():
+        if getattr(result, field) != value:
+            return "artifact provider %s mismatch" % field
     return None
 
 
@@ -769,6 +806,13 @@ def _observation_record(
     }
     if package_name is not None:
         record["package_name"] = package_name
+        if candidate.kind == "external_repo_exact":
+            repository_id = candidate.data.get("repository", {}).get("id")
+            exposed = set(candidate.data.get("exposed_package_names", ()))
+            if package_name in exposed:
+                record["package_origin"] = "external_repository:%s" % repository_id
+            else:
+                record["package_origin"] = "base_repository"
     if selected_asset is not None:
         record["asset"] = {
             "architecture": selected_asset.architecture,

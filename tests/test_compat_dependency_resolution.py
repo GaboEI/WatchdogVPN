@@ -506,6 +506,14 @@ class DependencyResolverTests(unittest.TestCase):
         full = resolve(m, rocky, "dep_base_runtime_commands", cap("cap_base_runtime_commands"))
         self.assertEqual(full.selected_method_id, candidate_id)
         self.assertIn("openvpn", packages_for_candidate(m, "dep_base_runtime_commands", candidate_id))
+        origins = {
+            item["package_name"]: item["package_origin"]
+            for item in full.availability_observations
+            if item["operation"] in ("repository_package_available", "package_exists")
+        }
+        self.assertEqual(origins["openvpn"], "external_repository:epel_9")
+        self.assertEqual(origins["bash"], "base_repository")
+        self.assertEqual(origins["epel-release"], "base_repository")
 
         provider = resolver.StaticAvailabilityProvider(
             {
@@ -557,6 +565,60 @@ class DependencyResolverTests(unittest.TestCase):
         self.assertEqual(missing_epel_package.resolution_status, "no_safe_route")
         self.assertTrue(missing_epel_package.all_availability_observations)
 
+        broken = json.loads(json.dumps(m))
+        candidate = next(
+            item
+            for item in broken["dependency_requirements"]["dep_base_runtime_commands"]["method_chain"]
+            if item["id"] == candidate_id
+        )
+        candidate["exposed_package_names"] = []
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        candidate = next(
+            item
+            for item in broken["dependency_requirements"]["dep_base_runtime_commands"]["method_chain"]
+            if item["id"] == candidate_id
+        )
+        candidate["exposed_package_names"] = ["not-in-package-list"]
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        candidate = next(
+            item
+            for item in broken["dependency_requirements"]["dep_base_runtime_commands"]["method_chain"]
+            if item["id"] == candidate_id
+        )
+        del candidate["repository_package"]
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        candidate = next(
+            item
+            for item in broken["dependency_requirements"]["dep_base_runtime_commands"]["method_chain"]
+            if item["id"] == candidate_id
+        )
+        candidate["package_names"].remove("openvpn")
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
+        broken = json.loads(json.dumps(m))
+        candidate = next(
+            item
+            for item in broken["dependency_requirements"]["dep_base_runtime_commands"]["method_chain"]
+            if item["id"] == candidate_id
+        )
+        partial = dict(candidate)
+        partial["id"] = "base_runtime_dnf_rhel9_partial_regression"
+        partial["priority"] = 99
+        partial["package_names"] = ["openvpn"]
+        broken["dependency_requirements"]["dep_base_runtime_commands"]["method_chain"].append(partial)
+        with self.assertRaises(compat_read.ManifestError):
+            compat_read.validate_manifest(broken)
+
     def test_artifact_provider_receives_selected_asset_for_current_architecture(self) -> None:
         m = manifest()
         ubuntu_x86 = facts(m, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", arch="x86_64")
@@ -570,23 +632,68 @@ class DependencyResolverTests(unittest.TestCase):
         self.assertEqual(decision.selected_asset.architecture, "aarch64")
         self.assertEqual(decision.selected_asset.asset_name, "sing-box-1.13.14-linux-arm64.tar.gz")
 
-        provider = resolver.StaticAvailabilityProvider(
-            {
-                (
-                    "artifact_exists",
-                    "sing_box_official_artifact_stable",
-                    "ubuntu_24_04",
-                    "sing-box-1.13.14-linux-amd64-glibc.tar.gz",
-                ): resolver.AvailabilityObservation(
+        class ArtifactProvider(resolver.StaticAvailabilityProvider):
+            def __init__(self, **overrides):
+                super().__init__(default_status=resolver.AvailabilityStatus.AVAILABLE.value)
+                self.overrides = overrides
+
+            def artifact_exists(self, candidate, target_id, selected_asset):
+                values = {
+                    "target_id": target_id,
+                    "architecture": selected_asset.architecture,
+                    "asset_name": selected_asset.asset_name,
+                    "official_download_base": selected_asset.official_download_base,
+                    "sha256": selected_asset.sha256,
+                    "expected_executable": selected_asset.expected_executable,
+                }
+                values.update(self.overrides)
+                return resolver.ArtifactAvailabilityObservation(
                     resolver.AvailabilityStatus.AVAILABLE.value,
-                    evidence="architecture=aarch64 asset_name=sing-box-1.13.14-linux-arm64.tar.gz",
+                    evidence="asset_name=%s" % selected_asset.asset_name,
+                    **values,
                 )
-            },
-            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+
+            def artifact_integrity_metadata_available(self, candidate, target_id, selected_asset):
+                return self.artifact_exists(candidate, target_id, selected_asset)
+
+        exact = resolve(m, ubuntu_x86, "dep_sing_box_runtime", cap("proto_sing_box_runtime"), provider=ArtifactProvider())
+        self.assertEqual(exact.selected_method_id, "sing_box_official_artifact_stable")
+
+        for field, value in (
+            ("target_id", "debian_13"),
+            ("architecture", "aarch64"),
+            ("asset_name", "sing-box-1.13.14-linux-arm64.tar.gz"),
+            ("sha256", "0" * 64),
+            ("official_download_base", "https://downloads.example.invalid/"),
+            ("expected_executable", "other-binary"),
+        ):
+            with self.subTest(field=field):
+                mismatched = resolve(
+                    m,
+                    ubuntu_x86,
+                    "dep_sing_box_runtime",
+                    cap("proto_sing_box_runtime"),
+                    provider=ArtifactProvider(**{field: value}),
+                )
+                self.assertEqual(mismatched.resolution_status, "availability_unknown")
+                self.assertEqual(mismatched.error_kind, "artifact_subject_mismatch")
+
+        class MissingIdentityProvider(resolver.StaticAvailabilityProvider):
+            def artifact_exists(self, candidate, target_id, selected_asset):
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence="convincing text includes %s" % selected_asset.asset_name,
+                )
+
+        missing_identity = resolve(
+            m,
+            ubuntu_x86,
+            "dep_sing_box_runtime",
+            cap("proto_sing_box_runtime"),
+            provider=MissingIdentityProvider(default_status=resolver.AvailabilityStatus.AVAILABLE.value),
         )
-        mismatched = resolve(m, ubuntu_x86, "dep_sing_box_runtime", cap("proto_sing_box_runtime"), provider=provider)
-        self.assertEqual(mismatched.resolution_status, "availability_unknown")
-        self.assertEqual(mismatched.error_kind, "provider_error")
+        self.assertEqual(missing_identity.resolution_status, "availability_unknown")
+        self.assertEqual(missing_identity.error_kind, "artifact_subject_mismatch")
 
         broken = json.loads(json.dumps(m))
         broken["dependency_requirements"]["dep_sing_box_runtime"]["method_chain"][0]["assets"] = [

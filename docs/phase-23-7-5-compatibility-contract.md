@@ -505,10 +505,12 @@ Selection is strict and deterministic:
    A statically invalid source pin or artifact hash is rejected without consulting
    availability.
 7. Artifact candidates select exactly one `SelectedArtifact` for the host architecture
-   before the provider is called. The observation records only that effective asset
-   (`architecture`, `asset_name`, archive/binary kind, download base, SHA-256 and expected
-   executable), and provider evidence that claims a different asset or architecture is a
-   controlled provider error.
+   before the provider is called. Providers must answer with structured
+   `ArtifactAvailabilityObservation` identity for `available` artifact results: target,
+   architecture, asset name, download base, SHA-256 and expected executable must match the
+   selected asset exactly. Free-form evidence text is preserved, but it never proves the
+   artifact subject; missing or divergent structured identity becomes
+   `artifact_subject_mismatch`.
 8. Availability comes only from an injected `AvailabilityProvider`; `unknown`, `timeout`,
    `permission_denied`, `malformed_response` and `provider_error` block the chain and mark
    lower-priority candidates as `not_evaluated_due_to_higher_priority_unknown`.
@@ -564,11 +566,17 @@ The provider-backed matrix is L1, not real ecosystem evidence. The focused real 
 is separate and requires disposable container infrastructure supplied explicitly through
 `WATCHDOGVPN_REAL_L2=1`; without such infrastructure it reports a skipped limitation. L2
 checks create uniquely named throwaway Docker/Podman containers and remove them in
-`finally`, read `/etc/os-release`, validate expected ID/version/codename, confirm the
-package manager and query each package separately (`apt-cache`, `dnf`, `zypper`,
-`pacman`) after metadata refreshes only inside the disposable container when needed. A
-refresh failure yields `unknown` and cannot continue as available; APT requires candidate
-or package metadata; aggregate availability is `available` only when every package has
-evidence. The harness records pull/run, refresh, os-release, package-manager and per-package
-stdout, stderr, exit code, timeout, image and status, and must never be presented as
-kernel, TUN, firewall, protocol or physical certification evidence.
+`finally` through an observable cleanup result. Package-manager detection runs inside the
+container shell as `sh -lc 'command -v -- <controlled-manager>'`; the manager name comes
+only from the harness's internal table, stdout must contain a path, and runtime errors are
+distinguished from a missing manager. Rocky/EPEL queries use an exact architecture URL
+(`.../Everything/x86_64/` for the current harness target), never shell-expanded
+`$basearch`. The evidence object records target, image, runtime, container name, pull,
+create, start, os-release, package-manager, metadata-refresh, per-package query, cleanup,
+aggregate and limitations phases. Each phase stores bounded stdout/stderr, return code,
+status and reason. A refresh failure yields `unknown` and cannot continue as available;
+APT requires candidate or package metadata; aggregate availability is `available` only
+when every package has evidence. With `WATCHDOGVPN_REAL_L2=1`, required targets ending in
+`unknown`, `timeout` or `malformed_response` fail the L2 matrix; Ubuntu 26.04 image absence
+is the only optional limitation. These checks must never be presented as kernel, TUN,
+firewall, protocol or physical certification evidence.
