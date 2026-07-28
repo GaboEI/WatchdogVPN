@@ -1443,6 +1443,60 @@ third round, again without starting 23.7.5.6b:
 27 new L1 tests were added for this round (202 total in the module), 408 across the
 full focused compatibility suite (1 skip), full local suite 2187 OK (1 skip).
 
+### Fourth hardening round: real VM re-validation
+
+Executed for real on `wdvpn-linuxmint-23-6-7` against commit `32cae5b`. The pre-existing
+clean snapshot (`pre-23.7.5.6a-round3-reboot-validation`) was restored first, L1 was
+re-run on the VM (Python 3.12.3, 202/202 OK) -- including, for real, the mandatory
+multiprocess `StateRootIdentityRaceTests` (a genuinely separate holder process, a real
+`state_root` rename/replace-by-directory/replace-by-symlink while the lock is held, all
+under a `02770` parent) and the mandatory `CoordinatedMetadataTamperTests` (a real
+`chmod`/hardlink on the resource coordinated with a matching tamper of the persisted
+ownership record) -- a NEW dedicated snapshot for this round
+(`pre-23.7.5.6a-round4-reboot-validation`) was then taken, and all six of the
+maintainer's required reboot scenarios were prepared independently (each in its own
+dedicated `--sandbox`/`--state-root` pair) before a single shared real reboot:
+
+1. `after_apply_before_verify` (apply) -- resumed and committed; both canary files
+   present, `OwnershipRecord` written.
+2. `undoing_before_unlink` (rollback) -- resumed rollback, reached `preparation_failed`,
+   zero residuals, sandbox empty.
+3. `undoing_after_unlink_before_undone` (rollback) -- resumed rollback, reached
+   `preparation_failed`, sandbox empty.
+4. `after_unlink_before_applied` (uninstall) -- resumed, reached `uninstalled`,
+   ownership record deleted, sandbox empty.
+5. `after_verify_before_revoke` (uninstall) -- resumed, reached `uninstalled`, ownership
+   record deleted, sandbox empty.
+6. `after_revoke_before_uninstalled` (uninstall) -- resumed, reached `uninstalled`,
+   ownership record deleted, sandbox empty.
+
+The real reboot again used a hypervisor-level hard reset (`VBoxManage controlvm ...
+reset`); `boot_id` (`85471f15-...` before, `60bd321e-...` after) confirmed a genuine
+kernel restart. As in the third round, this VM's home directory is eCryptfs-encrypted
+and does not unlock for key-based SSH until a real password login occurs after boot;
+the maintainer logged into the VM's graphical console directly to unlock it each time
+(once before starting, once again after the real reboot) -- no password was scripted,
+stored, or left in any evidence file.
+
+Package list, repository sources, running-service set and `/var/lib/watchdogvpn`
+content hashes were identical before and after (the only network diff was the expected
+DHCP-lease-timer countdown); real filesystem permissions across all six scenario state
+roots were confirmed `0700` for `transactions`/`ownership`/`history`/the state root
+itself, `0600` for every journal/ownership/lock file -- exactly one `provisioner.lock`
+and one consistent journal tree per scenario, no divergent second tree anywhere. A
+residual scan across all six scenario directories found only the exact expected
+contents for each outcome (populated sandbox for the one committed apply scenario,
+empty sandboxes and empty `ownership/` directories for every rollback/uninstall
+scenario) -- no stray files, no leaked ownership records. Both uninstall-operation
+journals in each uninstall scenario's `transactions/` directory (the source "prepare"
+transaction and the uninstall transaction itself) were present and internally
+consistent, directly confirming the point-7 fix: the uninstall journal's own id on disk
+matches what a caller would get back from `uninstall()`. The VM was powered off and the
+round's snapshot restored and confirmed as current (`VBoxManage snapshot list` showing
+`pre-23.7.5.6a-round4-reboot-validation *`) afterward; none of the four snapshots
+(rounds 1 through 4) was deleted. Private evidence (`0700`/`0600`) at
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-7-5-6a-round4-reboot-validation`.
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,
