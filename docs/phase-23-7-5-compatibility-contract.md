@@ -2007,6 +2007,16 @@ scenarios and its local `run-all` pass completed with rc=0, including observed
 `round7_identity_loss_before_terminal_state` records. The required real VM before/after
 reboot validation remains to be executed on the final SHA before this round is closed.
 
+During the first real VM pre-reboot 50-run batch on `fb62511b`, runs 1-49 completed with
+rc=0 and run 50 failed in `test_06_lock_contention_between_two_processes` with
+`subprocess.TimeoutExpired` at `proc.wait(15)`. Post-failure capture showed no live
+`holder.py` process, and the lock-contention assertion had already observed
+`ProvisionerLockHeldError` before the teardown wait. The applied correction widens only
+the non-security teardown waits for these holder processes from 15s to 60s in the unit
+test and VM harness; the barrier-based race scenario watchdogs remain unchanged. A fresh
+50/50 batch must be run after this correction; the failed 49/50+failure batch is retained
+as evidence and is not counted as clean.
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,

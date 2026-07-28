@@ -294,7 +294,7 @@ class TransactionalProvisioningTests(unittest.TestCase):
         # shutdown) under load -- not a correctness-relevant wait, so no
         # need for a barrier: the lock-exclusion assertions above already
         # ran, this only confirms the process eventually exits.
-        proc.wait(15)
+        proc.wait(60)
 
     # 7. Journal durable antes y después de cada paso.
     def test_07_journal_is_durable_before_and_after_each_step(self) -> None:
@@ -1770,7 +1770,7 @@ class RecoveryLockTests(unittest.TestCase):
             reports = engine._recover_pending_locked(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
             self.assertEqual(reports, [])
         finally:
-            proc.wait(15)
+            proc.wait(60)
 
 
 class StateRootIdentityRaceTests(unittest.TestCase):

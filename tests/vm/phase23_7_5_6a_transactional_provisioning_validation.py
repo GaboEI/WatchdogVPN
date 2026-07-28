@@ -353,7 +353,7 @@ def cmd_run_all(args) -> int:
             pass
     except ProvisionerLockHeldError:
         contended = True
-    holder.wait(15)
+    holder.wait(60)
     holder.stdout.close()
     evidence.record("lock_exclusion", holder_line=line.strip(), contended=contended)
     if not contended:
@@ -780,7 +780,7 @@ def cmd_run_all(args) -> int:
     except ProvisionerLockHeldError:
         global_swap_contender_refused = True
     _fifo_signal(global_swap_go)
-    global_swap_proc.wait(15)
+    global_swap_proc.wait(60)
     evidence.record("global_lock_root_swapped_while_holder_active", contender_refused=global_swap_contender_refused, holder_returncode=global_swap_proc.returncode)
     if not global_swap_contender_refused or global_swap_proc.returncode != 0:
         raise SystemExit("global_lock_root swap scenario did not refuse the contender")
