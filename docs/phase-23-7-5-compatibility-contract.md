@@ -2004,8 +2004,7 @@ scenarios and its local `run-all` pass completed with rc=0, including observed
 `round7_quarantine_substitution_after_verify`, `round7_quarantine_in_place_modification`,
 `round7_quarantine_restore_noreplace`, `round7_intermediate_swap_before_uninstall`,
 `round7_global_lock_parent_rejections`, and
-`round7_identity_loss_before_terminal_state` records. The required real VM before/after
-reboot validation remains to be executed on the final SHA before this round is closed.
+`round7_identity_loss_before_terminal_state` records.
 
 During the first real VM pre-reboot 50-run batch on `fb62511b`, runs 1-49 completed with
 rc=0 and run 50 failed in `test_06_lock_contention_between_two_processes` with
@@ -2024,8 +2023,73 @@ under VM scheduling pressure it could release the lock before the parent attempt
 contention. The applied correction replaces that sleep with an explicit FIFO release
 barrier in both the unit test and VM harness lock-exclusion scenario; the holder now keeps
 the lock until the parent has observed the contender refusal and signals release. A fresh
-50/50 batch must be run after this correction; the failed 8/50+failure batch is retained
-as evidence and is not counted as clean.
+50/50 batch was then run on the VM before reboot against
+`99f8a9cfc5c7d69a8ec697832f850f544082aacd`: 50/50 clean, no failure markers, no
+tracebacks, no timeout hits, no quarantine residues, and no test holder/worker process
+left alive. The failed 8/50+failure batch is retained as evidence and is not counted as
+clean.
+
+Real VM validation for the final code-bearing seventh-round SHA was executed on
+`wdvpn-linuxmint-23-6-7` against
+`99f8a9cfc5c7d69a8ec697832f850f544082aacd`; the later documentation-only commit
+records this evidence without changing executable provisioning code or tests. A full
+BEFORE baseline was captured under `/home/gabodev/Desktop/temporales/watchdogvpn-task-23-7-5-6a-round7-reboot-validation`
+before reboot: `boot_id`, `dpkg -l`, apt repository files, running services, `ip addr`,
+routes, `ss -tulpn`, WatchdogVPN-related processes, `/var/lib/watchdogvpn` permissions,
+listing and sha256 hashes, including a sudo-readable capture for the private subtree. The
+pre-reboot VM checks then passed on that code-bearing SHA: focused provisioning module 254/254 OK,
+VM `run-all` rc=0, and the 50-run batch described above completed 50/50 clean.
+
+The six mandatory reboot checkpoints were first prepared under `/tmp`, but the hard reset
+correctly demonstrated that `/tmp` is not a valid persistence location for reboot-crossing
+state on this VM: recovery found no pending transactions. That failed evidence attempt is
+retained under the round-seven evidence tree and is not counted as a passing recovery. The
+next preparation under `/var/tmp` initially failed closed because the VM's `umask` created
+scenario parents as `0775`; the newly hardened global-lock parent policy rejected those
+group-writable parents before mutation. The final preparation explicitly created each
+scenario parent as `0700` under `/var/tmp/wdvpn_round7_reboot_99f8a9c`; all six checkpoints
+then prepared cleanly with SIGKILL at the intended barrier and persisted journals:
+`after_apply_before_verify`, `undoing_before_unlink`,
+`undoing_after_unlink_before_undone`, `after_unlink_before_applied`,
+`after_verify_before_revoke`, and `after_revoke_before_uninstalled`.
+
+Two snapshots were created during this validation:
+`pre-23.7.5.6a-round7-reboot-validation` (`97c60b49-0994-4c09-b75a-ed6407941b3f`) and
+`pre-23.7.5.6a-round7-prepared-reboot-validation`
+(`07c4f423-c2e6-4f86-b028-52fd1c44ff04`). The actual recovery reset used a
+hypervisor-level hard reset from VirtualBox. `boot_id` changed from
+`ecbb3ff4-905c-4013-83b1-e85091b094ac` before reset to
+`c18effdc-bd12-4ded-a29b-e185b30236a0` after reset. As in earlier rounds, the VM's
+eCryptfs home required one interactive password SSH login after reboot before key-based
+SSH was usable again; no password was written to evidence files. After the reset, all six
+pending scenarios recovered with rc=0. The prepare recovery results were:
+`after_apply_before_verify` resumed to `committed`; `undoing_before_unlink` and
+`undoing_after_unlink_before_undone` resumed rollback to `preparation_failed` with empty
+sandboxes. The uninstall recovery results were: `after_unlink_before_applied`,
+`after_verify_before_revoke`, and `after_revoke_before_uninstalled` resumed to
+`uninstalled`, each with `remaining_ownership_records: 0`.
+
+Post-reboot VM checks then passed on the same SHA: focused provisioning module 254/254 OK,
+VM `run-all` rc=0 including the round-seven quarantine/intermediate/lock/terminal-state
+records, and 50 consecutive `run-all` repetitions on ext4-backed `/var/tmp` completed
+50/50 clean. A first post-reboot 50-run attempt under the evidence directory in `$HOME`
+failed on run 1 with a rollback residue because this VM's `$HOME` is eCryptfs-backed; that
+attempt is retained as environmental evidence and is not counted as clean. The successful
+post-reboot `/var/tmp` batch produced 50 logs, no `FAILED_RUN`, no traceback or timeout
+hits, zero non-empty residue scans, and no leftover test worker/holder process; the only
+matching process line across post-run captures was the pre-existing
+`/usr/bin/python3 -m daemon.main`.
+
+The AFTER baseline was captured with the same categories as BEFORE. Normalized comparison
+showed `dpkg -l`, IP address (ignoring DHCP lease lifetime), routes,
+`/var/lib/watchdogvpn` listing and `/var/lib/watchdogvpn` sha256 hashes unchanged.
+Repository content was unchanged; the raw diff differs only because the before capture
+included `ls -la` header lines and the after capture listed source filenames directly.
+The running-service set differed by `fwupd.service` no longer being in the post-reboot
+`running` set; `watchdogvpn.service` remained running. Socket differences were limited to
+ephemeral mDNS UDP port values and ordering. `/var/lib/watchdogvpn/private` remained
+`0700`, files remained `0600`/`0660` according to their prior ownership, and content hashes
+matched exactly.
 
 ### Out of scope (unchanged in this task)
 
