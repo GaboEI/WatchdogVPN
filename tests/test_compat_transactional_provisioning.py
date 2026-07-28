@@ -181,7 +181,8 @@ class _Harness:
 
     def __init__(self, tmp: Path, *, requires_network: bool = False, forbidden_roots=()):
         self.sandbox = tmp / "sandbox"
-        self.sandbox.mkdir()
+        self.sandbox.mkdir(mode=0o700)
+        os.chmod(self.sandbox, 0o700)
         self.state_root = tmp / "state"
         # Deliberately a SIBLING of state_root, never a descendant of it --
         # the whole point of the global lock root (point 1, fifth

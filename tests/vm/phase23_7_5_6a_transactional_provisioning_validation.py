@@ -128,7 +128,8 @@ def _decision(capability_id: str, dependency_id: str, *, method_kind: str = CANA
 
 
 def _env(sandbox: Path, state_root: Path, global_lock_root: Path) -> engine.ProvisioningEnvironment:
-    sandbox.mkdir(parents=True, exist_ok=True)
+    sandbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(sandbox, 0o700)
     registry = TrustedExecutorRegistry()
     registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=CanaryExecutor())
     registry.register(method_kind="nested_resource_vm", method_id="nested_resource_vm_method", executor=_NestedResourceExecutor())
@@ -327,7 +328,8 @@ def cmd_run_all(args) -> int:
     if scratch.exists():
         shutil.rmtree(scratch)
     scratch.mkdir(parents=True)
-    sandbox.mkdir(parents=True)
+    sandbox.mkdir(mode=0o700, parents=True)
+    os.chmod(sandbox, 0o700)
     evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / "phase23_7_5_6a_vm_evidence.json"))
     env = _env(sandbox, state_root, global_lock_root)
 
@@ -858,7 +860,8 @@ def cmd_prepare_reboot_checkpoint(args) -> int:
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
     global_lock_root = Path(args.global_lock_root)
-    sandbox.mkdir(parents=True, exist_ok=True)
+    sandbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(sandbox, 0o700)
     transaction_id = "vm-reboot-%s" % args.checkpoint
     evidence_path = Path(args.evidence) if args.evidence else (state_root.parent / "reboot_prep_evidence.json")
     evidence = Evidence(evidence_path)
@@ -1017,7 +1020,8 @@ def cmd_prepare_uninstall_reboot_checkpoint(args) -> int:
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
     global_lock_root = Path(args.global_lock_root)
-    sandbox.mkdir(parents=True, exist_ok=True)
+    sandbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(sandbox, 0o700)
     checkpoint = args.checkpoint
     capability_id = "cap_vm_uninstall_reboot_%s" % checkpoint
     evidence_path = Path(args.evidence) if args.evidence else (state_root.parent / ("uninstall_reboot_prep_evidence_%s.json" % checkpoint))
