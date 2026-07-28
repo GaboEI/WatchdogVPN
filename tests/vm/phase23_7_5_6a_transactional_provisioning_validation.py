@@ -327,7 +327,8 @@ def cmd_run_all(args) -> int:
     scratch = state_root.parent / "phase23_7_5_6a_round6_scratch"
     if scratch.exists():
         shutil.rmtree(scratch)
-    scratch.mkdir(parents=True)
+    scratch.mkdir(mode=0o700, parents=True)
+    os.chmod(scratch, 0o700)
     sandbox.mkdir(mode=0o700, parents=True)
     os.chmod(sandbox, 0o700)
     evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / "phase23_7_5_6a_vm_evidence.json"))
