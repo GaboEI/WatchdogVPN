@@ -272,29 +272,36 @@ class TransactionalProvisioningTests(unittest.TestCase):
         state_root = self.harness.state_root
         global_lock_root = self.harness.global_lock_root
         holder_script = self.tmp / "holder.py"
+        go = self.tmp / "holder-go.fifo"
+        _fifo_create(go)
         holder_script.write_text(
-            "import sys, time\n"
+            "import sys\n"
             "sys.path.insert(0, %r)\n"
             "from pathlib import Path\n"
             "from compat.provisioning.lock import acquire_provisioner_lock\n"
+            "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_wait\n"
+            "go = Path(%r)\n"
+            "go_fd = _fifo_open_reader(go)\n"
             "with acquire_provisioner_lock(Path(%r), global_lock_root=Path(%r), transaction_id='holder', timeout=2.0):\n"
             "    print('ACQUIRED', flush=True)\n"
-            "    time.sleep(1.5)\n" % (str(ROOT), str(state_root), str(global_lock_root))
+            "    _fifo_wait(go_fd, timeout=60.0, description='holder release signal')\n"
+            % (str(ROOT), str(go), str(state_root), str(global_lock_root))
         )
-        proc = subprocess.Popen([sys.executable, str(holder_script)], stdout=subprocess.PIPE, text=True)
+        proc = subprocess.Popen([sys.executable, str(holder_script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(proc.wait)
         self.addCleanup(proc.stdout.close)
+        self.addCleanup(proc.stderr.close)
         line = proc.stdout.readline()
         self.assertEqual(line.strip(), "ACQUIRED")
-        with self.assertRaises(ProvisionerLockHeldError) as ctx:
-            with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id="contender", timeout=0.3):
-                pass
-        self.assertIsNotNone(ctx.exception.holder_pid)
-        # A generous bound for the holder's own teardown (sleep + interpreter
-        # shutdown) under load -- not a correctness-relevant wait, so no
-        # need for a barrier: the lock-exclusion assertions above already
-        # ran, this only confirms the process eventually exits.
-        proc.wait(60)
+        try:
+            with self.assertRaises(ProvisionerLockHeldError) as ctx:
+                with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id="contender", timeout=0.3):
+                    pass
+            self.assertIsNotNone(ctx.exception.holder_pid)
+        finally:
+            _fifo_signal(go)
+        stdout, stderr = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
 
     # 7. Journal durable antes y después de cada paso.
     def test_07_journal_is_durable_before_and_after_each_step(self) -> None:

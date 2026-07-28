@@ -338,13 +338,20 @@ def cmd_run_all(args) -> int:
     evidence.record("pre_state", snapshot=baseline)
 
     # 1. Lock exclusion between two real processes.
+    lock_go = scratch / "lock_exclusion_go.fifo"
+    _fifo_create(lock_go)
     holder = subprocess.Popen(
         [sys.executable, "-c",
-         "import sys, time; sys.path.insert(0, %r); from pathlib import Path; "
+         "import sys; sys.path.insert(0, %r); from pathlib import Path; "
          "from compat.provisioning.lock import acquire_provisioner_lock\n"
+         "from tests.vm.phase23_7_5_6a_transactional_provisioning_validation import _fifo_open_reader, _fifo_wait\n"
+         "go = Path(%r)\n"
+         "go_fd = _fifo_open_reader(go)\n"
          "with acquire_provisioner_lock(Path(%r), global_lock_root=Path(%r), transaction_id='holder', timeout=5.0):\n"
-         "    print('ACQUIRED', flush=True); time.sleep(2.0)\n" % (str(ROOT), str(state_root), str(global_lock_root))],
-        stdout=subprocess.PIPE, text=True,
+         "    print('ACQUIRED', flush=True)\n"
+         "    _fifo_wait(go_fd, timeout=60.0, description='lock exclusion release signal')\n"
+         % (str(ROOT), str(lock_go), str(state_root), str(global_lock_root))],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     line = holder.stdout.readline()
     contended = False
@@ -353,11 +360,16 @@ def cmd_run_all(args) -> int:
             pass
     except ProvisionerLockHeldError:
         contended = True
-    holder.wait(60)
+    finally:
+        _fifo_signal(lock_go)
+    holder_stdout, holder_stderr = holder.communicate(timeout=60)
     holder.stdout.close()
-    evidence.record("lock_exclusion", holder_line=line.strip(), contended=contended)
-    if not contended:
-        raise SystemExit("lock exclusion did not hold between two real processes")
+    evidence.record("lock_exclusion", holder_line=line.strip(), contended=contended, holder_returncode=holder.returncode)
+    if not contended or holder.returncode != 0:
+        raise SystemExit(
+            "lock exclusion did not hold between two real processes: contended=%r stdout=%r stderr=%r"
+            % (contended, holder_stdout, holder_stderr)
+        )
 
     # 2. Apply and verify.
     decision = _decision("cap_vm_apply", "dep_vm_apply")

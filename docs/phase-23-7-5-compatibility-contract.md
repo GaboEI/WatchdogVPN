@@ -2017,6 +2017,16 @@ test and VM harness; the barrier-based race scenario watchdogs remain unchanged.
 50/50 batch must be run after this correction; the failed 49/50+failure batch is retained
 as evidence and is not counted as clean.
 
+The first fresh VM batch after that wait-bound correction (`8312d48`) failed on run 9 in
+the same test with `ProvisionerLockHeldError not raised`. That is not a retryable green
+result: the child holder still used `time.sleep(1.5)` as the lock-retention mechanism, so
+under VM scheduling pressure it could release the lock before the parent attempted
+contention. The applied correction replaces that sleep with an explicit FIFO release
+barrier in both the unit test and VM harness lock-exclusion scenario; the holder now keeps
+the lock until the parent has observed the contender refusal and signals release. A fresh
+50/50 batch must be run after this correction; the failed 8/50+failure batch is retained
+as evidence and is not counted as clean.
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,
