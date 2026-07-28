@@ -1331,6 +1331,118 @@ earlier and was unaffected). This is a VM-harness-only defect, not an engine def
 the actual local L1 suite never exercises this file, since it is deliberately excluded
 from `python3 -m unittest discover tests` (it sends real, uncatchable `SIGKILL`s).
 
+### Fourth security/correctness hardening round
+
+A fourth maintainer review of the third hardening round found seven further real
+gaps, closed in the same `compat/provisioning` package on top of the already-committed
+third round, again without starting 23.7.5.6b:
+
+- **Descriptor-relative state-root/lock identity binding** (`storage.py`, `lock.py`,
+  `journal.py`, `engine.py`): a new `StateRootHandle` -- an OPEN, `st_dev`/`st_ino`-bound
+  file descriptor for `state_root`, with lazily-cached, equally-open descriptors for its
+  `transactions`/`ownership`/`history` subdirectories -- is established ONCE via
+  `storage.open_state_root()` when the provisioner lock is acquired
+  (`lock.acquire_provisioner_lock` now takes `state_root` itself, not a precomputed lock
+  path, and YIELDS this handle) and threaded through every journal/ownership
+  read/write/delete/list for the entire duration of that lock-protected transaction.
+  `journal.py`'s functions now dispatch on `Path` (legacy, read-only callers outside a
+  lock, e.g. `status`/dry-run) vs `StateRootHandle` (every mutating call inside
+  `prepare()`/`uninstall()`/`recover_pending()`), using `os.open`/`os.mkdir`/`os.replace`/
+  `os.unlink` with `dir_fd=` for the latter -- never a fresh path-based lookup once the
+  state root's identity has been established. A real, disposable-subprocess multiprocess
+  test proves the property: a holder process acquires the lock, the test process renames
+  `state_root` aside (under a `02770` parent, no sticky bit) -- optionally replacing the
+  vacated path with a new directory or a symlink -- and the holder's subsequent write
+  correctly lands in the ORIGINAL (renamed-away) directory via its descriptor, never
+  silently creating a second journal tree at the new path; a symlink placed at the
+  vacated path is rejected outright (`PathPolicyError`, fail closed) for any other
+  process trying to acquire a lock there. A further test renames the `transactions`
+  subdirectory itself mid-transaction, after the holder has already cached its
+  descriptor from an earlier write in the SAME critical section, and confirms a second
+  write from that same holder still lands in the original, renamed-away subdirectory.
+- **Ownership authority derived from an executor-provided canonical expectation, not
+  engine-hardcoded assumptions** (`executors.py`, `engine.py`): a new abstract
+  `Executor.expected_ownership_for_step(plan, step) -> OwnershipCandidate` is derived
+  ONLY from the plan/intent/selected asset/the executor's own registered code -- never
+  from a live filesystem read. `validate_ownership_authority` and `_finalize_provenance`
+  now compare a persisted record's full field set (`capability_id`, `artifact_type`,
+  `resource_identity`, `pre_existing`, `method_id`, `source`, `version`, `integrity`,
+  `uid`, `gid`, `mode`, `nlink`, `post_install_fingerprint`, `executor_id`/`version`,
+  `created_by_transaction`) against THIS canonical expectation, removing every
+  canary-specific assumption that used to be hardcoded directly in `engine.py`
+  (`artifact_type` is always `"file"`, `source`/`version` are always `None`,
+  `post_install_fingerprint` always equals `integrity`). Because the expectation is
+  plan-derived (a fixed value the attacker cannot influence, never a live re-stat that
+  would legitimately vary mid-recovery), uid/gid/mode/nlink are safe to compare
+  unconditionally, closing a real coordinated-tamper gap: altering BOTH the real
+  resource's metadata (a real `chmod`/hardlink) AND the persisted ownership record to
+  match each other no longer helps an attacker, since authority never trusts either side
+  of that pair in isolation. `recorded_at` is deliberately excluded from the
+  authorization check -- declared explicitly informative metadata without authority,
+  not silently incorporated. A second, test-only `_DivergentMetadataExecutor` (never
+  registered outside tests) that produces non-null `source`/`version` and a
+  `post_install_fingerprint` deliberately diverging from the content hash commits and
+  uninstalls cleanly through the exact same generic machinery, proving the
+  infrastructure is genuinely executor-agnostic.
+- **Structural completeness of a COMMITTED source journal** (`engine.py`): before
+  granting authority, a new `_journal_steps_match_plan_exactly()` requires
+  `journal.steps` to be structurally IDENTICAL to the independently reconstructed plan
+  -- same cardinality, unique sequences, and for each sequence an exact match of
+  `step_id`/`action_type`/`target`/`intent` -- plus every step exactly `VERIFIED` with
+  non-`None` `verification` evidence and `undo_record`. This closes a real gap
+  `plan_digest` alone left open: none of a step's own persisted state (its current
+  `state`, its recorded `step_id`/`action_type`/`target`/`intent` as actually written to
+  disk after journal creation) participates in `plan_digest`, which only ever covered
+  the ORIGINAL plan once, at journal-creation time. The mandatory security scenario
+  (source journal tampered to leave only one of two steps `VERIFIED`, ownership shrunk
+  to just that one still-VERIFIED resource, `plan_digest` left untouched, uninstall
+  attempted) correctly resolves to `ownership_invalid` with both resources intact and
+  ownership never revoked; further variants cover a missing step, a duplicate step, a
+  duplicate sequence, a step left not-`VERIFIED`, and a changed `step_id`/`action_type`/
+  `target`/`intent`.
+- **`Path.is_symlink()`/`Path.exists()` fully removed from security decisions**
+  (`paths.py`): `_reject_symlink_components` and `validate_target_path`'s ancestor walk
+  now use `os.lstat` directly and classify explicitly -- `FileNotFoundError` means
+  absent where the operation allows it, any OTHER `OSError` (permission denied, `EIO`,
+  `ESTALE`) fails closed as `PathPolicyError`, a symlink fails closed as
+  `PathPolicyError` -- eliminating the exact cross-Python-version fragility class found
+  in the second hardening round (`Path.is_symlink()`'s internal `OSError`-handling
+  differs between 3.12 and 3.14). New tests inject `PermissionError`/`EIO`/`ESTALE` on
+  an intermediate path component against the REAL policy functions (no bypass, unlike
+  the second round's workaround) and must classify identically regardless of Python
+  version. This work also surfaced and closed a related gap: `validate_target_path`
+  previously resolved straight through an *allowed root* that had itself been replaced
+  by a symlink (`root.resolve(strict=True)` follows it silently); it now rejects that
+  outright before ever resolving, the same way an intermediate component already was.
+- **Descriptor-safe absence reconfirmation before revoke** (`paths.py`, `engine.py`): a
+  new `confirm_absent_descriptor_safe()` replaces `_revocation_boundary_is_safe()`'s
+  isolated `os.lstat()` on a bare persisted path string. It reconstructs and validates
+  the resource's path through the SAME allowlist/forbidden-roots policy, then confirms
+  the basename's absence relative to an OPEN, `O_NOFOLLOW` descriptor of its immediate
+  parent directory -- closing the window between path validation and the check itself.
+  The mandatory test: the resource is still genuinely present, but its parent directory
+  (the allowed sandbox root, for this single-level executor) is renamed aside and a
+  symlink to an unrelated EMPTY directory is dropped at the original location -- a naive
+  `os.lstat()` on the bare path would see `FileNotFoundError` and wrongly conclude
+  "absent" even though the real resource is fully intact in the renamed-away directory;
+  the new check instead fails the path validation itself (the allowed root is now a
+  symlink) and correctly blocks the revoke (`RECOVERY_REQUIRED`, ownership intact).
+- **`PrepareOutcome.transaction_id` fixed for `uninstall()`**: `_build_uninstall_plan`
+  now takes an explicit, caller-supplied `transaction_id` instead of minting its own
+  internally; `uninstall()` passes the SAME id it already uses for the provisioner-lock
+  metadata, so the `transaction_id` it returns is always exactly the uninstall journal's
+  own id on disk -- never a second, independently generated identifier a caller had no
+  way to correlate back to the real journal.
+- **Point 6, revisited**: with ownership authority now fully executor-derived (see
+  above), the last remaining canary-specific engine assumption is gone; `_finalize_provenance`
+  reads `artifact_type`/`pre_existing`/`method_id`/`source`/`version`/
+  `post_install_fingerprint` from `executor.expected_ownership_for_step()` rather than
+  hardcoding them, while still independently re-stating uid/gid/mode/nlink against that
+  same executor-declared expectation before ever persisting an `OwnershipRecord`.
+
+27 new L1 tests were added for this round (202 total in the module), 408 across the
+full focused compatibility suite (1 skip), full local suite 2187 OK (1 skip).
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,
