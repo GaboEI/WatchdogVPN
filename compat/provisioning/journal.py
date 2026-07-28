@@ -30,7 +30,7 @@ from compat.provisioning.model import (
     transition_transaction,
 )
 from compat.provisioning.paths import validate_identifier
-from compat.provisioning.storage import atomic_write_private_text, fsync_parent_directory
+from compat.provisioning.storage import atomic_write_private_text, ensure_private_subdir, fsync_parent_directory
 
 SCHEMA_VERSION = 1
 TRANSACTIONS_DIR = "transactions"
@@ -47,7 +47,7 @@ _OWNERSHIP_RECORD_FIELDS = frozenset(
 _OWNERSHIP_CANDIDATE_FIELDS = frozenset(
     {
         "artifact_type", "resource_identity", "pre_existing", "method_id", "source",
-        "version", "integrity", "uid", "gid", "mode", "post_install_fingerprint",
+        "version", "integrity", "uid", "gid", "mode", "nlink", "post_install_fingerprint",
     }
 )
 
@@ -148,9 +148,11 @@ def ownership_path(state_root: Path, capability_id: str) -> Path:
 
 def write_journal(state_root: Path, journal: TransactionJournal) -> None:
     payload = json.dumps(to_jsonable(journal), indent=2, sort_keys=True) + "\n"
+    ensure_private_subdir(state_root, TRANSACTIONS_DIR)
     path = transaction_path(state_root, journal.transaction_id)
     atomic_write_private_text(path, payload)
     if journal.is_terminal():
+        ensure_private_subdir(state_root, HISTORY_DIR)
         atomic_write_private_text(history_path(state_root, journal.transaction_id), payload)
 
 
@@ -193,7 +195,10 @@ def list_pending_transaction_ids(state_root: Path) -> list[str]:
 
 
 def write_ownership_records(state_root: Path, capability_id: str, records: Sequence[OwnershipRecord]) -> None:
-    payload = json.dumps([_ownership_to_jsonable(record) for record in records], indent=2, sort_keys=True) + "\n"
+    payload = json.dumps(
+        [redact_for_journal(_ownership_to_jsonable(record)) for record in records], indent=2, sort_keys=True
+    ) + "\n"
+    ensure_private_subdir(state_root, OWNERSHIP_DIR)
     atomic_write_private_text(ownership_path(state_root, capability_id), payload)
 
 
@@ -243,6 +248,7 @@ def _ownership_to_jsonable(record: OwnershipRecord) -> dict:
             "uid": candidate.uid,
             "gid": candidate.gid,
             "mode": candidate.mode,
+            "nlink": candidate.nlink,
             "post_install_fingerprint": candidate.post_install_fingerprint,
         },
     }
@@ -272,6 +278,7 @@ def _ownership_from_jsonable(data: object) -> OwnershipRecord:
             uid=_require_optional_non_negative_int(candidate_data, "uid"),
             gid=_require_optional_non_negative_int(candidate_data, "gid"),
             mode=_require_optional_mode(candidate_data, "mode"),
+            nlink=_require_optional_non_negative_int(candidate_data, "nlink"),
             post_install_fingerprint=_require_optional_str(candidate_data, "post_install_fingerprint"),
         )
         return OwnershipRecord(

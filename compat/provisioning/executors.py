@@ -19,6 +19,7 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass
 import hashlib
+import os
 from pathlib import Path
 import stat
 from typing import Callable, Mapping, Sequence
@@ -141,19 +142,33 @@ class CanaryExecutor(Executor):
         companion_path = sandbox / ("%s.companion" % capability_id)
         marker_content = _marker_content(capability_id)
         companion_content = _companion_content(capability_id, marker_content)
+        # expected_mode/uid/gid are the deterministic invariants this
+        # executor always creates its own files under -- part of the plan
+        # itself (and therefore of plan_digest), never metadata the engine
+        # invents or adopts after the fact from whatever it happens to find
+        # on disk at commit time.
+        expected_ownership = {"expected_mode": 0o600, "expected_uid": os.getuid(), "expected_gid": os.getgid()}
         return (
             ProvisioningStep(
                 sequence=0,
                 step_id="create_marker",
                 action_type="create_file",
-                intent={"content_sha256": hashlib.sha256(marker_content).hexdigest(), "content": marker_content.decode("ascii")},
+                intent={
+                    "content_sha256": hashlib.sha256(marker_content).hexdigest(),
+                    "content": marker_content.decode("ascii"),
+                    **expected_ownership,
+                },
                 target=str(marker_path),
             ),
             ProvisioningStep(
                 sequence=1,
                 step_id="create_companion",
                 action_type="create_file",
-                intent={"content_sha256": hashlib.sha256(companion_content).hexdigest(), "content": companion_content.decode("ascii")},
+                intent={
+                    "content_sha256": hashlib.sha256(companion_content).hexdigest(),
+                    "content": companion_content.decode("ascii"),
+                    **expected_ownership,
+                },
                 target=str(companion_path),
             ),
         )
@@ -194,8 +209,15 @@ class CanaryExecutor(Executor):
             return VerificationResult(status="verification_failed", error_kind="unexpected_symlink", error="target is a symlink")
         if not identity["is_regular"]:
             return VerificationResult(status="verification_failed", error_kind="not_regular_file", error="target is not a regular file")
-        if identity["mode"] != 0o600:
-            return VerificationResult(status="verification_failed", error_kind="unexpected_mode", error="mode is %o, expected 0600" % identity["mode"])
+        expected_mode = step.intent.get("expected_mode", 0o600)
+        if identity["mode"] != expected_mode:
+            return VerificationResult(status="verification_failed", error_kind="unexpected_mode", error="mode is %o, expected %o" % (identity["mode"], expected_mode))
+        expected_uid = step.intent.get("expected_uid")
+        if expected_uid is not None and identity["uid"] != expected_uid:
+            return VerificationResult(status="verification_failed", error_kind="unexpected_uid", error="uid is %d, expected %d" % (identity["uid"], expected_uid))
+        expected_gid = step.intent.get("expected_gid")
+        if expected_gid is not None and identity["gid"] != expected_gid:
+            return VerificationResult(status="verification_failed", error_kind="unexpected_gid", error="gid is %d, expected %d" % (identity["gid"], expected_gid))
         if identity["nlink"] != 1:
             return VerificationResult(status="verification_failed", error_kind="unexpected_nlink", error="st_nlink is %d, expected 1" % identity["nlink"])
         try:
@@ -250,6 +272,15 @@ class CanaryExecutor(Executor):
                 return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
             if identity["is_symlink"] or not identity["is_regular"]:
                 return VerificationResult(status="verification_failed", error_kind="unexpected_file_type", error=str(validated))
+            expected_mode = step.intent.get("expected_mode", 0o600)
+            if identity["mode"] != expected_mode:
+                return VerificationResult(status="verification_failed", error_kind="unexpected_mode", error="mode is %o, expected %o at %s" % (identity["mode"], expected_mode, validated))
+            expected_uid = step.intent.get("expected_uid")
+            if expected_uid is not None and identity["uid"] != expected_uid:
+                return VerificationResult(status="verification_failed", error_kind="unexpected_uid", error="uid is %d, expected %d at %s" % (identity["uid"], expected_uid, validated))
+            expected_gid = step.intent.get("expected_gid")
+            if expected_gid is not None and identity["gid"] != expected_gid:
+                return VerificationResult(status="verification_failed", error_kind="unexpected_gid", error="gid is %d, expected %d at %s" % (identity["gid"], expected_gid, validated))
             if identity["nlink"] != 1:
                 return VerificationResult(status="verification_failed", error_kind="unexpected_nlink", error="st_nlink is %d, expected 1" % identity["nlink"])
             expected_sha256 = step.intent.get("content_sha256")

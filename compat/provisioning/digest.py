@@ -54,15 +54,20 @@ def canonical_ownership_record_mapping(record: OwnershipRecord) -> dict:
         "created_by_transaction": record.created_by_transaction,
         "executor_id": record.executor_id,
         "executor_version": record.executor_version,
+        "recorded_at": record.recorded_at,
         "candidate": {
             "artifact_type": candidate.artifact_type,
             "resource_identity": candidate.resource_identity,
             "pre_existing": candidate.pre_existing,
             "method_id": candidate.method_id,
+            "source": candidate.source,
+            "version": candidate.version,
             "integrity": candidate.integrity,
             "uid": candidate.uid,
             "gid": candidate.gid,
             "mode": candidate.mode,
+            "nlink": candidate.nlink,
+            "post_install_fingerprint": candidate.post_install_fingerprint,
         },
     }
 

@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 from compat import detection
 from compat.dependency_resolution import ResolutionDecision
 from compat.provisioning import engine, journal as journal_mod
+from compat.provisioning.errors import PathPolicyError
 from compat.provisioning.executors import (
     CANARY_EXECUTOR_VERSION,
     CANARY_METHOD_KIND,
@@ -29,7 +30,7 @@ from compat.provisioning.executors import (
     ExecutionContext,
     TrustedExecutorRegistry,
 )
-from compat.provisioning.paths import validate_lab_root
+from compat.provisioning.paths import validate_dedicated_lab_root, validate_lab_descendant
 
 EXIT_USAGE = 1
 EXIT_PROVISIONING_ERROR = 2
@@ -68,17 +69,38 @@ def _lab_decision(capability_id: str, dependency_id: str, *, execution_ready: bo
     )
 
 
+def _path_contains(root: Path, candidate: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _build_env(args, *, mutating: bool) -> engine.ProvisioningEnvironment:
     """``mutating`` gates whether the sandbox root is created. Read-only
     operations (``plan``, ``prepare``/``uninstall`` without ``--apply``,
     ``status``) must never create the sandbox or provisioning state root --
     root creation happens only on an explicitly authorized mutating path.
-    ``validate_lab_root`` is mandatory confinement, enforced before any
-    mutation and regardless of ``mutating``: neither argument may be the
-    filesystem root, a reserved system path, the real product's own state
-    directory, ``$HOME`` itself, or a symlink at any component."""
-    sandbox = validate_lab_root(Path(args.sandbox), label="--sandbox")
-    state_root = validate_lab_root(Path(args.state_root), label="--state-root")
+
+    Positive lab-root confinement, enforced before any mutation and
+    regardless of ``mutating``: ``--sandbox`` and ``--state-root`` must both
+    be strict descendants of ONE dedicated, pre-created, pre-approved
+    ``--lab-root`` (owned by us, mode 0700, never a symlink, never the
+    filesystem root/a reserved system path/the real product state
+    directory/``$HOME`` itself) -- an arbitrary path such as ``/var/log``,
+    ``/var/spool``, ``/opt`` or ``/srv`` is never acceptable just because it
+    fails to match one specific denylist entry. Neither argument may equal
+    the lab root, equal each other, or contain the other."""
+    lab_root = validate_dedicated_lab_root(Path(args.lab_root))
+    sandbox = validate_lab_descendant(lab_root, Path(args.sandbox), label="--sandbox")
+    state_root = validate_lab_descendant(lab_root, Path(args.state_root), label="--state-root")
+    if sandbox == state_root:
+        raise PathPolicyError("--sandbox and --state-root must not be the same path: %s" % sandbox)
+    if _path_contains(sandbox, state_root):
+        raise PathPolicyError("--sandbox must not contain --state-root: %s / %s" % (sandbox, state_root))
+    if _path_contains(state_root, sandbox):
+        raise PathPolicyError("--state-root must not contain --sandbox: %s / %s" % (state_root, sandbox))
     if mutating:
         sandbox.mkdir(parents=True, exist_ok=True)
     registry = TrustedExecutorRegistry()
@@ -156,6 +178,9 @@ def cmd_status(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--lab-root", required=True, help="dedicated, pre-created lab root (owned by us, mode 0700) that --sandbox and --state-root must both descend from"
+    )
     parser.add_argument("--sandbox", required=True, help="lab-only sandbox root the canary executor is confined to")
     parser.add_argument("--state-root", required=True, help="provisioning state root (journal/lock/ownership)")
     sub = parser.add_subparsers(dest="command", required=True)

@@ -80,7 +80,9 @@ TRANSACTION_TRANSITIONS: Mapping[TransactionState, frozenset[TransactionState]] 
     ),
     TransactionState.UNINSTALL_PLANNED: frozenset({TransactionState.UNINSTALLING}),
     TransactionState.UNINSTALLING: frozenset({TransactionState.REVOKING_OWNERSHIP, TransactionState.UNINSTALL_FAILED}),
-    TransactionState.REVOKING_OWNERSHIP: frozenset({TransactionState.UNINSTALLED, TransactionState.UNINSTALL_FAILED}),
+    TransactionState.REVOKING_OWNERSHIP: frozenset(
+        {TransactionState.UNINSTALLED, TransactionState.UNINSTALL_FAILED, TransactionState.RECOVERY_REQUIRED}
+    ),
     TransactionState.UNINSTALLED: frozenset(),
     TransactionState.UNINSTALL_FAILED: frozenset({TransactionState.RECOVERY_REQUIRED}),
 }
@@ -203,6 +205,7 @@ class OwnershipCandidate:
     uid: int | None = None
     gid: int | None = None
     mode: int | None = None
+    nlink: int | None = None
     post_install_fingerprint: str | None = None
 
 

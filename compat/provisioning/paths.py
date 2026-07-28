@@ -194,29 +194,11 @@ def _real_product_state_dir() -> Path | None:
     return getattr(config_paths, "SYSTEM_CONFIG_DIR", None)
 
 
-def validate_lab_root(path: Path, *, label: str) -> Path:
-    """Confinement policy for the canary lab harness's ``--sandbox``/
-    ``--state-root`` CLI arguments -- deliberately stricter and independent
-    from ``validate_target_path`` (which requires its allowed root to
-    already exist): these arguments may legitimately name a path that does
-    not exist yet, so every check here must work before any mutation.
-
-    Rejects: a relative path, a ``..`` component, the filesystem root, any
-    of the reserved system roots (``/etc``, ``/usr``, ``/bin``, ``/sbin``,
-    ``/lib``, ``/lib64``, ``/boot``, ``/dev``, ``/proc``, ``/sys``), the
-    real product's own state directory (``/var/lib/watchdogvpn``) or
-    anything under it, ``$HOME`` itself (a private subdirectory *under*
-    ``$HOME`` remains allowed, since some hosts wipe ``/tmp`` on every
-    boot), and a symlink at the leaf or at any existing ancestor component
-    (checked BEFORE any resolution, which would otherwise silently follow
-    it). Returns the resolved, canonical path only once every check has
-    passed."""
-    raw = Path(path)
-    if not raw.is_absolute():
-        raise PathPolicyError("%s must be an absolute path: %s" % (label, raw))
-    if ".." in raw.parts:
-        raise PathPolicyError("%s must not contain '..' components: %s" % (label, raw))
-
+def _reject_symlink_components(raw: Path, *, label: str) -> None:
+    """Walks every existing component of ``raw`` (stopping at the first
+    component that does not yet exist) and rejects a symlink anywhere along
+    the way -- checked BEFORE any resolution, which would otherwise silently
+    follow it."""
     current = Path(raw.anchor)
     for part in raw.relative_to(raw.anchor).parts:
         current = current / part
@@ -225,7 +207,13 @@ def validate_lab_root(path: Path, *, label: str) -> Path:
         if not current.exists():
             break
 
-    resolved = raw.resolve(strict=False)
+
+def _reject_reserved_destination(raw: Path, *, label: str) -> Path:
+    """Rejects the filesystem root, any reserved system root, the real
+    product's own state directory, or ``$HOME`` itself (a private
+    subdirectory *under* ``$HOME`` remains allowed, since some hosts wipe
+    ``/tmp`` on every boot). Returns the resolved, canonical path."""
+    resolved = Path(raw).resolve(strict=False)
     if resolved == Path("/"):
         raise PathPolicyError("%s must not be the filesystem root" % label)
     if resolved == Path.home():
@@ -240,4 +228,77 @@ def validate_lab_root(path: Path, *, label: str) -> Path:
             raise PathPolicyError(
                 "%s must not overlap the real product state directory %s: %s" % (label, resolved_product_dir, raw)
             )
+    return resolved
+
+
+def validate_dedicated_lab_root(path: Path, *, label: str = "--lab-root") -> Path:
+    """Positive confinement policy for the canary lab harness's dedicated
+    ``--lab-root``. Unlike a denylist (which can only ever name the roots it
+    already knows about, and would still accept an arbitrary path like
+    ``/var/log``, ``/var/spool``, ``/opt`` or ``/srv``), every mutating path
+    the harness touches must now be a strict descendant of ONE explicitly
+    validated root.
+
+    The lab root itself must already exist -- it is deliberately never
+    created here, since a dedicated lab root is something the operator
+    creates and approves ahead of time, not something this tool improvises.
+    It must not be a symlink at any component, must be a real directory
+    owned by our own uid, and must be mode exactly ``0700``. It is also
+    rejected outright if it resolves to the filesystem root, a reserved
+    system root, the real product's own state directory, or ``$HOME``
+    itself."""
+    raw = Path(path)
+    if not raw.is_absolute():
+        raise PathPolicyError("%s must be an absolute path: %s" % (label, raw))
+    if ".." in raw.parts:
+        raise PathPolicyError("%s must not contain '..' components: %s" % (label, raw))
+    _reject_symlink_components(raw, label=label)
+    resolved = _reject_reserved_destination(raw, label=label)
+    try:
+        st = os.lstat(raw)
+    except FileNotFoundError as exc:
+        raise PathPolicyError(
+            "%s must already exist as a dedicated, pre-approved directory (never auto-created): %s" % (label, raw)
+        ) from exc
+    if stat_module.S_ISLNK(st.st_mode):
+        raise PathPolicyError("%s must not be a symlink: %s" % (label, raw))
+    if not stat_module.S_ISDIR(st.st_mode):
+        raise PathPolicyError("%s must be a directory: %s" % (label, raw))
+    if st.st_uid != os.getuid():
+        raise PathPolicyError("%s %s is owned by uid %d, expected %d" % (label, raw, st.st_uid, os.getuid()))
+    if stat_module.S_IMODE(st.st_mode) != 0o700:
+        raise PathPolicyError("%s %s must be mode 0700, found %o" % (label, raw, stat_module.S_IMODE(st.st_mode)))
+    return resolved
+
+
+def validate_lab_descendant(lab_root: Path, path: Path, *, label: str) -> Path:
+    """Validates ``path`` (the harness's ``--sandbox``/``--state-root``) as
+    a STRICT descendant of an already-validated ``lab_root`` -- deliberately
+    stricter and independent from ``validate_target_path`` (which requires
+    its allowed root to already exist): ``path`` may legitimately name
+    something that does not exist yet, so every check here works before any
+    mutation.
+
+    Rejects: a relative path, a ``..`` component, a symlink at the leaf or
+    any existing ancestor component, equality with ``lab_root`` itself, and
+    anything that does not resolve to a descendant of ``lab_root``. An
+    arbitrary path outside the lab root (``/var/log``, ``/opt``, ...) is
+    never acceptable no matter what it is, since it can never be a
+    descendant of the one approved root. Also independently re-checked
+    against the reserved-destination policy (filesystem root, reserved
+    system roots, the real product state directory) as defense in depth: a
+    misconfigured ``lab_root`` must never let one of those slip through just
+    because it happens to be nested underneath it."""
+    raw = Path(path)
+    if not raw.is_absolute():
+        raise PathPolicyError("%s must be an absolute path: %s" % (label, raw))
+    if ".." in raw.parts:
+        raise PathPolicyError("%s must not contain '..' components: %s" % (label, raw))
+    _reject_symlink_components(raw, label=label)
+    resolved = _reject_reserved_destination(raw, label=label)
+    lab_root = Path(lab_root)
+    if resolved == lab_root:
+        raise PathPolicyError("%s must not be the lab root itself: %s" % (label, raw))
+    if not _is_under(resolved, lab_root):
+        raise PathPolicyError("%s must be a descendant of the dedicated lab root %s: %s" % (label, lab_root, raw))
     return resolved

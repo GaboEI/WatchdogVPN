@@ -227,15 +227,26 @@ def _load_committed_source_journal(state_root: Path, transaction_id: str, *, cap
     return journal
 
 
-def _capability_has_completed_uninstall(state_root: Path, capability_id: str, target_transaction_id: str) -> bool:
+def _capability_has_completed_uninstall(
+    state_root: Path, capability_id: str, target_transaction_id: str, *, exclude_transaction_id: str | None = None
+) -> bool:
     """True if an uninstall journal exists for this exact source transaction
     that has already progressed past resource removal (``REVOKING_OWNERSHIP``
     or ``UNINSTALLED``). A live ownership record still citing that
     transaction at this point is stale bookkeeping left behind by a crash
     between the resources being removed and ownership being revoked -- it
     must never be trusted as authority again, even if its recorded hash
-    still happens to match a path someone else has since recreated."""
+    still happens to match a path someone else has since recreated.
+
+    ``exclude_transaction_id`` skips one specific uninstall journal (its own
+    ``transaction_id``, never the source ``target_transaction_id``) from the
+    scan -- used when this check is called from THAT very uninstall
+    journal's own in-progress revocation boundary (``_revocation_boundary_is_safe``),
+    where it would otherwise always find itself already sitting at
+    ``REVOKING_OWNERSHIP`` and wrongly self-invalidate its own authority."""
     for transaction_id in journal_mod.list_transaction_ids(state_root):
+        if transaction_id == exclude_transaction_id:
+            continue
         try:
             candidate = journal_mod.read_journal(state_root, transaction_id)
         except (JournalError, IdentifierError):
@@ -249,13 +260,40 @@ def _capability_has_completed_uninstall(state_root: Path, capability_id: str, ta
     return False
 
 
-def validate_ownership_authority(state_root: Path, capability_id: str, records: Sequence[OwnershipRecord]) -> bool:
+def validate_ownership_authority(
+    state_root: Path,
+    capability_id: str,
+    records: Sequence[OwnershipRecord],
+    *,
+    registry: TrustedExecutorRegistry,
+    expected_executor_version: str,
+    context: ExecutionContext,
+    exclude_uninstall_transaction_id: str | None = None,
+) -> bool:
     """Full-set-exact validation binding every product-owned record to one
-    committed "prepare" transaction's own provenance. Never trusts a record
-    in isolation -- an orphaned, partial or divergent record, one bound to a
-    non-committed/mismatched journal, or one left behind by an uninstall that
-    already removed its resources (stale bookkeeping pending revocation),
-    invalidates the entire set."""
+    committed "prepare" transaction's own PLAN -- never to
+    ``journal.provenance``, a second JSON blob that lives inside the very
+    same mutable journal file as the ownership metadata itself. Comparing
+    ownership against provenance alone cannot detect an attacker (or
+    corruption) that edits both consistently: point straight at a foreign
+    resource, adjust ``provenance`` to match, and the old check would pass.
+
+    Instead, the source transaction's plan is independently RECONSTRUCTED
+    here from the trusted executor's own code (``executor.plan_steps``),
+    exactly like ``_recover_one`` already does for recovery, and its digest
+    is reverified against the journal's own ``plan_digest`` -- never read
+    back from the journal's persisted step targets/intents, which is itself
+    tamperable. Each ownership record's resource_identity must then match
+    exactly one ``VERIFIED`` step of that reconstructed plan (a set-exact,
+    both-directions check). This deliberately never re-stats the live
+    filesystem: this function is also called mid-recovery, while a resume in
+    progress may legitimately have already altered the resource -- that is
+    ``_detect_ownership_drift``'s job, run later and only once, right before
+    the actual unlink. Never trusts a record in isolation -- an orphaned,
+    partial or divergent record, one bound to a non-committed/mismatched
+    journal, or one left behind by an uninstall that already removed its
+    resources (stale bookkeeping pending revocation), invalidates the entire
+    set."""
     owned = [record for record in records if record.product_owned]
     if not owned:
         return True
@@ -269,36 +307,69 @@ def validate_ownership_authority(state_root: Path, capability_id: str, records: 
     if journal is None:
         return False
 
-    if _capability_has_completed_uninstall(state_root, capability_id, transaction_id):
+    if _capability_has_completed_uninstall(
+        state_root, capability_id, transaction_id, exclude_transaction_id=exclude_uninstall_transaction_id
+    ):
         return False
 
-    provenance_records = journal.provenance.get("ownership_records")
-    if not isinstance(provenance_records, list):
+    try:
+        executor = registry.resolve(
+            method_kind=journal.selected_method["kind"],
+            method_id=journal.selected_method["id"],
+            expected_executor_version=journal.executor.get("version", expected_executor_version),
+        )
+    except (ExecutorNotRegisteredError, KeyError):
         return False
-    provenance_by_identity = {}
-    for item in provenance_records:
-        if not isinstance(item, dict) or "resource_identity" not in item:
-            return False
-        provenance_by_identity[item["resource_identity"]] = item
 
-    if set(provenance_by_identity) != {record.candidate.resource_identity for record in owned}:
+    try:
+        steps = executor.plan_steps(capability_id=journal.capability_id, dependency_id=journal.dependency_id, context=context)
+        plan = ProvisioningPlan(
+            capability_id=journal.capability_id,
+            dependency_id=journal.dependency_id,
+            resolved_target=journal.target,
+            architecture=journal.architecture,
+            support_classification=journal.support_classification,
+            selected_method_id=journal.selected_method["id"],
+            selected_method_kind=journal.selected_method["kind"],
+            postcondition=executor.postcondition_description(),
+            executor_id=journal.executor["id"],
+            executor_version=journal.executor["version"],
+            steps=steps,
+            selected_asset=journal.selected_asset,
+        )
+    except (ValueError, KeyError):
+        return False
+
+    if compute_plan_digest(plan) != journal.plan_digest:
+        return False
+
+    verified_sequences = {step.sequence for step in journal.steps if step.state == StepState.VERIFIED}
+    expected_by_identity = {step.target: step for step in plan.steps if step.sequence in verified_sequences and step.target}
+
+    if set(expected_by_identity) != {record.candidate.resource_identity for record in owned}:
         return False
 
     for record in owned:
-        expected = provenance_by_identity.get(record.candidate.resource_identity)
-        if expected is None:
+        candidate = record.candidate
+        expected_step = expected_by_identity.get(candidate.resource_identity)
+        if expected_step is None:
             return False
-        if expected.get("integrity") != record.candidate.integrity:
+        if candidate.pre_existing:
             return False
-        if expected.get("artifact_type") != record.candidate.artifact_type:
+        if candidate.source is not None or candidate.version is not None:
             return False
-        if expected.get("executor_id") != record.executor_id or expected.get("executor_version") != record.executor_version:
+        if candidate.post_install_fingerprint != candidate.integrity:
             return False
-        if expected.get("method_id") != record.candidate.method_id:
+        if candidate.method_id != journal.selected_method.get("id"):
             return False
         if record.executor_id != journal.executor.get("id") or record.executor_version != journal.executor.get("version"):
             return False
-        if record.candidate.method_id != journal.selected_method.get("id"):
+        if record.created_by_transaction != journal.transaction_id:
+            return False
+        expected_sha256 = expected_step.intent.get("content_sha256")
+        if expected_sha256 is not None and candidate.integrity != expected_sha256:
+            return False
+        if candidate.artifact_type != "file":
             return False
 
     return True
@@ -316,6 +387,8 @@ def check_idempotency(
     *,
     existing_ownership: Sequence[OwnershipRecord],
     state_root: Path,
+    registry: TrustedExecutorRegistry,
+    expected_executor_version: str,
 ) -> IdempotencyCheck:
     inspections = []
     for step in plan.steps:
@@ -354,7 +427,10 @@ def check_idempotency(
     if len(owned_by_this_plan) != len(plan.steps):
         return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
 
-    if not validate_ownership_authority(state_root, plan.capability_id, owned_by_this_plan):
+    if not validate_ownership_authority(
+        state_root, plan.capability_id, owned_by_this_plan,
+        registry=registry, expected_executor_version=expected_executor_version, context=context,
+    ):
         return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
 
     # Idempotency is tied to the FULL plan, not just ownership/resource
@@ -659,7 +735,13 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
     ``None`` metadata (which would grant uninstall/idempotency authority over
     a resource whose ownership was never actually confirmed); it raises
     ``ProvisioningError`` instead, so the caller can drive the transaction to
-    ``RECOVERY_REQUIRED`` rather than a false ``COMMITTED``."""
+    ``RECOVERY_REQUIRED`` rather than a false ``COMMITTED``.
+
+    The metadata found is never simply adopted as the new expectation: the
+    expected mode/uid/gid come from the plan's own step ``intent`` (part of
+    ``plan_digest``, hence tamper-evident -- see ``CanaryExecutor.plan_steps``)
+    and the live re-stat is checked AGAINST that expectation, closing the
+    window between the executor's own ``verify_postcondition`` and commit."""
     records = []
     for step in journal.steps:
         undo_record = step.undo_record or {}
@@ -673,6 +755,21 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             raise ProvisioningError("cannot finalize ownership for %s: not a regular, non-symlink file" % resource_identity)
         if identity["nlink"] != 1:
             raise ProvisioningError("cannot finalize ownership for %s: unexpected hard link count %d" % (resource_identity, identity["nlink"]))
+        expected_mode = step.intent.get("expected_mode")
+        if expected_mode is not None and identity["mode"] != expected_mode:
+            raise ProvisioningError(
+                "cannot finalize ownership for %s: mode is %o, expected %o" % (resource_identity, identity["mode"], expected_mode)
+            )
+        expected_uid = step.intent.get("expected_uid")
+        if expected_uid is not None and identity["uid"] != expected_uid:
+            raise ProvisioningError(
+                "cannot finalize ownership for %s: uid is %d, expected %d" % (resource_identity, identity["uid"], expected_uid)
+            )
+        expected_gid = step.intent.get("expected_gid")
+        if expected_gid is not None and identity["gid"] != expected_gid:
+            raise ProvisioningError(
+                "cannot finalize ownership for %s: gid is %d, expected %d" % (resource_identity, identity["gid"], expected_gid)
+            )
         candidate = OwnershipCandidate(
             artifact_type="file",
             resource_identity=str(validated),
@@ -682,6 +779,7 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             uid=identity["uid"],
             gid=identity["gid"],
             mode=identity["mode"],
+            nlink=identity["nlink"],
             post_install_fingerprint=undo_record.get("expected_sha256"),
         )
         records.append(
@@ -775,7 +873,10 @@ def prepare(decision: ResolutionDecision, env: ProvisioningEnvironment, *, apply
             )
 
         existing_ownership = journal_mod.read_ownership_records(env.state_root, plan.capability_id)
-        idempotency = check_idempotency(plan, executor, env.context, existing_ownership=existing_ownership, state_root=env.state_root)
+        idempotency = check_idempotency(
+            plan, executor, env.context, existing_ownership=existing_ownership, state_root=env.state_root,
+            registry=env.registry, expected_executor_version=env.expected_executor_version,
+        )
         if idempotency.outcome == IdempotencyOutcome.ALREADY_PRESENT:
             return PrepareOutcome(PrepareStatus.ALREADY_PRESENT, plan, None, "capability already present before WatchdogVPN; no write performed, no uninstall right granted")
         if idempotency.outcome == IdempotencyOutcome.ALREADY_PROVISIONED:
@@ -985,7 +1086,9 @@ def _recover_one(
         # uninstall's own recovery never dispatches through an Executor at
         # all (see _run_uninstall_loop), so it must never attempt to
         # resolve one.
-        return _recover_uninstall(state_root, journal, context)
+        return _recover_uninstall(
+            state_root, journal, context, registry=registry, expected_executor_version=expected_executor_version
+        )
 
     try:
         executor = registry.resolve(
@@ -1128,7 +1231,14 @@ def _inspect_recovery_boundary(journal: TransactionJournal, executor: Executor, 
     return _Verdict.AMBIGUOUS, "unrecognized transaction state for recovery: %s" % journal.state.value
 
 
-def _recover_uninstall(state_root: Path, journal: TransactionJournal, context: ExecutionContext) -> RecoveryDecision:
+def _recover_uninstall(
+    state_root: Path,
+    journal: TransactionJournal,
+    context: ExecutionContext,
+    *,
+    registry: TrustedExecutorRegistry,
+    expected_executor_version: str,
+) -> RecoveryDecision:
     """Resumes an uninstall at whichever boundary it was interrupted at:
     still removing resources (``UNINSTALLING``), or all resources already
     confirmed removed and only ownership revocation remained
@@ -1136,7 +1246,11 @@ def _recover_uninstall(state_root: Path, journal: TransactionJournal, context: E
     prior failed attempt), the correct boundary is determined from the
     steps' own recorded state -- never from a collapsed prior top-level
     state -- since a failure during revocation looks identical, at the
-    top level, to one during the unlink loop."""
+    top level, to one during the unlink loop. Reaching ``REVOKING_OWNERSHIP``
+    (whether just transitioned into or resumed directly at) never by itself
+    authorizes a revoke: see ``_revocation_boundary_is_safe``, which
+    independently reconfirms the snapshot/digest/step-states/live-absence
+    before ever calling ``_revoke_ownership_and_verify``."""
     now = context.now
     for step in journal.steps:
         if step.state == StepState.VERIFY_FAILED or step.state == StepState.APPLY_FAILED:
@@ -1155,7 +1269,9 @@ def _recover_uninstall(state_root: Path, journal: TransactionJournal, context: E
         journal_mod.write_journal(state_root, journal)
 
     if journal.state == TransactionState.UNINSTALLING:
-        journal, ok, residuals = _run_uninstall_loop(state_root, journal, context)
+        journal, ok, residuals = _run_uninstall_loop(
+            state_root, journal, context, registry=registry, expected_executor_version=expected_executor_version
+        )
         if not ok:
             journal = journal.with_state(TransactionState.UNINSTALL_FAILED, now=now(), failure={"residuals": residuals})
             journal_mod.write_journal(state_root, journal)
@@ -1163,9 +1279,22 @@ def _recover_uninstall(state_root: Path, journal: TransactionJournal, context: E
         journal = journal.with_state(TransactionState.REVOKING_OWNERSHIP, now=now())
         journal_mod.write_journal(state_root, journal)
 
-    # journal.state == TransactionState.REVOKING_OWNERSHIP here: all
-    # resources are confirmed removed; only revocation remains, and it is
-    # safe to retry unconditionally since it is fully idempotent.
+    # journal.state == TransactionState.REVOKING_OWNERSHIP here -- but this
+    # is never trusted as sufficient on its own, nor is journal.steps' own
+    # recorded state in isolation: independently reconfirm from the
+    # snapshot's own digest, the source transaction's authority, every
+    # step's real VERIFIED state, and a live recheck that none of the
+    # snapshotted resources are still present before ever revoking.
+    safe, unsafe_reason = _revocation_boundary_is_safe(
+        state_root, journal, registry=registry, expected_executor_version=expected_executor_version, context=context
+    )
+    if not safe:
+        journal = journal.with_state(
+            TransactionState.RECOVERY_REQUIRED, now=now(), recovery={"reason": "unsafe to revoke ownership: %s" % unsafe_reason}
+        )
+        journal_mod.write_journal(state_root, journal)
+        return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, "unsafe to revoke ownership: %s" % unsafe_reason)
+
     revoked, revoke_error = _revoke_ownership_and_verify(state_root, journal.capability_id)
     if revoked:
         journal = journal.with_state(TransactionState.UNINSTALLED, now=now())
@@ -1201,7 +1330,14 @@ def _build_uninstall_plan(capability_id: str, owned: Sequence[OwnershipRecord]) 
     )
 
 
-def _uninstall_source_matches(state_root: Path, journal: TransactionJournal) -> bool:
+def _uninstall_source_matches(
+    state_root: Path,
+    journal: TransactionJournal,
+    *,
+    registry: TrustedExecutorRegistry,
+    expected_executor_version: str,
+    context: ExecutionContext,
+) -> bool:
     """Re-derives the uninstall plan from the journal's OWN immutable
     ``owned_snapshot`` -- never the live ownership file, which recovery must
     not depend on exclusively (it may already be gone by the time recovery
@@ -1214,7 +1350,10 @@ def _uninstall_source_matches(state_root: Path, journal: TransactionJournal) -> 
     owned = [record for record in journal.owned_snapshot if record.product_owned]
     if not owned:
         return False
-    if not validate_ownership_authority(state_root, journal.capability_id, owned):
+    if not validate_ownership_authority(
+        state_root, journal.capability_id, owned,
+        registry=registry, expected_executor_version=expected_executor_version, context=context,
+    ):
         return False
     try:
         candidate_plan = _build_uninstall_plan(journal.capability_id, owned)
@@ -1223,15 +1362,70 @@ def _uninstall_source_matches(state_root: Path, journal: TransactionJournal) -> 
     return compute_uninstall_plan_digest(candidate_plan) == journal.plan_digest
 
 
+def _revocation_boundary_is_safe(
+    state_root: Path,
+    journal: TransactionJournal,
+    *,
+    registry: TrustedExecutorRegistry,
+    expected_executor_version: str,
+    context: ExecutionContext,
+) -> tuple[bool, str | None]:
+    """Independently re-confirms, from first principles, that it is safe to
+    revoke ownership -- never trusting the top-level transaction state
+    (``REVOKING_OWNERSHIP``) alone, and never trusting ``journal.steps``'
+    own recorded state in isolation either. Recomputes the uninstall plan
+    digest fresh from the journal's immutable ``owned_snapshot``, reverifies
+    the snapshot against the source ("prepare") transaction, requires every
+    step to be exactly ``VERIFIED``, and independently re-confirms on disk
+    that none of the snapshotted resources are still present. Any
+    impossible combination -- a step not ``VERIFIED``, a digest mismatch, an
+    invalid snapshot, a resource still present, or an inspection error --
+    means the caller must treat this as ``RECOVERY_REQUIRED`` and never
+    revoke ownership."""
+    owned = [record for record in journal.owned_snapshot if record.product_owned]
+    if not owned:
+        return False, "empty ownership snapshot"
+    if not validate_ownership_authority(
+        state_root, journal.capability_id, owned,
+        registry=registry, expected_executor_version=expected_executor_version, context=context,
+        exclude_uninstall_transaction_id=journal.transaction_id,
+    ):
+        return False, "ownership snapshot no longer traces to a valid committed transaction"
+    try:
+        candidate_plan = _build_uninstall_plan(journal.capability_id, owned)
+    except ValueError as exc:
+        return False, "cannot rebuild uninstall plan from snapshot: %s" % exc
+    if compute_uninstall_plan_digest(candidate_plan) != journal.plan_digest:
+        return False, "uninstall plan digest no longer matches the journal's own snapshot"
+    if any(step.state != StepState.VERIFIED for step in journal.steps):
+        return False, "not every uninstall step is VERIFIED"
+    for record in owned:
+        try:
+            os.lstat(record.candidate.resource_identity)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return False, "cannot confirm resource %s is absent: %s" % (record.candidate.resource_identity, exc)
+        return False, "resource %s is still present" % record.candidate.resource_identity
+    return True, None
+
+
 def _revoke_ownership_and_verify(state_root: Path, capability_id: str) -> tuple[bool, str | None]:
     """Durably revoke (tombstone) the live ownership file and verify the
     revocation actually landed -- idempotent, so recovery can safely call
     this again after a crash whether the delete itself already happened or
-    not. Never raises: a failure is reported as ``(False, reason)`` so the
-    caller can drive the transaction to a recoverable failure state instead
-    of crashing mid-uninstall."""
+    not. Never raises: EVERY controlled failure -- a plain ``OSError`` from
+    the unlink itself, or a ``DurabilityError`` from the parent-directory
+    fsync that follows it (the unlink may have genuinely succeeded, but its
+    survival across a crash is then unconfirmed) -- is reported as
+    ``(False, reason)``, never an unhandled exception. This is what lets the
+    caller drive the transaction to a recoverable failure state instead of
+    crashing mid-uninstall, and guarantees the transaction can never reach
+    ``UNINSTALLED`` while revocation durability is unconfirmed."""
     try:
         journal_mod.delete_ownership_records(state_root, capability_id)
+    except DurabilityError as exc:
+        return False, "ownership revocation durability could not be confirmed: %s" % exc
     except OSError as exc:
         return False, "failed to revoke ownership: %s" % exc
     path = journal_mod.ownership_path(state_root, capability_id)
@@ -1291,8 +1485,9 @@ def _detect_ownership_drift(record: OwnershipRecord, validated_path: Path) -> st
         identity = stat_identity(validated_path)
     except OSError as exc:
         return "cannot inspect current identity: %s" % exc
-    if identity["nlink"] != 1:
-        return "hard link count drifted to %d (expected 1)" % identity["nlink"]
+    expected_nlink = candidate.nlink if candidate.nlink is not None else 1
+    if identity["nlink"] != expected_nlink:
+        return "hard link count drifted to %d (expected %d)" % (identity["nlink"], expected_nlink)
     if candidate.uid is not None and identity["uid"] != candidate.uid:
         return "owner uid drifted: expected %d, found %d" % (candidate.uid, identity["uid"])
     if candidate.gid is not None and identity["gid"] != candidate.gid:
@@ -1302,7 +1497,14 @@ def _detect_ownership_drift(record: OwnershipRecord, validated_path: Path) -> st
     return None
 
 
-def _run_uninstall_loop(state_root: Path, journal: TransactionJournal, context: ExecutionContext) -> tuple[TransactionJournal, bool, list[str]]:
+def _run_uninstall_loop(
+    state_root: Path,
+    journal: TransactionJournal,
+    context: ExecutionContext,
+    *,
+    registry: TrustedExecutorRegistry,
+    expected_executor_version: str,
+) -> tuple[TransactionJournal, bool, list[str]]:
     """Explicit boundary-by-boundary uninstall state machine:
 
     PLANNED       -> write-ahead APPLYING, then attempt the unlink.
@@ -1315,7 +1517,9 @@ def _run_uninstall_loop(state_root: Path, journal: TransactionJournal, context: 
     VERIFYING     -> verifies ONLY absence; never re-attempts removal.
     """
     now = context.now
-    if not _uninstall_source_matches(state_root, journal):
+    if not _uninstall_source_matches(
+        state_root, journal, registry=registry, expected_executor_version=expected_executor_version, context=context
+    ):
         return journal, False, ["plan_digest_mismatch"]
 
     residuals: list[str] = []
@@ -1446,7 +1650,10 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
             "no product-owned resources recorded for capability %s; nothing to uninstall" % capability_id,
             error_kind="nothing_to_uninstall",
         )
-    if not validate_ownership_authority(env.state_root, capability_id, owned):
+    if not validate_ownership_authority(
+        env.state_root, capability_id, owned,
+        registry=env.registry, expected_executor_version=env.expected_executor_version, context=env.context,
+    ):
         return PrepareOutcome(
             PrepareStatus.OWNERSHIP_INVALID, None, None,
             "ownership records for capability %s do not correspond, in full, to any committed transaction; refusing to uninstall" % capability_id,
@@ -1470,7 +1677,10 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
         owned = [record for record in journal_mod.read_ownership_records(env.state_root, capability_id) if record.product_owned]
         if not owned:
             return PrepareOutcome(PrepareStatus.OUT_OF_CONTRACT, None, None, "nothing to uninstall", error_kind="nothing_to_uninstall")
-        if not validate_ownership_authority(env.state_root, capability_id, owned):
+        if not validate_ownership_authority(
+            env.state_root, capability_id, owned,
+            registry=env.registry, expected_executor_version=env.expected_executor_version, context=env.context,
+        ):
             return PrepareOutcome(
                 PrepareStatus.OWNERSHIP_INVALID, None, None,
                 "ownership records for capability %s do not correspond, in full, to any committed transaction; refusing to uninstall" % capability_id,
@@ -1484,7 +1694,9 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
         journal = journal.with_state(TransactionState.UNINSTALLING, now=now())
         journal_mod.write_journal(env.state_root, journal)
 
-        journal, ok, residuals = _run_uninstall_loop(env.state_root, journal, env.context)
+        journal, ok, residuals = _run_uninstall_loop(
+            env.state_root, journal, env.context, registry=env.registry, expected_executor_version=env.expected_executor_version
+        )
 
         if not ok:
             journal = journal.with_state(TransactionState.UNINSTALL_FAILED, now=now(), failure={"residuals": residuals})
@@ -1502,6 +1714,21 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
         # recognizes and rejects exactly that stale window on recovery).
         journal = journal.with_state(TransactionState.REVOKING_OWNERSHIP, now=now())
         journal_mod.write_journal(env.state_root, journal)
+
+        safe, unsafe_reason = _revocation_boundary_is_safe(
+            env.state_root, journal,
+            registry=env.registry, expected_executor_version=env.expected_executor_version, context=env.context,
+        )
+        if not safe:
+            journal = journal.with_state(
+                TransactionState.RECOVERY_REQUIRED, now=now(), recovery={"reason": "unsafe to revoke ownership: %s" % unsafe_reason}
+            )
+            journal_mod.write_journal(env.state_root, journal)
+            return PrepareOutcome(
+                PrepareStatus.RECOVERY_REQUIRED, None, transaction_id,
+                "unsafe to revoke ownership: %s" % unsafe_reason, error_kind="recovery_required",
+            )
+
         revoked, revoke_error = _revoke_ownership_and_verify(env.state_root, capability_id)
         if revoked:
             journal = journal.with_state(TransactionState.UNINSTALLED, now=now())
