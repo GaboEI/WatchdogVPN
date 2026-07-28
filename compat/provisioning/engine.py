@@ -53,10 +53,12 @@ from compat.provisioning.model import (
 )
 from compat.provisioning.paths import (
     AllowedRootHandle,
+    capture_intermediate_identities,
     confirm_absent_descriptor_safe,
     open_allowed_root,
     remove_file_if_owned_relative,
     stat_identity_relative,
+    verify_intermediate_identities,
     validate_target_path,
 )
 from compat.provisioning.storage import StateRootHandle
@@ -163,19 +165,17 @@ def _eager_cache_intermediates_for_targets(context: ExecutionContext, targets) -
     directory an attacker swapped in during the narrow window between the
     lock being acquired and that first access, with no earlier-cached
     identity to detect the divergence against. A target that fails
-    structural validation here is silently skipped -- it is properly
-    rejected later at its real use site with a clear, specific error."""
+    structural validation here fails closed immediately -- never silently
+    skipped -- because the very first descriptor capture is part of the
+    security boundary."""
     for target in targets:
         if not target:
             continue
-        try:
-            validated = validate_target_path(Path(target), allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
-            handle = handle_for_allowed_root(context, validated)
-            relative = validated.relative_to(handle.path)
-            if relative.parts[:-1]:
-                handle.intermediate_fd(relative.parts[:-1])
-        except PathPolicyError:
-            continue
+        validated = _validate_owned_resource_path_for_authority(str(target), context)
+        handle = handle_for_allowed_root(context, validated)
+        relative = validated.relative_to(handle.path)
+        if relative.parts[:-1]:
+            handle.intermediate_fd(relative.parts[:-1])
 
 
 def _verify_allowed_roots_identity(context: ExecutionContext) -> None:
@@ -190,6 +190,54 @@ def _verify_allowed_roots_identity(context: ExecutionContext) -> None:
     ``prepare()``/``uninstall()``/``recover_pending()`` already install."""
     for handle in context.allowed_root_handles:
         handle.verify_identity()
+
+
+def _verify_terminal_identity(context: ExecutionContext, records: Sequence[OwnershipRecord] = ()) -> None:
+    _verify_allowed_roots_identity(context)
+    for record in records:
+        if record.product_owned and record.candidate.intermediate_identities:
+            validated = validate_target_path(
+                Path(record.candidate.resource_identity),
+                allowed_roots=context.allowed_roots,
+                forbidden_roots=context.forbidden_roots,
+            )
+            handle = handle_for_allowed_root(context, validated)
+            verify_intermediate_identities(handle, record.candidate.intermediate_identities)
+
+
+def _ownership_intermediates_are_current(record: OwnershipRecord, context: ExecutionContext) -> bool:
+    if not context.allowed_root_handles:
+        return True
+    try:
+        validated = _validate_owned_resource_path_for_authority(record.candidate.resource_identity, context)
+        handle = handle_for_allowed_root(context, validated)
+        verify_intermediate_identities(handle, record.candidate.intermediate_identities)
+        return True
+    except (OSError, PathPolicyError):
+        return False
+
+
+def _validate_owned_resource_path_for_authority(resource_identity: str, context: ExecutionContext) -> Path:
+    path = Path(resource_identity)
+    if not path.is_absolute() or ".." in path.parts:
+        raise PathPolicyError("owned resource path must be absolute and must not contain '..': %s" % resource_identity)
+    for forbidden in context.forbidden_roots:
+        forbidden = Path(forbidden)
+        if path == forbidden or _path_is_under(path, forbidden):
+            raise PathPolicyError("owned resource path falls under forbidden root %s: %s" % (forbidden, path))
+    for root in context.allowed_roots:
+        root = Path(root)
+        if path == root or _path_is_under(path, root):
+            return path
+    raise PathPolicyError("owned resource path %s is outside every allowed root" % resource_identity)
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 class IdempotencyOutcome(Enum):
@@ -519,6 +567,16 @@ def validate_ownership_authority(
         if candidate.nlink != expected.nlink:
             return False
         if candidate.post_install_fingerprint != expected.post_install_fingerprint:
+            return False
+        try:
+            validated = _validate_owned_resource_path_for_authority(candidate.resource_identity, context)
+            allowed_root = next(root for root in context.allowed_roots if validated == root or _path_is_under(validated, root))
+            relative = validated.relative_to(allowed_root)
+        except (OSError, PathPolicyError, ValueError, StopIteration):
+            return False
+        if relative.parts[:-1] and not candidate.intermediate_identities:
+            return False
+        if not _ownership_intermediates_are_current(record, context):
             return False
         if record.executor_id != journal.executor.get("id") or record.executor_version != journal.executor.get("version"):
             return False
@@ -1021,6 +1079,7 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             validated = validate_target_path(Path(resource_identity), allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
             handle = handle_for_allowed_root(context, validated)
             identity = stat_identity_relative(handle, validated)
+            intermediate_identities = capture_intermediate_identities(handle, validated)
         except (PathPolicyError, OSError) as exc:
             raise ProvisioningError("cannot finalize ownership for %s: %s" % (resource_identity, exc)) from exc
         if identity["is_symlink"] or not identity["is_regular"]:
@@ -1062,6 +1121,7 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             mode=identity["mode"] if expected.mode is not None else None,
             nlink=identity["nlink"] if expected.nlink is not None else None,
             post_install_fingerprint=expected.post_install_fingerprint,
+            intermediate_identities=intermediate_identities,
         )
         records.append(
             OwnershipRecord(
@@ -1089,6 +1149,16 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
                 "executor_id": r.executor_id,
                 "executor_version": r.executor_version,
                 "method_id": r.candidate.method_id,
+                "intermediate_identities": [
+                    {
+                        "relative_name": identity.relative_name,
+                        "dev": identity.dev,
+                        "ino": identity.ino,
+                        "uid": identity.uid,
+                        "mode": identity.mode,
+                    }
+                    for identity in r.candidate.intermediate_identities
+                ],
             }
             for r in records
         ],
@@ -1234,7 +1304,7 @@ def _finish_prepare(
             residuals=(step_id,) if step_id else ("unknown",), error_kind="durability_unknown",
         )
     if apply_ok:
-        _verify_allowed_roots_identity(context)
+        _verify_terminal_identity(context)
         try:
             provenance = _finalize_provenance(state_root, journal, plan, executor, context, now())
         except ProvisioningError as exc:
@@ -1255,8 +1325,10 @@ def _finish_prepare(
 
     journal, rollback_ok, residuals = _run_rollback(state_root, journal, executor, context)
     if rollback_ok:
+        _verify_terminal_identity(context)
         journal = journal.with_state(TransactionState.ROLLED_BACK, now=now())
         journal_mod.write_journal(state_root, journal)
+        _verify_terminal_identity(context)
         journal = journal.with_state(TransactionState.PREPARATION_FAILED, now=now())
         journal_mod.write_journal(state_root, journal)
         return PrepareOutcome(PrepareStatus.PREPARATION_FAILED, plan, transaction_id, "provisioning failed; rollback completed cleanly", residuals=())
@@ -1479,7 +1551,7 @@ def _recover_one(
             journal_mod.write_journal(state_root, journal)
         journal, apply_ok, durability_unknown = _apply_and_verify(state_root, journal, plan, executor, context)
         if apply_ok:
-            _verify_allowed_roots_identity(context)
+            _verify_terminal_identity(context)
             try:
                 provenance = _finalize_provenance(state_root, journal, plan, executor, context, now())
             except ProvisioningError as exc:
@@ -1498,21 +1570,25 @@ def _recover_one(
             return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, "durability could not be confirmed during recovery; manual review required")
         # _apply_and_verify already drove the journal into ROLLING_BACK on failure.
         journal, rollback_ok, residuals = _run_rollback(state_root, journal, executor, context)
-        return _finalize_recovery_rollback(state_root, journal, rollback_ok, residuals)
+        return _finalize_recovery_rollback(state_root, journal, rollback_ok, residuals, context)
 
     # RESUME_ROLLBACK
     if journal.state == TransactionState.RECOVERING:
         journal = journal.with_state(TransactionState.ROLLING_BACK, now=now())
         journal_mod.write_journal(state_root, journal)
     journal, rollback_ok, residuals = _run_rollback(state_root, journal, executor, context)
-    return _finalize_recovery_rollback(state_root, journal, rollback_ok, residuals)
+    return _finalize_recovery_rollback(state_root, journal, rollback_ok, residuals, context)
 
 
-def _finalize_recovery_rollback(state_root: Path, journal: TransactionJournal, rollback_ok: bool, residuals: list[str]) -> RecoveryDecision:
+def _finalize_recovery_rollback(
+    state_root: Path, journal: TransactionJournal, rollback_ok: bool, residuals: list[str], context: ExecutionContext
+) -> RecoveryDecision:
     now = journal.updated_at
     if rollback_ok:
+        _verify_terminal_identity(context)
         journal = journal.with_state(TransactionState.ROLLED_BACK, now=now)
         journal_mod.write_journal(state_root, journal)
+        _verify_terminal_identity(context)
         journal = journal.with_state(TransactionState.PREPARATION_FAILED, now=now)
         journal_mod.write_journal(state_root, journal)
         return RecoveryDecision(journal.transaction_id, RecoveryAction.ROLLBACK, "resumed rollback completed cleanly")
@@ -1607,6 +1683,13 @@ def _recover_uninstall(
             state_root, journal, context, registry=registry, expected_executor_version=expected_executor_version
         )
         if not ok:
+            if _uninstall_failure_requires_recovery(journal) or _uninstall_residuals_require_recovery(residuals):
+                journal = journal.with_state(
+                    TransactionState.RECOVERY_REQUIRED, now=now(),
+                    recovery={"reason": "uninstall path policy failure; manual recovery required", "residuals": residuals},
+                )
+                journal_mod.write_journal(state_root, journal)
+                return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, "uninstall path policy failure; manual recovery required")
             journal = journal.with_state(TransactionState.UNINSTALL_FAILED, now=now(), failure={"residuals": residuals})
             journal_mod.write_journal(state_root, journal)
             return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, "uninstall did not complete for all resources during recovery")
@@ -1629,9 +1712,10 @@ def _recover_uninstall(
         journal_mod.write_journal(state_root, journal)
         return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, "unsafe to revoke ownership: %s" % unsafe_reason)
 
-    _verify_allowed_roots_identity(context)
+    _verify_terminal_identity(context, journal.owned_snapshot)
     revoked, revoke_error = _revoke_ownership_and_verify(state_root, journal.capability_id)
     if revoked:
+        _verify_terminal_identity(context, journal.owned_snapshot)
         journal = journal.with_state(TransactionState.UNINSTALLED, now=now())
         journal_mod.write_journal(state_root, journal)
         return RecoveryDecision(journal.transaction_id, RecoveryAction.RESUME, "resumed uninstall and completed")
@@ -1859,6 +1943,14 @@ def _mark_uninstall_step_failed(record: StepRecord, error_kind: str, error: str,
     return record.with_state(StepState.APPLY_FAILED, completed_at=now_value, error_kind=error_kind, error=error)
 
 
+def _uninstall_failure_requires_recovery(journal: TransactionJournal) -> bool:
+    return any(step.error_kind == "path_policy_violation" for step in journal.steps)
+
+
+def _uninstall_residuals_require_recovery(residuals: Sequence[str]) -> bool:
+    return "identity_mismatch" in residuals
+
+
 def _detect_ownership_drift(record: OwnershipRecord, validated_path: Path, handle: AllowedRootHandle) -> str | None:
     """Compares a resource's CURRENT uid/gid/mode/hard-link-count/canonical
     path against what its ``OwnershipRecord`` captured at commit time (the
@@ -1878,6 +1970,10 @@ def _detect_ownership_drift(record: OwnershipRecord, validated_path: Path, handl
         identity = stat_identity_relative(handle, validated_path)
     except (OSError, PathPolicyError) as exc:
         return "cannot inspect current identity: %s" % exc
+    try:
+        verify_intermediate_identities(handle, candidate.intermediate_identities)
+    except (OSError, PathPolicyError) as exc:
+        return "intermediate identity drifted: %s" % exc
     expected_nlink = candidate.nlink if candidate.nlink is not None else 1
     if identity["nlink"] != expected_nlink:
         return "hard link count drifted to %d (expected %d)" % (identity["nlink"], expected_nlink)
@@ -1913,6 +2009,10 @@ def _run_uninstall_loop(
     if not _uninstall_source_matches(
         state_root, journal, registry=registry, expected_executor_version=expected_executor_version, context=context
     ):
+        try:
+            _verify_terminal_identity(context, journal.owned_snapshot)
+        except (StateRootIdentityError, PathPolicyError):
+            return journal, False, ["identity_mismatch"]
         return journal, False, ["plan_digest_mismatch"]
 
     # Point 2, fifth correction round: reconfirm every allowed root's
@@ -2107,6 +2207,17 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
                 )
 
                 if not ok:
+                    if _uninstall_failure_requires_recovery(journal) or _uninstall_residuals_require_recovery(residuals):
+                        journal = journal.with_state(
+                            TransactionState.RECOVERY_REQUIRED, now=now(),
+                            recovery={"reason": "uninstall path policy failure; manual recovery required", "residuals": residuals},
+                        )
+                        journal_mod.write_journal(handle, journal)
+                        return PrepareOutcome(
+                            PrepareStatus.RECOVERY_REQUIRED, None, transaction_id,
+                            "uninstall path policy failure; manual recovery required",
+                            residuals=tuple(residuals), error_kind="recovery_required",
+                        )
                     journal = journal.with_state(TransactionState.UNINSTALL_FAILED, now=now(), failure={"residuals": residuals})
                     journal_mod.write_journal(handle, journal)
                     return PrepareOutcome(
@@ -2137,9 +2248,10 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
                         "unsafe to revoke ownership: %s" % unsafe_reason, error_kind="recovery_required",
                     )
 
-                _verify_allowed_roots_identity(locked_context)
+                _verify_terminal_identity(locked_context, owned)
                 revoked, revoke_error = _revoke_ownership_and_verify(handle, capability_id)
                 if revoked:
+                    _verify_terminal_identity(locked_context, owned)
                     journal = journal.with_state(TransactionState.UNINSTALLED, now=now())
                     journal_mod.write_journal(handle, journal)
                     return PrepareOutcome(PrepareStatus.UNINSTALLED, None, transaction_id, "uninstalled %d resource(s)" % len(owned))

@@ -79,7 +79,9 @@ TRANSACTION_TRANSITIONS: Mapping[TransactionState, frozenset[TransactionState]] 
         }
     ),
     TransactionState.UNINSTALL_PLANNED: frozenset({TransactionState.UNINSTALLING}),
-    TransactionState.UNINSTALLING: frozenset({TransactionState.REVOKING_OWNERSHIP, TransactionState.UNINSTALL_FAILED}),
+    TransactionState.UNINSTALLING: frozenset(
+        {TransactionState.REVOKING_OWNERSHIP, TransactionState.UNINSTALL_FAILED, TransactionState.RECOVERY_REQUIRED}
+    ),
     TransactionState.REVOKING_OWNERSHIP: frozenset(
         {TransactionState.UNINSTALLED, TransactionState.UNINSTALL_FAILED, TransactionState.RECOVERY_REQUIRED}
     ),
@@ -194,6 +196,15 @@ class RecoveryDecision:
 
 
 @dataclass(frozen=True)
+class IntermediateIdentity:
+    relative_name: str
+    dev: int
+    ino: int
+    uid: int
+    mode: int
+
+
+@dataclass(frozen=True)
 class OwnershipCandidate:
     artifact_type: str
     resource_identity: str
@@ -207,6 +218,7 @@ class OwnershipCandidate:
     mode: int | None = None
     nlink: int | None = None
     post_install_fingerprint: str | None = None
+    intermediate_identities: tuple[IntermediateIdentity, ...] = ()
 
 
 @dataclass(frozen=True)

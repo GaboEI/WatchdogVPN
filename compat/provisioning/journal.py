@@ -21,6 +21,7 @@ from typing import Mapping, Sequence
 
 from compat.provisioning.errors import CorruptStateError, IdentifierError, JournalError
 from compat.provisioning.model import (
+    IntermediateIdentity,
     OwnershipCandidate,
     OwnershipRecord,
     StepState,
@@ -58,8 +59,11 @@ _OWNERSHIP_CANDIDATE_FIELDS = frozenset(
     {
         "artifact_type", "resource_identity", "pre_existing", "method_id", "source",
         "version", "integrity", "uid", "gid", "mode", "nlink", "post_install_fingerprint",
+        "intermediate_identities",
     }
 )
+
+_INTERMEDIATE_IDENTITY_FIELDS = frozenset({"relative_name", "dev", "ino", "uid", "mode"})
 
 
 @dataclass(frozen=True)
@@ -316,6 +320,7 @@ def _ownership_to_jsonable(record: OwnershipRecord) -> dict:
             "mode": candidate.mode,
             "nlink": candidate.nlink,
             "post_install_fingerprint": candidate.post_install_fingerprint,
+            "intermediate_identities": [_intermediate_identity_to_jsonable(item) for item in candidate.intermediate_identities],
         },
     }
 
@@ -346,6 +351,10 @@ def _ownership_from_jsonable(data: object) -> OwnershipRecord:
             mode=_require_optional_mode(candidate_data, "mode"),
             nlink=_require_optional_non_negative_int(candidate_data, "nlink"),
             post_install_fingerprint=_require_optional_str(candidate_data, "post_install_fingerprint"),
+            intermediate_identities=tuple(
+                _intermediate_identity_from_jsonable(item)
+                for item in _require_list(candidate_data, "intermediate_identities", default=[])
+            ),
         )
         return OwnershipRecord(
             capability_id=_require_identifier(data, "capability_id"),
@@ -358,6 +367,35 @@ def _ownership_from_jsonable(data: object) -> OwnershipRecord:
         )
     except (KeyError, TypeError) as exc:
         raise JournalError("invalid ownership record structure: %s" % exc) from exc
+
+
+def _intermediate_identity_to_jsonable(identity: IntermediateIdentity) -> dict:
+    return {
+        "relative_name": identity.relative_name,
+        "dev": identity.dev,
+        "ino": identity.ino,
+        "uid": identity.uid,
+        "mode": identity.mode,
+    }
+
+
+def _intermediate_identity_from_jsonable(data: object) -> IntermediateIdentity:
+    if not isinstance(data, dict):
+        raise JournalError("intermediate identity must be a JSON object")
+    unknown = set(data) - _INTERMEDIATE_IDENTITY_FIELDS
+    if unknown:
+        raise JournalError("intermediate identity has unknown field(s): %s" % sorted(unknown))
+    relative_name = _require_str(data, "relative_name")
+    relative_path = Path(relative_name)
+    if relative_path.is_absolute() or ".." in relative_path.parts or not relative_path.parts:
+        raise JournalError("intermediate identity relative_name must be a non-empty relative path without '..': %s" % relative_name)
+    return IntermediateIdentity(
+        relative_name=relative_name,
+        dev=_require_non_negative_int(data, "dev"),
+        ino=_require_non_negative_int(data, "ino"),
+        uid=_require_non_negative_int(data, "uid"),
+        mode=_require_mode(data, "mode"),
+    )
 
 
 def redact_for_journal(value: object) -> object:
@@ -548,9 +586,23 @@ def _require_optional_non_negative_int(data: Mapping, field: str) -> int | None:
     return value
 
 
+def _require_non_negative_int(data: Mapping, field: str) -> int:
+    value = data.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise JournalError("journal field %r must be a non-negative integer" % field)
+    return value
+
+
 def _require_optional_mode(data: Mapping, field: str) -> int | None:
     value = _require_optional_non_negative_int(data, field)
     if value is not None and value > 0o7777:
+        raise JournalError("journal field %r must be a valid file mode (<= 0o7777)" % field)
+    return value
+
+
+def _require_mode(data: Mapping, field: str) -> int:
+    value = _require_non_negative_int(data, field)
+    if value > 0o7777:
         raise JournalError("journal field %r must be a valid file mode (<= 0o7777)" % field)
     return value
 

@@ -68,6 +68,16 @@ def canonical_ownership_record_mapping(record: OwnershipRecord) -> dict:
             "mode": candidate.mode,
             "nlink": candidate.nlink,
             "post_install_fingerprint": candidate.post_install_fingerprint,
+            "intermediate_identities": [
+                {
+                    "relative_name": identity.relative_name,
+                    "dev": identity.dev,
+                    "ino": identity.ino,
+                    "uid": identity.uid,
+                    "mode": identity.mode,
+                }
+                for identity in candidate.intermediate_identities
+            ],
         },
     }
 

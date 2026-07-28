@@ -348,6 +348,8 @@ def ensure_private_lock_root(path: Path) -> Path:
                 st = os.fstat(fd)
                 if not stat_module.S_ISDIR(st.st_mode):
                     raise PathPolicyError("global lock root component is not a directory: %s" % current)
+                if part == parts[-2]:
+                    _verify_global_lock_parent_component(current, st)
             finally:
                 os.close(fd)
     current = current / parts[-1]
@@ -363,6 +365,17 @@ def ensure_private_lock_root(path: Path) -> Path:
         fd = _open_directory_nofollow(current)
     _verify_and_secure_directory_fd(current, fd)
     return path
+
+
+def _verify_global_lock_parent_component(path: Path, st: os.stat_result) -> None:
+    expected_uid = os.getuid()
+    mode = stat_module.S_IMODE(st.st_mode)
+    if st.st_uid not in (0, expected_uid):
+        raise PathPolicyError(
+            "global lock root parent %s is owned by uid %d, expected root or uid %d" % (path, st.st_uid, expected_uid)
+        )
+    if mode & 0o022:
+        raise PathPolicyError("global lock root parent %s must not be group/world writable, found mode %o" % (path, mode))
 
 
 def _ensure_private_subdir_relative(parent_fd: int, name: str) -> int:

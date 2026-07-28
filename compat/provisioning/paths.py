@@ -14,6 +14,7 @@ identifier.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import ctypes
 import errno
 import hashlib
 import os
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from compat.provisioning.errors import DurabilityError, IdentifierError, PathPolicyError
+from compat.provisioning.model import IntermediateIdentity
 from compat.provisioning.storage import fsync_parent_directory
 
 CANARY_FORBIDDEN_ROOTS: tuple[Path, ...] = (
@@ -401,7 +403,67 @@ def _default_unlink_pause() -> None:
     return None
 
 
+def _default_quarantine_name(basename: str) -> str:
+    return ".wdvpn-quarantine.%s.%s" % (basename, uuid.uuid4().hex)
+
+
 UNLINK_REVERIFY_HOOK: Callable[[], None] = _default_unlink_pause
+QUARANTINE_POST_VERIFY_HOOK: Callable[[], None] = _default_unlink_pause
+QUARANTINE_BEFORE_RESTORE_HOOK: Callable[[], None] = _default_unlink_pause
+QUARANTINE_NAME_FACTORY: Callable[[str], str] = _default_quarantine_name
+
+RENAME_NOREPLACE = 1
+_RENAMEAT2_SYSCALLS = {
+    "x86_64": 316,
+    "amd64": 316,
+    "aarch64": 276,
+    "arm64": 276,
+}
+
+
+def _rename_noreplace(src_name: str, dst_name: str, *, src_dir_fd: int, dst_dir_fd: int) -> None:
+    """Linux ``renameat2(RENAME_NOREPLACE)`` wrapper. This intentionally
+    has no ``os.rename`` fallback: if the platform cannot provide
+    no-replace rename semantics, the secure remove/restore protocol must
+    fail closed instead of quietly weakening the guarantee."""
+    machine = os.uname().machine.lower()
+    syscall_no = _RENAMEAT2_SYSCALLS.get(machine)
+    if syscall_no is None:
+        raise PathPolicyError("renameat2(RENAME_NOREPLACE) is not mapped for architecture %s" % machine)
+    libc = ctypes.CDLL(None, use_errno=True)
+    result = libc.syscall(
+        ctypes.c_long(syscall_no),
+        ctypes.c_int(src_dir_fd),
+        ctypes.c_char_p(os.fsencode(src_name)),
+        ctypes.c_int(dst_dir_fd),
+        ctypes.c_char_p(os.fsencode(dst_name)),
+        ctypes.c_uint(RENAME_NOREPLACE),
+    )
+    if result != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), src_name)
+
+
+def _hash_fd_from_start(fd: int) -> str:
+    os.lseek(fd, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    while True:
+        chunk = os.read(fd, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_private_directory_fd(dir_fd: int, *, label: str) -> None:
+    st = os.fstat(dir_fd)
+    if not stat_module.S_ISDIR(st.st_mode):
+        raise PathPolicyError("%s is not a directory" % label)
+    if st.st_uid != os.getuid():
+        raise PathPolicyError("%s is owned by uid %d, expected %d" % (label, st.st_uid, os.getuid()))
+    mode = stat_module.S_IMODE(st.st_mode)
+    if mode & 0o022:
+        raise PathPolicyError("%s must not be writable by group/world actors, found mode %o" % (label, mode))
 
 
 def remove_file_if_owned_relative(
@@ -435,6 +497,7 @@ def remove_file_if_owned_relative(
     its name is private to this call, so no further substitution is
     possible."""
     with _relative_to_handle(handle, validated_path) as (parent_fd, basename):
+        _verify_private_directory_fd(parent_fd, label="quarantine parent for %s" % validated_path)
         try:
             fd = os.open(basename, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
         except FileNotFoundError:
@@ -443,69 +506,168 @@ def remove_file_if_owned_relative(
             if exc.errno == errno.ELOOP:
                 raise PathPolicyError("refusing to remove a symlink: %s" % validated_path) from exc
             raise PathPolicyError("cannot open %s for removal: %s" % (validated_path, exc)) from exc
+        expected_hash = None
         try:
             st = os.fstat(fd)
             if not stat_module.S_ISREG(st.st_mode):
                 raise PathPolicyError("refusing to remove a non-regular file: %s" % validated_path)
             if expected_sha256 is not None:
-                chunks = []
-                while True:
-                    chunk = os.read(fd, 1024 * 1024)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                actual = b"".join(chunks)
-                if hashlib.sha256(actual).hexdigest() != expected_sha256:
+                expected_hash = _hash_fd_from_start(fd)
+                if expected_hash != expected_sha256:
                     raise PathPolicyError(
                         "refusing to remove %s: content hash diverged from what this transaction created (ownership drift)"
                         % validated_path
                     )
+
+            # Test seam: after the original fd and content have been
+            # verified, while the fd is still held open, before the
+            # no-replace quarantine move.
+            UNLINK_REVERIFY_HOOK()
+
+            quarantine_name = QUARANTINE_NAME_FACTORY(basename)
+            try:
+                _rename_noreplace(basename, quarantine_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            except FileNotFoundError:
+                return False
+            except FileExistsError as exc:
+                raise PathPolicyError("cannot quarantine %s for removal: quarantine destination already exists" % validated_path) from exc
+            except OSError as exc:
+                raise PathPolicyError("cannot quarantine %s for removal with no-replace rename: %s" % (validated_path, exc)) from exc
+            try:
+                os.fsync(parent_fd)
+            except OSError as exc:
+                raise DurabilityError(
+                    "quarantine of %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
+                ) from exc
+
+            try:
+                qfd = os.open(quarantine_name, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
+            except FileNotFoundError as exc:
+                raise PathPolicyError("quarantined entry for %s vanished unexpectedly" % validated_path) from exc
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise PathPolicyError("quarantined entry for %s is a symlink" % validated_path) from exc
+                raise PathPolicyError("cannot open quarantined entry for %s: %s" % (validated_path, exc)) from exc
+            try:
+                quarantined = os.fstat(qfd)
+                if not stat_module.S_ISREG(quarantined.st_mode):
+                    raise PathPolicyError("quarantined entry for %s is not a regular file" % validated_path)
+                if (quarantined.st_dev, quarantined.st_ino) != (st.st_dev, st.st_ino):
+                    _restore_quarantine_or_raise(parent_fd, quarantine_name, basename, validated_path, "quarantined a different inode")
+                if expected_sha256 is not None:
+                    post_move_hash = _hash_fd_from_start(qfd)
+                    if post_move_hash != expected_sha256:
+                        raise PathPolicyError(
+                            "refusing to remove %s: quarantined inode content hash changed after initial verification; "
+                            "residual quarantine entry %s remains for recovery" % (validated_path, quarantine_name)
+                        )
+
+                # Test seam: after post-move identity/content verification,
+                # before the destructive unlink of the quarantine entry.
+                QUARANTINE_POST_VERIFY_HOOK()
+
+                try:
+                    qfd_after_hook = os.open(quarantine_name, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
+                except FileNotFoundError as exc:
+                    raise PathPolicyError(
+                        "refusing to remove %s: quarantine entry vanished before unlink; residual %s"
+                        % (validated_path, quarantine_name)
+                    ) from exc
+                except OSError as exc:
+                    if exc.errno == errno.ELOOP:
+                        raise PathPolicyError(
+                            "refusing to remove %s: quarantine entry became a symlink before unlink; residual %s"
+                            % (validated_path, quarantine_name)
+                        ) from exc
+                    raise PathPolicyError(
+                        "refusing to remove %s: cannot reopen quarantine entry before unlink; residual %s: %s"
+                        % (validated_path, quarantine_name, exc)
+                    ) from exc
+                try:
+                    post_hook = os.fstat(qfd_after_hook)
+                    if (post_hook.st_dev, post_hook.st_ino) != (st.st_dev, st.st_ino):
+                        raise PathPolicyError(
+                            "refusing to remove %s: quarantine entry identity changed before unlink; residual %s"
+                            % (validated_path, quarantine_name)
+                        )
+                    if expected_sha256 is not None and _hash_fd_from_start(qfd_after_hook) != expected_sha256:
+                        raise PathPolicyError(
+                            "refusing to remove %s: quarantine entry content changed before unlink; residual %s"
+                            % (validated_path, quarantine_name)
+                        )
+                finally:
+                    os.close(qfd_after_hook)
+            finally:
+                os.close(qfd)
+
+            os.unlink(quarantine_name, dir_fd=parent_fd)
+            try:
+                os.fsync(parent_fd)
+            except OSError as exc:
+                raise DurabilityError(
+                    "removal of %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
+                ) from exc
+            return True
         finally:
             os.close(fd)
 
-        # Point 1, sixth correction round: the window a test/attacker must
-        # win is now exactly here -- after the hash has been verified via
-        # the held fd, before the atomic quarantine rename below.
-        UNLINK_REVERIFY_HOOK()
 
-        quarantine_name = ".wdvpn-quarantine.%s.%s" % (basename, uuid.uuid4().hex)
-        try:
-            os.rename(basename, quarantine_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-        except FileNotFoundError:
-            return False
-        except OSError as exc:
-            raise PathPolicyError("cannot quarantine %s for removal: %s" % (validated_path, exc)) from exc
+def _restore_quarantine_or_raise(parent_fd: int, quarantine_name: str, basename: str, validated_path: Path, reason: str) -> None:
+    try:
+        QUARANTINE_BEFORE_RESTORE_HOOK()
+        _rename_noreplace(quarantine_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    except OSError as exc:
+        raise PathPolicyError(
+            "refusing to remove %s: %s; could not restore quarantine entry %s without replacement: %s"
+            % (validated_path, reason, quarantine_name, exc)
+        ) from exc
+    try:
+        os.fsync(parent_fd)
+    except OSError as exc:
+        raise DurabilityError(
+            "restore of quarantined %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
+        ) from exc
+    raise PathPolicyError(
+        "refusing to remove %s: %s; restored quarantined entry without replacement" % (validated_path, reason)
+    )
 
-        try:
-            quarantined = os.lstat(quarantine_name, dir_fd=parent_fd)
-        except FileNotFoundError as exc:
-            raise PathPolicyError("quarantined entry for %s vanished unexpectedly" % validated_path) from exc
-        except OSError as exc:
-            raise PathPolicyError("cannot verify quarantined entry for %s: %s" % (validated_path, exc)) from exc
 
-        if (quarantined.st_dev, quarantined.st_ino) != (st.st_dev, st.st_ino):
-            # A concurrent substitution won the race between our own hash
-            # verification and this rename: we quarantined a FOREIGN inode,
-            # never the one we hashed. Restore it to its original name
-            # (best-effort) -- it is never ours to delete -- and fail
-            # closed instead of ever unlinking an unverified inode.
-            try:
-                os.rename(quarantine_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-            except OSError:
-                pass  # best-effort restore; the quarantine name itself remains as recoverable evidence if even this fails
-            raise PathPolicyError(
-                "refusing to remove %s: quarantined a different inode than the one just verified "
-                "(concurrent substitution) -- never deleting an unrelated resource" % validated_path
+def capture_intermediate_identities(handle: AllowedRootHandle, validated_path: Path) -> tuple[IntermediateIdentity, ...]:
+    try:
+        relative = validated_path.relative_to(handle.path)
+    except ValueError as exc:
+        raise PathPolicyError("%s is not a descendant of allowed root %s" % (validated_path, handle.path)) from exc
+    identities = []
+    for index in range(1, len(relative.parts)):
+        parts = relative.parts[:index]
+        fd = handle.intermediate_fd(parts)
+        st = os.fstat(fd)
+        identities.append(
+            IntermediateIdentity(
+                relative_name="/".join(parts),
+                dev=st.st_dev,
+                ino=st.st_ino,
+                uid=st.st_uid,
+                mode=stat_module.S_IMODE(st.st_mode),
             )
+        )
+    return tuple(identities)
 
-        os.unlink(quarantine_name, dir_fd=parent_fd)
-        try:
-            os.fsync(parent_fd)
-        except OSError as exc:
-            raise DurabilityError(
-                "removal of %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
-            ) from exc
-        return True
+
+def verify_intermediate_identities(handle: AllowedRootHandle, expected: Sequence[IntermediateIdentity]) -> None:
+    for identity in expected:
+        parts = tuple(Path(identity.relative_name).parts)
+        if not parts or Path(identity.relative_name).is_absolute() or ".." in parts:
+            raise PathPolicyError("invalid persisted intermediate identity name: %s" % identity.relative_name)
+        fd = handle.intermediate_fd(parts)
+        st = os.fstat(fd)
+        actual = (st.st_dev, st.st_ino, st.st_uid, stat_module.S_IMODE(st.st_mode))
+        expected_tuple = (identity.dev, identity.ino, identity.uid, identity.mode)
+        if actual != expected_tuple:
+            raise PathPolicyError(
+                "intermediate %s identity changed: expected dev/ino/uid/mode %r, found %r"
+                % (identity.relative_name, expected_tuple, actual)
+            )
 
 
 def stat_identity_relative(handle: AllowedRootHandle, validated_path: Path) -> dict:

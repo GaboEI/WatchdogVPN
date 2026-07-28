@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import os
 import select
@@ -439,6 +440,208 @@ def cmd_run_all(args) -> int:
         raise SystemExit("symlink target was not rejected: %r" % symlink_outcome)
     (sandbox / ("%s.marker" % symlink_id)).unlink()
     real_target.unlink()
+
+    # 15. Seventh correction round, point 1: direct quarantine protocol
+    # checks for the post-move/pre-unlink boundary, in-place content drift,
+    # and no-replace restore when the basename reappears.
+    quarantine_sandbox = scratch / "round7_quarantine"
+    quarantine_sandbox.mkdir(mode=0o700)
+
+    def _reset_quarantine_hooks() -> None:
+        paths_mod.UNLINK_REVERIFY_HOOK = paths_mod._default_unlink_pause
+        paths_mod.QUARANTINE_POST_VERIFY_HOOK = paths_mod._default_unlink_pause
+        paths_mod.QUARANTINE_BEFORE_RESTORE_HOOK = paths_mod._default_unlink_pause
+        paths_mod.QUARANTINE_NAME_FACTORY = paths_mod._default_quarantine_name
+
+    try:
+        substitute_root = quarantine_sandbox / "substitute"
+        substitute_root.mkdir(mode=0o700)
+        substitute_target = substitute_root / "owned"
+        substitute_target.write_bytes(b"owned")
+        substitute_quarantine = substitute_root / ".wdvpn-quarantine.owned.vm"
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: substitute_quarantine.name
+
+        def _replace_quarantine() -> None:
+            substitute_quarantine.unlink()
+            substitute_quarantine.write_bytes(b"foreign")
+
+        paths_mod.QUARANTINE_POST_VERIFY_HOOK = _replace_quarantine
+        substitute_failed_closed = False
+        substitute_handle = paths_mod.open_allowed_root(substitute_root)
+        try:
+            try:
+                paths_mod.remove_file_if_owned_relative(
+                    substitute_handle, substitute_target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+                )
+            except Exception:
+                substitute_failed_closed = True
+        finally:
+            substitute_handle.close()
+        substitute_foreign_survives = substitute_quarantine.exists() and substitute_quarantine.read_bytes() == b"foreign"
+        evidence.record(
+            "round7_quarantine_substitution_after_verify",
+            failed_closed=substitute_failed_closed, foreign_file_survives=substitute_foreign_survives,
+            original_basename_exists=substitute_target.exists(),
+        )
+        if not substitute_failed_closed or not substitute_foreign_survives:
+            raise SystemExit("round7 quarantine substitution scenario failed")
+    finally:
+        _reset_quarantine_hooks()
+
+    try:
+        inplace_root = quarantine_sandbox / "inplace"
+        inplace_root.mkdir(mode=0o700)
+        inplace_target = inplace_root / "owned"
+        inplace_target.write_bytes(b"owned")
+        inplace_quarantine = inplace_root / ".wdvpn-quarantine.owned.vm"
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: inplace_quarantine.name
+
+        def _mutate_in_place() -> None:
+            with inplace_target.open("r+b") as handle:
+                handle.seek(0)
+                handle.write(b"pwned")
+                handle.truncate()
+
+        paths_mod.UNLINK_REVERIFY_HOOK = _mutate_in_place
+        inplace_failed_closed = False
+        inplace_handle = paths_mod.open_allowed_root(inplace_root)
+        try:
+            try:
+                paths_mod.remove_file_if_owned_relative(
+                    inplace_handle, inplace_target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+                )
+            except Exception:
+                inplace_failed_closed = True
+        finally:
+            inplace_handle.close()
+        inplace_residue = inplace_quarantine.exists() and inplace_quarantine.read_bytes() == b"pwned"
+        evidence.record("round7_quarantine_in_place_modification", failed_closed=inplace_failed_closed, residue_remains=inplace_residue)
+        if not inplace_failed_closed or not inplace_residue:
+            raise SystemExit("round7 quarantine in-place modification scenario failed")
+    finally:
+        _reset_quarantine_hooks()
+
+    try:
+        restore_root = quarantine_sandbox / "restore"
+        restore_root.mkdir(mode=0o700)
+        restore_target = restore_root / "owned"
+        restore_target.write_bytes(b"owned")
+        restore_quarantine = restore_root / ".wdvpn-quarantine.owned.vm"
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: restore_quarantine.name
+
+        def _swap_original_before_quarantine() -> None:
+            restore_target.unlink()
+            restore_target.write_bytes(b"foreign")
+
+        def _occupy_basename_before_restore() -> None:
+            restore_target.write_bytes(b"occupied")
+
+        paths_mod.UNLINK_REVERIFY_HOOK = _swap_original_before_quarantine
+        paths_mod.QUARANTINE_BEFORE_RESTORE_HOOK = _occupy_basename_before_restore
+        restore_failed_closed = False
+        restore_handle = paths_mod.open_allowed_root(restore_root)
+        try:
+            try:
+                paths_mod.remove_file_if_owned_relative(
+                    restore_handle, restore_target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+                )
+            except Exception:
+                restore_failed_closed = True
+        finally:
+            restore_handle.close()
+        restore_both_recoverable = (
+            restore_quarantine.exists() and restore_quarantine.read_bytes() == b"foreign"
+            and restore_target.exists() and restore_target.read_bytes() == b"occupied"
+        )
+        evidence.record("round7_quarantine_restore_noreplace", failed_closed=restore_failed_closed, both_recoverable=restore_both_recoverable)
+        if not restore_failed_closed or not restore_both_recoverable:
+            raise SystemExit("round7 quarantine restore no-replace scenario failed")
+    finally:
+        _reset_quarantine_hooks()
+
+    # 16. Seventh correction round, point 2: swap an intermediate directory
+    # before entering uninstall. Detection must come from persisted
+    # ownership identity, never a warm in-process cache.
+    persistent_nested_sandbox = scratch / "round7_nested_persistent_sandbox"
+    persistent_nested_state = scratch / "round7_nested_persistent_state"
+    persistent_nested_lock = scratch / "round7_nested_persistent_lock"
+    persistent_nested_env = _env(persistent_nested_sandbox, persistent_nested_state, persistent_nested_lock)
+    (persistent_nested_sandbox / "nested").mkdir(mode=0o700, exist_ok=True)
+    persistent_nested_capability_id = "cap_vm_round7_nested_persistent"
+    persistent_nested_outcome = engine.prepare(
+        _decision(
+            persistent_nested_capability_id, "dep_vm_round7_nested_persistent",
+            method_kind="nested_resource_vm", method_id="nested_resource_vm_method",
+        ),
+        persistent_nested_env, apply=True,
+    )
+    if persistent_nested_outcome.status.value != "committed":
+        raise SystemExit("round7 persistent nested setup did not commit: %r" % persistent_nested_outcome)
+    persistent_nested_dir = persistent_nested_sandbox / "nested"
+    persistent_nested_old = persistent_nested_sandbox / "nested.old"
+    persistent_nested_dir.rename(persistent_nested_old)
+    persistent_nested_dir.mkdir(mode=0o700)
+    persistent_nested_result = engine.uninstall(persistent_nested_capability_id, persistent_nested_env, apply=True)
+    persistent_nested_records = journal_mod.read_ownership_records(persistent_nested_state, persistent_nested_capability_id)
+    persistent_nested_resource_survives = (persistent_nested_old / ("%s.marker" % persistent_nested_capability_id)).exists()
+    evidence.record(
+        "round7_intermediate_swap_before_uninstall",
+        status=persistent_nested_result.status.value,
+        ownership_intact=any(r.product_owned for r in persistent_nested_records),
+        resource_survives_in_renamed_dir=persistent_nested_resource_survives,
+        replacement_dir_empty=(sorted(p.name for p in persistent_nested_dir.iterdir()) == []),
+    )
+    if persistent_nested_result.status.value == "uninstalled" or not persistent_nested_resource_survives:
+        raise SystemExit("round7 persistent intermediate swap scenario failed: %r" % persistent_nested_result)
+
+    # 17. Seventh correction round, point 3: unsafe immediate parents of
+    # the configured global lock root are rejected before the leaf is used.
+    lock_parent_results = []
+    for mode in (0o770, 0o2770, 0o777):
+        parent = scratch / ("round7_lock_parent_%o" % mode)
+        parent.mkdir(mode=0o700)
+        os.chmod(parent, mode)
+        rejected = False
+        try:
+            storage_mod.ensure_private_lock_root(parent / "global-lock-root")
+        except Exception:
+            rejected = True
+        lock_parent_results.append({"mode": oct(mode), "rejected": rejected, "leaf_created": (parent / "global-lock-root").exists()})
+    evidence.record("round7_global_lock_parent_rejections", results=lock_parent_results)
+    if not all(item["rejected"] and not item["leaf_created"] for item in lock_parent_results):
+        raise SystemExit("round7 global lock parent rejection scenario failed: %r" % lock_parent_results)
+
+    # 18. Seventh correction round, point 4: losing allowed-root identity
+    # immediately after the last undo must block a clean PREPARATION_FAILED
+    # terminal result.
+    from unittest import mock
+    from compat.provisioning.model import VerificationResult
+
+    terminal_sandbox = scratch / "round7_terminal_sandbox"
+    terminal_state = scratch / "round7_terminal_state"
+    terminal_lock = scratch / "round7_terminal_lock"
+    terminal_env = _env(terminal_sandbox, terminal_state, terminal_lock)
+    terminal_old = scratch / "round7_terminal_sandbox.old"
+    real_run_rollback = engine._run_rollback
+
+    def _rollback_then_swap_allowed_root(*args, **kwargs):
+        result = real_run_rollback(*args, **kwargs)
+        terminal_sandbox.rename(terminal_old)
+        terminal_sandbox.mkdir(mode=0o700)
+        return result
+
+    terminal_executor = terminal_env.registry.resolve(
+        method_kind=CANARY_METHOD_KIND, method_id="canary_method", expected_executor_version=CANARY_EXECUTOR_VERSION
+    )
+    with mock.patch.object(
+        terminal_executor, "verify_step",
+        return_value=VerificationResult(status="verification_failed", error_kind="forced", error="forced VM terminal identity check"),
+    ):
+        with mock.patch("compat.provisioning.engine._run_rollback", side_effect=_rollback_then_swap_allowed_root):
+            terminal_result = engine.prepare(_decision("cap_vm_round7_terminal", "dep_vm_round7_terminal"), terminal_env, apply=True)
+    evidence.record("round7_identity_loss_before_terminal_state", status=terminal_result.status.value)
+    if terminal_result.status.value == "preparation_failed":
+        raise SystemExit("round7 terminal identity loss reached a clean terminal state")
 
     # 15. Sixth correction round, point 1: a genuine second process (real
     # SIGKILL-free race, not a mock) substitutes a resource's basename in

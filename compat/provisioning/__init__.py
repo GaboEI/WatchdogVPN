@@ -53,6 +53,7 @@ from compat.provisioning.journal import StepRecord, TransactionJournal
 from compat.provisioning.lock import acquire_provisioner_lock
 from compat.provisioning.model import (
     ExecutionResult,
+    IntermediateIdentity,
     OwnershipCandidate,
     OwnershipRecord,
     ProvenanceRecord,
@@ -84,6 +85,7 @@ __all__ = [
     "IdempotencyCheck",
     "IdempotencyOutcome",
     "IdentifierError",
+    "IntermediateIdentity",
     "InvalidTransitionError",
     "JournalError",
     "OwnershipCandidate",

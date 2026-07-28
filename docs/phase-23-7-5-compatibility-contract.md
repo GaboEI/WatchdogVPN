@@ -1932,6 +1932,81 @@ a masked finding); this round's code changes are 100% confined to
 repositories, or services, so there is no mechanism by which they could have altered any of
 those, but the omission should not repeat in a future round.
 
+### Seventh hardening round: focused residual correction
+
+A seventh focused review of Task 23.7.5.6a identified residual gaps in the sixth-round
+implementation and evidence package. This round stays on the same 23.7.5.6a compatibility
+contract branch and does not start 23.7.5.6b.
+
+- **Deletion is now bound to the verified resource after the move, not just before it**
+  (`paths.py`): `remove_file_if_owned_relative()` now keeps the original fd open across
+  the whole destructive protocol, moves the basename into a same-directory quarantine
+  entry with Linux `renameat2(RENAME_NOREPLACE)`, fsyncs the directory after the
+  quarantine move, opens the quarantine entry with `O_NOFOLLOW`, checks regular-file type,
+  compares `(st_dev, st_ino)` against the original fd, recomputes the sha256 from the
+  moved object, and then reopens/revalidates the quarantine entry again immediately before
+  unlink. There is intentionally no `os.rename()` fallback for the no-replace primitive:
+  unsupported platforms fail closed rather than weakening the guarantee. Restore also uses
+  `RENAME_NOREPLACE` and never overwrites a basename that reappeared. If restore cannot be
+  completed, the quarantine entry remains as an explicit recovery residue and the caller
+  receives a closed failure instead of a clean removal result. The quarantine parent is
+  verified as a real private directory owned by the current uid and not group/world
+  writable; the implementation does not treat a UUID-like quarantine name as a security
+  boundary.
+- **Product-owned resources now persist intermediate component identity** (`model.py`,
+  `journal.py`, `digest.py`, `engine.py`, `paths.py`): ownership records gained a durable
+  `IntermediateIdentity` chain containing relative component name, `st_dev`, `st_ino`,
+  uid and mode. The ownership record digest includes this chain, journal
+  serialization/deserialization validates it, and provenance captures it when ownership is
+  finalized. Uninstall authority rejects nested ownership records that omit the persisted
+  chain, and locked uninstall/recovery revalidates the current descriptor-bound chain
+  against the persisted identities before resource removal, before ownership revocation,
+  and before clean terminal states. `_eager_cache_intermediates_for_targets()` now fails
+  closed on path-policy errors instead of silently skipping them.
+- **The global lock root now rejects unsafe immediate parents** (`storage.py`): the
+  configured lock root's immediate parent must be owned by root or the current uid and
+  must not be group/world writable. Tests cover pre-existing `0770`, `02770` and
+  world-writable parents being rejected before the leaf lock root is created.
+- **Clean terminal states are rechecked at the boundary** (`engine.py`): allowed-root
+  identity and persisted intermediate identities are checked before `COMMITTED`, before
+  `ROLLED_BACK`, between `ROLLED_BACK` and `PREPARATION_FAILED`, before clean recovery
+  rollback decisions, before ownership revocation, and before `UNINSTALLED`. A divergence
+  returns `RECOVERY_REQUIRED` or invalid ownership instead of reporting a clean terminal
+  state.
+- **Evidence correction from the sixth round**: the first VM repetition batch failed on
+  run 7 in `test_06_lock_contention_between_two_processes` with
+  `subprocess.TimeoutExpired` at `proc.wait(5)`. The correction applied was to widen that
+  teardown wait bound to 15 seconds in the relevant tests. The later evidence was a second
+  VM batch of 50/50 clean repetitions and a post-reboot batch of 50/50 clean repetitions.
+  The earlier failure is not classified as harmless merely because preceding assertions had
+  passed; the classification depends on the exact traceback location, the already-observed
+  lock-refusal result before teardown, the VM load context captured at the time, and the
+  clean 50/50 reruns after the wait-bound correction. The prior absence of a complete
+  pre-reboot package/repository/service/network/state baseline is recorded as a historical
+  evidence omission; this seventh round must capture and compare a full before/after VM
+  baseline before closure.
+
+Local pre-VM evidence for this seventh round: `tests/test_compat_transactional_provisioning.py`
+ran 254/254 clean; the focused new round-seven subset ran 20/20 clean;
+`python -m compileall -q compat/provisioning tests/test_compat_transactional_provisioning.py`,
+`tests/syntax.sh`, `git diff --check`, `python tools/compat_read.py validate`, the four
+fixture probes (`detect`, `capabilities`, `evaluate`, `report`), the four fixture resolve
+commands (`dependency dep_python_runtime`, `all`, `explain dep_python_runtime`, `matrix`)
+and a real-host unknown-availability `resolve all` pass all completed with rc=0.
+`tests/unit.sh` completed with rc=0. `python -m unittest discover -s tests -p
+'test_*.py'` ran 2239 tests with 1 skip and rc=0. The focused provisioning module was then
+run 50 consecutive times locally with no retries: 50/50 clean, no `FAILED`/`ERROR`/
+traceback/`TimeoutExpired` in the per-run logs, no quarantine residues found under `/tmp`
+after any run, and no test holder process left alive; the only matching Python process in
+the post-run snapshots was the pre-existing `/usr/bin/python3 -m daemon.main`, unrelated
+to the test runs. The VM validation harness was extended with the new round-seven
+scenarios and its local `run-all` pass completed with rc=0, including observed
+`round7_quarantine_substitution_after_verify`, `round7_quarantine_in_place_modification`,
+`round7_quarantine_restore_noreplace`, `round7_intermediate_swap_before_uninstall`,
+`round7_global_lock_parent_rejections`, and
+`round7_identity_loss_before_terminal_state` records. The required real VM before/after
+reboot validation remains to be executed on the final SHA before this round is closed.
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,

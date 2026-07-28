@@ -457,6 +457,29 @@ class TransactionalProvisioningTests(unittest.TestCase):
         journal = journal_mod.read_journal(self.harness.state_root, outcome.transaction_id)
         self.assertEqual(journal.state, TransactionState.PREPARATION_FAILED)
 
+    def test_21b_allowed_root_identity_loss_after_last_undo_blocks_clean_terminal_state(self) -> None:
+        decision = self.harness.decision(capability_id="cap_rollback_identity_loss")
+        sandbox_old = self.tmp / "sandbox.old"
+        real_run_rollback = engine._run_rollback
+
+        def _rollback_then_swap_allowed_root(*args, **kwargs):
+            result = real_run_rollback(*args, **kwargs)
+            self.harness.sandbox.rename(sandbox_old)
+            self.harness.sandbox.mkdir(mode=0o700)
+            return result
+
+        with mock.patch.object(
+            self.harness.executor, "verify_step",
+            return_value=VerificationResult(status="verification_failed", error_kind="content_mismatch", error="forced"),
+        ):
+            with mock.patch("compat.provisioning.engine._run_rollback", side_effect=_rollback_then_swap_allowed_root):
+                outcome = engine.prepare(decision, self.harness.env, apply=True)
+
+        self.assertEqual(outcome.status, PrepareStatus.RECOVERY_REQUIRED)
+        self.assertNotEqual(outcome.status, PrepareStatus.PREPARATION_FAILED)
+        journal = journal_mod.read_journal(self.harness.state_root, outcome.transaction_id)
+        self.assertNotEqual(journal.state, TransactionState.PREPARATION_FAILED)
+
     # 22. Rollback parcialmente fallido.
     def test_22_partially_failed_rollback_reports_explicit_residuals(self) -> None:
         decision = self.harness.decision(capability_id="cap_partial_rollback")
@@ -4029,6 +4052,64 @@ class NestedIntermediateComponentSwapTests(unittest.TestCase):
         self.assertTrue((renamed / companion_path.name).exists())
         self.assertEqual(sorted(p.name for p in nested_dir.iterdir()), [])
 
+    def test_ownership_records_persist_intermediate_component_identity(self) -> None:
+        capability_id = "cap_nested_identity_record"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        nested_stat = (self.harness.sandbox / "nested").stat()
+
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        self.assertTrue(records)
+        for record in records:
+            identities = record.candidate.intermediate_identities
+            self.assertEqual(len(identities), 1)
+            identity = identities[0]
+            self.assertEqual(identity.relative_name, "nested")
+            self.assertEqual((identity.dev, identity.ino), (nested_stat.st_dev, nested_stat.st_ino))
+            self.assertEqual(identity.uid, nested_stat.st_uid)
+            self.assertEqual(identity.mode, stat.S_IMODE(nested_stat.st_mode))
+
+    def test_intermediate_swap_before_uninstall_entry_is_rejected_by_persisted_identity(self) -> None:
+        capability_id = "cap_nested_persistent_swap"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        marker_path = self.harness.sandbox / "nested" / ("%s.marker" % capability_id)
+        companion_path = self.harness.sandbox / "nested" / ("%s.companion" % capability_id)
+
+        nested_dir = self.harness.sandbox / "nested"
+        renamed = self.harness.sandbox / "nested.old"
+        nested_dir.rename(renamed)
+        nested_dir.mkdir(mode=0o700)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertNotEqual(result.status, PrepareStatus.UNINSTALLED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        self.assertTrue(any(r.product_owned for r in records))
+        self.assertTrue((renamed / marker_path.name).exists())
+        self.assertTrue((renamed / companion_path.name).exists())
+        self.assertEqual(sorted(p.name for p in nested_dir.iterdir()), [])
+
+    def test_nested_ownership_without_persisted_intermediate_identity_is_invalid(self) -> None:
+        capability_id = "cap_nested_missing_identity"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        stripped = [
+            dataclasses.replace(
+                record,
+                candidate=dataclasses.replace(record.candidate, intermediate_identities=()),
+            )
+            for record in records
+        ]
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, stripped)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertTrue((self.harness.sandbox / "nested" / ("%s.marker" % capability_id)).exists())
+
     def test_intermediate_swap_during_apply_blocks_commit(self) -> None:
         """Variant: the same swap, but during a fresh apply/commit rather
         than uninstall -- the swap happens after eager-caching (which
@@ -4091,6 +4172,30 @@ class GlobalLockRootHardeningTests(unittest.TestCase):
         self._tmp_ctx = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp_ctx.name)
         self.addCleanup(self._tmp_ctx.cleanup)
+
+    def test_preexisting_immediate_parent_at_0770_is_rejected(self) -> None:
+        parent = self.tmp / "lock-parent-770"
+        parent.mkdir(mode=0o700)
+        os.chmod(parent, 0o770)
+        with self.assertRaises(PathPolicyError):
+            storage_mod.ensure_private_lock_root(parent / "global-lock-root")
+        self.assertFalse((parent / "global-lock-root").exists())
+
+    def test_preexisting_immediate_parent_at_02770_is_rejected(self) -> None:
+        parent = self.tmp / "lock-parent-2770"
+        parent.mkdir(mode=0o700)
+        os.chmod(parent, 0o2770)
+        with self.assertRaises(PathPolicyError):
+            storage_mod.ensure_private_lock_root(parent / "global-lock-root")
+        self.assertFalse((parent / "global-lock-root").exists())
+
+    def test_preexisting_immediate_parent_world_writable_is_rejected(self) -> None:
+        parent = self.tmp / "lock-parent-777"
+        parent.mkdir(mode=0o700)
+        os.chmod(parent, 0o777)
+        with self.assertRaises(PathPolicyError):
+            storage_mod.ensure_private_lock_root(parent / "global-lock-root")
+        self.assertFalse((parent / "global-lock-root").exists())
 
     def test_preexisting_leaf_at_0770_is_tightened_to_0700(self) -> None:
         root = self.tmp / "global-lock-root-770"
@@ -4360,6 +4465,132 @@ class HashUnlinkToctouTests(unittest.TestCase):
         # Ownership must still be live -- never silently revoked.
         records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
         self.assertTrue(any(r.product_owned for r in records))
+
+class RoundSevenQuarantineProtocolTests(unittest.TestCase):
+    """Round 7: deletion is tied to the verified inode and post-move
+    content, quarantine/restore use no-replace semantics, and unsafe
+    residues stay recoverable."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.root = self.tmp / "root"
+        self.root.mkdir(mode=0o700)
+
+    def _handle(self) -> AllowedRootHandle:
+        handle = open_allowed_root(self.root)
+        self.addCleanup(handle.close)
+        return handle
+
+    def _restore_hooks(self) -> None:
+        paths_mod.UNLINK_REVERIFY_HOOK = paths_mod._default_unlink_pause
+        paths_mod.QUARANTINE_POST_VERIFY_HOOK = paths_mod._default_unlink_pause
+        paths_mod.QUARANTINE_BEFORE_RESTORE_HOOK = paths_mod._default_unlink_pause
+        paths_mod.QUARANTINE_NAME_FACTORY = paths_mod._default_quarantine_name
+
+    def test_quarantine_entry_substitution_before_unlink_preserves_foreign_inode(self) -> None:
+        self.addCleanup(self._restore_hooks)
+        target = self.root / "owned"
+        target.write_bytes(b"owned")
+        quarantine = self.root / ".wdvpn-quarantine.owned.test"
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+
+        def _replace_quarantine() -> None:
+            quarantine.unlink()
+            quarantine.write_bytes(b"foreign")
+
+        paths_mod.QUARANTINE_POST_VERIFY_HOOK = _replace_quarantine
+        with self.assertRaises(PathPolicyError):
+            paths_mod.remove_file_if_owned_relative(
+                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+            )
+        self.assertTrue(quarantine.exists())
+        self.assertEqual(quarantine.read_bytes(), b"foreign")
+        self.assertFalse(target.exists())
+
+    def test_in_place_modification_after_initial_hash_leaves_quarantine_residue(self) -> None:
+        self.addCleanup(self._restore_hooks)
+        target = self.root / "owned"
+        target.write_bytes(b"owned")
+        quarantine = self.root / ".wdvpn-quarantine.owned.test"
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+
+        def _mutate_in_place() -> None:
+            with target.open("r+b") as handle:
+                handle.seek(0)
+                handle.write(b"pwned")
+                handle.truncate()
+
+        paths_mod.UNLINK_REVERIFY_HOOK = _mutate_in_place
+        with self.assertRaises(PathPolicyError):
+            paths_mod.remove_file_if_owned_relative(
+                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+            )
+        self.assertTrue(quarantine.exists())
+        self.assertEqual(quarantine.read_bytes(), b"pwned")
+
+    def test_restore_uses_noreplace_when_basename_reappears(self) -> None:
+        self.addCleanup(self._restore_hooks)
+        target = self.root / "owned"
+        target.write_bytes(b"owned")
+        quarantine = self.root / ".wdvpn-quarantine.owned.test"
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+
+        def _swap_original_before_quarantine() -> None:
+            target.unlink()
+            target.write_bytes(b"foreign")
+
+        def _basename_reappears_before_restore() -> None:
+            if not target.exists():
+                target.write_bytes(b"new-basename")
+
+        paths_mod.UNLINK_REVERIFY_HOOK = _swap_original_before_quarantine
+        paths_mod.QUARANTINE_BEFORE_RESTORE_HOOK = _basename_reappears_before_restore
+        with self.assertRaises(PathPolicyError):
+            paths_mod.remove_file_if_owned_relative(
+                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+            )
+        self.assertTrue(quarantine.exists())
+        self.assertTrue(target.exists())
+        self.assertNotEqual(target.read_bytes(), b"owned")
+
+    def test_quarantine_name_collision_is_rejected_without_replacement(self) -> None:
+        self.addCleanup(self._restore_hooks)
+        target = self.root / "owned"
+        target.write_bytes(b"owned")
+        quarantine = self.root / ".wdvpn-quarantine.owned.test"
+        quarantine.write_bytes(b"preexisting")
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+        with self.assertRaises(PathPolicyError):
+            paths_mod.remove_file_if_owned_relative(
+                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+            )
+        self.assertEqual(quarantine.read_bytes(), b"preexisting")
+        self.assertTrue(target.exists())
+
+    def test_restore_failure_keeps_quarantine_residue(self) -> None:
+        self.addCleanup(self._restore_hooks)
+        target = self.root / "owned"
+        target.write_bytes(b"owned")
+        quarantine = self.root / ".wdvpn-quarantine.owned.test"
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+
+        def _swap_original_before_quarantine() -> None:
+            target.unlink()
+            target.write_bytes(b"foreign")
+
+        def _force_restore_collision() -> None:
+            target.write_bytes(b"occupied")
+
+        paths_mod.UNLINK_REVERIFY_HOOK = _swap_original_before_quarantine
+        paths_mod.QUARANTINE_BEFORE_RESTORE_HOOK = _force_restore_collision
+        with self.assertRaises(PathPolicyError):
+            paths_mod.remove_file_if_owned_relative(
+                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+            )
+        self.assertTrue(quarantine.exists())
+        self.assertEqual(target.read_bytes(), b"occupied")
 
 
 class NestedAllowedRootPathTests(unittest.TestCase):
