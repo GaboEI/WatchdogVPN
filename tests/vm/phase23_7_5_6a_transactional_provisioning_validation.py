@@ -114,7 +114,7 @@ def cmd_worker(args) -> int:
     decision = _decision(args.capability_id, args.dependency_id)
     plan, executor = engine.build_plan(decision, registry=env.registry, expected_executor_version=env.expected_executor_version, context=env.context)
 
-    with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(state_root), transaction_id=args.transaction_id, timeout=10.0):
+    with lock_mod.acquire_provisioner_lock(state_root, transaction_id=args.transaction_id, timeout=10.0):
         journal = engine._initial_journal(plan, transaction_id=args.transaction_id, now_value=_now())
         journal = journal.with_state(TransactionState.AUTHORIZED, now=_now())
         journal = journal.with_state(TransactionState.APPLYING, now=_now())
@@ -272,19 +272,18 @@ def cmd_run_all(args) -> int:
     evidence.record("pre_state", snapshot=baseline)
 
     # 1. Lock exclusion between two real processes.
-    lock_path = journal_mod.lock_path(state_root)
     holder = subprocess.Popen(
         [sys.executable, "-c",
          "import sys, time; sys.path.insert(0, %r); from pathlib import Path; "
          "from compat.provisioning.lock import acquire_provisioner_lock\n"
          "with acquire_provisioner_lock(Path(%r), transaction_id='holder', timeout=5.0):\n"
-         "    print('ACQUIRED', flush=True); time.sleep(2.0)\n" % (str(ROOT), str(lock_path))],
+         "    print('ACQUIRED', flush=True); time.sleep(2.0)\n" % (str(ROOT), str(state_root))],
         stdout=subprocess.PIPE, text=True,
     )
     line = holder.stdout.readline()
     contended = False
     try:
-        with lock_mod.acquire_provisioner_lock(lock_path, transaction_id="contender", timeout=0.3):
+        with lock_mod.acquire_provisioner_lock(state_root, transaction_id="contender", timeout=0.3):
             pass
     except ProvisionerLockHeldError:
         contended = True
@@ -509,9 +508,9 @@ def cmd_uninstall_worker(args) -> int:
     checkpoint = args.checkpoint
     env = _env(sandbox, state_root)
     transaction_id = "vm-uninstall-reboot-%s" % checkpoint
-    with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(state_root), transaction_id=transaction_id, timeout=10.0):
+    with lock_mod.acquire_provisioner_lock(state_root, transaction_id=transaction_id, timeout=10.0):
         owned = [r for r in journal_mod.read_ownership_records(state_root, capability_id) if r.product_owned]
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id=transaction_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         journal_mod.write_journal(state_root, journal)
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())

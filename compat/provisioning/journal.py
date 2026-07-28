@@ -30,7 +30,18 @@ from compat.provisioning.model import (
     transition_transaction,
 )
 from compat.provisioning.paths import validate_identifier
-from compat.provisioning.storage import atomic_write_private_text, ensure_private_subdir, fsync_parent_directory
+from compat.provisioning.storage import (
+    StateRootHandle,
+    atomic_write_private_text,
+    atomic_write_private_text_relative,
+    delete_private_relative,
+    ensure_private_subdir,
+    fsync_parent_directory,
+    list_json_names_relative,
+    read_private_relative,
+)
+
+StateRootLike = "Path | StateRootHandle"
 
 SCHEMA_VERSION = 1
 TRANSACTIONS_DIR = "transactions"
@@ -146,30 +157,53 @@ def ownership_path(state_root: Path, capability_id: str) -> Path:
     return ownership_dir(state_root) / ("%s.json" % capability_id)
 
 
-def write_journal(state_root: Path, journal: TransactionJournal) -> None:
+def write_journal(state_root: StateRootLike, journal: TransactionJournal) -> None:
+    """Accepts either a bare ``state_root: Path`` (legacy/read-only callers
+    outside a lock-protected transaction, e.g. status/dry-run) or a
+    ``StateRootHandle`` (point 1: every mutating call inside
+    prepare()/uninstall()/recover_pending() threads the SAME handle
+    established once when the provisioner lock was acquired, so the write
+    is bound to that exact directory via ``dir_fd``, never a fresh
+    path-based lookup that an external rename/replace could redirect)."""
+    validate_identifier(journal.transaction_id, field="transaction_id")
     payload = json.dumps(to_jsonable(journal), indent=2, sort_keys=True) + "\n"
-    ensure_private_subdir(state_root, TRANSACTIONS_DIR)
-    path = transaction_path(state_root, journal.transaction_id)
-    atomic_write_private_text(path, payload)
-    if journal.is_terminal():
-        ensure_private_subdir(state_root, HISTORY_DIR)
-        atomic_write_private_text(history_path(state_root, journal.transaction_id), payload)
+    name = "%s.json" % journal.transaction_id
+    if isinstance(state_root, StateRootHandle):
+        atomic_write_private_text_relative(state_root.subdir_fd(TRANSACTIONS_DIR), name, payload)
+        if journal.is_terminal():
+            atomic_write_private_text_relative(state_root.subdir_fd(HISTORY_DIR), name, payload)
+    else:
+        ensure_private_subdir(state_root, TRANSACTIONS_DIR)
+        atomic_write_private_text(transaction_path(state_root, journal.transaction_id), payload)
+        if journal.is_terminal():
+            ensure_private_subdir(state_root, HISTORY_DIR)
+            atomic_write_private_text(history_path(state_root, journal.transaction_id), payload)
 
 
-def read_journal(state_root: Path, transaction_id: str) -> TransactionJournal:
-    path = transaction_path(state_root, transaction_id)
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise JournalError("cannot read journal %s: %s" % (path, exc)) from exc
+def read_journal(state_root: StateRootLike, transaction_id: str) -> TransactionJournal:
+    validate_identifier(transaction_id, field="transaction_id")
+    name = "%s.json" % transaction_id
+    if isinstance(state_root, StateRootHandle):
+        try:
+            raw = read_private_relative(state_root.subdir_fd(TRANSACTIONS_DIR), name)
+        except OSError as exc:
+            raise JournalError("cannot read journal %s: %s" % (transaction_id, exc)) from exc
+    else:
+        path = transaction_path(state_root, transaction_id)
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise JournalError("cannot read journal %s: %s" % (path, exc)) from exc
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise JournalError("corrupt journal %s: %s" % (path, exc)) from exc
+        raise JournalError("corrupt journal %s: %s" % (transaction_id, exc)) from exc
     return from_jsonable(data)
 
 
-def list_transaction_ids(state_root: Path) -> list[str]:
+def list_transaction_ids(state_root: StateRootLike) -> list[str]:
+    if isinstance(state_root, StateRootHandle):
+        return list_json_names_relative(state_root.subdir_fd(TRANSACTIONS_DIR))
     directory = transactions_dir(state_root)
     try:
         os.lstat(directory)
@@ -178,7 +212,7 @@ def list_transaction_ids(state_root: Path) -> list[str]:
     return sorted(entry.stem for entry in directory.glob("*.json"))
 
 
-def list_pending_transaction_ids(state_root: Path) -> list[str]:
+def list_pending_transaction_ids(state_root: StateRootLike) -> list[str]:
     """Every non-terminal transaction id, plus any journal that fails to parse
     (a corrupt/unknown-schema/invalid journal must block the provisioner, not
     be silently skipped)."""
@@ -194,32 +228,54 @@ def list_pending_transaction_ids(state_root: Path) -> list[str]:
     return pending
 
 
-def write_ownership_records(state_root: Path, capability_id: str, records: Sequence[OwnershipRecord]) -> None:
+def write_ownership_records(state_root: StateRootLike, capability_id: str, records: Sequence[OwnershipRecord]) -> None:
+    validate_identifier(capability_id, field="capability_id")
     payload = json.dumps(
         [redact_for_journal(_ownership_to_jsonable(record)) for record in records], indent=2, sort_keys=True
     ) + "\n"
-    ensure_private_subdir(state_root, OWNERSHIP_DIR)
-    atomic_write_private_text(ownership_path(state_root, capability_id), payload)
+    name = "%s.json" % capability_id
+    if isinstance(state_root, StateRootHandle):
+        atomic_write_private_text_relative(state_root.subdir_fd(OWNERSHIP_DIR), name, payload)
+    else:
+        ensure_private_subdir(state_root, OWNERSHIP_DIR)
+        atomic_write_private_text(ownership_path(state_root, capability_id), payload)
 
 
-def read_ownership_records(state_root: Path, capability_id: str) -> list[OwnershipRecord]:
-    path = ownership_path(state_root, capability_id)
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return []
-    except OSError as exc:
-        raise JournalError("cannot read ownership records %s: %s" % (path, exc)) from exc
+def read_ownership_records(state_root: StateRootLike, capability_id: str) -> list[OwnershipRecord]:
+    validate_identifier(capability_id, field="capability_id")
+    name = "%s.json" % capability_id
+    if isinstance(state_root, StateRootHandle):
+        try:
+            raw = read_private_relative(state_root.subdir_fd(OWNERSHIP_DIR), name)
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise JournalError("cannot read ownership records %s: %s" % (capability_id, exc)) from exc
+        descriptor = capability_id
+    else:
+        path = ownership_path(state_root, capability_id)
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise JournalError("cannot read ownership records %s: %s" % (path, exc)) from exc
+        descriptor = path
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise JournalError("cannot read ownership records %s: %s" % (path, exc)) from exc
+        raise JournalError("cannot read ownership records %s: %s" % (descriptor, exc)) from exc
     if not isinstance(data, list):
-        raise JournalError("ownership records %s must be a JSON array" % path)
+        raise JournalError("ownership records %s must be a JSON array" % descriptor)
     return [_ownership_from_jsonable(item) for item in data]
 
 
-def delete_ownership_records(state_root: Path, capability_id: str) -> None:
+def delete_ownership_records(state_root: StateRootLike, capability_id: str) -> None:
+    validate_identifier(capability_id, field="capability_id")
+    name = "%s.json" % capability_id
+    if isinstance(state_root, StateRootHandle):
+        delete_private_relative(state_root.subdir_fd(OWNERSHIP_DIR), name)
+        return
     path = ownership_path(state_root, capability_id)
     try:
         path.unlink()

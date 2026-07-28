@@ -166,7 +166,7 @@ class TransactionalProvisioningTests(unittest.TestCase):
 
     # 6. Lock entre dos procesos.
     def test_06_lock_contention_between_two_processes(self) -> None:
-        lock_path = journal_mod.lock_path(self.harness.state_root)
+        state_root = self.harness.state_root
         holder_script = self.tmp / "holder.py"
         holder_script.write_text(
             "import sys, time\n"
@@ -175,7 +175,7 @@ class TransactionalProvisioningTests(unittest.TestCase):
             "from compat.provisioning.lock import acquire_provisioner_lock\n"
             "with acquire_provisioner_lock(Path(%r), transaction_id='holder', timeout=2.0):\n"
             "    print('ACQUIRED', flush=True)\n"
-            "    time.sleep(1.5)\n" % (str(ROOT), str(lock_path))
+            "    time.sleep(1.5)\n" % (str(ROOT), str(state_root))
         )
         proc = subprocess.Popen([sys.executable, str(holder_script)], stdout=subprocess.PIPE, text=True)
         self.addCleanup(proc.wait)
@@ -183,7 +183,7 @@ class TransactionalProvisioningTests(unittest.TestCase):
         line = proc.stdout.readline()
         self.assertEqual(line.strip(), "ACQUIRED")
         with self.assertRaises(ProvisionerLockHeldError) as ctx:
-            with lock_mod.acquire_provisioner_lock(lock_path, transaction_id="contender", timeout=0.3):
+            with lock_mod.acquire_provisioner_lock(state_root, transaction_id="contender", timeout=0.3):
                 pass
         self.assertIsNotNone(ctx.exception.holder_pid)
         proc.wait(5)
@@ -582,7 +582,7 @@ class TransactionalProvisioningTests(unittest.TestCase):
         self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
         journal_path = journal_mod.transaction_path(self.harness.state_root, outcome.transaction_id)
         ownership_file = journal_mod.ownership_path(self.harness.state_root, decision.capability_id)
-        with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(self.harness.state_root), transaction_id="perm-check", timeout=1.0):
+        with lock_mod.acquire_provisioner_lock(self.harness.state_root, transaction_id="perm-check", timeout=1.0):
             lock_file = journal_mod.lock_path(self.harness.state_root)
             self.assertEqual(oct(stat.S_IMODE(lock_file.stat().st_mode)), "0o600")
         self.assertEqual(oct(stat.S_IMODE(journal_path.stat().st_mode)), "0o600")
@@ -808,6 +808,86 @@ class PathPolicyChokePointTests(unittest.TestCase):
         self.assertEqual(result_journal.step(0).error_kind, "path_policy_violation")
 
 
+class PathPolicyErrorClassificationTests(unittest.TestCase):
+    """Point 4 (fourth correction round): validate_target_path,
+    _reject_symlink_components, validate_dedicated_lab_root and
+    validate_lab_descendant use os.lstat directly, never
+    Path.is_symlink()/Path.exists() (whose internal OSError-handling
+    differs across Python versions -- see the round-2 hardening notes,
+    where that divergence caused a real cross-version test fragility). A
+    FileNotFoundError on a component means absent where the operation
+    allows it; any OTHER OSError -- permission denied, EIO, ESTALE -- is
+    fail-closed as PathPolicyError, never silently treated as absence.
+    These tests run against the REAL policy functions with no bypass, and
+    must classify identically regardless of Python version."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+
+    @staticmethod
+    def _faulty_lstat(target: Path, exc: OSError):
+        real_lstat = os.lstat
+
+        def _wrapped(path, *args, **kwargs):
+            if Path(path) == target:
+                raise exc
+            return real_lstat(path, *args, **kwargs)
+
+        return _wrapped
+
+    def _assert_validate_target_path_fails_closed(self, injected_exc: OSError) -> None:
+        allowed_root = self.tmp / "allowed"
+        allowed_root.mkdir()
+        blocked = allowed_root / "blocked_dir"
+        blocked.mkdir()
+        target = blocked / "leaf.txt"
+        with mock.patch("compat.provisioning.paths.os.lstat", side_effect=self._faulty_lstat(blocked, injected_exc)):
+            with self.assertRaises(PathPolicyError):
+                validate_target_path(target, allowed_roots=(allowed_root,))
+
+    def test_validate_target_path_permission_error_on_intermediate_component_fails_closed(self) -> None:
+        self._assert_validate_target_path_fails_closed(PermissionError(errno.EACCES, "permission denied"))
+
+    def test_validate_target_path_eio_on_intermediate_component_fails_closed(self) -> None:
+        self._assert_validate_target_path_fails_closed(OSError(errno.EIO, "I/O error"))
+
+    def test_validate_target_path_estale_on_intermediate_component_fails_closed(self) -> None:
+        self._assert_validate_target_path_fails_closed(OSError(errno.ESTALE, "stale file handle"))
+
+    def _assert_lab_root_validation_fails_closed(self, injected_exc: OSError) -> None:
+        lab_root = self.tmp / "lab_root"
+        lab_root.mkdir(mode=0o700)
+        os.chmod(lab_root, 0o700)
+        blocked = lab_root / "blocked_dir"
+        blocked.mkdir()
+        sandbox = blocked / "sandbox"
+        with mock.patch("compat.provisioning.paths.os.lstat", side_effect=self._faulty_lstat(blocked, injected_exc)):
+            with self.assertRaises(PathPolicyError):
+                paths_mod.validate_lab_descendant(lab_root, sandbox, label="--sandbox")
+
+    def test_validate_lab_descendant_permission_error_on_intermediate_component_fails_closed(self) -> None:
+        self._assert_lab_root_validation_fails_closed(PermissionError(errno.EACCES, "permission denied"))
+
+    def test_validate_lab_descendant_eio_on_intermediate_component_fails_closed(self) -> None:
+        self._assert_lab_root_validation_fails_closed(OSError(errno.EIO, "I/O error"))
+
+    def test_validate_lab_descendant_estale_on_intermediate_component_fails_closed(self) -> None:
+        self._assert_lab_root_validation_fails_closed(OSError(errno.ESTALE, "stale file handle"))
+
+    def test_validate_dedicated_lab_root_permission_error_on_leaf_fails_closed(self) -> None:
+        lab_root = self.tmp / "lab_root_leaf_fault"
+        lab_root.mkdir(mode=0o700)
+        os.chmod(lab_root, 0o700)
+        with mock.patch(
+            "compat.provisioning.paths.os.lstat",
+            side_effect=self._faulty_lstat(lab_root, PermissionError(errno.EACCES, "permission denied")),
+        ):
+            with self.assertRaises(PathPolicyError):
+                paths_mod.validate_dedicated_lab_root(lab_root)
+
+
 class PrivateStorageTests(unittest.TestCase):
     """Point 4: provisioning state is always 0700/0600, never the shared-group
     config.persistence primitive, regardless of where state_root lives."""
@@ -1005,6 +1085,298 @@ class OwnershipAuthorityBindingTests(unittest.TestCase):
         self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
 
 
+class _DivergentMetadataExecutor(CanaryExecutor):
+    """Test-only executor (fourth correction round, points 2+6) -- NEVER
+    registered outside tests. Behaves identically to CanaryExecutor except
+    its plan_steps embeds a non-null source/version in each step's intent,
+    and expected_ownership_for_step reports a post_install_fingerprint that
+    deliberately diverges from the content hash. Used to prove the engine's
+    ownership-authority validation is executor-agnostic: it derives
+    everything from THIS executor's own expected_ownership_for_step, never
+    from canary-specific assumptions (source is always None, fingerprint
+    always equals integrity, ...) hardcoded in engine.py."""
+
+    executor_id = "divergent_metadata_test_executor"
+    supported_method_kind = "divergent_metadata_test"
+
+    def plan_steps(self, *, capability_id: str, dependency_id: str, context: ExecutionContext):
+        steps = super().plan_steps(capability_id=capability_id, dependency_id=dependency_id, context=context)
+        return tuple(
+            dataclasses.replace(
+                step,
+                intent={
+                    **step.intent,
+                    "source": "https://example.invalid/divergent-package",
+                    "version": "9.9.9-test",
+                },
+            )
+            for step in steps
+        )
+
+    def expected_ownership_for_step(self, plan, step):
+        expected = super().expected_ownership_for_step(plan, step)
+        return dataclasses.replace(
+            expected,
+            source=step.intent.get("source"),
+            version=step.intent.get("version"),
+            post_install_fingerprint="0" * 64,
+        )
+
+
+DIVERGENT_METADATA_METHOD_KIND = "divergent_metadata_test"
+
+
+class ExecutorAgnosticOwnershipAuthorityTests(unittest.TestCase):
+    """Points 2+6 (fourth correction round): validate_ownership_authority
+    must derive its expectations from whatever executor produced the plan,
+    never from engine-hardcoded canary assumptions. A second, divergent
+    test-only executor (non-null source/version, a post_install_fingerprint
+    that diverges from the content hash) must still work correctly through
+    the exact same generic authority/commit/uninstall machinery -- proving
+    the infrastructure is genuinely generic, not secretly canary-specific."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+        self.divergent_executor = _DivergentMetadataExecutor()
+        self.harness.registry.register(
+            method_kind=DIVERGENT_METADATA_METHOD_KIND, method_id="divergent_method", executor=self.divergent_executor
+        )
+
+    def _decision(self, capability_id: str):
+        return _decision(capability_id, method_kind=DIVERGENT_METADATA_METHOD_KIND, method_id="divergent_method")
+
+    def test_divergent_metadata_executor_commits_and_uninstalls_cleanly(self) -> None:
+        capability_id = "cap_divergent_lifecycle"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        self.assertTrue(all(r.candidate.source == "https://example.invalid/divergent-package" for r in records))
+        self.assertTrue(all(r.candidate.version == "9.9.9-test" for r in records))
+        self.assertTrue(all(r.candidate.post_install_fingerprint == "0" * 64 for r in records))
+        self.assertTrue(all(r.candidate.post_install_fingerprint != r.candidate.integrity for r in records))
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.UNINSTALLED)
+        self.assertFalse((self.harness.sandbox / ("%s.divergent" % capability_id)).exists())
+
+    def test_divergent_metadata_executor_authority_still_rejects_a_redirected_resource(self) -> None:
+        capability_id = "cap_divergent_redirect"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        foreign = self.tmp / "foreign.txt"
+        foreign.write_bytes(b"not part of this plan")
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        tampered = [dataclasses.replace(r, candidate=dataclasses.replace(r.candidate, resource_identity=str(foreign))) for r in records]
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, tampered)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertTrue(foreign.exists())
+
+
+class CoordinatedMetadataTamperTests(unittest.TestCase):
+    """Point 2 (fourth correction round) mandatory security tests: even a
+    COORDINATED tamper -- altering the real resource's metadata AND the
+    persisted ownership record to match each other -- must still be
+    refused, because authority compares against the executor's canonical,
+    PLAN-derived expectation (a fixed value the attacker cannot influence),
+    never against a live re-stat or the record's own claims in isolation."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def _prepare_committed(self, capability_id: str) -> None:
+        outcome = engine.prepare(self.harness.decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+
+    def test_coordinated_mode_tamper_is_still_refused(self) -> None:
+        capability_id = "cap_coord_mode"
+        self._prepare_committed(capability_id)
+        marker_path = self.harness.sandbox / ("%s.marker" % capability_id)
+        os.chmod(marker_path, 0o644)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        tampered = [
+            dataclasses.replace(r, candidate=dataclasses.replace(r.candidate, mode=0o644))
+            if r.candidate.resource_identity == str(marker_path) else r
+            for r in records
+        ]
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, tampered)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertEqual(result.error_kind, "ownership_invalid")
+        self.assertTrue(marker_path.exists())
+        self.assertEqual(oct(stat.S_IMODE(marker_path.stat().st_mode)), "0o644")
+
+    def test_coordinated_hardlink_tamper_is_still_refused(self) -> None:
+        capability_id = "cap_coord_hardlink"
+        self._prepare_committed(capability_id)
+        marker_path = self.harness.sandbox / ("%s.marker" % capability_id)
+        hardlink_path = marker_path.with_name(marker_path.name + ".extra_link")
+        os.link(marker_path, hardlink_path)
+        self.addCleanup(lambda: hardlink_path.unlink(missing_ok=True))
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        tampered = [
+            dataclasses.replace(r, candidate=dataclasses.replace(r.candidate, nlink=2))
+            if r.candidate.resource_identity == str(marker_path) else r
+            for r in records
+        ]
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, tampered)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertNotEqual(result.status, PrepareStatus.UNINSTALLED)
+        self.assertTrue(marker_path.exists())
+        self.assertTrue(hardlink_path.exists())
+
+    def test_coordinated_uid_gid_tamper_is_still_refused(self) -> None:
+        # A real chown to a different uid/gid typically requires privileges
+        # this test process does not have; the record is tampered to a
+        # DIFFERENT uid/gid than the plan's own deterministic expectation
+        # (os.getuid()/os.getgid() at plan-build time) to simulate the
+        # coordinated-tamper scenario without needing root.
+        capability_id = "cap_coord_uid_gid"
+        self._prepare_committed(capability_id)
+        marker_path = self.harness.sandbox / ("%s.marker" % capability_id)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        tampered = [
+            dataclasses.replace(r, candidate=dataclasses.replace(r.candidate, uid=r.candidate.uid + 1, gid=r.candidate.gid + 1))
+            if r.candidate.resource_identity == str(marker_path) else r
+            for r in records
+        ]
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, tampered)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertTrue(marker_path.exists())
+
+
+class CommittedJournalStructuralIntegrityTests(unittest.TestCase):
+    """Point 3 (fourth correction round): before granting authority, a
+    COMMITTED source journal's own steps must be structurally IDENTICAL to
+    the independently reconstructed plan -- same cardinality, unique
+    sequences, same step_id/action_type/target/intent, in every step, and
+    every step exactly VERIFIED. plan_digest alone does not protect
+    journal.steps: none of a step's own persisted state (its state, its
+    step_id/action_type/target/intent as actually written to disk)
+    participates in plan_digest, which only covers the ORIGINAL plan at
+    journal-creation time."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def _prepare_committed(self, capability_id: str) -> str:
+        outcome = engine.prepare(self.harness.decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        return outcome.transaction_id
+
+    def _rewrite_source_journal(self, transaction_id: str, mutate) -> journal_mod.TransactionJournal:
+        journal = journal_mod.read_journal(self.harness.state_root, transaction_id)
+        journal = mutate(journal)
+        journal_mod.write_journal(self.harness.state_root, journal)
+        return journal
+
+    def _validate_authority(self, capability_id: str) -> bool:
+        owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
+        return engine.validate_ownership_authority(
+            self.harness.state_root, capability_id, owned,
+            registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.harness.context,
+        )
+
+    def test_mandatory_security_scenario_step_not_verified_and_ownership_shrunk_still_blocked(self) -> None:
+        capability_id = "cap_structural_mandatory"
+        transaction_id = self._prepare_committed(capability_id)
+        marker_path = self.harness.sandbox / ("%s.marker" % capability_id)
+        companion_path = self.harness.sandbox / ("%s.companion" % capability_id)
+        original_digest = journal_mod.read_journal(self.harness.state_root, transaction_id).plan_digest
+
+        self._rewrite_source_journal(
+            transaction_id, lambda j: j.with_step(dataclasses.replace(j.step(1), state=StepState.APPLIED))
+        )
+        self.assertEqual(journal_mod.read_journal(self.harness.state_root, transaction_id).plan_digest, original_digest)
+
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        shrunk = [r for r in records if r.candidate.resource_identity == str(marker_path)]
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, shrunk)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertTrue(marker_path.exists())
+        self.assertTrue(companion_path.exists())
+        self.assertTrue(journal_mod.read_ownership_records(self.harness.state_root, capability_id))
+
+    def test_missing_step_breaks_authority(self) -> None:
+        capability_id = "cap_structural_missing_step"
+        transaction_id = self._prepare_committed(capability_id)
+        self._rewrite_source_journal(transaction_id, lambda j: dataclasses.replace(j, steps=(j.steps[0],)))
+        self.assertFalse(self._validate_authority(capability_id))
+
+    def test_duplicate_step_breaks_authority(self) -> None:
+        capability_id = "cap_structural_duplicate_step"
+        transaction_id = self._prepare_committed(capability_id)
+        self._rewrite_source_journal(transaction_id, lambda j: dataclasses.replace(j, steps=j.steps + (j.steps[0],)))
+        self.assertFalse(self._validate_authority(capability_id))
+
+    def test_duplicate_sequence_breaks_authority(self) -> None:
+        capability_id = "cap_structural_duplicate_sequence"
+        transaction_id = self._prepare_committed(capability_id)
+        self._rewrite_source_journal(
+            transaction_id,
+            lambda j: dataclasses.replace(j, steps=(j.steps[0], dataclasses.replace(j.steps[1], sequence=j.steps[0].sequence))),
+        )
+        self.assertFalse(self._validate_authority(capability_id))
+
+    def test_step_not_verified_breaks_authority(self) -> None:
+        capability_id = "cap_structural_not_verified"
+        transaction_id = self._prepare_committed(capability_id)
+        self._rewrite_source_journal(
+            transaction_id, lambda j: j.with_step(dataclasses.replace(j.step(1), state=StepState.VERIFYING))
+        )
+        self.assertFalse(self._validate_authority(capability_id))
+
+    def test_changed_step_id_breaks_authority(self) -> None:
+        capability_id = "cap_structural_step_id"
+        transaction_id = self._prepare_committed(capability_id)
+        self._rewrite_source_journal(
+            transaction_id, lambda j: j.with_step(dataclasses.replace(j.step(1), step_id="not_the_real_step_id"))
+        )
+        self.assertFalse(self._validate_authority(capability_id))
+
+    def test_changed_action_type_breaks_authority(self) -> None:
+        capability_id = "cap_structural_action_type"
+        transaction_id = self._prepare_committed(capability_id)
+        self._rewrite_source_journal(
+            transaction_id, lambda j: j.with_step(dataclasses.replace(j.step(1), action_type="not_the_real_action"))
+        )
+        self.assertFalse(self._validate_authority(capability_id))
+
+    def test_changed_target_breaks_authority(self) -> None:
+        capability_id = "cap_structural_target"
+        transaction_id = self._prepare_committed(capability_id)
+        self._rewrite_source_journal(
+            transaction_id, lambda j: j.with_step(dataclasses.replace(j.step(1), target=j.step(1).target + ".moved"))
+        )
+        self.assertFalse(self._validate_authority(capability_id))
+
+    def test_changed_intent_breaks_authority(self) -> None:
+        capability_id = "cap_structural_intent"
+        transaction_id = self._prepare_committed(capability_id)
+        self._rewrite_source_journal(
+            transaction_id,
+            lambda j: j.with_step(dataclasses.replace(j.step(1), intent={**j.step(1).intent, "content_sha256": "0" * 64})),
+        )
+        self.assertFalse(self._validate_authority(capability_id))
+
+
 class OwnershipAuthorityDerivedFromPlanTests(unittest.TestCase):
     """Point 3 (third correction round): validate_ownership_authority must
     derive its expectations from the source transaction's own PLAN,
@@ -1084,40 +1456,37 @@ class OwnershipAuthorityDerivedFromPlanTests(unittest.TestCase):
             "cap_tamper_fingerprint", lambda c: dataclasses.replace(c, post_install_fingerprint="0" * 64)
         )
 
-    def _assert_uid_gid_mode_tamper_alone_is_refused_via_drift(self, capability_id: str, mutate_candidate) -> None:
-        # Authority is a purely structural/digest check (path, hash, method,
-        # executor, transaction) -- it deliberately never re-stats the live
-        # filesystem (see validate_ownership_authority's docstring), so a
-        # uid/gid/mode-only tamper of the persisted record does not by
-        # itself change WHICH resource is being claimed and still passes
-        # authority. It must still never be able to cause an actual unlink:
-        # the real, untouched file's identity diverges from the tampered
-        # record, and _detect_ownership_drift refuses the removal.
+    def _assert_uid_gid_mode_tamper_alone_breaks_authority(self, capability_id: str, mutate_candidate) -> None:
+        # Fourth correction round, point 2: authority now compares uid/gid/
+        # mode against the executor's own canonical, plan-derived
+        # expectation (never a live re-stat -- see
+        # CanaryExecutor.expected_ownership_for_step), so a uid/gid/mode-only
+        # tamper of the persisted record is caught by authority itself, not
+        # deferred to _detect_ownership_drift.
         self._prepare_committed(capability_id)
         records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
         tampered = [dataclasses.replace(r, candidate=mutate_candidate(r.candidate)) for r in records]
         journal_mod.write_ownership_records(self.harness.state_root, capability_id, tampered)
-        self.assertTrue(engine.validate_ownership_authority(
+        self.assertFalse(engine.validate_ownership_authority(
             self.harness.state_root, capability_id, tampered,
             registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.harness.context,
         ))
         result = engine.uninstall(capability_id, self.harness.env, apply=True)
-        self.assertEqual(result.status, PrepareStatus.UNINSTALL_FAILED)
-        self.assertTrue(result.residuals)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
         self.assertTrue((self.harness.sandbox / ("%s.marker" % capability_id)).exists())
 
-    def test_tampering_only_uid_is_refused_via_drift_detection(self) -> None:
-        self._assert_uid_gid_mode_tamper_alone_is_refused_via_drift(
+    def test_tampering_only_uid_breaks_authority(self) -> None:
+        self._assert_uid_gid_mode_tamper_alone_breaks_authority(
             "cap_tamper_uid_only", lambda c: dataclasses.replace(c, uid=c.uid + 1)
         )
 
-    def test_tampering_only_gid_is_refused_via_drift_detection(self) -> None:
-        self._assert_uid_gid_mode_tamper_alone_is_refused_via_drift(
+    def test_tampering_only_gid_breaks_authority(self) -> None:
+        self._assert_uid_gid_mode_tamper_alone_breaks_authority(
             "cap_tamper_gid_only", lambda c: dataclasses.replace(c, gid=c.gid + 1)
         )
 
-    def test_tampering_only_mode_is_refused_via_drift_detection(self) -> None:
-        self._assert_uid_gid_mode_tamper_alone_is_refused_via_drift(
+    def test_tampering_only_mode_breaks_authority(self) -> None:
+        self._assert_uid_gid_mode_tamper_alone_breaks_authority(
             "cap_tamper_mode_only", lambda c: dataclasses.replace(c, mode=0o755)
         )
 
@@ -1165,13 +1534,11 @@ class RecoveryLockTests(unittest.TestCase):
         self.harness = _Harness(self.tmp)
 
     def test_public_recover_pending_acquires_the_lock_itself(self) -> None:
-        lock_path = journal_mod.lock_path(self.harness.state_root)
-        with lock_mod.acquire_provisioner_lock(lock_path, transaction_id="holder", timeout=1.0):
+        with lock_mod.acquire_provisioner_lock(self.harness.state_root, transaction_id="holder", timeout=1.0):
             with self.assertRaises(ProvisionerLockHeldError):
                 engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context, lock_timeout=0.2)
 
     def test_internal_recover_pending_locked_does_not_acquire_the_lock(self) -> None:
-        lock_path = journal_mod.lock_path(self.harness.state_root)
         holder_script = self.tmp / "holder.py"
         holder_script.write_text(
             "import sys, time\n"
@@ -1180,7 +1547,7 @@ class RecoveryLockTests(unittest.TestCase):
             "from compat.provisioning.lock import acquire_provisioner_lock\n"
             "with acquire_provisioner_lock(Path(%r), transaction_id='holder', timeout=2.0):\n"
             "    print('ACQUIRED', flush=True)\n"
-            "    time.sleep(1.5)\n" % (str(ROOT), str(lock_path))
+            "    time.sleep(1.5)\n" % (str(ROOT), str(self.harness.state_root))
         )
         proc = subprocess.Popen([sys.executable, str(holder_script)], stdout=subprocess.PIPE, text=True)
         self.addCleanup(proc.wait)
@@ -1192,6 +1559,196 @@ class RecoveryLockTests(unittest.TestCase):
             self.assertEqual(reports, [])
         finally:
             proc.wait(5)
+
+
+class StateRootIdentityRaceTests(unittest.TestCase):
+    """Point 1 (fourth correction round) mandatory multiprocess test: the
+    lock and all state operations stay bound to the SAME physical state
+    root for the entire duration of a lock-protected transaction, via
+    descriptor-relative operations -- never a re-resolved path. A holder
+    process's write must land in the ORIGINAL directory even after it has
+    been renamed aside (or replaced by a new directory/symlink) while the
+    lock was held, and it must never create a second, divergent journal
+    tree at the vacated path."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+
+    def _write_holder_script(self, *, state_root: Path, ready: Path, go: Path, done: Path, transaction_id: str) -> Path:
+        script = self.tmp / ("holder_%s.py" % transaction_id)
+        script.write_text(
+            "import sys, time\n"
+            "sys.path.insert(0, %r)\n"
+            "from pathlib import Path\n"
+            "from compat.provisioning import lock as lock_mod, journal as journal_mod\n"
+            "from compat.provisioning.journal import TransactionJournal\n"
+            "from compat.provisioning.model import TransactionState\n"
+            "state_root = Path(%r)\n"
+            "ready = Path(%r)\n"
+            "go = Path(%r)\n"
+            "done = Path(%r)\n"
+            "with lock_mod.acquire_provisioner_lock(state_root, transaction_id=%r, timeout=10.0) as handle:\n"
+            "    ready.write_text('ready')\n"
+            "    deadline = time.monotonic() + 10.0\n"
+            "    while not go.exists():\n"
+            "        if time.monotonic() > deadline:\n"
+            "            raise SystemExit('timed out waiting for go marker')\n"
+            "        time.sleep(0.05)\n"
+            "    journal = TransactionJournal(\n"
+            "        schema_version=journal_mod.SCHEMA_VERSION, transaction_id=%r, operation='prepare',\n"
+            "        state=TransactionState.PLANNED, created_at='2026-01-01T00:00:00+00:00',\n"
+            "        updated_at='2026-01-01T00:00:00+00:00', plan_digest='0' * 64, capability_id='cap_rename_race',\n"
+            "        dependency_id='dep_rename_race', target='lab', architecture='x86_64',\n"
+            "        support_classification='lab_fixture', selected_method={'id': 'canary_method', 'kind': 'canary_lab'},\n"
+            "        executor={'id': 'canary_lab_executor', 'version': '1'}, steps=(),\n"
+            "    )\n"
+            "    journal_mod.write_journal(handle, journal)\n"
+            "    done.write_text('done')\n"
+            % (str(ROOT), str(state_root), str(ready), str(go), str(done), transaction_id, transaction_id)
+        )
+        return script
+
+    def _run_rename_race(self, *, replace_with) -> tuple[Path, Path, str]:
+        """Starts a holder process, waits for it to acquire the lock, then
+        renames state_root aside (optionally calling ``replace_with`` to
+        put something new at the vacated original path) before signaling
+        the holder to perform its write. Returns
+        (renamed_state_root, original_state_root, transaction_id)."""
+        parent = self.tmp / "var_lib_watchdogvpn_style_parent"
+        parent.mkdir(mode=0o2770)
+        os.chmod(parent, 0o2770)
+        state_root = parent / "state"
+        ready = self.tmp / "ready.marker"
+        go = self.tmp / "go.marker"
+        done = self.tmp / "done.marker"
+        transaction_id = "rename-race-txn"
+        script = self._write_holder_script(state_root=state_root, ready=ready, go=go, done=done, transaction_id=transaction_id)
+
+        proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.wait)
+
+        deadline = time.monotonic() + 10.0
+        while not ready.exists():
+            self.assertLess(time.monotonic(), deadline, "holder never signaled ready")
+            time.sleep(0.05)
+
+        renamed_state_root = self.tmp / "state_renamed_aside"
+        state_root.rename(renamed_state_root)
+        if replace_with is not None:
+            replace_with(state_root)
+
+        go.write_text("go")
+        stdout, stderr = proc.communicate(timeout=15)
+        self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
+        self.assertTrue(done.exists(), "holder never finished its write: stderr=%r" % stderr)
+        self.assertEqual(oct(stat.S_IMODE(parent.stat().st_mode)), "0o2770")
+        return renamed_state_root, state_root, transaction_id
+
+    def test_state_root_renamed_aside_holder_still_writes_to_original_directory(self) -> None:
+        renamed_state_root, original_path, transaction_id = self._run_rename_race(replace_with=None)
+        journal = journal_mod.read_journal(renamed_state_root, transaction_id)
+        self.assertEqual(journal.transaction_id, transaction_id)
+        self.assertFalse(original_path.exists())
+
+    def test_state_root_replaced_by_new_directory_holder_still_writes_to_original(self) -> None:
+        def _replace(path: Path) -> None:
+            path.mkdir(mode=0o700)
+
+        renamed_state_root, original_path, transaction_id = self._run_rename_race(replace_with=_replace)
+        journal = journal_mod.read_journal(renamed_state_root, transaction_id)
+        self.assertEqual(journal.transaction_id, transaction_id)
+        # The new directory at the vacated path is a genuinely different,
+        # empty state root -- it must never contain the holder's journal.
+        self.assertEqual(journal_mod.list_transaction_ids(original_path), [])
+
+    def test_state_root_replaced_by_symlink_holder_still_writes_to_original_and_symlink_rejected(self) -> None:
+        decoy = self.tmp / "decoy_target"
+        decoy.mkdir()
+
+        def _replace(path: Path) -> None:
+            path.symlink_to(decoy)
+
+        renamed_state_root, original_path, transaction_id = self._run_rename_race(replace_with=_replace)
+        journal = journal_mod.read_journal(renamed_state_root, transaction_id)
+        self.assertEqual(journal.transaction_id, transaction_id)
+        # A second process (this test process) must never be able to
+        # acquire a lock through the symlink now sitting at the original
+        # path -- it fails closed rather than silently following it.
+        with self.assertRaises(PathPolicyError):
+            with lock_mod.acquire_provisioner_lock(original_path, transaction_id="contender", timeout=0.2):
+                pass
+        self.assertEqual(sorted(decoy.iterdir()), [])
+
+    def test_transactions_subdir_renamed_mid_transaction_second_write_stays_on_original(self) -> None:
+        """A step further than a top-level state-root rename: the
+        TRANSACTIONS subdirectory itself is renamed away while the holder
+        is still inside its lock-protected critical section, after it has
+        already opened/cached that subdirectory's descriptor once. A
+        second write from the same holder, using the SAME cached
+        descriptor, must still land in the original (now renamed-away)
+        transactions directory."""
+        parent = self.tmp
+        state_root = parent / "state_txn_rename"
+        state_root.mkdir(mode=0o700)
+        ready = self.tmp / "ready2.marker"
+        go = self.tmp / "go2.marker"
+        rename_done = self.tmp / "rename_done2.marker"
+        done = self.tmp / "done2.marker"
+        transaction_id = "txn-subdir-rename-race"
+        script = self.tmp / "holder_txn_subdir.py"
+        script.write_text(
+            "import sys, time\n"
+            "sys.path.insert(0, %r)\n"
+            "from pathlib import Path\n"
+            "from compat.provisioning import lock as lock_mod, journal as journal_mod\n"
+            "from compat.provisioning.journal import TransactionJournal\n"
+            "from compat.provisioning.model import TransactionState\n"
+            "state_root = Path(%r)\n"
+            "ready = Path(%r); go = Path(%r); rename_done = Path(%r); done = Path(%r)\n"
+            "def _journal(txn_id):\n"
+            "    return TransactionJournal(\n"
+            "        schema_version=journal_mod.SCHEMA_VERSION, transaction_id=txn_id, operation='prepare',\n"
+            "        state=TransactionState.PLANNED, created_at='2026-01-01T00:00:00+00:00',\n"
+            "        updated_at='2026-01-01T00:00:00+00:00', plan_digest='0' * 64, capability_id='cap_x',\n"
+            "        dependency_id='dep_x', target='lab', architecture='x86_64', support_classification='lab_fixture',\n"
+            "        selected_method={'id': 'canary_method', 'kind': 'canary_lab'},\n"
+            "        executor={'id': 'canary_lab_executor', 'version': '1'}, steps=(),\n"
+            "    )\n"
+            "with lock_mod.acquire_provisioner_lock(state_root, transaction_id='holder', timeout=10.0) as handle:\n"
+            "    journal_mod.write_journal(handle, _journal(%r))\n"  # opens/caches the transactions subdir fd
+            "    ready.write_text('ready')\n"
+            "    deadline = time.monotonic() + 10.0\n"
+            "    while not rename_done.exists():\n"
+            "        if time.monotonic() > deadline: raise SystemExit('timed out waiting for rename_done')\n"
+            "        time.sleep(0.05)\n"
+            "    journal_mod.write_journal(handle, _journal(%r))\n"
+            "    done.write_text('done')\n"
+            % (str(ROOT), str(state_root), str(ready), str(go), str(rename_done), str(done), transaction_id, transaction_id + "-second")
+        )
+
+        proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.wait)
+        deadline = time.monotonic() + 10.0
+        while not ready.exists():
+            self.assertLess(time.monotonic(), deadline, "holder never signaled ready")
+            time.sleep(0.05)
+
+        renamed_transactions = state_root / "transactions_renamed_aside"
+        (state_root / journal_mod.TRANSACTIONS_DIR).rename(renamed_transactions)
+
+        rename_done.write_text("go")
+        stdout, stderr = proc.communicate(timeout=15)
+        self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
+        self.assertTrue(done.exists())
+
+        second_id = transaction_id + "-second"
+        self.assertTrue((renamed_transactions / ("%s.json" % transaction_id)).exists())
+        self.assertTrue((renamed_transactions / ("%s.json" % second_id)).exists())
+        recreated_transactions = state_root / journal_mod.TRANSACTIONS_DIR
+        if recreated_transactions.exists():
+            self.assertEqual(sorted(p.name for p in recreated_transactions.iterdir()), [])
 
 
 class UninstallRecoveryStateMachineTests(unittest.TestCase):
@@ -1212,7 +1769,7 @@ class UninstallRecoveryStateMachineTests(unittest.TestCase):
 
     def _build_uninstall_journal(self, capability_id: str) -> journal_mod.TransactionJournal:
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id="uninstall-%s" % capability_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         return journal.with_state(TransactionState.UNINSTALLING, now=_now())
 
@@ -1369,7 +1926,7 @@ class OwnershipRevocationTests(unittest.TestCase):
 
     def _uninstall_journal_at_revoking_ownership(self, capability_id: str) -> journal_mod.TransactionJournal:
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id="uninstall-%s" % capability_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
         journal_mod.write_journal(self.harness.state_root, journal)
@@ -1386,7 +1943,7 @@ class OwnershipRevocationTests(unittest.TestCase):
         capability_id = "cap_snapshot"
         self._prepare_committed(capability_id)
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id="uninstall-%s" % capability_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         self.assertEqual(len(journal.owned_snapshot), 2)
         journal_mod.write_journal(self.harness.state_root, journal)
@@ -1398,7 +1955,7 @@ class OwnershipRevocationTests(unittest.TestCase):
         capability_id = "cap_snapshot_tamper"
         self._prepare_committed(capability_id)
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id="uninstall-%s" % capability_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
         tampered_snapshot = tuple(
@@ -1472,7 +2029,7 @@ class OwnershipRevocationTests(unittest.TestCase):
         # Fabricate a completed uninstall journal for this exact source
         # transaction WITHOUT actually revoking the live ownership file --
         # this is the "UNINSTALLED with stale ownership still active" case.
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id="uninstall-%s" % capability_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
         journal = journal.with_state(TransactionState.REVOKING_OWNERSHIP, now=_now())
@@ -1509,7 +2066,7 @@ class RevocationBoundarySafetyTests(unittest.TestCase):
 
     def _uninstall_journal_at_revoking_ownership(self, capability_id: str) -> journal_mod.TransactionJournal:
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id="uninstall-%s" % capability_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
         journal_mod.write_journal(self.harness.state_root, journal)
@@ -1599,6 +2156,68 @@ class RevocationBoundarySafetyTests(unittest.TestCase):
         self._assert_boundary_blocks_revoke(capability_id, journal)
         self.assertTrue(marker_path.exists())
 
+    def test_ancestor_swap_disguising_a_present_resource_as_absent_blocks_revoke(self) -> None:
+        # Point 5 (fourth correction round) mandatory test: the resource is
+        # still genuinely present, but an attacker renames its own parent
+        # directory (== the allowed sandbox root, for this single-level
+        # executor) aside and drops a symlink to an unrelated EMPTY
+        # directory at the original location. A naive os.lstat() on the
+        # bare persisted path would see FileNotFoundError (nothing named
+        # "<cap>.marker" inside the empty decoy) and wrongly conclude
+        # "absent" -- even though the real resource is fully intact in the
+        # renamed-away original directory. confirm_absent_descriptor_safe
+        # must instead re-validate the path (which now fails: the allowed
+        # root itself is a symlink) and refuse to treat this as absence.
+        capability_id = "cap_revoke_ancestor_swap"
+        self._prepare_committed(capability_id)
+        journal = self._uninstall_journal_at_revoking_ownership(capability_id)
+        marker_path = Path(journal.owned_snapshot[0].candidate.resource_identity)
+        sandbox = self.harness.sandbox
+
+        marker_path.write_bytes(b"still here, hidden behind an ancestor swap")
+
+        renamed_sandbox = self.tmp / "sandbox_renamed_aside"
+        sandbox.rename(renamed_sandbox)
+        empty_decoy = self.tmp / "empty_decoy"
+        empty_decoy.mkdir()
+        sandbox.symlink_to(empty_decoy)
+
+        def _restore() -> None:
+            if sandbox.is_symlink():
+                sandbox.unlink()
+            if renamed_sandbox.exists() and not sandbox.exists():
+                renamed_sandbox.rename(sandbox)
+
+        self.addCleanup(_restore)
+
+        self._assert_boundary_blocks_revoke(capability_id, journal)
+        self.assertTrue((renamed_sandbox / marker_path.name).exists())
+
+
+class UninstallTransactionIdMatchesJournalTests(unittest.TestCase):
+    """Point 7 (fourth correction round): PrepareOutcome.transaction_id
+    returned by uninstall() must be exactly the uninstall journal's own id,
+    never a separate id minted only for the provisioner-lock metadata."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def test_uninstall_result_transaction_id_matches_the_real_journal(self) -> None:
+        capability_id = "cap_txn_id_match"
+        outcome = engine.prepare(self.harness.decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.UNINSTALLED)
+        self.assertIsNotNone(result.transaction_id)
+        journal = journal_mod.read_journal(self.harness.state_root, result.transaction_id)
+        self.assertEqual(journal.transaction_id, result.transaction_id)
+        self.assertEqual(journal.operation, "uninstall")
+        self.assertEqual(journal.capability_id, capability_id)
+
 
 class RevocationErrorHandlingTests(unittest.TestCase):
     """Point 7 (third correction round): _revoke_ownership_and_verify must
@@ -1626,29 +2245,23 @@ class RevocationErrorHandlingTests(unittest.TestCase):
         self.assertFalse(revoked)
         self.assertIsNotNone(reason)
 
-    def _find_uninstall_transaction_id(self, capability_id: str) -> str:
-        for transaction_id in journal_mod.list_transaction_ids(self.harness.state_root):
-            candidate = journal_mod.read_journal(self.harness.state_root, transaction_id)
-            if candidate.operation == "uninstall" and candidate.capability_id == capability_id:
-                return transaction_id
-        raise AssertionError("no uninstall journal found for %s" % capability_id)
-
     def test_uninstall_never_reaches_uninstalled_when_revocation_durability_fails(self) -> None:
-        # Note: the PrepareOutcome.transaction_id returned by uninstall() is
-        # the outer provisioner-lock's id, not the uninstall journal's own
-        # (a separate uuid minted inside _build_uninstall_plan) -- the
-        # journal is located by scanning for it directly.
         capability_id = "cap_revoke_durability_full"
         outcome = engine.prepare(self.harness.decision(capability_id), self.harness.env, apply=True)
         self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
 
-        with mock.patch("compat.provisioning.journal.fsync_parent_directory", side_effect=DurabilityError("boom")):
+        # uninstall() holds the provisioner lock for its whole critical
+        # section (point 1, fourth correction round), so its own
+        # delete_ownership_records call goes through the descriptor-relative
+        # path (StateRootHandle), not the legacy Path-based one -- the fault
+        # is injected at that same relative primitive.
+        with mock.patch("compat.provisioning.journal.delete_private_relative", side_effect=DurabilityError("boom")):
             result = engine.uninstall(capability_id, self.harness.env, apply=True)
         self.assertEqual(result.status, PrepareStatus.UNINSTALL_FAILED)
         self.assertEqual(result.error_kind, "ownership_revocation_failed")
+        self.assertIsNotNone(result.transaction_id)
 
-        uninstall_transaction_id = self._find_uninstall_transaction_id(capability_id)
-        final = journal_mod.read_journal(self.harness.state_root, uninstall_transaction_id)
+        final = journal_mod.read_journal(self.harness.state_root, result.transaction_id)
         self.assertEqual(final.state, TransactionState.UNINSTALL_FAILED)
 
         # Recovery must still be able to pick this up cleanly once the
@@ -1656,7 +2269,7 @@ class RevocationErrorHandlingTests(unittest.TestCase):
         # already be unlinked for real).
         reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
         self.assertEqual(reports[0].action, RecoveryAction.REQUIRE_MANUAL)
-        recovered = journal_mod.read_journal(self.harness.state_root, uninstall_transaction_id)
+        recovered = journal_mod.read_journal(self.harness.state_root, result.transaction_id)
         self.assertEqual(recovered.state, TransactionState.RECOVERY_REQUIRED)
 
 
@@ -1697,31 +2310,34 @@ class PrivateStateAndLockSecurityTests(unittest.TestCase):
             storage_mod.ensure_private_subdir(state_root, journal_mod.OWNERSHIP_DIR)
 
     def test_lock_path_is_a_symlink_to_a_victim_file_which_survives_untouched(self) -> None:
+        state_root = self.tmp / "state_lock_symlink"
+        state_root.mkdir(mode=0o700)
         victim = self.tmp / "victim.txt"
         victim.write_bytes(b"do not touch me")
         os.chmod(victim, 0o644)  # explicit, umask-independent starting mode
-        lock_path = self.tmp / "provisioner.lock"
-        lock_path.symlink_to(victim)
+        (state_root / "provisioner.lock").symlink_to(victim)
         with self.assertRaises(PathPolicyError):
-            with lock_mod.acquire_provisioner_lock(lock_path, transaction_id="t", timeout=0.2):
+            with lock_mod.acquire_provisioner_lock(state_root, transaction_id="t", timeout=0.2):
                 pass
         self.assertEqual(victim.read_bytes(), b"do not touch me")
         self.assertEqual(oct(stat.S_IMODE(victim.stat().st_mode)), "0o644")  # never fchmod'd
 
     def test_lock_path_is_a_directory_is_rejected(self) -> None:
-        lock_path = self.tmp / "provisioner.lock"
-        lock_path.mkdir()
+        state_root = self.tmp / "state_lock_dir"
+        state_root.mkdir(mode=0o700)
+        (state_root / "provisioner.lock").mkdir()
         with self.assertRaises(PathPolicyError):
-            with lock_mod.acquire_provisioner_lock(lock_path, transaction_id="t", timeout=0.2):
+            with lock_mod.acquire_provisioner_lock(state_root, transaction_id="t", timeout=0.2):
                 pass
 
     def test_lock_path_is_a_hardlink_is_rejected_and_victim_survives(self) -> None:
+        state_root = self.tmp / "state_lock_hardlink"
+        state_root.mkdir(mode=0o700)
         victim = self.tmp / "victim2.txt"
         victim.write_bytes(b"hardlink victim")
-        lock_path = self.tmp / "provisioner.lock"
-        os.link(victim, lock_path)
+        os.link(victim, state_root / "provisioner.lock")
         with self.assertRaises(PathPolicyError):
-            with lock_mod.acquire_provisioner_lock(lock_path, transaction_id="t", timeout=0.2):
+            with lock_mod.acquire_provisioner_lock(state_root, transaction_id="t", timeout=0.2):
                 pass
         self.assertEqual(victim.read_bytes(), b"hardlink victim")
 
@@ -2100,7 +2716,7 @@ class ErrorsNeverConfusedWithAbsenceTests(unittest.TestCase):
         capability_id = "cap_err_uninstall_verify"
         self._committed(capability_id)
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id="uninstall-%s" % capability_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
         marker_index = next(i for i, s in enumerate(journal.steps) if s.intent["resource_identity"].endswith(".marker"))
@@ -2133,7 +2749,7 @@ class ErrorsNeverConfusedWithAbsenceTests(unittest.TestCase):
         capability_id = "cap_err_estale"
         self._committed(capability_id)
         owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
-        plan = engine._build_uninstall_plan(capability_id, owned)
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id="uninstall-%s" % capability_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
         journal = journal.with_state(TransactionState.UNINSTALLING, now=_now())
         marker_index = next(i for i, s in enumerate(journal.steps) if s.intent["resource_identity"].endswith(".marker"))

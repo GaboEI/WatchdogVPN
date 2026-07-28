@@ -92,6 +92,19 @@ def validate_target_path(path: Path, *, allowed_roots: Sequence[Path], forbidden
     for root in allowed_roots:
         root = Path(root)
         try:
+            root_lstat = os.lstat(root)
+        except OSError as exc:
+            raise PathPolicyError("allowed root does not exist: %s (%s)" % (root, exc)) from exc
+        if stat_module.S_ISLNK(root_lstat.st_mode):
+            # An allowed root that has itself been replaced by a symlink
+            # must never be silently followed: resolve() would otherwise
+            # redirect every path-under-this-root check to wherever the
+            # symlink points, letting an attacker who can swap the root
+            # (e.g. rename it aside and drop a symlink to an empty
+            # directory in its place) make an ancestor-swap attack look
+            # like a genuine absence.
+            raise PathPolicyError("allowed root must not be a symlink: %s" % root)
+        try:
             resolved_root = root.resolve(strict=True)
         except OSError as exc:
             raise PathPolicyError("allowed root does not exist: %s (%s)" % (root, exc)) from exc
@@ -101,8 +114,15 @@ def validate_target_path(path: Path, *, allowed_roots: Sequence[Path], forbidden
         current = resolved_root
         for part in relative.parts:
             candidate = current / part
-            if candidate.is_symlink():
-                raise PathPolicyError("target path has an unexpected symlink component: %s" % candidate)
+            try:
+                st = os.lstat(candidate)
+            except FileNotFoundError:
+                pass  # a not-yet-existing tail component is fine; nothing to reject
+            except OSError as exc:
+                raise PathPolicyError("cannot inspect target path component %s: %s" % (candidate, exc)) from exc
+            else:
+                if stat_module.S_ISLNK(st.st_mode):
+                    raise PathPolicyError("target path has an unexpected symlink component: %s" % candidate)
             current = candidate
         return resolved_root / relative
 
@@ -167,6 +187,57 @@ def remove_file_if_owned(path: Path, *, expected_sha256: str | None = None) -> b
     return True
 
 
+_PARENT_DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def confirm_absent_descriptor_safe(
+    resource_identity: str, *, allowed_roots: Sequence[Path], forbidden_roots: Sequence[Path] = ()
+) -> tuple[bool, str | None]:
+    """Descriptor-safe absence check for revocation (point 5, fourth
+    correction round): never an isolated ``os.lstat()`` on a bare,
+    previously-persisted path string, which is vulnerable to a TOCTOU
+    ancestor-swap between whenever the path was last validated and the
+    moment it is inspected. ``resource_identity`` is first reconstructed
+    and validated through the SAME allowlist/forbidden-roots policy as
+    everywhere else (``validate_target_path``, which itself walks every
+    component without following symlinks); its immediate parent directory
+    is then opened with ``O_NOFOLLOW`` and held open, and the basename's
+    absence is checked RELATIVE TO THAT DESCRIPTOR -- closing the window
+    between path validation and the final check, since an ancestor
+    substituted after validation would already be reflected in a fresh
+    ``os.open`` of the parent, not silently bypassed.
+
+    Returns ``(True, None)`` only on a genuine ``FileNotFoundError`` for the
+    basename relative to the held parent descriptor. Any of the following
+    returns ``(False, reason)`` instead -- a path-policy violation, a
+    parent directory that cannot be opened/verified, an unexpected symlink,
+    any other inspection error, or the resource still being present -- so
+    the caller must never treat the resource as safely absent in any of
+    those cases."""
+    try:
+        validated = validate_target_path(Path(resource_identity), allowed_roots=allowed_roots, forbidden_roots=forbidden_roots)
+    except PathPolicyError as exc:
+        return False, "cannot validate path for %s: %s" % (resource_identity, exc)
+
+    parent = validated.parent
+    try:
+        parent_fd = os.open(str(parent), _PARENT_DIR_OPEN_FLAGS)
+    except OSError as exc:
+        return False, "cannot open parent directory of %s: %s" % (resource_identity, exc)
+    try:
+        try:
+            st = os.lstat(validated.name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            return True, None
+        except OSError as exc:
+            return False, "cannot confirm absence of %s: %s" % (resource_identity, exc)
+        if stat_module.S_ISLNK(st.st_mode):
+            return False, "%s exists as an unexpected symlink" % resource_identity
+        return False, "resource %s is still present" % resource_identity
+    finally:
+        os.close(parent_fd)
+
+
 def stat_identity(path: Path) -> dict:
     """Read-only ownership/type identity of a path: uid, gid, mode, st_nlink,
     is_symlink, is_regular. Never follows a symlink for the target itself."""
@@ -198,14 +269,25 @@ def _reject_symlink_components(raw: Path, *, label: str) -> None:
     """Walks every existing component of ``raw`` (stopping at the first
     component that does not yet exist) and rejects a symlink anywhere along
     the way -- checked BEFORE any resolution, which would otherwise silently
-    follow it."""
+    follow it. Uses ``os.lstat`` directly, never ``Path.is_symlink()``/
+    ``Path.exists()``: pathlib's internal ``OSError``-handling for those two
+    calls differs across Python versions (propagates on 3.12, silently
+    returns ``False`` on 3.14 -- see the round-2 hardening notes) and can
+    turn a genuine inspection failure (permission denied, EIO, ESTALE) into
+    a false "not a symlink"/"doesn't exist". Only a genuine
+    ``FileNotFoundError`` on a component means "nothing deeper to check";
+    any OTHER ``OSError`` fails closed as ``PathPolicyError``."""
     current = Path(raw.anchor)
     for part in raw.relative_to(raw.anchor).parts:
         current = current / part
-        if current.is_symlink():
-            raise PathPolicyError("%s has a symlink component, refusing: %s" % (label, current))
-        if not current.exists():
+        try:
+            st = os.lstat(current)
+        except FileNotFoundError:
             break
+        except OSError as exc:
+            raise PathPolicyError("%s: cannot inspect path component %s: %s" % (label, current, exc)) from exc
+        if stat_module.S_ISLNK(st.st_mode):
+            raise PathPolicyError("%s has a symlink component, refusing: %s" % (label, current))
 
 
 def _reject_reserved_destination(raw: Path, *, label: str) -> Path:

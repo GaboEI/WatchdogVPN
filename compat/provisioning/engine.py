@@ -50,7 +50,8 @@ from compat.provisioning.model import (
     UninstallPlan,
     VerificationResult,
 )
-from compat.provisioning.paths import remove_file_if_owned, stat_identity, validate_target_path
+from compat.provisioning.paths import confirm_absent_descriptor_safe, remove_file_if_owned, stat_identity, validate_target_path
+from compat.provisioning.storage import StateRootHandle
 
 NEEDS_RECOVERY_ATTENTION = frozenset(
     {
@@ -283,17 +284,29 @@ def validate_ownership_authority(
     exactly like ``_recover_one`` already does for recovery, and its digest
     is reverified against the journal's own ``plan_digest`` -- never read
     back from the journal's persisted step targets/intents, which is itself
-    tamperable. Each ownership record's resource_identity must then match
-    exactly one ``VERIFIED`` step of that reconstructed plan (a set-exact,
-    both-directions check). This deliberately never re-stats the live
-    filesystem: this function is also called mid-recovery, while a resume in
-    progress may legitimately have already altered the resource -- that is
-    ``_detect_ownership_drift``'s job, run later and only once, right before
-    the actual unlink. Never trusts a record in isolation -- an orphaned,
-    partial or divergent record, one bound to a non-committed/mismatched
-    journal, or one left behind by an uninstall that already removed its
-    resources (stale bookkeeping pending revocation), invalidates the entire
-    set."""
+    tamperable. ``journal.steps`` is additionally required to be
+    STRUCTURALLY IDENTICAL to that reconstructed plan (see
+    ``_journal_steps_match_plan_exactly``): ``plan_digest`` alone does not
+    protect a step being entirely removed, duplicated or altered in
+    ``journal.steps``, since a step's own persisted state (VERIFIED, its
+    undo_record) is not part of ``plan_digest`` at all. Each ownership
+    record must then match exactly one ``VERIFIED`` step of that plan (a
+    set-exact, both-directions check), and every field is compared against
+    ``executor.expected_ownership_for_step`` -- a canonical, deterministic
+    expectation the TRUSTED EXECUTOR itself derives from the plan, never an
+    engine-hardcoded assumption like "artifact_type is always file" or
+    "source is always None" (those belong to the executor, not the
+    coordinator -- a different executor may legitimately produce different
+    values). Because that expectation is plan-derived (never a live
+    filesystem read), it is safe to compare unconditionally even mid-
+    recovery, when a resume in progress may legitimately have already
+    altered the real resource -- live-state drift remains
+    ``_detect_ownership_drift``'s job, run later and only once, right
+    before the actual unlink. Never trusts a record in isolation -- an
+    orphaned, partial or divergent record, one bound to a non-committed/
+    structurally-altered journal, or one left behind by an uninstall that
+    already removed its resources (stale bookkeeping pending revocation),
+    invalidates the entire set."""
     owned = [record for record in records if record.product_owned]
     if not owned:
         return True
@@ -343,35 +356,88 @@ def validate_ownership_authority(
     if compute_plan_digest(plan) != journal.plan_digest:
         return False
 
-    verified_sequences = {step.sequence for step in journal.steps if step.state == StepState.VERIFIED}
-    expected_by_identity = {step.target: step for step in plan.steps if step.sequence in verified_sequences and step.target}
+    if not _journal_steps_match_plan_exactly(journal, plan):
+        return False
+
+    if any(step.state != StepState.VERIFIED for step in journal.steps):
+        return False
+    for step in journal.steps:
+        if step.verification is None or not step.undo_record:
+            return False
+
+    expected_by_identity = {step.target: step for step in plan.steps if step.target}
 
     if set(expected_by_identity) != {record.candidate.resource_identity for record in owned}:
         return False
 
     for record in owned:
         candidate = record.candidate
-        expected_step = expected_by_identity.get(candidate.resource_identity)
-        if expected_step is None:
+        plan_step = expected_by_identity.get(candidate.resource_identity)
+        if plan_step is None:
             return False
-        if candidate.pre_existing:
+        expected = executor.expected_ownership_for_step(plan, plan_step)
+        if record.capability_id != journal.capability_id:
             return False
-        if candidate.source is not None or candidate.version is not None:
+        if candidate.artifact_type != expected.artifact_type:
             return False
-        if candidate.post_install_fingerprint != candidate.integrity:
+        if candidate.resource_identity != expected.resource_identity:
             return False
-        if candidate.method_id != journal.selected_method.get("id"):
+        if candidate.pre_existing != expected.pre_existing:
+            return False
+        if candidate.method_id != expected.method_id:
+            return False
+        if candidate.source != expected.source:
+            return False
+        if candidate.version != expected.version:
+            return False
+        if expected.integrity is not None and candidate.integrity != expected.integrity:
+            return False
+        if expected.uid is not None and candidate.uid != expected.uid:
+            return False
+        if expected.gid is not None and candidate.gid != expected.gid:
+            return False
+        if expected.mode is not None and candidate.mode != expected.mode:
+            return False
+        if expected.nlink is not None and candidate.nlink != expected.nlink:
+            return False
+        if expected.post_install_fingerprint is not None and candidate.post_install_fingerprint != expected.post_install_fingerprint:
             return False
         if record.executor_id != journal.executor.get("id") or record.executor_version != journal.executor.get("version"):
             return False
         if record.created_by_transaction != journal.transaction_id:
             return False
-        expected_sha256 = expected_step.intent.get("content_sha256")
-        if expected_sha256 is not None and candidate.integrity != expected_sha256:
-            return False
-        if candidate.artifact_type != "file":
-            return False
 
+    return True
+
+
+def _journal_steps_match_plan_exactly(journal: TransactionJournal, plan: ProvisioningPlan) -> bool:
+    """Point 3: a COMMITTED source journal's own steps must be structurally
+    IDENTICAL to the independently reconstructed plan's steps -- same
+    cardinality, unique sequences, same set of sequences, and for each
+    sequence an exact match of step_id/action_type/target/intent.
+    ``plan_digest`` alone does not protect against ``journal.steps`` being
+    tampered (a step removed, duplicated, or its own recorded step_id/
+    action_type/target/intent altered): none of a step's own per-step
+    fields participate in ``plan_digest``, only the ORIGINAL plan's steps
+    did, once, at journal-creation time."""
+    if len(journal.steps) != len(plan.steps):
+        return False
+    journal_sequences = [step.sequence for step in journal.steps]
+    if len(set(journal_sequences)) != len(journal_sequences):
+        return False
+    plan_by_sequence = {step.sequence: step for step in plan.steps}
+    if set(journal_sequences) != set(plan_by_sequence):
+        return False
+    for journal_step in journal.steps:
+        plan_step = plan_by_sequence[journal_step.sequence]
+        if journal_step.step_id != plan_step.step_id:
+            return False
+        if journal_step.action_type != plan_step.action_type:
+            return False
+        if journal_step.target != plan_step.target:
+            return False
+        if dict(journal_step.intent) != dict(plan_step.intent):
+            return False
     return True
 
 
@@ -737,15 +803,24 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
     ``ProvisioningError`` instead, so the caller can drive the transaction to
     ``RECOVERY_REQUIRED`` rather than a false ``COMMITTED``.
 
-    The metadata found is never simply adopted as the new expectation: the
-    expected mode/uid/gid come from the plan's own step ``intent`` (part of
-    ``plan_digest``, hence tamper-evident -- see ``CanaryExecutor.plan_steps``)
-    and the live re-stat is checked AGAINST that expectation, closing the
-    window between the executor's own ``verify_postcondition`` and commit."""
+    The metadata found is never simply adopted as the new expectation, and
+    the engine itself never hardcodes an executor's own semantics (point 6):
+    expected artifact_type/pre_existing/method_id/source/version/mode/uid/
+    gid/nlink/post_install_fingerprint all come from
+    ``executor.expected_ownership_for_step`` -- a canonical, deterministic
+    value derived from the plan (part of ``plan_digest``, hence
+    tamper-evident) -- and the live re-stat is checked AGAINST that
+    expectation, closing the window between the executor's own
+    ``verify_postcondition`` and commit."""
+    plan_steps_by_sequence = {step.sequence: step for step in plan.steps}
     records = []
     for step in journal.steps:
         undo_record = step.undo_record or {}
         resource_identity = undo_record.get("path", step.target or "")
+        plan_step = plan_steps_by_sequence.get(step.sequence)
+        if plan_step is None:
+            raise ProvisioningError("cannot finalize ownership for %s: no matching plan step for sequence %d" % (resource_identity, step.sequence))
+        expected = executor.expected_ownership_for_step(plan, plan_step)
         try:
             validated = validate_target_path(Path(resource_identity), allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
             identity = stat_identity(validated)
@@ -753,34 +828,35 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             raise ProvisioningError("cannot finalize ownership for %s: %s" % (resource_identity, exc)) from exc
         if identity["is_symlink"] or not identity["is_regular"]:
             raise ProvisioningError("cannot finalize ownership for %s: not a regular, non-symlink file" % resource_identity)
-        if identity["nlink"] != 1:
-            raise ProvisioningError("cannot finalize ownership for %s: unexpected hard link count %d" % (resource_identity, identity["nlink"]))
-        expected_mode = step.intent.get("expected_mode")
-        if expected_mode is not None and identity["mode"] != expected_mode:
+        if expected.nlink is not None and identity["nlink"] != expected.nlink:
             raise ProvisioningError(
-                "cannot finalize ownership for %s: mode is %o, expected %o" % (resource_identity, identity["mode"], expected_mode)
+                "cannot finalize ownership for %s: st_nlink is %d, expected %d" % (resource_identity, identity["nlink"], expected.nlink)
             )
-        expected_uid = step.intent.get("expected_uid")
-        if expected_uid is not None and identity["uid"] != expected_uid:
+        if expected.mode is not None and identity["mode"] != expected.mode:
             raise ProvisioningError(
-                "cannot finalize ownership for %s: uid is %d, expected %d" % (resource_identity, identity["uid"], expected_uid)
+                "cannot finalize ownership for %s: mode is %o, expected %o" % (resource_identity, identity["mode"], expected.mode)
             )
-        expected_gid = step.intent.get("expected_gid")
-        if expected_gid is not None and identity["gid"] != expected_gid:
+        if expected.uid is not None and identity["uid"] != expected.uid:
             raise ProvisioningError(
-                "cannot finalize ownership for %s: gid is %d, expected %d" % (resource_identity, identity["gid"], expected_gid)
+                "cannot finalize ownership for %s: uid is %d, expected %d" % (resource_identity, identity["uid"], expected.uid)
+            )
+        if expected.gid is not None and identity["gid"] != expected.gid:
+            raise ProvisioningError(
+                "cannot finalize ownership for %s: gid is %d, expected %d" % (resource_identity, identity["gid"], expected.gid)
             )
         candidate = OwnershipCandidate(
-            artifact_type="file",
+            artifact_type=expected.artifact_type,
             resource_identity=str(validated),
-            pre_existing=False,
-            method_id=plan.selected_method_id,
-            integrity=undo_record.get("expected_sha256"),
+            pre_existing=expected.pre_existing,
+            method_id=expected.method_id,
+            source=expected.source,
+            version=expected.version,
+            integrity=expected.integrity,
             uid=identity["uid"],
             gid=identity["gid"],
             mode=identity["mode"],
             nlink=identity["nlink"],
-            post_install_fingerprint=undo_record.get("expected_sha256"),
+            post_install_fingerprint=expected.post_install_fingerprint,
         )
         records.append(
             OwnershipRecord(
@@ -862,8 +938,8 @@ def prepare(decision: ResolutionDecision, env: ProvisioningEnvironment, *, apply
         return PrepareOutcome(PrepareStatus.OFFLINE, plan, None, "capability requires network and none is available", error_kind="offline")
 
     transaction_id = _new_transaction_id()
-    with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(env.state_root), transaction_id=transaction_id, timeout=env.lock_timeout):
-        recovery_reports = _recover_pending_locked(env.state_root, env.registry, env.expected_executor_version, env.context)
+    with lock_mod.acquire_provisioner_lock(env.state_root, transaction_id=transaction_id, timeout=env.lock_timeout) as handle:
+        recovery_reports = _recover_pending_locked(handle, env.registry, env.expected_executor_version, env.context)
         blocking = [item for item in recovery_reports if item.action == RecoveryAction.REQUIRE_MANUAL]
         if blocking:
             return PrepareOutcome(
@@ -872,9 +948,9 @@ def prepare(decision: ResolutionDecision, env: ProvisioningEnvironment, *, apply
                 error_kind="recovery_required",
             )
 
-        existing_ownership = journal_mod.read_ownership_records(env.state_root, plan.capability_id)
+        existing_ownership = journal_mod.read_ownership_records(handle, plan.capability_id)
         idempotency = check_idempotency(
-            plan, executor, env.context, existing_ownership=existing_ownership, state_root=env.state_root,
+            plan, executor, env.context, existing_ownership=existing_ownership, state_root=handle,
             registry=env.registry, expected_executor_version=env.expected_executor_version,
         )
         if idempotency.outcome == IdempotencyOutcome.ALREADY_PRESENT:
@@ -890,14 +966,14 @@ def prepare(decision: ResolutionDecision, env: ProvisioningEnvironment, *, apply
 
         now = env.context.now
         journal = _initial_journal(plan, transaction_id=transaction_id, now_value=now())
-        journal_mod.write_journal(env.state_root, journal)
+        journal_mod.write_journal(handle, journal)
         journal = journal.with_state(TransactionState.AUTHORIZED, now=now())
-        journal_mod.write_journal(env.state_root, journal)
+        journal_mod.write_journal(handle, journal)
         journal = journal.with_state(TransactionState.APPLYING, now=now())
-        journal_mod.write_journal(env.state_root, journal)
+        journal_mod.write_journal(handle, journal)
 
-        journal, apply_ok, durability_unknown = _apply_and_verify(env.state_root, journal, plan, executor, env.context)
-        return _finish_prepare(env.state_root, journal, plan, executor, env.context, apply_ok, durability_unknown, transaction_id)
+        journal, apply_ok, durability_unknown = _apply_and_verify(handle, journal, plan, executor, env.context)
+        return _finish_prepare(handle, journal, plan, executor, env.context, apply_ok, durability_unknown, transaction_id)
 
 
 def _apply_and_verify(state_root: Path, journal: TransactionJournal, plan: ProvisioningPlan, executor: Executor, context: ExecutionContext) -> tuple[TransactionJournal, bool, bool]:
@@ -1038,8 +1114,8 @@ def recover_pending(
     ``prepare()``/``uninstall()`` call the internal ``_recover_pending_locked``
     directly since they already hold this same lock."""
     transaction_id = "recovery-%s" % _new_transaction_id()
-    with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(state_root), transaction_id=transaction_id, timeout=lock_timeout):
-        return _recover_pending_locked(state_root, registry, expected_executor_version, context)
+    with lock_mod.acquire_provisioner_lock(state_root, transaction_id=transaction_id, timeout=lock_timeout) as handle:
+        return _recover_pending_locked(handle, registry, expected_executor_version, context)
 
 
 def _recover_pending_locked(
@@ -1310,7 +1386,13 @@ def _recover_uninstall(
 # --------------------------------------------------------------------------
 
 
-def _build_uninstall_plan(capability_id: str, owned: Sequence[OwnershipRecord]) -> UninstallPlan:
+def _build_uninstall_plan(capability_id: str, owned: Sequence[OwnershipRecord], *, transaction_id: str) -> UninstallPlan:
+    """``transaction_id`` is always caller-supplied, never minted internally:
+    ``uninstall()`` passes the SAME id it uses for the provisioner-lock
+    metadata, so the ``PrepareOutcome.transaction_id`` it returns is always
+    exactly the uninstall journal's own id -- never a second, independently
+    generated identifier the caller would have no way to correlate back to
+    the actual journal on disk."""
     steps = tuple(
         ProvisioningStep(
             sequence=index,
@@ -1323,7 +1405,7 @@ def _build_uninstall_plan(capability_id: str, owned: Sequence[OwnershipRecord]) 
     )
     return UninstallPlan(
         capability_id=capability_id,
-        transaction_id=_new_transaction_id(),
+        transaction_id=transaction_id,
         target_transaction_id=owned[0].created_by_transaction or "",
         ownership_records=tuple(owned),
         steps=steps,
@@ -1356,7 +1438,7 @@ def _uninstall_source_matches(
     ):
         return False
     try:
-        candidate_plan = _build_uninstall_plan(journal.capability_id, owned)
+        candidate_plan = _build_uninstall_plan(journal.capability_id, owned, transaction_id=journal.transaction_id)
     except ValueError:
         return False
     return compute_uninstall_plan_digest(candidate_plan) == journal.plan_digest
@@ -1392,7 +1474,7 @@ def _revocation_boundary_is_safe(
     ):
         return False, "ownership snapshot no longer traces to a valid committed transaction"
     try:
-        candidate_plan = _build_uninstall_plan(journal.capability_id, owned)
+        candidate_plan = _build_uninstall_plan(journal.capability_id, owned, transaction_id=journal.transaction_id)
     except ValueError as exc:
         return False, "cannot rebuild uninstall plan from snapshot: %s" % exc
     if compute_uninstall_plan_digest(candidate_plan) != journal.plan_digest:
@@ -1400,13 +1482,17 @@ def _revocation_boundary_is_safe(
     if any(step.state != StepState.VERIFIED for step in journal.steps):
         return False, "not every uninstall step is VERIFIED"
     for record in owned:
-        try:
-            os.lstat(record.candidate.resource_identity)
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            return False, "cannot confirm resource %s is absent: %s" % (record.candidate.resource_identity, exc)
-        return False, "resource %s is still present" % record.candidate.resource_identity
+        # Descriptor-safe: reconstructs and validates the path through the
+        # same allowlist/forbidden-roots policy, then confirms absence
+        # relative to an open, O_NOFOLLOW parent-directory descriptor --
+        # never an isolated os.lstat() on the bare persisted path string,
+        # which is vulnerable to a TOCTOU ancestor-swap between validation
+        # and the check itself.
+        absent, reason = confirm_absent_descriptor_safe(
+            record.candidate.resource_identity, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots
+        )
+        if not absent:
+            return False, reason
     return True, None
 
 
@@ -1428,9 +1514,12 @@ def _revoke_ownership_and_verify(state_root: Path, capability_id: str) -> tuple[
         return False, "ownership revocation durability could not be confirmed: %s" % exc
     except OSError as exc:
         return False, "failed to revoke ownership: %s" % exc
-    path = journal_mod.ownership_path(state_root, capability_id)
+    name = "%s.json" % capability_id
     try:
-        os.lstat(path)
+        if isinstance(state_root, StateRootHandle):
+            os.lstat(name, dir_fd=state_root.subdir_fd(journal_mod.OWNERSHIP_DIR))
+        else:
+            os.lstat(journal_mod.ownership_path(state_root, capability_id))
     except FileNotFoundError:
         return True, None
     except OSError as exc:
@@ -1664,8 +1753,8 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
         return PrepareOutcome(PrepareStatus.DRY_RUN, None, None, "uninstall dry-run: %d resource(s) would be removed" % len(owned))
 
     transaction_id = _new_transaction_id()
-    with lock_mod.acquire_provisioner_lock(journal_mod.lock_path(env.state_root), transaction_id=transaction_id, timeout=env.lock_timeout):
-        recovery_reports = _recover_pending_locked(env.state_root, env.registry, env.expected_executor_version, env.context)
+    with lock_mod.acquire_provisioner_lock(env.state_root, transaction_id=transaction_id, timeout=env.lock_timeout) as handle:
+        recovery_reports = _recover_pending_locked(handle, env.registry, env.expected_executor_version, env.context)
         blocking = [item for item in recovery_reports if item.action == RecoveryAction.REQUIRE_MANUAL]
         if blocking:
             return PrepareOutcome(
@@ -1674,11 +1763,11 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
                 error_kind="recovery_required",
             )
 
-        owned = [record for record in journal_mod.read_ownership_records(env.state_root, capability_id) if record.product_owned]
+        owned = [record for record in journal_mod.read_ownership_records(handle, capability_id) if record.product_owned]
         if not owned:
             return PrepareOutcome(PrepareStatus.OUT_OF_CONTRACT, None, None, "nothing to uninstall", error_kind="nothing_to_uninstall")
         if not validate_ownership_authority(
-            env.state_root, capability_id, owned,
+            handle, capability_id, owned,
             registry=env.registry, expected_executor_version=env.expected_executor_version, context=env.context,
         ):
             return PrepareOutcome(
@@ -1687,20 +1776,20 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
                 error_kind="ownership_invalid",
             )
 
-        plan = _build_uninstall_plan(capability_id, owned)
+        plan = _build_uninstall_plan(capability_id, owned, transaction_id=transaction_id)
         now = env.context.now
         journal = _initial_uninstall_journal(plan, now_value=now())
-        journal_mod.write_journal(env.state_root, journal)
+        journal_mod.write_journal(handle, journal)
         journal = journal.with_state(TransactionState.UNINSTALLING, now=now())
-        journal_mod.write_journal(env.state_root, journal)
+        journal_mod.write_journal(handle, journal)
 
         journal, ok, residuals = _run_uninstall_loop(
-            env.state_root, journal, env.context, registry=env.registry, expected_executor_version=env.expected_executor_version
+            handle, journal, env.context, registry=env.registry, expected_executor_version=env.expected_executor_version
         )
 
         if not ok:
             journal = journal.with_state(TransactionState.UNINSTALL_FAILED, now=now(), failure={"residuals": residuals})
-            journal_mod.write_journal(env.state_root, journal)
+            journal_mod.write_journal(handle, journal)
             return PrepareOutcome(
                 PrepareStatus.UNINSTALL_FAILED, None, transaction_id,
                 "uninstall did not complete for all resources", residuals=tuple(residuals), error_kind="uninstall_failed",
@@ -1713,30 +1802,30 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
         # authority behind (see _capability_has_completed_uninstall, which
         # recognizes and rejects exactly that stale window on recovery).
         journal = journal.with_state(TransactionState.REVOKING_OWNERSHIP, now=now())
-        journal_mod.write_journal(env.state_root, journal)
+        journal_mod.write_journal(handle, journal)
 
         safe, unsafe_reason = _revocation_boundary_is_safe(
-            env.state_root, journal,
+            handle, journal,
             registry=env.registry, expected_executor_version=env.expected_executor_version, context=env.context,
         )
         if not safe:
             journal = journal.with_state(
                 TransactionState.RECOVERY_REQUIRED, now=now(), recovery={"reason": "unsafe to revoke ownership: %s" % unsafe_reason}
             )
-            journal_mod.write_journal(env.state_root, journal)
+            journal_mod.write_journal(handle, journal)
             return PrepareOutcome(
                 PrepareStatus.RECOVERY_REQUIRED, None, transaction_id,
                 "unsafe to revoke ownership: %s" % unsafe_reason, error_kind="recovery_required",
             )
 
-        revoked, revoke_error = _revoke_ownership_and_verify(env.state_root, capability_id)
+        revoked, revoke_error = _revoke_ownership_and_verify(handle, capability_id)
         if revoked:
             journal = journal.with_state(TransactionState.UNINSTALLED, now=now())
-            journal_mod.write_journal(env.state_root, journal)
+            journal_mod.write_journal(handle, journal)
             return PrepareOutcome(PrepareStatus.UNINSTALLED, None, transaction_id, "uninstalled %d resource(s)" % len(owned))
 
         journal = journal.with_state(TransactionState.UNINSTALL_FAILED, now=now(), failure={"reason": "ownership_revocation_failed", "error": revoke_error})
-        journal_mod.write_journal(env.state_root, journal)
+        journal_mod.write_journal(handle, journal)
         return PrepareOutcome(
             PrepareStatus.UNINSTALL_FAILED, None, transaction_id,
             "resources removed but ownership revocation did not complete", residuals=("ownership",), error_kind="ownership_revocation_failed",

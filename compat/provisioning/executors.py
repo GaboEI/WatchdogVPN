@@ -26,7 +26,14 @@ from typing import Callable, Mapping, Sequence
 
 from compat.provisioning.errors import ExecutorNotRegisteredError, PathPolicyError, ProvisioningError
 from compat.provisioning.journal import StepRecord
-from compat.provisioning.model import ExecutionResult, ProvisioningPlan, ProvisioningStep, RollbackResult, VerificationResult
+from compat.provisioning.model import (
+    ExecutionResult,
+    OwnershipCandidate,
+    ProvisioningPlan,
+    ProvisioningStep,
+    RollbackResult,
+    VerificationResult,
+)
 from compat.provisioning.paths import (
     create_file_exclusive,
     remove_file_if_owned,
@@ -78,6 +85,20 @@ class Executor(abc.ABC):
         produced, purely from the step's own intent/target (no I/O). Used by
         recovery when a crash landed the real action but not the journal
         write recording undo_record."""
+
+    @abc.abstractmethod
+    def expected_ownership_for_step(self, plan: ProvisioningPlan, step: ProvisioningStep) -> OwnershipCandidate:
+        """Canonical, deterministic expected ownership metadata for a
+        resource this step's plan creates -- derived ONLY from ``plan``,
+        ``step.intent``, ``plan.selected_asset`` and this executor's own
+        registered code; NEVER from a live filesystem inspection (that
+        would legitimately vary mid-recovery, which is exactly why it must
+        never gate authority -- see ``_detect_ownership_drift`` for the
+        live-state check instead). The engine (``validate_ownership_authority``,
+        ``_finalize_provenance``) uses this as the single source of truth
+        for what a persisted ``OwnershipRecord`` must match; it never
+        hardcodes executor-specific assumptions (e.g. "artifact_type is
+        always file", "source is always None") itself."""
 
     def declares_network_required(self) -> bool:
         return False
@@ -256,6 +277,23 @@ class CanaryExecutor(Executor):
 
     def reconstruct_undo_record(self, step: StepRecord) -> Mapping[str, object]:
         return {"path": step.target, "expected_content": step.intent["content"], "expected_sha256": step.intent["content_sha256"]}
+
+    def expected_ownership_for_step(self, plan: ProvisioningPlan, step: ProvisioningStep) -> OwnershipCandidate:
+        content_sha256 = step.intent.get("content_sha256")
+        return OwnershipCandidate(
+            artifact_type="file",
+            resource_identity=step.target,
+            pre_existing=False,
+            method_id=plan.selected_method_id,
+            source=step.intent.get("source"),
+            version=step.intent.get("version"),
+            integrity=content_sha256,
+            uid=step.intent.get("expected_uid"),
+            gid=step.intent.get("expected_gid"),
+            mode=step.intent.get("expected_mode"),
+            nlink=1,
+            post_install_fingerprint=content_sha256,
+        )
 
     def verify_postcondition(self, plan: ProvisioningPlan, context: ExecutionContext) -> VerificationResult:
         for step in plan.steps:

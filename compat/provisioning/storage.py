@@ -22,10 +22,12 @@ parent's mode exactly as it found it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import errno
 import os
 import stat as stat_module
 import tempfile
+import uuid
 from pathlib import Path
 
 from compat.provisioning.errors import DurabilityError, PathPolicyError
@@ -53,20 +55,46 @@ def _open_directory_nofollow(path: Path) -> int:
         raise PathPolicyError("cannot open state directory %s: %s" % (path, exc)) from exc
 
 
-def _verify_and_secure_directory_fd(path: Path, fd: int) -> None:
+def _check_and_secure_directory_fd(path_desc: object, fd: int) -> None:
+    """Verifies ``fd`` is a real directory owned by us, tightening its mode
+    to ``0700`` if loose. Never closes ``fd`` -- the caller decides whether
+    this is a one-shot check (see ``_verify_and_secure_directory_fd``, which
+    closes it) or a lasting handle it intends to keep open (see
+    ``StateRootHandle``)."""
     expected_uid = os.getuid()
+    st = os.fstat(fd)
+    if not stat_module.S_ISDIR(st.st_mode):
+        raise PathPolicyError("state path is not a directory: %s" % path_desc)
+    if st.st_uid != expected_uid:
+        raise PathPolicyError(
+            "state path %s is owned by uid %d, expected %d; refusing to use it" % (path_desc, st.st_uid, expected_uid)
+        )
+    if stat_module.S_IMODE(st.st_mode) != PRIVATE_DIR_MODE:
+        os.fchmod(fd, PRIVATE_DIR_MODE)
+
+
+def _verify_and_secure_directory_fd(path: Path, fd: int) -> None:
     try:
-        st = os.fstat(fd)
-        if not stat_module.S_ISDIR(st.st_mode):
-            raise PathPolicyError("state path is not a directory: %s" % path)
-        if st.st_uid != expected_uid:
-            raise PathPolicyError(
-                "state path %s is owned by uid %d, expected %d; refusing to use it" % (path, st.st_uid, expected_uid)
-            )
-        if stat_module.S_IMODE(st.st_mode) != PRIVATE_DIR_MODE:
-            os.fchmod(fd, PRIVATE_DIR_MODE)
+        _check_and_secure_directory_fd(path, fd)
     finally:
         os.close(fd)
+
+
+def _open_dir_relative(parent_fd: int, name: str) -> int:
+    """Descriptor-relative equivalent of ``_open_directory_nofollow``: opens
+    ``name`` strictly within the directory ``parent_fd`` refers to, never
+    resolving any path from the filesystem root. A genuinely absent
+    component re-raises ``FileNotFoundError`` verbatim."""
+    try:
+        return os.open(name, _DIR_OPEN_FLAGS, dir_fd=parent_fd)
+    except FileNotFoundError:
+        raise
+    except NotADirectoryError as exc:
+        raise PathPolicyError("state path exists but is not a directory: %s" % name) from exc
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise PathPolicyError("state path is a symlink, refusing: %s" % name) from exc
+        raise PathPolicyError("cannot open state directory %s: %s" % (name, exc)) from exc
 
 
 def _verify_external_parent_readonly(parent: Path) -> None:
@@ -140,6 +168,164 @@ def ensure_private_subdir(state_root: Path, relative_path: Path | str) -> Path:
             fd = _open_directory_nofollow(current)
         _verify_and_secure_directory_fd(current, fd)
     return current
+
+
+@dataclass
+class StateRootHandle:
+    """An OPEN, identity-bound handle to ``state_root`` (point 1, fourth
+    correction round) -- captured once via ``open_state_root()`` and held
+    for the entire duration of a lock-protected transaction. Every
+    descriptor-relative operation (``os.open``/``os.mkdir``/``os.replace``/
+    ``os.unlink`` with ``dir_fd=``) resolves against this handle's file
+    descriptors, which continue to reference the SAME physical directory
+    regardless of any external rename, symlink-swap, or directory-replace
+    of ``state_root``'s path afterward. Once this handle exists, a fresh
+    path-based lookup of ``state_root`` (or its subdirectories) is never
+    used again for the rest of the transaction -- that is precisely the
+    TOCTOU window this handle closes: a process holding it either keeps
+    operating correctly on the original directory via the descriptor, or
+    fails closed (a subdirectory it never opened before now raising
+    ``PathPolicyError`` if the replacement is a symlink or wrong type), but
+    never silently starts operating on a newly created directory at the
+    same path."""
+
+    path: Path
+    fd: int
+    dev: int
+    ino: int
+    _subdir_fds: dict = field(default_factory=dict, repr=False, compare=False)
+
+    def subdir_fd(self, name: str) -> int:
+        """Returns a cached, verified directory fd for ``name`` (e.g.
+        ``"transactions"``) strictly inside this handle's state root,
+        opening/creating it on first use and reusing the SAME fd for the
+        rest of this handle's lifetime -- an external rename/replace of
+        that subdirectory after the first call cannot redirect subsequent
+        operations, for the same reason the state root fd itself is
+        immune to it."""
+        if name not in self._subdir_fds:
+            self._subdir_fds[name] = _ensure_private_subdir_relative(self.fd, name)
+        return self._subdir_fds[name]
+
+    def close(self) -> None:
+        for fd in self._subdir_fds.values():
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self._subdir_fds.clear()
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+
+
+def open_state_root(state_root: Path) -> StateRootHandle:
+    """Descriptor-relative equivalent of ``ensure_private_state_root``: does
+    the SAME boundary verification (external parent verified read-only and
+    never mutated, ``state_root`` itself created/verified/tightened to
+    ``0700``), but returns an OPEN file descriptor -- with its ``st_dev``/
+    ``st_ino`` captured at open time -- instead of closing it. Callers MUST
+    hold this handle, and use it (never a re-resolved path) for every state
+    operation, for the entire duration of a lock-protected transaction."""
+    state_root = Path(state_root)
+    parent = state_root.parent
+    if parent == state_root:
+        raise PathPolicyError("state root must not be the filesystem root: %s" % state_root)
+    _verify_external_parent_readonly(parent)
+    try:
+        fd = _open_directory_nofollow(state_root)
+    except FileNotFoundError:
+        try:
+            os.mkdir(state_root, PRIVATE_DIR_MODE)
+        except FileExistsError:
+            pass
+        else:
+            fsync_parent_directory(state_root)
+        fd = _open_directory_nofollow(state_root)
+    _check_and_secure_directory_fd(state_root, fd)
+    st = os.fstat(fd)
+    return StateRootHandle(path=state_root, fd=fd, dev=st.st_dev, ino=st.st_ino)
+
+
+def _ensure_private_subdir_relative(parent_fd: int, name: str) -> int:
+    """Create (if missing) and verify a directory named ``name`` strictly
+    within ``parent_fd``, returning an OPEN, verified fd for it -- never
+    closed here, since the caller (``StateRootHandle.subdir_fd``) caches
+    and reuses it for the handle's whole lifetime."""
+    try:
+        fd = _open_dir_relative(parent_fd, name)
+    except FileNotFoundError:
+        try:
+            os.mkdir(name, PRIVATE_DIR_MODE, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        else:
+            os.fsync(parent_fd)  # durability of the new directory entry
+        fd = _open_dir_relative(parent_fd, name)
+    _check_and_secure_directory_fd(name, fd)
+    return fd
+
+
+def atomic_write_private_relative(dir_fd: int, name: str, data: bytes) -> None:
+    """Descriptor-relative equivalent of ``atomic_write_private``: writes
+    ``data`` atomically and durably to ``name`` strictly within ``dir_fd``,
+    never resolving any path from the filesystem root. Uses ``os.replace``
+    with ``src_dir_fd``/``dst_dir_fd`` (``renameat``) so the rename itself
+    is bound to the same held descriptor as the temp file's creation."""
+    tmp_name = ".%s.%s.tmp" % (name, uuid.uuid4().hex)
+    fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, PRIVATE_FILE_MODE, dir_fd=dir_fd)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except Exception:
+        try:
+            os.unlink(tmp_name, dir_fd=dir_fd)
+        except FileNotFoundError:
+            pass
+        raise
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        raise DurabilityError("write to %s completed but its directory could not be durably fsynced: %s" % (name, exc)) from exc
+
+
+def atomic_write_private_text_relative(dir_fd: int, name: str, text: str) -> None:
+    atomic_write_private_relative(dir_fd, name, text.encode("utf-8"))
+
+
+def read_private_relative(dir_fd: int, name: str) -> str:
+    """Reads a UTF-8 text file named ``name`` strictly within ``dir_fd``.
+    ``FileNotFoundError`` propagates verbatim so callers can distinguish
+    genuine absence from any other inspection error."""
+    fd = os.open(name, os.O_RDONLY, dir_fd=dir_fd)
+    with os.fdopen(fd, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def delete_private_relative(dir_fd: int, name: str) -> None:
+    """Unlinks ``name`` strictly within ``dir_fd`` and durably fsyncs the
+    directory entry. A genuinely absent file is treated as an idempotent
+    no-op; any other ``OSError`` propagates."""
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return
+    os.fsync(dir_fd)
+
+
+def list_json_names_relative(dir_fd: int) -> list[str]:
+    """Lists the ``*.json`` entry stems (filename without extension)
+    directly within ``dir_fd``, sorted -- descriptor-relative equivalent of
+    globbing a transactions/ownership/history directory by path."""
+    try:
+        entries = os.listdir(dir_fd)
+    except FileNotFoundError:
+        return []
+    return sorted(name[: -len(".json")] for name in entries if name.endswith(".json"))
 
 
 def fsync_parent_directory(path: Path) -> None:
