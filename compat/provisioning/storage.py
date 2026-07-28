@@ -306,17 +306,31 @@ def ensure_private_lock_root(path: Path) -> Path:
     directory's own identity must never be bound to (or swappable via) any
     single installation's ``state_root`` tree: it is walked and, where
     missing, created component by component from its own filesystem anchor.
-    A component that already exists (the OS's own ``/run``, ``/run/lock``,
-    ...) is verified to be a real, non-symlink directory but its
-    ownership/mode is left completely untouched -- only components THIS
-    function itself creates are ever chmod'd/asserted to be ours, exactly
-    like ``state_root``'s own external parent is verified but never
-    mutated."""
+
+    ANCESTOR components that already exist (the OS's own ``/run``,
+    ``/run/lock``, ...) are verified to be a real, non-symlink directory but
+    their ownership/mode is left completely untouched -- this function never
+    mutates a system directory it did not itself create.
+
+    The FINAL (leaf) component -- the actual, caller-configured
+    ``global_lock_root`` itself -- is different: it is OUR OWN dedicated
+    private root, exactly like ``state_root`` itself, and is always enforced
+    the same way (point 3, sixth correction round): owned by us, mode
+    exactly ``0700``, no group/world access. A pre-existing leaf at a loose
+    mode (``0770``, ``0777``, ...) is silently tightened if it is already
+    ours; a leaf owned by a different uid is rejected outright
+    (``PathPolicyError``) rather than ever being trusted as a private lock
+    root. Without this, a global lock root that happened to pre-exist at a
+    loose, shared mode would let any other member of that mode's
+    group/world rename or replace the lock file inside it undetected."""
     path = Path(path)
     if not path.is_absolute():
         raise PathPolicyError("global lock root must be an absolute path: %s" % path)
+    parts = path.relative_to(path.anchor).parts
+    if not parts:
+        raise PathPolicyError("global lock root must not be the filesystem root: %s" % path)
     current = Path(path.anchor)
-    for part in path.relative_to(path.anchor).parts:
+    for part in parts[:-1]:
         current = current / part
         try:
             fd = _open_directory_nofollow(current)
@@ -336,6 +350,18 @@ def ensure_private_lock_root(path: Path) -> Path:
                     raise PathPolicyError("global lock root component is not a directory: %s" % current)
             finally:
                 os.close(fd)
+    current = current / parts[-1]
+    try:
+        fd = _open_directory_nofollow(current)
+    except FileNotFoundError:
+        try:
+            os.mkdir(current, PRIVATE_DIR_MODE)
+        except FileExistsError:
+            pass
+        else:
+            fsync_parent_directory(current)
+        fd = _open_directory_nofollow(current)
+    _verify_and_secure_directory_fd(current, fd)
     return path
 
 

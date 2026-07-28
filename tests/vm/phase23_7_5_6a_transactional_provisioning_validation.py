@@ -26,8 +26,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
+import select
 import shutil
 import signal
 import subprocess
@@ -41,7 +43,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from compat.dependency_resolution import ResolutionDecision
-from compat.provisioning import engine, journal as journal_mod, lock as lock_mod
+from compat.provisioning import engine, journal as journal_mod, lock as lock_mod, paths as paths_mod, storage as storage_mod
 from compat.provisioning.errors import ProvisionerLockHeldError
 from compat.provisioning.executors import (
     CANARY_EXECUTOR_VERSION,
@@ -56,17 +58,67 @@ from compat.provisioning.model import RecoveryAction, StepState, TransactionStat
 from compat.provisioning.paths import remove_file_if_owned
 
 
+# --------------------------------------------------------------------------
+# FIFO-based blocking barriers for real two-process race scenarios (sixth
+# correction round, point 5): a genuine kernel wait via ``select``, never a
+# sleep-poll loop -- timeouts below are strictly a watchdog, not the
+# synchronization mechanism itself.
+# --------------------------------------------------------------------------
+
+
+def _fifo_create(path: Path) -> None:
+    os.mkfifo(str(path))
+
+
+def _fifo_open_reader(path: Path) -> int:
+    return os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
+
+
+def _fifo_wait(fd: int, *, timeout: float, description: str) -> None:
+    r, _, _ = select.select([fd], [], [], timeout)
+    if not r:
+        raise SystemExit("timed out waiting for %s" % description)
+    os.read(fd, 1)
+
+
+def _fifo_signal(path: Path) -> None:
+    fd = os.open(str(path), os.O_WRONLY)
+    try:
+        os.write(fd, b"x")
+    finally:
+        os.close(fd)
+
+
+class _NestedResourceExecutor(CanaryExecutor):
+    """Places its marker/companion one directory level deeper
+    (``sandbox/nested/...``) than ``CanaryExecutor``, to exercise
+    intermediate-component identity binding in ``AllowedRootHandle``
+    (sixth correction round, point 2). Never used outside this harness."""
+
+    executor_id = "nested_resource_vm_executor"
+    supported_method_kind = "nested_resource_vm"
+
+    def plan_steps(self, *, capability_id: str, dependency_id: str, context: ExecutionContext):
+        steps = super().plan_steps(capability_id=capability_id, dependency_id=dependency_id, context=context)
+        nested_steps = []
+        for step in steps:
+            original = Path(step.target)
+            nested_target = original.parent / "nested" / original.name
+            nested_steps.append(dataclasses.replace(step, target=str(nested_target)))
+        return tuple(nested_steps)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _decision(capability_id: str, dependency_id: str) -> ResolutionDecision:
+def _decision(capability_id: str, dependency_id: str, *, method_kind: str = CANARY_METHOD_KIND, method_id: str = "canary_method") -> ResolutionDecision:
     return ResolutionDecision(
         capability_id=capability_id, dependency_id=dependency_id,
         resolved_distribution="lab", resolved_release=None, technical_family="lab_fixture",
         release_model="rolling", support_classification="lab_fixture", machine_architecture="x86_64",
-        observed_capability_status="absent", candidate_chain=("canary_method",),
-        selected_method_id="canary_method", selected_method_kind=CANARY_METHOD_KIND,
+        observed_capability_status="absent", candidate_chain=(method_id,),
+        selected_method_id=method_id, selected_method_kind=method_kind,
         resolution_status="method_selected", execution_ready=True,
         rejected_candidates=(), evidence=(), reason="VM validation harness for 23.7.5.6a",
         provider_type="lab_fixture", provider_authoritative=False,
@@ -78,6 +130,7 @@ def _env(sandbox: Path, state_root: Path, global_lock_root: Path) -> engine.Prov
     sandbox.mkdir(parents=True, exist_ok=True)
     registry = TrustedExecutorRegistry()
     registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=CanaryExecutor())
+    registry.register(method_kind="nested_resource_vm", method_id="nested_resource_vm_method", executor=_NestedResourceExecutor())
     context = ExecutionContext(allowed_roots=(sandbox,), now=_now)
     return engine.ProvisioningEnvironment(
         state_root=state_root, registry=registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=context,
@@ -269,6 +322,10 @@ def cmd_run_all(args) -> int:
         shutil.rmtree(sandbox)
     if state_root.exists():
         shutil.rmtree(state_root)
+    scratch = state_root.parent / "phase23_7_5_6a_round6_scratch"
+    if scratch.exists():
+        shutil.rmtree(scratch)
+    scratch.mkdir(parents=True)
     sandbox.mkdir(parents=True)
     evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / "phase23_7_5_6a_vm_evidence.json"))
     env = _env(sandbox, state_root, global_lock_root)
@@ -292,7 +349,7 @@ def cmd_run_all(args) -> int:
             pass
     except ProvisionerLockHeldError:
         contended = True
-    holder.wait(5)
+    holder.wait(15)
     holder.stdout.close()
     evidence.record("lock_exclusion", holder_line=line.strip(), contended=contended)
     if not contended:
@@ -382,6 +439,194 @@ def cmd_run_all(args) -> int:
         raise SystemExit("symlink target was not rejected: %r" % symlink_outcome)
     (sandbox / ("%s.marker" % symlink_id)).unlink()
     real_target.unlink()
+
+    # 15. Sixth correction round, point 1: a genuine second process (real
+    # SIGKILL-free race, not a mock) substitutes a resource's basename in
+    # the window strictly AFTER the hash/identity re-verify and BEFORE the
+    # atomic quarantine-rename. Must never delete the foreign inode.
+    # Isolated environment: this scenario intentionally leaves a
+    # RECOVERY_REQUIRED-class transaction behind, which would otherwise
+    # block every subsequent engine.prepare() call sharing the main env.
+    toctou_sandbox = scratch / "toctou_sandbox"
+    toctou_state_root = scratch / "toctou_state"
+    toctou_global_lock_root = scratch / "toctou_global_lock"
+    toctou_env = _env(toctou_sandbox, toctou_state_root, toctou_global_lock_root)
+    toctou_capability_id = "cap_vm_toctou_race"
+    toctou_outcome = engine.prepare(_decision(toctou_capability_id, "dep_vm_toctou_race"), toctou_env, apply=True)
+    if toctou_outcome.status.value != "committed":
+        raise SystemExit("toctou race setup did not commit: %r" % toctou_outcome)
+    toctou_marker = toctou_sandbox / ("%s.marker" % toctou_capability_id)
+    toctou_ready = scratch / "toctou_ready.fifo"
+    toctou_go = scratch / "toctou_go.fifo"
+    toctou_result = scratch / "toctou_result.json"
+    toctou_script = scratch / "toctou_holder.py"
+    toctou_script.write_text(
+        "import sys, json\n"
+        "sys.path.insert(0, %r)\n"
+        "from pathlib import Path\n"
+        "from compat.provisioning import engine, paths as paths_mod\n"
+        "from tests.vm.phase23_7_5_6a_transactional_provisioning_validation import _env, _fifo_open_reader, _fifo_signal, _fifo_wait\n"
+        "env = _env(Path(%r), Path(%r), Path(%r))\n"
+        "ready = Path(%r); go = Path(%r)\n"
+        "go_fd = _fifo_open_reader(go)\n"
+        "def _pause():\n"
+        "    _fifo_signal(ready)\n"
+        "    _fifo_wait(go_fd, timeout=10.0, description='go marker')\n"
+        "paths_mod.UNLINK_REVERIFY_HOOK = _pause\n"
+        "result = engine.uninstall(%r, env, apply=True)\n"
+        "Path(%r).write_text(json.dumps({'status': result.status.value}))\n"
+        % (str(ROOT), str(toctou_sandbox), str(toctou_state_root), str(toctou_global_lock_root), str(toctou_ready), str(toctou_go), toctou_capability_id, str(toctou_result))
+    )
+    _fifo_create(toctou_ready)
+    _fifo_create(toctou_go)
+    toctou_ready_fd = _fifo_open_reader(toctou_ready)
+    toctou_proc = subprocess.Popen([sys.executable, str(toctou_script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _fifo_wait(toctou_ready_fd, timeout=10.0, description="toctou holder ready signal")
+    os.close(toctou_ready_fd)
+    toctou_marker.unlink()
+    toctou_marker.write_bytes(b"foreign content planted by a real second process")
+    _fifo_signal(toctou_go)
+    toctou_stdout, toctou_stderr = toctou_proc.communicate(timeout=15)
+    toctou_status = json.loads(toctou_result.read_text())["status"] if toctou_result.exists() else None
+    toctou_survives = toctou_marker.exists() and toctou_marker.read_bytes() == b"foreign content planted by a real second process"
+    evidence.record("toctou_race_after_last_inode_check", status=toctou_status, foreign_file_survives=toctou_survives, returncode=toctou_proc.returncode)
+    if toctou_proc.returncode != 0 or toctou_status == "uninstalled" or not toctou_survives:
+        raise SystemExit("TOCTOU race scenario failed: status=%r survives=%r stderr=%r" % (toctou_status, toctou_survives, toctou_stderr))
+
+    # 16. Sixth correction round, point 2: an INTERMEDIATE directory (not
+    # the allowed root itself) is renamed aside and replaced by a new,
+    # same-uid, empty real directory strictly between eager-caching and
+    # first real use during uninstall. Must never reach UNINSTALLED.
+    # Isolated environment, for the same reason as the TOCTOU scenario above.
+    nested_sandbox = scratch / "nested_swap_sandbox"
+    nested_state_root = scratch / "nested_swap_state"
+    nested_global_lock_root = scratch / "nested_swap_global_lock"
+    nested_env = _env(nested_sandbox, nested_state_root, nested_global_lock_root)
+    (nested_sandbox / "nested").mkdir(mode=0o700, exist_ok=True)
+    nested_capability_id = "cap_vm_nested_swap"
+    nested_outcome = engine.prepare(
+        _decision(nested_capability_id, "dep_vm_nested_swap", method_kind="nested_resource_vm", method_id="nested_resource_vm_method"),
+        nested_env, apply=True,
+    )
+    if nested_outcome.status.value != "committed":
+        raise SystemExit("nested swap setup did not commit: %r" % nested_outcome)
+    nested_dir = nested_sandbox / "nested"
+    nested_renamed = nested_sandbox / "nested.old"
+    real_uninstall_source_matches = engine._uninstall_source_matches
+
+    def _nested_swap_then_check(*args, **kwargs):
+        nested_dir.rename(nested_renamed)
+        nested_dir.mkdir(mode=0o700)
+        return real_uninstall_source_matches(*args, **kwargs)
+
+    engine._uninstall_source_matches = _nested_swap_then_check
+    try:
+        nested_result = engine.uninstall(nested_capability_id, nested_env, apply=True)
+    finally:
+        engine._uninstall_source_matches = real_uninstall_source_matches
+    nested_records = journal_mod.read_ownership_records(nested_state_root, nested_capability_id)
+    nested_ownership_intact = any(r.product_owned for r in nested_records)
+    nested_resource_survives = (nested_renamed / ("%s.marker" % nested_capability_id)).exists()
+    evidence.record(
+        "intermediate_component_swapped_for_real_directory", status=nested_result.status.value,
+        ownership_intact=nested_ownership_intact, resource_survives_in_renamed_dir=nested_resource_survives,
+        new_replacement_dir_empty=(sorted(p.name for p in nested_dir.iterdir()) == []),
+    )
+    if nested_result.status.value == "uninstalled" or not nested_ownership_intact or not nested_resource_survives:
+        raise SystemExit("intermediate component swap scenario failed: %r" % nested_result)
+
+    # 17. Sixth correction round, point 3: global_lock_root (or its lock
+    # file) is renamed/replaced while a holder is active. A same-uid
+    # contender using the swapped directory must still be refused, via the
+    # secondary flock directly on the real, unswapped state_root.
+    global_swap_state_root = scratch / "state_global_swap"
+    global_swap_lock_root = scratch / "global_lock_root_swap"
+    global_swap_ready = scratch / "global_swap_ready.fifo"
+    global_swap_go = scratch / "global_swap_go.fifo"
+    global_swap_script = scratch / "global_swap_holder.py"
+    global_swap_script.write_text(
+        "import sys\n"
+        "sys.path.insert(0, %r)\n"
+        "from pathlib import Path\n"
+        "from compat.provisioning.lock import acquire_provisioner_lock\n"
+        "from tests.vm.phase23_7_5_6a_transactional_provisioning_validation import _fifo_open_reader, _fifo_signal, _fifo_wait\n"
+        "state_root = Path(%r); global_lock_root = Path(%r)\n"
+        "ready = Path(%r); go = Path(%r)\n"
+        "go_fd = _fifo_open_reader(go)\n"
+        "with acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id='holder', timeout=10.0):\n"
+        "    _fifo_signal(ready)\n"
+        "    _fifo_wait(go_fd, timeout=10.0, description='go marker')\n"
+        % (str(ROOT), str(global_swap_state_root), str(global_swap_lock_root), str(global_swap_ready), str(global_swap_go))
+    )
+    _fifo_create(global_swap_ready)
+    _fifo_create(global_swap_go)
+    global_swap_ready_fd = _fifo_open_reader(global_swap_ready)
+    global_swap_proc = subprocess.Popen([sys.executable, str(global_swap_script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _fifo_wait(global_swap_ready_fd, timeout=10.0, description="global lock root holder ready signal")
+    os.close(global_swap_ready_fd)
+    global_swap_renamed = scratch / "global_lock_root_swap.old"
+    global_swap_lock_root.rename(global_swap_renamed)
+    global_swap_lock_root.mkdir(mode=0o700)
+    global_swap_contender_refused = False
+    try:
+        with lock_mod.acquire_provisioner_lock(global_swap_state_root, global_lock_root=global_swap_lock_root, transaction_id="contender", timeout=0.3):
+            pass
+    except ProvisionerLockHeldError:
+        global_swap_contender_refused = True
+    _fifo_signal(global_swap_go)
+    global_swap_proc.wait(15)
+    evidence.record("global_lock_root_swapped_while_holder_active", contender_refused=global_swap_contender_refused, holder_returncode=global_swap_proc.returncode)
+    if not global_swap_contender_refused or global_swap_proc.returncode != 0:
+        raise SystemExit("global_lock_root swap scenario did not refuse the contender")
+
+    # 18. Sixth correction round, point 4: an uninstall journal that
+    # legitimately reached REVOKING_OWNERSHIP (crash simulated before
+    # ownership was actually revoked) becomes unreadable; a file is then
+    # recreated at the original path. The unreadable journal must never be
+    # silently skipped -- authority must be denied, never reactivating the
+    # recreated file as product-owned.
+    # Isolated environment, for the same reason as the scenarios above.
+    unreadable_sandbox = scratch / "unreadable_journal_sandbox"
+    unreadable_state_root = scratch / "unreadable_journal_state"
+    unreadable_global_lock_root = scratch / "unreadable_journal_global_lock"
+    unreadable_env = _env(unreadable_sandbox, unreadable_state_root, unreadable_global_lock_root)
+    unreadable_capability_id = "cap_vm_unreadable_uninstall_journal"
+    unreadable_outcome = engine.prepare(_decision(unreadable_capability_id, "dep_vm_unreadable_uninstall_journal"), unreadable_env, apply=True)
+    if unreadable_outcome.status.value != "committed":
+        raise SystemExit("unreadable-uninstall-journal setup did not commit: %r" % unreadable_outcome)
+    unreadable_marker = unreadable_sandbox / ("%s.marker" % unreadable_capability_id)
+    unreadable_marker_content = unreadable_marker.read_bytes()
+    owned_for_unreadable = [r for r in journal_mod.read_ownership_records(unreadable_state_root, unreadable_capability_id) if r.product_owned]
+    unreadable_txn_id = "uninstall-%s" % unreadable_capability_id
+    unreadable_plan = engine._build_uninstall_plan(unreadable_capability_id, owned_for_unreadable, transaction_id=unreadable_txn_id)
+    unreadable_journal = engine._initial_uninstall_journal(unreadable_plan, now_value=_now())
+    unreadable_journal = unreadable_journal.with_state(TransactionState.UNINSTALLING, now=_now())
+    journal_mod.write_journal(unreadable_state_root, unreadable_journal)
+    unreadable_locked_context = engine._open_locked_context(unreadable_env.context)
+    try:
+        unreadable_journal, unreadable_ok, unreadable_residuals = engine._run_uninstall_loop(
+            unreadable_state_root, unreadable_journal, unreadable_locked_context,
+            registry=unreadable_env.registry, expected_executor_version=unreadable_env.expected_executor_version,
+        )
+    finally:
+        engine._close_locked_context(unreadable_locked_context)
+    if not unreadable_ok:
+        raise SystemExit("unreadable-uninstall-journal setup's real uninstall loop did not complete: %r" % unreadable_residuals)
+    unreadable_journal = unreadable_journal.with_state(TransactionState.REVOKING_OWNERSHIP, now=_now())
+    journal_mod.write_journal(unreadable_state_root, unreadable_journal)
+    if not journal_mod.read_ownership_records(unreadable_state_root, unreadable_capability_id) or unreadable_marker.exists():
+        raise SystemExit("unreadable-uninstall-journal setup did not reach the expected stalled state")
+    unreadable_journal_path = journal_mod.transaction_path(unreadable_state_root, unreadable_txn_id)
+    os.chmod(unreadable_journal_path, 0o644)
+    unreadable_marker.write_bytes(unreadable_marker_content)
+    unreadable_result = engine.uninstall(unreadable_capability_id, unreadable_env, apply=True)
+    unreadable_recreated_survives = unreadable_marker.exists() and unreadable_marker.read_bytes() == unreadable_marker_content
+    evidence.record(
+        "unreadable_uninstall_journal_never_reactivates_ownership", status=unreadable_result.status.value,
+        recreated_resource_survives=unreadable_recreated_survives,
+    )
+    if unreadable_result.status.value == "uninstalled" or not unreadable_recreated_survives:
+        raise SystemExit("unreadable-uninstall-journal scenario failed: %r" % unreadable_result)
 
     # 13/14. Final cleanup + residual scan (no packages/repos/DNS/firewall/services/protocols touched).
     remaining_capabilities = [

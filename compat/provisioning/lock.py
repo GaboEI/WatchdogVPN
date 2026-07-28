@@ -62,7 +62,17 @@ def _global_lock_file_name(state_root: Path) -> str:
     return "%s.lock" % digest
 
 
-def _open_global_root(global_lock_root: Path) -> int:
+_GLOBAL_ROOT_MODE = 0o700
+
+
+def _open_global_root(global_lock_root: Path) -> tuple[int, int, int]:
+    """Opens (and, via ``ensure_private_lock_root``, creates/tightens) the
+    global lock root, returning ``(fd, st_dev, st_ino)``. Re-checks
+    uid/mode here too (point 3, sixth correction round) as defense in depth
+    against a race between ``ensure_private_lock_root``'s own tightening
+    and this open; the captured identity lets the caller detect a
+    rename/replace of this directory that happens between opening it and
+    actually acquiring the flock inside it."""
     global_lock_root = ensure_private_lock_root(Path(global_lock_root))
     try:
         fd = os.open(str(global_lock_root), _ROOT_OPEN_FLAGS)
@@ -74,10 +84,14 @@ def _open_global_root(global_lock_root: Path) -> int:
             raise PathPolicyError("global lock root is not a directory: %s" % global_lock_root)
         if st.st_uid != os.getuid():
             raise PathPolicyError("global lock root %s is owned by uid %d, expected %d" % (global_lock_root, st.st_uid, os.getuid()))
+        if stat_module.S_IMODE(st.st_mode) != _GLOBAL_ROOT_MODE:
+            raise PathPolicyError(
+                "global lock root %s must be mode 0700, found %o" % (global_lock_root, stat_module.S_IMODE(st.st_mode))
+            )
     except Exception:
         os.close(fd)
         raise
-    return fd
+    return fd, st.st_dev, st.st_ino
 
 
 def _open_and_verify_lock_fd_relative(root_fd: int, name: str) -> int:
@@ -158,7 +172,7 @@ def acquire_provisioner_lock(
     is for operator diagnostics only -- the kernel flock, not this
     metadata, is what actually excludes a second mutating provisioner.
     """
-    global_root_fd = _open_global_root(Path(global_lock_root))
+    global_root_fd, global_root_dev, global_root_ino = _open_global_root(Path(global_lock_root))
     try:
         lock_name = _global_lock_file_name(Path(state_root))
         fd = _open_and_verify_lock_fd_relative(global_root_fd, lock_name)
@@ -181,10 +195,50 @@ def acquire_provisioner_lock(
                             holder_transaction_id=holder_transaction_id,
                         ) from exc
                     time.sleep(poll_interval)
+
+            # Point 3, sixth correction round: re-confirm the global lock
+            # root's own identity hasn't changed between opening it and
+            # actually acquiring the flock -- an actor with write access to
+            # ITS parent could otherwise rename/replace it out from under
+            # us while we still believed we held a meaningful, exclusive
+            # lock relative to the CANONICAL configured path.
+            try:
+                current_root_stat = os.lstat(global_lock_root)
+            except OSError as exc:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                raise PathPolicyError("cannot reconfirm global lock root identity: %s" % exc) from exc
+            if (current_root_stat.st_dev, current_root_stat.st_ino) != (global_root_dev, global_root_ino):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                raise PathPolicyError(
+                    "global lock root %s no longer refers to the directory this lock was bound to "
+                    "(identity changed)" % global_lock_root
+                )
+
             _write_holder_metadata(handle, transaction_id=transaction_id, state_root=state_root)
             try:
                 state_root_handle = open_state_root(Path(state_root))
                 try:
+                    # Defense in depth (point 3, sixth correction round): a
+                    # same-uid actor who can rename/replace global_lock_root
+                    # itself could otherwise let a second process acquire
+                    # an "independent" lock via the substitute directory
+                    # while still racing on the REAL, unswapped state_root.
+                    # A second, non-blocking flock directly on state_root's
+                    # OWN directory fd is immune to any global_lock_root
+                    # swap (state_root was never touched by it), so two
+                    # processes that end up disagreeing about which global
+                    # lock file is "the" lock still correctly contend here
+                    # as long as they agree on the real state_root.
+                    try:
+                        fcntl.flock(state_root_handle.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except OSError as exc:
+                        if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                            raise
+                        state_root_handle.close()
+                        raise ProvisionerLockHeldError(
+                            "provisioner lock is held by another process (state root directory already locked)",
+                            holder_pid=None, holder_transaction_id=None,
+                        ) from exc
                     for subdir_name in (TRANSACTIONS_DIR, OWNERSHIP_DIR, HISTORY_DIR):
                         state_root_handle.subdir_fd(subdir_name)
                     yield state_root_handle

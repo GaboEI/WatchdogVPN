@@ -13,12 +13,13 @@ identifier.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import errno
 import hashlib
 import os
 import re
 import stat as stat_module
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Sequence
@@ -195,6 +196,26 @@ _RELATIVE_DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getatt
 _RELATIVE_FILE_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
+def _verify_canonical_dev_ino(path: Path, expected_dev: int, expected_ino: int, *, label: str) -> None:
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError as exc:
+        raise PathPolicyError("%s is no longer present at its canonical path: %s" % (label, path)) from exc
+    except OSError as exc:
+        raise PathPolicyError("cannot verify %s identity at %s: %s" % (label, path, exc)) from exc
+    if (st.st_dev, st.st_ino) != (expected_dev, expected_ino):
+        raise PathPolicyError(
+            "%s at %s no longer refers to the directory this transaction is bound to (identity changed)" % (label, path)
+        )
+
+
+@dataclass
+class _IntermediateHandle:
+    fd: int
+    dev: int
+    ino: int
+
+
 @dataclass
 class AllowedRootHandle:
     """An OPEN, identity-bound handle to one of ``context.allowed_roots``
@@ -206,37 +227,71 @@ class AllowedRootHandle:
     this handle's descriptor, never against a freshly re-resolved ``Path``
     -- a later rename/symlink-swap/directory-replace of the allowed root
     itself is detected (via ``st_dev``/``st_ino`` captured at open time),
-    exactly like ``StateRootHandle`` for the provisioning state root."""
+    exactly like ``StateRootHandle`` for the provisioning state root.
+
+    Point 2, sixth correction round: this binding is NOT limited to the top
+    of the allowed root. Every INTERMEDIATE directory between the allowed
+    root and a resource's parent is also opened once, its descriptor cached
+    (keyed by its relative path tuple, built progressively so a deeper path
+    reuses its own parents' cached fds), and its identity re-verified
+    alongside the root's own -- a rename/replace of an intermediate
+    subdirectory (never the root itself, and never the leaf resource) is
+    exactly as detectable as a swap of the root, closing a gap where a
+    fresh, uncached open of an intermediate component on every single call
+    would otherwise silently walk into whatever real directory now sits at
+    that name."""
 
     path: Path
     fd: int
     dev: int
     ino: int
+    _intermediates: dict = field(default_factory=dict, repr=False, compare=False)
+
+    def intermediate_fd(self, relative_parts: tuple) -> int:
+        """Returns a cached, verified directory fd for the intermediate
+        component chain ``relative_parts`` (e.g. ``("resources",)``),
+        strictly inside this handle's allowed root, opening it (and any of
+        its own uncached parents) on first use and reusing the SAME fd for
+        the rest of this handle's lifetime -- an external rename/replace of
+        that subdirectory after the first call cannot redirect subsequent
+        operations, for the same reason the allowed root's own fd is
+        immune to it."""
+        relative_parts = tuple(relative_parts)
+        if not relative_parts:
+            return self.fd
+        if relative_parts not in self._intermediates:
+            parent_fd = self.intermediate_fd(relative_parts[:-1])
+            fd = _open_dir_component_relative(parent_fd, relative_parts[-1])
+            st = os.fstat(fd)
+            self._intermediates[relative_parts] = _IntermediateHandle(fd=fd, dev=st.st_dev, ino=st.st_ino)
+        return self._intermediates[relative_parts].fd
 
     def verify_identity(self) -> None:
         """Re-confirm, via a fresh inspection of the CONFIGURED (canonical)
-        allowed-root path, that it still refers to exactly the physical
-        directory this handle was bound to when first opened. Raises
+        allowed-root path AND every cached intermediate subdirectory's own
+        canonical path, that each still refers to exactly the physical
+        directory this handle was bound to when first opened/cached. Raises
         ``PathPolicyError`` on any mismatch, absence, or inspection
         failure -- callers must never report a clean/terminal outcome
         (COMMITTED, UNINSTALLED, ...) once this has failed, exactly like
         ``StateRootHandle.verify_identity()`` for the state root: fd-bound
         operations against this handle remain correct even after a
-        rename/replace of the allowed root, but silently reporting success
-        anyway would create a split-brain against whatever a fresh process
-        using the same configured path would now see."""
-        try:
-            st = os.lstat(self.path)
-        except FileNotFoundError as exc:
-            raise PathPolicyError("allowed root %s is no longer present at its canonical path" % self.path) from exc
-        except OSError as exc:
-            raise PathPolicyError("cannot verify allowed root %s identity: %s" % (self.path, exc)) from exc
-        if (st.st_dev, st.st_ino) != (self.dev, self.ino):
-            raise PathPolicyError(
-                "allowed root %s no longer refers to the directory this transaction is bound to (identity changed)" % self.path
-            )
+        rename/replace of the allowed root or an intermediate subdirectory,
+        but silently reporting success anyway would create a split-brain
+        against whatever a fresh process using the same configured path
+        would now see."""
+        _verify_canonical_dev_ino(self.path, self.dev, self.ino, label="allowed root")
+        for relative_parts, sub in self._intermediates.items():
+            canonical = self.path.joinpath(*relative_parts)
+            _verify_canonical_dev_ino(canonical, sub.dev, sub.ino, label="allowed root intermediate %r" % (relative_parts,))
 
     def close(self) -> None:
+        for sub in self._intermediates.values():
+            try:
+                os.close(sub.fd)
+            except OSError:
+                pass
+        self._intermediates.clear()
         try:
             os.close(self.fd)
         except OSError:
@@ -290,11 +345,15 @@ def _open_dir_component_relative(parent_fd: int, name: str) -> int:
 @contextmanager
 def _relative_to_handle(handle: AllowedRootHandle, validated_path: Path):
     """Yields ``(parent_fd, basename)`` for ``validated_path``, resolved
-    entirely relative to ``handle`` -- walking any intermediate components
-    (opening each with ``O_NOFOLLOW``, dir_fd-relative, never resolving any
-    path from the filesystem root) and closing whatever intermediate fds it
-    opened on exit. ``validated_path`` must already be a strict descendant
-    of ``handle.path`` (as returned by ``validate_target_path``)."""
+    entirely relative to ``handle``. Every intermediate component is
+    resolved via ``handle.intermediate_fd()`` (point 2, sixth correction
+    round) -- opened and identity-cached on first use, then REUSED for the
+    rest of this handle's lifetime, never freshly re-opened by name on each
+    call -- so a rename/replace of an intermediate directory after its
+    first use cannot silently redirect a later operation into a substitute
+    directory nobody has verified. ``validated_path`` must already be a
+    strict descendant of ``handle.path`` (as returned by
+    ``validate_target_path``)."""
     try:
         relative = validated_path.relative_to(handle.path)
     except ValueError as exc:
@@ -302,20 +361,8 @@ def _relative_to_handle(handle: AllowedRootHandle, validated_path: Path):
     parts = relative.parts
     if not parts:
         raise PathPolicyError("path must be a strict descendant of the allowed root, not the root itself: %s" % validated_path)
-    opened_fds = []
-    try:
-        current_fd = handle.fd
-        for part in parts[:-1]:
-            fd = _open_dir_component_relative(current_fd, part)
-            opened_fds.append(fd)
-            current_fd = fd
-        yield current_fd, parts[-1]
-    finally:
-        for fd in reversed(opened_fds):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+    parent_fd = handle.intermediate_fd(parts[:-1])
+    yield parent_fd, parts[-1]
 
 
 def create_file_exclusive_relative(handle: AllowedRootHandle, validated_path: Path, data: bytes, *, mode: int = 0o600) -> None:
@@ -362,16 +409,31 @@ def remove_file_if_owned_relative(
 ) -> bool:
     """Descriptor-relative equivalent of ``remove_file_if_owned`` that also
     eliminates the TOCTOU window between verifying a resource's identity
-    and unlinking it (point 3, fifth correction round): the file is opened
-    ONCE, ``O_NOFOLLOW``, and every check -- regular file, content hash --
-    is performed against that SAME open file descriptor. Immediately before
-    the actual unlink, the basename's CURRENT directory entry is
-    re-inspected (``lstat(..., dir_fd=parent_fd)``) and its ``(dev, ino)``
-    compared against what was just verified: only a basename that still
-    resolves to the EXACT inode just hashed is ever removed. A concurrent
-    substitution of the basename for a foreign file in between is detected
-    here and fails closed (``PathPolicyError``) -- the foreign file is
-    never touched, and no unlink is ever attempted against it."""
+    and actually deleting it (point 3, fifth correction round; made
+    genuinely atomic in the sixth). The file is opened ONCE, ``O_NOFOLLOW``,
+    and every check -- regular file, content hash -- is performed against
+    that SAME open file descriptor.
+
+    A bare ``lstat()`` immediately before ``unlink()`` (the fifth round's
+    approach) still leaves a window between that check and the destructive
+    syscall itself, since ``unlink`` operates on the NAME, not the inode: a
+    concurrent rename of the basename in that exact window would still get
+    deleted. Instead, the basename is atomically RENAMED into a private,
+    unpredictable quarantine name within the SAME directory (a
+    ``uuid4``-derived name never otherwise used, so a pre-existing collision
+    is not realistically triggerable): whatever inode is CURRENTLY at the
+    basename at the moment of that single atomic ``renameat`` syscall is
+    what moves, collapsing "read the name" and "claim the entry" into one
+    kernel operation with no window for a third party to intervene in
+    between. Only THEN is the quarantined entry's identity compared against
+    what was hashed -- if a concurrent substitution beat us to the rename,
+    we quarantined the WRONG (foreign) inode, and it is restored to its
+    original name (best-effort) rather than ever being deleted; if the
+    restore itself fails, the quarantined entry is left in place as
+    recoverable evidence, never silently deleted. Only a quarantined entry
+    that matches the exact inode just hashed is ever unlinked -- and by then
+    its name is private to this call, so no further substitution is
+    possible."""
     with _relative_to_handle(handle, validated_path) as (parent_fd, basename):
         try:
             fd = os.open(basename, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
@@ -398,23 +460,45 @@ def remove_file_if_owned_relative(
                         "refusing to remove %s: content hash diverged from what this transaction created (ownership drift)"
                         % validated_path
                     )
-            UNLINK_REVERIFY_HOOK()
-            try:
-                current = os.lstat(basename, dir_fd=parent_fd)
-            except FileNotFoundError as exc:
-                raise PathPolicyError(
-                    "cannot re-verify %s immediately before removal: no longer present" % validated_path
-                ) from exc
-            except OSError as exc:
-                raise PathPolicyError("cannot re-verify %s immediately before removal: %s" % (validated_path, exc)) from exc
-            if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
-                raise PathPolicyError(
-                    "refusing to remove %s: the name now refers to a different inode than the one just verified "
-                    "(concurrent substitution)" % validated_path
-                )
         finally:
             os.close(fd)
-        os.unlink(basename, dir_fd=parent_fd)
+
+        # Point 1, sixth correction round: the window a test/attacker must
+        # win is now exactly here -- after the hash has been verified via
+        # the held fd, before the atomic quarantine rename below.
+        UNLINK_REVERIFY_HOOK()
+
+        quarantine_name = ".wdvpn-quarantine.%s.%s" % (basename, uuid.uuid4().hex)
+        try:
+            os.rename(basename, quarantine_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise PathPolicyError("cannot quarantine %s for removal: %s" % (validated_path, exc)) from exc
+
+        try:
+            quarantined = os.lstat(quarantine_name, dir_fd=parent_fd)
+        except FileNotFoundError as exc:
+            raise PathPolicyError("quarantined entry for %s vanished unexpectedly" % validated_path) from exc
+        except OSError as exc:
+            raise PathPolicyError("cannot verify quarantined entry for %s: %s" % (validated_path, exc)) from exc
+
+        if (quarantined.st_dev, quarantined.st_ino) != (st.st_dev, st.st_ino):
+            # A concurrent substitution won the race between our own hash
+            # verification and this rename: we quarantined a FOREIGN inode,
+            # never the one we hashed. Restore it to its original name
+            # (best-effort) -- it is never ours to delete -- and fail
+            # closed instead of ever unlinking an unverified inode.
+            try:
+                os.rename(quarantine_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            except OSError:
+                pass  # best-effort restore; the quarantine name itself remains as recoverable evidence if even this fails
+            raise PathPolicyError(
+                "refusing to remove %s: quarantined a different inode than the one just verified "
+                "(concurrent substitution) -- never deleting an unrelated resource" % validated_path
+            )
+
+        os.unlink(quarantine_name, dir_fd=parent_fd)
         try:
             os.fsync(parent_fd)
         except OSError as exc:
@@ -489,12 +573,14 @@ def confirm_absent_descriptor_safe(
     if handle is None:
         return False, "no matching allowed root handle for %s" % resource_identity
 
+    # Point 2, sixth correction round: re-verify the ROOT and every cached
+    # INTERMEDIATE component's identity, not just the root -- an
+    # intermediate directory swapped after being cached is exactly as
+    # disqualifying as the allowed root itself being swapped.
     try:
-        current_root_stat = os.lstat(handle.path)
-    except OSError as exc:
-        return False, "cannot reconfirm allowed root identity for %s: %s" % (resource_identity, exc)
-    if (current_root_stat.st_dev, current_root_stat.st_ino) != (handle.dev, handle.ino):
-        return False, "allowed root %s no longer refers to the directory this check was bound to (identity changed)" % handle.path
+        handle.verify_identity()
+    except PathPolicyError as exc:
+        return False, str(exc)
 
     try:
         with _relative_to_handle(handle, validated) as (parent_fd, basename):

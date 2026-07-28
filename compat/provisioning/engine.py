@@ -151,6 +151,33 @@ def _close_locked_context(context: ExecutionContext) -> None:
         handle.close()
 
 
+def _eager_cache_intermediates_for_targets(context: ExecutionContext, targets) -> None:
+    """Pre-opens and caches every intermediate directory descriptor between
+    each allowed root and each resource path in ``targets`` (point 2, sixth
+    correction round), immediately after the plan/ownership set is known
+    and the lock is held -- before ANY other operation (idempotency check,
+    inspection, removal, ...) touches these paths. This mirrors the eager
+    open of state_root's own transactions/ownership/history subdirectories
+    (point 1, fifth correction round): without it, the FIRST access to a
+    nested resource could itself land on a substitute intermediate
+    directory an attacker swapped in during the narrow window between the
+    lock being acquired and that first access, with no earlier-cached
+    identity to detect the divergence against. A target that fails
+    structural validation here is silently skipped -- it is properly
+    rejected later at its real use site with a clear, specific error."""
+    for target in targets:
+        if not target:
+            continue
+        try:
+            validated = validate_target_path(Path(target), allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+            handle = handle_for_allowed_root(context, validated)
+            relative = validated.relative_to(handle.path)
+            if relative.parts[:-1]:
+                handle.intermediate_fd(relative.parts[:-1])
+        except PathPolicyError:
+            continue
+
+
 def _verify_allowed_roots_identity(context: ExecutionContext) -> None:
     """Re-confirms every captured ``AllowedRootHandle`` still refers to the
     same physical directory at its canonical, configured path (point 2,
@@ -284,16 +311,30 @@ def _load_committed_source_journal(state_root: Path, transaction_id: str, *, cap
     return journal
 
 
+class _UninstallScanResult(Enum):
+    """Point 4, sixth correction round: a plain boolean cannot represent
+    "cannot tell" -- only "yes" or "no". An individual journal that cannot
+    be read/validated during the scan might be EXACTLY the relevant
+    completed-uninstall journal for this capability; its irrelevance can
+    never be demonstrated without reading it, so it must never be silently
+    treated as "not found" (which would wrongly grant authority)."""
+
+    NONE_FOUND = "none_found"
+    COMPLETED_FOUND = "completed_found"
+    UNKNOWN = "unknown"
+
+
 def _capability_has_completed_uninstall(
     state_root: Path, capability_id: str, target_transaction_id: str, *, exclude_transaction_id: str | None = None
-) -> bool:
-    """True if an uninstall journal exists for this exact source transaction
-    that has already progressed past resource removal (``REVOKING_OWNERSHIP``
-    or ``UNINSTALLED``). A live ownership record still citing that
-    transaction at this point is stale bookkeeping left behind by a crash
-    between the resources being removed and ownership being revoked -- it
-    must never be trusted as authority again, even if its recorded hash
-    still happens to match a path someone else has since recreated.
+) -> _UninstallScanResult:
+    """Scans for an uninstall journal, for this exact source transaction,
+    that has already progressed past resource removal
+    (``REVOKING_OWNERSHIP`` or ``UNINSTALLED``). A live ownership record
+    still citing that transaction at this point is stale bookkeeping left
+    behind by a crash between the resources being removed and ownership
+    being revoked -- it must never be trusted as authority again, even if
+    its recorded hash still happens to match a path someone else has since
+    recreated.
 
     ``exclude_transaction_id`` skips one specific uninstall journal (its own
     ``transaction_id``, never the source ``target_transaction_id``) from the
@@ -302,30 +343,31 @@ def _capability_has_completed_uninstall(
     where it would otherwise always find itself already sitting at
     ``REVOKING_OWNERSHIP`` and wrongly self-invalidate its own authority.
 
-    Fails closed (point 6, fifth correction round): if the transactions
-    directory itself cannot even be enumerated (corrupt/unexpected entry
-    type), this returns ``True`` -- "a completed uninstall might exist and
-    cannot be ruled out" -- rather than silently treating an unreadable
-    state as "no completed uninstall found", which would wrongly grant
-    authority."""
+    Fails closed (point 6, fifth correction round; point 4, sixth): if the
+    transactions directory itself cannot even be enumerated, OR if any
+    INDIVIDUAL journal encountered during the scan cannot be read/validated,
+    this returns ``UNKNOWN`` -- never silently skipped/continued past as
+    irrelevant -- since a corrupted-in-place journal might be exactly the
+    completed uninstall this check exists to find. The caller must deny
+    authority for anything other than ``NONE_FOUND``."""
     try:
         transaction_ids = journal_mod.list_transaction_ids(state_root)
     except (JournalError, IdentifierError):
-        return True
+        return _UninstallScanResult.UNKNOWN
     for transaction_id in transaction_ids:
         if transaction_id == exclude_transaction_id:
             continue
         try:
             candidate = journal_mod.read_journal(state_root, transaction_id)
         except (JournalError, IdentifierError):
-            continue
+            return _UninstallScanResult.UNKNOWN
         if candidate.operation != "uninstall" or candidate.capability_id != capability_id:
             continue
         if candidate.target != target_transaction_id:
             continue
         if candidate.state in (TransactionState.REVOKING_OWNERSHIP, TransactionState.UNINSTALLED):
-            return True
-    return False
+            return _UninstallScanResult.COMPLETED_FOUND
+    return _UninstallScanResult.NONE_FOUND
 
 
 def validate_ownership_authority(
@@ -389,7 +431,7 @@ def validate_ownership_authority(
 
     if _capability_has_completed_uninstall(
         state_root, capability_id, transaction_id, exclude_transaction_id=exclude_uninstall_transaction_id
-    ):
+    ) != _UninstallScanResult.NONE_FOUND:
         return False
 
     try:
@@ -1107,6 +1149,7 @@ def prepare(decision: ResolutionDecision, env: ProvisioningEnvironment, *, apply
         ) as handle:
             locked_context = _open_locked_context(env.context)
             try:
+                _eager_cache_intermediates_for_targets(locked_context, [step.target for step in plan.steps])
                 recovery_reports = _recover_pending_locked(handle, env.registry, env.expected_executor_version, locked_context)
                 blocking = [item for item in recovery_reports if item.action == RecoveryAction.REQUIRE_MANUAL]
                 if blocking:
@@ -1391,6 +1434,8 @@ def _recover_one(
             journal_mod.write_journal(state_root, journal)
         return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, "cannot rebuild plan for recovery: %s" % exc)
 
+    _eager_cache_intermediates_for_targets(context, [step.target for step in plan.steps])
+
     if compute_plan_digest(plan) != journal.plan_digest:
         if journal.state != TransactionState.RECOVERY_REQUIRED:
             journal = journal.with_state(TransactionState.RECOVERY_REQUIRED, now=now(), recovery={"reason": "plan_digest_mismatch"})
@@ -1540,6 +1585,7 @@ def _recover_uninstall(
     independently reconfirms the snapshot/digest/step-states/live-absence
     before ever calling ``_revoke_ownership_and_verify``."""
     now = context.now
+    _eager_cache_intermediates_for_targets(context, [r.candidate.resource_identity for r in journal.owned_snapshot])
     for step in journal.steps:
         if step.state == StepState.VERIFY_FAILED or step.state == StepState.APPLY_FAILED:
             if journal.state != TransactionState.RECOVERY_REQUIRED:
@@ -2038,6 +2084,7 @@ def uninstall(capability_id: str, env: ProvisioningEnvironment, *, apply: bool) 
                 owned = [record for record in journal_mod.read_ownership_records(handle, capability_id) if record.product_owned]
                 if not owned:
                     return PrepareOutcome(PrepareStatus.OUT_OF_CONTRACT, None, None, "nothing to uninstall", error_kind="nothing_to_uninstall")
+                _eager_cache_intermediates_for_targets(locked_context, [r.candidate.resource_identity for r in owned])
                 if not validate_ownership_authority(
                     handle, capability_id, owned,
                     registry=env.registry, expected_executor_version=env.expected_executor_version, context=locked_context,

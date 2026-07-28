@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import dataclasses
 import errno
+import fcntl
 import hashlib
 import json
 import os
+import select
 import signal
 import stat
 import subprocess
@@ -70,6 +72,48 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _fifo_create(path: Path) -> None:
+    """Creates a FIFO special file at ``path``. Must be called (by
+    whichever side owns the filesystem namespace, typically the parent
+    process before spawning a child) before either side attempts to open
+    it."""
+    os.mkfifo(str(path))
+
+
+def _fifo_open_reader(path: Path) -> int:
+    """Opens an already-created FIFO's read end in non-blocking mode.
+    POSIX guarantees an ``O_NONBLOCK`` read-only open of a FIFO never
+    blocks, regardless of whether a writer exists yet -- so this is
+    always safe to call before starting whatever process will later
+    signal on the FIFO, closing the race that a sleep-poll loop on
+    ``Path.exists()`` cannot close (the reader is genuinely listening
+    before the signaler can possibly write)."""
+    return os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
+
+
+def _fifo_wait(fd: int, *, timeout: float, description: str) -> None:
+    """Blocks via a real kernel wait (``select``) until a byte is
+    available on ``fd``, or raises after ``timeout`` seconds. The timeout
+    is strictly a watchdog: the wakeup itself is immediate once the
+    signaler writes, never delayed by a polling interval."""
+    r, _, _ = select.select([fd], [], [], timeout)
+    if not r:
+        raise AssertionError("timed out waiting for %s" % description)
+    os.read(fd, 1)
+
+
+def _fifo_signal(path: Path) -> None:
+    """Opens a FIFO's write end and writes a single marker byte. The
+    blocking open here returns immediately in practice: the reader is
+    expected to have already opened its end (via ``_fifo_open_reader``)
+    before this is ever called."""
+    fd = os.open(str(path), os.O_WRONLY)
+    try:
+        os.write(fd, b"x")
+    finally:
+        os.close(fd)
 
 
 def _fail_directory_fsync_side_effect(exc: Exception | None = None, *, only_within: Path | None = None):
@@ -245,7 +289,11 @@ class TransactionalProvisioningTests(unittest.TestCase):
             with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id="contender", timeout=0.3):
                 pass
         self.assertIsNotNone(ctx.exception.holder_pid)
-        proc.wait(5)
+        # A generous bound for the holder's own teardown (sleep + interpreter
+        # shutdown) under load -- not a correctness-relevant wait, so no
+        # need for a barrier: the lock-exclusion assertions above already
+        # ran, this only confirms the process eventually exits.
+        proc.wait(15)
 
     # 7. Journal durable antes y después de cada paso.
     def test_07_journal_is_durable_before_and_after_each_step(self) -> None:
@@ -1698,7 +1746,7 @@ class RecoveryLockTests(unittest.TestCase):
             reports = engine._recover_pending_locked(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context)
             self.assertEqual(reports, [])
         finally:
-            proc.wait(5)
+            proc.wait(15)
 
 
 class StateRootIdentityRaceTests(unittest.TestCase):
@@ -1727,25 +1775,23 @@ class StateRootIdentityRaceTests(unittest.TestCase):
     def _write_holder_script(self, *, state_root: Path, ready: Path, go: Path, done: Path, transaction_id: str) -> Path:
         script = self.tmp / ("holder_%s.py" % transaction_id)
         script.write_text(
-            "import sys, time\n"
+            "import sys\n"
             "sys.path.insert(0, %r)\n"
             "from pathlib import Path\n"
             "from compat.provisioning import lock as lock_mod, journal as journal_mod\n"
             "from compat.provisioning.journal import TransactionJournal\n"
             "from compat.provisioning.model import TransactionState\n"
             "from compat.provisioning.errors import StateRootIdentityError\n"
+            "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_signal, _fifo_wait\n"
             "state_root = Path(%r)\n"
             "global_lock_root = Path(%r)\n"
             "ready = Path(%r)\n"
             "go = Path(%r)\n"
             "done = Path(%r)\n"
+            "go_fd = _fifo_open_reader(go)\n"
             "with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id=%r, timeout=10.0) as handle:\n"
-            "    ready.write_text('ready')\n"
-            "    deadline = time.monotonic() + 10.0\n"
-            "    while not go.exists():\n"
-            "        if time.monotonic() > deadline:\n"
-            "            raise SystemExit('timed out waiting for go marker')\n"
-            "        time.sleep(0.05)\n"
+            "    _fifo_signal(ready)\n"
+            "    _fifo_wait(go_fd, timeout=10.0, description='go marker')\n"
             "    journal = TransactionJournal(\n"
             "        schema_version=journal_mod.SCHEMA_VERSION, transaction_id=%r, operation='prepare',\n"
             "        state=TransactionState.PLANNED, created_at='2026-01-01T00:00:00+00:00',\n"
@@ -1780,18 +1826,21 @@ class StateRootIdentityRaceTests(unittest.TestCase):
         transaction_id = "rename-race-txn"
         script = self._write_holder_script(state_root=state_root, ready=ready, go=go, done=done, transaction_id=transaction_id)
 
+        _fifo_create(ready)
+        _fifo_create(go)
+        ready_fd = _fifo_open_reader(ready)
+
         proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(proc.wait)
 
-        deadline = time.monotonic() + 10.0
-        while not ready.exists():
-            self.assertLess(time.monotonic(), deadline, "holder never signaled ready")
-            time.sleep(0.05)
+        _fifo_wait(ready_fd, timeout=10.0, description="holder ready signal")
 
         renamed_state_root = self.tmp / "state_renamed_aside"
         state_root.rename(renamed_state_root)
         if replace_with is not None:
             replace_with(state_root)
+
+        os.close(ready_fd)
 
         # Invariant 1 (point 1, fifth correction round): two processes
         # configured with the SAME logical installation (the same
@@ -1806,7 +1855,7 @@ class StateRootIdentityRaceTests(unittest.TestCase):
             ):
                 pass
 
-        go.write_text("go")
+        _fifo_signal(go)
         stdout, stderr = proc.communicate(timeout=15)
         self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
         self.assertTrue(done.exists(), "holder never finished: stderr=%r" % stderr)
@@ -1869,22 +1918,23 @@ class StateRootIdentityRaceTests(unittest.TestCase):
         state_root = parent / "state_txn_rename"
         state_root.mkdir(mode=0o700)
         ready = self.tmp / "ready2.marker"
-        go = self.tmp / "go2.marker"
         rename_done = self.tmp / "rename_done2.marker"
         done = self.tmp / "done2.marker"
         transaction_id = "txn-subdir-rename-race"
         script = self.tmp / "holder_txn_subdir.py"
         script.write_text(
-            "import sys, time\n"
+            "import sys\n"
             "sys.path.insert(0, %r)\n"
             "from pathlib import Path\n"
             "from compat.provisioning import lock as lock_mod, journal as journal_mod\n"
             "from compat.provisioning.journal import TransactionJournal\n"
             "from compat.provisioning.model import TransactionState\n"
             "from compat.provisioning.errors import StateRootIdentityError\n"
+            "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_signal, _fifo_wait\n"
             "state_root = Path(%r)\n"
             "global_lock_root = Path(%r)\n"
-            "ready = Path(%r); go = Path(%r); rename_done = Path(%r); done = Path(%r)\n"
+            "ready = Path(%r); rename_done = Path(%r); done = Path(%r)\n"
+            "rename_done_fd = _fifo_open_reader(rename_done)\n"
             "def _journal(txn_id):\n"
             "    return TransactionJournal(\n"
             "        schema_version=journal_mod.SCHEMA_VERSION, transaction_id=txn_id, operation='prepare',\n"
@@ -1896,31 +1946,30 @@ class StateRootIdentityRaceTests(unittest.TestCase):
             "    )\n"
             "with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id='holder', timeout=10.0) as handle:\n"
             "    journal_mod.write_journal(handle, _journal(%r))\n"  # opens/caches the transactions subdir fd
-            "    ready.write_text('ready')\n"
-            "    deadline = time.monotonic() + 10.0\n"
-            "    while not rename_done.exists():\n"
-            "        if time.monotonic() > deadline: raise SystemExit('timed out waiting for rename_done')\n"
-            "        time.sleep(0.05)\n"
+            "    _fifo_signal(ready)\n"
+            "    _fifo_wait(rename_done_fd, timeout=10.0, description='rename_done marker')\n"
             "    try:\n"
             "        journal_mod.write_journal(handle, _journal(%r))\n"
             "    except StateRootIdentityError as exc:\n"
             "        done.write_text('identity_error:' + str(exc))\n"
             "    else:\n"
             "        done.write_text('done')\n"
-            % (str(ROOT), str(state_root), str(self.global_lock_root), str(ready), str(go), str(rename_done), str(done), transaction_id, transaction_id + "-second")
+            % (str(ROOT), str(state_root), str(self.global_lock_root), str(ready), str(rename_done), str(done), transaction_id, transaction_id + "-second")
         )
+
+        _fifo_create(ready)
+        _fifo_create(rename_done)
+        ready_fd = _fifo_open_reader(ready)
 
         proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(proc.wait)
-        deadline = time.monotonic() + 10.0
-        while not ready.exists():
-            self.assertLess(time.monotonic(), deadline, "holder never signaled ready")
-            time.sleep(0.05)
+        _fifo_wait(ready_fd, timeout=10.0, description="holder ready signal")
+        os.close(ready_fd)
 
         renamed_transactions = state_root / "transactions_renamed_aside"
         (state_root / journal_mod.TRANSACTIONS_DIR).rename(renamed_transactions)
 
-        rename_done.write_text("go")
+        _fifo_signal(rename_done)
         stdout, stderr = proc.communicate(timeout=15)
         self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
         self.assertTrue(done.exists())
@@ -1964,24 +2013,23 @@ class StateRootIdentityRaceTests(unittest.TestCase):
         result_file = self.tmp / "result3.json"
         script = self.tmp / "holder_subdir_swap.py"
         script.write_text(
-            "import sys, time, json\n"
+            "import sys, json\n"
             "sys.path.insert(0, %r)\n"
             "from pathlib import Path\n"
             "from compat.provisioning import lock as lock_mod, engine, journal as journal_mod\n"
             "from compat.provisioning.executors import CANARY_EXECUTOR_VERSION, CANARY_METHOD_KIND, CanaryExecutor, ExecutionContext, TrustedExecutorRegistry\n"
             "from compat.provisioning.model import RecoveryAction\n"
+            "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_signal, _fifo_wait\n"
             "state_root = Path(%r)\n"
             "global_lock_root = Path(%r)\n"
             "ready = Path(%r); go = Path(%r); result_file = Path(%r)\n"
+            "go_fd = _fifo_open_reader(go)\n"
             "registry = TrustedExecutorRegistry()\n"
             "registry.register(method_kind=CANARY_METHOD_KIND, method_id='canary_method', executor=CanaryExecutor())\n"
             "context = ExecutionContext(allowed_roots=(Path(%r),), now=lambda: '2026-01-01T00:00:00+00:00')\n"
             "with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id='holder', timeout=10.0) as handle:\n"
-            "    ready.write_text('ready')\n"  # eager-open of transactions/ownership/history already done by now
-            "    deadline = time.monotonic() + 10.0\n"
-            "    while not go.exists():\n"
-            "        if time.monotonic() > deadline: raise SystemExit('timed out waiting for go')\n"
-            "        time.sleep(0.05)\n"
+            "    _fifo_signal(ready)\n"  # eager-open of transactions/ownership/history already done by now
+            "    _fifo_wait(go_fd, timeout=10.0, description='go marker')\n"
             "    decisions = engine._recover_pending_locked(handle, registry, CANARY_EXECUTOR_VERSION, context)\n"
             "    result_file.write_text(json.dumps([\n"
             "        {'transaction_id': d.transaction_id, 'action': d.action.value} for d in decisions\n"
@@ -1993,12 +2041,14 @@ class StateRootIdentityRaceTests(unittest.TestCase):
         )
         (self.tmp / "sandbox_subdir_swap").mkdir()
 
+        _fifo_create(ready)
+        _fifo_create(go)
+        ready_fd = _fifo_open_reader(ready)
+
         proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(proc.wait)
-        deadline = time.monotonic() + 10.0
-        while not ready.exists():
-            self.assertLess(time.monotonic(), deadline, "holder never signaled ready")
-            time.sleep(0.05)
+        _fifo_wait(ready_fd, timeout=10.0, description="holder ready signal")
+        os.close(ready_fd)
 
         # The swap happens strictly AFTER eager-open (which already ran
         # inside acquire_provisioner_lock, before "ready" was ever
@@ -2008,7 +2058,7 @@ class StateRootIdentityRaceTests(unittest.TestCase):
         transactions_dir.rename(renamed_transactions)
         (state_root / journal_mod.TRANSACTIONS_DIR).mkdir(mode=0o700)  # brand new, empty replacement
 
-        go.write_text("go")
+        _fifo_signal(go)
         stdout, stderr = proc.communicate(timeout=15)
         self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
         self.assertTrue(result_file.exists())
@@ -3906,6 +3956,326 @@ class ConfirmAbsentBoundToHandleTests(unittest.TestCase):
         self.assertTrue((renamed / "cap.marker").exists())
 
 
+class _NestedResourceExecutor(CanaryExecutor):
+    """Test-only executor (point 2, sixth correction round) -- NEVER
+    registered outside tests. Places its marker/companion one directory
+    level deeper (``sandbox/nested/...``) than ``CanaryExecutor``, to
+    exercise intermediate-component identity binding in
+    ``AllowedRootHandle``."""
+
+    executor_id = "nested_resource_test_executor"
+    supported_method_kind = "nested_resource_test"
+
+    def plan_steps(self, *, capability_id: str, dependency_id: str, context: ExecutionContext):
+        steps = super().plan_steps(capability_id=capability_id, dependency_id=dependency_id, context=context)
+        nested_steps = []
+        for step in steps:
+            original = Path(step.target)
+            nested_target = original.parent / "nested" / original.name
+            nested_steps.append(dataclasses.replace(step, target=str(nested_target)))
+        return tuple(nested_steps)
+
+
+class NestedIntermediateComponentSwapTests(unittest.TestCase):
+    """Point 2, sixth correction round, mandatory test: an intermediate
+    directory between the allowed root and a resource's parent is renamed
+    aside and replaced by a new, same-uid, empty real directory strictly
+    between eager-caching (which happens as soon as the lock is acquired
+    and the ownership/plan set is known) and the resource's actual use
+    during uninstall. The swap must be detected -- ``RECOVERY_REQUIRED``,
+    ownership intact, the real resource still sitting untouched in the
+    renamed-aside directory, never a false ``UNINSTALLED``."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+        (self.harness.sandbox / "nested").mkdir(mode=0o700)
+        self.executor = _NestedResourceExecutor()
+        self.harness.registry.register(
+            method_kind="nested_resource_test", method_id="nested_resource_method", executor=self.executor
+        )
+
+    def _decision(self, capability_id: str):
+        return _decision(capability_id, method_kind="nested_resource_test", method_id="nested_resource_method")
+
+    def test_intermediate_swap_between_eager_cache_and_uninstall_blocks_completion(self) -> None:
+        capability_id = "cap_nested_swap"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        marker_path = self.harness.sandbox / "nested" / ("%s.marker" % capability_id)
+        companion_path = self.harness.sandbox / "nested" / ("%s.companion" % capability_id)
+        self.assertTrue(marker_path.exists())
+        self.assertTrue(companion_path.exists())
+
+        nested_dir = self.harness.sandbox / "nested"
+        renamed = self.harness.sandbox / "nested.old"
+        real_matches = engine._uninstall_source_matches
+
+        def _swap_then_check(*args, **kwargs):
+            nested_dir.rename(renamed)
+            nested_dir.mkdir(mode=0o700)  # same-uid, empty replacement at the original path
+            return real_matches(*args, **kwargs)
+
+        with mock.patch("compat.provisioning.engine._uninstall_source_matches", side_effect=_swap_then_check):
+            result = engine.uninstall(capability_id, self.harness.env, apply=True)
+
+        self.assertEqual(result.status, PrepareStatus.RECOVERY_REQUIRED)
+        self.assertNotEqual(result.status, PrepareStatus.UNINSTALLED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        self.assertTrue(any(r.product_owned for r in records))
+        self.assertTrue((renamed / marker_path.name).exists())
+        self.assertTrue((renamed / companion_path.name).exists())
+        self.assertEqual(sorted(p.name for p in nested_dir.iterdir()), [])
+
+    def test_intermediate_swap_during_apply_blocks_commit(self) -> None:
+        """Variant: the same swap, but during a fresh apply/commit rather
+        than uninstall -- the swap happens after eager-caching (which
+        already ran once the plan is known) but before
+        ``check_idempotency`` actually touches the nested resource."""
+        capability_id = "cap_nested_apply_swap"
+        nested_dir = self.harness.sandbox / "nested"
+        renamed = self.harness.sandbox / "nested.old"
+        real_check_idempotency = engine.check_idempotency
+
+        def _swap_then_check(*args, **kwargs):
+            nested_dir.rename(renamed)
+            nested_dir.mkdir(mode=0o700)
+            return real_check_idempotency(*args, **kwargs)
+
+        with mock.patch("compat.provisioning.engine.check_idempotency", side_effect=_swap_then_check):
+            outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+
+        self.assertEqual(outcome.status, PrepareStatus.RECOVERY_REQUIRED)
+        self.assertNotEqual(outcome.status, PrepareStatus.COMMITTED)
+        # Nothing was ever committed under the new, substitute directory.
+        self.assertEqual(journal_mod.read_ownership_records(self.harness.state_root, capability_id), [])
+
+    def test_confirm_absent_descriptor_safe_detects_intermediate_swap(self) -> None:
+        """Variant: ``confirm_absent_descriptor_safe`` itself, called
+        directly with a handle whose intermediate is already cached, must
+        detect an intermediate swap the same way it detects a root swap."""
+        sandbox = self.harness.sandbox
+        handle = open_allowed_root(sandbox)
+        self.addCleanup(handle.close)
+        nested_dir = sandbox / "nested"
+        marker = nested_dir / "cap_confirm_absent.marker"
+        marker.write_bytes(b"still here")
+        # Prime the cache for the "nested" intermediate.
+        handle.intermediate_fd(("nested",))
+
+        renamed = sandbox / "nested.old"
+        nested_dir.rename(renamed)
+        nested_dir.mkdir(mode=0o700)
+
+        absent, reason = confirm_absent_descriptor_safe(str(marker), allowed_root_handles=(handle,))
+        self.assertFalse(absent)
+        self.assertIsNotNone(reason)
+        self.assertIn("identity", reason)
+        self.assertTrue((renamed / marker.name).exists())
+
+
+class GlobalLockRootHardeningTests(unittest.TestCase):
+    """Point 3, sixth correction round: the global lock root's own FINAL
+    (leaf) component -- the caller's actual configured ``global_lock_root``
+    -- must always be enforced as our own dedicated private root (owned by
+    us, mode exactly ``0700``), exactly like ``state_root`` itself, not just
+    verified to be "a directory" like its ancestors. Its own identity is
+    also re-confirmed right after the flock is acquired, and a SECOND,
+    non-blocking flock directly on ``state_root``'s own directory fd
+    provides defense in depth against a same-privilege actor who can
+    rename/replace ``global_lock_root`` itself."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+
+    def test_preexisting_leaf_at_0770_is_tightened_to_0700(self) -> None:
+        root = self.tmp / "global-lock-root-770"
+        root.mkdir(mode=0o770)
+        os.chmod(root, 0o770)
+        storage_mod.ensure_private_lock_root(root)
+        self.assertEqual(oct(stat.S_IMODE(root.stat().st_mode)), "0o700")
+
+    def test_preexisting_leaf_at_0777_is_tightened_to_0700(self) -> None:
+        root = self.tmp / "global-lock-root-777"
+        root.mkdir(mode=0o777)
+        os.chmod(root, 0o777)
+        storage_mod.ensure_private_lock_root(root)
+        self.assertEqual(oct(stat.S_IMODE(root.stat().st_mode)), "0o700")
+
+    def test_preexisting_leaf_owned_by_different_uid_is_rejected(self) -> None:
+        root = self.tmp / "global-lock-root-wronguid"
+        root.mkdir(mode=0o700)
+        with mock.patch("compat.provisioning.storage.os.getuid", return_value=os.getuid() + 1):
+            with self.assertRaises(PathPolicyError):
+                storage_mod.ensure_private_lock_root(root)
+
+    def test_global_lock_root_swapped_between_open_and_flock_is_detected(self) -> None:
+        global_lock_root = self.tmp / "global-lock-root-swap"
+        state_root = self.tmp / "state_swap_root"
+        renamed = self.tmp / "global-lock-root-swap.old"
+
+        real_flock = fcntl.flock
+        call_count = {"n": 0}
+
+        def _flock_then_swap(fd, operation):
+            call_count["n"] += 1
+            if call_count["n"] == 1 and operation == (fcntl.LOCK_EX | fcntl.LOCK_NB):
+                global_lock_root.rename(renamed)
+                global_lock_root.mkdir(mode=0o700)
+            return real_flock(fd, operation)
+
+        with mock.patch("compat.provisioning.lock.fcntl.flock", side_effect=_flock_then_swap):
+            with self.assertRaises(PathPolicyError):
+                with lock_mod.acquire_provisioner_lock(
+                    state_root, global_lock_root=global_lock_root, transaction_id="t", timeout=1.0
+                ):
+                    pass
+
+    def test_second_process_via_swapped_global_lock_root_is_still_refused_via_state_root_flock(self) -> None:
+        state_root = self.tmp / "state_secondary_lock"
+        global_lock_root = self.tmp / "global-lock-root-secondary"
+        ready = self.tmp / "ready_secondary.marker"
+        go = self.tmp / "go_secondary.marker"
+        script = self.tmp / "holder_secondary.py"
+        script.write_text(
+            "import sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from pathlib import Path\n"
+            "from compat.provisioning.lock import acquire_provisioner_lock\n"
+            "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_signal, _fifo_wait\n"
+            "state_root = Path(%r); global_lock_root = Path(%r)\n"
+            "ready = Path(%r); go = Path(%r)\n"
+            "go_fd = _fifo_open_reader(go)\n"
+            "with acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id='holder', timeout=10.0):\n"
+            "    _fifo_signal(ready)\n"
+            "    _fifo_wait(go_fd, timeout=10.0, description='go marker')\n"
+            % (str(ROOT), str(state_root), str(global_lock_root), str(ready), str(go))
+        )
+        _fifo_create(ready)
+        _fifo_create(go)
+        ready_fd = _fifo_open_reader(ready)
+
+        proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.wait)
+        _fifo_wait(ready_fd, timeout=10.0, description="holder ready signal")
+        os.close(ready_fd)
+
+        # Swap global_lock_root WHILE the holder is active.
+        renamed = self.tmp / "global-lock-root-secondary.old"
+        global_lock_root.rename(renamed)
+        global_lock_root.mkdir(mode=0o700)
+
+        # A genuine second process, configured with the SAME state_root and
+        # the SAME (now swapped) global_lock_root, gets its own independent
+        # primary lock via the substitute directory -- but must still be
+        # refused via the secondary flock directly on the real, unswapped
+        # state_root directory.
+        with self.assertRaises(ProvisionerLockHeldError):
+            with lock_mod.acquire_provisioner_lock(
+                state_root, global_lock_root=global_lock_root, transaction_id="contender", timeout=0.3
+            ):
+                pass
+
+        _fifo_signal(go)
+        stdout, stderr = proc.communicate(timeout=15)
+        self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
+
+
+class UnreadableUninstallJournalNeverReactivatesOwnershipTests(unittest.TestCase):
+    """Point 4, sixth correction round, mandatory test: an uninstall journal
+    that legitimately completed resource removal and reached
+    ``REVOKING_OWNERSHIP`` (crash simulated before ownership was actually
+    revoked, so the ownership record is still live) becomes unreadable
+    (mode ``0644``, now rejected by the fail-closed private reads from the
+    fifth round). If someone then recreates a file at the original path
+    with matching content/hash, ``_capability_has_completed_uninstall`` must
+    NOT silently skip the unreadable journal as irrelevant -- it must
+    report ``UNKNOWN`` and deny authority, never letting the recreated file
+    be reactivated as product-owned and removed."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+        self.harness = _Harness(self.tmp)
+
+    def _prepare_and_stall_at_revoking_ownership(self, capability_id: str) -> tuple[Path, bytes]:
+        outcome = engine.prepare(self.harness.decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        marker_path = self.harness.sandbox / ("%s.marker" % capability_id)
+        marker_content = marker_path.read_bytes()
+
+        # Real uninstall loop: both resources are genuinely removed and
+        # verified, the journal durably reaches REVOKING_OWNERSHIP -- then a
+        # crash is simulated before ownership is ever actually revoked, so
+        # the ownership record remains live on disk.
+        owned = [r for r in journal_mod.read_ownership_records(self.harness.state_root, capability_id) if r.product_owned]
+        uninstall_transaction_id = "uninstall-%s" % capability_id
+        plan = engine._build_uninstall_plan(capability_id, owned, transaction_id=uninstall_transaction_id)
+        uninstall_journal = engine._initial_uninstall_journal(plan, now_value=_now())
+        uninstall_journal = uninstall_journal.with_state(TransactionState.UNINSTALLING, now=_now())
+        journal_mod.write_journal(self.harness.state_root, uninstall_journal)
+        uninstall_journal, ok, residuals = engine._run_uninstall_loop(
+            self.harness.state_root, uninstall_journal, self.harness.locked_context(),
+            registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION,
+        )
+        self.assertTrue(ok, residuals)
+        uninstall_journal = uninstall_journal.with_state(TransactionState.REVOKING_OWNERSHIP, now=_now())
+        journal_mod.write_journal(self.harness.state_root, uninstall_journal)
+        self.assertTrue(journal_mod.read_ownership_records(self.harness.state_root, capability_id))  # still live
+        self.assertFalse(marker_path.exists())  # genuinely removed by the real loop above
+        return marker_path, marker_content
+
+    def _assert_reactivation_blocked(self, capability_id: str, marker_path: Path, marker_content: bytes) -> None:
+        marker_path.write_bytes(marker_content)
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+        self.assertIn(result.status, (PrepareStatus.OWNERSHIP_INVALID, PrepareStatus.RECOVERY_REQUIRED))
+        self.assertNotEqual(result.status, PrepareStatus.UNINSTALLED)
+        self.assertTrue(marker_path.exists())
+        self.assertEqual(marker_path.read_bytes(), marker_content)
+
+    def test_uninstall_journal_chmod_0644_blocks_reactivation_of_recreated_resource(self) -> None:
+        capability_id = "cap_unreadable_uninstall_journal"
+        marker_path, marker_content = self._prepare_and_stall_at_revoking_ownership(capability_id)
+        uninstall_journal_path = journal_mod.transaction_path(self.harness.state_root, "uninstall-%s" % capability_id)
+        os.chmod(uninstall_journal_path, 0o644)
+        self._assert_reactivation_blocked(capability_id, marker_path, marker_content)
+
+    def test_uninstall_journal_hardlinked_blocks_reactivation_of_recreated_resource(self) -> None:
+        capability_id = "cap_hardlinked_uninstall_journal"
+        marker_path, marker_content = self._prepare_and_stall_at_revoking_ownership(capability_id)
+        uninstall_journal_path = journal_mod.transaction_path(self.harness.state_root, "uninstall-%s" % capability_id)
+        victim = self.tmp / "victim_uninstall_journal_hardlink.json"
+        os.link(uninstall_journal_path, victim)
+        self._assert_reactivation_blocked(capability_id, marker_path, marker_content)
+
+    def test_uninstall_journal_corrupt_json_blocks_reactivation_of_recreated_resource(self) -> None:
+        capability_id = "cap_corrupt_uninstall_journal"
+        marker_path, marker_content = self._prepare_and_stall_at_revoking_ownership(capability_id)
+        uninstall_journal_path = journal_mod.transaction_path(self.harness.state_root, "uninstall-%s" % capability_id)
+        uninstall_journal_path.write_bytes(b"{not valid json")
+        os.chmod(uninstall_journal_path, 0o600)
+        self._assert_reactivation_blocked(capability_id, marker_path, marker_content)
+
+    def test_uninstall_journal_wrong_uid_blocks_reactivation_of_recreated_resource(self) -> None:
+        capability_id = "cap_wrong_uid_uninstall_journal"
+        marker_path, marker_content = self._prepare_and_stall_at_revoking_ownership(capability_id)
+        with mock.patch("compat.provisioning.storage.os.getuid", return_value=os.getuid() + 1):
+            self._assert_reactivation_blocked(capability_id, marker_path, marker_content)
+
+    def test_uninstall_journal_oversized_blocks_reactivation_of_recreated_resource(self) -> None:
+        capability_id = "cap_oversized_uninstall_journal"
+        marker_path, marker_content = self._prepare_and_stall_at_revoking_ownership(capability_id)
+        uninstall_journal_path = journal_mod.transaction_path(self.harness.state_root, "uninstall-%s" % capability_id)
+        uninstall_journal_path.write_bytes(b"{" + b" " * (storage_mod.MAX_PRIVATE_FILE_SIZE + 1) + b"}")
+        os.chmod(uninstall_journal_path, 0o600)
+        self._assert_reactivation_blocked(capability_id, marker_path, marker_content)
+
+
 class HashUnlinkToctouTests(unittest.TestCase):
     """Point 3, fifth correction round, mandatory multiprocess test:
     process A opens and hashes an owned resource; before the actual
@@ -3938,8 +4308,10 @@ class HashUnlinkToctouTests(unittest.TestCase):
             "from pathlib import Path\n"
             "from compat.provisioning import engine, paths as paths_mod\n"
             "from compat.provisioning.executors import CANARY_EXECUTOR_VERSION, CANARY_METHOD_KIND, CanaryExecutor, ExecutionContext, TrustedExecutorRegistry\n"
+            "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_signal, _fifo_wait\n"
             "state_root = Path(%r); sandbox = Path(%r); global_lock_root = Path(%r)\n"
             "ready = Path(%r); go = Path(%r); result_file = Path(%r)\n"
+            "go_fd = _fifo_open_reader(go)\n"
             "registry = TrustedExecutorRegistry()\n"
             "registry.register(method_kind=CANARY_METHOD_KIND, method_id='canary_method', executor=CanaryExecutor())\n"
             "context = ExecutionContext(allowed_roots=(sandbox,), now=lambda: '2026-01-01T00:00:00+00:00')\n"
@@ -3948,12 +4320,8 @@ class HashUnlinkToctouTests(unittest.TestCase):
             "    context=context, global_lock_root=global_lock_root,\n"
             ")\n"
             "def _pause():\n"
-            "    ready.write_text('ready')\n"
-            "    import time\n"
-            "    deadline = time.monotonic() + 10.0\n"
-            "    while not go.exists():\n"
-            "        if time.monotonic() > deadline: raise SystemExit('timed out waiting for go')\n"
-            "        time.sleep(0.02)\n"
+            "    _fifo_signal(ready)\n"
+            "    _fifo_wait(go_fd, timeout=10.0, description='go marker')\n"
             "paths_mod.UNLINK_REVERIFY_HOOK = _pause\n"
             "result = engine.uninstall(%r, env, apply=True)\n"
             "result_file.write_text(json.dumps({'status': result.status.value, 'error_kind': result.error_kind, 'residuals': list(result.residuals)}))\n"
@@ -3963,19 +4331,21 @@ class HashUnlinkToctouTests(unittest.TestCase):
             )
         )
 
+        _fifo_create(ready)
+        _fifo_create(go)
+        ready_fd = _fifo_open_reader(ready)
+
         proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(proc.wait)
-        deadline = time.monotonic() + 10.0
-        while not ready.exists():
-            self.assertLess(time.monotonic(), deadline, "holder (process A) never signaled ready")
-            time.sleep(0.05)
+        _fifo_wait(ready_fd, timeout=10.0, description="holder (process A) ready signal")
+        os.close(ready_fd)
 
         # Process B: substitutes the basename for a foreign file, strictly
         # between A's own hash verification and its final re-verify+unlink.
         marker_path.unlink()
         marker_path.write_bytes(b"foreign content planted by process B")
 
-        go.write_text("go")
+        _fifo_signal(go)
         stdout, stderr = proc.communicate(timeout=15)
         self.assertEqual(proc.returncode, 0, "process A failed: stdout=%r stderr=%r" % (stdout, stderr))
         self.assertTrue(result_file.exists())
