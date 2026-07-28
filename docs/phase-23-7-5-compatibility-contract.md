@@ -1138,6 +1138,199 @@ targets, independent of any pathlib version quirk. This was a test-only fragilit
 engine defect -- the underlying `inspect_step`/`_run_uninstall_loop` behavior was already
 correct on both platforms once the tests isolated the right call.
 
+### Third security/correctness hardening round
+
+A third, still deeper maintainer review of the second hardening round found seven
+further real gaps, closed in the same `compat/provisioning` package on top of the
+already-committed second round, again without starting 23.7.5.6b:
+
+- **State-root ancestor boundary** (`storage.py`): `ensure_private_dir` is replaced by
+  two boundary-aware primitives, `ensure_private_state_root(state_root)` and
+  `ensure_private_subdir(state_root, relative_path)`. The directory directly ABOVE
+  `state_root` -- the real product's own `/var/lib/watchdogvpn`, a dedicated lab root,
+  `$HOME`, a system temp dir, whatever it is -- is verified read-only
+  (`_verify_external_parent_readonly`: must exist, must not be a symlink, must be a real
+  directory) and is NEVER chmod'd, chown'd, created or replaced; only `state_root`
+  itself and its own descendants are ever created or have their mode enforced to
+  `0700`. This closes a real bug: the previous unconditional "recurse into parent"
+  logic would climb past `state_root` into its external parent whenever an
+  intermediate directory was missing, and then tighten that external parent's mode
+  to `0700` -- silently destroying a `02770` setgid, group-shared product config
+  directory the first time its own `provisioning/` subdirectory didn't yet exist.
+  `journal.py` and `lock.py` now call these two functions explicitly with `state_root`
+  passed in, instead of letting `atomic_write_private`/`atomic_write_private_text`
+  auto-create arbitrary missing ancestors; `atomic_write_private` now only verifies
+  (never creates) its immediate parent, raising `PathPolicyError` if the caller didn't
+  establish it first via `ensure_private_subdir`.
+- **Positive lab-root confinement, not a denylist** (`paths.py`,
+  `tools/compat_provision.py`): the CLI harness gains a mandatory `--lab-root` argument,
+  validated by `validate_dedicated_lab_root` -- absolute, no symlink at any component,
+  must already exist (never auto-created: a dedicated lab root is something the
+  operator creates and approves ahead of time), owned by our own uid, mode exactly
+  `0700`, and still rejected outright if it resolves to the filesystem root, a reserved
+  system root, the real product state directory, or `$HOME` itself. `--sandbox` and
+  `--state-root` are validated by the new `validate_lab_descendant(lab_root, path,
+  label=...)` as STRICT descendants of that one approved root (never equal to it, never
+  resolving outside it, also independently re-checked against the reserved-destination
+  policy as defense in depth) -- an arbitrary path like `/var/log`, `/var/spool`,
+  `/opt` or `/srv` is never acceptable just because it fails to match one denylist
+  entry. `_build_env` additionally rejects `--sandbox`/`--state-root` being equal to
+  each other or containing one another, all checked before any mutation.
+- **Ownership authority derived from the committed plan, never from
+  `journal.provenance`** (`engine.validate_ownership_authority`): the old check compared
+  the standalone ownership file against `journal.provenance`, a second JSON blob living
+  inside the very same mutable journal file -- an attacker (or corruption) that edits
+  both consistently (point straight at a foreign resource, adjust `provenance` to
+  match) would have passed. The source ("prepare") transaction's plan is now
+  independently RECONSTRUCTED from the trusted executor's own code
+  (`executor.plan_steps`), exactly like `_recover_one` already does for recovery, and
+  its digest reverified against the journal's own `plan_digest`; each ownership
+  record's `resource_identity` must then match exactly one `VERIFIED` step of that
+  reconstructed plan (a set-exact, both-directions check), with `pre_existing`,
+  `source`/`version` (must be `None`, matching what this executor genuinely produces),
+  `post_install_fingerprint` (must equal `integrity`), `method_id`,
+  `executor_id`/`version` and `created_by_transaction` all independently required to
+  match. This deliberately never re-stats the live filesystem for uid/gid/mode/nlink --
+  this function also runs mid-recovery, where a resume in progress may legitimately
+  have already altered the resource; that remains `_detect_ownership_drift`'s job, run
+  later and only once, right before the actual unlink. The mandatory security scenario
+  (install, complete uninstall, simulate a crash between removal and revocation,
+  manually recreate the file with an identical hash, uninstall again) and a lockstep
+  tamper of both the ownership file and `journal.provenance` together (steps/plan left
+  untouched) both correctly resolve to `ownership_invalid`/`nothing_to_uninstall` with
+  zero mutation; tampering only `uid`/`gid`/`mode` on the persisted record still passes
+  authority (the path/hash/method/executor identity is unchanged) but is still refused
+  at the real unlink by `_detect_ownership_drift`, never causing deletion.
+- **Exact final postcondition** (`executors.py`, `engine._finalize_provenance`):
+  `CanaryExecutor.plan_steps` now embeds deterministic `expected_mode`/`expected_uid`/
+  `expected_gid` in each step's own `intent` (part of `plan_digest`, hence
+  tamper-evident); `verify_step` and `verify_postcondition` both check mode and uid/gid
+  against those values (`verify_postcondition` previously checked neither). Most
+  importantly, `_finalize_provenance` no longer simply adopts whatever metadata it
+  finds at commit time as the new ownership expectation -- it now checks the live
+  re-stat AGAINST the plan's own `expected_mode`/`expected_uid`/`expected_gid` and
+  raises `ProvisioningError` (no commit, no ownership) on any mismatch, closing the
+  window between the executor's own `verify_postcondition` and commit. A chmod, a
+  simulated chown, a hard link, or a symlink/type substitution injected strictly
+  between the last per-step `verify_step` and the transaction-level
+  `verify_postcondition` all correctly block commit with zero ownership granted.
+- **`REVOKING_OWNERSHIP` boundary independently reconfirmed before revoke**
+  (`engine._revocation_boundary_is_safe`): reaching `REVOKING_OWNERSHIP` -- whether just
+  transitioned into from a successful unlink loop, or resumed directly at it after a
+  crash -- never by itself authorizes a revoke. The new check recomputes the uninstall
+  plan digest fresh from `journal.owned_snapshot`, reverifies the snapshot against the
+  source transaction via `validate_ownership_authority`, requires every step to be
+  exactly `VERIFIED`, and independently re-confirms on disk that none of the
+  snapshotted resources are still present; any impossible combination drives the
+  transaction to `RECOVERY_REQUIRED` (a new allowed transition from
+  `REVOKING_OWNERSHIP` in `model.py`) rather than revoking. `validate_ownership_authority`
+  gained an `exclude_uninstall_transaction_id` parameter so this self-referential check
+  does not mistake the very journal it is validating for a stale, already-completed
+  uninstall of itself. Steps forced to `PLANNED`/`APPLYING`/`APPLIED`/`VERIFYING`, a
+  tampered snapshot, a digest mismatch, or a resurrected resource at the boundary all
+  correctly block the revoke, leave ownership and the resource intact, and never reach
+  `UNINSTALLED`.
+- **Truly complete ownership snapshot** (`digest.py`, `model.py`, `journal.py`):
+  `canonical_ownership_record_mapping` now includes `source`, `version`,
+  `post_install_fingerprint`, `recorded_at` and the candidate's new explicit `nlink`
+  field (added to `OwnershipCandidate`/journal (de)serialization) -- tampering any
+  single one of these now changes `compute_uninstall_plan_digest`. `write_ownership_records`
+  now applies the same `redact_for_journal` credential-URL redaction the transaction
+  journal itself already used for `owned_snapshot`, so a credentialed URL in `source`
+  is never persisted verbatim into the standalone ownership file either.
+- **Controlled-error handling in ownership revocation**
+  (`engine._revoke_ownership_and_verify`): now catches `DurabilityError` (in addition to
+  plain `OSError`) from the ownership file's own delete -- a directory-fsync failure
+  right after a genuine unlink no longer escapes as an unhandled exception crashing
+  mid-uninstall; it is reported as a structured `(False, reason)`, driving the
+  transaction to the existing recoverable `UNINSTALL_FAILED`/`RECOVERY_REQUIRED` path
+  and guaranteeing the transaction can never reach `UNINSTALLED` while revocation
+  durability is unconfirmed.
+
+57 new L1 tests were added for this round (175 total in the module), 381 across the
+full focused compatibility suite (1 skip), full local suite 2160 OK (1 skip). A
+pre-existing, unrelated minor API quirk was noted (not part of this round's scope, not
+fixed): the
+`PrepareOutcome.transaction_id` that `uninstall()` returns is the outer
+provisioner-lock's id, not the uninstall journal's own (a separate uuid minted inside
+`_build_uninstall_plan`) -- a caller that wants the uninstall journal must scan
+`journal.list_transaction_ids`/`read_journal` for `operation == "uninstall"`, as the L1
+tests for this round now do.
+
+### Third hardening round: real VM re-validation
+
+Executed for real on `wdvpn-linuxmint-23-6-7` against commit `b1cc6f7` (third hardening
+round code `feb01bd` plus a VM-harness-only fix `b1cc6f7`, see below). The pre-existing
+clean snapshot (`pre-23.7.5.6a-round2-reboot-validation`) was restored first, L1 was
+re-run on the VM (Python 3.12.3, 175/175 OK), a NEW dedicated snapshot for this round
+(`pre-23.7.5.6a-round3-reboot-validation`) was then taken, and all six of the
+maintainer's required scenarios were prepared independently (each in its own dedicated
+`--sandbox`/`--state-root` pair, since the apply/rollback checkpoints share a fixed
+`cap_vm_reboot` capability_id and would otherwise auto-recover each other the moment a
+second `prepare()` acquired the same state root's lock) before a single shared real
+reboot:
+
+1. `after_apply_before_verify` (apply) -- resumed and committed; both canary files
+   present, `OwnershipRecord` written.
+2. `undoing_before_unlink` (rollback) -- resumed rollback, reached `preparation_failed`,
+   zero residuals, sandbox empty.
+3. `undoing_after_unlink_before_undone` (rollback) -- resumed rollback, reached
+   `preparation_failed`, sandbox empty.
+4. `after_unlink_before_applied` (uninstall) -- resumed, reached `uninstalled`,
+   ownership record deleted, sandbox empty.
+5. `after_verify_before_revoke` (uninstall) -- resumed, reached `uninstalled`, ownership
+   record deleted, sandbox empty.
+6. `after_revoke_before_uninstalled` (uninstall) -- resumed, reached `uninstalled`,
+   ownership record deleted, sandbox empty.
+
+The real reboot itself used a hypervisor-level hard reset (`VBoxManage controlvm ...
+reset`, from the host running VirtualBox) rather than an in-guest `sudo reboot`, since
+this VM's account has no passwordless sudo configured; a hard reset is at least as
+rigorous a crash test (no graceful shutdown, no buffered-write flush at all) and
+`/proc/sys/kernel/random/boot_id` still proves a genuine kernel restart, not a process
+restart. `boot_id` (`85471f15-...` before, `4b1d8210-...` after) confirmed this. The
+VM's home directory is eCryptfs-encrypted and does not unlock for key-based SSH until a
+real password login occurs after boot; the maintainer logged into the VM's graphical
+console directly to unlock it, after which key-based SSH resumed working for the
+recovery commands -- no password was scripted, stored, or left in any evidence file.
+
+Two additional CLI-level checks specific to this round's points 1 and 2 were run
+directly against the real VM filesystem (not through the Python engine harness, which
+bypasses the CLI): (a) `storage.ensure_private_state_root` against a simulated
+`/var/lib/watchdogvpn`-style parent at mode `02770` with its `provisioning/` subdirectory
+missing -- the parent's mode was confirmed unchanged (`0o2770` before and after) while
+the new state root came out at `0700`; (b) `tools/compat_provision.py` invoked directly
+with `--sandbox=/var/log`, `--sandbox=/opt`, `--state-root=/var/log/wdvpn-state`, and a
+sandbox outside the dedicated `--lab-root` entirely -- all four rejected with
+`PathPolicyError` and zero mutation, while a valid `--lab-root`/`--sandbox`/
+`--state-root` triple under one dedicated root committed normally.
+
+Package list, repository sources, running-service set and `/var/lib/watchdogvpn`
+content hashes were identical before and after (the only network diff was the expected
+DHCP-lease-timer countdown); real filesystem permissions across all six scenario state
+roots were confirmed `0700` for `transactions`/`ownership`/`history`/the state root
+itself, `0600` for every journal/ownership/lock file. A residual scan across all six
+scenario directories found only the exact expected contents for each outcome (populated
+sandbox for the one committed apply scenario, empty sandboxes and empty `ownership/`
+directories for every rollback/uninstall scenario) -- no stray files, no leaked
+ownership records. The VM was powered off and the round's snapshot restored and
+confirmed as current (`VBoxManage snapshot list` showing `pre-23.7.5.6a-round3-reboot-
+validation *`) afterward; none of the three snapshots (round 1, round 2, round 3) was
+deleted. Private evidence (`0700`/`0600`) at
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-7-5-6a-round3-reboot-validation`.
+
+This VM run also caught a real bug in the VM harness script itself (fixed in commit
+`b1cc6f7`, on top of `feb01bd`): `cmd_uninstall_worker`'s call to
+`engine._run_uninstall_loop` still used the old 3-argument signature after this round
+added mandatory `registry`/`expected_executor_version` keyword arguments to that
+function (needed for the new ownership-authority reconstruction); this crashed the
+`after_verify_before_revoke` and `after_revoke_before_uninstalled` scenarios with an
+unhandled `TypeError` instead of the intended `SIGKILL`, since those two checkpoints
+run the removal loop before self-killing (`after_unlink_before_applied` self-kills
+earlier and was unaffected). This is a VM-harness-only defect, not an engine defect --
+the actual local L1 suite never exercises this file, since it is deliberately excluded
+from `python3 -m unittest discover tests` (it sends real, uncatchable `SIGKILL`s).
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,
