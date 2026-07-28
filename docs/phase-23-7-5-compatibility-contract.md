@@ -1497,6 +1497,231 @@ round's snapshot restored and confirmed as current (`VBoxManage snapshot list` s
 (rounds 1 through 4) was deleted. Private evidence (`0700`/`0600`) at
 `/home/gabodev/Desktop/temporales/watchdogvpn-task-23-7-5-6a-round4-reboot-validation`.
 
+### Fifth security/correctness hardening round
+
+A fifth maintainer review of the fourth hardening round found seven further real gaps,
+closed in the same `compat/provisioning` package on top of the already-committed fourth
+round, again without starting 23.7.5.6b:
+
+- **Global provisioner lock moved to a dedicated stable root, decoupled from
+  `state_root`'s own identity** (`lock.py`, `storage.py`, `engine.py`): the fourth
+  round's `StateRootHandle` closed the TOCTOU between opening `state_root` and using it,
+  but the lock file itself still lived INSIDE `state_root` -- a tree that can be
+  renamed/replaced by anything that can write to its shared parent while the lock is
+  held, meaning two processes configured with the identical `state_root` path could, in
+  principle, end up contending for two DIFFERENT physical lock files after a rename. The
+  lock now lives under a separate, caller-supplied `global_lock_root` (e.g.
+  `/run/lock/watchdogvpn/provisioning` in production; a dedicated per-test/per-scenario
+  directory that is a SIBLING of, never a descendant of, `state_root`'s own renamable
+  parent), keyed by a stable `sha256` of `state_root`'s own CONFIGURED path string --
+  never a resolved/canonicalized form, and never the directory's physical identity,
+  both of which could themselves be affected by the swap being defended against. The
+  global lock is acquired strictly BEFORE `state_root` is ever created, opened or
+  recovered (`storage.ensure_private_lock_root` walks and creates only the components
+  IT owns, leaving pre-existing system directories like `/run`/`/run/lock` completely
+  untouched). Once held, `storage.open_state_root()` establishes the `StateRootHandle`
+  and its `transactions`/`ownership`/`history` descriptors are opened EAGERLY, before
+  any recovery pass or other use, so a subdirectory renamed away and replaced by an
+  empty one afterward can never make a later listing silently read "zero pending" from
+  the wrong (new, empty) directory instead of the real one already cached. Both
+  `StateRootHandle` and the new `AllowedRootHandle` (see below) gained a
+  `verify_identity()` that re-`lstat`s the canonical, configured path and compares
+  `st_dev`/`st_ino` against what was captured when the handle was first opened; it is
+  called before every mutating journal/ownership write, before finalizing
+  provenance/commit, and before revoking ownership -- fd-relative operations remain
+  correct even after a rename/replace (since they are bound to the original directory),
+  but reporting success anyway would create a split-brain against whatever a fresh
+  process using the same configured path would now see, so a divergence instead raises
+  `StateRootIdentityError`/`PathPolicyError`, caught by a single outer handler in
+  `prepare()`/`uninstall()`/`recover_pending()` and converted to `RECOVERY_REQUIRED`
+  (never a crash, never a silent success). Three real, disposable-subprocess
+  multiprocess tests cover the mandatory scenarios: `state_root` renamed aside (with no
+  replacement, replaced by a new directory, or replaced by a symlink) while a holder
+  process is mid-transaction -- in every case the holder's write now fails closed
+  (`identity_error:` marker, zero journal ever written claiming success) rather than
+  silently landing in the orphaned original directory, a contender configured with the
+  identical path is refused a second lock the entire time the holder is active
+  regardless of what has happened to `state_root` physically, and no new state root is
+  ever silently created at the vacated path; a fourth test renames the `transactions`
+  subdirectory strictly between the holder's eager-open and its first
+  `list_transaction_ids()` call (a corrupt, genuinely pending journal already sitting in
+  it) and confirms the real pending count is still seen through the cached descriptor
+  (never misread as "zero pending"), while a second write attempted after the swap is
+  detected and fails closed.
+- **`AllowedRootHandle` binds every executor operation to a descriptor** (`paths.py`,
+  `executors.py`, `engine.py`): a new `AllowedRootHandle(path, fd, dev, ino)`, captured
+  under the provisioner lock via `engine._open_locked_context()` immediately before
+  apply/rollback/uninstall/recovery, is threaded through a new
+  `ExecutionContext.allowed_root_handles` field. `CanaryExecutor.apply_step`/
+  `verify_step`/`undo_step`/`verify_postcondition`/`inspect_step` -- and the engine's own
+  `_finalize_provenance`/`check_idempotency`/`_detect_ownership_drift`/
+  `_run_uninstall_loop` -- now resolve every create/inspect/verify/hash/undo/unlink
+  through `handle_for_allowed_root()` and the handle's descriptor
+  (`create_file_exclusive_relative`/`stat_identity_relative`/`read_bytes_relative`/
+  `remove_file_if_owned_relative`), never re-resolving a bare `Path` for a later
+  mutation. A sandbox/allowed-root swap that happens right as `uninstall()` begins (or
+  right before finalizing a commit) is reconfirmed via `AllowedRootHandle.verify_identity()`
+  and fails closed exactly like the state-root case above -- `RECOVERY_REQUIRED`, never a
+  clean `UNINSTALLED`/`COMMITTED`, ownership never revoked, and the resources sitting in
+  the renamed-aside original directory survive untouched as inspectable residuals. The
+  mandatory test (a real prepare committed, then the sandbox renamed aside strictly at
+  the start of `uninstall()`'s real removal loop) and its variants (replaced by a new,
+  same-uid empty directory; replaced by a symlink to an empty decoy) all confirm this; a
+  further test replaces an INTERMEDIATE subdirectory (not the allowed root itself, one
+  level further down a resolved descendant path) with a symlink after the handle was
+  opened and confirms the descriptor-relative walk rejects it the same way.
+- **The TOCTOU between hashing a resource and unlinking it is eliminated**
+  (`paths.py`): `remove_file_if_owned_relative()` opens the target ONCE, `O_NOFOLLOW`,
+  and performs every check -- regular-file type, content hash -- against that SAME open
+  file descriptor; immediately before the actual `unlink`, the basename's CURRENT
+  directory entry is re-`lstat`'d relative to the held parent descriptor and its
+  `(dev, ino)` compared against what was just verified, so only a basename that STILL
+  resolves to the exact inode just hashed is ever removed. A real, deterministic,
+  two-process test (a test-only `paths.UNLINK_REVERIFY_HOOK` seam lets process A pause
+  exactly between its own hash verification and the final re-verify+unlink) has process
+  B substitute the basename for a foreign file in that exact window; process A detects
+  the substitution and refuses to remove it -- the foreign file survives completely
+  untouched, with no false `UNINSTALLED`, the step failing as `ownership_drift`/
+  `recovery_required`.
+- **Structural validation extended to every journal, not just a COMMITTED source**
+  (`engine.py`): the fourth round's `_journal_steps_match_plan_exactly()` only gated
+  `validate_ownership_authority` (i.e. uninstall/idempotency); it is now ALSO checked
+  during ordinary prepare-side recovery (`_recover_one`), immediately after the
+  `plan_digest` check and before `_inspect_recovery_boundary` -- a pending "prepare"
+  journal read back from disk during recovery is just as capable of having its own
+  `steps` tampered as a COMMITTED one. A new `_uninstall_journal_steps_match_plan_exactly()`
+  closes an equivalent, previously-unprotected gap on the UNINSTALL side:
+  `compute_uninstall_plan_digest()` is computed purely from `capability_id`/
+  `target_transaction_id`/`ownership_records`, and `_build_uninstall_plan()` always
+  derives its own `steps` fresh from that same ownership snapshot -- meaning
+  `journal.steps` (the ones `_run_uninstall_loop` actually iterates) was NEVER covered
+  by the digest at all, so an attacker could add, remove, duplicate or alter a step in
+  the persisted uninstall journal without ever moving `plan_digest`. The mandatory test
+  (a legitimate pending uninstall with an extra step appended targeting an unrelated
+  foreign file, its own real hash) now correctly blocks at `recover_pending` with the
+  foreign file completely untouched, zero unlink, ownership still live, and the
+  transaction never reaching `UNINSTALLED`; further variants cover a missing step, a
+  duplicate step, a duplicate sequence, and a changed `step_id`/`action_type`/`target`/
+  `intent`. Separately, the PERSISTED `undo_record` is never again trusted as authority
+  for rollback: a new `_authoritative_undo_record()` always reconstructs it fresh from
+  the executor's own deterministic `reconstruct_undo_record()` and requires the
+  persisted value to agree with it exactly; any divergence is treated as unsafe to
+  resume automatically (`UNDO_FAILED`/`RECOVERY_REQUIRED`) rather than driving the real
+  undo/removal off a value an attacker (or corruption) could otherwise have pointed at
+  an unrelated foreign resource. The mandatory test tampers a verified step's persisted
+  `undo_record.path`/`expected_sha256` to a real foreign file sitting inside the allowed
+  root, with its own real hash, before a simulated crash mid-`ROLLING_BACK`; recovery
+  correctly refuses (`undo_record_diverged`), and both the foreign file AND the real
+  resource the tampered record tried to hide survive completely untouched.
+- **`confirm_absent_descriptor_safe()` bound to an already-captured `AllowedRootHandle`**
+  (`paths.py`, `engine.py`): the fourth round's version still reopened the allowed root's
+  parent directory from a bare string on every call; it now receives the SAME
+  `AllowedRootHandle` the rest of the critical section already uses, re-confirms that
+  handle's own identity (`st_dev`/`st_ino`) against a fresh `lstat` of its canonical path
+  before ever walking further, and only then checks the resource's basename absence
+  relative to that held descriptor chain -- never reopening anything from a string. The
+  direct test (allowed root renamed aside, a fresh empty directory placed at the
+  original path) confirms the function now returns `False` with an identity-mismatch
+  reason, never `True`, closing the residual window between the handle being captured
+  and this specific check running.
+- **Private journal/ownership reads fail closed on more than just a symlink**
+  (`storage.py`): `read_private_relative()` now opens with `O_NOFOLLOW` and `fstat`s
+  BEFORE ever parsing content, requiring a regular file, the expected uid, mode exactly
+  `0600`, `st_nlink == 1`, and a size under a fixed bound (`MAX_PRIVATE_FILE_SIZE`, 10
+  MiB) -- a symlink, a hard link, a loose mode, a different owner, or an oversized file
+  all raise a new `CorruptStateError` (wrapped into the existing `JournalError` at the
+  `journal.py` boundary, so every existing narrow `except (JournalError, ...)` caller
+  keeps working unchanged) instead of being silently followed, truncated or trusted.
+  `list_json_names_relative()` now `lstat`s every `*.json` entry the same way before
+  including it in a listing, so a symlink or a directory named `*.json` blocks recovery
+  (`_recover_pending_locked`'s enumeration itself fails closed with a synthetic
+  `REQUIRE_MANUAL` decision) rather than being silently skipped or followed.
+  `_capability_has_completed_uninstall()` now fails closed (denies authority) rather
+  than granting it when the transactions directory itself cannot even be enumerated.
+  Seven new tests cover a journal symlink, an ownership symlink, a journal hard link, a
+  directory named `*.json`, a journal at mode `0644`, a journal owned by a different
+  (simulated) uid, and an oversized journal.
+- **`validate_ownership_authority` compares every `ExpectedOwnership` field for EXACT
+  equality, including when the executor's own expectation is `None`** (`engine.py`): the
+  fourth round's per-field checks were still guarded by `if expected.X is not None and
+  candidate.X != expected.X`, meaning whenever an executor legitimately declared no
+  opinion on a field (`uid`/`gid`/`mode`/`nlink`/`integrity`/`post_install_fingerprint`
+  all default to `None`), the corresponding PERSISTED value was never checked against
+  anything at all -- an attacker could set it to any tampered value undetected. Every
+  comparison is now unconditional (`candidate.X == expected.X`, no guard). Symmetrically,
+  `_finalize_provenance` no longer silently upgrades "the executor has no opinion"
+  (`expected.uid`/`gid`/`mode`/`nlink` is `None`) into a concrete live-stat value when
+  persisting the `OwnershipCandidate`: when the executor's own expectation for a field is
+  `None`, the persisted candidate now ALSO records `None` for it, so a legitimate,
+  untampered record continues to compare equal under the new unconditional rule instead
+  of a live-stat value the executor never actually asked to pin. A new test-only
+  `_NoneOwnershipFieldsExecutor` (never registered outside tests) declares `uid`/`gid`
+  unset; a baseline committed capability validates cleanly, and tampering either
+  persisted field from `None` to any concrete value now correctly breaks authority.
+
+27 new L1 tests were added for this round (229 total in the module), 435 across the
+full focused compatibility suite (1 skip), full local suite 2214 OK (1 skip).
+
+### Fifth hardening round: real VM re-validation
+
+Executed for real on `wdvpn-linuxmint-23-6-7` against commit `e5709b7d`. The pre-existing
+clean snapshot (`pre-23.7.5.6a-round4-reboot-validation`) was restored first (VM powered
+off, snapshot restored, VM started); the module L1 suite ran green on the VM's own
+Python 3.12.3 (229/229 -- one run out of five flaked on a timing-sensitive multiprocess
+test immediately after the fresh boot, most likely background services still settling
+right after a snapshot resume; four immediately-repeated runs were all clean, and this
+is consistent with real subprocess/timing-based tests under variable VM scheduling load
+rather than a logic defect). A NEW dedicated snapshot for this round
+(`pre-23.7.5.6a-round5-reboot-validation`) was then taken, and all six of the
+maintainer's required reboot scenarios were prepared independently (each in its own
+dedicated `--sandbox`/`--state-root`/`--global-lock-root` triple) before a single shared
+real reboot:
+
+1. `after_apply_before_verify` (apply) -- resumed and committed; both canary files
+   present, `OwnershipRecord` written.
+2. `undoing_before_unlink` (rollback) -- resumed rollback, reached `preparation_failed`,
+   zero residuals, sandbox empty.
+3. `undoing_after_unlink_before_undone` (rollback) -- resumed rollback, reached
+   `preparation_failed`, sandbox empty.
+4. `after_unlink_before_applied` (uninstall) -- resumed, reached `uninstalled`,
+   ownership record deleted, sandbox empty.
+5. `after_verify_before_revoke` (uninstall) -- resumed, reached `uninstalled`, ownership
+   record deleted, sandbox empty.
+6. `after_revoke_before_uninstalled` (uninstall) -- resumed, reached `uninstalled`,
+   ownership record deleted, sandbox empty.
+
+The real reboot again used a hypervisor-level hard reset (`VBoxManage controlvm ...
+reset`); `boot_id` (`85471f15-...` before, `50e166d8-...` after) confirmed a genuine
+kernel restart. As in every prior round, this VM's home directory is eCryptfs-encrypted
+and does not unlock for key-based SSH until a real password login occurs after boot;
+the maintainer logged into the VM's graphical console directly to unlock it -- no
+password was scripted, stored, or left in any evidence file. After the real reboot and
+console unlock, the module L1 suite ran green again on the VM's Python 3.12.3 (229/229),
+directly exercising the mandatory multiprocess state-root-rename contender, the sandbox
+directory-replacement-during-uninstall scenario, the hash/unlink substitution TOCTOU
+test, the tampered-`undo_record` recovery test and the uninstall-extra-step structural
+test as REAL subprocess/real-filesystem executions against a genuinely freshly-booted
+kernel, not merely against the local development machine.
+
+Package list (`dpkg -l`), repository sources, running-service set and
+`/var/lib/watchdogvpn` content hashes were identical before and after the real reboot
+(the only network diff was the expected DHCP-lease-timer countdown); real filesystem
+permissions across all six scenario state roots and their six INDEPENDENT
+`global_lock_root` directories were confirmed `0700` for `transactions`/`ownership`/the
+state root itself/the global lock root, `0600` for every journal/ownership/lock file --
+exactly one `*.lock` file per scenario's global lock root and one consistent journal
+tree per scenario, no divergent second tree anywhere. A residual scan across all six
+scenario directories found only the exact expected contents for each outcome (populated
+sandbox for the one committed apply scenario, empty sandboxes and empty `ownership/`
+directories for every rollback/uninstall scenario) -- no stray files, no leaked
+ownership records. Both uninstall-operation journals in each uninstall scenario's
+`transactions/` directory (the source "prepare" transaction and the uninstall
+transaction itself) were present and internally consistent. The VM was powered off and
+the round's snapshot restored and confirmed as current (`VBoxManage snapshot list`
+showing `pre-23.7.5.6a-round5-reboot-validation *`) afterward; none of the five
+snapshots (rounds 1 through 5) was deleted. Private evidence (`0700`/`0600`) at
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-7-5-6a-round5-reboot-validation`.
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,
