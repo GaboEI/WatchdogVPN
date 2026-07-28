@@ -531,7 +531,9 @@ def cmd_uninstall_worker(args) -> int:
         # the real removal loop to completion (both resources genuinely
         # gone, both steps VERIFIED) before reaching the ownership-revocation
         # boundary itself.
-        journal, ok, residuals = engine._run_uninstall_loop(state_root, journal, env.context)
+        journal, ok, residuals = engine._run_uninstall_loop(
+            state_root, journal, env.context, registry=env.registry, expected_executor_version=env.expected_executor_version
+        )
         if not ok:
             raise SystemExit("uninstall-worker's real removal loop did not complete: %r" % residuals)
         journal = journal.with_state(TransactionState.REVOKING_OWNERSHIP, now=_now())
