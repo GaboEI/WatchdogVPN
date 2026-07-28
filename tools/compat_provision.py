@@ -107,7 +107,8 @@ def _build_env(args, *, mutating: bool) -> engine.ProvisioningEnvironment:
     registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=CanaryExecutor())
     context = ExecutionContext(allowed_roots=(sandbox,), now=_now)
     return engine.ProvisioningEnvironment(
-        state_root=state_root, registry=registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=context
+        state_root=state_root, registry=registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=context,
+        global_lock_root=Path(args.global_lock_root),
     )
 
 
@@ -142,7 +143,7 @@ def cmd_prepare(args) -> int:
 
 def cmd_recover(args) -> int:
     env = _build_env(args, mutating=True)
-    reports = engine.recover_pending(env.state_root, env.registry, env.expected_executor_version, env.context)
+    reports = engine.recover_pending(env.state_root, env.registry, env.expected_executor_version, env.context, global_lock_root=env.global_lock_root)
     _print([{"transaction_id": r.transaction_id, "action": r.action.value, "reason": r.reason} for r in reports])
     return 0
 
@@ -182,7 +183,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--lab-root", required=True, help="dedicated, pre-created lab root (owned by us, mode 0700) that --sandbox and --state-root must both descend from"
     )
     parser.add_argument("--sandbox", required=True, help="lab-only sandbox root the canary executor is confined to")
-    parser.add_argument("--state-root", required=True, help="provisioning state root (journal/lock/ownership)")
+    parser.add_argument("--state-root", required=True, help="provisioning state root (journal/ownership)")
+    parser.add_argument(
+        "--global-lock-root", required=True,
+        help="dedicated, stable root the global provisioner lock lives under (e.g. /run/lock/watchdogvpn/provisioning); "
+        "never inside --state-root or --sandbox, and never renamed/replaced together with them",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser("plan", help="read-only dry-run plan description")

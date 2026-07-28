@@ -21,7 +21,6 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
-import stat
 from typing import Callable, Mapping, Sequence
 
 from compat.provisioning.errors import ExecutorNotRegisteredError, PathPolicyError, ProvisioningError
@@ -35,9 +34,11 @@ from compat.provisioning.model import (
     VerificationResult,
 )
 from compat.provisioning.paths import (
-    create_file_exclusive,
-    remove_file_if_owned,
-    stat_identity,
+    AllowedRootHandle,
+    create_file_exclusive_relative,
+    read_bytes_relative,
+    remove_file_if_owned_relative,
+    stat_identity_relative,
     validate_identifier,
     validate_target_path,
 )
@@ -49,6 +50,24 @@ class ExecutionContext:
     now: Callable[[], str]
     forbidden_roots: tuple[Path, ...] = ()
     network_available: Callable[[], bool] | None = None
+    # Captured under the provisioner lock, immediately before apply/rollback/
+    # uninstall (point 2, fifth correction round) -- empty for callers that
+    # never mutate (plan/dry-run). Every executor operation that touches the
+    # filesystem resolves through the handle matching its target's allowed
+    # root, never through a freshly re-resolved ``Path``.
+    allowed_root_handles: tuple[AllowedRootHandle, ...] = ()
+
+
+def handle_for_allowed_root(context: ExecutionContext, validated: Path) -> AllowedRootHandle:
+    for handle in context.allowed_root_handles:
+        if validated == handle.path:
+            return handle
+        try:
+            validated.relative_to(handle.path)
+            return handle
+        except ValueError:
+            continue
+    raise PathPolicyError("no allowed-root handle bound for %s; the caller must open one under the lock before use" % validated)
 
 
 class Executor(abc.ABC):
@@ -199,13 +218,16 @@ class CanaryExecutor(Executor):
             validated = validate_target_path(
                 Path(step.target), allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots
             )
+            handle = handle_for_allowed_root(context, validated)
         except PathPolicyError as exc:
             return ExecutionResult(status="apply_failed", error_kind="path_policy_violation", error=str(exc))
         content = step.intent["content"].encode("ascii")
         try:
-            create_file_exclusive(validated, content, mode=0o600)
+            create_file_exclusive_relative(handle, validated, content, mode=0o600)
         except FileExistsError as exc:
             return ExecutionResult(status="apply_failed", error_kind="target_already_exists", error=str(exc))
+        except PathPolicyError as exc:
+            return ExecutionResult(status="apply_failed", error_kind="path_policy_violation", error=str(exc))
         except OSError as exc:
             return ExecutionResult(status="apply_failed", error_kind="os_error", error=str(exc))
         return ExecutionResult(
@@ -218,13 +240,14 @@ class CanaryExecutor(Executor):
         path = Path(execution.observed.get("path", step.target))
         try:
             validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+            handle = handle_for_allowed_root(context, validated)
         except PathPolicyError as exc:
             return VerificationResult(status="verification_failed", error_kind="path_policy_violation", error=str(exc))
         try:
-            identity = stat_identity(validated)
+            identity = stat_identity_relative(handle, validated)
         except FileNotFoundError as exc:
             return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
-        except OSError as exc:
+        except (OSError, PathPolicyError) as exc:
             return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
         if identity["is_symlink"]:
             return VerificationResult(status="verification_failed", error_kind="unexpected_symlink", error="target is a symlink")
@@ -242,10 +265,10 @@ class CanaryExecutor(Executor):
         if identity["nlink"] != 1:
             return VerificationResult(status="verification_failed", error_kind="unexpected_nlink", error="st_nlink is %d, expected 1" % identity["nlink"])
         try:
-            actual = validated.read_bytes()
+            actual = read_bytes_relative(handle, validated)
         except FileNotFoundError as exc:
             return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
-        except OSError as exc:
+        except (OSError, PathPolicyError) as exc:
             return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
         expected_sha256 = step.intent["content_sha256"]
         actual_sha256 = hashlib.sha256(actual).hexdigest()
@@ -264,11 +287,12 @@ class CanaryExecutor(Executor):
         path = Path(undo_record.get("path", step.target))
         try:
             validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+            handle = handle_for_allowed_root(context, validated)
         except PathPolicyError as exc:
             return RollbackResult(status="undo_failed", residual=True, error_kind="path_policy_violation", error=str(exc))
         expected_sha256 = undo_record.get("expected_sha256")
         try:
-            removed = remove_file_if_owned(validated, expected_sha256=expected_sha256)
+            removed = remove_file_if_owned_relative(handle, validated, expected_sha256=expected_sha256)
         except PathPolicyError as exc:
             return RollbackResult(status="undo_failed", residual=True, error_kind="ownership_mismatch", error=str(exc))
         except OSError as exc:
@@ -300,13 +324,14 @@ class CanaryExecutor(Executor):
             path = Path(step.target)
             try:
                 validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+                handle = handle_for_allowed_root(context, validated)
             except PathPolicyError as exc:
                 return VerificationResult(status="verification_failed", error_kind="path_policy_violation", error=str(exc))
             try:
-                identity = stat_identity(validated)
+                identity = stat_identity_relative(handle, validated)
             except FileNotFoundError as exc:
                 return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
-            except OSError as exc:
+            except (OSError, PathPolicyError) as exc:
                 return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
             if identity["is_symlink"] or not identity["is_regular"]:
                 return VerificationResult(status="verification_failed", error_kind="unexpected_file_type", error=str(validated))
@@ -323,10 +348,10 @@ class CanaryExecutor(Executor):
                 return VerificationResult(status="verification_failed", error_kind="unexpected_nlink", error="st_nlink is %d, expected 1" % identity["nlink"])
             expected_sha256 = step.intent.get("content_sha256")
             try:
-                actual_sha256 = hashlib.sha256(validated.read_bytes()).hexdigest()
+                actual_sha256 = hashlib.sha256(read_bytes_relative(handle, validated)).hexdigest()
             except FileNotFoundError as exc:
                 return VerificationResult(status="verification_failed", error_kind="missing", error=str(exc))
-            except OSError as exc:
+            except (OSError, PathPolicyError) as exc:
                 return VerificationResult(status="verification_failed", error_kind="inspection_error", error=str(exc))
             if expected_sha256 is not None and actual_sha256 != expected_sha256:
                 return VerificationResult(status="verification_failed", error_kind="content_mismatch", error="sha256 mismatch at %s" % validated)
@@ -345,22 +370,23 @@ class CanaryExecutor(Executor):
         path = Path(step.target)
         try:
             validated = validate_target_path(path, allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
+            handle = handle_for_allowed_root(context, validated)
         except PathPolicyError as exc:
             return {"exists": None, "is_symlink": None, "content_matches": None, "path_policy_error": str(exc)}
         try:
-            lstat_result = validated.lstat()
+            identity = stat_identity_relative(handle, validated)
         except FileNotFoundError:
             return {"exists": False, "is_symlink": False, "content_matches": None}
-        except OSError as exc:
+        except (OSError, PathPolicyError) as exc:
             return {"exists": None, "is_symlink": None, "content_matches": None, "inspect_error": str(exc)}
-        if stat.S_ISLNK(lstat_result.st_mode):
+        if identity["is_symlink"]:
             return {"exists": True, "is_symlink": True, "content_matches": None}
         expected_sha256 = step.intent.get("content_sha256")
         try:
-            actual_sha256 = hashlib.sha256(validated.read_bytes()).hexdigest()
+            actual_sha256 = hashlib.sha256(read_bytes_relative(handle, validated)).hexdigest()
         except FileNotFoundError:
             return {"exists": False, "is_symlink": False, "content_matches": None}
-        except OSError as exc:
+        except (OSError, PathPolicyError) as exc:
             return {"exists": True, "is_symlink": False, "content_matches": None, "inspect_error": str(exc)}
         return {"exists": True, "is_symlink": False, "content_matches": actual_sha256 == expected_sha256}
 

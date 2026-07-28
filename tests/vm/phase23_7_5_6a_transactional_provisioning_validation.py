@@ -74,13 +74,14 @@ def _decision(capability_id: str, dependency_id: str) -> ResolutionDecision:
     )
 
 
-def _env(sandbox: Path, state_root: Path) -> engine.ProvisioningEnvironment:
+def _env(sandbox: Path, state_root: Path, global_lock_root: Path) -> engine.ProvisioningEnvironment:
     sandbox.mkdir(parents=True, exist_ok=True)
     registry = TrustedExecutorRegistry()
     registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=CanaryExecutor())
     context = ExecutionContext(allowed_roots=(sandbox,), now=_now)
     return engine.ProvisioningEnvironment(
-        state_root=state_root, registry=registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=context
+        state_root=state_root, registry=registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=context,
+        global_lock_root=global_lock_root,
     )
 
 
@@ -110,11 +111,13 @@ class Evidence:
 def cmd_worker(args) -> int:
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
-    env = _env(sandbox, state_root)
+    global_lock_root = Path(args.global_lock_root)
+    env = _env(sandbox, state_root, global_lock_root)
     decision = _decision(args.capability_id, args.dependency_id)
     plan, executor = engine.build_plan(decision, registry=env.registry, expected_executor_version=env.expected_executor_version, context=env.context)
 
-    with lock_mod.acquire_provisioner_lock(state_root, transaction_id=args.transaction_id, timeout=10.0):
+    with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id=args.transaction_id, timeout=10.0):
+        locked_context = engine._open_locked_context(env.context)
         journal = engine._initial_journal(plan, transaction_id=args.transaction_id, now_value=_now())
         journal = journal.with_state(TransactionState.AUTHORIZED, now=_now())
         journal = journal.with_state(TransactionState.APPLYING, now=_now())
@@ -131,13 +134,13 @@ def cmd_worker(args) -> int:
             record0 = record0.with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
             journal = journal.with_step(record0)
             journal_mod.write_journal(state_root, journal)
-            result0 = executor.apply_step(record0, env.context)
+            result0 = executor.apply_step(record0, locked_context)
             record0 = record0.with_state(StepState.APPLIED, completed_at=_now(), undo_record=result0.undo_record)
             journal = journal.with_step(record0)
             journal_mod.write_journal(state_root, journal)
             record0 = record0.with_state(StepState.VERIFYING)
             journal = journal.with_step(record0)
-            verification0 = executor.verify_step(record0, result0, env.context)
+            verification0 = executor.verify_step(record0, result0, locked_context)
             record0 = record0.with_state(StepState.VERIFIED, completed_at=_now(), verification=verification0.evidence)
             journal = journal.with_step(record0)
             journal_mod.write_journal(state_root, journal)
@@ -188,7 +191,7 @@ def cmd_worker(args) -> int:
         record = record.with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
         journal = journal.with_step(record)
         journal_mod.write_journal(state_root, journal)
-        result = executor.apply_step(record, env.context)  # real file write
+        result = executor.apply_step(record, locked_context)  # real file write
         record = record.with_state(StepState.APPLIED, completed_at=_now(), undo_record=result.undo_record)
         journal = journal.with_step(record)
 
@@ -199,7 +202,7 @@ def cmd_worker(args) -> int:
         journal_mod.write_journal(state_root, journal)
         record = record.with_state(StepState.VERIFYING)
         journal = journal.with_step(record)
-        verification = executor.verify_step(record, result, env.context)
+        verification = executor.verify_step(record, result, locked_context)
         record = record.with_state(StepState.VERIFIED, completed_at=_now(), verification=verification.evidence)
         journal = journal.with_step(record)
         journal_mod.write_journal(state_root, journal)
@@ -211,13 +214,13 @@ def cmd_worker(args) -> int:
             record = record.with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
             journal = journal.with_step(record)
             journal_mod.write_journal(state_root, journal)
-            result = executor.apply_step(record, env.context)
+            result = executor.apply_step(record, locked_context)
             record = record.with_state(StepState.APPLIED, completed_at=_now(), undo_record=result.undo_record)
             journal = journal.with_step(record)
             journal_mod.write_journal(state_root, journal)
             record = record.with_state(StepState.VERIFYING)
             journal = journal.with_step(record)
-            verification = executor.verify_step(record, result, env.context)
+            verification = executor.verify_step(record, result, locked_context)
             record = record.with_state(StepState.VERIFIED, completed_at=_now(), verification=verification.evidence)
             journal = journal.with_step(record)
             journal_mod.write_journal(state_root, journal)
@@ -228,17 +231,18 @@ def cmd_worker(args) -> int:
         if args.kill_after == "after_verify_before_commit":
             os.kill(os.getpid(), signal.SIGKILL)  # never returns
 
-        postcondition = executor.verify_postcondition(plan, env.context)
+        postcondition = executor.verify_postcondition(plan, locked_context)
         assert postcondition.status == "verified"
-        provenance = engine._finalize_provenance(state_root, journal, plan, executor, _now())
+        provenance = engine._finalize_provenance(state_root, journal, plan, executor, locked_context, _now())
         journal = journal.with_state(TransactionState.COMMITTED, now=_now(), provenance=provenance)
         journal_mod.write_journal(state_root, journal)
     return 0
 
 
-def _run_worker_and_expect_kill(sandbox: Path, state_root: Path, capability_id: str, dependency_id: str, transaction_id: str, kill_after: str, evidence: Evidence) -> None:
+def _run_worker_and_expect_kill(sandbox: Path, state_root: Path, global_lock_root: Path, capability_id: str, dependency_id: str, transaction_id: str, kill_after: str, evidence: Evidence) -> None:
     argv = [
         sys.executable, __file__, "--sandbox", str(sandbox), "--state-root", str(state_root),
+        "--global-lock-root", str(global_lock_root),
         "worker", "--capability-id", capability_id, "--dependency-id", dependency_id,
         "--transaction-id", transaction_id, "--kill-after", kill_after,
     ]
@@ -260,13 +264,14 @@ def _run_worker_and_expect_kill(sandbox: Path, state_root: Path, capability_id: 
 def cmd_run_all(args) -> int:
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
+    global_lock_root = Path(args.global_lock_root)
     if sandbox.exists():
         shutil.rmtree(sandbox)
     if state_root.exists():
         shutil.rmtree(state_root)
     sandbox.mkdir(parents=True)
     evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / "phase23_7_5_6a_vm_evidence.json"))
-    env = _env(sandbox, state_root)
+    env = _env(sandbox, state_root, global_lock_root)
 
     baseline = _snapshot(sandbox, state_root)
     evidence.record("pre_state", snapshot=baseline)
@@ -276,14 +281,14 @@ def cmd_run_all(args) -> int:
         [sys.executable, "-c",
          "import sys, time; sys.path.insert(0, %r); from pathlib import Path; "
          "from compat.provisioning.lock import acquire_provisioner_lock\n"
-         "with acquire_provisioner_lock(Path(%r), transaction_id='holder', timeout=5.0):\n"
-         "    print('ACQUIRED', flush=True); time.sleep(2.0)\n" % (str(ROOT), str(state_root))],
+         "with acquire_provisioner_lock(Path(%r), global_lock_root=Path(%r), transaction_id='holder', timeout=5.0):\n"
+         "    print('ACQUIRED', flush=True); time.sleep(2.0)\n" % (str(ROOT), str(state_root), str(global_lock_root))],
         stdout=subprocess.PIPE, text=True,
     )
     line = holder.stdout.readline()
     contended = False
     try:
-        with lock_mod.acquire_provisioner_lock(state_root, transaction_id="contender", timeout=0.3):
+        with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id="contender", timeout=0.3):
             pass
     except ProvisionerLockHeldError:
         contended = True
@@ -321,10 +326,10 @@ def cmd_run_all(args) -> int:
     # 5/6. kill -9 after write-ahead (before apply) and after apply (before verify).
     for checkpoint, capability_id in (("write_ahead_applying", "cap_vm_kill_early"), ("after_apply_before_verify", "cap_vm_kill_mid")):
         transaction_id = "vm-%s" % checkpoint
-        _run_worker_and_expect_kill(sandbox, state_root, capability_id, "dep_%s" % capability_id, transaction_id, checkpoint, evidence)
+        _run_worker_and_expect_kill(sandbox, state_root, global_lock_root, capability_id, "dep_%s" % capability_id, transaction_id, checkpoint, evidence)
         pre_recovery = journal_mod.read_journal(state_root, transaction_id)
         evidence.record("pre_recovery_state", checkpoint=checkpoint, state=pre_recovery.state.value)
-        reports = engine.recover_pending(state_root, env.registry, env.expected_executor_version, env.context)
+        reports = engine.recover_pending(state_root, env.registry, env.expected_executor_version, env.context, global_lock_root=global_lock_root)
         matching = [r for r in reports if r.transaction_id == transaction_id]
         evidence.record("recovery_decision", checkpoint=checkpoint, action=matching[0].action.value if matching else "none", reason=matching[0].reason if matching else "")
         final = journal_mod.read_journal(state_root, transaction_id)
@@ -404,12 +409,13 @@ def cmd_prepare_reboot_checkpoint(args) -> int:
     process), then run recover-after-reboot with the same --checkpoint."""
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
+    global_lock_root = Path(args.global_lock_root)
     sandbox.mkdir(parents=True, exist_ok=True)
     transaction_id = "vm-reboot-%s" % args.checkpoint
     evidence_path = Path(args.evidence) if args.evidence else (state_root.parent / "reboot_prep_evidence.json")
     evidence = Evidence(evidence_path)
     evidence.record("boot_id_before_reboot", boot_id=_read_boot_id())
-    _run_worker_and_expect_kill(sandbox, state_root, "cap_vm_reboot", "dep_vm_reboot", transaction_id, args.checkpoint, evidence)
+    _run_worker_and_expect_kill(sandbox, state_root, global_lock_root, "cap_vm_reboot", "dep_vm_reboot", transaction_id, args.checkpoint, evidence)
     pending = journal_mod.read_journal(state_root, transaction_id)
     evidence.record("pre_reboot_journal_state", transaction_id=transaction_id, state=pending.state.value, plan_digest=pending.plan_digest)
     evidence.record("pre_reboot_sandbox", files=sorted(p.name for p in sandbox.iterdir()) if sandbox.exists() else [])
@@ -425,6 +431,7 @@ def cmd_recover_after_reboot(args) -> int:
     transaction prepare-reboot-checkpoint left behind before a real reboot."""
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
+    global_lock_root = Path(args.global_lock_root)
     checkpoint = args.checkpoint
     transaction_id = "vm-reboot-%s" % checkpoint
     evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / "recovery-after-reboot.json"))
@@ -440,8 +447,8 @@ def cmd_recover_after_reboot(args) -> int:
     evidence.record("pre_recovery_state", transaction_id=transaction_id, state=pre_recovery.state.value, plan_digest=pre_recovery.plan_digest)
     evidence.record("pre_recovery_sandbox", files=sorted(p.name for p in sandbox.iterdir()) if sandbox.exists() else [])
 
-    env = _env(sandbox, state_root)
-    reports = engine.recover_pending(state_root, env.registry, env.expected_executor_version, env.context)
+    env = _env(sandbox, state_root, global_lock_root)
+    reports = engine.recover_pending(state_root, env.registry, env.expected_executor_version, env.context, global_lock_root=global_lock_root)
     matching = [r for r in reports if r.transaction_id == transaction_id]
     if not matching:
         raise SystemExit("recover_pending produced no decision for %r (reports: %r)" % (transaction_id, reports))
@@ -504,11 +511,13 @@ def cmd_uninstall_worker(args) -> int:
     """
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
+    global_lock_root = Path(args.global_lock_root)
     capability_id = args.capability_id
     checkpoint = args.checkpoint
-    env = _env(sandbox, state_root)
+    env = _env(sandbox, state_root, global_lock_root)
     transaction_id = "vm-uninstall-reboot-%s" % checkpoint
-    with lock_mod.acquire_provisioner_lock(state_root, transaction_id=transaction_id, timeout=10.0):
+    with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id=transaction_id, timeout=10.0):
+        locked_context = engine._open_locked_context(env.context)
         owned = [r for r in journal_mod.read_ownership_records(state_root, capability_id) if r.product_owned]
         plan = engine._build_uninstall_plan(capability_id, owned, transaction_id=transaction_id)
         journal = engine._initial_uninstall_journal(plan, now_value=_now())
@@ -531,7 +540,7 @@ def cmd_uninstall_worker(args) -> int:
         # gone, both steps VERIFIED) before reaching the ownership-revocation
         # boundary itself.
         journal, ok, residuals = engine._run_uninstall_loop(
-            state_root, journal, env.context, registry=env.registry, expected_executor_version=env.expected_executor_version
+            state_root, journal, locked_context, registry=env.registry, expected_executor_version=env.expected_executor_version
         )
         if not ok:
             raise SystemExit("uninstall-worker's real removal loop did not complete: %r" % residuals)
@@ -559,6 +568,7 @@ def cmd_prepare_uninstall_reboot_checkpoint(args) -> int:
     can be prepared independently before a single shared reboot."""
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
+    global_lock_root = Path(args.global_lock_root)
     sandbox.mkdir(parents=True, exist_ok=True)
     checkpoint = args.checkpoint
     capability_id = "cap_vm_uninstall_reboot_%s" % checkpoint
@@ -566,7 +576,7 @@ def cmd_prepare_uninstall_reboot_checkpoint(args) -> int:
     evidence = Evidence(evidence_path)
     evidence.record("boot_id_before_reboot", boot_id=_read_boot_id())
 
-    env = _env(sandbox, state_root)
+    env = _env(sandbox, state_root, global_lock_root)
     prepare_outcome = engine.prepare(_decision(capability_id, "dep_vm_uninstall_reboot_%s" % checkpoint), env, apply=True)
     evidence.record("prepare_committed", status=prepare_outcome.status.value, transaction_id=prepare_outcome.transaction_id)
     if prepare_outcome.status.value != "committed":
@@ -574,6 +584,7 @@ def cmd_prepare_uninstall_reboot_checkpoint(args) -> int:
 
     argv = [
         sys.executable, __file__, "--sandbox", str(sandbox), "--state-root", str(state_root),
+        "--global-lock-root", str(global_lock_root),
         "uninstall-worker", "--capability-id", capability_id, "--checkpoint", checkpoint,
     ]
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
@@ -604,6 +615,7 @@ def cmd_recover_uninstall_after_reboot(args) -> int:
     real reboot, for the given --checkpoint."""
     sandbox = Path(args.sandbox)
     state_root = Path(args.state_root)
+    global_lock_root = Path(args.global_lock_root)
     checkpoint = args.checkpoint
     capability_id = "cap_vm_uninstall_reboot_%s" % checkpoint
     evidence = Evidence(Path(args.evidence) if args.evidence else (state_root.parent / ("uninstall-recovery-after-reboot-%s.json" % checkpoint)))
@@ -614,8 +626,8 @@ def cmd_recover_uninstall_after_reboot(args) -> int:
     evidence.record("pre_recovery_state", transaction_id=transaction_id, state=pre_recovery.state.value, plan_digest=pre_recovery.plan_digest)
     evidence.record("pre_recovery_sandbox", files=sorted(p.name for p in sandbox.iterdir()) if sandbox.exists() else [])
 
-    env = _env(sandbox, state_root)
-    reports = engine.recover_pending(state_root, env.registry, env.expected_executor_version, env.context)
+    env = _env(sandbox, state_root, global_lock_root)
+    reports = engine.recover_pending(state_root, env.registry, env.expected_executor_version, env.context, global_lock_root=global_lock_root)
     matching = [r for r in reports if r.transaction_id == transaction_id]
     if not matching:
         raise SystemExit("recover_pending produced no decision for %r (reports: %r)" % (transaction_id, reports))
@@ -659,6 +671,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sandbox", required=True)
     parser.add_argument("--state-root", required=True)
+    parser.add_argument(
+        "--global-lock-root", required=True,
+        help="dedicated, stable root the global provisioner lock lives under; never inside --state-root or --sandbox",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     checkpoints = (

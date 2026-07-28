@@ -13,14 +13,17 @@ identifier.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import errno
 import hashlib
 import os
 import re
 import stat as stat_module
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
-from compat.provisioning.errors import IdentifierError, PathPolicyError
+from compat.provisioning.errors import DurabilityError, IdentifierError, PathPolicyError
 from compat.provisioning.storage import fsync_parent_directory
 
 CANARY_FORBIDDEN_ROOTS: tuple[Path, ...] = (
@@ -188,54 +191,324 @@ def remove_file_if_owned(path: Path, *, expected_sha256: str | None = None) -> b
 
 
 _PARENT_DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+_RELATIVE_DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+_RELATIVE_FILE_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+@dataclass
+class AllowedRootHandle:
+    """An OPEN, identity-bound handle to one of ``context.allowed_roots``
+    (point 2, fifth correction round) -- captured once, under the
+    provisioner lock, immediately before apply/rollback/uninstall, and held
+    for the rest of that critical section. Every executor operation
+    (create, inspect, verify, hash, undo, unlink, the transaction-level
+    postcondition check, and the revocation absence check) resolves against
+    this handle's descriptor, never against a freshly re-resolved ``Path``
+    -- a later rename/symlink-swap/directory-replace of the allowed root
+    itself is detected (via ``st_dev``/``st_ino`` captured at open time),
+    exactly like ``StateRootHandle`` for the provisioning state root."""
+
+    path: Path
+    fd: int
+    dev: int
+    ino: int
+
+    def verify_identity(self) -> None:
+        """Re-confirm, via a fresh inspection of the CONFIGURED (canonical)
+        allowed-root path, that it still refers to exactly the physical
+        directory this handle was bound to when first opened. Raises
+        ``PathPolicyError`` on any mismatch, absence, or inspection
+        failure -- callers must never report a clean/terminal outcome
+        (COMMITTED, UNINSTALLED, ...) once this has failed, exactly like
+        ``StateRootHandle.verify_identity()`` for the state root: fd-bound
+        operations against this handle remain correct even after a
+        rename/replace of the allowed root, but silently reporting success
+        anyway would create a split-brain against whatever a fresh process
+        using the same configured path would now see."""
+        try:
+            st = os.lstat(self.path)
+        except FileNotFoundError as exc:
+            raise PathPolicyError("allowed root %s is no longer present at its canonical path" % self.path) from exc
+        except OSError as exc:
+            raise PathPolicyError("cannot verify allowed root %s identity: %s" % (self.path, exc)) from exc
+        if (st.st_dev, st.st_ino) != (self.dev, self.ino):
+            raise PathPolicyError(
+                "allowed root %s no longer refers to the directory this transaction is bound to (identity changed)" % self.path
+            )
+
+    def close(self) -> None:
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+
+
+def open_allowed_root(path: Path) -> AllowedRootHandle:
+    """Open ``path`` (one configured allowed root) with ``O_NOFOLLOW``,
+    verify it is a real directory, and capture its ``st_dev``/``st_ino``.
+    The root itself must already exist -- an allowed root is something the
+    caller creates ahead of time (e.g. ``tools/compat_provision.py``'s
+    ``--sandbox`` handling), never something this function improvises."""
+    path = Path(path)
+    try:
+        fd = os.open(str(path), _RELATIVE_DIR_OPEN_FLAGS)
+    except FileNotFoundError as exc:
+        raise PathPolicyError("allowed root does not exist: %s" % path) from exc
+    except NotADirectoryError as exc:
+        raise PathPolicyError("allowed root exists but is not a directory: %s" % path) from exc
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise PathPolicyError("allowed root must not be a symlink: %s" % path) from exc
+        raise PathPolicyError("cannot open allowed root %s: %s" % (path, exc)) from exc
+    try:
+        st = os.fstat(fd)
+        if not stat_module.S_ISDIR(st.st_mode):
+            raise PathPolicyError("allowed root is not a directory: %s" % path)
+    except Exception:
+        os.close(fd)
+        raise
+    return AllowedRootHandle(path=path, fd=fd, dev=st.st_dev, ino=st.st_ino)
+
+
+def _open_dir_component_relative(parent_fd: int, name: str) -> int:
+    """Opens directory component ``name`` strictly within ``parent_fd``,
+    ``O_NOFOLLOW``, verifying it is a real directory. Used only to walk any
+    intermediate components between an allowed root and a validated target
+    path -- never to resolve the final (leaf) component, which callers open
+    with whatever flags their own operation (read/create/unlink) needs."""
+    try:
+        fd = os.open(name, _RELATIVE_DIR_OPEN_FLAGS, dir_fd=parent_fd)
+    except NotADirectoryError as exc:
+        raise PathPolicyError("path component exists but is not a directory: %s" % name) from exc
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise PathPolicyError("path has an unexpected symlink component: %s" % name) from exc
+        raise
+    return fd
+
+
+@contextmanager
+def _relative_to_handle(handle: AllowedRootHandle, validated_path: Path):
+    """Yields ``(parent_fd, basename)`` for ``validated_path``, resolved
+    entirely relative to ``handle`` -- walking any intermediate components
+    (opening each with ``O_NOFOLLOW``, dir_fd-relative, never resolving any
+    path from the filesystem root) and closing whatever intermediate fds it
+    opened on exit. ``validated_path`` must already be a strict descendant
+    of ``handle.path`` (as returned by ``validate_target_path``)."""
+    try:
+        relative = validated_path.relative_to(handle.path)
+    except ValueError as exc:
+        raise PathPolicyError("%s is not a descendant of allowed root %s" % (validated_path, handle.path)) from exc
+    parts = relative.parts
+    if not parts:
+        raise PathPolicyError("path must be a strict descendant of the allowed root, not the root itself: %s" % validated_path)
+    opened_fds = []
+    try:
+        current_fd = handle.fd
+        for part in parts[:-1]:
+            fd = _open_dir_component_relative(current_fd, part)
+            opened_fds.append(fd)
+            current_fd = fd
+        yield current_fd, parts[-1]
+    finally:
+        for fd in reversed(opened_fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def create_file_exclusive_relative(handle: AllowedRootHandle, validated_path: Path, data: bytes, *, mode: int = 0o600) -> None:
+    """Descriptor-relative equivalent of ``create_file_exclusive`` (point 2,
+    fifth correction round): creates a brand-new regular file resolved
+    entirely relative to ``handle``, refusing to follow or replace anything
+    already there (including a dangling symlink). Durable: fsyncs the file
+    and, once created, the containing directory entry."""
+    with _relative_to_handle(handle, validated_path) as (parent_fd, basename):
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(basename, flags, mode, dir_fd=parent_fd)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            try:
+                os.unlink(basename, dir_fd=parent_fd)
+            except OSError:
+                pass
+            raise
+        try:
+            os.fsync(parent_fd)
+        except OSError as exc:
+            raise DurabilityError("write to %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)) from exc
+
+
+# Test-only synchronization seam (point 3, fifth correction round): normally
+# a no-op. A test may monkeypatch this to pause A's execution, between its
+# own hash verification and its final re-verify-then-unlink, for exactly as
+# long as it takes a second process to substitute the basename underneath
+# it -- deterministically reproducing the TOCTOU window being defended
+# against, without weakening the real defense itself.
+def _default_unlink_pause() -> None:
+    return None
+
+
+UNLINK_REVERIFY_HOOK: Callable[[], None] = _default_unlink_pause
+
+
+def remove_file_if_owned_relative(
+    handle: AllowedRootHandle, validated_path: Path, *, expected_sha256: str | None = None
+) -> bool:
+    """Descriptor-relative equivalent of ``remove_file_if_owned`` that also
+    eliminates the TOCTOU window between verifying a resource's identity
+    and unlinking it (point 3, fifth correction round): the file is opened
+    ONCE, ``O_NOFOLLOW``, and every check -- regular file, content hash --
+    is performed against that SAME open file descriptor. Immediately before
+    the actual unlink, the basename's CURRENT directory entry is
+    re-inspected (``lstat(..., dir_fd=parent_fd)``) and its ``(dev, ino)``
+    compared against what was just verified: only a basename that still
+    resolves to the EXACT inode just hashed is ever removed. A concurrent
+    substitution of the basename for a foreign file in between is detected
+    here and fails closed (``PathPolicyError``) -- the foreign file is
+    never touched, and no unlink is ever attempted against it."""
+    with _relative_to_handle(handle, validated_path) as (parent_fd, basename):
+        try:
+            fd = os.open(basename, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise PathPolicyError("refusing to remove a symlink: %s" % validated_path) from exc
+            raise PathPolicyError("cannot open %s for removal: %s" % (validated_path, exc)) from exc
+        try:
+            st = os.fstat(fd)
+            if not stat_module.S_ISREG(st.st_mode):
+                raise PathPolicyError("refusing to remove a non-regular file: %s" % validated_path)
+            if expected_sha256 is not None:
+                chunks = []
+                while True:
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                actual = b"".join(chunks)
+                if hashlib.sha256(actual).hexdigest() != expected_sha256:
+                    raise PathPolicyError(
+                        "refusing to remove %s: content hash diverged from what this transaction created (ownership drift)"
+                        % validated_path
+                    )
+            UNLINK_REVERIFY_HOOK()
+            try:
+                current = os.lstat(basename, dir_fd=parent_fd)
+            except FileNotFoundError as exc:
+                raise PathPolicyError(
+                    "cannot re-verify %s immediately before removal: no longer present" % validated_path
+                ) from exc
+            except OSError as exc:
+                raise PathPolicyError("cannot re-verify %s immediately before removal: %s" % (validated_path, exc)) from exc
+            if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
+                raise PathPolicyError(
+                    "refusing to remove %s: the name now refers to a different inode than the one just verified "
+                    "(concurrent substitution)" % validated_path
+                )
+        finally:
+            os.close(fd)
+        os.unlink(basename, dir_fd=parent_fd)
+        try:
+            os.fsync(parent_fd)
+        except OSError as exc:
+            raise DurabilityError(
+                "removal of %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
+            ) from exc
+        return True
+
+
+def stat_identity_relative(handle: AllowedRootHandle, validated_path: Path) -> dict:
+    """Descriptor-relative equivalent of ``stat_identity``, resolved via
+    ``handle`` rather than a fresh path-based lstat."""
+    with _relative_to_handle(handle, validated_path) as (parent_fd, basename):
+        st = os.lstat(basename, dir_fd=parent_fd)
+    return {
+        "uid": st.st_uid,
+        "gid": st.st_gid,
+        "mode": stat_module.S_IMODE(st.st_mode),
+        "nlink": st.st_nlink,
+        "is_symlink": stat_module.S_ISLNK(st.st_mode),
+        "is_regular": stat_module.S_ISREG(st.st_mode),
+    }
+
+
+def read_bytes_relative(handle: AllowedRootHandle, validated_path: Path) -> bytes:
+    """Reads the full content of ``validated_path``, resolved via
+    ``handle``, opened ``O_NOFOLLOW`` (never following a symlink swapped in
+    for the leaf component)."""
+    with _relative_to_handle(handle, validated_path) as (parent_fd, basename):
+        try:
+            fd = os.open(basename, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise PathPolicyError("refusing to read a symlink: %s" % validated_path) from exc
+            raise
+        with os.fdopen(fd, "rb") as f:
+            return f.read()
 
 
 def confirm_absent_descriptor_safe(
-    resource_identity: str, *, allowed_roots: Sequence[Path], forbidden_roots: Sequence[Path] = ()
+    resource_identity: str, *, allowed_root_handles: Sequence[AllowedRootHandle], forbidden_roots: Sequence[Path] = ()
 ) -> tuple[bool, str | None]:
     """Descriptor-safe absence check for revocation (point 5, fourth
-    correction round): never an isolated ``os.lstat()`` on a bare,
-    previously-persisted path string, which is vulnerable to a TOCTOU
-    ancestor-swap between whenever the path was last validated and the
-    moment it is inspected. ``resource_identity`` is first reconstructed
-    and validated through the SAME allowlist/forbidden-roots policy as
-    everywhere else (``validate_target_path``, which itself walks every
-    component without following symlinks); its immediate parent directory
-    is then opened with ``O_NOFOLLOW`` and held open, and the basename's
-    absence is checked RELATIVE TO THAT DESCRIPTOR -- closing the window
-    between path validation and the final check, since an ancestor
-    substituted after validation would already be reflected in a fresh
-    ``os.open`` of the parent, not silently bypassed.
+    correction round; bound to an already-captured ``AllowedRootHandle`` in
+    the fifth): never an isolated ``os.lstat()`` on a bare, previously-
+    persisted path string, and never a fresh path-based ``os.open`` of the
+    parent directory either -- both are vulnerable to a TOCTOU ancestor-
+    swap between whenever the allowed root was last confirmed and the
+    moment this check runs. ``resource_identity`` is first validated
+    through the SAME allowlist/forbidden-roots policy as everywhere else
+    (``validate_target_path``); the matching ``AllowedRootHandle`` (already
+    opened, under the lock, before this critical section began) is then
+    re-confirmed to still refer to the SAME physical directory it was
+    captured from, and the absence check itself walks descriptor-relative
+    from that SAME handle -- never reopening the allowed root from a
+    string.
 
     Returns ``(True, None)`` only on a genuine ``FileNotFoundError`` for the
-    basename relative to the held parent descriptor. Any of the following
-    returns ``(False, reason)`` instead -- a path-policy violation, a
-    parent directory that cannot be opened/verified, an unexpected symlink,
-    any other inspection error, or the resource still being present -- so
-    the caller must never treat the resource as safely absent in any of
-    those cases."""
+    basename relative to the held descriptor chain. Any of the following
+    returns ``(False, reason)`` instead -- a path-policy violation, no
+    matching handle, an allowed root whose identity has changed, an
+    unexpected symlink, any other inspection error, or the resource still
+    being present -- so the caller must never treat the resource as safely
+    absent in any of those cases."""
+    allowed_roots = [h.path for h in allowed_root_handles]
     try:
         validated = validate_target_path(Path(resource_identity), allowed_roots=allowed_roots, forbidden_roots=forbidden_roots)
     except PathPolicyError as exc:
         return False, "cannot validate path for %s: %s" % (resource_identity, exc)
 
-    parent = validated.parent
+    handle = next((h for h in allowed_root_handles if validated == h.path or _is_under(validated, h.path)), None)
+    if handle is None:
+        return False, "no matching allowed root handle for %s" % resource_identity
+
     try:
-        parent_fd = os.open(str(parent), _PARENT_DIR_OPEN_FLAGS)
+        current_root_stat = os.lstat(handle.path)
     except OSError as exc:
-        return False, "cannot open parent directory of %s: %s" % (resource_identity, exc)
+        return False, "cannot reconfirm allowed root identity for %s: %s" % (resource_identity, exc)
+    if (current_root_stat.st_dev, current_root_stat.st_ino) != (handle.dev, handle.ino):
+        return False, "allowed root %s no longer refers to the directory this check was bound to (identity changed)" % handle.path
+
     try:
-        try:
-            st = os.lstat(validated.name, dir_fd=parent_fd)
-        except FileNotFoundError:
-            return True, None
-        except OSError as exc:
-            return False, "cannot confirm absence of %s: %s" % (resource_identity, exc)
-        if stat_module.S_ISLNK(st.st_mode):
-            return False, "%s exists as an unexpected symlink" % resource_identity
-        return False, "resource %s is still present" % resource_identity
-    finally:
-        os.close(parent_fd)
+        with _relative_to_handle(handle, validated) as (parent_fd, basename):
+            try:
+                st = os.lstat(basename, dir_fd=parent_fd)
+            except FileNotFoundError:
+                return True, None
+            except OSError as exc:
+                return False, "cannot confirm absence of %s: %s" % (resource_identity, exc)
+            if stat_module.S_ISLNK(st.st_mode):
+                return False, "%s exists as an unexpected symlink" % resource_identity
+            return False, "resource %s is still present" % resource_identity
+    except PathPolicyError as exc:
+        return False, "cannot walk to %s: %s" % (resource_identity, exc)
 
 
 def stat_identity(path: Path) -> dict:

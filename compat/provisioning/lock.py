@@ -4,12 +4,26 @@ Distinct from ``config.persistence``'s restore-transaction lock/journal: the
 provisioner needs its own kernel-level lock and its own recovery semantics,
 never coupled to backup/restore recovery side effects. Only ``atomic_write``/
 ``fsync``-style primitives are shared, not the restore journal itself.
+
+Fifth correction round, point 1: the lock itself no longer lives inside
+``state_root`` (a tree that can be renamed/replaced by anything that can
+write to its shared parent while the lock is held). It lives under a
+dedicated, stable ``global_lock_root`` -- e.g. ``/run/lock/watchdogvpn/
+provisioning`` in production, or a per-test tmp directory kept OUTSIDE any
+single test's own renamable ``state_root`` tree -- keyed by a stable hash of
+``state_root``'s own CONFIGURED path string (never a resolved/canonicalized
+one, and never the directory's own identity), so two processes configured
+with the SAME ``state_root`` path always contend for the exact same lock
+file regardless of what has since happened to that path physically. The
+global lock is acquired BEFORE ``state_root`` is ever created, opened or
+recovered.
 """
 
 from __future__ import annotations
 
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import stat as stat_module
@@ -20,19 +34,56 @@ from pathlib import Path
 from typing import Iterator
 
 from compat.provisioning.errors import PathPolicyError, ProvisionerLockHeldError
-from compat.provisioning.storage import StateRootHandle, open_state_root
+from compat.provisioning.journal import HISTORY_DIR, OWNERSHIP_DIR, TRANSACTIONS_DIR
+from compat.provisioning.storage import StateRootHandle, ensure_private_lock_root, open_state_root
 
-LOCK_FILE_NAME = "provisioner.lock"
 DEFAULT_TIMEOUT_SECONDS = 5.0
 DEFAULT_POLL_INTERVAL_SECONDS = 0.05
 
 _LOCK_OPEN_FLAGS = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+_ROOT_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
-def _open_and_verify_lock_fd_relative(state_root_fd: int, name: str) -> int:
-    """Open the lock file with ``O_NOFOLLOW``, strictly within
-    ``state_root_fd`` (point 1: never a fresh path-based lookup once the
-    state root's own identity has been established), and verify its
+def _global_lock_file_name(state_root: Path) -> str:
+    """A stable, deterministic lock filename derived from ``state_root``'s
+    own CONFIGURED path string -- never its resolved/canonicalized form
+    (which could itself be affected by the very swap being defended
+    against), and never its physical identity (``st_dev``/``st_ino``, which
+    is exactly what may have changed). Two processes given the identical
+    configured path always compute the identical filename, so they always
+    contend for the same lock regardless of what has happened to the path
+    physically in between -- satisfying the invariant that two processes
+    using the same logical installation can never acquire distinct locks
+    even if ``state_root`` is renamed, deleted or replaced."""
+    state_root = Path(state_root)
+    if not state_root.is_absolute():
+        raise PathPolicyError("state root must be an absolute path: %s" % state_root)
+    digest = hashlib.sha256(str(state_root).encode("utf-8")).hexdigest()
+    return "%s.lock" % digest
+
+
+def _open_global_root(global_lock_root: Path) -> int:
+    global_lock_root = ensure_private_lock_root(Path(global_lock_root))
+    try:
+        fd = os.open(str(global_lock_root), _ROOT_OPEN_FLAGS)
+    except OSError as exc:
+        raise PathPolicyError("cannot open global lock root %s: %s" % (global_lock_root, exc)) from exc
+    try:
+        st = os.fstat(fd)
+        if not stat_module.S_ISDIR(st.st_mode):
+            raise PathPolicyError("global lock root is not a directory: %s" % global_lock_root)
+        if st.st_uid != os.getuid():
+            raise PathPolicyError("global lock root %s is owned by uid %d, expected %d" % (global_lock_root, st.st_uid, os.getuid()))
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _open_and_verify_lock_fd_relative(root_fd: int, name: str) -> int:
+    """Open the lock file with ``O_NOFOLLOW``, strictly within ``root_fd``
+    (the global, stable lock root -- never a fresh path-based lookup, and
+    never inside the renamable ``state_root`` tree), and verify its
     identity via ``fstat`` BEFORE any ``fchmod`` or content mutation -- a
     symlink at ``name`` (ELOOP), a directory (``IsADirectoryError``), a
     hardlinked file (``st_nlink != 1``), or a file owned by a different uid
@@ -40,7 +91,7 @@ def _open_and_verify_lock_fd_relative(state_root_fd: int, name: str) -> int:
     chmod'd, truncated or written to."""
     expected_uid = os.getuid()
     try:
-        fd = os.open(name, _LOCK_OPEN_FLAGS, 0o600, dir_fd=state_root_fd)
+        fd = os.open(name, _LOCK_OPEN_FLAGS, 0o600, dir_fd=root_fd)
     except OSError as exc:
         if exc.errno == errno.ELOOP:
             raise PathPolicyError("lock path is a symlink, refusing: %s" % name) from exc
@@ -67,37 +118,50 @@ def _open_and_verify_lock_fd_relative(state_root_fd: int, name: str) -> int:
 def acquire_provisioner_lock(
     state_root: Path,
     *,
+    global_lock_root: Path,
     transaction_id: str,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> Iterator[StateRootHandle]:
-    """Acquire the single machine-wide provisioner lock, bound to
-    ``state_root``'s own identity for the whole transaction (point 1,
-    fourth correction round).
+    """Acquire the single machine-wide provisioner lock for ``state_root``,
+    then bind a ``StateRootHandle`` to its identity for the whole
+    transaction (fifth correction round, point 1).
 
-    ``state_root`` is opened ONCE via ``storage.open_state_root`` (its
-    external parent verified read-only, ``state_root`` itself verified/
-    tightened to ``0700``, its ``st_dev``/``st_ino`` captured) and the
-    resulting handle's file descriptor is held open for as long as the
-    lock is held. The lock file itself is opened RELATIVE TO that
-    descriptor, never via a fresh path lookup -- an external rename,
-    symlink-swap, or directory-replace of ``state_root`` after this point
-    can never redirect the lock (or any journal/ownership operation the
-    caller performs using the yielded handle) to a different physical
-    directory. The yielded ``StateRootHandle`` must be passed to every
-    ``journal`` module call for the remainder of the critical section
-    instead of a bare path.
+    Order matters and is never reversed: the global lock (under
+    ``global_lock_root``, a dedicated root never renamed/replaced by
+    anything that can write to ``state_root``'s own shared parent) is
+    acquired FIRST; only once it is held is ``state_root`` itself ever
+    created, opened, or recovered. This is what lets two processes
+    configured with the identical ``state_root`` path always contend for
+    the exact same lock even if ``state_root`` itself has been renamed,
+    deleted, or replaced by something else in between -- the lock's own
+    identity was never inside that tree to begin with.
 
-    Non-blocking flock attempts are retried until ``timeout`` elapses; if the
-    lock is still held, a controlled ``ProvisionerLockHeldError`` is raised
-    instead of blocking forever. The informational metadata written into the
-    lock file (PID, start time, transaction id) is for operator diagnostics
-    only -- the kernel flock, not this metadata, is what actually excludes a
-    second mutating provisioner.
+    Once the state root is opened, ``transactions``/``ownership``/
+    ``history`` are EAGERLY opened (their descriptors cached on the
+    returned handle) before this contextmanager ever yields -- i.e. before
+    any recovery pass or other use gets a chance to run -- so a rename/
+    replace of one of those subdirectories that happens afterward can never
+    make a later listing of it silently reflect the wrong (empty,
+    replacement) directory instead of the real one this transaction is
+    bound to.
+
+    The yielded ``StateRootHandle`` must be passed to every ``journal``
+    module call for the remainder of the critical section instead of a
+    bare path; its ``verify_identity()`` is also re-checked by those calls
+    before every mutating write.
+
+    Non-blocking flock attempts are retried until ``timeout`` elapses; if
+    the lock is still held, a controlled ``ProvisionerLockHeldError`` is
+    raised instead of blocking forever. The informational metadata written
+    into the lock file (PID, start time, transaction id, state root path)
+    is for operator diagnostics only -- the kernel flock, not this
+    metadata, is what actually excludes a second mutating provisioner.
     """
-    state_root_handle = open_state_root(state_root)
+    global_root_fd = _open_global_root(Path(global_lock_root))
     try:
-        fd = _open_and_verify_lock_fd_relative(state_root_handle.fd, LOCK_FILE_NAME)
+        lock_name = _global_lock_file_name(Path(state_root))
+        fd = _open_and_verify_lock_fd_relative(global_root_fd, lock_name)
         handle = os.fdopen(fd, "r+", encoding="utf-8")
         try:
             deadline = time.monotonic() + timeout
@@ -117,22 +181,29 @@ def acquire_provisioner_lock(
                             holder_transaction_id=holder_transaction_id,
                         ) from exc
                     time.sleep(poll_interval)
-            _write_holder_metadata(handle, transaction_id=transaction_id)
+            _write_holder_metadata(handle, transaction_id=transaction_id, state_root=state_root)
             try:
-                yield state_root_handle
+                state_root_handle = open_state_root(Path(state_root))
+                try:
+                    for subdir_name in (TRANSACTIONS_DIR, OWNERSHIP_DIR, HISTORY_DIR):
+                        state_root_handle.subdir_fd(subdir_name)
+                    yield state_root_handle
+                finally:
+                    state_root_handle.close()
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
             handle.close()
     finally:
-        state_root_handle.close()
+        os.close(global_root_fd)
 
 
-def _write_holder_metadata(handle, *, transaction_id: str) -> None:
+def _write_holder_metadata(handle, *, transaction_id: str, state_root: Path) -> None:
     metadata = {
         "pid": os.getpid(),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "transaction_id": transaction_id,
+        "state_root": str(state_root),
     }
     handle.seek(0)
     handle.truncate()

@@ -53,3 +53,22 @@ class RecoveryRequiredError(ProvisioningError):
 
 class OwnershipError(ProvisioningError):
     """Raised for ownership conflicts or drift."""
+
+
+class StateRootIdentityError(ProvisioningError):
+    """Raised when a state root (or one of its subdirectories) no longer
+    refers, at its canonical configured path, to the exact physical
+    directory a ``StateRootHandle`` was originally bound to (fifth
+    correction round, point 1) -- e.g. it was renamed away, deleted, or
+    replaced by a different directory/symlink while a transaction held it.
+    Callers must never report a clean/terminal outcome (COMMITTED,
+    PREPARATION_FAILED, UNINSTALLED, ...) once this has been raised."""
+
+
+class CorruptStateError(ProvisioningError):
+    """Raised when a persisted journal/ownership entry itself violates its
+    own integrity contract (fifth correction round, point 6): a symlink, a
+    directory, a hard link, an unexpected owner/mode, or an unreasonably
+    large file where only a private, owner-only, single-link regular file
+    is ever legitimate. Always fails closed -- never silently skipped or
+    followed."""

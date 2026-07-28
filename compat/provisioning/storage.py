@@ -30,12 +30,19 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from compat.provisioning.errors import DurabilityError, PathPolicyError
+from compat.provisioning.errors import CorruptStateError, DurabilityError, PathPolicyError, StateRootIdentityError
 
 PRIVATE_DIR_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 
+# A journal/ownership record is a small, bounded JSON document. Anything
+# larger than this is itself a red flag (point 6, fifth correction round) --
+# reading it fully into memory before parsing is never appropriate for an
+# attacker-influenced or corrupted file of unbounded size.
+MAX_PRIVATE_FILE_SIZE = 10 * 1024 * 1024
+
 _DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+_PRIVATE_FILE_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
 def _open_directory_nofollow(path: Path) -> int:
@@ -171,29 +178,46 @@ def ensure_private_subdir(state_root: Path, relative_path: Path | str) -> Path:
 
 
 @dataclass
+class _SubdirHandle:
+    fd: int
+    dev: int
+    ino: int
+
+
+@dataclass
 class StateRootHandle:
     """An OPEN, identity-bound handle to ``state_root`` (point 1, fourth
-    correction round) -- captured once via ``open_state_root()`` and held
-    for the entire duration of a lock-protected transaction. Every
-    descriptor-relative operation (``os.open``/``os.mkdir``/``os.replace``/
-    ``os.unlink`` with ``dir_fd=``) resolves against this handle's file
-    descriptors, which continue to reference the SAME physical directory
-    regardless of any external rename, symlink-swap, or directory-replace
-    of ``state_root``'s path afterward. Once this handle exists, a fresh
-    path-based lookup of ``state_root`` (or its subdirectories) is never
-    used again for the rest of the transaction -- that is precisely the
-    TOCTOU window this handle closes: a process holding it either keeps
-    operating correctly on the original directory via the descriptor, or
-    fails closed (a subdirectory it never opened before now raising
-    ``PathPolicyError`` if the replacement is a symlink or wrong type), but
-    never silently starts operating on a newly created directory at the
-    same path."""
+    correction round; identity re-verification added in the fifth) --
+    captured once via ``open_state_root()`` and held for the entire
+    duration of a lock-protected transaction. Every descriptor-relative
+    operation (``os.open``/``os.mkdir``/``os.replace``/``os.unlink`` with
+    ``dir_fd=``) resolves against this handle's file descriptors, which
+    continue to reference the SAME physical directory regardless of any
+    external rename, symlink-swap, or directory-replace of ``state_root``'s
+    path afterward. Once this handle exists, a fresh path-based lookup of
+    ``state_root`` (or its subdirectories) is never used again for the rest
+    of the transaction -- that is precisely the TOCTOU window this handle
+    closes: a process holding it either keeps operating correctly on the
+    original directory via the descriptor, or fails closed (a subdirectory
+    it never opened before now raising ``PathPolicyError`` if the
+    replacement is a symlink or wrong type), but never silently starts
+    operating on a newly created directory at the same path.
+
+    ``verify_identity()`` additionally allows a caller to actively DETECT
+    (not merely survive) a swap of the canonical, configured path away from
+    the physical directory this handle is bound to -- required before any
+    mutation, before publishing ownership, and before ever reporting a
+    terminal/clean outcome (point 1, fifth correction round): even though
+    fd-relative operations remain correct against the original directory, a
+    caller that reported success without detecting the swap would create a
+    split-brain, since a fresh process configured with the same path would
+    see something else entirely."""
 
     path: Path
     fd: int
     dev: int
     ino: int
-    _subdir_fds: dict = field(default_factory=dict, repr=False, compare=False)
+    _subdirs: dict = field(default_factory=dict, repr=False, compare=False)
 
     def subdir_fd(self, name: str) -> int:
         """Returns a cached, verified directory fd for ``name`` (e.g.
@@ -203,21 +227,48 @@ class StateRootHandle:
         that subdirectory after the first call cannot redirect subsequent
         operations, for the same reason the state root fd itself is
         immune to it."""
-        if name not in self._subdir_fds:
-            self._subdir_fds[name] = _ensure_private_subdir_relative(self.fd, name)
-        return self._subdir_fds[name]
+        if name not in self._subdirs:
+            fd = _ensure_private_subdir_relative(self.fd, name)
+            st = os.fstat(fd)
+            self._subdirs[name] = _SubdirHandle(fd=fd, dev=st.st_dev, ino=st.st_ino)
+        return self._subdirs[name].fd
+
+    def verify_identity(self) -> None:
+        """Re-confirm, via a fresh path-based inspection of the CONFIGURED
+        (canonical) path, that the state root -- and every subdirectory this
+        handle has opened so far -- still refers to exactly the physical
+        directory it was bound to when first opened. Raises
+        ``StateRootIdentityError`` on any mismatch, absence, or inspection
+        failure; callers must treat that as ``RECOVERY_REQUIRED``/manual
+        failure, never as a clean outcome."""
+        _verify_dev_ino(self.path, self.dev, self.ino, label="state root")
+        for name, subdir in self._subdirs.items():
+            _verify_dev_ino(self.path / name, subdir.dev, subdir.ino, label="state root subdirectory %r" % name)
 
     def close(self) -> None:
-        for fd in self._subdir_fds.values():
+        for subdir in self._subdirs.values():
             try:
-                os.close(fd)
+                os.close(subdir.fd)
             except OSError:
                 pass
-        self._subdir_fds.clear()
+        self._subdirs.clear()
         try:
             os.close(self.fd)
         except OSError:
             pass
+
+
+def _verify_dev_ino(path: Path, expected_dev: int, expected_ino: int, *, label: str) -> None:
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError as exc:
+        raise StateRootIdentityError("%s is no longer present at its canonical path: %s" % (label, path)) from exc
+    except OSError as exc:
+        raise StateRootIdentityError("cannot verify %s identity at %s: %s" % (label, path, exc)) from exc
+    if (st.st_dev, st.st_ino) != (expected_dev, expected_ino):
+        raise StateRootIdentityError(
+            "%s at %s no longer refers to the directory this transaction is bound to (identity changed)" % (label, path)
+        )
 
 
 def open_state_root(state_root: Path) -> StateRootHandle:
@@ -246,6 +297,46 @@ def open_state_root(state_root: Path) -> StateRootHandle:
     _check_and_secure_directory_fd(state_root, fd)
     st = os.fstat(fd)
     return StateRootHandle(path=state_root, fd=fd, dev=st.st_dev, ino=st.st_ino)
+
+
+def ensure_private_lock_root(path: Path) -> Path:
+    """Create (if missing) and verify the dedicated, stable root the global
+    provisioner lock lives under (point 1, fifth correction round) -- e.g.
+    ``/run/lock/watchdogvpn/provisioning``. Unlike ``state_root``, this
+    directory's own identity must never be bound to (or swappable via) any
+    single installation's ``state_root`` tree: it is walked and, where
+    missing, created component by component from its own filesystem anchor.
+    A component that already exists (the OS's own ``/run``, ``/run/lock``,
+    ...) is verified to be a real, non-symlink directory but its
+    ownership/mode is left completely untouched -- only components THIS
+    function itself creates are ever chmod'd/asserted to be ours, exactly
+    like ``state_root``'s own external parent is verified but never
+    mutated."""
+    path = Path(path)
+    if not path.is_absolute():
+        raise PathPolicyError("global lock root must be an absolute path: %s" % path)
+    current = Path(path.anchor)
+    for part in path.relative_to(path.anchor).parts:
+        current = current / part
+        try:
+            fd = _open_directory_nofollow(current)
+        except FileNotFoundError:
+            try:
+                os.mkdir(current, PRIVATE_DIR_MODE)
+            except FileExistsError:
+                pass
+            else:
+                fsync_parent_directory(current)
+            fd = _open_directory_nofollow(current)
+            _verify_and_secure_directory_fd(current, fd)
+        else:
+            try:
+                st = os.fstat(fd)
+                if not stat_module.S_ISDIR(st.st_mode):
+                    raise PathPolicyError("global lock root component is not a directory: %s" % current)
+            finally:
+                os.close(fd)
+    return path
 
 
 def _ensure_private_subdir_relative(parent_fd: int, name: str) -> int:
@@ -298,10 +389,46 @@ def atomic_write_private_text_relative(dir_fd: int, name: str, text: str) -> Non
 
 
 def read_private_relative(dir_fd: int, name: str) -> str:
-    """Reads a UTF-8 text file named ``name`` strictly within ``dir_fd``.
+    """Reads a UTF-8 text file named ``name`` strictly within ``dir_fd``,
+    failing closed on anything but a private, owner-only, single-link
+    regular file (point 6, fifth correction round): opened with
+    ``O_NOFOLLOW`` and verified via ``fstat`` -- a symlink, a directory, a
+    hard link, a file owned by someone else, a mode other than ``0600``, or
+    a file larger than ``MAX_PRIVATE_FILE_SIZE`` is never read, and instead
+    raises ``CorruptStateError`` so the caller can treat it as blocking
+    recovery rather than silently following or truncating it.
     ``FileNotFoundError`` propagates verbatim so callers can distinguish
     genuine absence from any other inspection error."""
-    fd = os.open(name, os.O_RDONLY, dir_fd=dir_fd)
+    expected_uid = os.getuid()
+    try:
+        fd = os.open(name, _PRIVATE_FILE_READ_FLAGS, dir_fd=dir_fd)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise CorruptStateError("refusing to read %s: it is a symlink" % name) from exc
+        if exc.errno == errno.EISDIR:
+            raise CorruptStateError("refusing to read %s: it is a directory" % name) from exc
+        raise
+    try:
+        st = os.fstat(fd)
+        if not stat_module.S_ISREG(st.st_mode):
+            raise CorruptStateError("refusing to read %s: not a regular file" % name)
+        if st.st_uid != expected_uid:
+            raise CorruptStateError("refusing to read %s: owned by uid %d, expected %d" % (name, st.st_uid, expected_uid))
+        if stat_module.S_IMODE(st.st_mode) != PRIVATE_FILE_MODE:
+            raise CorruptStateError(
+                "refusing to read %s: mode is %o, expected %o" % (name, stat_module.S_IMODE(st.st_mode), PRIVATE_FILE_MODE)
+            )
+        if st.st_nlink != 1:
+            raise CorruptStateError("refusing to read %s: unexpected hard link count %d" % (name, st.st_nlink))
+        if st.st_size > MAX_PRIVATE_FILE_SIZE:
+            raise CorruptStateError(
+                "refusing to read %s: size %d exceeds the maximum private file size %d" % (name, st.st_size, MAX_PRIVATE_FILE_SIZE)
+            )
+    except Exception:
+        os.close(fd)
+        raise
     with os.fdopen(fd, "r", encoding="utf-8") as handle:
         return handle.read()
 
@@ -320,12 +447,35 @@ def delete_private_relative(dir_fd: int, name: str) -> None:
 def list_json_names_relative(dir_fd: int) -> list[str]:
     """Lists the ``*.json`` entry stems (filename without extension)
     directly within ``dir_fd``, sorted -- descriptor-relative equivalent of
-    globbing a transactions/ownership/history directory by path."""
+    globbing a transactions/ownership/history directory by path.
+
+    Every ``*.json`` entry is individually ``lstat``-inspected first (point
+    6, fifth correction round): a symlink, a directory named ``*.json``, or
+    a hard-linked file is never silently included in (or excluded from) the
+    listing -- each is itself corrupt state that must block recovery, so
+    ``CorruptStateError`` is raised instead."""
     try:
         entries = os.listdir(dir_fd)
     except FileNotFoundError:
         return []
-    return sorted(name[: -len(".json")] for name in entries if name.endswith(".json"))
+    names = []
+    for entry in entries:
+        if not entry.endswith(".json"):
+            continue
+        try:
+            st = os.lstat(entry, dir_fd=dir_fd)
+        except FileNotFoundError:
+            continue  # raced with a concurrent delete of this exact entry; genuinely gone, not corrupt
+        except OSError as exc:
+            raise CorruptStateError("cannot inspect state entry %s: %s" % (entry, exc)) from exc
+        if stat_module.S_ISLNK(st.st_mode):
+            raise CorruptStateError("state entry %s is an unexpected symlink" % entry)
+        if not stat_module.S_ISREG(st.st_mode):
+            raise CorruptStateError("state entry %s is not a regular file" % entry)
+        if st.st_nlink != 1:
+            raise CorruptStateError("state entry %s has unexpected hard link count %d" % (entry, st.st_nlink))
+        names.append(entry[: -len(".json")])
+    return sorted(names)
 
 
 def fsync_parent_directory(path: Path) -> None:

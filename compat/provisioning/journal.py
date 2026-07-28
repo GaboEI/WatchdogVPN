@@ -19,7 +19,7 @@ from pathlib import Path
 import re
 from typing import Mapping, Sequence
 
-from compat.provisioning.errors import IdentifierError, JournalError
+from compat.provisioning.errors import CorruptStateError, IdentifierError, JournalError
 from compat.provisioning.model import (
     OwnershipCandidate,
     OwnershipRecord,
@@ -47,7 +47,6 @@ SCHEMA_VERSION = 1
 TRANSACTIONS_DIR = "transactions"
 HISTORY_DIR = "history"
 OWNERSHIP_DIR = "ownership"
-LOCK_FILE_NAME = "provisioner.lock"
 
 _SENSITIVE_KEY_MARKERS = ("password", "secret", "token", "credential", "api_key", "apikey")
 _CREDENTIALED_URL_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@")
@@ -138,10 +137,6 @@ def ownership_dir(state_root: Path) -> Path:
     return Path(state_root) / OWNERSHIP_DIR
 
 
-def lock_path(state_root: Path) -> Path:
-    return Path(state_root) / LOCK_FILE_NAME
-
-
 def transaction_path(state_root: Path, transaction_id: str) -> Path:
     validate_identifier(transaction_id, field="transaction_id")
     return transactions_dir(state_root) / ("%s.json" % transaction_id)
@@ -164,11 +159,21 @@ def write_journal(state_root: StateRootLike, journal: TransactionJournal) -> Non
     prepare()/uninstall()/recover_pending() threads the SAME handle
     established once when the provisioner lock was acquired, so the write
     is bound to that exact directory via ``dir_fd``, never a fresh
-    path-based lookup that an external rename/replace could redirect)."""
+    path-based lookup that an external rename/replace could redirect).
+
+    When given a handle, ``state_root.verify_identity()`` is re-confirmed
+    immediately before this mutating write (point 1, fifth correction
+    round) -- covering every mutation, every terminal-state write, and
+    every ownership publication in one place, since they all funnel through
+    this module's write functions. A ``StateRootIdentityError`` here means
+    the canonical, configured path no longer refers to the exact directory
+    this transaction is bound to; the caller must never report a clean
+    outcome in that case."""
     validate_identifier(journal.transaction_id, field="transaction_id")
     payload = json.dumps(to_jsonable(journal), indent=2, sort_keys=True) + "\n"
     name = "%s.json" % journal.transaction_id
     if isinstance(state_root, StateRootHandle):
+        state_root.verify_identity()
         atomic_write_private_text_relative(state_root.subdir_fd(TRANSACTIONS_DIR), name, payload)
         if journal.is_terminal():
             atomic_write_private_text_relative(state_root.subdir_fd(HISTORY_DIR), name, payload)
@@ -186,7 +191,7 @@ def read_journal(state_root: StateRootLike, transaction_id: str) -> TransactionJ
     if isinstance(state_root, StateRootHandle):
         try:
             raw = read_private_relative(state_root.subdir_fd(TRANSACTIONS_DIR), name)
-        except OSError as exc:
+        except (OSError, CorruptStateError) as exc:
             raise JournalError("cannot read journal %s: %s" % (transaction_id, exc)) from exc
     else:
         path = transaction_path(state_root, transaction_id)
@@ -203,7 +208,10 @@ def read_journal(state_root: StateRootLike, transaction_id: str) -> TransactionJ
 
 def list_transaction_ids(state_root: StateRootLike) -> list[str]:
     if isinstance(state_root, StateRootHandle):
-        return list_json_names_relative(state_root.subdir_fd(TRANSACTIONS_DIR))
+        try:
+            return list_json_names_relative(state_root.subdir_fd(TRANSACTIONS_DIR))
+        except CorruptStateError as exc:
+            raise JournalError("cannot list transactions: %s" % exc) from exc
     directory = transactions_dir(state_root)
     try:
         os.lstat(directory)
@@ -235,6 +243,7 @@ def write_ownership_records(state_root: StateRootLike, capability_id: str, recor
     ) + "\n"
     name = "%s.json" % capability_id
     if isinstance(state_root, StateRootHandle):
+        state_root.verify_identity()
         atomic_write_private_text_relative(state_root.subdir_fd(OWNERSHIP_DIR), name, payload)
     else:
         ensure_private_subdir(state_root, OWNERSHIP_DIR)
@@ -249,7 +258,7 @@ def read_ownership_records(state_root: StateRootLike, capability_id: str) -> lis
             raw = read_private_relative(state_root.subdir_fd(OWNERSHIP_DIR), name)
         except FileNotFoundError:
             return []
-        except OSError as exc:
+        except (OSError, CorruptStateError) as exc:
             raise JournalError("cannot read ownership records %s: %s" % (capability_id, exc)) from exc
         descriptor = capability_id
     else:
@@ -274,6 +283,7 @@ def delete_ownership_records(state_root: StateRootLike, capability_id: str) -> N
     validate_identifier(capability_id, field="capability_id")
     name = "%s.json" % capability_id
     if isinstance(state_root, StateRootHandle):
+        state_root.verify_identity()
         delete_private_relative(state_root.subdir_fd(OWNERSHIP_DIR), name)
         return
     path = ownership_path(state_root, capability_id)
