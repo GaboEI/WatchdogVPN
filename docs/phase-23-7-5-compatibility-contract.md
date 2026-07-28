@@ -1722,6 +1722,216 @@ showing `pre-23.7.5.6a-round5-reboot-validation *`) afterward; none of the five
 snapshots (rounds 1 through 5) was deleted. Private evidence (`0700`/`0600`) at
 `/home/gabodev/Desktop/temporales/watchdogvpn-task-23-7-5-6a-round5-reboot-validation`.
 
+### Sixth security/correctness hardening round
+
+A sixth maintainer review of the fifth hardening round's published commits
+(`e5709b7d`/`3e5ba9d`) confirmed the chain was real, auditable and linear, and that
+several specific fifth-round fixes were genuinely present (exact `ExpectedOwnership`
+equality including `None`, structural validation of pending prepare/uninstall journals,
+state-root identity checks before internal writes, fail-closed private reads) -- but
+found four further HIGH gaps and one MEDIUM evidence-quality gap, closed in the same
+`compat/provisioning` package on top of the already-published fifth round, again without
+starting 23.7.5.6b:
+
+- **The hash/unlink TOCTOU was narrowed, not closed** (`paths.py`): the fifth round's
+  `UNLINK_REVERIFY_HOOK` test seam paused BEFORE the final `lstat()` re-verify, so its
+  mandatory test only proved detection of a substitution happening before that check --
+  the window AFTER the re-verify and BEFORE the actual `unlink()` syscall (which operates
+  on a NAME, not an inode) remained open and untested. `remove_file_if_owned_relative()`
+  is now genuinely atomic: after the held-descriptor hash verification, the basename is
+  renamed -- a single atomic `renameat` -- into a private, `uuid4`-derived quarantine name
+  in the same directory (whatever inode currently sits at the basename at that instant is
+  what moves, collapsing "read the name" and "claim the entry" into one kernel operation);
+  only the QUARANTINED entry's `(dev, ino)` is then compared against what was hashed, and
+  only a match is ever unlinked (by then under a name private to this call, so no further
+  substitution is possible). A mismatch means a concurrent actor won the race and the
+  quarantined entry is the WRONG (foreign) inode: it is restored to its original name
+  best-effort rather than ever deleted, and if the restore itself fails the quarantined
+  entry is left in place as recoverable evidence rather than silently disappearing. The
+  test seam moved to sit exactly in this new, genuinely closed window; the mandatory real
+  two-process test (process B substitutes the basename strictly between A's hash verify
+  and the atomic quarantine rename) confirms the foreign file survives completely
+  untouched, no inode other than the one hashed is ever removed, and the step fails as
+  `ownership_drift`/`recovery_required` -- never a false `UNINSTALLED`.
+- **`AllowedRootHandle` bound only the top-level root's identity, not intermediate path
+  components** (`paths.py`, `engine.py`): `_relative_to_handle()` re-opened every
+  intermediate directory fresh by name on every call and closed it immediately afterward,
+  with no caching or identity comparison -- so a resource nested under an intermediate
+  directory (e.g. `sandbox/resources/component.bin`) was exposed to the intermediate
+  itself (`sandbox/resources`) being renamed aside and replaced by a NEW, same-uid, real
+  directory between the handle being opened and the resource actually being used; the
+  fifth round's own "intermediate subdirectory replaced" test only covered a SYMLINK
+  substitution, trivially caught by the existing `O_NOFOLLOW` flags, never the
+  actually-dangerous real-directory case. `AllowedRootHandle` gained a per-handle
+  `intermediate_fd(relative_parts)` that recursively opens and CACHES each intermediate
+  component's `fd`/`dev`/`ino` on first use (reusing cached parents), returning the same
+  fd on every subsequent call; `verify_identity()` now re-`lstat`s every cached
+  intermediate's canonical path against its captured identity in addition to the root's
+  own check, and `close()` closes every cached intermediate fd. Since a handle is opened
+  once per `prepare()`/`uninstall()`/recovery call, caching-on-first-use alone would still
+  miss a swap that happens before the very first access; a new
+  `engine._eager_cache_intermediates_for_targets()` pre-opens and caches the full
+  intermediate chain for every target immediately after the plan/ownership set is known
+  and the lock is held -- before idempotency checks, removal, or any other operation
+  touches these paths -- mirroring exactly how `state_root`'s own subdirectories are
+  eagerly opened under the lock. Wired into `prepare()`, `uninstall()`, `_recover_one()`
+  and `_recover_uninstall()`. `confirm_absent_descriptor_safe()` now delegates its whole
+  identity check to `AllowedRootHandle.verify_identity()`, automatically extending its
+  protection to cached intermediates too. The mandatory test (a nested resource under
+  `sandbox/nested`, committed, then `nested` renamed aside and replaced by a new, empty,
+  same-uid real directory strictly between eager-caching and the resource's actual use
+  during uninstall) confirms: no `UNINSTALLED`, ownership intact, the real resource still
+  sitting untouched in the renamed-aside directory, the new replacement directory empty,
+  `RECOVERY_REQUIRED`; variants cover the same swap during a fresh apply/commit and a
+  direct `confirm_absent_descriptor_safe()` call against a primed handle.
+- **The global lock root's own directory was never enforced private or identity-bound**
+  (`storage.py`, `lock.py`): `ensure_private_lock_root()` left every PRE-EXISTING
+  component unenforced for mode/uid as long as it was already a directory -- including
+  the LEAF component, i.e. `global_lock_root` itself (e.g. a pre-existing
+  `/run/lock/watchdogvpn/provisioning` at mode `0770`, group-writable, was accepted
+  as-is). The leaf is now always run through the same `_verify_and_secure_directory_fd`
+  helper `state_root` itself uses: owned by us with a loose mode gets tightened to exactly
+  `0700`; owned by a different uid is rejected outright. Separately, `_open_global_root()`
+  never captured or re-verified `global_lock_root`'s own identity during the lock's
+  lifetime, so nothing defended against a same-privilege actor renaming/replacing
+  `global_lock_root` itself while a holder was active -- a fresh contender using the
+  substitute directory would acquire an "independent" primary lock while still racing on
+  the real, shared `state_root`. `_open_global_root()` now also returns the captured
+  `(dev, ino)` and re-checks the mode is exactly `0700`; immediately after the primary
+  flock succeeds (before writing holder metadata), `acquire_provisioner_lock()` re-`lstat`s
+  `global_lock_root` and compares identity, releasing the flock and raising
+  `PathPolicyError` on any divergence. Since a fresh contender through a genuinely swapped
+  directory cannot be stopped by `global_lock_root`-side checks alone (it is, from the
+  kernel's point of view, a different, real, independently-lockable inode), a SECOND,
+  non-blocking `flock` directly on the `state_root` directory descriptor itself was added
+  right after `open_state_root()` succeeds -- immune to any `global_lock_root` swap, since
+  `state_root` is a separate, unaffected directory, this closes the residual gap as long as
+  both processes agree on the real `state_root` path, which they must to interact with the
+  same installation at all. Mandatory/variant tests cover: a pre-existing leaf at `0770`
+  and `0777` tightened to `0700`; a leaf owned by a different (simulated) uid rejected; the
+  global root swapped between open and flock, detected; and a real two-process test where
+  a holder is active, `global_lock_root` is renamed/replaced while it holds the lock, and a
+  contender using the SAME `state_root` and the swapped `global_lock_root` is still refused
+  via the secondary `state_root` flock.
+- **An individual unreadable uninstall journal was silently skipped during the
+  completed-uninstall scan, rather than failing closed** (`engine.py`):
+  `_capability_has_completed_uninstall()` already failed closed when the WHOLE
+  transactions directory couldn't be enumerated, but for an individual unreadable/corrupt
+  journal hit while scanning transaction IDs one at a time, it just `continue`d past it as
+  irrelevant. Concretely: an uninstall reaches `REVOKING_OWNERSHIP` with all resources
+  genuinely removed but the ownership record still live (a crash simulated before
+  revocation); the uninstall journal itself later becomes unreadable (mode `0644`,
+  hardlinked, corrupt JSON, wrong uid, or oversized -- all already rejected by the fifth
+  round's fail-closed private reads); a file is recreated at the original path with
+  matching content. The scan cannot prove that unreadable journal is irrelevant without
+  reading it, so skipping it risked `validate_ownership_authority` granting authority over
+  the recreated file and removing it. The function's return type is now a 3-state
+  `_UninstallScanResult` (`NONE_FOUND` / `COMPLETED_FOUND` / `UNKNOWN`): ANY unreadable or
+  unvalidatable journal hit during the scan -- individually or via a whole-directory
+  enumeration failure -- now immediately yields `UNKNOWN`, and the sole caller
+  (`validate_ownership_authority`) denies authority for anything other than `NONE_FOUND`.
+  Five tests cover the mandatory chmod-`0644` scenario plus hardlinked, corrupt-JSON,
+  wrong-uid and oversized variants, in every case confirming the recreated resource
+  survives untouched and the result is never `UNINSTALLED`.
+- **Flake diagnosis and deterministic multiprocess synchronization** (test-only, no
+  production code): the fifth round's VM evidence noted "1 of 5 pre-reboot runs flaked on
+  a timing-sensitive multiprocess test" without naming the test or ruling out a genuine
+  synchronization defect. The module suite ran 50 consecutive times locally after this
+  round's fixes (0 failures) and again on the VM before and after the real reboot (see
+  below); the original single flake was never reproduced. The ready/go signaling in the
+  five most security-critical real-subprocess multiprocess tests --
+  `StateRootIdentityRaceTests` (all three holder scripts), `HashUnlinkToctouTests`
+  (the direct mandatory test for the first finding above) and
+  `GlobalLockRootHardeningTests`'s two-process scenario -- was migrated off a
+  `Path.exists()` sleep-poll loop onto a genuine blocking primitive: a POSIX FIFO whose
+  read end is opened non-blocking by the waiter before the signaling side can possibly
+  exist (removing the race the poll loop could not close either), with `select()`'s
+  timeout used strictly as a watchdog, never as the synchronization mechanism itself.
+  Shared `_fifo_create`/`_fifo_open_reader`/`_fifo_wait`/`_fifo_signal` helpers live at
+  module level in the test file and are imported directly by the generated subprocess
+  scripts. Older, already-passing multiprocess tests outside this critical set were left
+  on the pre-existing polling pattern (with generous timeouts) rather than fully migrated,
+  given no evidence tied the original flake to a specific test and the underlying
+  protections being validated (lock exclusion, identity checks) are themselves
+  deterministic and do not depend on the test's own polling timing.
+
+13 new L1 tests were added for this round (242 total in the module), 448 across the full
+focused compatibility suite (1 skip), full local suite 2227 OK (1 skip). The module suite
+was additionally run 50 consecutive times locally (0 failures) as part of the flake
+diagnosis above.
+
+### Sixth hardening round: real VM re-validation
+
+Executed for real on `wdvpn-linuxmint-23-6-7` against commit `e5709b7d` plus this round's
+uncommitted working tree (verified identical via `sha256sum` between the local checkout and
+the VM's copy before every run). The pre-existing clean snapshot
+(`pre-23.7.5.6a-round5-reboot-validation`) was restored first (VM powered off, snapshot
+restored, VM started); the module L1 suite ran green on the VM's own Python 3.12.3
+(242/242), then 50 consecutive repetitions of the module suite ran clean (0 failures) --
+this is where the flake diagnosis above actually reproduced: run 7 of this first VM batch
+hit a genuine `subprocess.TimeoutExpired` on `proc.wait(5)` in
+`test_06_lock_contention_between_two_processes` (full traceback captured), root-caused to
+an insufficiently generous teardown-wait bound under this VM's own CPU contention (2
+vCPUs, load average 1.17 at the time) -- not a synchronization defect, since the
+security-relevant assertions (`ProvisionerLockHeldError`, `holder_pid`) had already passed
+before that line ever ran. Both occurrences of this bound (here and in
+`RecoveryLockTests`) were widened from 5s to 15s, matching the convention already used
+everywhere else in the file; the equivalent bound in this harness's own "lock exclusion"
+scenario was widened the same way. The fix was re-synced (hashes re-verified identical)
+and the 50-repetition batch re-run clean (0 failures) before proceeding. The `run-all`
+scenario matrix (including this round's four new attack scenarios) then ran clean in a
+single pass, with results identical to the local pre-VM validation:
+`toctou_race_after_last_inode_check` (`uninstall_failed`, foreign file survives),
+`intermediate_component_swapped_for_real_directory` (`recovery_required`, ownership
+intact, resource survives in the renamed-aside directory, replacement directory empty),
+`global_lock_root_swapped_while_holder_active` (contender refused via the secondary
+`state_root` flock), `unreadable_uninstall_journal_never_reactivates_ownership`
+(`ownership_invalid`, recreated resource survives untouched).
+
+A NEW dedicated snapshot for this round (`pre-23.7.5.6a-round6-reboot-validation`) was then
+taken, and all six of the maintainer's required reboot scenarios were prepared
+independently (each in its own dedicated `--sandbox`/`--state-root`/`--global-lock-root`
+triple) before a single shared real reboot -- identical checkpoints and identical expected
+outcomes to every prior round (`after_apply_before_verify` resumed/committed;
+`undoing_before_unlink` and `undoing_after_unlink_before_undone` resumed
+rollback/`preparation_failed`/sandbox empty; `after_unlink_before_applied`,
+`after_verify_before_revoke` and `after_revoke_before_uninstalled` resumed/`uninstalled`/
+ownership record deleted/sandbox empty). The real reboot again used a hypervisor-level hard
+reset (`VBoxManage controlvm ... reset`); `boot_id` (`85471f15-...` before, `a0e2c526-...`
+after) confirmed a genuine kernel restart, not a process restart. As in every prior round,
+this VM's home directory is eCryptfs-encrypted and does not unlock for key-based SSH until
+a real password login occurs after boot; the maintainer logged into the VM's graphical
+console directly to unlock it -- no password was scripted, stored, or left in any evidence
+file. After the real reboot and console unlock, all six scenarios recovered exactly as
+expected (`ok: true` in every case), and the module L1 suite ran green again on the VM's
+freshly-booted kernel (242/242), followed by 50 further consecutive clean repetitions
+post-reboot, directly exercising the atomic quarantine-rename removal, the eager
+intermediate-component identity binding, the hardened global lock root and secondary
+state-root flock, and the fail-closed 3-state uninstall-completion scan as REAL
+subprocess/real-filesystem executions against a genuinely freshly-booted kernel.
+
+Real filesystem permissions across all six scenario state roots and their six INDEPENDENT
+`global_lock_root` directories were confirmed `0700` for `transactions`/`ownership`/the
+state root itself/the global lock root, `0600` for every journal/ownership/lock file --
+exactly one `*.lock` file per scenario's global lock root and one consistent journal tree
+per scenario, no divergent second tree anywhere. A residual scan across all six scenario
+directories found only the exact expected contents for each outcome (populated sandbox for
+the one committed apply scenario, empty sandboxes for every rollback/uninstall scenario) --
+no stray files, no leaked ownership records. Both uninstall-operation journals in each
+uninstall scenario's `transactions/` directory (the source "prepare" transaction and the
+uninstall transaction itself) were present and internally consistent. The VM was powered
+off and the round's snapshot restored and confirmed as current (`VBoxManage snapshot list`
+showing `pre-23.7.5.6a-round6-reboot-validation *`) afterward; none of the six snapshots
+(rounds 1 through 6) was deleted. Private evidence (`0700`/`0600`) at
+`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-7-5-6a-round6-reboot-validation`.
+Package list, repository sources and running-service set were captured after the reboot for
+completeness, but -- unlike prior rounds -- a separate BEFORE-reboot snapshot of these
+specific baselines was not captured this round (an evidence-collection gap on my part, not
+a masked finding); this round's code changes are 100% confined to
+`compat/provisioning/{engine,lock,paths,storage}.py` and never touch package management,
+repositories, or services, so there is no mechanism by which they could have altered any of
+those, but the omission should not repeat in a future round.
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,
