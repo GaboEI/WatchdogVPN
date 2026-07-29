@@ -21,10 +21,14 @@ from typing import Mapping, Sequence
 
 from compat.provisioning.errors import CorruptStateError, IdentifierError, JournalError
 from compat.provisioning.model import (
+    CustodyRecord,
+    CustodyState,
     IntermediateIdentity,
     OwnershipCandidate,
     OwnershipRecord,
     PathAuthority,
+    PathAuthorityV2,
+    PathAuthorityV2Component,
     PathComponentIdentity,
     StepState,
     TRANSACTION_TRANSITIONS,
@@ -63,12 +67,31 @@ _OWNERSHIP_CANDIDATE_FIELDS = frozenset(
         "version", "integrity", "uid", "gid", "mode", "nlink", "post_install_fingerprint",
         "intermediate_identities",
         "path_authority",
+        "path_authority_v2",
     }
 )
 
 _INTERMEDIATE_IDENTITY_FIELDS = frozenset({"relative_name", "dev", "ino", "uid", "mode"})
 _PATH_AUTHORITY_FIELDS = frozenset({"root_path", "target_relative_path", "component_count", "components"})
 _PATH_COMPONENT_IDENTITY_FIELDS = frozenset({"index", "relative_name", "dev", "ino", "uid", "mode"})
+_PATH_AUTHORITY_V2_FIELDS = frozenset(
+    {
+        "schema", "transaction_id", "plan_digest", "resource_id", "configured_root", "root_path",
+        "target_relative_path", "component_count", "components", "chain_digest", "authority_digest",
+    }
+)
+_PATH_AUTHORITY_V2_COMPONENT_FIELDS = frozenset(
+    {"index", "name", "role", "dev", "ino", "uid", "gid", "mode", "nlink", "integrity"}
+)
+_CUSTODY_RECORD_FIELDS = frozenset(
+    {
+        "resource_id", "state", "original_path", "original_parent", "original_name",
+        "original_dev", "original_ino", "original_uid", "original_gid", "original_mode", "original_nlink",
+        "authorized_hash", "custody_dir", "custody_dir_dev", "custody_dir_ino", "custody_dir_uid",
+        "custody_dir_gid", "custody_dir_mode", "custody_name", "moved_dev", "moved_ino", "moved_uid",
+        "moved_gid", "moved_mode", "moved_nlink", "moved_hash",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -112,6 +135,7 @@ class TransactionJournal:
     selected_asset: Mapping[str, object] | None = None
     ownership_candidates: tuple[Mapping[str, object], ...] = ()
     owned_snapshot: tuple[OwnershipRecord, ...] = ()
+    custody_records: tuple[CustodyRecord, ...] = ()
     provenance: Mapping[str, object] | None = None
     failure: Mapping[str, object] | None = None
     recovery: Mapping[str, object] | None = None
@@ -327,6 +351,11 @@ def _ownership_to_jsonable(record: OwnershipRecord) -> dict:
             "post_install_fingerprint": candidate.post_install_fingerprint,
             "intermediate_identities": [_intermediate_identity_to_jsonable(item) for item in candidate.intermediate_identities],
             "path_authority": _path_authority_to_jsonable(candidate.path_authority) if candidate.path_authority is not None else None,
+            "path_authority_v2": (
+                _path_authority_v2_to_jsonable(candidate.path_authority_v2)
+                if candidate.path_authority_v2 is not None
+                else None
+            ),
         },
     }
 
@@ -362,6 +391,7 @@ def _ownership_from_jsonable(data: object) -> OwnershipRecord:
                 for item in _require_list(candidate_data, "intermediate_identities", default=[])
             ),
             path_authority=_path_authority_from_jsonable(candidate_data.get("path_authority")),
+            path_authority_v2=_path_authority_v2_from_jsonable(candidate_data.get("path_authority_v2")),
         )
         return OwnershipRecord(
             capability_id=_require_identifier(data, "capability_id"),
@@ -477,6 +507,172 @@ def _path_component_identity_from_jsonable(data: object) -> PathComponentIdentit
     )
 
 
+def _path_authority_v2_to_jsonable(authority: PathAuthorityV2 | None) -> dict | None:
+    if authority is None:
+        return None
+    return {
+        "schema": authority.schema,
+        "transaction_id": authority.transaction_id,
+        "plan_digest": authority.plan_digest,
+        "resource_id": authority.resource_id,
+        "configured_root": authority.configured_root,
+        "root_path": authority.root_path,
+        "target_relative_path": authority.target_relative_path,
+        "component_count": authority.component_count,
+        "components": [
+            {
+                "index": component.index,
+                "name": component.name,
+                "role": component.role,
+                "dev": component.dev,
+                "ino": component.ino,
+                "uid": component.uid,
+                "gid": component.gid,
+                "mode": component.mode,
+                "nlink": component.nlink,
+                "integrity": component.integrity,
+            }
+            for component in authority.components
+        ],
+        "chain_digest": authority.chain_digest,
+        "authority_digest": authority.authority_digest,
+    }
+
+
+def _path_authority_v2_from_jsonable(data: object) -> PathAuthorityV2 | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise JournalError("path authority v2 must be a JSON object or null")
+    unknown = set(data) - _PATH_AUTHORITY_V2_FIELDS
+    if unknown:
+        raise JournalError("path authority v2 has unknown field(s): %s" % sorted(unknown))
+    components = tuple(_path_authority_v2_component_from_jsonable(item) for item in _require_list(data, "components"))
+    component_count = _require_non_negative_int(data, "component_count")
+    if component_count != len(components):
+        raise JournalError("path authority v2 component_count does not match components length")
+    indexes = [component.index for component in components]
+    if indexes != list(range(len(components))):
+        raise JournalError("path authority v2 components must have exact contiguous indexes")
+    if components and components[0].role != "root":
+        raise JournalError("path authority v2 first component must be root")
+    if components and components[-1].role != "leaf":
+        raise JournalError("path authority v2 last component must be leaf")
+    if sum(1 for component in components if component.role == "leaf") != 1:
+        raise JournalError("path authority v2 must contain exactly one leaf")
+    return PathAuthorityV2(
+        schema=_require_str(data, "schema"),
+        transaction_id=_require_identifier(data, "transaction_id"),
+        plan_digest=_require_hex_digest(data, "plan_digest"),
+        resource_id=_require_str(data, "resource_id"),
+        configured_root=_require_absolute_path(data, "configured_root"),
+        root_path=_require_absolute_path(data, "root_path"),
+        target_relative_path=_require_str(data, "target_relative_path"),
+        component_count=component_count,
+        components=components,
+        chain_digest=_require_hex_digest(data, "chain_digest"),
+        authority_digest=_require_hex_digest(data, "authority_digest"),
+    )
+
+
+def _path_authority_v2_component_from_jsonable(data: object) -> PathAuthorityV2Component:
+    if not isinstance(data, dict):
+        raise JournalError("path authority v2 component must be a JSON object")
+    unknown = set(data) - _PATH_AUTHORITY_V2_COMPONENT_FIELDS
+    if unknown:
+        raise JournalError("path authority v2 component has unknown field(s): %s" % sorted(unknown))
+    name = _require_str_allow_empty(data, "name")
+    if name:
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise JournalError("path authority v2 component name must be relative without '..': %s" % name)
+    role = _require_str(data, "role")
+    if role not in {"root", "intermediate", "leaf"}:
+        raise JournalError("path authority v2 component role is invalid: %s" % role)
+    integrity = data.get("integrity")
+    if integrity is not None:
+        integrity = _require_hex_digest(data, "integrity")
+    return PathAuthorityV2Component(
+        index=_require_non_negative_int(data, "index"),
+        name=name,
+        role=role,
+        dev=_require_non_negative_int(data, "dev"),
+        ino=_require_non_negative_int(data, "ino"),
+        uid=_require_non_negative_int(data, "uid"),
+        gid=_require_non_negative_int(data, "gid"),
+        mode=_require_mode(data, "mode"),
+        nlink=_require_non_negative_int(data, "nlink"),
+        integrity=integrity,
+    )
+
+
+def _custody_record_to_jsonable(record: CustodyRecord) -> dict:
+    return {
+        "resource_id": record.resource_id,
+        "state": record.state.value,
+        "original_path": record.original_path,
+        "original_parent": record.original_parent,
+        "original_name": record.original_name,
+        "original_dev": record.original_dev,
+        "original_ino": record.original_ino,
+        "original_uid": record.original_uid,
+        "original_gid": record.original_gid,
+        "original_mode": record.original_mode,
+        "original_nlink": record.original_nlink,
+        "authorized_hash": record.authorized_hash,
+        "custody_dir": record.custody_dir,
+        "custody_dir_dev": record.custody_dir_dev,
+        "custody_dir_ino": record.custody_dir_ino,
+        "custody_dir_uid": record.custody_dir_uid,
+        "custody_dir_gid": record.custody_dir_gid,
+        "custody_dir_mode": record.custody_dir_mode,
+        "custody_name": record.custody_name,
+        "moved_dev": record.moved_dev,
+        "moved_ino": record.moved_ino,
+        "moved_uid": record.moved_uid,
+        "moved_gid": record.moved_gid,
+        "moved_mode": record.moved_mode,
+        "moved_nlink": record.moved_nlink,
+        "moved_hash": record.moved_hash,
+    }
+
+
+def _custody_record_from_jsonable(data: object) -> CustodyRecord:
+    if not isinstance(data, dict):
+        raise JournalError("custody record must be a JSON object")
+    unknown = set(data) - _CUSTODY_RECORD_FIELDS
+    if unknown:
+        raise JournalError("custody record has unknown field(s): %s" % sorted(unknown))
+    return CustodyRecord(
+        resource_id=_require_str(data, "resource_id"),
+        state=_require_enum(data, "state", CustodyState),
+        original_path=_require_absolute_path(data, "original_path"),
+        original_parent=_require_absolute_path(data, "original_parent"),
+        original_name=_require_str(data, "original_name"),
+        original_dev=_require_non_negative_int(data, "original_dev"),
+        original_ino=_require_non_negative_int(data, "original_ino"),
+        original_uid=_require_non_negative_int(data, "original_uid"),
+        original_gid=_require_non_negative_int(data, "original_gid"),
+        original_mode=_require_mode(data, "original_mode"),
+        original_nlink=_require_non_negative_int(data, "original_nlink"),
+        authorized_hash=_require_optional_hex_digest(data, "authorized_hash"),
+        custody_dir=_require_str(data, "custody_dir"),
+        custody_dir_dev=_require_non_negative_int(data, "custody_dir_dev"),
+        custody_dir_ino=_require_non_negative_int(data, "custody_dir_ino"),
+        custody_dir_uid=_require_non_negative_int(data, "custody_dir_uid"),
+        custody_dir_gid=_require_non_negative_int(data, "custody_dir_gid"),
+        custody_dir_mode=_require_mode(data, "custody_dir_mode"),
+        custody_name=_require_str(data, "custody_name"),
+        moved_dev=_require_optional_non_negative_int(data, "moved_dev"),
+        moved_ino=_require_optional_non_negative_int(data, "moved_ino"),
+        moved_uid=_require_optional_non_negative_int(data, "moved_uid"),
+        moved_gid=_require_optional_non_negative_int(data, "moved_gid"),
+        moved_mode=_require_optional_mode(data, "moved_mode"),
+        moved_nlink=_require_optional_non_negative_int(data, "moved_nlink"),
+        moved_hash=_require_optional_hex_digest(data, "moved_hash"),
+    )
+
+
 def redact_for_journal(value: object) -> object:
     if isinstance(value, MappingABC):
         return {
@@ -515,6 +711,7 @@ def to_jsonable(journal: TransactionJournal) -> dict:
         "selected_asset": redact_for_journal(journal.selected_asset) if journal.selected_asset is not None else None,
         "ownership_candidates": [redact_for_journal(item) for item in journal.ownership_candidates],
         "owned_snapshot": [redact_for_journal(_ownership_to_jsonable(record)) for record in journal.owned_snapshot],
+        "custody_records": [redact_for_journal(_custody_record_to_jsonable(record)) for record in journal.custody_records],
         "provenance": redact_for_journal(journal.provenance) if journal.provenance is not None else None,
         "failure": redact_for_journal(journal.failure) if journal.failure is not None else None,
         "recovery": redact_for_journal(journal.recovery) if journal.recovery is not None else None,
@@ -565,6 +762,7 @@ def from_jsonable(data: object) -> TransactionJournal:
             selected_asset=_require_optional_mapping(data, "selected_asset"),
             ownership_candidates=tuple(_require_list(data, "ownership_candidates", default=[])),
             owned_snapshot=tuple(_ownership_from_jsonable(item) for item in _require_list(data, "owned_snapshot", default=[])),
+            custody_records=tuple(_custody_record_from_jsonable(item) for item in _require_list(data, "custody_records", default=[])),
             provenance=data.get("provenance"),
             failure=data.get("failure"),
             recovery=data.get("recovery"),
@@ -600,6 +798,13 @@ def _require_str(data: Mapping, field: str) -> str:
     value = data.get(field)
     if not isinstance(value, str) or not value:
         raise JournalError("journal field %r must be a non-empty string" % field)
+    return value
+
+
+def _require_str_allow_empty(data: Mapping, field: str) -> str:
+    value = data.get(field)
+    if not isinstance(value, str):
+        raise JournalError("journal field %r must be a string" % field)
     return value
 
 

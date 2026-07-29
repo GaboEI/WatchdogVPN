@@ -213,7 +213,7 @@ def acquire_provisioner_lock(
     is for operator diagnostics only -- the kernel flock, not this
     metadata, is what actually excludes a second mutating provisioner.
     """
-    domain_socket = _acquire_domain_socket_lock(Path(state_root), timeout=timeout, poll_interval=poll_interval)
+    domain_socket: socket.socket | None = None
     try:
         global_root_fd, global_root_dev, global_root_ino = _open_global_root(Path(global_lock_root))
         try:
@@ -252,6 +252,13 @@ def acquire_provisioner_lock(
                     )
 
                 _write_holder_metadata(handle, transaction_id=transaction_id, state_root=state_root)
+                # Defense-in-depth only. The persistent flock above is the
+                # primary machine-wide lock domain; this abstract socket is
+                # acquired after it and is not treated as authority because
+                # abstract sockets are scoped to a network namespace.
+                domain_socket = _acquire_domain_socket_lock(
+                    Path(state_root), timeout=timeout, poll_interval=poll_interval
+                )
                 try:
                     state_root_handle = open_state_root(Path(state_root))
                     try:
@@ -277,7 +284,8 @@ def acquire_provisioner_lock(
         finally:
             os.close(global_root_fd)
     finally:
-        domain_socket.close()
+        if domain_socket is not None:
+            domain_socket.close()
 
 
 def _write_holder_metadata(handle, *, transaction_id: str, state_root: Path) -> None:

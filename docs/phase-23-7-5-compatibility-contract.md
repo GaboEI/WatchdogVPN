@@ -2119,14 +2119,11 @@ rather than adding another name-based recheck around the old protocol.
   components, or with a substituted root/intermediate. Direct children of the root are
   explicit: their authority contains the root component and the full target-relative leaf
   name, not an implicit empty chain.
-- **The exclusion domain has a filesystem-independent primary lock** (`lock.py`): before
-  opening `global_lock_root` or `state_root`, the provisioner binds a Linux abstract Unix
-  socket name derived from the configured logical `state_root` string. The existing
-  `global_lock_root` lock file and secondary `state_root` flock remain as
-  defense-in-depth and operator evidence, but coordinated replacement of both visible
-  roots and their parents can no longer give a contender a second accepted domain for the
-  same logical installation. If the abstract domain is already bound, the contender fails
-  with `ProvisionerLockHeldError`.
+- **The exclusion domain uses a persistent primary lock** (`lock.py`): the durable flock
+  under the dedicated `global_lock_root` is the primary machine-wide domain. The abstract
+  Unix socket, when available, is defense-in-depth only because abstract sockets are scoped
+  to a network namespace and cannot be the only authority for a machine-wide provisioner
+  lock.
 - **Terminal authority now requires full path authority** (`engine.py`): clean
   `COMMITTED`, rollback-clean, recovery-clean and `UNINSTALLED` paths verify allowed-root
   identity plus every product-owned record's durable `PathAuthority`. Legacy records that
@@ -2201,3 +2198,54 @@ does not start preparation. `cli/main.py` was not modified in this task; the min
 `watchdog runtime plan/prepare/recover/uninstall/status` CLI surface described in the
 task authorization remains available for a future task to add without needing further
 engine changes.
+
+### Structural correction after remote audit of 3f25f846
+
+Remote audit of `3f25f8469e87cd661a8df796782f7ddcef3eab1c` did not close
+Task 23.7.5.6a. This correction remains inside the provisioning subsystem and does not
+start 23.7.5.6b.
+
+- **Durable custody records** (`model.py`, `journal.py`, `paths.py`, `engine.py`):
+  destructive removal now persists `CustodyRecord` entries for `MOVE_PENDING`, `MOVED`,
+  and `DELETED`. `MOVE_PENDING` records the resource id, original identity, authorized
+  hash, custody directory identity, and custody name before the rename. `MOVED` is written
+  only after the no-replace rename and parent/custody directory fsyncs, with post-move
+  identity and hash. `DELETED` is written only after the custody unlink and custody fsync.
+  Pending custody records block clean uninstall/revocation instead of being interpreted as
+  absence of the original basename.
+- **Explicit custody isolation policy** (`paths.py`): custody remains descriptor-bound,
+  same-filesystem, exact `0700`, and group/world non-writable. Callers that must defend
+  against another process with the same uid can require uid separation; when the custody
+  directory is owned by that configured adversary uid and no trusted custody uid applies,
+  deletion fails closed before the rename/unlink. The code no longer treats a same-uid
+  `0700` directory as proof of same-uid isolation.
+- **PathAuthorityV2** (`model.py`, `journal.py`, `digest.py`, `paths.py`, `engine.py`):
+  ownership now carries schema, transaction id, plan digest, resource id, configured root,
+  root path, exact target-relative path, exact component count, ordered components, a
+  canonical chain digest, and an authority digest. Components include root, every
+  intermediate, and an explicit leaf. The leaf records `st_dev`, `st_ino`, uid, gid, mode,
+  `st_nlink`, and integrity; direct children therefore persist exactly two components
+  (`root`, `leaf`). Validation rejects a leaf replacement even if content, uid, gid, mode,
+  and link count match.
+- **Terminal prepare and uninstall protocol** (`model.py`, `engine.py`): prepare publishes
+  ownership/provenance, fsyncs, revalidates the published authority, writes
+  `PREPARE_TERMINAL_PREPARED`, fsyncs, revalidates again, and only then writes
+  `COMMITTED`. Uninstall keeps ownership live through durable `UNINSTALLED`: after all
+  resources are absent, it writes `REVOKING_OWNERSHIP`, validates the revocation boundary,
+  writes `UNINSTALL_TERMINAL_PREPARED`, revalidates root/intermediate authority, writes
+  `UNINSTALLED`, and only then attempts idempotent ownership cleanup.
+- **Persistent lock domain is primary** (`lock.py`): the filesystem-backed flock under the
+  dedicated global lock root is acquired before the optional abstract socket and is the
+  only primary authority. The socket remains diagnostic/defense-in-depth, not a condition
+  required for a machine-wide exclusion proof.
+
+Local evidence for this correction: `python -m compileall compat/provisioning
+tests/test_compat_transactional_provisioning.py` completed with rc=0, and
+`python -m unittest tests.test_compat_transactional_provisioning` ran 263 tests in
+12.493s with rc=0. The added tests cover durable custody state publication, crash
+boundaries after `MOVE_PENDING` and after rename-before-`MOVED`, same-uid custody
+fail-closed policy, direct-child `PathAuthorityV2` structure, and leaf replacement with
+matching content and metadata but a different inode. `tests/syntax.sh`,
+`python tools/compat_read.py validate`, and `git diff --check` completed with rc=0.
+The full repository unittest discovery then ran 2248 tests in 342.284s with rc=0 and
+1 skip.

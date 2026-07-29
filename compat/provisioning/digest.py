@@ -98,6 +98,37 @@ def canonical_ownership_record_mapping(record: OwnershipRecord) -> dict:
                 if candidate.path_authority is not None
                 else None
             ),
+            "path_authority_v2": (
+                {
+                    "schema": candidate.path_authority_v2.schema,
+                    "transaction_id": candidate.path_authority_v2.transaction_id,
+                    "plan_digest": candidate.path_authority_v2.plan_digest,
+                    "resource_id": candidate.path_authority_v2.resource_id,
+                    "configured_root": candidate.path_authority_v2.configured_root,
+                    "root_path": candidate.path_authority_v2.root_path,
+                    "target_relative_path": candidate.path_authority_v2.target_relative_path,
+                    "component_count": candidate.path_authority_v2.component_count,
+                    "components": [
+                        {
+                            "index": component.index,
+                            "name": component.name,
+                            "role": component.role,
+                            "dev": component.dev,
+                            "ino": component.ino,
+                            "uid": component.uid,
+                            "gid": component.gid,
+                            "mode": component.mode,
+                            "nlink": component.nlink,
+                            "integrity": component.integrity,
+                        }
+                        for component in candidate.path_authority_v2.components
+                    ],
+                    "chain_digest": candidate.path_authority_v2.chain_digest,
+                    "authority_digest": candidate.path_authority_v2.authority_digest,
+                }
+                if candidate.path_authority_v2 is not None
+                else None
+            ),
         },
     }
 

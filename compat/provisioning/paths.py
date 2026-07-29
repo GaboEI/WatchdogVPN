@@ -23,10 +23,18 @@ import stat as stat_module
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from compat.provisioning.errors import DurabilityError, IdentifierError, PathPolicyError
-from compat.provisioning.model import IntermediateIdentity, PathAuthority, PathComponentIdentity
+from compat.provisioning.model import (
+    CustodyRecord,
+    CustodyState,
+    IntermediateIdentity,
+    PathAuthority,
+    PathAuthorityV2,
+    PathAuthorityV2Component,
+    PathComponentIdentity,
+)
 from compat.provisioning.storage import fsync_parent_directory
 
 CANARY_FORBIDDEN_ROOTS: tuple[Path, ...] = (
@@ -410,6 +418,9 @@ def _default_quarantine_name(basename: str) -> str:
 UNLINK_REVERIFY_HOOK: Callable[[], None] = _default_unlink_pause
 QUARANTINE_POST_VERIFY_HOOK: Callable[[], None] = _default_unlink_pause
 QUARANTINE_BEFORE_RESTORE_HOOK: Callable[[], None] = _default_unlink_pause
+QUARANTINE_AFTER_MOVE_PENDING_BEFORE_RENAME_HOOK: Callable[[], None] = _default_unlink_pause
+QUARANTINE_AFTER_MOVE_BEFORE_MOVED_HOOK: Callable[[], None] = _default_unlink_pause
+QUARANTINE_AFTER_UNLINK_BEFORE_DELETED_HOOK: Callable[[], None] = _default_unlink_pause
 QUARANTINE_NAME_FACTORY: Callable[[str], str] = _default_quarantine_name
 CUSTODY_DIR_NAME = ".wdvpn-custody"
 
@@ -456,7 +467,23 @@ def _hash_fd_from_start(fd: int) -> str:
     return digest.hexdigest()
 
 
-def _verify_private_directory_fd(dir_fd: int, *, label: str) -> None:
+@dataclass(frozen=True)
+class CustodyIsolationPolicy:
+    """Explicit custody threat-model policy.
+
+    The default lab policy verifies type/owner/mode and records the fact
+    that it does not claim same-uid isolation. Callers that must defend
+    against another process with the same uid set
+    ``require_uid_separation=True``; if the custody directory is writable
+    by that uid, deletion fails closed.
+    """
+
+    require_uid_separation: bool = False
+    adversary_uid: int | None = None
+    trusted_custody_uids: tuple[int, ...] = (0,)
+
+
+def _verify_private_directory_fd(dir_fd: int, *, label: str, policy: CustodyIsolationPolicy | None = None) -> None:
     st = os.fstat(dir_fd)
     if not stat_module.S_ISDIR(st.st_mode):
         raise PathPolicyError("%s is not a directory" % label)
@@ -465,9 +492,23 @@ def _verify_private_directory_fd(dir_fd: int, *, label: str) -> None:
     mode = stat_module.S_IMODE(st.st_mode)
     if mode & 0o022:
         raise PathPolicyError("%s must not be writable by group/world actors, found mode %o" % (label, mode))
+    policy = policy or CustodyIsolationPolicy()
+    if policy.require_uid_separation:
+        adversary_uid = os.getuid() if policy.adversary_uid is None else policy.adversary_uid
+        if st.st_uid == adversary_uid and st.st_uid not in policy.trusted_custody_uids:
+            raise PathPolicyError(
+                "%s is owned by the configured adversary uid %d; no effective same-uid custody separation exists"
+                % (label, adversary_uid)
+            )
 
 
-def _open_private_custody_dir(handle: AllowedRootHandle, resource_dev: int, *, label: str) -> int:
+def _open_private_custody_dir(
+    handle: AllowedRootHandle,
+    resource_dev: int,
+    *,
+    label: str,
+    isolation_policy: CustodyIsolationPolicy | None = None,
+) -> int:
     """Open the per-allowed-root custody directory used for destructive
     removal. The final unlink is allowed only inside this descriptor-bound
     private directory; if it cannot be created or proven private, deletion
@@ -490,7 +531,7 @@ def _open_private_custody_dir(handle: AllowedRootHandle, resource_dev: int, *, l
             raise PathPolicyError("custody directory is a symlink for %s" % label) from exc
         raise PathPolicyError("cannot open custody directory for %s: %s" % (label, exc)) from exc
     try:
-        _verify_private_directory_fd(fd, label="custody directory for %s" % label)
+        _verify_private_directory_fd(fd, label="custody directory for %s" % label, policy=isolation_policy)
         st = os.fstat(fd)
         if st.st_dev != resource_dev:
             raise PathPolicyError("custody directory for %s is on a different filesystem" % label)
@@ -501,7 +542,13 @@ def _open_private_custody_dir(handle: AllowedRootHandle, resource_dev: int, *, l
 
 
 def remove_file_if_owned_relative(
-    handle: AllowedRootHandle, validated_path: Path, *, expected_sha256: str | None = None
+    handle: AllowedRootHandle,
+    validated_path: Path,
+    *,
+    expected_sha256: str | None = None,
+    custody_recorder: Callable[[CustodyRecord], None] | None = None,
+    resource_id: str | None = None,
+    isolation_policy: CustodyIsolationPolicy | None = None,
 ) -> bool:
     """Descriptor-relative equivalent of ``remove_file_if_owned`` that also
     eliminates the TOCTOU window between verifying a resource's identity
@@ -547,8 +594,37 @@ def remove_file_if_owned_relative(
             # no-replace quarantine move.
             UNLINK_REVERIFY_HOOK()
 
-            custody_fd = _open_private_custody_dir(handle, st.st_dev, label=str(validated_path))
+            custody_fd = _open_private_custody_dir(
+                handle, st.st_dev, label=str(validated_path), isolation_policy=isolation_policy
+            )
             quarantine_name = QUARANTINE_NAME_FACTORY(basename)
+            custody_st = os.fstat(custody_fd)
+            custody_record_id = resource_id or str(validated_path)
+            if custody_recorder is not None:
+                custody_recorder(
+                    CustodyRecord(
+                        resource_id=custody_record_id,
+                        state=CustodyState.MOVE_PENDING,
+                        original_path=str(validated_path),
+                        original_parent=str(validated_path.parent),
+                        original_name=basename,
+                        original_dev=st.st_dev,
+                        original_ino=st.st_ino,
+                        original_uid=st.st_uid,
+                        original_gid=st.st_gid,
+                        original_mode=stat_module.S_IMODE(st.st_mode),
+                        original_nlink=st.st_nlink,
+                        authorized_hash=expected_sha256,
+                        custody_dir="%s/%s" % (handle.path, CUSTODY_DIR_NAME),
+                        custody_dir_dev=custody_st.st_dev,
+                        custody_dir_ino=custody_st.st_ino,
+                        custody_dir_uid=custody_st.st_uid,
+                        custody_dir_gid=custody_st.st_gid,
+                        custody_dir_mode=stat_module.S_IMODE(custody_st.st_mode),
+                        custody_name=quarantine_name,
+                    )
+                )
+            QUARANTINE_AFTER_MOVE_PENDING_BEFORE_RENAME_HOOK()
             try:
                 _rename_noreplace(basename, quarantine_name, src_dir_fd=parent_fd, dst_dir_fd=custody_fd)
             except FileNotFoundError:
@@ -564,6 +640,7 @@ def remove_file_if_owned_relative(
                 raise DurabilityError(
                     "quarantine of %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
                 ) from exc
+            QUARANTINE_AFTER_MOVE_BEFORE_MOVED_HOOK()
 
             try:
                 qfd = os.open(quarantine_name, _RELATIVE_FILE_READ_FLAGS, dir_fd=custody_fd)
@@ -588,6 +665,39 @@ def remove_file_if_owned_relative(
                             "refusing to remove %s: quarantined inode content hash changed after initial verification; "
                             "residual quarantine entry %s remains for recovery" % (validated_path, quarantine_name)
                         )
+                else:
+                    post_move_hash = None
+                if custody_recorder is not None:
+                    custody_recorder(
+                        CustodyRecord(
+                            resource_id=custody_record_id,
+                            state=CustodyState.MOVED,
+                            original_path=str(validated_path),
+                            original_parent=str(validated_path.parent),
+                            original_name=basename,
+                            original_dev=st.st_dev,
+                            original_ino=st.st_ino,
+                            original_uid=st.st_uid,
+                            original_gid=st.st_gid,
+                            original_mode=stat_module.S_IMODE(st.st_mode),
+                            original_nlink=st.st_nlink,
+                            authorized_hash=expected_sha256,
+                            custody_dir="%s/%s" % (handle.path, CUSTODY_DIR_NAME),
+                            custody_dir_dev=custody_st.st_dev,
+                            custody_dir_ino=custody_st.st_ino,
+                            custody_dir_uid=custody_st.st_uid,
+                            custody_dir_gid=custody_st.st_gid,
+                            custody_dir_mode=stat_module.S_IMODE(custody_st.st_mode),
+                            custody_name=quarantine_name,
+                            moved_dev=quarantined.st_dev,
+                            moved_ino=quarantined.st_ino,
+                            moved_uid=quarantined.st_uid,
+                            moved_gid=quarantined.st_gid,
+                            moved_mode=stat_module.S_IMODE(quarantined.st_mode),
+                            moved_nlink=quarantined.st_nlink,
+                            moved_hash=post_move_hash,
+                        )
+                    )
 
                 # Test seam: after post-move identity/content verification,
                 # before the destructive unlink of the quarantine entry.
@@ -625,6 +735,38 @@ def remove_file_if_owned_relative(
                 raise DurabilityError(
                     "removal of %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
                 ) from exc
+            QUARANTINE_AFTER_UNLINK_BEFORE_DELETED_HOOK()
+            if custody_recorder is not None:
+                custody_recorder(
+                    CustodyRecord(
+                        resource_id=custody_record_id,
+                        state=CustodyState.DELETED,
+                        original_path=str(validated_path),
+                        original_parent=str(validated_path.parent),
+                        original_name=basename,
+                        original_dev=st.st_dev,
+                        original_ino=st.st_ino,
+                        original_uid=st.st_uid,
+                        original_gid=st.st_gid,
+                        original_mode=stat_module.S_IMODE(st.st_mode),
+                        original_nlink=st.st_nlink,
+                        authorized_hash=expected_sha256,
+                        custody_dir="%s/%s" % (handle.path, CUSTODY_DIR_NAME),
+                        custody_dir_dev=custody_st.st_dev,
+                        custody_dir_ino=custody_st.st_ino,
+                        custody_dir_uid=custody_st.st_uid,
+                        custody_dir_gid=custody_st.st_gid,
+                        custody_dir_mode=stat_module.S_IMODE(custody_st.st_mode),
+                        custody_name=quarantine_name,
+                        moved_dev=st.st_dev,
+                        moved_ino=st.st_ino,
+                        moved_uid=st.st_uid,
+                        moved_gid=st.st_gid,
+                        moved_mode=stat_module.S_IMODE(st.st_mode),
+                        moved_nlink=st.st_nlink,
+                        moved_hash=expected_hash,
+                    )
+                )
             try:
                 os.rmdir(CUSTODY_DIR_NAME, dir_fd=handle.fd)
             except OSError:
@@ -732,6 +874,116 @@ def capture_path_authority(handle: AllowedRootHandle, validated_path: Path) -> P
     )
 
 
+def _authority_hash(payload: Mapping[str, object]) -> str:
+    import json
+
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+
+
+def capture_path_authority_v2(
+    handle: AllowedRootHandle,
+    validated_path: Path,
+    *,
+    transaction_id: str,
+    plan_digest: str,
+    resource_id: str,
+    integrity: str | None,
+) -> PathAuthorityV2:
+    try:
+        relative = validated_path.relative_to(handle.path)
+    except ValueError as exc:
+        raise PathPolicyError("%s is not a descendant of allowed root %s" % (validated_path, handle.path)) from exc
+    if not relative.parts:
+        raise PathPolicyError("path authority target must be a strict descendant of allowed root: %s" % validated_path)
+
+    components: list[PathAuthorityV2Component] = []
+    root_st = os.fstat(handle.fd)
+    components.append(
+        PathAuthorityV2Component(
+            index=0,
+            name="",
+            role="root",
+            dev=root_st.st_dev,
+            ino=root_st.st_ino,
+            uid=root_st.st_uid,
+            gid=root_st.st_gid,
+            mode=stat_module.S_IMODE(root_st.st_mode),
+            nlink=root_st.st_nlink,
+            integrity=None,
+        )
+    )
+    for index in range(1, len(relative.parts)):
+        parts = relative.parts[:index]
+        fd = handle.intermediate_fd(parts)
+        st = os.fstat(fd)
+        components.append(
+            PathAuthorityV2Component(
+                index=index,
+                name="/".join(parts),
+                role="intermediate",
+                dev=st.st_dev,
+                ino=st.st_ino,
+                uid=st.st_uid,
+                gid=st.st_gid,
+                mode=stat_module.S_IMODE(st.st_mode),
+                nlink=st.st_nlink,
+                integrity=None,
+            )
+        )
+    with _relative_to_handle(handle, validated_path) as (parent_fd, basename):
+        fd = os.open(basename, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
+        try:
+            leaf_st = os.fstat(fd)
+            leaf_integrity = _hash_fd_from_start(fd) if stat_module.S_ISREG(leaf_st.st_mode) else None
+        finally:
+            os.close(fd)
+    if integrity is not None and leaf_integrity != integrity:
+        raise PathPolicyError("path authority leaf integrity mismatch for %s" % validated_path)
+    components.append(
+        PathAuthorityV2Component(
+            index=len(components),
+            name="/".join(relative.parts),
+            role="leaf",
+            dev=leaf_st.st_dev,
+            ino=leaf_st.st_ino,
+            uid=leaf_st.st_uid,
+            gid=leaf_st.st_gid,
+            mode=stat_module.S_IMODE(leaf_st.st_mode),
+            nlink=leaf_st.st_nlink,
+            integrity=leaf_integrity,
+        )
+    )
+    chain_payload = {
+        "configured_root": str(handle.path),
+        "root_path": str(handle.path),
+        "target_relative_path": "/".join(relative.parts),
+        "components": [component.__dict__ for component in components],
+    }
+    chain_digest = _authority_hash(chain_payload)
+    authority_payload = {
+        "schema": "watchdogvpn.path_authority.v2",
+        "transaction_id": transaction_id,
+        "plan_digest": plan_digest,
+        "resource_id": resource_id,
+        "chain_digest": chain_digest,
+    }
+    return PathAuthorityV2(
+        schema="watchdogvpn.path_authority.v2",
+        transaction_id=transaction_id,
+        plan_digest=plan_digest,
+        resource_id=resource_id,
+        configured_root=str(handle.path),
+        root_path=str(handle.path),
+        target_relative_path="/".join(relative.parts),
+        component_count=len(components),
+        components=tuple(components),
+        chain_digest=chain_digest,
+        authority_digest=_authority_hash(authority_payload),
+    )
+
+
 def verify_intermediate_identities(handle: AllowedRootHandle, expected: Sequence[IntermediateIdentity]) -> None:
     for identity in expected:
         parts = tuple(Path(identity.relative_name).parts)
@@ -778,6 +1030,37 @@ def verify_path_authority(handle: AllowedRootHandle, authority: PathAuthority | 
                 "path authority component %s identity changed: expected dev/ino/uid/mode %r, found %r"
                 % (component.relative_name or "<root>", expected_tuple, actual)
             )
+
+
+def verify_path_authority_v2(
+    handle: AllowedRootHandle,
+    authority: PathAuthorityV2 | None,
+    validated_path: Path,
+    *,
+    transaction_id: str | None = None,
+    plan_digest: str | None = None,
+    resource_id: str | None = None,
+) -> None:
+    if authority is None:
+        raise PathPolicyError("missing durable path authority v2 for %s" % validated_path)
+    if authority.schema != "watchdogvpn.path_authority.v2":
+        raise PathPolicyError("path authority v2 schema mismatch for %s" % validated_path)
+    if transaction_id is not None and authority.transaction_id != transaction_id:
+        raise PathPolicyError("path authority v2 transaction mismatch for %s" % validated_path)
+    if plan_digest is not None and authority.plan_digest != plan_digest:
+        raise PathPolicyError("path authority v2 plan digest mismatch for %s" % validated_path)
+    if resource_id is not None and authority.resource_id != resource_id:
+        raise PathPolicyError("path authority v2 resource mismatch for %s" % validated_path)
+    actual = capture_path_authority_v2(
+        handle,
+        validated_path,
+        transaction_id=authority.transaction_id,
+        plan_digest=authority.plan_digest,
+        resource_id=authority.resource_id,
+        integrity=authority.components[-1].integrity if authority.components else None,
+    )
+    if actual != authority:
+        raise PathPolicyError("path authority v2 identity changed for %s" % validated_path)
 
 
 def stat_identity_relative(handle: AllowedRootHandle, validated_path: Path) -> dict:

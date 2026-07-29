@@ -20,6 +20,7 @@ class TransactionState(Enum):
     AUTHORIZED = "authorized"
     APPLYING = "applying"
     VERIFYING = "verifying"
+    PREPARE_TERMINAL_PREPARED = "prepare_terminal_prepared"
     COMMITTED = "committed"
     PREPARATION_FAILED = "preparation_failed"
     ROLLING_BACK = "rolling_back"
@@ -30,6 +31,7 @@ class TransactionState(Enum):
     UNINSTALL_PLANNED = "uninstall_planned"
     UNINSTALLING = "uninstalling"
     REVOKING_OWNERSHIP = "revoking_ownership"
+    UNINSTALL_TERMINAL_PREPARED = "uninstall_terminal_prepared"
     UNINSTALLED = "uninstalled"
     UNINSTALL_FAILED = "uninstall_failed"
 
@@ -60,8 +62,14 @@ TRANSACTION_TRANSITIONS: Mapping[TransactionState, frozenset[TransactionState]] 
         {TransactionState.VERIFYING, TransactionState.ROLLING_BACK, TransactionState.RECOVERY_REQUIRED}
     ),
     TransactionState.VERIFYING: frozenset(
-        {TransactionState.COMMITTED, TransactionState.ROLLING_BACK, TransactionState.RECOVERY_REQUIRED}
+        {
+            TransactionState.PREPARE_TERMINAL_PREPARED,
+            TransactionState.COMMITTED,
+            TransactionState.ROLLING_BACK,
+            TransactionState.RECOVERY_REQUIRED,
+        }
     ),
+    TransactionState.PREPARE_TERMINAL_PREPARED: frozenset({TransactionState.COMMITTED, TransactionState.RECOVERY_REQUIRED}),
     TransactionState.COMMITTED: frozenset({TransactionState.UNINSTALL_PLANNED}),
     TransactionState.PREPARATION_FAILED: frozenset(),
     TransactionState.ROLLING_BACK: frozenset({TransactionState.ROLLED_BACK, TransactionState.ROLLBACK_FAILED}),
@@ -76,6 +84,7 @@ TRANSACTION_TRANSITIONS: Mapping[TransactionState, frozenset[TransactionState]] 
             TransactionState.RECOVERY_REQUIRED,
             TransactionState.UNINSTALLING,
             TransactionState.REVOKING_OWNERSHIP,
+            TransactionState.UNINSTALL_TERMINAL_PREPARED,
         }
     ),
     TransactionState.UNINSTALL_PLANNED: frozenset({TransactionState.UNINSTALLING}),
@@ -83,8 +92,14 @@ TRANSACTION_TRANSITIONS: Mapping[TransactionState, frozenset[TransactionState]] 
         {TransactionState.REVOKING_OWNERSHIP, TransactionState.UNINSTALL_FAILED, TransactionState.RECOVERY_REQUIRED}
     ),
     TransactionState.REVOKING_OWNERSHIP: frozenset(
-        {TransactionState.UNINSTALLED, TransactionState.UNINSTALL_FAILED, TransactionState.RECOVERY_REQUIRED}
+        {
+            TransactionState.UNINSTALL_TERMINAL_PREPARED,
+            TransactionState.UNINSTALLED,
+            TransactionState.UNINSTALL_FAILED,
+            TransactionState.RECOVERY_REQUIRED,
+        }
     ),
+    TransactionState.UNINSTALL_TERMINAL_PREPARED: frozenset({TransactionState.UNINSTALLED, TransactionState.RECOVERY_REQUIRED}),
     TransactionState.UNINSTALLED: frozenset(),
     TransactionState.UNINSTALL_FAILED: frozenset({TransactionState.RECOVERY_REQUIRED}),
 }
@@ -223,6 +238,71 @@ class PathAuthority:
 
 
 @dataclass(frozen=True)
+class PathAuthorityV2Component:
+    index: int
+    name: str
+    role: str
+    dev: int
+    ino: int
+    uid: int
+    gid: int
+    mode: int
+    nlink: int
+    integrity: str | None = None
+
+
+@dataclass(frozen=True)
+class PathAuthorityV2:
+    schema: str
+    transaction_id: str
+    plan_digest: str
+    resource_id: str
+    configured_root: str
+    root_path: str
+    target_relative_path: str
+    component_count: int
+    components: tuple[PathAuthorityV2Component, ...]
+    chain_digest: str
+    authority_digest: str
+
+
+class CustodyState(Enum):
+    MOVE_PENDING = "move_pending"
+    MOVED = "moved"
+    DELETED = "deleted"
+
+
+@dataclass(frozen=True)
+class CustodyRecord:
+    resource_id: str
+    state: CustodyState
+    original_path: str
+    original_parent: str
+    original_name: str
+    original_dev: int
+    original_ino: int
+    original_uid: int
+    original_gid: int
+    original_mode: int
+    original_nlink: int
+    authorized_hash: str | None
+    custody_dir: str
+    custody_dir_dev: int
+    custody_dir_ino: int
+    custody_dir_uid: int
+    custody_dir_gid: int
+    custody_dir_mode: int
+    custody_name: str
+    moved_dev: int | None = None
+    moved_ino: int | None = None
+    moved_uid: int | None = None
+    moved_gid: int | None = None
+    moved_mode: int | None = None
+    moved_nlink: int | None = None
+    moved_hash: str | None = None
+
+
+@dataclass(frozen=True)
 class OwnershipCandidate:
     artifact_type: str
     resource_identity: str
@@ -238,6 +318,7 @@ class OwnershipCandidate:
     post_install_fingerprint: str | None = None
     intermediate_identities: tuple[IntermediateIdentity, ...] = ()
     path_authority: PathAuthority | None = None
+    path_authority_v2: PathAuthorityV2 | None = None
 
 
 @dataclass(frozen=True)

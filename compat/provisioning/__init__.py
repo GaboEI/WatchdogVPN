@@ -52,11 +52,15 @@ from compat.provisioning.executors import (
 from compat.provisioning.journal import StepRecord, TransactionJournal
 from compat.provisioning.lock import acquire_provisioner_lock
 from compat.provisioning.model import (
+    CustodyRecord,
+    CustodyState,
     ExecutionResult,
     IntermediateIdentity,
     OwnershipCandidate,
     OwnershipRecord,
     PathAuthority,
+    PathAuthorityV2,
+    PathAuthorityV2Component,
     PathComponentIdentity,
     ProvenanceRecord,
     ProvisioningPlan,
@@ -78,6 +82,8 @@ __all__ = [
     "CANARY_EXECUTOR_VERSION",
     "CANARY_METHOD_KIND",
     "CanaryExecutor",
+    "CustodyRecord",
+    "CustodyState",
     "DurabilityError",
     "ExecutionContext",
     "ExecutionNotReadyError",
@@ -94,6 +100,8 @@ __all__ = [
     "OwnershipError",
     "OwnershipRecord",
     "PathAuthority",
+    "PathAuthorityV2",
+    "PathAuthorityV2Component",
     "PathComponentIdentity",
     "PathPolicyError",
     "PrepareOutcome",
