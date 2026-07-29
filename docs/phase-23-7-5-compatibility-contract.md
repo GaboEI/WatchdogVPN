@@ -2346,4 +2346,104 @@ foreign inode is removed, no ownership is revoked, and no clean terminal state i
 reported. The recommended follow-up, if the cosmetic residue is later cleaned
 up, is to remove an empty custody directory best-effort when it was created by
 the current call and strict validation fails before any file is moved, followed
-by a parent-directory fsync. 23.7.5.6b remains not started.
+by a parent-directory fsync.
+
+### Task 23.7.5.6b AmneziaWG userspace source-build provisioning
+
+Task 23.7.5.6b starts only the AmneziaWG userspace source-build migration. It
+does not start Task 23.7.5.7, does not expose a public CLI surface, does not
+wire `profile add`, `install.sh`, `update.sh`, `doctor.sh`, legacy distro
+adapters, package-manager PPA execution, DKMS or kernel-module installation.
+The executable surface for this task is the internal audit/VM tool
+`tools/compat_runtime_prepare.py`.
+
+The compatibility manifest now pins every AmneziaWG source-build component by
+official release tag and exact Git commit:
+
+- `amneziawg-tools`: upstream `https://github.com/amnezia-vpn/amneziawg-tools`,
+  tag `v1.0.20260618-2`, commit
+  `61e741780e8465a67a7d7fb6cffe14a8a15d624a`.
+- `amneziawg-go`: upstream `https://github.com/amnezia-vpn/amneziawg-go`, tag
+  `v3.0.2`, commit `0527dfa47639714dd8f5c9ffbd9d40d19083f0ba`.
+
+The resolver marks a `pinned_source_build` candidate as execution-ready only
+when the candidate is `implemented` and every component declares a release tag
+plus immutable commit. The 23.7.5.6b internal provider deliberately reports
+package-manager candidates as out of scope for this task, so the source-build
+path can be audited without pretending that PPA/repository mutation was
+migrated.
+If the host already reports the AmneziaWG runtime present, `plan` and
+non-mutating `prepare` report the resolver decision without constructing a fake
+source-build plan. Recovery and uninstall register all pinned source-build
+executors so existing WatchdogVPN ownership/journal authority can be handled
+even when the live resolver no longer needs a new install.
+
+The new production executor is
+`compat.provisioning.amneziawg.AmneziaWGUserspaceSourceBuildExecutor`. It
+installs exactly three userspace outputs under the configured install root,
+defaulting to `/usr/local/bin`: `awg`, `awg-quick`, and `amneziawg-go`.
+`/usr/local/bin` is used because this is a WatchdogVPN-managed source build,
+not a distribution package; `/usr/bin` remains reserved for package-manager
+owned files. If any target already exists and is not WatchdogVPN-owned, the
+transactional engine returns an ownership conflict before writing anything and
+grants no uninstall authority.
+
+The executor never checks out a default branch. It fetches the exact tag,
+resolves the checked-out commit, and aborts before build if the observed commit
+does not match the manifest commit. The build user is explicit: mutating
+provisioning commands require `--build-user <user>`, and that user must exist
+and must not be root. Source workspace preparation, Git fetch/checkout and
+build commands run as that build user; installation, recovery and uninstall
+remain governed by the 23.7.5.6a provisioner lock, journal, custody, ownership
+and terminal-state protocols. Command execution is isolated behind
+`compat.provisioning.process` and uses argv-only subprocesses with
+`shell=False`.
+
+Because source-build output hashes are known only after compilation, ownership
+authority records the verified output SHA-256 at commit time. The plan must
+declare `integrity_policy=record_verified_sha256`; the engine then stores that
+verified digest in the ownership record, PathAuthorityV2 leaf integrity and
+post-install fingerprint, and validates idempotency against the live file hash.
+Static-digest executors keep the existing 23.7.5.6a behavior.
+
+Local evidence at implementation time:
+
+- `python -m compileall -q compat/provisioning tools/compat_runtime_prepare.py
+  tests/test_compat_amneziawg_provisioning.py
+  tests/test_compat_dependency_resolution.py tools/compat_read.py` completed
+  with rc=0.
+- `python -m unittest tests.test_compat_amneziawg_provisioning` ran 7 tests
+  with rc=0, covering dynamic output digests, PathAuthorityV2 integrity,
+  pre-existing-output preservation, commit mismatch before install, uninstall
+  of owned outputs, idempotent second prepare, already-present CLI handling and
+  source-build executor registration for recovery/uninstall.
+- `python -m unittest tests.test_compat_dependency_resolution` ran 32 tests
+  with rc=0 after updating the AWG source-build contract from future/unresolved
+  to implemented/pinned.
+- `python tools/compat_read.py validate` completed with rc=0.
+- Internal CLI smoke with a Debian 13 os-release fixture and
+  `--force-runtime-absent plan` selected
+  `amneziawg_pinned_source_build_apt_stable_future` with
+  `execution_ready=true`.
+- Internal CLI smoke on the local host without fixture completed with rc=0 and
+  reported `already_present` with `plan=null`, proving the tool does not
+  invent a source-build plan when the runtime is already available.
+- `bash tests/syntax.sh` completed with rc=0.
+- `git diff --check` completed with rc=0.
+- Full repository unittest discovery ran 2257 tests in 268.069s with rc=0 and
+  1 skip.
+- The four fixture compatibility probes (`detect`, `capabilities`, `evaluate`,
+  `report`) completed with rc=0. The four fixture resolver commands
+  (`dependency`, `all`, `explain`, `matrix`) completed with rc=0; the AWG
+  source-build fixture selected the pinned source-build candidate with
+  `execution_ready=true`.
+- The 23.7.5.6b VM harness smoke ran in non-mutating mode with rc=0 and
+  produced one baseline/plan evidence step.
+- The new AWG focal suite ran 50 consecutive repetitions with no retries:
+  50/50 clean in 18.087s.
+
+The VM harness for this task is
+`tests/vm/phase23_7_5_6b_amneziawg_validation.py`. It captures baseline
+evidence and drives only the internal tool. Its `--apply` mode is intended for
+disposable VMs; it does not activate profiles, mutate VPN/DNS/firewall state or
+claim L4 traffic certification.

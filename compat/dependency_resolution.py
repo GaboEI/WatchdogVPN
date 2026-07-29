@@ -412,7 +412,7 @@ def resolve_dependency(
                     error_kind=availability_result.error_kind or availability_result.status,
                 )
             continue
-        execution_ready = False
+        execution_ready = candidate.kind == "pinned_source_build" and candidate.implementation_status == "implemented"
         return ResolutionDecision(
             **common,
             selected_method_id=candidate.method_id,
@@ -860,7 +860,10 @@ def _candidate_has_complete_security_metadata(candidate: MethodCandidate) -> boo
         components = candidate.data.get("components", ())
         if components:
             return all(
-                component.get("revision_type") == "commit" and _is_git_commit(component.get("revision"))
+                component.get("revision_type") == "commit"
+                and _is_git_commit(component.get("revision"))
+                and type(component.get("tag")) is str
+                and component.get("tag")
                 for component in components
             )
         revision = candidate.data.get("revision")

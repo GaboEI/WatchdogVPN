@@ -89,6 +89,8 @@ UNDOABLE_STEP_STATES = frozenset(
     {StepState.APPLIED, StepState.VERIFYING, StepState.VERIFIED, StepState.VERIFY_FAILED}
 )
 
+DYNAMIC_VERIFIED_SHA256 = "__watchdogvpn_dynamic_verified_sha256__"
+
 
 class PrepareStatus(Enum):
     DRY_RUN = "dry_run"
@@ -558,6 +560,7 @@ def validate_ownership_authority(
             return False
 
     expected_by_identity = {step.target: step for step in plan.steps if step.target}
+    journal_step_by_sequence = {step.sequence: step for step in journal.steps}
 
     if set(expected_by_identity) != {record.candidate.resource_identity for record in owned}:
         return False
@@ -568,6 +571,13 @@ def validate_ownership_authority(
         if plan_step is None:
             return False
         expected = executor.expected_ownership_for_step(plan, plan_step)
+        journal_step = journal_step_by_sequence.get(plan_step.sequence)
+        if journal_step is None:
+            return False
+        try:
+            dynamic_integrity = _dynamic_verified_sha256_for_step(journal_step, plan_step, expected)
+        except ProvisioningError:
+            return False
         if record.capability_id != journal.capability_id:
             return False
         if candidate.artifact_type != expected.artifact_type:
@@ -591,7 +601,8 @@ def validate_ownership_authority(
         # without ever being caught. ``candidate.X == expected.X`` alone,
         # with no conditional, is the only comparison that also catches a
         # None-in-the-plan field being tampered into a concrete value.
-        if candidate.integrity != expected.integrity:
+        expected_integrity = dynamic_integrity if dynamic_integrity is not None else expected.integrity
+        if candidate.integrity != expected_integrity:
             return False
         if candidate.uid != expected.uid:
             return False
@@ -601,7 +612,12 @@ def validate_ownership_authority(
             return False
         if candidate.nlink != expected.nlink:
             return False
-        if candidate.post_install_fingerprint != expected.post_install_fingerprint:
+        expected_fingerprint = (
+            dynamic_integrity
+            if dynamic_integrity is not None and expected.post_install_fingerprint == DYNAMIC_VERIFIED_SHA256
+            else expected.post_install_fingerprint
+        )
+        if candidate.post_install_fingerprint != expected_fingerprint:
             return False
         try:
             validated = _validate_owned_resource_path_for_authority(candidate.resource_identity, context)
@@ -781,8 +797,17 @@ def check_idempotency(
         return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
 
     intent_by_target = {step.target: step.intent for step in plan.steps}
+    inspection_by_target = {
+        step.target: inspection for step, inspection in zip(plan.steps, inspections) if step.target
+    }
     for record in owned_by_this_plan:
-        expected_sha256 = intent_by_target.get(record.candidate.resource_identity, {}).get("content_sha256")
+        intent = intent_by_target.get(record.candidate.resource_identity, {})
+        if intent.get("integrity_policy") == "record_verified_sha256":
+            expected_sha256 = record.candidate.integrity
+            if inspection_by_target.get(record.candidate.resource_identity, {}).get("sha256") != expected_sha256:
+                return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
+        else:
+            expected_sha256 = intent.get("content_sha256")
         if record.candidate.integrity != expected_sha256:
             return IdempotencyCheck(IdempotencyOutcome.OWNERSHIP_CONFLICT, inspections)
         try:
@@ -1144,6 +1169,7 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
         if plan_step is None:
             raise ProvisioningError("cannot finalize ownership for %s: no matching plan step for sequence %d" % (resource_identity, step.sequence))
         expected = executor.expected_ownership_for_step(plan, plan_step)
+        dynamic_integrity = _dynamic_verified_sha256_for_step(step, plan_step, expected)
         try:
             validated = validate_target_path(Path(resource_identity), allowed_roots=context.allowed_roots, forbidden_roots=context.forbidden_roots)
             handle = handle_for_allowed_root(context, validated)
@@ -1156,7 +1182,7 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
                 transaction_id=journal.transaction_id,
                 plan_digest=journal.plan_digest,
                 resource_id=str(validated),
-                integrity=expected.integrity,
+                integrity=dynamic_integrity if dynamic_integrity is not None else expected.integrity,
             )
         except (PathPolicyError, OSError) as exc:
             raise ProvisioningError("cannot finalize ownership for %s: %s" % (resource_identity, exc)) from exc
@@ -1185,7 +1211,7 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             method_id=expected.method_id,
             source=expected.source,
             version=expected.version,
-            integrity=expected.integrity,
+            integrity=dynamic_integrity if dynamic_integrity is not None else expected.integrity,
             # Point 7, fifth correction round: when the executor's own
             # expectation for a field is None (it declares no opinion),
             # the persisted candidate must ALSO record None for it --
@@ -1198,7 +1224,11 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             gid=identity["gid"] if expected.gid is not None else None,
             mode=identity["mode"] if expected.mode is not None else None,
             nlink=identity["nlink"] if expected.nlink is not None else None,
-            post_install_fingerprint=expected.post_install_fingerprint,
+            post_install_fingerprint=(
+                dynamic_integrity
+                if dynamic_integrity is not None and expected.post_install_fingerprint == DYNAMIC_VERIFIED_SHA256
+                else expected.post_install_fingerprint
+            ),
             intermediate_identities=intermediate_identities,
             path_authority=path_authority,
             path_authority_v2=path_authority_v2,
@@ -1446,6 +1476,22 @@ def _network_available(context: ExecutionContext) -> bool:
     if context.network_available is None:
         return True
     return bool(context.network_available())
+
+
+def _dynamic_verified_sha256_for_step(
+    journal_step: StepRecord,
+    plan_step: ProvisioningStep,
+    expected: OwnershipCandidate,
+) -> str | None:
+    if expected.integrity != DYNAMIC_VERIFIED_SHA256:
+        return None
+    if plan_step.intent.get("integrity_policy") != "record_verified_sha256":
+        raise ProvisioningError("dynamic integrity placeholder used without explicit step policy")
+    verification = journal_step.verification or {}
+    sha256 = verification.get("sha256")
+    if type(sha256) is not str or len(sha256) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in sha256):
+        raise ProvisioningError("dynamic integrity step %s has no verified sha256" % journal_step.step_id)
+    return sha256.lower()
 
 
 # --------------------------------------------------------------------------

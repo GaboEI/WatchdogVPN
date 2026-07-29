@@ -185,6 +185,7 @@ _ENTITY_KEYS = {
         "repository",
         "revision",
         "revision_type",
+        "tag",
     ),
     "dns_backend_policy_entry": ("helper_requirement",),
     "compatible_target": ("own_release", "series", "target_id"),
@@ -1100,6 +1101,9 @@ def _validate_source_components(candidate, path):
         revision = _require_str(component.get("revision"), comp_path + ".revision")
         if revision != "unresolved" and not _is_git_commit(revision):
             raise ManifestError("%s.revision must be an immutable Git commit" % comp_path)
+        tag = _require_str(component.get("tag"), comp_path + ".tag")
+        if not tag.startswith("v"):
+            raise ManifestError("%s.tag must be an explicit upstream release tag" % comp_path)
         _require_package_list(component.get("build_dependencies"), comp_path + ".build_dependencies")
         _require_safe_expected_paths(component.get("expected_outputs"), comp_path + ".expected_outputs")
         _require_id(component.get("postcondition"), comp_path + ".postcondition")

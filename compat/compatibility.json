@@ -2884,7 +2884,7 @@
     },
     "dep_amneziawg_runtime": {
       "capability_id": "proto_amneziawg_runtime",
-      "description": "AmneziaWG runtime: exact external package where proven, otherwise non-executable pinned source-build need",
+      "description": "AmneziaWG userspace runtime: exact external package where proven, otherwise pinned transactional source build for awg, awg-quick and amneziawg-go",
       "method_chain": [
         {
           "architectures": [
@@ -3032,8 +3032,9 @@
               ],
               "postcondition": "amneziawg_tools_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a",
+              "revision_type": "commit",
+              "tag": "v1.0.20260618-2"
             },
             {
               "build_dependencies": [
@@ -3048,12 +3049,13 @@
               ],
               "postcondition": "amneziawg_transport_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-go",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba",
+              "revision_type": "commit",
+              "tag": "v3.0.2"
             }
           ],
           "evidence": [
-            "legacy adapter documents source fallback but clones default branches without immutable pins"
+            "Task 23.7.5.6b source-build hardening records official AmneziaWG release tags and exact commits for userspace provisioning"
           ],
           "expected_outputs": [
             "awg",
@@ -3061,7 +3063,7 @@
             "amneziawg-go"
           ],
           "id": "amneziawg_pinned_source_build_apt_stable_future",
-          "implementation_status": "future_task",
+          "implementation_status": "implemented",
           "kind": "pinned_source_build",
           "method_ref": "pinned_source_build",
           "official_provenance": "https://github.com/amnezia-vpn",
@@ -3108,8 +3110,9 @@
               ],
               "postcondition": "amneziawg_tools_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a",
+              "revision_type": "commit",
+              "tag": "v1.0.20260618-2"
             },
             {
               "build_dependencies": [
@@ -3124,12 +3127,13 @@
               ],
               "postcondition": "amneziawg_transport_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-go",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba",
+              "revision_type": "commit",
+              "tag": "v3.0.2"
             }
           ],
           "evidence": [
-            "legacy adapter documents source fallback but clones default branches without immutable pins"
+            "Task 23.7.5.6b source-build hardening records official AmneziaWG release tags and exact commits for userspace provisioning"
           ],
           "expected_outputs": [
             "awg",
@@ -3137,7 +3141,7 @@
             "amneziawg-go"
           ],
           "id": "amneziawg_pinned_source_build_dnf_stable_future",
-          "implementation_status": "future_task",
+          "implementation_status": "implemented",
           "kind": "pinned_source_build",
           "method_ref": "pinned_source_build",
           "official_provenance": "https://github.com/amnezia-vpn",
@@ -3184,8 +3188,9 @@
               ],
               "postcondition": "amneziawg_tools_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a",
+              "revision_type": "commit",
+              "tag": "v1.0.20260618-2"
             },
             {
               "build_dependencies": [
@@ -3200,12 +3205,13 @@
               ],
               "postcondition": "amneziawg_transport_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-go",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba",
+              "revision_type": "commit",
+              "tag": "v3.0.2"
             }
           ],
           "evidence": [
-            "legacy adapter documents source fallback but clones default branches without immutable pins"
+            "Task 23.7.5.6b source-build hardening records official AmneziaWG release tags and exact commits for userspace provisioning"
           ],
           "expected_outputs": [
             "awg",
@@ -3213,7 +3219,7 @@
             "amneziawg-go"
           ],
           "id": "amneziawg_pinned_source_build_zypper_stable_future",
-          "implementation_status": "future_task",
+          "implementation_status": "implemented",
           "kind": "pinned_source_build",
           "method_ref": "pinned_source_build",
           "official_provenance": "https://github.com/amnezia-vpn",
@@ -3256,8 +3262,9 @@
               ],
               "postcondition": "amneziawg_tools_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a",
+              "revision_type": "commit",
+              "tag": "v1.0.20260618-2"
             },
             {
               "build_dependencies": [
@@ -3272,12 +3279,13 @@
               ],
               "postcondition": "amneziawg_transport_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-go",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba",
+              "revision_type": "commit",
+              "tag": "v3.0.2"
             }
           ],
           "evidence": [
-            "legacy adapter documents source fallback but clones default branches without immutable pins"
+            "Task 23.7.5.6b source-build hardening records official AmneziaWG release tags and exact commits for userspace provisioning"
           ],
           "expected_outputs": [
             "awg",
@@ -3285,7 +3293,7 @@
             "amneziawg-go"
           ],
           "id": "amneziawg_pinned_source_build_apt_kali_rolling_future",
-          "implementation_status": "future_task",
+          "implementation_status": "implemented",
           "kind": "pinned_source_build",
           "method_ref": "pinned_source_build",
           "official_provenance": "https://github.com/amnezia-vpn",
@@ -3328,8 +3336,9 @@
               ],
               "postcondition": "amneziawg_tools_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a",
+              "revision_type": "commit",
+              "tag": "v1.0.20260618-2"
             },
             {
               "build_dependencies": [
@@ -3344,12 +3353,13 @@
               ],
               "postcondition": "amneziawg_transport_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-go",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba",
+              "revision_type": "commit",
+              "tag": "v3.0.2"
             }
           ],
           "evidence": [
-            "legacy adapter documents source fallback but clones default branches without immutable pins"
+            "Task 23.7.5.6b source-build hardening records official AmneziaWG release tags and exact commits for userspace provisioning"
           ],
           "expected_outputs": [
             "awg",
@@ -3357,7 +3367,7 @@
             "amneziawg-go"
           ],
           "id": "amneziawg_pinned_source_build_zypper_tumbleweed_rolling_future",
-          "implementation_status": "future_task",
+          "implementation_status": "implemented",
           "kind": "pinned_source_build",
           "method_ref": "pinned_source_build",
           "official_provenance": "https://github.com/amnezia-vpn",
@@ -3400,8 +3410,9 @@
               ],
               "postcondition": "amneziawg_tools_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "61e741780e8465a67a7d7fb6cffe14a8a15d624a",
+              "revision_type": "commit",
+              "tag": "v1.0.20260618-2"
             },
             {
               "build_dependencies": [
@@ -3416,12 +3427,13 @@
               ],
               "postcondition": "amneziawg_transport_present",
               "repository": "https://github.com/amnezia-vpn/amneziawg-go",
-              "revision": "unresolved",
-              "revision_type": "commit"
+              "revision": "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba",
+              "revision_type": "commit",
+              "tag": "v3.0.2"
             }
           ],
           "evidence": [
-            "legacy adapter documents source fallback but clones default branches without immutable pins"
+            "Task 23.7.5.6b source-build hardening records official AmneziaWG release tags and exact commits for userspace provisioning"
           ],
           "expected_outputs": [
             "awg",
@@ -3429,7 +3441,7 @@
             "amneziawg-go"
           ],
           "id": "amneziawg_pinned_source_build_pacman_rolling_future",
-          "implementation_status": "future_task",
+          "implementation_status": "implemented",
           "kind": "pinned_source_build",
           "method_ref": "pinned_source_build",
           "official_provenance": "https://github.com/amnezia-vpn",

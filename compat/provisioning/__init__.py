@@ -4,13 +4,22 @@ Pure domain model, durable journal, dedicated lock, path protection, a
 trusted (code-only) executor registry with a lab-only canary executor, and
 the coordinating engine (plan/dry-run/apply/verify/rollback/recover/
 uninstall). No production executor is registered here; see
-``docs/phase-23-7-5-compatibility-contract.md`` for the exact 23.7.5.6a scope
-and ``compat.provisioning.executors.CanaryExecutor`` for the lab-only
-demonstration executor.
+``docs/phase-23-7-5-compatibility-contract.md`` for task-by-task scope:
+23.7.5.6a introduced the lab-only demonstration executor, while 23.7.5.6b
+adds the internal AmneziaWG userspace source-build executor without registering
+package-manager, DKMS, kernel-module or public-CLI surfaces.
 """
 
 from __future__ import annotations
 
+from compat.provisioning.amneziawg import (
+    AMNEZIAWG_SOURCE_BUILD_EXECUTOR_ID,
+    AMNEZIAWG_SOURCE_BUILD_EXECUTOR_VERSION,
+    AMNEZIAWG_SOURCE_BUILD_METHOD_KIND,
+    AmneziaWGUserspaceSourceBuildExecutor,
+    SourceComponent,
+    components_from_candidate,
+)
 from compat.provisioning.digest import compute_plan_digest, compute_uninstall_plan_digest
 from compat.provisioning.engine import (
     IdempotencyCheck,
@@ -81,6 +90,10 @@ __all__ = [
     "CANARY_EXECUTOR_ID",
     "CANARY_EXECUTOR_VERSION",
     "CANARY_METHOD_KIND",
+    "AMNEZIAWG_SOURCE_BUILD_EXECUTOR_ID",
+    "AMNEZIAWG_SOURCE_BUILD_EXECUTOR_VERSION",
+    "AMNEZIAWG_SOURCE_BUILD_METHOD_KIND",
+    "AmneziaWGUserspaceSourceBuildExecutor",
     "CanaryExecutor",
     "CustodyRecord",
     "CustodyState",
@@ -118,6 +131,7 @@ __all__ = [
     "RollbackResult",
     "StepRecord",
     "StepState",
+    "SourceComponent",
     "TransactionJournal",
     "TransactionState",
     "TrustedExecutorRegistry",
@@ -128,6 +142,7 @@ __all__ = [
     "check_idempotency",
     "compute_plan_digest",
     "compute_uninstall_plan_digest",
+    "components_from_candidate",
     "describe_plan",
     "dry_run",
     "prepare",

@@ -165,8 +165,9 @@ class DependencyResolverTests(unittest.TestCase):
         focal = [item for item in decision.rejected_candidates if item.method_id == "amneziawg_debian_legacy_focal_ppa"][0]
         self.assertEqual(focal.reason, "target_release_not_explicitly_compatible")
         self.assertIn("focal", decision.candidate_chain[2])
-        self.assertEqual(decision.resolution_status, "no_safe_route")
-        self.assertFalse(decision.execution_ready)
+        self.assertEqual(decision.selected_method_id, "amneziawg_pinned_source_build_apt_stable_future")
+        self.assertEqual(decision.resolution_status, "method_selected")
+        self.assertTrue(decision.execution_ready)
 
     def test_ubuntu_26_rejects_nearby_series_and_remains_experimental(self) -> None:
         m = manifest()
@@ -175,7 +176,8 @@ class DependencyResolverTests(unittest.TestCase):
         decision = resolve(m, distro, "dep_amneziawg_runtime", cap("proto_amneziawg_runtime"))
         self.assertEqual(decision.support_classification, "experimental")
         self.assertEqual(decision.rejected_candidates[0].reason, "target_release_not_explicitly_compatible")
-        self.assertEqual(decision.resolution_status, "no_safe_route")
+        self.assertEqual(decision.selected_method_id, "amneziawg_pinned_source_build_apt_stable_future")
+        self.assertTrue(decision.execution_ready)
         self.assertFalse(any("noble" in item.evidence and item.reason == "method_selected" for item in decision.rejected_candidates))
 
         artifact = resolve(m, distro, "dep_sing_box_runtime", cap("proto_sing_box_runtime"))
@@ -189,7 +191,8 @@ class DependencyResolverTests(unittest.TestCase):
         self.assertEqual(kali.release_model, "rolling")
         self.assertIsNone(kali.resolved_release)
         kali_decision = resolve(m, kali, "dep_amneziawg_runtime", cap("proto_amneziawg_runtime"))
-        self.assertEqual(kali_decision.resolution_status, "no_safe_route")
+        self.assertEqual(kali_decision.selected_method_id, "amneziawg_pinned_source_build_apt_kali_rolling_future")
+        self.assertTrue(kali_decision.execution_ready)
         focal = [item for item in kali_decision.rejected_candidates if item.method_id == "amneziawg_debian_legacy_focal_ppa"][0]
         self.assertEqual(focal.reason, "rolling_target_requires_rolling_identity")
 
@@ -239,7 +242,8 @@ class DependencyResolverTests(unittest.TestCase):
         self.assertEqual(rpm.reason, "architecture_not_supported")
 
     def test_source_without_pin_and_artifact_without_integrity_are_not_executable(self) -> None:
-        m = manifest()
+        m = json.loads(json.dumps(manifest()))
+        m["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][0]["revision"] = "unresolved"
         distro = facts(m, "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
         decision = resolve(m, distro, "dep_amneziawg_runtime", cap("proto_amneziawg_runtime"))
         source = [item for item in decision.rejected_candidates if item.method_id == "amneziawg_pinned_source_build_apt_stable_future"][0]
@@ -330,7 +334,8 @@ class DependencyResolverTests(unittest.TestCase):
         )
 
     def test_static_metadata_rejection_happens_before_provider(self) -> None:
-        m = manifest()
+        m = json.loads(json.dumps(manifest()))
+        m["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][0]["revision"] = "unresolved"
         distro = facts(m, "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
 
         class SpyProvider(resolver.StaticAvailabilityProvider):
@@ -372,8 +377,11 @@ class DependencyResolverTests(unittest.TestCase):
                 self.assertIn("amneziawg-go", components["amneziawg_transport"]["expected_outputs"])
                 self.assertEqual(components["amneziawg_tools"]["repository"], "https://github.com/amnezia-vpn/amneziawg-tools")
                 self.assertEqual(components["amneziawg_transport"]["repository"], "https://github.com/amnezia-vpn/amneziawg-go")
-                self.assertEqual(components["amneziawg_tools"]["revision"], "unresolved")
-                self.assertEqual(components["amneziawg_transport"]["revision"], "unresolved")
+                self.assertEqual(components["amneziawg_tools"]["tag"], "v1.0.20260618-2")
+                self.assertEqual(components["amneziawg_tools"]["revision"], "61e741780e8465a67a7d7fb6cffe14a8a15d624a")
+                self.assertEqual(components["amneziawg_transport"]["tag"], "v3.0.2")
+                self.assertEqual(components["amneziawg_transport"]["revision"], "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba")
+                self.assertEqual(candidate["implementation_status"], "implemented")
         by_id = {candidate["id"]: candidate for candidate in source_candidates}
         self.assertIn("golang-go", by_id["amneziawg_pinned_source_build_apt_stable_future"]["build_dependencies"])
         self.assertIn("golang", by_id["amneziawg_pinned_source_build_dnf_stable_future"]["build_dependencies"])
