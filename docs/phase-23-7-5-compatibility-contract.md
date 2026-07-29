@@ -2302,3 +2302,21 @@ locally after the checkpoint migration and completed with rc=0, including the
 real descriptor-custody unlink checkpoints and the post-last-check race scenarios;
 evidence was retained at
 `/tmp/wdvpn-6a-sameuid-postdoc.2f2ArI/phase23_7_5_6a_vm_evidence.json`.
+
+VM evidence for code commit `56e4b00951d8127c307429328d516cb1c6259b0e` was
+executed on `wdvpn-linuxmint-23-6-7` from an exact `git archive` deployment under
+`/var/tmp/wdvpn-23-7-5-6a-56e4b00-20260729T134840Z/src`. The VM baseline recorded
+Python 3.12.3 and boot id `5ba9cc02-2682-43d7-b298-b6127c8d67df`. The focused
+provisioning suite completed with rc=0, the VM harness `run-all` completed with
+rc=0, and the exact VM tree then ran 50 consecutive focused repetitions with no
+retries: 50/50 clean from `2026-07-29T13:50:18Z` to
+`2026-07-29T14:29:05Z`, with zero live provisioning Python processes after every
+run. The scoped custody/quarantine scan reported six retained entries, all from
+the intentional fail-closed `run-all` quarantine scenarios (`substitute`,
+`inplace`, and `restore`, each retaining the custody directory plus the
+quarantined object as recovery evidence); the count stayed constant throughout
+the 50-run batch and did not represent new residue growth from the repetitions.
+VM evidence paths:
+`/var/tmp/wdvpn-23-7-5-6a-56e4b00-20260729T134840Z/evidence/focused.log`,
+`/var/tmp/wdvpn-23-7-5-6a-56e4b00-20260729T134840Z/evidence/run-all.log`, and
+`/var/tmp/wdvpn-23-7-5-6a-56e4b00-20260729T134840Z/evidence/vm-focused-50`.
