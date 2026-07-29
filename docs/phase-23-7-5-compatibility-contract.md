@@ -2133,7 +2133,7 @@ rather than adding another name-based recheck around the old protocol.
   only have the older intermediate identity chain are not sufficient authority for
   destructive uninstall.
 
-Local evidence for this follow-up correction so far: `PYTHONPATH=. python
+Local evidence for this follow-up correction: `PYTHONPATH=. python
 tests/test_compat_transactional_provisioning.py` ran 258/258 clean after adding tests for
 missing/truncated/reordered path authority and simultaneous `global_lock_root`/`state_root`
 parent substitution. `python -m compileall -q compat/provisioning
@@ -2150,8 +2150,44 @@ rc=0 against a temporary 0700 lab root, including descriptor-custody quarantine
 substitution, in-place modification, no-replace restore, persisted intermediate swap,
 unsafe lock-parent rejection, identity loss before terminal state, post-last-check TOCTOU,
 intermediate real-directory swap, global-lock-root swap, and unreadable uninstall-journal
-reactivation scenarios. This is local evidence only; real VM reboot validation must still
-be run before closure.
+reactivation scenarios.
+
+Real VM evidence for the final follow-up SHA
+`16d2e7f22a889282ccca935cd248765004299962` was then executed on
+`wdvpn-linuxmint-23-6-7`. The VM checkout was reset to that exact SHA. Before the hard
+reset, the six mandatory reboot checkpoints were prepared with real SIGKILL boundaries:
+`after_apply_before_verify`, `undoing_before_unlink`,
+`undoing_after_unlink_before_undone`, `after_unlink_before_applied`,
+`after_verify_before_revoke`, and `after_revoke_before_uninstalled`. The final durable
+baseline was captured under `/var/tmp/wdvpn-round8-16d2e7f-reboot3` with an explicit
+`sync` before the snapshot and hard reset; a previous baseline attempt without that sync
+was rejected because the pre-reboot evidence files were observed as zero-length after the
+hard reset. The accepted snapshot is
+`pre-23.7.5.6a-round8-reboot3-synced-pre-hard-reset-16d2e7f`
+(`facecc7b-ef97-4493-962c-f1adb1582aa7`). The accepted boot IDs are
+`e58373b7-4c01-4106-9b59-065fd61b4163` before reset and
+`5ba9cc02-2682-43d7-b298-b6127c8d67df` after reset. As in prior rounds, the VM's
+eCryptfs home required one interactive password SSH login after the hard reset before
+key-based SSH could read the checkout; no password was written to a file, command line,
+commit or evidence artifact.
+
+All six post-reboot recoveries completed with rc=0 on the same SHA. The apply checkpoint
+resumed to `committed`; the two rollback checkpoints resumed rollback to
+`preparation_failed` with no remaining capability files; all three uninstall checkpoints
+resumed to `uninstalled`, removed the capability files, and left zero ownership records.
+The before/after VM baseline comparison was explicit: `dpkg -l`, apt repository files,
+running services, and `/var/lib/watchdogvpn` permissions/content hashes were byte-clean.
+Only expected dynamic fields changed: `boot_id` and timestamp, the DHCP lease lifetime in
+`ip addr`, and PIDs/command lines for the validation process itself. The post-reboot
+focused provisioning suite ran 258/258 clean on the VM, post-reboot `run-all` completed
+with rc=0, and a post-reboot 50-run batch completed 50/50 clean with no
+`FAILED`/`ERROR`/traceback/`TimeoutExpired` markers, no live harness child processes after
+any run, and no unexpected `.wdvpn-custody` or `.wdvpn-quarantine*` residues. The accepted
+post-reboot 50-run logs are under
+`/var/tmp/wdvpn-round8-16d2e7f-postreboot-vm50-final.ROEOry`. Earlier post-reboot 50-run
+attempts with observer bugs were discarded rather than counted: one `grep -R` inspection
+blocked on a FIFO, one `awk` filter was misquoted, and one process scan captured its own
+controller shell.
 
 ### Out of scope (unchanged in this task)
 
