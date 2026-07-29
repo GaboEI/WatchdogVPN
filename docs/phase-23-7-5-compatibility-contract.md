@@ -2320,3 +2320,18 @@ VM evidence paths:
 `/var/tmp/wdvpn-23-7-5-6a-56e4b00-20260729T134840Z/evidence/focused.log`,
 `/var/tmp/wdvpn-23-7-5-6a-56e4b00-20260729T134840Z/evidence/run-all.log`, and
 `/var/tmp/wdvpn-23-7-5-6a-56e4b00-20260729T134840Z/evidence/vm-focused-50`.
+
+Final HEAD `2ec6999b2d835e14fc45fc2171ee925cb186beec` then received a real
+reboot recovery check on the same VM from an exact archive deployment under
+`/var/tmp/wdvpn-23-7-5-6a-2ec6999-reboot-20260729T143244Z/src`. The six reboot
+checkpoints were prepared independently, synced, and followed by a real
+VirtualBox reset: `after_apply_before_verify`, `undoing_before_unlink`,
+`undoing_after_unlink_before_undone`, `after_unlink_before_applied`,
+`after_verify_before_revoke`, and `after_revoke_before_uninstalled`. Boot id
+changed from `5ba9cc02-2682-43d7-b298-b6127c8d67df` to
+`98a0d5c3-2780-4c20-b3f9-a7a2cbbc4a48`. All six post-reboot recoveries completed
+with rc=0, the post-reboot focused provisioning suite completed with rc=0, the
+reboot case custody/quarantine scan returned zero retained entries, and the
+post-reboot live-process scan returned zero provisioning Python processes.
+Evidence was retained under
+`/var/tmp/wdvpn-23-7-5-6a-2ec6999-reboot-20260729T143244Z/evidence`.
