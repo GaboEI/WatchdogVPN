@@ -2091,6 +2091,68 @@ ephemeral mDNS UDP port values and ordering. `/var/lib/watchdogvpn/private` rema
 `0700`, files remained `0600`/`0660` according to their prior ownership, and content hashes
 matched exactly.
 
+### Integral follow-up correction: descriptor custody, full path authority, and stable domain lock
+
+The follow-up correction after the seventh round keeps the scope inside Task 23.7.5.6a and
+does not start 23.7.5.6b. It addresses the remaining architectural weakness directly
+rather than adding another name-based recheck around the old protocol.
+
+- **Destructive removal now unlinks only inside descriptor-bound custody** (`paths.py`):
+  `remove_file_if_owned_relative()` still opens the original resource with `O_NOFOLLOW`
+  and keeps that fd open, but the quarantine destination is no longer a sibling basename
+  in the resource parent. The file is moved with `renameat2(RENAME_NOREPLACE)` into a
+  private `0700` custody directory opened relative to the allowed-root fd, verified to be
+  on the same filesystem, then reopened from that custody fd with `O_NOFOLLOW`. The moved
+  object's `st_dev`/`st_ino` and post-move sha256 must match the authorized original before
+  the final unlink. The final unlink is still necessarily name-based at the kernel API
+  level, but the name being unlinked lives in a descriptor-held private custody directory;
+  if custody cannot be proven private and same-filesystem, deletion fails closed. Empty
+  custody is removed after a clean delete; non-empty custody is retained as recovery
+  evidence.
+- **Ownership records now carry full durable path authority** (`model.py`, `journal.py`,
+  `digest.py`, `engine.py`, `paths.py`): each product-owned candidate persists a
+  `PathAuthority` containing the configured root path, exact target-relative path, exact
+  component count, and ordered root/intermediate component identities (`index`,
+  `relative_name`, `st_dev`, `st_ino`, uid, mode). The authority participates in the
+  canonical ownership/uninstall digest and is serialized in ownership snapshots. Uninstall
+  authority rejects records without this authority, with truncated chains, with reordered
+  components, or with a substituted root/intermediate. Direct children of the root are
+  explicit: their authority contains the root component and the full target-relative leaf
+  name, not an implicit empty chain.
+- **The exclusion domain has a filesystem-independent primary lock** (`lock.py`): before
+  opening `global_lock_root` or `state_root`, the provisioner binds a Linux abstract Unix
+  socket name derived from the configured logical `state_root` string. The existing
+  `global_lock_root` lock file and secondary `state_root` flock remain as
+  defense-in-depth and operator evidence, but coordinated replacement of both visible
+  roots and their parents can no longer give a contender a second accepted domain for the
+  same logical installation. If the abstract domain is already bound, the contender fails
+  with `ProvisionerLockHeldError`.
+- **Terminal authority now requires full path authority** (`engine.py`): clean
+  `COMMITTED`, rollback-clean, recovery-clean and `UNINSTALLED` paths verify allowed-root
+  identity plus every product-owned record's durable `PathAuthority`. Legacy records that
+  only have the older intermediate identity chain are not sufficient authority for
+  destructive uninstall.
+
+Local evidence for this follow-up correction so far: `PYTHONPATH=. python
+tests/test_compat_transactional_provisioning.py` ran 258/258 clean after adding tests for
+missing/truncated/reordered path authority and simultaneous `global_lock_root`/`state_root`
+parent substitution. `python -m compileall -q compat/provisioning
+tests/test_compat_transactional_provisioning.py tools/compat_provision.py`,
+`git diff --check`, `tests/syntax.sh`, `python tools/compat_read.py validate`, the four
+fixture probes, the four fixture resolve commands, and the real-host unknown-only resolve
+pass all completed with rc=0. `tests/unit.sh` completed with rc=0. `PYTHONPATH=. python
+-m unittest discover -s tests -p 'test_*.py'` ran 2243 tests with 1 skip and rc=0. The
+focused provisioning suite then ran 50 consecutive local repetitions with no retries:
+50/50 clean, no `FAILED`/`ERROR`/traceback/`TimeoutExpired` markers, no `.wdvpn-custody`
+or `.wdvpn-quarantine*` residues found after any run, and logs retained under
+`/tmp/wdvpn-23-7-5-6a-local50.X5TUTu`. The VM harness local `run-all` pass completed with
+rc=0 against a temporary 0700 lab root, including descriptor-custody quarantine
+substitution, in-place modification, no-replace restore, persisted intermediate swap,
+unsafe lock-parent rejection, identity loss before terminal state, post-last-check TOCTOU,
+intermediate real-directory swap, global-lock-root swap, and unreadable uninstall-journal
+reactivation scenarios. This is local evidence only; real VM reboot validation must still
+be run before closure.
+
 ### Out of scope (unchanged in this task)
 
 No production executor was registered. `lib/amneziawg.sh`,

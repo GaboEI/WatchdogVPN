@@ -205,6 +205,24 @@ class IntermediateIdentity:
 
 
 @dataclass(frozen=True)
+class PathComponentIdentity:
+    index: int
+    relative_name: str
+    dev: int
+    ino: int
+    uid: int
+    mode: int
+
+
+@dataclass(frozen=True)
+class PathAuthority:
+    root_path: str
+    target_relative_path: str
+    component_count: int
+    components: tuple[PathComponentIdentity, ...]
+
+
+@dataclass(frozen=True)
 class OwnershipCandidate:
     artifact_type: str
     resource_identity: str
@@ -219,6 +237,7 @@ class OwnershipCandidate:
     nlink: int | None = None
     post_install_fingerprint: str | None = None
     intermediate_identities: tuple[IntermediateIdentity, ...] = ()
+    path_authority: PathAuthority | None = None
 
 
 @dataclass(frozen=True)

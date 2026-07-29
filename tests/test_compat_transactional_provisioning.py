@@ -297,7 +297,7 @@ class TransactionalProvisioningTests(unittest.TestCase):
             with self.assertRaises(ProvisionerLockHeldError) as ctx:
                 with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id="contender", timeout=0.3):
                     pass
-            self.assertIsNotNone(ctx.exception.holder_pid)
+            self.assertIsNone(ctx.exception.holder_pid)
         finally:
             _fifo_signal(go)
         stdout, stderr = proc.communicate(timeout=60)
@@ -4076,6 +4076,67 @@ class NestedIntermediateComponentSwapTests(unittest.TestCase):
             self.assertEqual((identity.dev, identity.ino), (nested_stat.st_dev, nested_stat.st_ino))
             self.assertEqual(identity.uid, nested_stat.st_uid)
             self.assertEqual(identity.mode, stat.S_IMODE(nested_stat.st_mode))
+            self.assertIsNotNone(record.candidate.path_authority)
+            authority = record.candidate.path_authority
+            self.assertEqual(authority.root_path, str(self.harness.sandbox))
+            self.assertEqual(authority.component_count, 2)
+            self.assertEqual([component.relative_name for component in authority.components], ["", "nested"])
+
+    def test_nested_ownership_without_path_authority_is_invalid(self) -> None:
+        capability_id = "cap_nested_missing_path_authority"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        stripped = [
+            dataclasses.replace(record, candidate=dataclasses.replace(record.candidate, path_authority=None))
+            for record in records
+        ]
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, stripped)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertTrue((self.harness.sandbox / "nested" / ("%s.marker" % capability_id)).exists())
+
+    def test_truncated_path_authority_is_invalid(self) -> None:
+        capability_id = "cap_nested_truncated_path_authority"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        tampered = []
+        for record in records:
+            authority = record.candidate.path_authority
+            self.assertIsNotNone(authority)
+            truncated = dataclasses.replace(authority, component_count=1, components=authority.components[:1])
+            tampered.append(dataclasses.replace(record, candidate=dataclasses.replace(record.candidate, path_authority=truncated)))
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, tampered)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertTrue((self.harness.sandbox / "nested" / ("%s.marker" % capability_id)).exists())
+
+    def test_reordered_path_authority_is_invalid(self) -> None:
+        capability_id = "cap_nested_reordered_path_authority"
+        outcome = engine.prepare(self._decision(capability_id), self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+        records = journal_mod.read_ownership_records(self.harness.state_root, capability_id)
+        tampered = []
+        for record in records:
+            authority = record.candidate.path_authority
+            self.assertIsNotNone(authority)
+            reordered_components = tuple(
+                dataclasses.replace(component, index=index)
+                for index, component in enumerate(reversed(authority.components))
+            )
+            reordered = dataclasses.replace(authority, components=reordered_components)
+            tampered.append(dataclasses.replace(record, candidate=dataclasses.replace(record.candidate, path_authority=reordered)))
+        journal_mod.write_ownership_records(self.harness.state_root, capability_id, tampered)
+
+        result = engine.uninstall(capability_id, self.harness.env, apply=True)
+
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+        self.assertTrue((self.harness.sandbox / "nested" / ("%s.marker" % capability_id)).exists())
 
     def test_intermediate_swap_before_uninstall_entry_is_rejected_by_persisted_identity(self) -> None:
         capability_id = "cap_nested_persistent_swap"
@@ -4297,6 +4358,56 @@ class GlobalLockRootHardeningTests(unittest.TestCase):
         stdout, stderr = proc.communicate(timeout=15)
         self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
 
+    def test_simultaneous_global_and_state_root_parent_swap_still_has_one_domain(self) -> None:
+        state_parent = self.tmp / "state-parent"
+        global_parent = self.tmp / "global-parent"
+        state_parent.mkdir(mode=0o700)
+        global_parent.mkdir(mode=0o700)
+        state_root = state_parent / "state"
+        global_lock_root = global_parent / "global"
+        ready = self.tmp / "ready_domain_swap.marker"
+        go = self.tmp / "go_domain_swap.marker"
+        script = self.tmp / "holder_domain_swap.py"
+        script.write_text(
+            "import sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from pathlib import Path\n"
+            "from compat.provisioning.lock import acquire_provisioner_lock\n"
+            "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_signal, _fifo_wait\n"
+            "state_root = Path(%r); global_lock_root = Path(%r)\n"
+            "ready = Path(%r); go = Path(%r)\n"
+            "go_fd = _fifo_open_reader(go)\n"
+            "with acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id='holder', timeout=10.0):\n"
+            "    _fifo_signal(ready)\n"
+            "    _fifo_wait(go_fd, timeout=10.0, description='go marker')\n"
+            % (str(ROOT), str(state_root), str(global_lock_root), str(ready), str(go))
+        )
+        _fifo_create(ready)
+        _fifo_create(go)
+        ready_fd = _fifo_open_reader(ready)
+
+        proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.wait)
+        _fifo_wait(ready_fd, timeout=10.0, description="holder ready signal")
+        os.close(ready_fd)
+
+        state_parent.rename(self.tmp / "state-parent.old")
+        global_parent.rename(self.tmp / "global-parent.old")
+        state_parent.mkdir(mode=0o700)
+        global_parent.mkdir(mode=0o700)
+        state_root.mkdir(mode=0o700)
+        global_lock_root.mkdir(mode=0o700)
+
+        with self.assertRaises(ProvisionerLockHeldError):
+            with lock_mod.acquire_provisioner_lock(
+                state_root, global_lock_root=global_lock_root, transaction_id="contender", timeout=0.3
+            ):
+                pass
+
+        _fifo_signal(go)
+        stdout, stderr = proc.communicate(timeout=15)
+        self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
+
 
 class UnreadableUninstallJournalNeverReactivatesOwnershipTests(unittest.TestCase):
     """Point 4, sixth correction round, mandatory test: an uninstall journal
@@ -4501,8 +4612,9 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         self.addCleanup(self._restore_hooks)
         target = self.root / "owned"
         target.write_bytes(b"owned")
-        quarantine = self.root / ".wdvpn-quarantine.owned.test"
-        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+        quarantine_name = ".wdvpn-quarantine.owned.test"
+        quarantine = self.root / paths_mod.CUSTODY_DIR_NAME / quarantine_name
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine_name
 
         def _replace_quarantine() -> None:
             quarantine.unlink()
@@ -4521,8 +4633,9 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         self.addCleanup(self._restore_hooks)
         target = self.root / "owned"
         target.write_bytes(b"owned")
-        quarantine = self.root / ".wdvpn-quarantine.owned.test"
-        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+        quarantine_name = ".wdvpn-quarantine.owned.test"
+        quarantine = self.root / paths_mod.CUSTODY_DIR_NAME / quarantine_name
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine_name
 
         def _mutate_in_place() -> None:
             with target.open("r+b") as handle:
@@ -4542,8 +4655,9 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         self.addCleanup(self._restore_hooks)
         target = self.root / "owned"
         target.write_bytes(b"owned")
-        quarantine = self.root / ".wdvpn-quarantine.owned.test"
-        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+        quarantine_name = ".wdvpn-quarantine.owned.test"
+        quarantine = self.root / paths_mod.CUSTODY_DIR_NAME / quarantine_name
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine_name
 
         def _swap_original_before_quarantine() -> None:
             target.unlink()
@@ -4567,7 +4681,9 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         self.addCleanup(self._restore_hooks)
         target = self.root / "owned"
         target.write_bytes(b"owned")
-        quarantine = self.root / ".wdvpn-quarantine.owned.test"
+        custody = self.root / paths_mod.CUSTODY_DIR_NAME
+        custody.mkdir(mode=0o700)
+        quarantine = custody / ".wdvpn-quarantine.owned.test"
         quarantine.write_bytes(b"preexisting")
         paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
         with self.assertRaises(PathPolicyError):
@@ -4581,8 +4697,9 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         self.addCleanup(self._restore_hooks)
         target = self.root / "owned"
         target.write_bytes(b"owned")
-        quarantine = self.root / ".wdvpn-quarantine.owned.test"
-        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
+        quarantine_name = ".wdvpn-quarantine.owned.test"
+        quarantine = self.root / paths_mod.CUSTODY_DIR_NAME / quarantine_name
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine_name
 
         def _swap_original_before_quarantine() -> None:
             target.unlink()

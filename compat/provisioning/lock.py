@@ -26,6 +26,7 @@ import fcntl
 import hashlib
 import json
 import os
+import socket
 import stat as stat_module
 import time
 from contextlib import contextmanager
@@ -60,6 +61,46 @@ def _global_lock_file_name(state_root: Path) -> str:
         raise PathPolicyError("state root must be an absolute path: %s" % state_root)
     digest = hashlib.sha256(str(state_root).encode("utf-8")).hexdigest()
     return "%s.lock" % digest
+
+
+def _domain_socket_name(state_root: Path) -> bytes:
+    if not Path(state_root).is_absolute():
+        raise PathPolicyError("state root must be an absolute path: %s" % state_root)
+    digest = hashlib.sha256(str(Path(state_root)).encode("utf-8")).hexdigest()
+    return b"\0watchdogvpn-provisioning-domain-" + digest.encode("ascii")
+
+
+def _acquire_domain_socket_lock(
+    state_root: Path, *, timeout: float, poll_interval: float
+) -> socket.socket:
+    """Acquire a filesystem-independent primary exclusion domain.
+
+    Filesystem locks under ``global_lock_root`` and ``state_root`` remain
+    valuable evidence/defense-in-depth, but both roots and their parents can
+    be swapped as names. A Linux abstract Unix socket name is keyed only by
+    the configured logical ``state_root`` string and lives in the kernel's
+    network namespace, so two processes for one logical installation cannot
+    bind two different filesystem-backed lock domains by replacing paths.
+    """
+    name = _domain_socket_name(state_root)
+    deadline = time.monotonic() + timeout
+    while True:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.bind(name)
+            sock.listen(1)
+            return sock
+        except OSError as exc:
+            sock.close()
+            if exc.errno != errno.EADDRINUSE:
+                raise PathPolicyError("cannot acquire provisioner domain socket lock: %s" % exc) from exc
+            if time.monotonic() >= deadline:
+                raise ProvisionerLockHeldError(
+                    "provisioner lock is held by another process (domain socket already bound)",
+                    holder_pid=None,
+                    holder_transaction_id=None,
+                ) from exc
+            time.sleep(poll_interval)
 
 
 _GLOBAL_ROOT_MODE = 0o700
@@ -172,84 +213,71 @@ def acquire_provisioner_lock(
     is for operator diagnostics only -- the kernel flock, not this
     metadata, is what actually excludes a second mutating provisioner.
     """
-    global_root_fd, global_root_dev, global_root_ino = _open_global_root(Path(global_lock_root))
+    domain_socket = _acquire_domain_socket_lock(Path(state_root), timeout=timeout, poll_interval=poll_interval)
     try:
-        lock_name = _global_lock_file_name(Path(state_root))
-        fd = _open_and_verify_lock_fd_relative(global_root_fd, lock_name)
-        handle = os.fdopen(fd, "r+", encoding="utf-8")
+        global_root_fd, global_root_dev, global_root_ino = _open_global_root(Path(global_lock_root))
         try:
-            deadline = time.monotonic() + timeout
-            while True:
-                try:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError as exc:
-                    if exc.errno not in (errno.EACCES, errno.EAGAIN):
-                        raise
-                    if time.monotonic() >= deadline:
-                        holder_pid, holder_transaction_id = _read_holder_metadata(handle)
-                        raise ProvisionerLockHeldError(
-                            "provisioner lock is held by another process (pid=%s, transaction_id=%s)"
-                            % (holder_pid, holder_transaction_id),
-                            holder_pid=holder_pid,
-                            holder_transaction_id=holder_transaction_id,
-                        ) from exc
-                    time.sleep(poll_interval)
-
-            # Point 3, sixth correction round: re-confirm the global lock
-            # root's own identity hasn't changed between opening it and
-            # actually acquiring the flock -- an actor with write access to
-            # ITS parent could otherwise rename/replace it out from under
-            # us while we still believed we held a meaningful, exclusive
-            # lock relative to the CANONICAL configured path.
+            lock_name = _global_lock_file_name(Path(state_root))
+            fd = _open_and_verify_lock_fd_relative(global_root_fd, lock_name)
+            handle = os.fdopen(fd, "r+", encoding="utf-8")
             try:
-                current_root_stat = os.lstat(global_lock_root)
-            except OSError as exc:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-                raise PathPolicyError("cannot reconfirm global lock root identity: %s" % exc) from exc
-            if (current_root_stat.st_dev, current_root_stat.st_ino) != (global_root_dev, global_root_ino):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-                raise PathPolicyError(
-                    "global lock root %s no longer refers to the directory this lock was bound to "
-                    "(identity changed)" % global_lock_root
-                )
-
-            _write_holder_metadata(handle, transaction_id=transaction_id, state_root=state_root)
-            try:
-                state_root_handle = open_state_root(Path(state_root))
-                try:
-                    # Defense in depth (point 3, sixth correction round): a
-                    # same-uid actor who can rename/replace global_lock_root
-                    # itself could otherwise let a second process acquire
-                    # an "independent" lock via the substitute directory
-                    # while still racing on the REAL, unswapped state_root.
-                    # A second, non-blocking flock directly on state_root's
-                    # OWN directory fd is immune to any global_lock_root
-                    # swap (state_root was never touched by it), so two
-                    # processes that end up disagreeing about which global
-                    # lock file is "the" lock still correctly contend here
-                    # as long as they agree on the real state_root.
+                deadline = time.monotonic() + timeout
+                while True:
                     try:
-                        fcntl.flock(state_root_handle.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
                     except OSError as exc:
                         if exc.errno not in (errno.EACCES, errno.EAGAIN):
                             raise
+                        if time.monotonic() >= deadline:
+                            holder_pid, holder_transaction_id = _read_holder_metadata(handle)
+                            raise ProvisionerLockHeldError(
+                                "provisioner lock is held by another process (pid=%s, transaction_id=%s)"
+                                % (holder_pid, holder_transaction_id),
+                                holder_pid=holder_pid,
+                                holder_transaction_id=holder_transaction_id,
+                            ) from exc
+                        time.sleep(poll_interval)
+
+                try:
+                    current_root_stat = os.lstat(global_lock_root)
+                except OSError as exc:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    raise PathPolicyError("cannot reconfirm global lock root identity: %s" % exc) from exc
+                if (current_root_stat.st_dev, current_root_stat.st_ino) != (global_root_dev, global_root_ino):
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    raise PathPolicyError(
+                        "global lock root %s no longer refers to the directory this lock was bound to "
+                        "(identity changed)" % global_lock_root
+                    )
+
+                _write_holder_metadata(handle, transaction_id=transaction_id, state_root=state_root)
+                try:
+                    state_root_handle = open_state_root(Path(state_root))
+                    try:
+                        try:
+                            fcntl.flock(state_root_handle.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except OSError as exc:
+                            if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                                raise
+                            state_root_handle.close()
+                            raise ProvisionerLockHeldError(
+                                "provisioner lock is held by another process (state root directory already locked)",
+                                holder_pid=None, holder_transaction_id=None,
+                            ) from exc
+                        for subdir_name in (TRANSACTIONS_DIR, OWNERSHIP_DIR, HISTORY_DIR):
+                            state_root_handle.subdir_fd(subdir_name)
+                        yield state_root_handle
+                    finally:
                         state_root_handle.close()
-                        raise ProvisionerLockHeldError(
-                            "provisioner lock is held by another process (state root directory already locked)",
-                            holder_pid=None, holder_transaction_id=None,
-                        ) from exc
-                    for subdir_name in (TRANSACTIONS_DIR, OWNERSHIP_DIR, HISTORY_DIR):
-                        state_root_handle.subdir_fd(subdir_name)
-                    yield state_root_handle
                 finally:
-                    state_root_handle.close()
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                handle.close()
         finally:
-            handle.close()
+            os.close(global_root_fd)
     finally:
-        os.close(global_root_fd)
+        domain_socket.close()
 
 
 def _write_holder_metadata(handle, *, transaction_id: str, state_root: Path) -> None:

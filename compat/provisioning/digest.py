@@ -78,6 +78,26 @@ def canonical_ownership_record_mapping(record: OwnershipRecord) -> dict:
                 }
                 for identity in candidate.intermediate_identities
             ],
+            "path_authority": (
+                {
+                    "root_path": candidate.path_authority.root_path,
+                    "target_relative_path": candidate.path_authority.target_relative_path,
+                    "component_count": candidate.path_authority.component_count,
+                    "components": [
+                        {
+                            "index": component.index,
+                            "relative_name": component.relative_name,
+                            "dev": component.dev,
+                            "ino": component.ino,
+                            "uid": component.uid,
+                            "mode": component.mode,
+                        }
+                        for component in candidate.path_authority.components
+                    ],
+                }
+                if candidate.path_authority is not None
+                else None
+            ),
         },
     }
 

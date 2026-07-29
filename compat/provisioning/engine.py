@@ -54,11 +54,13 @@ from compat.provisioning.model import (
 from compat.provisioning.paths import (
     AllowedRootHandle,
     capture_intermediate_identities,
+    capture_path_authority,
     confirm_absent_descriptor_safe,
     open_allowed_root,
     remove_file_if_owned_relative,
     stat_identity_relative,
     verify_intermediate_identities,
+    verify_path_authority,
     validate_target_path,
 )
 from compat.provisioning.storage import StateRootHandle
@@ -195,13 +197,14 @@ def _verify_allowed_roots_identity(context: ExecutionContext) -> None:
 def _verify_terminal_identity(context: ExecutionContext, records: Sequence[OwnershipRecord] = ()) -> None:
     _verify_allowed_roots_identity(context)
     for record in records:
-        if record.product_owned and record.candidate.intermediate_identities:
+        if record.product_owned:
             validated = validate_target_path(
                 Path(record.candidate.resource_identity),
                 allowed_roots=context.allowed_roots,
                 forbidden_roots=context.forbidden_roots,
             )
             handle = handle_for_allowed_root(context, validated)
+            verify_path_authority(handle, record.candidate.path_authority, validated)
             verify_intermediate_identities(handle, record.candidate.intermediate_identities)
 
 
@@ -211,6 +214,7 @@ def _ownership_intermediates_are_current(record: OwnershipRecord, context: Execu
     try:
         validated = _validate_owned_resource_path_for_authority(record.candidate.resource_identity, context)
         handle = handle_for_allowed_root(context, validated)
+        verify_path_authority(handle, record.candidate.path_authority, validated)
         verify_intermediate_identities(handle, record.candidate.intermediate_identities)
         return True
     except (OSError, PathPolicyError):
@@ -573,6 +577,20 @@ def validate_ownership_authority(
             allowed_root = next(root for root in context.allowed_roots if validated == root or _path_is_under(validated, root))
             relative = validated.relative_to(allowed_root)
         except (OSError, PathPolicyError, ValueError, StopIteration):
+            return False
+        if candidate.path_authority is None:
+            return False
+        try:
+            if context.allowed_root_handles:
+                handle = handle_for_allowed_root(context, validated)
+                verify_path_authority(handle, candidate.path_authority, validated)
+            else:
+                handle = open_allowed_root(allowed_root)
+                try:
+                    verify_path_authority(handle, candidate.path_authority, validated)
+                finally:
+                    handle.close()
+        except (OSError, PathPolicyError):
             return False
         if relative.parts[:-1] and not candidate.intermediate_identities:
             return False
@@ -1080,6 +1098,7 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             handle = handle_for_allowed_root(context, validated)
             identity = stat_identity_relative(handle, validated)
             intermediate_identities = capture_intermediate_identities(handle, validated)
+            path_authority = capture_path_authority(handle, validated)
         except (PathPolicyError, OSError) as exc:
             raise ProvisioningError("cannot finalize ownership for %s: %s" % (resource_identity, exc)) from exc
         if identity["is_symlink"] or not identity["is_regular"]:
@@ -1122,6 +1141,7 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
             nlink=identity["nlink"] if expected.nlink is not None else None,
             post_install_fingerprint=expected.post_install_fingerprint,
             intermediate_identities=intermediate_identities,
+            path_authority=path_authority,
         )
         records.append(
             OwnershipRecord(
@@ -1159,6 +1179,15 @@ def _finalize_provenance(state_root: Path, journal: TransactionJournal, plan: Pr
                     }
                     for identity in r.candidate.intermediate_identities
                 ],
+                "path_authority": (
+                    {
+                        "root_path": r.candidate.path_authority.root_path,
+                        "target_relative_path": r.candidate.path_authority.target_relative_path,
+                        "component_count": r.candidate.path_authority.component_count,
+                    }
+                    if r.candidate.path_authority is not None
+                    else None
+                ),
             }
             for r in records
         ],
@@ -1971,9 +2000,10 @@ def _detect_ownership_drift(record: OwnershipRecord, validated_path: Path, handl
     except (OSError, PathPolicyError) as exc:
         return "cannot inspect current identity: %s" % exc
     try:
+        verify_path_authority(handle, candidate.path_authority, validated_path)
         verify_intermediate_identities(handle, candidate.intermediate_identities)
     except (OSError, PathPolicyError) as exc:
-        return "intermediate identity drifted: %s" % exc
+        return "path authority drifted: %s" % exc
     expected_nlink = candidate.nlink if candidate.nlink is not None else 1
     if identity["nlink"] != expected_nlink:
         return "hard link count drifted to %d (expected %d)" % (identity["nlink"], expected_nlink)

@@ -24,6 +24,8 @@ from compat.provisioning.model import (
     IntermediateIdentity,
     OwnershipCandidate,
     OwnershipRecord,
+    PathAuthority,
+    PathComponentIdentity,
     StepState,
     TRANSACTION_TRANSITIONS,
     TransactionState,
@@ -60,10 +62,13 @@ _OWNERSHIP_CANDIDATE_FIELDS = frozenset(
         "artifact_type", "resource_identity", "pre_existing", "method_id", "source",
         "version", "integrity", "uid", "gid", "mode", "nlink", "post_install_fingerprint",
         "intermediate_identities",
+        "path_authority",
     }
 )
 
 _INTERMEDIATE_IDENTITY_FIELDS = frozenset({"relative_name", "dev", "ino", "uid", "mode"})
+_PATH_AUTHORITY_FIELDS = frozenset({"root_path", "target_relative_path", "component_count", "components"})
+_PATH_COMPONENT_IDENTITY_FIELDS = frozenset({"index", "relative_name", "dev", "ino", "uid", "mode"})
 
 
 @dataclass(frozen=True)
@@ -321,6 +326,7 @@ def _ownership_to_jsonable(record: OwnershipRecord) -> dict:
             "nlink": candidate.nlink,
             "post_install_fingerprint": candidate.post_install_fingerprint,
             "intermediate_identities": [_intermediate_identity_to_jsonable(item) for item in candidate.intermediate_identities],
+            "path_authority": _path_authority_to_jsonable(candidate.path_authority) if candidate.path_authority is not None else None,
         },
     }
 
@@ -355,6 +361,7 @@ def _ownership_from_jsonable(data: object) -> OwnershipRecord:
                 _intermediate_identity_from_jsonable(item)
                 for item in _require_list(candidate_data, "intermediate_identities", default=[])
             ),
+            path_authority=_path_authority_from_jsonable(candidate_data.get("path_authority")),
         )
         return OwnershipRecord(
             capability_id=_require_identifier(data, "capability_id"),
@@ -390,6 +397,78 @@ def _intermediate_identity_from_jsonable(data: object) -> IntermediateIdentity:
     if relative_path.is_absolute() or ".." in relative_path.parts or not relative_path.parts:
         raise JournalError("intermediate identity relative_name must be a non-empty relative path without '..': %s" % relative_name)
     return IntermediateIdentity(
+        relative_name=relative_name,
+        dev=_require_non_negative_int(data, "dev"),
+        ino=_require_non_negative_int(data, "ino"),
+        uid=_require_non_negative_int(data, "uid"),
+        mode=_require_mode(data, "mode"),
+    )
+
+
+def _path_authority_to_jsonable(authority: PathAuthority | None) -> dict | None:
+    if authority is None:
+        return None
+    return {
+        "root_path": authority.root_path,
+        "target_relative_path": authority.target_relative_path,
+        "component_count": authority.component_count,
+        "components": [
+            {
+                "index": component.index,
+                "relative_name": component.relative_name,
+                "dev": component.dev,
+                "ino": component.ino,
+                "uid": component.uid,
+                "mode": component.mode,
+            }
+            for component in authority.components
+        ],
+    }
+
+
+def _path_authority_from_jsonable(data: object) -> PathAuthority | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise JournalError("path authority must be a JSON object or null")
+    unknown = set(data) - _PATH_AUTHORITY_FIELDS
+    if unknown:
+        raise JournalError("path authority has unknown field(s): %s" % sorted(unknown))
+    root_path = _require_absolute_path(data, "root_path")
+    target_relative_path = _require_str(data, "target_relative_path")
+    target_relative = Path(target_relative_path)
+    if target_relative.is_absolute() or ".." in target_relative.parts or not target_relative.parts:
+        raise JournalError("path authority target_relative_path must be a non-empty relative path without '..': %s" % target_relative_path)
+    components = tuple(_path_component_identity_from_jsonable(item) for item in _require_list(data, "components"))
+    component_count = _require_non_negative_int(data, "component_count")
+    if component_count != len(components):
+        raise JournalError("path authority component_count does not match components length")
+    indexes = [component.index for component in components]
+    if indexes != list(range(len(components))):
+        raise JournalError("path authority components must have exact contiguous indexes")
+    return PathAuthority(
+        root_path=root_path,
+        target_relative_path=target_relative_path,
+        component_count=component_count,
+        components=components,
+    )
+
+
+def _path_component_identity_from_jsonable(data: object) -> PathComponentIdentity:
+    if not isinstance(data, dict):
+        raise JournalError("path authority component must be a JSON object")
+    unknown = set(data) - _PATH_COMPONENT_IDENTITY_FIELDS
+    if unknown:
+        raise JournalError("path authority component has unknown field(s): %s" % sorted(unknown))
+    relative_name = data.get("relative_name")
+    if not isinstance(relative_name, str):
+        raise JournalError("path authority component relative_name must be a string")
+    if relative_name != "":
+        relative_path = Path(relative_name)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise JournalError("path authority component relative_name must be relative without '..': %s" % relative_name)
+    return PathComponentIdentity(
+        index=_require_non_negative_int(data, "index"),
         relative_name=relative_name,
         dev=_require_non_negative_int(data, "dev"),
         ino=_require_non_negative_int(data, "ino"),

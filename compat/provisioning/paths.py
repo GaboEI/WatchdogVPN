@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from compat.provisioning.errors import DurabilityError, IdentifierError, PathPolicyError
-from compat.provisioning.model import IntermediateIdentity
+from compat.provisioning.model import IntermediateIdentity, PathAuthority, PathComponentIdentity
 from compat.provisioning.storage import fsync_parent_directory
 
 CANARY_FORBIDDEN_ROOTS: tuple[Path, ...] = (
@@ -411,6 +411,7 @@ UNLINK_REVERIFY_HOOK: Callable[[], None] = _default_unlink_pause
 QUARANTINE_POST_VERIFY_HOOK: Callable[[], None] = _default_unlink_pause
 QUARANTINE_BEFORE_RESTORE_HOOK: Callable[[], None] = _default_unlink_pause
 QUARANTINE_NAME_FACTORY: Callable[[str], str] = _default_quarantine_name
+CUSTODY_DIR_NAME = ".wdvpn-custody"
 
 RENAME_NOREPLACE = 1
 _RENAMEAT2_SYSCALLS = {
@@ -466,6 +467,39 @@ def _verify_private_directory_fd(dir_fd: int, *, label: str) -> None:
         raise PathPolicyError("%s must not be writable by group/world actors, found mode %o" % (label, mode))
 
 
+def _open_private_custody_dir(handle: AllowedRootHandle, resource_dev: int, *, label: str) -> int:
+    """Open the per-allowed-root custody directory used for destructive
+    removal. The final unlink is allowed only inside this descriptor-bound
+    private directory; if it cannot be created or proven private, deletion
+    fails closed."""
+    try:
+        fd = os.open(CUSTODY_DIR_NAME, _RELATIVE_DIR_OPEN_FLAGS, dir_fd=handle.fd)
+    except FileNotFoundError:
+        try:
+            os.mkdir(CUSTODY_DIR_NAME, 0o700, dir_fd=handle.fd)
+        except FileExistsError:
+            pass
+        else:
+            try:
+                os.fsync(handle.fd)
+            except OSError as exc:
+                raise DurabilityError("custody directory creation for %s could not be durably fsynced: %s" % (label, exc)) from exc
+        fd = os.open(CUSTODY_DIR_NAME, _RELATIVE_DIR_OPEN_FLAGS, dir_fd=handle.fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise PathPolicyError("custody directory is a symlink for %s" % label) from exc
+        raise PathPolicyError("cannot open custody directory for %s: %s" % (label, exc)) from exc
+    try:
+        _verify_private_directory_fd(fd, label="custody directory for %s" % label)
+        st = os.fstat(fd)
+        if st.st_dev != resource_dev:
+            raise PathPolicyError("custody directory for %s is on a different filesystem" % label)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
 def remove_file_if_owned_relative(
     handle: AllowedRootHandle, validated_path: Path, *, expected_sha256: str | None = None
 ) -> bool:
@@ -476,28 +510,17 @@ def remove_file_if_owned_relative(
     and every check -- regular file, content hash -- is performed against
     that SAME open file descriptor.
 
-    A bare ``lstat()`` immediately before ``unlink()`` (the fifth round's
-    approach) still leaves a window between that check and the destructive
-    syscall itself, since ``unlink`` operates on the NAME, not the inode: a
-    concurrent rename of the basename in that exact window would still get
-    deleted. Instead, the basename is atomically RENAMED into a private,
-    unpredictable quarantine name within the SAME directory (a
-    ``uuid4``-derived name never otherwise used, so a pre-existing collision
-    is not realistically triggerable): whatever inode is CURRENTLY at the
-    basename at the moment of that single atomic ``renameat`` syscall is
-    what moves, collapsing "read the name" and "claim the entry" into one
-    kernel operation with no window for a third party to intervene in
-    between. Only THEN is the quarantined entry's identity compared against
-    what was hashed -- if a concurrent substitution beat us to the rename,
-    we quarantined the WRONG (foreign) inode, and it is restored to its
-    original name (best-effort) rather than ever being deleted; if the
-    restore itself fails, the quarantined entry is left in place as
-    recoverable evidence, never silently deleted. Only a quarantined entry
-    that matches the exact inode just hashed is ever unlinked -- and by then
-    its name is private to this call, so no further substitution is
-    possible."""
+    The basename is atomically RENAMED into a descriptor-bound private
+    custody directory under the same allowed root, using
+    ``RENAME_NOREPLACE`` and requiring the same filesystem. Only after the
+    move do we open the custody entry with ``O_NOFOLLOW``, compare its
+    ``st_dev``/``st_ino`` with the original fd, and rehash the moved object.
+    The destructive unlink is then performed only inside that private
+    custody directory. If identity/content cannot be proven, or if a
+    no-replace restore is blocked by a reappeared basename, the custody
+    entry is left as an explicit recoverable residue and the caller must
+    drive the transaction to recovery/manual review."""
     with _relative_to_handle(handle, validated_path) as (parent_fd, basename):
-        _verify_private_directory_fd(parent_fd, label="quarantine parent for %s" % validated_path)
         try:
             fd = os.open(basename, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
         except FileNotFoundError:
@@ -524,9 +547,10 @@ def remove_file_if_owned_relative(
             # no-replace quarantine move.
             UNLINK_REVERIFY_HOOK()
 
+            custody_fd = _open_private_custody_dir(handle, st.st_dev, label=str(validated_path))
             quarantine_name = QUARANTINE_NAME_FACTORY(basename)
             try:
-                _rename_noreplace(basename, quarantine_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                _rename_noreplace(basename, quarantine_name, src_dir_fd=parent_fd, dst_dir_fd=custody_fd)
             except FileNotFoundError:
                 return False
             except FileExistsError as exc:
@@ -535,13 +559,14 @@ def remove_file_if_owned_relative(
                 raise PathPolicyError("cannot quarantine %s for removal with no-replace rename: %s" % (validated_path, exc)) from exc
             try:
                 os.fsync(parent_fd)
+                os.fsync(custody_fd)
             except OSError as exc:
                 raise DurabilityError(
                     "quarantine of %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
                 ) from exc
 
             try:
-                qfd = os.open(quarantine_name, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
+                qfd = os.open(quarantine_name, _RELATIVE_FILE_READ_FLAGS, dir_fd=custody_fd)
             except FileNotFoundError as exc:
                 raise PathPolicyError("quarantined entry for %s vanished unexpectedly" % validated_path) from exc
             except OSError as exc:
@@ -553,7 +578,9 @@ def remove_file_if_owned_relative(
                 if not stat_module.S_ISREG(quarantined.st_mode):
                     raise PathPolicyError("quarantined entry for %s is not a regular file" % validated_path)
                 if (quarantined.st_dev, quarantined.st_ino) != (st.st_dev, st.st_ino):
-                    _restore_quarantine_or_raise(parent_fd, quarantine_name, basename, validated_path, "quarantined a different inode")
+                    _restore_quarantine_or_raise(
+                        custody_fd, parent_fd, quarantine_name, basename, validated_path, "quarantined a different inode"
+                    )
                 if expected_sha256 is not None:
                     post_move_hash = _hash_fd_from_start(qfd)
                     if post_move_hash != expected_sha256:
@@ -567,22 +594,13 @@ def remove_file_if_owned_relative(
                 QUARANTINE_POST_VERIFY_HOOK()
 
                 try:
-                    qfd_after_hook = os.open(quarantine_name, _RELATIVE_FILE_READ_FLAGS, dir_fd=parent_fd)
+                    qfd_after_hook = os.open(quarantine_name, _RELATIVE_FILE_READ_FLAGS, dir_fd=custody_fd)
                 except FileNotFoundError as exc:
-                    raise PathPolicyError(
-                        "refusing to remove %s: quarantine entry vanished before unlink; residual %s"
-                        % (validated_path, quarantine_name)
-                    ) from exc
+                    raise PathPolicyError("refusing to remove %s: quarantine entry vanished before unlink; residual %s/%s" % (validated_path, CUSTODY_DIR_NAME, quarantine_name)) from exc
                 except OSError as exc:
                     if exc.errno == errno.ELOOP:
-                        raise PathPolicyError(
-                            "refusing to remove %s: quarantine entry became a symlink before unlink; residual %s"
-                            % (validated_path, quarantine_name)
-                        ) from exc
-                    raise PathPolicyError(
-                        "refusing to remove %s: cannot reopen quarantine entry before unlink; residual %s: %s"
-                        % (validated_path, quarantine_name, exc)
-                    ) from exc
+                        raise PathPolicyError("refusing to remove %s: quarantine entry became a symlink before unlink; residual %s/%s" % (validated_path, CUSTODY_DIR_NAME, quarantine_name)) from exc
+                    raise PathPolicyError("refusing to remove %s: cannot reopen quarantine entry before unlink; residual %s/%s: %s" % (validated_path, CUSTODY_DIR_NAME, quarantine_name, exc)) from exc
                 try:
                     post_hook = os.fstat(qfd_after_hook)
                     if (post_hook.st_dev, post_hook.st_ino) != (st.st_dev, st.st_ino):
@@ -600,28 +618,46 @@ def remove_file_if_owned_relative(
             finally:
                 os.close(qfd)
 
-            os.unlink(quarantine_name, dir_fd=parent_fd)
+            os.unlink(quarantine_name, dir_fd=custody_fd)
             try:
-                os.fsync(parent_fd)
+                os.fsync(custody_fd)
             except OSError as exc:
                 raise DurabilityError(
                     "removal of %s completed but its directory could not be durably fsynced: %s" % (validated_path, exc)
                 ) from exc
+            try:
+                os.rmdir(CUSTODY_DIR_NAME, dir_fd=handle.fd)
+            except OSError:
+                pass
+            else:
+                try:
+                    os.fsync(handle.fd)
+                except OSError as exc:
+                    raise DurabilityError(
+                        "empty custody directory cleanup for %s could not be durably fsynced: %s" % (validated_path, exc)
+                    ) from exc
             return True
         finally:
+            try:
+                os.close(custody_fd)
+            except UnboundLocalError:
+                pass
             os.close(fd)
 
 
-def _restore_quarantine_or_raise(parent_fd: int, quarantine_name: str, basename: str, validated_path: Path, reason: str) -> None:
+def _restore_quarantine_or_raise(
+    custody_fd: int, parent_fd: int, quarantine_name: str, basename: str, validated_path: Path, reason: str
+) -> None:
     try:
         QUARANTINE_BEFORE_RESTORE_HOOK()
-        _rename_noreplace(quarantine_name, basename, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        _rename_noreplace(quarantine_name, basename, src_dir_fd=custody_fd, dst_dir_fd=parent_fd)
     except OSError as exc:
         raise PathPolicyError(
             "refusing to remove %s: %s; could not restore quarantine entry %s without replacement: %s"
             % (validated_path, reason, quarantine_name, exc)
         ) from exc
     try:
+        os.fsync(custody_fd)
         os.fsync(parent_fd)
     except OSError as exc:
         raise DurabilityError(
@@ -654,6 +690,48 @@ def capture_intermediate_identities(handle: AllowedRootHandle, validated_path: P
     return tuple(identities)
 
 
+def capture_path_authority(handle: AllowedRootHandle, validated_path: Path) -> PathAuthority:
+    try:
+        relative = validated_path.relative_to(handle.path)
+    except ValueError as exc:
+        raise PathPolicyError("%s is not a descendant of allowed root %s" % (validated_path, handle.path)) from exc
+    if not relative.parts:
+        raise PathPolicyError("path authority target must be a strict descendant of allowed root: %s" % validated_path)
+
+    components: list[PathComponentIdentity] = []
+    root_st = os.fstat(handle.fd)
+    components.append(
+        PathComponentIdentity(
+            index=0,
+            relative_name="",
+            dev=root_st.st_dev,
+            ino=root_st.st_ino,
+            uid=root_st.st_uid,
+            mode=stat_module.S_IMODE(root_st.st_mode),
+        )
+    )
+    for index in range(1, len(relative.parts)):
+        parts = relative.parts[:index]
+        fd = handle.intermediate_fd(parts)
+        st = os.fstat(fd)
+        components.append(
+            PathComponentIdentity(
+                index=index,
+                relative_name="/".join(parts),
+                dev=st.st_dev,
+                ino=st.st_ino,
+                uid=st.st_uid,
+                mode=stat_module.S_IMODE(st.st_mode),
+            )
+        )
+    return PathAuthority(
+        root_path=str(handle.path),
+        target_relative_path="/".join(relative.parts),
+        component_count=len(components),
+        components=tuple(components),
+    )
+
+
 def verify_intermediate_identities(handle: AllowedRootHandle, expected: Sequence[IntermediateIdentity]) -> None:
     for identity in expected:
         parts = tuple(Path(identity.relative_name).parts)
@@ -667,6 +745,38 @@ def verify_intermediate_identities(handle: AllowedRootHandle, expected: Sequence
             raise PathPolicyError(
                 "intermediate %s identity changed: expected dev/ino/uid/mode %r, found %r"
                 % (identity.relative_name, expected_tuple, actual)
+            )
+
+
+def verify_path_authority(handle: AllowedRootHandle, authority: PathAuthority | None, validated_path: Path) -> None:
+    if authority is None:
+        raise PathPolicyError("missing durable path authority for %s" % validated_path)
+    try:
+        relative = validated_path.relative_to(handle.path)
+    except ValueError as exc:
+        raise PathPolicyError("%s is not a descendant of allowed root %s" % (validated_path, handle.path)) from exc
+    if authority.root_path != str(handle.path):
+        raise PathPolicyError("path authority root mismatch for %s" % validated_path)
+    target_relative_path = "/".join(relative.parts)
+    if authority.target_relative_path != target_relative_path:
+        raise PathPolicyError("path authority target mismatch: expected %s, found %s" % (authority.target_relative_path, target_relative_path))
+    expected_component_count = len(relative.parts)
+    if authority.component_count != expected_component_count or len(authority.components) != expected_component_count:
+        raise PathPolicyError("path authority component count mismatch for %s" % validated_path)
+    expected_names = [""] + ["/".join(relative.parts[:index]) for index in range(1, len(relative.parts))]
+    for index, component in enumerate(authority.components):
+        if component.index != index:
+            raise PathPolicyError("path authority component index mismatch for %s" % validated_path)
+        if component.relative_name != expected_names[index]:
+            raise PathPolicyError("path authority component order/name mismatch for %s" % validated_path)
+        fd = handle.fd if index == 0 else handle.intermediate_fd(tuple(Path(component.relative_name).parts))
+        st = os.fstat(fd)
+        actual = (st.st_dev, st.st_ino, st.st_uid, stat_module.S_IMODE(st.st_mode))
+        expected_tuple = (component.dev, component.ino, component.uid, component.mode)
+        if actual != expected_tuple:
+            raise PathPolicyError(
+                "path authority component %s identity changed: expected dev/ino/uid/mode %r, found %r"
+                % (component.relative_name or "<root>", expected_tuple, actual)
             )
 
 

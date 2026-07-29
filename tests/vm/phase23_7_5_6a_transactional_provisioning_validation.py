@@ -473,8 +473,9 @@ def cmd_run_all(args) -> int:
         substitute_root.mkdir(mode=0o700)
         substitute_target = substitute_root / "owned"
         substitute_target.write_bytes(b"owned")
-        substitute_quarantine = substitute_root / ".wdvpn-quarantine.owned.vm"
-        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: substitute_quarantine.name
+        substitute_quarantine_name = ".wdvpn-quarantine.owned.vm"
+        substitute_quarantine = substitute_root / paths_mod.CUSTODY_DIR_NAME / substitute_quarantine_name
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: substitute_quarantine_name
 
         def _replace_quarantine() -> None:
             substitute_quarantine.unlink()
@@ -508,8 +509,9 @@ def cmd_run_all(args) -> int:
         inplace_root.mkdir(mode=0o700)
         inplace_target = inplace_root / "owned"
         inplace_target.write_bytes(b"owned")
-        inplace_quarantine = inplace_root / ".wdvpn-quarantine.owned.vm"
-        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: inplace_quarantine.name
+        inplace_quarantine_name = ".wdvpn-quarantine.owned.vm"
+        inplace_quarantine = inplace_root / paths_mod.CUSTODY_DIR_NAME / inplace_quarantine_name
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: inplace_quarantine_name
 
         def _mutate_in_place() -> None:
             with inplace_target.open("r+b") as handle:
@@ -541,8 +543,9 @@ def cmd_run_all(args) -> int:
         restore_root.mkdir(mode=0o700)
         restore_target = restore_root / "owned"
         restore_target.write_bytes(b"owned")
-        restore_quarantine = restore_root / ".wdvpn-quarantine.owned.vm"
-        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: restore_quarantine.name
+        restore_quarantine_name = ".wdvpn-quarantine.owned.vm"
+        restore_quarantine = restore_root / paths_mod.CUSTODY_DIR_NAME / restore_quarantine_name
+        paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: restore_quarantine_name
 
         def _swap_original_before_quarantine() -> None:
             restore_target.unlink()
