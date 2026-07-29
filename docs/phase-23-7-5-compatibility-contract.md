@@ -2489,3 +2489,53 @@ after the reboot; the latter refuses success unless the pre-reboot and
 post-reboot `boot_id` values differ. Its `--apply` mode is intended for
 disposable VMs; it does not activate profiles, mutate VPN/DNS/firewall state or
 claim L4 traffic certification.
+
+### Task 23.7.5.7 System migration
+
+Task 23.7.5.7 migrates the legacy shell distro-detection layer to the manifest
+and engine built in the preceding tasks, without changing the manifest, the
+pure domain modules, the transactional provisioner, the AmneziaWG migration or
+any public CLI surface.
+
+The new entrypoint `tools/compat_distro_classify.py` is an internal wrapper that
+reads `compat/compatibility.json`, invokes `compat.detection` to resolve the
+host identity and support classification, and emits a stable JSON document.
+`lib/distro.sh` consumes that document as its primary source of truth for:
+
+- `DISTRO_SUPPORTED` — set when the engine reports `certified`, `supported` or
+  `family_inferred`.
+- `DISTRO_FUTURE` — set when the engine reports `experimental`.
+- `DISTRO_UNSUPPORTED` — set when the engine reports `unsupported`.
+- `DISTRO_ADAPTER_ID`, `DISTRO_FAMILY`, `DISTRO_PACKAGE_MANAGER` — identity
+  fields used by the legacy adapter-loading path.
+
+The shell↔engine contract is the JSON shape produced by
+`tools/compat_distro_classify.py`; the wrapper intentionally consumes an
+internal Python function from `compat.detection` and is maintained in lock-step
+with that module during this phase.
+
+If Python or the engine is unavailable, `lib/distro.sh` falls back to a minimal
+pure-Bash bootstrap reader. That fallback resolves only mechanical identity:
+`DISTRO_ID`, `DISTRO_NAME`, adapter/family and a package-manager seed. It does
+not reconstruct `support_classification`, does not mark any distro as supported
+and does not produce `DISTRO_FUTURE=1`. In that degraded state the distro is
+reported as `DISTRO_UNDETERMINED=1` and the installer/doctor/updater treat it as
+unsupported. This preserves the design rule that the manifest+engine is the
+single source of truth for support policy.
+
+`doctor.sh`, `install.sh` and `update.sh` now distinguish three outcomes:
+
+- supported → continue normally;
+- future → fail with "planned for a future release";
+- unsupported/undetermined → fail with "unsupported distro".
+
+Files added or modified in this task: `tools/compat_distro_classify.py`,
+`lib/distro.sh`, `lib/common.sh` (helper messages only), `install.sh`,
+`update.sh`, `doctor.sh` (message wiring), `tests/unit/test_distro_detection.sh`,
+`tests/test_compat_system_migration.py` and this document. Files explicitly not
+touched: `compat/compatibility.json`, `compat/compatibility.schema.json`,
+`compat/support_model.py`, `compat/detection.py`, `compat/dependency_resolution.py`,
+`compat/provisioning/*`, `lib/amneziawg.sh`,
+`diagnostics/amneziawg_guidance.py`, `tools/compat_runtime_prepare.py`,
+`distros/*.sh`, `lib/packages.sh`, `lib/singbox.sh`, `lib/cloak.sh` and
+`cli/main.py`.

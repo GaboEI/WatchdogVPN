@@ -120,8 +120,17 @@ require_supported_distro() {
   detect_distro
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
 
-  if [[ "${DISTRO_SUPPORTED:-0}" != "1" ]]; then
-    print_unsupported_distro
+  if [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
+    print_future_distro
+    exit 1
+  fi
+
+  if [[ "${DISTRO_UNSUPPORTED:-0}" == "1" || "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
+    if [[ "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
+      print_undetermined_distro
+    else
+      print_unsupported_distro
+    fi
     exit 1
   fi
 

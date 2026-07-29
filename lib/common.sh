@@ -143,6 +143,31 @@ Next step:
 EOF
 }
 
+print_future_distro() {
+  fail "distro support is planned for a future release: ${DISTRO_NAME:-unknown} (${DISTRO_ID:-unknown})"
+  cat <<'EOF'
+This distribution is recognized but is not yet supported by this release of
+WatchdogVPN. Support status may change once certification evidence is
+completed.
+
+Next step:
+  Run ./doctor.sh for the current readiness report, or check the compatibility
+  matrix in the project documentation.
+EOF
+}
+
+print_undetermined_distro() {
+  fail "distro support cannot be determined: ${DISTRO_NAME:-unknown} (${DISTRO_ID:-unknown})"
+  cat <<'EOF'
+WatchdogVPN could not load its compatibility engine. The distribution could not
+be classified. Ensure python3 is available and the manifest
+compat/compatibility.json is intact.
+
+Next step:
+  Install python3 and run ./doctor.sh again.
+EOF
+}
+
 have_cmd() {
   local command_name="$1" candidate search_path
   local search_paths="${WATCHDOGVPN_COMMAND_PATHS:-/usr/local/sbin:/usr/sbin:/sbin}"
