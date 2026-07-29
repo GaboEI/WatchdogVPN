@@ -2335,3 +2335,15 @@ reboot case custody/quarantine scan returned zero retained entries, and the
 post-reboot live-process scan returned zero provisioning Python processes.
 Evidence was retained under
 `/var/tmp/wdvpn-23-7-5-6a-2ec6999-reboot-20260729T143244Z/evidence`.
+
+Independent closure audit result: Task 23.7.5.6a was technically approved with
+0 HIGH, 0 MEDIUM, and 1 non-blocking LOW finding. `LOW-01`: when uninstall is
+deliberately executed under strict same-UID custody in the non-root lab harness,
+the fail-closed path correctly preserves product-owned files, keeps ownership
+live, and returns `uninstall_failed`, but leaves an empty `.wdvpn-custody`
+directory in the sandbox. This is not a destructive-integrity failure: no
+foreign inode is removed, no ownership is revoked, and no clean terminal state is
+reported. The recommended follow-up, if the cosmetic residue is later cleaned
+up, is to remove an empty custody directory best-effort when it was created by
+the current call and strict validation fails before any file is moved, followed
+by a parent-directory fsync. 23.7.5.6b remains not started.
