@@ -2398,6 +2398,13 @@ remain governed by the 23.7.5.6a provisioner lock, journal, custody, ownership
 and terminal-state protocols. Command execution is isolated behind
 `compat.provisioning.process` and uses argv-only subprocesses with
 `shell=False`.
+Git and make subprocesses receive an explicit sanitized build environment and
+never inherit arbitrary parent-process variables. The allowlist is:
+`HOME` (the selected build user's home), a fixed `PATH`
+(`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), fixed
+`LANG=C.UTF-8`, fixed `LC_ALL=C.UTF-8`, `USER`, `LOGNAME`, and
+`GIT_TERMINAL_PROMPT=0` so Git cannot block on an interactive credential
+prompt.
 
 Because source-build output hashes are known only after compilation, ownership
 authority records the verified output SHA-256 at commit time. The plan must
@@ -2412,11 +2419,16 @@ Local evidence at implementation time:
   tests/test_compat_amneziawg_provisioning.py
   tests/test_compat_dependency_resolution.py tools/compat_read.py` completed
   with rc=0.
-- `python -m unittest tests.test_compat_amneziawg_provisioning` ran 7 tests
+- `python -m unittest tests.test_compat_amneziawg_provisioning` ran 11 tests
   with rc=0, covering dynamic output digests, PathAuthorityV2 integrity,
   pre-existing-output preservation, commit mismatch before install, uninstall
   of owned outputs, idempotent second prepare, already-present CLI handling and
-  source-build executor registration for recovery/uninstall.
+  source-build executor registration for recovery/uninstall, sanitized
+  subprocess environment inheritance rejection, and VM post-reboot `boot_id`
+  enforcement. The suite also covers recovery of a pending source-build prepare
+  whose resumed apply fails, proving recovery persists `ROLLING_BACK` before
+  completing rollback instead of attempting an invalid `APPLYING -> ROLLED_BACK`
+  transition.
 - `python -m unittest tests.test_compat_dependency_resolution` ran 32 tests
   with rc=0 after updating the AWG source-build contract from future/unresolved
   to implemented/pinned.
@@ -2430,7 +2442,7 @@ Local evidence at implementation time:
   invent a source-build plan when the runtime is already available.
 - `bash tests/syntax.sh` completed with rc=0.
 - `git diff --check` completed with rc=0.
-- Full repository unittest discovery ran 2257 tests in 268.069s with rc=0 and
+- Full repository unittest discovery ran 2261 tests in 308.799s with rc=0 and
   1 skip.
 - The four fixture compatibility probes (`detect`, `capabilities`, `evaluate`,
   `report`) completed with rc=0. The four fixture resolver commands
@@ -2438,12 +2450,36 @@ Local evidence at implementation time:
   source-build fixture selected the pinned source-build candidate with
   `execution_ready=true`.
 - The 23.7.5.6b VM harness smoke ran in non-mutating mode with rc=0 and
-  produced one baseline/plan evidence step.
+  produced v2 baseline evidence including boot id, package inventory probes,
+  repository state, running services, network state, relevant processes,
+  permissions, `/var/lib/watchdogvpn`, and output state.
+- Real 23.7.5.6b VM reboot-recovery campaign on `wdvpn-linuxmint-23-6-7`
+  completed with rc=0 using the internal harness, root-owned temporary
+  state/lock/install/evidence roots under `/var/lib/wdvpn-6b-medium-*`, and a
+  build workspace under `/home/gabodev/wdvpn-6b-medium-work`. The VM validation
+  environment was prepared with `golang-go 2:1.22~2build1` so the real
+  `amneziawg-go` source-build could complete; that package is visible in the
+  captured pre-reboot package baseline. Pre-reboot evidence
+  `/var/lib/wdvpn-6b-medium-evidence/pre.json` recorded boot id
+  `a5acfe68-88b0-4b9f-b78e-578b35fef624`, baseline size 216848 bytes, and a
+  durable pending prepare journal
+  `vm6b_reboot_cb30a3bf0d67a145` in state `applying` with all three steps still
+  `planned`. After a real VirtualBox reset, post-reboot evidence
+  `/var/lib/wdvpn-6b-medium-evidence/post.json` recorded boot id
+  `26fc162a-83df-4d31-bdcb-2d307482fbd0`, `boot_id_changed=true`, `recover`
+  rc=0 with action `resume` and reason `resumed and committed`, post-recovery
+  `status` showing the pending prepare `committed`, cleanup `uninstall --apply`
+  status `uninstalled 3 resource(s)`, cleanup `status` rc=0, baseline size
+  418043 bytes, and an empty temporary install root.
 - The new AWG focal suite ran 50 consecutive repetitions with no retries:
-  50/50 clean in 18.087s.
+  50/50 clean in 27s.
 
 The VM harness for this task is
 `tests/vm/phase23_7_5_6b_amneziawg_validation.py`. It captures baseline
-evidence and drives only the internal tool. Its `--apply` mode is intended for
+evidence and drives only the internal tool. Its `run-all` command remains a
+single-boot smoke. Reboot recovery evidence is split into
+`prepare-reboot-campaign` before the real VM reboot and `recover-after-reboot`
+after the reboot; the latter refuses success unless the pre-reboot and
+post-reboot `boot_id` values differ. Its `--apply` mode is intended for
 disposable VMs; it does not activate profiles, mutate VPN/DNS/firewall state or
 claim L4 traffic certification.

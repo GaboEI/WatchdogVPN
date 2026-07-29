@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import importlib.util
+import io
+import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
+from contextlib import redirect_stdout
 import unittest
 
 from compat import detection
@@ -19,6 +24,7 @@ from compat.provisioning.amneziawg import (
     SourceComponent,
 )
 from compat.provisioning.executors import ExecutionContext, TrustedExecutorRegistry
+from compat.provisioning.model import TransactionState
 from compat.provisioning.paths import LAB_CUSTODY_ISOLATION_POLICY
 from compat.provisioning.process import CommandResult, CommandRunner
 from tools import compat_runtime_prepare
@@ -26,6 +32,7 @@ from tools import compat_runtime_prepare
 
 TOOLS_REVISION = "61e741780e8465a67a7d7fb6cffe14a8a15d624a"
 GO_REVISION = "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba"
+VM_HARNESS = Path(__file__).resolve().parent / "vm" / "phase23_7_5_6b_amneziawg_validation.py"
 
 
 class FakeRunner(CommandRunner):
@@ -35,7 +42,7 @@ class FakeRunner(CommandRunner):
 
     def run(self, argv, *, cwd=None, env=None, run_as_user=None, timeout=120.0):
         argv = tuple(argv)
-        self.calls.append({"argv": argv, "run_as_user": run_as_user})
+        self.calls.append({"argv": argv, "env": dict(env or {}), "run_as_user": run_as_user})
         if argv[:2] == ("git", "init"):
             Path(argv[2]).mkdir(parents=True, exist_ok=True)
             return CommandResult(argv, None, 0, "", "")
@@ -153,6 +160,7 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
             self.assertEqual(outcome.status.value, "committed")
             self.assertTrue(runner.calls)
             self.assertTrue(all(call["run_as_user"] is not None for call in runner.calls))
+            self.assertTrue(all(call["env"] for call in runner.calls))
             records = journal_mod.read_ownership_records(env.state_root, "proto_amneziawg_runtime")
             self.assertEqual({Path(record.candidate.resource_identity).name for record in records}, {"awg", "awg-quick", "amneziawg-go"})
             by_name = {Path(record.candidate.resource_identity).name: record for record in records}
@@ -187,6 +195,34 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
             outcome = engine.prepare(_decision(), env, apply=True)
             self.assertEqual(outcome.status.value, "preparation_failed")
             self.assertEqual(list(env.context.allowed_roots[0].iterdir()), [])
+
+    def test_recovery_apply_failure_rolls_back_without_invalid_transition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._env(Path(tmp), FakeRunner(wrong_commit=True))
+            plan, _executor = engine.build_plan(
+                _decision(),
+                registry=env.registry,
+                expected_executor_version=env.expected_executor_version,
+                context=env.context,
+            )
+            journal = engine._initial_journal(plan, transaction_id="pending_apply_failure", now_value="2026-07-29T00:00:00+00:00")
+            journal_mod.write_journal(env.state_root, journal)
+            journal = journal.with_state(TransactionState.AUTHORIZED, now="2026-07-29T00:00:01+00:00")
+            journal_mod.write_journal(env.state_root, journal)
+            journal = journal.with_state(TransactionState.APPLYING, now="2026-07-29T00:00:02+00:00")
+            journal_mod.write_journal(env.state_root, journal)
+
+            reports = engine.recover_pending(
+                env.state_root,
+                env.registry,
+                env.expected_executor_version,
+                env.context,
+                global_lock_root=env.global_lock_root,
+            )
+
+            self.assertEqual([(item.transaction_id, item.action.value) for item in reports], [("pending_apply_failure", "rollback")])
+            recovered = journal_mod.read_journal(env.state_root, "pending_apply_failure")
+            self.assertEqual(recovered.state.value, "preparation_failed")
 
     def test_uninstall_removes_only_owned_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -244,6 +280,29 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
         self.assertEqual(seen[0]["plan"], None)
         self.assertEqual(seen[0]["reason"], "dependency already satisfied on this host")
 
+    def test_build_subprocesses_receive_sanitized_env_not_parent_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            previous = os.environ.get("WATCHDOGVPN_PARENT_ENV_CANARY")
+            os.environ["WATCHDOGVPN_PARENT_ENV_CANARY"] = "must-not-leak"
+            try:
+                runner = FakeRunner()
+                env = self._env(Path(tmp), runner)
+                outcome = engine.prepare(_decision(), env, apply=True)
+            finally:
+                if previous is None:
+                    os.environ.pop("WATCHDOGVPN_PARENT_ENV_CANARY", None)
+                else:
+                    os.environ["WATCHDOGVPN_PARENT_ENV_CANARY"] = previous
+            self.assertEqual(outcome.status.value, "committed")
+            allowed = {"HOME", "PATH", "LANG", "LC_ALL", "USER", "LOGNAME", "GIT_TERMINAL_PROMPT"}
+            for call in runner.calls:
+                self.assertEqual(set(call["env"]), allowed)
+                self.assertNotIn("WATCHDOGVPN_PARENT_ENV_CANARY", call["env"])
+                self.assertEqual(call["env"]["PATH"], "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+                self.assertEqual(call["env"]["LANG"], "C.UTF-8")
+                self.assertEqual(call["env"]["LC_ALL"], "C.UTF-8")
+                self.assertEqual(call["env"]["GIT_TERMINAL_PROMPT"], "0")
+
     def test_internal_cli_registers_all_source_build_executors_for_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -268,6 +327,111 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
                     expected_executor_version=env.expected_executor_version,
                 )
                 self.assertEqual(executor.method_id, candidate["id"])
+
+    def test_vm_recover_after_reboot_requires_changed_boot_id(self) -> None:
+        harness = _load_vm_harness()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pre = root / "pre.json"
+            pre.write_text(json.dumps({"observations": {"before": {"boot_id": "boot-a"}}}), encoding="utf-8")
+            args = SimpleNamespace(
+                pre_evidence=str(pre),
+                evidence=str(root / "post.json"),
+                cleanup=False,
+                state_root=str(root / "state"),
+                global_lock_root=str(root / "locks"),
+                install_root=str(root / "bin"),
+                workspace_root=str(root / "workspace"),
+                os_release=None,
+                build_user="nobody",
+                force_runtime_absent=False,
+            )
+            original_baseline = harness._baseline
+            original_run = harness._run
+            original_tool_args = harness._tool_args
+            try:
+                harness._baseline = lambda _args, phase: {"phase": phase, "boot_id": "boot-a"}
+                harness._run = lambda argv: {"argv": argv, "returncode": 0, "stdout": [], "stderr": ""}
+                harness._tool_args = lambda _args: ["tool"]
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(harness.cmd_recover_after_reboot(args), 2)
+                harness._baseline = lambda _args, phase: {"phase": phase, "boot_id": "boot-b"}
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(harness.cmd_recover_after_reboot(args), 0)
+            finally:
+                harness._baseline = original_baseline
+                harness._run = original_run
+                harness._tool_args = original_tool_args
+
+    def test_vm_recover_after_reboot_requires_seeded_pending_prepare_to_commit(self) -> None:
+        harness = _load_vm_harness()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pre = root / "pre.json"
+            pre.write_text(
+                json.dumps(
+                    {
+                        "observations": {"before": {"boot_id": "boot-a"}},
+                        "pending_prepare": {"transaction_id": "vm6b_reboot_fixture"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                pre_evidence=str(pre),
+                evidence=str(root / "post.json"),
+                cleanup=False,
+                state_root=str(root / "state"),
+                global_lock_root=str(root / "locks"),
+                install_root=str(root / "bin"),
+                workspace_root=str(root / "workspace"),
+                os_release=None,
+                build_user="nobody",
+                force_runtime_absent=False,
+            )
+            original_baseline = harness._baseline
+            original_run = harness._run
+            original_tool_args = harness._tool_args
+            try:
+                harness._baseline = lambda _args, phase: {"phase": phase, "boot_id": "boot-b"}
+                harness._tool_args = lambda _args: ["tool"]
+                harness._run = lambda argv: {"argv": argv, "returncode": 0, "stdout": [], "stderr": ""}
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(harness.cmd_recover_after_reboot(args), 2)
+
+                def recovered_run(argv):
+                    if argv[-1] == "recover":
+                        return {
+                            "argv": argv,
+                            "returncode": 0,
+                            "stdout": [{"transaction_id": "vm6b_reboot_fixture", "action": "resume", "reason": "resumed and committed"}],
+                            "stderr": "",
+                        }
+                    if argv[-1] == "status":
+                        return {
+                            "argv": argv,
+                            "returncode": 0,
+                            "stdout": [{"transaction_id": "vm6b_reboot_fixture", "operation": "prepare", "state": "committed"}],
+                            "stderr": "",
+                        }
+                    return {"argv": argv, "returncode": 0, "stdout": [], "stderr": ""}
+
+                harness._run = recovered_run
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(harness.cmd_recover_after_reboot(args), 0)
+            finally:
+                harness._baseline = original_baseline
+                harness._run = original_run
+                harness._tool_args = original_tool_args
+
+
+def _load_vm_harness():
+    spec = importlib.util.spec_from_file_location("phase23_7_5_6b_amneziawg_validation", VM_HARNESS)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load VM harness")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 if __name__ == "__main__":

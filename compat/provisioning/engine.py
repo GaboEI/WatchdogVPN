@@ -1723,7 +1723,13 @@ def _recover_one(
             # (which could hit the exact same problem) -- surface for manual
             # review and let a later, separate recovery pass retry.
             return RecoveryDecision(journal.transaction_id, RecoveryAction.REQUIRE_MANUAL, "durability could not be confirmed during recovery; manual review required")
-        # _apply_and_verify already drove the journal into ROLLING_BACK on failure.
+        if journal.state != TransactionState.ROLLING_BACK:
+            journal = journal.with_state(
+                TransactionState.ROLLING_BACK,
+                now=now(),
+                failure={"reason": "recovery_apply_failed"},
+            )
+            journal_mod.write_journal(state_root, journal)
         journal, rollback_ok, residuals = _run_rollback(state_root, journal, executor, context)
         return _finalize_recovery_rollback(state_root, journal, rollback_ok, residuals, context)
 

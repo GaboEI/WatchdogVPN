@@ -39,6 +39,8 @@ AMNEZIAWG_SOURCE_BUILD_EXECUTOR_ID = "amneziawg_userspace_source_build"
 AMNEZIAWG_SOURCE_BUILD_EXECUTOR_VERSION = "1"
 AMNEZIAWG_INSTALL_ROOT = Path("/usr/local/bin")
 AMNEZIAWG_OUTPUTS = ("awg", "awg-quick", "amneziawg-go")
+AMNEZIAWG_BUILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+AMNEZIAWG_BUILD_LOCALE = "C.UTF-8"
 _DYNAMIC_SHA256 = "__watchdogvpn_dynamic_verified_sha256__"
 
 
@@ -79,6 +81,7 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
         info = pwd.getpwnam(self.build_user)
         self._build_uid = info.pw_uid
         self._build_gid = info.pw_gid
+        self._build_home = info.pw_dir or "/nonexistent"
 
     def declares_network_required(self) -> bool:
         return True
@@ -289,10 +292,21 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
         os.chmod(path, 0o700)
 
     def _run_ok(self, argv, *, cwd: Path | None, run_as_user: str | None) -> CommandResult:
-        result = self.runner.run(argv, cwd=cwd, run_as_user=run_as_user, timeout=600.0)
+        result = self.runner.run(argv, cwd=cwd, env=self._sanitized_build_env(), run_as_user=run_as_user, timeout=600.0)
         if result.returncode != 0:
             raise ValueError("command failed rc=%d argv=%r stderr=%s" % (result.returncode, result.argv, result.stderr))
         return result
+
+    def _sanitized_build_env(self) -> Mapping[str, str]:
+        return {
+            "HOME": self._build_home,
+            "PATH": AMNEZIAWG_BUILD_PATH,
+            "LANG": AMNEZIAWG_BUILD_LOCALE,
+            "LC_ALL": AMNEZIAWG_BUILD_LOCALE,
+            "USER": self.build_user,
+            "LOGNAME": self.build_user,
+            "GIT_TERMINAL_PROMPT": "0",
+        }
 
     def _verify_installed_path(self, path: Path, expected_sha256: str, context: ExecutionContext) -> VerificationResult:
         try:
