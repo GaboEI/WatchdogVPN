@@ -2249,3 +2249,56 @@ matching content and metadata but a different inode. `tests/syntax.sh`,
 `python tools/compat_read.py validate`, and `git diff --check` completed with rc=0.
 The full repository unittest discovery then ran 2248 tests in 342.284s with rc=0 and
 1 skip.
+
+### Same-UID custody isolation closure after audit of b2637b0
+
+A final self-audit of `b2637b0f858865c4e455c398c78d3ede8ff41515` found one
+remaining HIGH issue: the same-UID custody isolation defense existed only as an
+optional policy on the primitive, while the normal rollback/uninstall flow still
+used a lab-permissive default. That meant the implementation could still be
+misread as protecting against another process with the same uid without enforcing
+real privilege separation on the destructive path.
+
+This correction makes strict custody isolation the default authority:
+
+- `paths.py` now exposes `STRICT_CUSTODY_ISOLATION_POLICY` and
+  `LAB_CUSTODY_ISOLATION_POLICY`. The descriptor-bound custody primitive defaults
+  to the strict policy, which requires effective uid separation unless the custody
+  directory uid is explicitly trusted. A same-uid `0700` custody directory is
+  therefore fail-closed by default and is never documented as protection against a
+  same-uid adversary.
+- `ExecutionContext` carries the custody isolation policy. `CanaryExecutor`
+  rollback and `engine.uninstall()` pass that policy into the real custody unlink
+  primitive, so destructive engine flows do not silently fall back to lab
+  semantics.
+- The synthetic CLI and VM/unit harnesses opt into `LAB_CUSTODY_ISOLATION_POLICY`
+  explicitly because they run as same-uid canary fixtures inside a dedicated lab
+  root. The opt-out is visible in the call site; it is not the primitive or engine
+  default.
+- The VM reboot checkpoints that need to crash after a real unlink now call the
+  descriptor-relative custody protocol through the locked `AllowedRootHandle`.
+  They no longer use the legacy path-only `remove_file_if_owned()` as a surrogate
+  for custody deletion.
+- New regressions prove both primitive and engine behavior: a default
+  `remove_file_if_owned_relative()` call rejects same-uid custody and preserves the
+  target, and strict-policy uninstall fails closed without deleting marker or
+  companion files and without revoking live ownership.
+
+Local evidence for this correction: `python -m compileall compat/provisioning
+tests/test_compat_transactional_provisioning.py
+tests/vm/phase23_7_5_6a_transactional_provisioning_validation.py
+tools/compat_provision.py` completed with rc=0; `python -m unittest
+tests.test_compat_transactional_provisioning` ran 265 tests in 8.704s with rc=0;
+`bash tests/syntax.sh`, `python tools/compat_read.py validate`, `git diff
+--check`, the four fixture probes, the four fixture resolve commands, and the
+real-host unknown-only resolve command all completed with rc=0. Full repository
+unittest discovery ran 2250 tests in 258.154s with rc=0 and 1 skip. The focused
+provisioning suite then ran 50 consecutive local repetitions with no retries:
+50/50 clean from `2026-07-29T13:38:18Z` to `2026-07-29T13:45:54Z`, with zero
+live provisioning Python processes and zero `.wdvpn-custody` or
+`.wdvpn-quarantine*` residues after every run. Logs were retained under
+`/tmp/wdvpn-23-7-5-6a-focused-50.Rc5DUI`. The VM harness `run-all` was also run
+locally after the checkpoint migration and completed with rc=0, including the
+real descriptor-custody unlink checkpoints and the post-last-check race scenarios;
+evidence was retained at
+`/tmp/wdvpn-6a-sameuid-postdoc.2f2ArI/phase23_7_5_6a_vm_evidence.json`.

@@ -483,6 +483,10 @@ class CustodyIsolationPolicy:
     trusted_custody_uids: tuple[int, ...] = (0,)
 
 
+STRICT_CUSTODY_ISOLATION_POLICY = CustodyIsolationPolicy(require_uid_separation=True)
+LAB_CUSTODY_ISOLATION_POLICY = CustodyIsolationPolicy(require_uid_separation=False)
+
+
 def _verify_private_directory_fd(dir_fd: int, *, label: str, policy: CustodyIsolationPolicy | None = None) -> None:
     st = os.fstat(dir_fd)
     if not stat_module.S_ISDIR(st.st_mode):
@@ -492,7 +496,7 @@ def _verify_private_directory_fd(dir_fd: int, *, label: str, policy: CustodyIsol
     mode = stat_module.S_IMODE(st.st_mode)
     if mode & 0o022:
         raise PathPolicyError("%s must not be writable by group/world actors, found mode %o" % (label, mode))
-    policy = policy or CustodyIsolationPolicy()
+    policy = policy or STRICT_CUSTODY_ISOLATION_POLICY
     if policy.require_uid_separation:
         adversary_uid = os.getuid() if policy.adversary_uid is None else policy.adversary_uid
         if st.st_uid == adversary_uid and st.st_uid not in policy.trusted_custody_uids:

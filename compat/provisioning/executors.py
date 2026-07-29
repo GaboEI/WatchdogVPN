@@ -35,6 +35,8 @@ from compat.provisioning.model import (
 )
 from compat.provisioning.paths import (
     AllowedRootHandle,
+    CustodyIsolationPolicy,
+    STRICT_CUSTODY_ISOLATION_POLICY,
     create_file_exclusive_relative,
     read_bytes_relative,
     remove_file_if_owned_relative,
@@ -56,6 +58,7 @@ class ExecutionContext:
     # filesystem resolves through the handle matching its target's allowed
     # root, never through a freshly re-resolved ``Path``.
     allowed_root_handles: tuple[AllowedRootHandle, ...] = ()
+    custody_isolation_policy: CustodyIsolationPolicy = STRICT_CUSTODY_ISOLATION_POLICY
 
 
 def handle_for_allowed_root(context: ExecutionContext, validated: Path) -> AllowedRootHandle:
@@ -292,7 +295,12 @@ class CanaryExecutor(Executor):
             return RollbackResult(status="undo_failed", residual=True, error_kind="path_policy_violation", error=str(exc))
         expected_sha256 = undo_record.get("expected_sha256")
         try:
-            removed = remove_file_if_owned_relative(handle, validated, expected_sha256=expected_sha256)
+            removed = remove_file_if_owned_relative(
+                handle,
+                validated,
+                expected_sha256=expected_sha256,
+                isolation_policy=context.custody_isolation_policy,
+            )
         except PathPolicyError as exc:
             return RollbackResult(status="undo_failed", residual=True, error_kind="ownership_mismatch", error=str(exc))
         except OSError as exc:

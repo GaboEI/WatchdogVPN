@@ -193,7 +193,12 @@ class _Harness:
         self.executor = CanaryExecutor(requires_network=requires_network)
         self.registry = TrustedExecutorRegistry()
         self.registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=self.executor)
-        self.context = ExecutionContext(allowed_roots=(self.sandbox,), now=_now, forbidden_roots=forbidden_roots)
+        self.context = ExecutionContext(
+            allowed_roots=(self.sandbox,),
+            now=_now,
+            forbidden_roots=forbidden_roots,
+            custody_isolation_policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,
+        )
         self.env = ProvisioningEnvironment(
             state_root=self.state_root, registry=self.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.context,
             global_lock_root=self.global_lock_root,
@@ -659,6 +664,26 @@ class TransactionalProvisioningTests(unittest.TestCase):
         self.assertEqual(result.status, PrepareStatus.UNINSTALLED)
         self.assertEqual(list(self.harness.sandbox.iterdir()), [])
         self.assertEqual(journal_mod.read_ownership_records(self.harness.state_root, decision.capability_id), [])
+
+    def test_29b_uninstall_strict_same_uid_custody_fails_closed(self) -> None:
+        decision = self.harness.decision(capability_id="cap_strict_same_uid")
+        outcome = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+
+        strict_context = dataclasses.replace(
+            self.harness.context,
+            custody_isolation_policy=paths_mod.STRICT_CUSTODY_ISOLATION_POLICY,
+        )
+        strict_env = dataclasses.replace(self.harness.env, context=strict_context)
+        result = engine.uninstall(decision.capability_id, strict_env, apply=True)
+
+        self.assertNotEqual(result.status, PrepareStatus.UNINSTALLED)
+        self.assertIn(result.status, (PrepareStatus.UNINSTALL_FAILED, PrepareStatus.RECOVERY_REQUIRED))
+        self.assertTrue((self.harness.sandbox / "cap_strict_same_uid.marker").exists())
+        self.assertTrue((self.harness.sandbox / "cap_strict_same_uid.companion").exists())
+        self.assertTrue(
+            any(record.product_owned for record in journal_mod.read_ownership_records(self.harness.state_root, decision.capability_id))
+        )
 
     # 30. Uninstall preservando preexistente.
     def test_30_uninstall_never_touches_a_pre_existing_capability(self) -> None:
@@ -2047,7 +2072,7 @@ class StateRootIdentityRaceTests(unittest.TestCase):
             "import sys, json\n"
             "sys.path.insert(0, %r)\n"
             "from pathlib import Path\n"
-            "from compat.provisioning import lock as lock_mod, engine, journal as journal_mod\n"
+            "from compat.provisioning import lock as lock_mod, engine, journal as journal_mod, paths as paths_mod\n"
             "from compat.provisioning.executors import CANARY_EXECUTOR_VERSION, CANARY_METHOD_KIND, CanaryExecutor, ExecutionContext, TrustedExecutorRegistry\n"
             "from compat.provisioning.model import RecoveryAction\n"
             "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_signal, _fifo_wait\n"
@@ -2057,7 +2082,10 @@ class StateRootIdentityRaceTests(unittest.TestCase):
             "go_fd = _fifo_open_reader(go)\n"
             "registry = TrustedExecutorRegistry()\n"
             "registry.register(method_kind=CANARY_METHOD_KIND, method_id='canary_method', executor=CanaryExecutor())\n"
-            "context = ExecutionContext(allowed_roots=(Path(%r),), now=lambda: '2026-01-01T00:00:00+00:00')\n"
+            "context = ExecutionContext(\n"
+            "    allowed_roots=(Path(%r),), now=lambda: '2026-01-01T00:00:00+00:00',\n"
+            "    custody_isolation_policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,\n"
+            ")\n"
             "with lock_mod.acquire_provisioner_lock(state_root, global_lock_root=global_lock_root, transaction_id='holder', timeout=10.0) as handle:\n"
             "    _fifo_signal(ready)\n"  # eager-open of transactions/ownership/history already done by now
             "    _fifo_wait(go_fd, timeout=10.0, description='go marker')\n"
@@ -4568,7 +4596,10 @@ class HashUnlinkToctouTests(unittest.TestCase):
             "go_fd = _fifo_open_reader(go)\n"
             "registry = TrustedExecutorRegistry()\n"
             "registry.register(method_kind=CANARY_METHOD_KIND, method_id='canary_method', executor=CanaryExecutor())\n"
-            "context = ExecutionContext(allowed_roots=(sandbox,), now=lambda: '2026-01-01T00:00:00+00:00')\n"
+            "context = ExecutionContext(\n"
+            "    allowed_roots=(sandbox,), now=lambda: '2026-01-01T00:00:00+00:00',\n"
+            "    custody_isolation_policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,\n"
+            ")\n"
             "env = engine.ProvisioningEnvironment(\n"
             "    state_root=state_root, registry=registry, expected_executor_version=CANARY_EXECUTOR_VERSION,\n"
             "    context=context, global_lock_root=global_lock_root,\n"
@@ -4632,6 +4663,15 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         self.addCleanup(handle.close)
         return handle
 
+    def _remove_in_lab(self, target: Path, *, expected_sha256: str, **kwargs) -> bool:
+        return paths_mod.remove_file_if_owned_relative(
+            self._handle(),
+            target,
+            expected_sha256=expected_sha256,
+            isolation_policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,
+            **kwargs,
+        )
+
     def _restore_hooks(self) -> None:
         paths_mod.UNLINK_REVERIFY_HOOK = paths_mod._default_unlink_pause
         paths_mod.QUARANTINE_POST_VERIFY_HOOK = paths_mod._default_unlink_pause
@@ -4648,8 +4688,7 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         records = []
         paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: ".wdvpn-quarantine.owned.test"
 
-        removed = paths_mod.remove_file_if_owned_relative(
-            self._handle(),
+        removed = self._remove_in_lab(
             target,
             expected_sha256=hashlib.sha256(b"owned").hexdigest(),
             custody_recorder=records.append,
@@ -4683,6 +4722,18 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
             )
         self.assertTrue(target.exists())
 
+    def test_default_custody_policy_is_strict_not_lab_permissive(self) -> None:
+        self.addCleanup(self._restore_hooks)
+        target = self.root / "owned"
+        target.write_bytes(b"owned")
+        with self.assertRaises(PathPolicyError):
+            paths_mod.remove_file_if_owned_relative(
+                self._handle(),
+                target,
+                expected_sha256=hashlib.sha256(b"owned").hexdigest(),
+            )
+        self.assertTrue(target.exists())
+
     def test_crash_after_move_pending_before_rename_leaves_original_and_move_pending(self) -> None:
         self.addCleanup(self._restore_hooks)
         target = self.root / "owned"
@@ -4694,8 +4745,7 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
 
         paths_mod.QUARANTINE_AFTER_MOVE_PENDING_BEFORE_RENAME_HOOK = _crash
         with self.assertRaises(RuntimeError):
-            paths_mod.remove_file_if_owned_relative(
-                self._handle(),
+            self._remove_in_lab(
                 target,
                 expected_sha256=hashlib.sha256(b"owned").hexdigest(),
                 custody_recorder=records.append,
@@ -4716,8 +4766,7 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
 
         paths_mod.QUARANTINE_AFTER_MOVE_BEFORE_MOVED_HOOK = _crash
         with self.assertRaises(RuntimeError):
-            paths_mod.remove_file_if_owned_relative(
-                self._handle(),
+            self._remove_in_lab(
                 target,
                 expected_sha256=hashlib.sha256(b"owned").hexdigest(),
                 custody_recorder=lambda record: None,
@@ -4740,9 +4789,7 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
 
         paths_mod.QUARANTINE_POST_VERIFY_HOOK = _replace_quarantine
         with self.assertRaises(PathPolicyError):
-            paths_mod.remove_file_if_owned_relative(
-                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
-            )
+            self._remove_in_lab(target, expected_sha256=hashlib.sha256(b"owned").hexdigest())
         self.assertTrue(quarantine.exists())
         self.assertEqual(quarantine.read_bytes(), b"foreign")
         self.assertFalse(target.exists())
@@ -4763,9 +4810,7 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
 
         paths_mod.UNLINK_REVERIFY_HOOK = _mutate_in_place
         with self.assertRaises(PathPolicyError):
-            paths_mod.remove_file_if_owned_relative(
-                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
-            )
+            self._remove_in_lab(target, expected_sha256=hashlib.sha256(b"owned").hexdigest())
         self.assertTrue(quarantine.exists())
         self.assertEqual(quarantine.read_bytes(), b"pwned")
 
@@ -4788,9 +4833,7 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         paths_mod.UNLINK_REVERIFY_HOOK = _swap_original_before_quarantine
         paths_mod.QUARANTINE_BEFORE_RESTORE_HOOK = _basename_reappears_before_restore
         with self.assertRaises(PathPolicyError):
-            paths_mod.remove_file_if_owned_relative(
-                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
-            )
+            self._remove_in_lab(target, expected_sha256=hashlib.sha256(b"owned").hexdigest())
         self.assertTrue(quarantine.exists())
         self.assertTrue(target.exists())
         self.assertNotEqual(target.read_bytes(), b"owned")
@@ -4805,9 +4848,7 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         quarantine.write_bytes(b"preexisting")
         paths_mod.QUARANTINE_NAME_FACTORY = lambda basename: quarantine.name
         with self.assertRaises(PathPolicyError):
-            paths_mod.remove_file_if_owned_relative(
-                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
-            )
+            self._remove_in_lab(target, expected_sha256=hashlib.sha256(b"owned").hexdigest())
         self.assertEqual(quarantine.read_bytes(), b"preexisting")
         self.assertTrue(target.exists())
 
@@ -4829,9 +4870,7 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
         paths_mod.UNLINK_REVERIFY_HOOK = _swap_original_before_quarantine
         paths_mod.QUARANTINE_BEFORE_RESTORE_HOOK = _force_restore_collision
         with self.assertRaises(PathPolicyError):
-            paths_mod.remove_file_if_owned_relative(
-                self._handle(), target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
-            )
+            self._remove_in_lab(target, expected_sha256=hashlib.sha256(b"owned").hexdigest())
         self.assertTrue(quarantine.exists())
         self.assertEqual(target.read_bytes(), b"occupied")
 

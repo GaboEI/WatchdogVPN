@@ -2269,6 +2269,7 @@ def _run_uninstall_loop(
                         expected_sha256=expected_sha256,
                         custody_recorder=custody_recorder,
                         resource_id=record.intent["resource_identity"],
+                        isolation_policy=context.custody_isolation_policy,
                     )
                 except Exception as exc:  # noqa: BLE001 - ownership drift or OS error must not raise out of the loop
                     journal = journal_box["journal"]

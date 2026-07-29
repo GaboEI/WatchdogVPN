@@ -52,11 +52,11 @@ from compat.provisioning.executors import (
     CanaryExecutor,
     ExecutionContext,
     TrustedExecutorRegistry,
+    handle_for_allowed_root,
     _companion_content,
     _marker_content,
 )
 from compat.provisioning.model import RecoveryAction, StepState, TransactionState
-from compat.provisioning.paths import remove_file_if_owned
 
 
 # --------------------------------------------------------------------------
@@ -133,7 +133,11 @@ def _env(sandbox: Path, state_root: Path, global_lock_root: Path) -> engine.Prov
     registry = TrustedExecutorRegistry()
     registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=CanaryExecutor())
     registry.register(method_kind="nested_resource_vm", method_id="nested_resource_vm_method", executor=_NestedResourceExecutor())
-    context = ExecutionContext(allowed_roots=(sandbox,), now=_now)
+    context = ExecutionContext(
+        allowed_roots=(sandbox,),
+        now=_now,
+        custody_isolation_policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,
+    )
     return engine.ProvisioningEnvironment(
         state_root=state_root, registry=registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=context,
         global_lock_root=global_lock_root,
@@ -231,7 +235,18 @@ def cmd_worker(args) -> int:
             # (bypassing undo_step's own journal write for UNDONE), then
             # crash before that durable transition ever lands.
             marker_path = Path(record0.undo_record["path"])
-            remove_file_if_owned(marker_path, expected_sha256=record0.undo_record.get("expected_sha256"))
+            validated = paths_mod.validate_target_path(
+                marker_path,
+                allowed_roots=locked_context.allowed_roots,
+                forbidden_roots=locked_context.forbidden_roots,
+            )
+            handle = handle_for_allowed_root(locked_context, validated)
+            paths_mod.remove_file_if_owned_relative(
+                handle,
+                validated,
+                expected_sha256=record0.undo_record.get("expected_sha256"),
+                isolation_policy=locked_context.custody_isolation_policy,
+            )
             os.kill(os.getpid(), signal.SIGKILL)  # never returns
 
         step0 = plan.steps[0]
@@ -487,7 +502,10 @@ def cmd_run_all(args) -> int:
         try:
             try:
                 paths_mod.remove_file_if_owned_relative(
-                    substitute_handle, substitute_target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+                    substitute_handle,
+                    substitute_target,
+                    expected_sha256=hashlib.sha256(b"owned").hexdigest(),
+                    isolation_policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,
                 )
             except Exception:
                 substitute_failed_closed = True
@@ -525,7 +543,10 @@ def cmd_run_all(args) -> int:
         try:
             try:
                 paths_mod.remove_file_if_owned_relative(
-                    inplace_handle, inplace_target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+                    inplace_handle,
+                    inplace_target,
+                    expected_sha256=hashlib.sha256(b"owned").hexdigest(),
+                    isolation_policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,
                 )
             except Exception:
                 inplace_failed_closed = True
@@ -561,7 +582,10 @@ def cmd_run_all(args) -> int:
         try:
             try:
                 paths_mod.remove_file_if_owned_relative(
-                    restore_handle, restore_target, expected_sha256=hashlib.sha256(b"owned").hexdigest()
+                    restore_handle,
+                    restore_target,
+                    expected_sha256=hashlib.sha256(b"owned").hexdigest(),
+                    isolation_policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,
                 )
             except Exception:
                 restore_failed_closed = True
@@ -999,7 +1023,18 @@ def cmd_uninstall_worker(args) -> int:
             journal = journal.with_step(record)
             journal_mod.write_journal(state_root, journal)  # write-ahead: durable before the real unlink
             path = Path(record.intent["resource_identity"])
-            remove_file_if_owned(path, expected_sha256=record.intent.get("expected_sha256"))  # the REAL unlink happens here
+            validated = paths_mod.validate_target_path(
+                path,
+                allowed_roots=locked_context.allowed_roots,
+                forbidden_roots=locked_context.forbidden_roots,
+            )
+            handle = handle_for_allowed_root(locked_context, validated)
+            paths_mod.remove_file_if_owned_relative(
+                handle,
+                validated,
+                expected_sha256=record.intent.get("expected_sha256"),
+                isolation_policy=locked_context.custody_isolation_policy,
+            )  # the REAL custody protocol unlink happens here
             os.kill(os.getpid(), signal.SIGKILL)  # never returns: crash before APPLIED is ever journaled
 
         # after_verify_before_revoke / after_revoke_before_uninstalled: run

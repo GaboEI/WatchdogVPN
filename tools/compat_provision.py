@@ -30,7 +30,7 @@ from compat.provisioning.executors import (
     ExecutionContext,
     TrustedExecutorRegistry,
 )
-from compat.provisioning.paths import validate_dedicated_lab_root, validate_lab_descendant
+from compat.provisioning.paths import LAB_CUSTODY_ISOLATION_POLICY, validate_dedicated_lab_root, validate_lab_descendant
 
 EXIT_USAGE = 1
 EXIT_PROVISIONING_ERROR = 2
@@ -105,7 +105,11 @@ def _build_env(args, *, mutating: bool) -> engine.ProvisioningEnvironment:
         sandbox.mkdir(parents=True, exist_ok=True)
     registry = TrustedExecutorRegistry()
     registry.register(method_kind=CANARY_METHOD_KIND, method_id="canary_method", executor=CanaryExecutor())
-    context = ExecutionContext(allowed_roots=(sandbox,), now=_now)
+    context = ExecutionContext(
+        allowed_roots=(sandbox,),
+        now=_now,
+        custody_isolation_policy=LAB_CUSTODY_ISOLATION_POLICY,
+    )
     return engine.ProvisioningEnvironment(
         state_root=state_root, registry=registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=context,
         global_lock_root=Path(args.global_lock_root),
