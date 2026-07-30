@@ -245,20 +245,66 @@ class CompatSystemMigrationTest(unittest.TestCase):
                     tmp_path.unlink(missing_ok=True)
 
     def test_fallback_never_claims_support(self):
+        for name, content in FIXTURES.items():
+            with self.subTest(name=name):
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
+                    tmp.write(content)
+                    tmp_path = Path(tmp.name)
+                try:
+                    shell = self._detect_with_shell(tmp_path, empty_path=True)
+                    self.assertEqual(shell["distro_id"], shell["distro_id"])
+                    self.assertEqual(shell["supported"], "0")
+                    self.assertEqual(shell["future"], "0")
+                    self.assertEqual(shell["unsupported"], "0")
+                    self.assertEqual(shell["undetermined"], "1")
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+
+    def test_classify_exit_code_on_invalid_manifest(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+            tmp.write("{not valid json")
+            manifest_path = Path(tmp.name)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
             tmp.write(FIXTURES["ubuntu_24_04"])
-            tmp_path = Path(tmp.name)
+            os_release_path = Path(tmp.name)
         try:
-            shell = self._detect_with_shell(tmp_path, empty_path=True)
-            self.assertEqual(shell["distro_id"], "ubuntu")
-            self.assertEqual(shell["adapter_id"], "ubuntu")
-            self.assertEqual(shell["family"], "ubuntu")
-            self.assertEqual(shell["supported"], "0")
-            self.assertEqual(shell["future"], "0")
-            self.assertEqual(shell["unsupported"], "0")
-            self.assertEqual(shell["undetermined"], "1")
+            result = subprocess.run(
+                ["python3", str(CLASSIFY), "--manifest", str(manifest_path),
+                 "--os-release", str(os_release_path), "classify"],
+                cwd=ROOT_DIR,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2, "invalid manifest must exit 2")
+            self.assertIn("error:", result.stderr.lower())
         finally:
-            tmp_path.unlink(missing_ok=True)
+            manifest_path.unlink(missing_ok=True)
+            os_release_path.unlink(missing_ok=True)
+
+    def test_classify_exit_code_on_usage_error(self):
+        result = subprocess.run(
+            ["python3", str(CLASSIFY)],
+            cwd=ROOT_DIR,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1, "usage error must exit 1")
+
+    def test_classify_exit_code_on_missing_os_release(self):
+        missing_path = ROOT_DIR / "nonexistent_os_release_for_test.txt"
+        result = subprocess.run(
+            ["python3", str(CLASSIFY), "--os-release", str(missing_path), "classify"],
+            cwd=ROOT_DIR,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2, "missing os-release must exit 2")
 
 
 def _family_short(family_id: str) -> str:

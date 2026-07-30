@@ -107,7 +107,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        # argparse calls sys.exit(2) on usage errors; normalize to our own
+        # EXIT_USAGE so shell callers have a single, stable contract.
+        return EXIT_USAGE if exc.code == 2 else (exc.code if isinstance(exc.code, int) else EXIT_USAGE)
     try:
         return args.func(args)
     except (compat_read.ManifestError, detection.DetectionError, ValueError) as exc:

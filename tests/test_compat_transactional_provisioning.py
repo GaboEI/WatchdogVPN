@@ -16,6 +16,7 @@ import fcntl
 import hashlib
 import json
 import os
+import pickle
 import select
 import signal
 import stat
@@ -308,6 +309,65 @@ class TransactionalProvisioningTests(unittest.TestCase):
             _fifo_signal(go)
         stdout, stderr = proc.communicate(timeout=60)
         self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
+
+    # 6b. Lock entre prepare e uninstall concurrentes.
+    def test_06b_lock_contention_between_prepare_and_uninstall(self) -> None:
+        decision = self.harness.decision(capability_id="cap_prep_uninstall")
+        outcome = engine.prepare(decision, self.harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+
+        state_root = self.harness.state_root
+        global_lock_root = self.harness.global_lock_root
+        go = self.tmp / "prep-uninstall-go.fifo"
+        _fifo_create(go)
+        holder_script = self.tmp / "prep_uninstall_holder.py"
+        holder_script.write_text(
+            "import sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from pathlib import Path\n"
+            "from compat.provisioning.lock import acquire_provisioner_lock\n"
+            "from tests.test_compat_transactional_provisioning import _fifo_open_reader, _fifo_wait\n"
+            "go = Path(%r)\n"
+            "go_fd = _fifo_open_reader(go)\n"
+            "with acquire_provisioner_lock(Path(%r), global_lock_root=Path(%r), transaction_id='holder', timeout=2.0):\n"
+            "    print('ACQUIRED', flush=True)\n"
+            "    _fifo_wait(go_fd, timeout=60.0, description='holder release signal')\n"
+            % (str(ROOT), str(go), str(state_root), str(global_lock_root))
+        )
+        proc = subprocess.Popen([sys.executable, str(holder_script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(proc.stderr.close)
+        line = proc.stdout.readline()
+        self.assertEqual(line.strip(), "ACQUIRED")
+
+        uninstall_result = None
+        uninstall_error = None
+
+        def uninstall_runner() -> None:
+            nonlocal uninstall_result, uninstall_error
+            try:
+                uninstall_env = dataclasses.replace(self.harness.env, lock_timeout=5.0)
+                uninstall_result = engine.uninstall(decision.capability_id, uninstall_env, apply=True)
+            except Exception as exc:  # pragma: no cover - failure diagnostics
+                uninstall_error = exc
+
+        thread = threading.Thread(target=uninstall_runner)
+        thread.start()
+        # Give the contender time to reach the lock acquisition attempt.
+        time.sleep(0.3)
+        try:
+            # The uninstall should still be blocked because the holder owns the lock.
+            self.assertTrue(thread.is_alive(), "uninstall must not complete while prepare lock is held")
+        finally:
+            _fifo_signal(go)
+        thread.join(timeout=10)
+        self.assertFalse(thread.is_alive(), "uninstall did not complete after lock release")
+        stdout, stderr = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, "holder failed: stdout=%r stderr=%r" % (stdout, stderr))
+        self.assertIsNone(uninstall_error, "uninstall raised: %r" % uninstall_error)
+        self.assertIsNotNone(uninstall_result)
+        self.assertEqual(uninstall_result.status, PrepareStatus.UNINSTALLED)
 
     # 7. Journal durable antes y después de cada paso.
     def test_07_journal_is_durable_before_and_after_each_step(self) -> None:

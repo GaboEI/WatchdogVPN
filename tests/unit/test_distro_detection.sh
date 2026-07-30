@@ -218,4 +218,105 @@ mkdir -p "$TMP_DIR/empty"
   assert_eq "1" "$DISTRO_UNDETERMINED" "fallback marks undetermined"
 )
 
+# Fallback multi-family: the pure-Bash fallback derives mechanical identity for
+# every major family without claiming support.
+write_os_release fallback_arch \
+  'ID=arch' \
+  'PRETTY_NAME="Arch Linux"'
+(
+  PATH="$TMP_DIR/empty"
+  OS_RELEASE_FILE="$TMP_DIR/fallback_arch" detect_distro
+  assert_eq "arch" "$DISTRO_ID" "fallback arch id"
+  assert_eq "arch" "$DISTRO_ADAPTER_ID" "fallback arch adapter"
+  assert_eq "arch" "$DISTRO_FAMILY" "fallback arch family"
+  assert_eq "pacman" "$DISTRO_PACKAGE_MANAGER" "fallback arch package manager"
+  assert_eq "0" "$DISTRO_SUPPORTED" "fallback arch does not claim supported"
+  assert_eq "1" "$DISTRO_UNDETERMINED" "fallback arch marks undetermined"
+)
+
+write_os_release fallback_redhat \
+  'ID=fedora' \
+  'PRETTY_NAME="Fedora Linux 44"' \
+  'VERSION_ID="44"'
+(
+  PATH="$TMP_DIR/empty"
+  OS_RELEASE_FILE="$TMP_DIR/fallback_redhat" detect_distro
+  assert_eq "fedora" "$DISTRO_ID" "fallback redhat id"
+  assert_eq "fedora" "$DISTRO_ADAPTER_ID" "fallback redhat adapter"
+  assert_eq "redhat" "$DISTRO_FAMILY" "fallback redhat family"
+  assert_eq "dnf" "$DISTRO_PACKAGE_MANAGER" "fallback redhat package manager"
+  assert_eq "0" "$DISTRO_SUPPORTED" "fallback redhat does not claim supported"
+  assert_eq "1" "$DISTRO_UNDETERMINED" "fallback redhat marks undetermined"
+)
+
+write_os_release fallback_suse \
+  'ID=opensuse-leap' \
+  'ID_LIKE="suse opensuse"' \
+  'PRETTY_NAME="openSUSE Leap 15.6"' \
+  'VERSION_ID="15.6"'
+(
+  PATH="$TMP_DIR/empty"
+  OS_RELEASE_FILE="$TMP_DIR/fallback_suse" detect_distro
+  assert_eq "opensuse-leap" "$DISTRO_ID" "fallback suse id"
+  assert_eq "opensuse" "$DISTRO_ADAPTER_ID" "fallback suse adapter"
+  assert_eq "suse" "$DISTRO_FAMILY" "fallback suse family"
+  assert_eq "zypper" "$DISTRO_PACKAGE_MANAGER" "fallback suse package manager"
+  assert_eq "0" "$DISTRO_SUPPORTED" "fallback suse does not claim supported"
+  assert_eq "1" "$DISTRO_UNDETERMINED" "fallback suse marks undetermined"
+)
+
+# Engine failure modes: if the Python engine is present but returns garbage,
+# exits non-zero, or hangs, lib/distro.sh must degrade to the pure-Bash fallback.
+write_os_release engine_failure \
+  'ID=debian' \
+  'PRETTY_NAME="Debian GNU/Linux 13"' \
+  'VERSION_ID="13"' \
+  'VERSION_CODENAME=trixie'
+
+_mk_fake_python() {
+  printf '%s\n' "$1" > "$TMP_DIR/fake-python"
+  chmod +x "$TMP_DIR/fake-python"
+}
+
+# 1. Engine returns invalid JSON.
+_mk_fake_python '#!/usr/bin/env bash
+printf "not json\n"
+exit 0
+'
+(
+  PATH="$TMP_DIR"
+  WATCHDOGVPN_PYTHON="$TMP_DIR/fake-python"
+  OS_RELEASE_FILE="$TMP_DIR/engine_failure" detect_distro
+  assert_eq "debian" "$DISTRO_ID" "invalid-json fallback id"
+  assert_eq "0" "$DISTRO_SUPPORTED" "invalid-json fallback does not claim supported"
+  assert_eq "1" "$DISTRO_UNDETERMINED" "invalid-json fallback marks undetermined"
+)
+
+# 2. Engine exits non-zero.
+_mk_fake_python '#!/usr/bin/env bash
+printf "engine crash\n" >&2
+exit 2
+'
+(
+  PATH="$TMP_DIR"
+  WATCHDOGVPN_PYTHON="$TMP_DIR/fake-python"
+  OS_RELEASE_FILE="$TMP_DIR/engine_failure" detect_distro
+  assert_eq "debian" "$DISTRO_ID" "crash fallback id"
+  assert_eq "0" "$DISTRO_SUPPORTED" "crash fallback does not claim supported"
+  assert_eq "1" "$DISTRO_UNDETERMINED" "crash fallback marks undetermined"
+)
+
+# 3. Engine hangs (timeout 1s via the wrapper used by lib/distro.sh).
+_mk_fake_python '#!/usr/bin/env bash
+sleep 60
+'
+(
+  PATH="$TMP_DIR"
+  WATCHDOGVPN_PYTHON="$TMP_DIR/fake-python"
+  OS_RELEASE_FILE="$TMP_DIR/engine_failure" detect_distro
+  assert_eq "debian" "$DISTRO_ID" "timeout fallback id"
+  assert_eq "0" "$DISTRO_SUPPORTED" "timeout fallback does not claim supported"
+  assert_eq "1" "$DISTRO_UNDETERMINED" "timeout fallback marks undetermined"
+)
+
 printf 'distro detection checks passed\n'

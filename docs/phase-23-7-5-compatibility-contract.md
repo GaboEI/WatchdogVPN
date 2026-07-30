@@ -2539,3 +2539,57 @@ touched: `compat/compatibility.json`, `compat/compatibility.schema.json`,
 `diagnostics/amneziawg_guidance.py`, `tools/compat_runtime_prepare.py`,
 `distros/*.sh`, `lib/packages.sh`, `lib/singbox.sh`, `lib/cloak.sh` and
 `cli/main.py`.
+
+### Task 23.7.5.8 L1 coverage audit & closure
+
+Task 23.7.5.8 audits the L1 test coverage of tasks 23.7.5.1 through 23.7.5.7,
+closes the mandatory L1 gaps found, and produces an auditable coverage report.
+No product feature, manifest, detection/provisioning semantics, public CLI or
+host mutation is added.
+
+Mandatory gaps closed in this task:
+
+- Exit-code contract of `tools/compat_distro_classify.py`: usage errors return
+  exit code `1`; manifest/detection errors return exit code `2`.
+- Multi-family pure-Bash fallback in `lib/distro.sh`: the fallback derives
+  mechanical identity for arch, redhat and suse families without ever claiming
+  support or setting `DISTRO_FUTURE=1`.
+- Engine-failure degradation in `lib/distro.sh`: invalid JSON, non-zero exit and
+  timeout from the Python engine all degrade to the pure-Bash fallback.
+- `lib/common.sh` state-message helpers: `print_unsupported_distro`,
+  `print_future_distro` and `print_undetermined_distro` emit the expected text.
+- `doctor.sh` read-only wiring: future, unsupported and undetermined distro
+  states are reported correctly.
+- Transactional provisioner cross-operation lock: `prepare()` and `uninstall()`
+  contend for the same global lock and never run concurrently.
+
+Files added or modified in this task:
+`tests/test_compat_system_migration.py`,
+`tests/test_compat_transactional_provisioning.py`,
+`tests/unit/test_distro_detection.sh`,
+`tests/unit/test_shell_distro_state.sh`,
+`tests/unit/test_doctor_distro_state.sh`,
+`tools/compat_distro_classify.py`,
+`docs/phase-23-7-5-8-l1-coverage-report.md` and this document.
+Files explicitly not touched: `compat/compatibility.json`,
+`compat/compatibility.schema.json`, `compat/detection.py`,
+`compat/dependency_resolution.py`, `compat/support_model.py`,
+`compat/provisioning/*`, `lib/packages.sh`, `distros/*.sh`, `lib/distro.sh`,
+`lib/common.sh`, `install.sh`, `update.sh`, `doctor.sh` and all public CLI /
+runtime / network / VPN / DNS / firewall code.
+
+Validation recorded for the closure commit:
+`bash tests/unit/test_distro_detection.sh` rc=0;
+`bash tests/unit/test_shell_distro_state.sh` rc=0;
+`bash tests/unit/test_doctor_distro_state.sh` rc=0;
+`python3 -m unittest tests.test_compat_system_migration` 6 tests rc=0;
+`python3 -m unittest tests.test_compat_transactional_provisioning` 266 tests rc=0;
+`python3 -m unittest discover -s tests -p 'test_compat_*.py'` 489 tests rc=0 with 1 skip;
+`python3 -m unittest discover -s tests` 2268 tests rc=0 with 1 skip;
+`bash tests/syntax.sh` rc=0;
+`python3 tools/compat_read.py validate` rc=0;
+`python3 tools/compat_distro_classify.py classify` on Arch reports
+`support_classification: certified`;
+fallback simulation with empty `PATH` reports
+`DISTRO_ID=arch SUPPORTED=0 FUTURE=0 UNSUPPORTED=0 UNDETERMINED=1`;
+`git diff --check` rc=0.
