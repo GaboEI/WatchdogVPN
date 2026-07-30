@@ -1,8 +1,8 @@
 # Phase 23.7.5.8 — L1 Coverage Audit & Closure Report
 
-**Status:** L1 coverage complete, pending maintainer audit.  
+**Status:** L1 coverage implementation complete; pending final auditor approval.  
 **Branch:** `phase-23-7-5-compatibility-contract`  
-**Implementation commit:** *(to be recorded after final push)*  
+**Implementation commit:** `fc9f1ced310b922f1ab424ed55bb5ebf33490e12`  
 **Base commit:** `e62daadecbfd6ddad5027eed4a7108cbc883e1d4` (Task 23.7.5.7 approved)
 
 ---
@@ -231,7 +231,7 @@ Stop and ask before proceeding if any of the following appear:
 
 ## 13. Execution results
 
-All validation commands were executed on the local Arch host against commit `e62daadecbfd6ddad5027eed4a7108cbc883e1d4`.
+All validation commands were executed on the local Arch host against the implementation commit `fc9f1ced310b922f1ab424ed55bb5ebf33490e12`.
 
 | Command | Result |
 |---------|--------|
