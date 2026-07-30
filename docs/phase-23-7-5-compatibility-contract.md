@@ -2540,21 +2540,29 @@ touched: `compat/compatibility.json`, `compat/compatibility.schema.json`,
 `distros/*.sh`, `lib/packages.sh`, `lib/singbox.sh`, `lib/cloak.sh` and
 `cli/main.py`.
 
-### Task 23.7.5.8 L1 coverage audit & closure (pending final auditor approval)
+### Task 23.7.5.8 L1 coverage audit & closure
 
 Task 23.7.5.8 audits the L1 test coverage of tasks 23.7.5.1 through 23.7.5.7,
 closes the mandatory L1 gaps found, and produces an auditable coverage report.
 No product feature, manifest, detection/provisioning semantics, public CLI or
 host mutation is added.
 
-Initial independent audit verdict: REJECTED UNTIL CORRECTION (0 HIGH / 1 MEDIUM
-/ 1 LOW). Code and tests passed; the rejection was for documentation
-traceability. The MEDIUM finding was that `docs/phase-23-7-5-8-l1-coverage-report.md`
-left the implementation commit as a placeholder and attributed the validation
-results to the previous base commit instead of the actual implementation commit
-`fc9f1ced310b922f1ab424ed55bb5ebf33490e12`. The LOW finding was that the
-handoff/memory files marked 23.7.5.8 as closed before final auditor approval.
-Both findings have been corrected; the task is now pending re-audit.
+Independent audit verdict: **APPROVED** — 0 HIGH / 0 MEDIUM / 0 LOW. The final
+audit was performed on `archvm` against commit
+`491ff4d97e1f0e0ac9d2534840197e9ffc1834a2`, with `HEAD = origin`, ahead/behind
+`0 0`, and `main` intact at `8b15d470e8abca62a5bb3b72873be6bfecbaf56f`.
+
+Two documentation-traceability findings were raised and corrected during the
+audit cycle before final approval:
+
+- MEDIUM: `docs/phase-23-7-5-8-l1-coverage-report.md` initially left the
+  implementation commit as a placeholder and attributed validation results to
+  the previous base commit. This was corrected to record
+  `fc9f1ced310b922f1ab424ed55bb5ebf33490e12` as the implementation commit and to
+  state that final validations were run against that commit.
+- LOW: the handoff/memory files initially marked 23.7.5.8 as closed before
+  final auditor approval, and a trailing-whitespace issue was left in the L1
+  report. Both were corrected before final approval.
 
 Mandatory gaps closed in this task:
 
