@@ -1695,6 +1695,22 @@ def _recover_one(
         journal = journal.with_state(TransactionState.RECOVERING, now=now())
         journal_mod.write_journal(state_root, journal)
 
+    if journal.state == TransactionState.PREPARE_TERMINAL_PREPARED:
+        # A journal already durably in PREPARE_TERMINAL_PREPARED means every
+        # step was applied+verified AND ownership records were already
+        # published by _finalize_provenance; only the COMMITTED write never
+        # landed (crash between the PREPARE_TERMINAL_PREPARED and COMMITTED
+        # write-ahead boundaries in _finish_prepare / the recovery RESUME_APPLY
+        # path). Re-running _apply_and_verify here would force an invalid
+        # PREPARE_TERMINAL_PREPARED -> VERIFYING transition; the correct
+        # resume is the terminal commit, after re-confirming identity.
+        _verify_terminal_identity(context)
+        _verify_terminal_identity(context, journal_mod.read_ownership_records(state_root, journal.capability_id))
+        journal = journal.with_state(TransactionState.COMMITTED, now=now())
+        journal_mod.write_journal(state_root, journal)
+        _verify_terminal_identity(context, journal_mod.read_ownership_records(state_root, journal.capability_id))
+        return RecoveryDecision(journal.transaction_id, RecoveryAction.RESUME, "resumed and committed")
+
     if verdict == _Verdict.RESUME_APPLY:
         if journal.state == TransactionState.RECOVERING:
             journal = journal.with_state(TransactionState.APPLYING, now=now())
@@ -1734,7 +1750,12 @@ def _recover_one(
         return _finalize_recovery_rollback(state_root, journal, rollback_ok, residuals, context)
 
     # RESUME_ROLLBACK
-    if journal.state == TransactionState.RECOVERING:
+    if journal.state in (TransactionState.RECOVERING, TransactionState.APPLYING):
+        # APPLYING: a step's APPLY_FAILED/VERIFY_FAILED was already durably
+        # recorded but the crash hit before the APPLYING -> ROLLING_BACK
+        # write landed. The transition must be made here (it is valid for
+        # APPLYING); _finalize_recovery_rollback must never see a top-level
+        # state that has no APPLYING -> ROLLED_BACK transition.
         journal = journal.with_state(TransactionState.ROLLING_BACK, now=now())
         journal_mod.write_journal(state_root, journal)
     journal, rollback_ok, residuals = _run_rollback(state_root, journal, executor, context)

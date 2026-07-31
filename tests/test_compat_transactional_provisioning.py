@@ -715,6 +715,78 @@ class TransactionalProvisioningTests(unittest.TestCase):
         final = journal_mod.read_journal(self.harness.state_root, "ambig-txn")
         self.assertEqual(final.state, TransactionState.RECOVERY_REQUIRED)
 
+    # 28b. Recovery desde PREPARE_TERMINAL_PREPARED (crash entre el write-ahead
+    # de PREPARE_TERMINAL_PREPARED y el de COMMITTED). El recovery debe retomar
+    # el commit terminal directamente, nunca reintentar VERIFYING (transición
+    # inválida para PREPARE_TERMINAL_PREPARED).
+    def test_28b_recovery_from_prepare_terminal_prepared_resumes_terminal_commit(self) -> None:
+        decision = self.harness.decision(capability_id="cap_prep_terminal")
+        plan, executor = engine.build_plan(decision, registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.harness.context)
+        journal = engine._initial_journal(plan, transaction_id="prepterm-txn", now_value=_now())
+        journal = journal.with_state(TransactionState.AUTHORIZED, now=_now())
+        journal = journal.with_state(TransactionState.APPLYING, now=_now())
+        locked_context = self.harness.locked_context()
+        for step in plan.steps:
+            record = journal.step(step.sequence).with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
+            journal = journal.with_step(record)
+            result = executor.apply_step(record, locked_context)
+            self.assertEqual(result.status, "applied")
+            record = record.with_state(StepState.APPLIED, completed_at=_now(), undo_record=result.undo_record)
+            journal = journal.with_step(record)
+            record = record.with_state(StepState.VERIFYING)
+            journal = journal.with_step(record)
+            verification = executor.verify_step(record, result, locked_context)
+            self.assertEqual(verification.status, "verified")
+            record = record.with_state(StepState.VERIFIED, completed_at=_now(), verification=verification.evidence)
+            journal = journal.with_step(record)
+        journal = journal.with_state(TransactionState.VERIFYING, now=_now())
+        journal = journal.with_state(TransactionState.PREPARE_TERMINAL_PREPARED, now=_now())
+        # Crash simulado aquí: el write-ahead de COMMITTED nunca llegó a escribirse.
+        journal_mod.write_journal(self.harness.state_root, journal)
+
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context, global_lock_root=self.harness.global_lock_root)
+        self.assertEqual(reports[0].action, RecoveryAction.RESUME)
+        final = journal_mod.read_journal(self.harness.state_root, "prepterm-txn")
+        self.assertEqual(final.state, TransactionState.COMMITTED)
+
+    # 28c. Recovery desde APPLYING con step APPLY_FAILED persistido (crash
+    # entre marcar el step APPLY_FAILED y escribir el ROLLING_BACK). El
+    # recovery debe completar el rollback, nunca transicionar APPLYING ->
+    # ROLLED_BACK directamente (transición inválida).
+    def test_28c_recovery_from_applying_with_persisted_apply_failed_rolls_back(self) -> None:
+        decision = self.harness.decision(capability_id="cap_apply_failed")
+        plan, executor = engine.build_plan(decision, registry=self.harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=self.harness.context)
+        journal = engine._initial_journal(plan, transaction_id="applyfail-txn", now_value=_now())
+        journal = journal.with_state(TransactionState.AUTHORIZED, now=_now())
+        journal = journal.with_state(TransactionState.APPLYING, now=_now())
+        locked_context = self.harness.locked_context()
+        # step 0 applied + verified, step 1 APPLY_FAILED, transacción aún en
+        # APPLYING (window de crash antes de ROLLING_BACK).
+        record = journal.step(0).with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
+        journal = journal.with_step(record)
+        result = executor.apply_step(record, locked_context)
+        self.assertEqual(result.status, "applied")
+        record = record.with_state(StepState.APPLIED, completed_at=_now(), undo_record=result.undo_record)
+        journal = journal.with_step(record)
+        record = record.with_state(StepState.VERIFYING)
+        journal = journal.with_step(record)
+        verification = executor.verify_step(record, result, locked_context)
+        self.assertEqual(verification.status, "verified")
+        record = record.with_state(StepState.VERIFIED, completed_at=_now(), verification=verification.evidence)
+        journal = journal.with_step(record)
+        record1 = journal.step(1).with_state(StepState.APPLYING, started_at=_now(), before_state={"exists": False})
+        journal = journal.with_step(record1)
+        record1 = record1.with_state(StepState.APPLY_FAILED, completed_at=_now(), error_kind="executor_error", error="boom")
+        journal = journal.with_step(record1)
+        journal_mod.write_journal(self.harness.state_root, journal)
+
+        self.assertTrue((self.harness.sandbox / "cap_apply_failed.marker").exists())
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context, global_lock_root=self.harness.global_lock_root)
+        self.assertEqual(reports[0].action, RecoveryAction.ROLLBACK)
+        final = journal_mod.read_journal(self.harness.state_root, "applyfail-txn")
+        self.assertEqual(final.state, TransactionState.PREPARATION_FAILED)
+        self.assertEqual(list(self.harness.sandbox.iterdir()), [])
+
     # 29. Uninstall product-owned.
     def test_29_uninstall_removes_only_product_owned_resources(self) -> None:
         decision = self.harness.decision(capability_id="cap_uninstall")
