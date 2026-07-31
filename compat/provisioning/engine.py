@@ -998,10 +998,27 @@ def _run_apply_loop(state_root: Path, journal: TransactionJournal, plan: Provisi
                 )
                 journal_mod.write_journal(state_root, journal)
                 return journal, False, True
-            record = record.with_state(StepState.APPLY_FAILED, completed_at=now(), error_kind=result.error_kind, error=result.error)
-            journal = journal.with_step(record)
+            # Un executor puede haber escrito su efecto y lanzado DESPUÉS
+            # (possible_partial_effect). Declararlo APPLY_FAILED "limpio" con
+            # residuals=() filtraría el archivo real que quedó en disco.
+            # Antes de dar el fallo limpio, inspeccionamos el target: solo la
+            # ausencia genuina confirmada (exists=False, sin symlink) autoriza
+            # APPLY_FAILED; cualquier ambigüedad (no inspeccionable, symlink,
+            # o contenido presente/divergente) exige recovery con el step
+            # aún en APPLYING, para que la maquinaria de inspección/resume
+            # existente decida sobre el estado real.
+            observed = _safe_inspect(executor, record, context)
+            if observed.get("exists") is False and not observed.get("is_symlink"):
+                record = record.with_state(StepState.APPLY_FAILED, completed_at=now(), error_kind=result.error_kind, error=result.error)
+                journal = journal.with_step(record)
+                journal_mod.write_journal(state_root, journal)
+                return journal, False, False
+            journal = journal.with_state(
+                TransactionState.RECOVERY_REQUIRED, now=now(),
+                recovery={"reason": "possible_partial_effect", "step_id": record.step_id, "error": result.error, "error_kind": result.error_kind},
+            )
             journal_mod.write_journal(state_root, journal)
-            return journal, False, False
+            return journal, False, True
 
         if record.state == StepState.APPLYING:
             record = record.with_state(StepState.APPLIED, completed_at=now(), undo_record=result.undo_record)

@@ -787,6 +787,37 @@ class TransactionalProvisioningTests(unittest.TestCase):
         self.assertEqual(final.state, TransactionState.PREPARATION_FAILED)
         self.assertEqual(list(self.harness.sandbox.iterdir()), [])
 
+    # 28d. Falso "cero residuos" (H3): un executor que ESCRIBE su efecto y
+    # LUEGO lanza no puede reportarse como APPLY_FAILED limpio con
+    # residuals=(). El journal debe transicionar a RECOVERY_REQUIRED con el
+    # step en APPLYING, y el recovery debe completar la transacción (RESUME)
+    # inspeccionando el target real.
+    def test_28d_executor_write_then_crash_requires_recovery_not_clean_preparation_failed(self) -> None:
+        decision = self.harness.decision(capability_id="cap_evil")
+        real_apply = self.harness.executor.apply_step
+
+        def evil_apply(step, context):
+            result = real_apply(step, context)
+            self.assertEqual(result.status, "applied")
+            raise RuntimeError("boom after write")
+
+        with mock.patch.object(self.harness.executor, "apply_step", side_effect=evil_apply):
+            outcome = engine.prepare(decision, self.harness.env, apply=True)
+
+        self.assertEqual(outcome.status, PrepareStatus.RECOVERY_REQUIRED)
+        self.assertTrue(outcome.residuals)
+        journal = journal_mod.read_journal(self.harness.state_root, outcome.transaction_id)
+        self.assertEqual(journal.state, TransactionState.RECOVERY_REQUIRED)
+        step0 = journal.step(0)
+        self.assertEqual(step0.state, StepState.APPLYING)
+        self.assertIsNone(step0.error_kind)
+        self.assertTrue((self.harness.sandbox / "cap_evil.marker").exists())
+
+        reports = engine.recover_pending(self.harness.state_root, self.harness.registry, CANARY_EXECUTOR_VERSION, self.harness.context, global_lock_root=self.harness.global_lock_root)
+        self.assertEqual(reports[0].action, RecoveryAction.RESUME)
+        final = journal_mod.read_journal(self.harness.state_root, outcome.transaction_id)
+        self.assertEqual(final.state, TransactionState.COMMITTED)
+
     # 29. Uninstall product-owned.
     def test_29_uninstall_removes_only_product_owned_resources(self) -> None:
         decision = self.harness.decision(capability_id="cap_uninstall")
