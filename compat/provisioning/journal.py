@@ -236,7 +236,17 @@ def read_journal(state_root: StateRootLike, transaction_id: str) -> TransactionJ
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise JournalError("corrupt journal %s: %s" % (transaction_id, exc)) from exc
-    return from_jsonable(data)
+    journal = from_jsonable(data)
+    # El nombre del archivo ES la identidad por la que se solicitó el
+    # journal; si el contenido no la declara exactamente igual, es un journal
+    # con identidad falsa (renombrado, copiado o reemplazado) y debe
+    # rechazarse fail-safe en lugar de devolverse bajo un id ajeno.
+    if journal.transaction_id != transaction_id:
+        raise JournalError(
+            "journal %s declares transaction_id %r; filename and content identity must match"
+            % (transaction_id, journal.transaction_id)
+        )
+    return journal
 
 
 def list_transaction_ids(state_root: StateRootLike) -> list[str]:

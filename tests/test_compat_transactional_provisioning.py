@@ -1013,6 +1013,27 @@ class IdentifierValidationTests(unittest.TestCase):
         with self.assertRaises(IdentifierError):
             journal_mod.ownership_path(state_root, "../../evil")
 
+    def test_read_journal_rejects_filename_transaction_id_mismatch(self) -> None:
+        # H4: el nombre del archivo debe ser coherente con el transaction_id
+        # del contenido. Una identidad falsa (archivo renombrado/copiado con
+        # contenido de otro journal) debe rechazarse al leer, nunca devolverse
+        # bajo un id que no le corresponde.
+        state_root = self.tmp / "state"
+        harness = _Harness(self.tmp)
+        decision = harness.decision(capability_id="cap_mismatch")
+        plan, _ = engine.build_plan(decision, registry=harness.registry, expected_executor_version=CANARY_EXECUTOR_VERSION, context=harness.context)
+        journal = engine._initial_journal(plan, transaction_id="evil-txn", now_value=_now())
+        journal_mod.write_journal(state_root, journal)
+        loaded = journal_mod.read_journal(state_root, "evil-txn")
+        self.assertEqual(loaded.transaction_id, "evil-txn")
+
+        (state_root / "transactions" / "evil-txn.json").rename(state_root / "transactions" / "requested-txn.json")
+
+        with self.assertRaises(JournalError):
+            journal_mod.read_journal(state_root, "requested-txn")
+        with self.assertRaises(JournalError):
+            journal_mod.read_journal(state_root, "evil-txn")
+
     def test_ownership_deserialization_rejects_path_traversal_created_by_transaction(self) -> None:
         state_root = self.tmp / "state"
         payload = [_valid_ownership_payload(created_by_transaction="../../etc/passwd")]
