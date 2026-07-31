@@ -138,8 +138,9 @@ _detect_distro_fallback() {
   DISTRO_UNDETERMINED=1
 
   if [[ ! -r "$os_release" ]]; then
-    DISTRO_UNSUPPORTED=1
-    DISTRO_UNDETERMINED=0
+    # No legible/inexistente: NO es un "unsupported" demostrado, es estado
+    # indeterminado (no se pudo determinar la distro). UNDETERMINED ya está
+    # marcado por defecto arriba; solo hay que no alterarlo.
     return 0
   fi
 

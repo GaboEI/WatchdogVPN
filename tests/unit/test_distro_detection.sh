@@ -319,4 +319,22 @@ sleep 60
   assert_eq "1" "$DISTRO_UNDETERMINED" "timeout fallback marks undetermined"
 )
 
+# Fallback: un os-release ilegible/inexistente NO es "unsupported"; es
+# "undetermined" (no se pudo leer, no se demostró que sea no soportado). Un
+# archivo inexistente nunca es legible (incluso bajo root), por lo que el
+# test es determinístico.
+(
+  OS_RELEASE_FILE="$TMP_DIR/does-not-exist" detect_distro
+  assert_eq "unknown" "$DISTRO_ID" "unreadable fallback id"
+  assert_eq "0" "$DISTRO_SUPPORTED" "unreadable fallback does not claim supported"
+  assert_eq "0" "$DISTRO_FUTURE" "unreadable fallback does not claim future"
+  assert_eq "0" "$DISTRO_UNSUPPORTED" "unreadable fallback does not claim unsupported"
+  assert_eq "1" "$DISTRO_UNDETERMINED" "unreadable fallback marks undetermined"
+)
+
+# Misma garantía a nivel de la función de fallback directa.
+_detect_distro_fallback "$TMP_DIR/does-not-exist"
+assert_eq "0" "$DISTRO_UNSUPPORTED" "direct fallback does not claim unsupported"
+assert_eq "1" "$DISTRO_UNDETERMINED" "direct fallback marks undetermined"
+
 printf 'distro detection checks passed\n'
