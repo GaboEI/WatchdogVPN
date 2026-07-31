@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from compat import detection
-from compat.support_model import CoreCapabilityStatus, ProtocolRuntimeStatus
+from compat.support_model import CoreCapabilityStatus, ProtocolRuntimeStatus, HostReadiness
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -728,6 +728,31 @@ class CapabilityProbeTests(unittest.TestCase):
             with self.subTest(proto=proto):
                 with self.assertRaises(detection.DetectionError):
                     detection.evaluate(manifest, distro, ready_core(manifest, distro), proto, now=datetime(2026, 7, 26))
+
+    def test_unknown_distribution_evaluates_without_technical_family(self) -> None:
+        # H5: un distro no reconocido (technical_family=None) no debe abortar
+        # la evaluación con DetectionError. El probe ya sondea el conjunto
+        # completo de core capabilities y la clasificación de soporte es
+        # UNSUPPORTED; no se inventa ningún valor de family (HostReadiness no
+        # tiene UNKNOWN).
+        manifest = product_manifest()
+        distro = detection.distro_facts_from_os_release(
+            osr("ID=madeupdistro\nVERSION_ID=99\n"),
+            manifest,
+            kernel_release="6.8.0-test",
+            machine_architecture="x86_64",
+        )
+        self.assertIsNone(distro.technical_family)
+        env = fixture_env()
+        core = detection.probe_core_capabilities(manifest, distro, env)
+        self.assertTrue(core)
+        report = detection.evaluate(manifest, distro, core, present_protocols(manifest), now=datetime(2026, 7, 26))
+        self.assertEqual(report.support_classification, "unsupported")
+        self.assertIn(report.host_readiness, {item.value for item in HostReadiness})
+        self.assertIn(report.host_readiness, ("ready", "needs_preparation", "preparation_failed", "incompatible"))
+
+        with self.assertRaises(detection.DetectionError):
+            detection.evaluate(manifest, distro, core[:1], present_protocols(manifest), now=datetime(2026, 7, 26))
 
     def test_host_readiness_not_ready_with_partial_required_capabilities(self) -> None:
         manifest = product_manifest()

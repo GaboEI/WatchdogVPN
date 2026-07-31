@@ -1176,9 +1176,15 @@ def _validate_core_capability_contract(
     distro_facts: DistroFacts,
     core_capabilities: Sequence[CapabilityResult],
 ) -> None:
-    if not distro_facts.technical_family:
-        raise DetectionError("cannot evaluate core capabilities without a resolved technical family")
-    expected = tuple(manifest["technical_families"][distro_facts.technical_family]["core_capabilities"])
+    # technical_family=None (distro no reconocido) NO es un error: el probe
+    # ya sondeó el conjunto completo de core capabilities en ese caso y la
+    # clasificación de soporte es UNSUPPORTED. El contrato se sigue validando
+    # contra el conjunto completo, sin inventar ningún valor de family
+    # (HostReadiness no tiene UNKNOWN).
+    if distro_facts.technical_family:
+        expected = tuple(manifest["technical_families"][distro_facts.technical_family]["core_capabilities"])
+    else:
+        expected = tuple(sorted(manifest["capabilities"]["core_host_capabilities"]))
     _validate_capability_result_set(
         core_capabilities,
         expected,
