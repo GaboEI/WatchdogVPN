@@ -278,6 +278,18 @@ class ManifestValidCasesTests(unittest.TestCase):
         ):
             self.assertIn(key, manifest)
 
+    def test_all_external_repo_candidates_declare_signing_key_provenance(self) -> None:
+        manifest = load_product()
+        compat_read.validate_manifest(manifest)
+        missing = [
+            candidate.get("id")
+            for requirement in manifest["dependency_requirements"].values()
+            for candidate in requirement["method_chain"]
+            if candidate.get("kind") == "external_repo_exact"
+            and not isinstance(candidate.get("signing_key_provenance"), str)
+        ]
+        self.assertEqual(missing, [])
+
     def test_product_has_valid_cross_references_and_expected_examples(self) -> None:
         manifest = load_product()
         self.assertIn("ubuntu_24_04", manifest["distributions"]["ubuntu"]["policy"]["stable"]["admitted_releases"])
@@ -510,6 +522,14 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest = self.product_copy()
         manifest["protocols"]["ubuntu"] = manifest["protocols"].pop("vless")
         self.assert_invalid(manifest, "reused")
+
+    def test_external_repo_exact_requires_signing_key_provenance(self) -> None:
+        manifest = self.product_copy()
+        for requirement in manifest["dependency_requirements"].values():
+            for candidate in requirement["method_chain"]:
+                if candidate.get("kind") == "external_repo_exact":
+                    candidate.pop("signing_key_provenance", None)
+        self.assert_invalid(manifest, "signing_key_provenance")
 
     def test_references_and_release_ownership_are_strict(self) -> None:
         manifest = self.product_copy()

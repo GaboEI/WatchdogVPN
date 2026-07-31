@@ -416,8 +416,8 @@ version 1 accepts these method kinds:
 
 - `official_package_exact` — package manager, exact target scope, package names,
   architectures, evidence and postcondition.
-- `external_repo_exact` — provider, repository identity, exact `compatible_targets`,
-  package names, architectures, evidence and postcondition.
+- `external_repo_exact` — provider, repository identity, signing-key provenance, exact
+  `compatible_targets`, package names, architectures, evidence and postcondition.
 - `official_artifact_pinned` — official provenance, pinned version, per-architecture
   asset metadata, integrity metadata and expected files. The current sing-box data is
   pinned to `1.13.14` with assets
@@ -439,7 +439,8 @@ stdlib-only and independent from the modern resolver module. It rejects empty ch
 duplicate priorities, unknown method kinds, unknown capabilities, unknown method refs,
 unknown releases/distributions/families, package managers that diverge from the targeted
 family, architectures outside `cap_architecture.supported_values`, missing kind-specific
-security fields, target identity/scope mismatches, duplicate global candidate IDs,
+security fields (including `external_repo_exact` candidates without a declared
+signing-key provenance), target identity/scope mismatches, duplicate global candidate IDs,
 unsafe package names, non-HTTPS or credentialed URLs, malformed SHA-256 hashes, mapped-base
 targets not authorized by derivative mappings, stable rules applied to rolling targets,
 rolling rules applied to stable targets, and arbitrary command-looking evidence.

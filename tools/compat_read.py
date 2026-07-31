@@ -844,8 +844,7 @@ def _validate_dependency_requirements(manifest):
             if kind == "external_repo_exact":
                 if "repository_package" in candidate:
                     _require_package_name(candidate.get("repository_package"), cand_path + ".repository_package")
-                if "signing_key_provenance" in candidate:
-                    _require_str(candidate.get("signing_key_provenance"), cand_path + ".signing_key_provenance")
+                _require_str(candidate.get("signing_key_provenance"), cand_path + ".signing_key_provenance")
                 if "exposed_package_names" in candidate:
                     exposed = _require_package_list(candidate.get("exposed_package_names"), cand_path + ".exposed_package_names")
                     if not exposed:

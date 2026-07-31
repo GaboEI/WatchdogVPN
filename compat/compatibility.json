@@ -2916,6 +2916,7 @@
             "series": "noble",
             "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
           },
+          "signing_key_provenance": "Launchpad PPA signing key for amnezia/ppa (keyid 57290828, retrieved from keyserver.ubuntu.com)",
           "target_identity": "resolved_release",
           "target_scope": {
             "rolling_distributions": [],
@@ -2959,6 +2960,7 @@
             "series": "noble",
             "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
           },
+          "signing_key_provenance": "Launchpad PPA signing key for amnezia/ppa (keyid 57290828, retrieved from keyserver.ubuntu.com)",
           "target_identity": "mapped_base_release",
           "target_scope": {
             "rolling_distributions": [],
@@ -2995,6 +2997,7 @@
             "series": "focal",
             "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
           },
+          "signing_key_provenance": "Launchpad PPA signing key for amnezia/ppa (keyid 57290828, retrieved from keyserver.ubuntu.com)",
           "target_identity": "resolved_release",
           "target_scope": {
             "rolling_distributions": [],
