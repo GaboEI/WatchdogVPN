@@ -711,7 +711,7 @@ def _resolve_stable_release(
             evidence["version_id"] = release_id
         else:
             conflicts.append("VERSION_ID=%s does not match an enumerated release" % version_id)
-    if version_codename is not None:
+    if version_codename:
         release_id = _find_release_by_codename(manifest, distro_id, version_codename)
         if release_id is not None:
             evidence["version_codename"] = release_id

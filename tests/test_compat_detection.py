@@ -327,6 +327,14 @@ class DistributionResolutionTests(unittest.TestCase):
         report = detection.evaluate(manifest, distro, ready_core(manifest, distro), present_protocols(manifest), now=datetime(2026, 7, 26))
         self.assertEqual(report.support_classification, "experimental")
 
+    def test_empty_version_codename_is_ignored(self) -> None:
+        manifest = product_manifest()
+        distro = facts(manifest, 'ID=fedora\nVERSION_ID=44\nVERSION_CODENAME=""\n')
+        self.assertEqual(distro.resolution_status, "resolved")
+        self.assertEqual(distro.resolved_release, "fedora_44")
+        report = detection.evaluate(manifest, distro, ready_core(manifest, distro), present_protocols(manifest), now=datetime(2026, 7, 26))
+        self.assertEqual(report.support_classification, "certified")
+
     def test_stable_release_identity_requires_anchor_consensus(self) -> None:
         manifest = product_manifest()
         cases = (
