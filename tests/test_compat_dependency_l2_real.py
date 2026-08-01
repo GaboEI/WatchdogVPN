@@ -295,6 +295,8 @@ def aggregate_package_status(items: list[dict]) -> str:
         return "timeout"
     if "runtime_error" in statuses:
         return "runtime_error"
+    if "manager_unavailable" in statuses:
+        return "unavailable"
     if "unknown" in statuses or "malformed_response" in statuses:
         return "unknown"
     return "unavailable"
@@ -824,14 +826,16 @@ def _resolve_dependency_queries(
                 query["command"] = command
                 queries_out.append(query)
         elif kind == "pinned_source_build":
-            query = _run_phase(runtime, ["exec", name, "sh", "-lc", "command -v git"])
-            status, reason = classify_package_manager(query)
-            _finalize(query, status, reason)
-            query["package"] = "git"
-            query["dependency_id"] = decision.dependency_id
-            query["method_id"] = decision.selected_method_id
-            query["command"] = "command -v git"
-            queries_out.append(query)
+            for package_name in candidate_data.get("build_dependencies", ()):
+                command = _query_command(case, package_name)
+                query = _run_phase(runtime, ["exec", name, "sh", "-lc", command])
+                status, reason = classify_package_query(query, case["kind"], package_name)
+                _finalize(query, status, reason)
+                query["package"] = package_name
+                query["dependency_id"] = decision.dependency_id
+                query["method_id"] = decision.selected_method_id
+                query["command"] = command
+                queries_out.append(query)
     aggregate = aggregate_package_status([{"status": q["status"]} for q in queries_out]) if queries_out else "unknown"
     return aggregate, decisions_out, queries_out
 
@@ -1357,6 +1361,9 @@ class L2ParserTests(unittest.TestCase):
     def test_one_missing_package_fails_aggregate(self) -> None:
         self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "unavailable"}]), "unavailable")
 
+    def test_manager_unavailable_fails_aggregate(self) -> None:
+        self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "manager_unavailable"}]), "unavailable")
+
 
 class L2MatrixResolverTests(unittest.TestCase):
     # Deterministic tests for the resolver-driven matrix harness. They mock the
@@ -1395,7 +1402,7 @@ class L2MatrixResolverTests(unittest.TestCase):
     def test_matrix_case_resolves_dependencies_and_queries_packages(self) -> None:
         manifest = detection.load_product_manifest()
         case = CASES[0]
-        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn")))
+        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
         with mock.patch(__name__ + "._run", side_effect=fake_run):
             result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
         self.assertEqual(result["os_release"]["status"], "available")
@@ -1404,26 +1411,21 @@ class L2MatrixResolverTests(unittest.TestCase):
         self.assertTrue(result["resolver_package_queries"])
         queried_packages = {q["package"] for q in result["resolver_package_queries"]}
         self.assertIn("python3", queried_packages)
+        self.assertIn("golang-go", queried_packages)
         self.assertIn("git", queried_packages)
         self.assertEqual(result["overall_status"], "available")
 
-    def test_matrix_case_fails_when_source_build_tool_missing(self) -> None:
+    def test_matrix_case_fails_when_source_build_dependency_missing(self) -> None:
         manifest = detection.load_product_manifest()
         case = CASES[0]
-        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn")))
-
-        def no_git_run(runtime, args, timeout=TIMEOUT_SECONDS):
-            cmd = args[-1] if args else ""
-            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("command -v git"):
-                return subprocess.CompletedProcess([runtime] + args, 1, "", "")
-            return fake_run(runtime, args, timeout)
-
-        with mock.patch(__name__ + "._run", side_effect=no_git_run):
+        # Make the source-build dependency "git" unavailable in the APT candidate.
+        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "make", "gcc")))
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
             result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
         self.assertEqual(result["overall_status"], "unavailable")
         self.assertTrue(result["resolver_package_queries"])
         self.assertTrue(
-            any(q["package"] == "git" and q["status"] == "manager_unavailable" for q in result["resolver_package_queries"])
+            any(q["package"] == "git" and q["status"] == "unavailable" for q in result["resolver_package_queries"])
         )
 
     def test_artifact_dependency_is_probed_and_selected(self) -> None:
@@ -1484,6 +1486,7 @@ class L2MatrixResolverTests(unittest.TestCase):
             "python3", "curl", "tar", "iproute", "NetworkManager", "logrotate", "libnotify",
             "openvpn", "util-linux", "polkit", "nftables", "iptables-nft", "iputils",
             "procps-ng", "firewalld", "systemd-resolved", "python3.11", "epel-release",
+            "golang", "make", "gcc",
         ))
         calls = []
 
