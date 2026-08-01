@@ -700,6 +700,35 @@ evidence that the Rocky Linux minor releases do not exist; the official Rocky Li
 announcements above are the release source used for manifest identity coverage. RHEL 9 is
 left unchanged until exact `VERSION_ID` evidence is available from an accessible source.
 
+### AlmaLinux 9 `VERSION_ID` Evidence For Manifest Identity
+
+`almalinux_9` is not physically certified by this manifest; it remains `family_inferred` /
+`pending_evaluation`, and its `evidence_refs` stay empty because release `evidence_refs`
+are reserved by the validator for current qualifying certification records. The
+`os_release_version_ids` list still requires its own evidence because exact stable-release
+identity is a manifest input, not something inferred from Rocky Linux or the RHEL family.
+
+The official AlmaLinux blog announces the following AlmaLinux 9 stable releases:
+
+| Release | Official AlmaLinux blog date | `VERSION_ID` admitted |
+|---|---:|---:|
+| AlmaLinux 9.0 | May 26, 2022 | `9.0` |
+| AlmaLinux 9.1 | November 16, 2022 | `9.1` |
+| AlmaLinux 9.2 | May 10, 2023 | `9.2` |
+| AlmaLinux 9.3 | November 13, 2023 | `9.3` |
+| AlmaLinux 9.4 | May 6, 2024 | `9.4` |
+| AlmaLinux 9.5 | November 18, 2024 | `9.5` |
+| AlmaLinux 9.6 | May 20, 2025 | `9.6` |
+| AlmaLinux 9.7 | November 17, 2025 | `9.7` |
+| AlmaLinux 9.8 | May 26, 2026 | `9.8` |
+
+Direct release-package identity evidence gathered for this correction also matched that
+minor-version pattern: official AlmaLinux release RPMs from `vault.almalinux.org` /
+`repo.almalinux.org` exposed `/etc/os-release` `VERSION_ID` values `9.0`, `9.1`, `9.2`,
+`9.3`, `9.4`, `9.5`, `9.6`, `9.7` and `9.8` respectively. This evidence only supports
+exact identity resolution for `almalinux_9`; it does not promote AlmaLinux to physical
+certification and does not change the certification evidence model.
+
 ## Transactional Provisioning Realization (Task 23.7.5.6a)
 
 Task 23.7.5.6a adds the generic transactional-provisioning infrastructure that will
