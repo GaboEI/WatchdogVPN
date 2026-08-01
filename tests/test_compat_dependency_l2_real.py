@@ -389,6 +389,14 @@ def _availability_from_query(status: str, reason: str) -> resolver.AvailabilityO
     return resolver.AvailabilityObservation(enum_value.value, evidence=reason, reason=reason)
 
 
+def _debian_repo_arch(machine_architecture: str | None) -> str:
+    if machine_architecture == "x86_64":
+        return "amd64"
+    if machine_architecture == "aarch64":
+        return "arm64"
+    return machine_architecture or "amd64"
+
+
 class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
     """Injected availability provider that probes packages, repositories,
     source tags and pinned artifacts inside a running disposable container.
@@ -451,7 +459,53 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
             error_kind="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
         )
 
+    def _external_apt_package_exists(self, candidate: resolver.MethodCandidate, package_name: str) -> resolver.AvailabilityObservation:
+        repo = candidate.data.get("repository", {})
+        base_url = (repo.get("url") or "").rstrip("/")
+        series = repo.get("series") or ""
+        if not base_url or not series:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="external APT repository metadata incomplete",
+                reason="repository_metadata_incomplete",
+                error_kind="malformed_response",
+            )
+        arch = _debian_repo_arch(self._facts.machine_architecture)
+        packages_url = "%s/dists/%s/main/binary-%s/Packages.gz" % (base_url, series, arch)
+        command = "curl -fsSL --max-time 30 %s | gzip -dc | grep -Fx %s" % (
+            shlex.quote(packages_url),
+            shlex.quote("Package: %s" % package_name),
+        )
+        phase = self._exec(command)
+        if phase["runtime_status"] != "executed":
+            return _availability_from_query(phase["runtime_status"], "external APT package index probe did not execute")
+        if phase["returncode"] == 0:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.AVAILABLE.value,
+                evidence="external APT package %s listed in %s" % (package_name, packages_url),
+                reason="external_apt_package_listed",
+            )
+        if phase["returncode"] == 1:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNAVAILABLE.value,
+                evidence="external APT package %s absent from %s" % (package_name, packages_url),
+                reason="external_apt_package_missing",
+                error_kind="unavailable",
+            )
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.UNKNOWN.value,
+            evidence="external APT package index probe failed for %s: %s" % (packages_url, phase.get("stderr") or ""),
+            reason="external_apt_package_probe_failed",
+            error_kind="provider_error",
+        )
+
     def package_exists(self, candidate: resolver.MethodCandidate, exact_target: str, package_name: str) -> resolver.AvailabilityObservation:
+        if (
+            candidate.kind == "external_repo_exact"
+            and self._case["kind"] == "apt"
+            and package_name in set(candidate.data.get("package_names", ()))
+        ):
+            return self._external_apt_package_exists(candidate, package_name)
         phase = self._exec(_query_command(self._case, package_name))
         status, reason = classify_package_query(phase, self._case["kind"], package_name)
         return _availability_from_query(status, reason)
@@ -630,13 +684,13 @@ def _refresh_command(case: dict) -> str:
 def _curl_prepare_command(case: dict) -> str:
     kind = case["kind"]
     if kind == "apt":
-        return "apt-get install -y curl"
+        return "command -v curl >/dev/null 2>&1 || apt-get install -y curl"
     if kind == "dnf":
-        return "dnf -y install curl"
+        return "command -v curl >/dev/null 2>&1 || dnf -y install curl"
     if kind == "zypper":
-        return "zypper --non-interactive install curl"
+        return "command -v curl >/dev/null 2>&1 || zypper --non-interactive install curl"
     if kind == "pacman":
-        return "pacman -S --noconfirm --needed curl"
+        return "command -v curl >/dev/null 2>&1 || pacman -S --noconfirm --needed curl"
     raise AssertionError(kind)
 
 
@@ -1454,6 +1508,8 @@ class L2MatrixResolverTests(unittest.TestCase):
                 return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/curl\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("command -v git"):
                 return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/git\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -fsSL --max-time 30"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "Package: amneziawg\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -I"):
                 return subprocess.CompletedProcess([runtime] + args, 0, "HTTP/1.1 200 OK\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("apt-cache policy"):
@@ -1473,7 +1529,14 @@ class L2MatrixResolverTests(unittest.TestCase):
     def test_matrix_case_resolves_dependencies_and_queries_packages(self) -> None:
         manifest = detection.load_product_manifest()
         case = CASES[0]
-        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -fsSL --max-time 30"):
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "")
+            return base_run(runtime, args, timeout)
+
         with mock.patch(__name__ + "._run", side_effect=fake_run):
             result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
         self.assertEqual(result["os_release"]["status"], "available")
@@ -1490,7 +1553,14 @@ class L2MatrixResolverTests(unittest.TestCase):
         manifest = detection.load_product_manifest()
         case = CASES[0]
         # Make the source-build dependency "git" unavailable in the APT candidate.
-        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "make", "gcc")))
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "make", "gcc")))
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -fsSL --max-time 30"):
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "")
+            return base_run(runtime, args, timeout)
+
         with mock.patch(__name__ + "._run", side_effect=fake_run):
             result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
         self.assertEqual(result["overall_status"], "unavailable")
@@ -1534,7 +1604,7 @@ class L2MatrixResolverTests(unittest.TestCase):
         with mock.patch(__name__ + "._run", side_effect=instrumented_run):
             result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
         self.assertEqual(result["http_probe_tool"]["status"], "available")
-        self.assertIn(("exec", "watchdogvpn-matrix-ubuntu", "sh", "-lc", "apt-get install -y curl"), calls)
+        self.assertIn(("exec", "watchdogvpn-matrix-ubuntu", "sh", "-lc", "command -v curl >/dev/null 2>&1 || apt-get install -y curl"), calls)
 
     def test_matrix_case_fails_when_curl_preparation_fails(self) -> None:
         manifest = detection.load_product_manifest()
@@ -1542,7 +1612,7 @@ class L2MatrixResolverTests(unittest.TestCase):
         base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
 
         def no_curl_run(runtime, args, timeout=TIMEOUT_SECONDS):
-            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and args[-1] == "apt-get install -y curl":
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and args[-1] == "command -v curl >/dev/null 2>&1 || apt-get install -y curl":
                 return subprocess.CompletedProcess([runtime] + args, 100, "", "unable to locate package curl")
             return base_run(runtime, args, timeout)
 
@@ -1550,6 +1620,30 @@ class L2MatrixResolverTests(unittest.TestCase):
             result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
         self.assertEqual(result["http_probe_tool"]["status"], "unknown")
         self.assertEqual(result["overall_status"], "unknown")
+
+    def test_external_apt_repo_package_is_checked_from_declared_repo_index(self) -> None:
+        manifest = detection.load_product_manifest()
+        candidate = resolver.load_requirement(manifest, "dep_amneziawg_runtime").method_chain[0]
+        facts = detection.distro_facts_from_os_release(
+            detection.parse_os_release_text("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n"),
+            manifest,
+            machine_architecture="x86_64",
+        )
+        calls = []
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            cmd = args[-1] if args else ""
+            if cmd.startswith("curl -fsSL --max-time 30"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "Package: amneziawg\n", "")
+            return subprocess.CompletedProcess([runtime] + args, 1, "", "unexpected command")
+
+        provider = ContainerAvailabilityProvider("docker", "watchdogvpn-matrix-ubuntu", CASES[0], facts)
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            observation = provider.package_exists(candidate, "ubuntu_24_04", "amneziawg")
+        self.assertEqual(observation.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        self.assertTrue(any("Packages.gz" in call[-1] and "Package: amneziawg" in call[-1] for call in calls))
+        self.assertFalse(any(call[-1] == "apt-cache policy amneziawg" for call in calls))
 
     def test_dependency_availability_unknown_blocks_overall_available(self) -> None:
         manifest = detection.load_product_manifest()

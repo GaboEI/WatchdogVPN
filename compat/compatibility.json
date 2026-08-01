@@ -1806,10 +1806,8 @@
           "target_scope": {
             "rolling_distributions": [],
             "stable_releases": [
-              "debian_13",
               "linuxmint_22_3",
-              "ubuntu_24_04",
-              "ubuntu_26_04"
+              "ubuntu_24_04"
             ],
             "technical_families": [
               "debian_apt",
@@ -1827,12 +1825,45 @@
           "implementation_status": "not_implemented",
           "postcondition": "cap_dns_runtime_package",
           "evidence": [
-            "lib/packages.sh package inventory audit"
+            "lib/packages.sh package inventory audit",
+            "Ubuntu packages: noble dnsutils remains an installable transitional package for bind9-dnsutils"
+          ]
+        },
+        {
+          "id": "dns_runtime_apt_bind9_dnsutils_stable",
+          "priority": 2,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "bind9-dnsutils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "Ubuntu packages: resolute dnsutils is virtual and bind9-dnsutils is the installable provider",
+            "Debian trixie official APT index: dnsutils absent, bind9-dnsutils present"
           ]
         },
         {
           "id": "dns_runtime_apt_kali_rolling",
-          "priority": 2,
+          "priority": 3,
           "kind": "official_package_exact",
           "method_ref": "apt_official_package",
           "target_identity": "rolling_distribution",
@@ -1861,7 +1892,7 @@
         },
         {
           "id": "dns_runtime_dnf_stable",
-          "priority": 3,
+          "priority": 4,
           "kind": "official_package_exact",
           "method_ref": "dnf_official_package",
           "target_identity": "resolved_release",
@@ -1894,7 +1925,7 @@
         },
         {
           "id": "dns_runtime_zypper_stable",
-          "priority": 4,
+          "priority": 5,
           "kind": "official_package_exact",
           "method_ref": "zypper_official_package",
           "target_identity": "resolved_release",
@@ -1923,7 +1954,7 @@
         },
         {
           "id": "dns_runtime_zypper_tumbleweed_rolling",
-          "priority": 5,
+          "priority": 6,
           "kind": "official_package_exact",
           "method_ref": "zypper_official_package",
           "target_identity": "rolling_distribution",
@@ -1952,7 +1983,7 @@
         },
         {
           "id": "dns_runtime_pacman_rolling",
-          "priority": 6,
+          "priority": 7,
           "kind": "official_package_exact",
           "method_ref": "pacman_official_package",
           "target_identity": "rolling_distribution",

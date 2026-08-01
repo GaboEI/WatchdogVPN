@@ -2705,9 +2705,9 @@ Files added or modified in this task:
 `tools/run_compat_l2_matrix.py`,
 `.github/workflows/compat-l2-matrix.yml`,
 `.github/workflows/repo-availability-cron.yml`,
+`compat/compatibility.json`,
 `docs/phase-23-7-5-9-plan.md` and this document.
 Files explicitly not touched:
-`compat/compatibility.json` (only updated by human-reviewed commit),
 `compat/compatibility.schema.json`,
 `compat/detection.py`,
 `compat/dependency_resolution.py`,
@@ -2757,4 +2757,23 @@ Key implementation details:
 `validation_metadata.per_release_ci` is never updated by an automated workflow
 commit; it is updated only by a human-reviewed commit after inspecting the
 artifact.
+
+Artifact inspection during the L2 matrix hardening found two real version-level
+breaks that the matrix must not hide. First, `rockylinux:9` already includes a
+working `curl` implementation via `curl-minimal`, so the matrix now prepares the
+HTTP probe tool idempotently with `command -v curl || <package-manager install>`
+instead of forcing DNF to replace `curl-minimal` with `curl`. Second, Ubuntu
+26.04 and Debian 13 no longer have `dnsutils` as the exact installable package
+used by the DNS helper capability: Ubuntu 26.04 exposes `dnsutils` as a virtual
+package provided by `bind9-dnsutils`, and the Debian 13 APT index lists
+`bind9-dnsutils` while omitting `dnsutils`. The manifest therefore keeps
+`dnsutils` for Ubuntu 24.04 / Linux Mint 22.3 and adds a separate exact APT
+candidate for Debian 13 / Ubuntu 26.04 using `bind9-dnsutils`.
+
+For `external_repo_exact` APT candidates, L2 now validates package availability
+against the declared external repository's `Packages.gz` index instead of asking
+the base container's unconfigured APT cache. The repository metadata probe still
+has to pass first, and the package name must be listed by the exact declared
+series before the candidate can qualify.
+
 `git diff --check` rc=0.
