@@ -2706,18 +2706,18 @@ Files added or modified in this task:
 `.github/workflows/compat-l2-matrix.yml`,
 `.github/workflows/repo-availability-cron.yml`,
 `compat/compatibility.json`,
+`compat/detection.py`,
+`doctor.sh`,
 `docs/phase-23-7-5-9-plan.md` and this document.
 Files explicitly not touched:
 `compat/compatibility.schema.json`,
-`compat/detection.py`,
 `compat/dependency_resolution.py`,
 `compat/support_model.py`,
 `compat/provisioning/*`,
 `lib/distro.sh`,
 `lib/common.sh`,
 `install.sh`,
-`update.sh`,
-`doctor.sh` and all public CLI / runtime / network / VPN / DNS / firewall code.
+`update.sh` and all public CLI / runtime / network / VPN / DNS / firewall code.
 
 Design deviation recorded: the frozen design listed a single
 `.github/workflows/ci.yml` containing both the matrix and the scheduled job.
@@ -2753,6 +2753,30 @@ Key implementation details:
   checks daily at 06:00 UTC, uploads the report, and fails on any unavailable
   external resource. It does not open issues, does not commit the manifest, and
   does not create PRs.
+
+GitHub Actions platform limitation recorded for Task 23.7.5.9: the repository
+availability cron could not be executed as a real `workflow_dispatch` run during
+this task because GitHub does not index newly added manually-dispatchable
+workflows until the workflow file exists on the default branch. The workflow file
+exists on `phase-23-7-5-compatibility-contract`, but it is not present on `main`,
+so `gh workflow run repo-availability-cron.yml --ref
+phase-23-7-5-compatibility-contract` returns GitHub API HTTP 404 and the workflow
+is absent from the repository workflow index. This is a known platform indexing
+limitation, not a defect in the reporter or workflow code.
+
+The cron reporter logic was still verified with real network execution against
+the corrected code: `run_cron_checks()` produced 17 checks total, 10 available,
+0 unavailable and 7 unknown container-image checks because no available
+environment had Docker or Podman. The corrected EPEL repository metadata URLs use
+`/epel/9/Everything/<arch>/repodata/repomd.xml` and returned real `HEAD 200`
+results for both `x86_64` and `aarch64`; the rejected `/epel/epel9/...` form is
+not used.
+
+Follow-up for Task 23.7.5.14 `cierre_y_merge`: after this branch is merged to
+`main`, manually dispatch `.github/workflows/repo-availability-cron.yml` for the
+first time from GitHub Actions and inspect the uploaded
+`repo-availability-report.json` artifact to confirm the real scheduled-workflow
+path on the default branch.
 
 `validation_metadata.per_release_ci` is never updated by an automated workflow
 commit; it is updated only by a human-reviewed commit after inspecting the
