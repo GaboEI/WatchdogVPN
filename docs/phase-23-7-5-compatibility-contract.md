@@ -2622,4 +2622,71 @@ Validation recorded for the closure commit:
 `support_classification: certified`;
 fallback simulation with empty `PATH` reports
 `DISTRO_ID=arch SUPPORTED=0 FUTURE=0 UNSUPPORTED=0 UNDETERMINED=1`;
+
+### Task 23.7.5.9 `pruebas_por_versiones`
+
+Task 23.7.5.9 adds the L2 per-version layer: a CI container matrix that runs real,
+disposable-container dependency resolution against every supported family/release,
+a scheduled repository-availability job, and explicit offline negative-test coverage.
+
+Files added or modified in this task:
+`tests/test_compat_dependency_l2_negative.py`,
+`tests/test_compat_dependency_l2_real.py`,
+`tests/test_compat_l2_reporter.py`,
+`tools/compat_l2_reporter.py`,
+`tools/run_compat_l2_matrix.py`,
+`.github/workflows/compat-l2-matrix.yml`,
+`.github/workflows/repo-availability-cron.yml`,
+`docs/phase-23-7-5-9-plan.md` and this document.
+Files explicitly not touched:
+`compat/compatibility.json` (only updated by human-reviewed commit),
+`compat/compatibility.schema.json`,
+`compat/detection.py`,
+`compat/dependency_resolution.py`,
+`compat/support_model.py`,
+`compat/provisioning/*`,
+`lib/distro.sh`,
+`lib/common.sh`,
+`install.sh`,
+`update.sh`,
+`doctor.sh` and all public CLI / runtime / network / VPN / DNS / firewall code.
+
+Design deviation recorded: the frozen design listed a single
+`.github/workflows/ci.yml` containing both the matrix and the scheduled job.
+This task splits them into `.github/workflows/compat-l2-matrix.yml` (PR/push
+and manual dispatch) and `.github/workflows/repo-availability-cron.yml` (daily
+06:00 UTC). The split isolates the heavy, network-dependent L2 matrix from the
+fast L1/unit/syntax gate and matches the different trigger cadence. The two
+workflows together implement the single "CI container matrix + scheduled
+repo-availability job" requirement from the frozen design.
+
+Key implementation details:
+
+- `tests/test_compat_dependency_l2_negative.py` exercises the resolver with the
+  injected `StaticAvailabilityProvider` without containers. Coverage includes
+  target-series rejection, availability propagation, unsupported/EOL
+  classification, recipe-not-implemented vs method-selected, manifest
+  integrity/data regression checks, and unsupported architecture.
+- `tests/test_compat_dependency_l2_real.py` contains
+  `ContainerAvailabilityProvider`, which probes packages, repository metadata,
+  source-build tags and pinned artifacts inside disposable containers.
+  `execute_l2_matrix_case()` builds `DistroFacts` from `/etc/os-release`,
+  evaluates support, runs `resolver.resolve_all()`, and queries the packages
+  declared by the selected candidate for every dependency requirement.
+- `tools/run_compat_l2_matrix.py` drives `execute_l2_matrix_case()` over all
+  `CASES` and writes raw and rendered reports.
+- `tools/compat_l2_reporter.py` reads raw results and produces
+  `compat-l2-matrix.json` / `compat-l2-matrix.md`. It also runs the scheduled
+  cron checks and produces `repo-availability-report.json`.
+- `.github/workflows/compat-l2-matrix.yml` detects Docker/Podman, fails fast if
+  neither is available, runs the matrix, uploads reports, and fails if any
+  mandatory target is not green.
+- `.github/workflows/repo-availability-cron.yml` runs read-only availability
+  checks daily at 06:00 UTC, uploads the report, and fails on any unavailable
+  external resource. It does not open issues, does not commit the manifest, and
+  does not create PRs.
+
+`validation_metadata.per_release_ci` is never updated by an automated workflow
+commit; it is updated only by a human-reviewed commit after inspecting the
+artifact.
 `git diff --check` rc=0.
