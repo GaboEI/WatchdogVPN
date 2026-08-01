@@ -1,0 +1,65 @@
+name: L2 Compatibility Matrix
+
+on:
+  push:
+    branches:
+      - phase-23-7-5-compatibility-contract
+  pull_request:
+    branches:
+      - phase-23-7-5-compatibility-contract
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  l2-matrix:
+    name: Run per-family/release L2 matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Detect container runtime
+        id: runtime
+        run: |
+          if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+            echo "runtime=docker" >> "$GITHUB_OUTPUT"
+          elif command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+            echo "runtime=podman" >> "$GITHUB_OUTPUT"
+          else
+            echo "runtime=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail fast if no container runtime
+        if: steps.runtime.outputs.runtime == 'none'
+        run: |
+          echo "Container runtime unavailable — L2 matrix cannot run. This is a CI infrastructure failure, not a product test pass."
+          exit 1
+
+      - name: Run L2 matrix
+        run: |
+          python3 tools/run_compat_l2_matrix.py \
+            --raw-output compat-l2-matrix-raw.json \
+            --json-output compat-l2-matrix.json \
+            --markdown-output compat-l2-matrix.md \
+            --fail-on-red
+
+      - name: Upload matrix reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-l2-matrix
+          path: |
+            compat-l2-matrix-raw.json
+            compat-l2-matrix.json
+            compat-l2-matrix.md
+          if-no-files-found: ignore
