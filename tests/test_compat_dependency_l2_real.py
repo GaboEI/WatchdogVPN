@@ -304,6 +304,28 @@ def aggregate_package_status(items: list[dict]) -> str:
     return "unavailable"
 
 
+def aggregate_dependency_status(decisions: list[dict]) -> str:
+    if not decisions:
+        return "unknown"
+    statuses = {decision["resolution_status"] for decision in decisions}
+    resolved = {"already_present", "method_selected", "recipe_not_implemented"}
+    if statuses <= resolved:
+        return "available"
+    if "timeout" in statuses:
+        return "timeout"
+    if "internal_error" in statuses:
+        return "runtime_error"
+    if "availability_unknown" in statuses:
+        return "unknown"
+    if "no_safe_route" in statuses or "out_of_contract" in statuses:
+        return "unavailable"
+    return "unknown"
+
+
+def combine_probe_statuses(*statuses: str) -> str:
+    return aggregate_package_status([{"status": status} for status in statuses])
+
+
 def compute_overall_status(probe_aggregate: str, cleanup: dict) -> str:
     """Fold cleanup outcome into a single gate-facing status without ever
     hiding or replacing the primary probe result. "cleaned" and "not_needed"
@@ -605,6 +627,19 @@ def _refresh_command(case: dict) -> str:
     return case.get("refresh", "true")
 
 
+def _curl_prepare_command(case: dict) -> str:
+    kind = case["kind"]
+    if kind == "apt":
+        return "apt-get install -y curl"
+    if kind == "dnf":
+        return "dnf -y install curl"
+    if kind == "zypper":
+        return "zypper --non-interactive install curl"
+    if kind == "pacman":
+        return "pacman -S --noconfirm --needed curl"
+    raise AssertionError(kind)
+
+
 def _base_result(runtime: str, case: dict, name: str) -> dict:
     return {
         "target": case["target"],
@@ -617,6 +652,7 @@ def _base_result(runtime: str, case: dict, name: str) -> dict:
         "os_release": _phase("not_run"),
         "package_manager": _phase("not_run"),
         "metadata_refresh": _phase("not_run"),
+        "http_probe_tool": _phase("not_run"),
         "package_queries": [],
         "cleanup": {
             "attempted": False,
@@ -838,7 +874,9 @@ def _resolve_dependency_queries(
                 query["method_id"] = decision.selected_method_id
                 query["command"] = command
                 queries_out.append(query)
-    aggregate = aggregate_package_status([{"status": q["status"]} for q in queries_out]) if queries_out else "unknown"
+    package_aggregate = aggregate_package_status([{"status": q["status"]} for q in queries_out]) if queries_out else "unknown"
+    decision_aggregate = aggregate_dependency_status(decisions_out)
+    aggregate = combine_probe_statuses(package_aggregate, decision_aggregate)
     return aggregate, decisions_out, queries_out
 
 
@@ -916,6 +954,17 @@ def execute_l2_matrix_case(runtime: str, case: dict, name: str, manifest: dict) 
         if status != "available":
             result["probe_aggregate"] = status
             result["limitations"].append("metadata refresh failed")
+            return result
+
+        curl_cmd = _curl_prepare_command(case)
+        curl_prepare = _run_phase(runtime, ["exec", name, "sh", "-lc", curl_cmd])
+        status, reason = classify_lifecycle_phase(curl_prepare, verb="curl preparation")
+        _finalize(curl_prepare, status, reason)
+        curl_prepare["command"] = curl_cmd
+        result["http_probe_tool"] = curl_prepare
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("HTTP probe tool preparation failed")
             return result
 
         os_release_data = detection.parse_os_release_text(os_release["stdout"])
@@ -1376,6 +1425,16 @@ class L2ParserTests(unittest.TestCase):
     def test_manager_unavailable_fails_aggregate(self) -> None:
         self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "manager_unavailable"}]), "unavailable")
 
+    def test_dependency_unknown_blocks_available_aggregate(self) -> None:
+        self.assertEqual(
+            aggregate_dependency_status([
+                {"resolution_status": "method_selected"},
+                {"resolution_status": "availability_unknown"},
+            ]),
+            "unknown",
+        )
+        self.assertEqual(combine_probe_statuses("available", "unknown"), "unknown")
+
 
 class L2MatrixResolverTests(unittest.TestCase):
     # Deterministic tests for the resolver-driven matrix harness. They mock the
@@ -1425,7 +1484,7 @@ class L2MatrixResolverTests(unittest.TestCase):
         self.assertIn("python3", queried_packages)
         self.assertIn("golang-go", queried_packages)
         self.assertIn("git", queried_packages)
-        self.assertEqual(result["overall_status"], "available")
+        self.assertEqual(result["overall_status"], "unavailable")
 
     def test_matrix_case_fails_when_source_build_dependency_missing(self) -> None:
         manifest = detection.load_product_manifest()
@@ -1461,6 +1520,55 @@ class L2MatrixResolverTests(unittest.TestCase):
         self.assertEqual(sing_box["resolution_status"], "recipe_not_implemented")
         self.assertEqual(sing_box["selected_method_kind"], "official_artifact_pinned")
         self.assertEqual(sing_box["selected_method_id"], "sing_box_official_artifact_stable")
+
+    def test_matrix_case_prepares_curl_before_artifact_probe(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        calls = []
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+
+        def instrumented_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=instrumented_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertEqual(result["http_probe_tool"]["status"], "available")
+        self.assertIn(("exec", "watchdogvpn-matrix-ubuntu", "sh", "-lc", "apt-get install -y curl"), calls)
+
+    def test_matrix_case_fails_when_curl_preparation_fails(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+
+        def no_curl_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and args[-1] == "apt-get install -y curl":
+                return subprocess.CompletedProcess([runtime] + args, 100, "", "unable to locate package curl")
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=no_curl_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertEqual(result["http_probe_tool"]["status"], "unknown")
+        self.assertEqual(result["overall_status"], "unknown")
+
+    def test_dependency_availability_unknown_blocks_overall_available(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+
+        def no_curl_after_prepare_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd == "command -v curl":
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "")
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=no_curl_after_prepare_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertTrue(
+            any(d["resolution_status"] == "availability_unknown" for d in result["dependency_decisions"]),
+            result["dependency_decisions"],
+        )
+        self.assertEqual(result["overall_status"], "unknown")
 
     def _rocky_matrix_fake_run(self, case: dict, available_packages: frozenset[str]):
         def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
