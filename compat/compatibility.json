@@ -891,7 +891,7 @@
               "series": "epel9"
             }
           ],
-          "signing_key_provenance": "Fedora EPEL release package for EL9",
+          "signing_key_provenance": "Fedora EPEL 9 trust is bootstrapped by epel-release installed from the target system's already-trusted base repositories; epel-release carries the EPEL repository GPG key and repo configuration. Fedora publishes the EPEL 9 package signing key as keyid 8A3872BF3228467C, fingerprint FF8A D134 4597 106E CE81 3B91 8A38 72BF 3228 467C, on fedoraproject.org/security.",
           "exposed_package_names": [
             "openvpn"
           ],
@@ -2501,7 +2501,7 @@
             "url": "https://dl.fedoraproject.org/pub/epel/"
           },
           "repository_package": "epel-release",
-          "signing_key_provenance": "Fedora EPEL release package for EL9",
+          "signing_key_provenance": "Fedora EPEL 9 trust is bootstrapped by epel-release installed from the target system's already-trusted base repositories; epel-release carries the EPEL repository GPG key and repo configuration. Fedora publishes the EPEL 9 package signing key as keyid 8A3872BF3228467C, fingerprint FF8A D134 4597 106E CE81 3B91 8A38 72BF 3228 467C, on fedoraproject.org/security.",
           "target_identity": "resolved_release",
           "target_scope": {
             "rolling_distributions": [],

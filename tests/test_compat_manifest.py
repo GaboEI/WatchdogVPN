@@ -26,6 +26,17 @@ from compat import (
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "compat_read.py"
 PRODUCT_MANIFEST = ROOT / "compat" / "compatibility.json"
+EPEL_9_SIGNING_KEY_PROVENANCE = (
+    "Fedora EPEL 9 trust is bootstrapped by epel-release installed from the target "
+    "system's already-trusted base repositories; epel-release carries the EPEL "
+    "repository GPG key and repo configuration. Fedora publishes the EPEL 9 "
+    "package signing key as keyid 8A3872BF3228467C, fingerprint FF8A D134 4597 "
+    "106E CE81 3B91 8A38 72BF 3228 467C, on fedoraproject.org/security."
+)
+AMNEZIAWG_PPA_SIGNING_KEY_PROVENANCE = (
+    "Launchpad PPA signing key for amnezia/ppa (keyid 57290828, "
+    "retrieved from keyserver.ubuntu.com)"
+)
 
 spec = importlib.util.spec_from_file_location("compat_read_bootstrap", TOOL)
 compat_read = importlib.util.module_from_spec(spec)
@@ -290,6 +301,45 @@ class ManifestValidCasesTests(unittest.TestCase):
         ]
         self.assertEqual(missing, [])
 
+    def test_external_repo_signing_key_provenance_accepts_epel_bootstrap_and_key_evidence(self) -> None:
+        manifest = load_product()
+        target_ids = {
+            "base_runtime_dnf_rhel9_with_epel_exact",
+            "openvpn_epel_rhel9_exact",
+        }
+        found_ids = set()
+        for requirement in manifest["dependency_requirements"].values():
+            for candidate in requirement["method_chain"]:
+                if candidate.get("id") in target_ids:
+                    candidate["signing_key_provenance"] = EPEL_9_SIGNING_KEY_PROVENANCE
+                    found_ids.add(candidate["id"])
+        self.assertEqual(found_ids, target_ids)
+        self.assertTrue(compat_read.validate_manifest(manifest))
+
+    def test_existing_amneziawg_ppa_signing_key_provenance_remains_valid(self) -> None:
+        manifest = load_product()
+        matches = []
+        for requirement in manifest["dependency_requirements"].values():
+            for candidate in requirement["method_chain"]:
+                if candidate.get("signing_key_provenance") == AMNEZIAWG_PPA_SIGNING_KEY_PROVENANCE:
+                    matches.append(candidate.get("signing_key_provenance"))
+                    candidate["signing_key_provenance"] = AMNEZIAWG_PPA_SIGNING_KEY_PROVENANCE
+        self.assertEqual(matches, [AMNEZIAWG_PPA_SIGNING_KEY_PROVENANCE] * 3)
+        self.assertTrue(compat_read.validate_manifest(manifest))
+
+    def test_external_repo_bootstrap_trust_uses_declared_repository_package(self) -> None:
+        manifest = load_product()
+        for requirement in manifest["dependency_requirements"].values():
+            for candidate in requirement["method_chain"]:
+                if candidate.get("id") == "openvpn_epel_rhel9_exact":
+                    candidate["repository_package"] = "foo-release"
+                    candidate["signing_key_provenance"] = (
+                        "Foo repository trust is bootstrapped by foo-release installed from "
+                        "the target system's already-trusted base repositories; foo-release "
+                        "carries the Foo repository GPG key and repo configuration."
+                    )
+        self.assertTrue(compat_read.validate_manifest(manifest))
+
     def test_product_has_valid_cross_references_and_expected_examples(self) -> None:
         manifest = load_product()
         self.assertIn("ubuntu_24_04", manifest["distributions"]["ubuntu"]["policy"]["stable"]["admitted_releases"])
@@ -530,6 +580,35 @@ class ManifestInvalidCasesTests(unittest.TestCase):
                 if candidate.get("kind") == "external_repo_exact":
                     candidate.pop("signing_key_provenance", None)
         self.assert_invalid(manifest, "signing_key_provenance")
+
+    def test_external_repo_exact_rejects_generic_signing_key_provenance(self) -> None:
+        for value in (
+            "Fedora EPEL release package for EL9",
+            "external repository package is configured by installer",
+            "keyid 8A3872BF3228467C",
+        ):
+            with self.subTest(value=value):
+                manifest = self.product_copy()
+                for requirement in manifest["dependency_requirements"].values():
+                    for candidate in requirement["method_chain"]:
+                        if candidate.get("id") == "openvpn_epel_rhel9_exact":
+                            candidate["signing_key_provenance"] = value
+                self.assert_invalid(manifest, "signing_key_provenance")
+
+    def test_external_repo_exact_rejects_bootstrap_trust_without_repository_package(self) -> None:
+        manifest = self.product_copy()
+        for requirement in manifest["dependency_requirements"].values():
+            for candidate in requirement["method_chain"]:
+                if candidate.get("signing_key_provenance") == AMNEZIAWG_PPA_SIGNING_KEY_PROVENANCE:
+                    candidate["signing_key_provenance"] = (
+                        "Repository trust is bootstrapped from the target system's "
+                        "already-trusted base repositories and carries the repository GPG "
+                        "key and repo configuration."
+                    )
+                    self.assertNotIn("repository_package", candidate)
+                    self.assert_invalid(manifest, "signing_key_provenance")
+                    return
+        self.fail("expected an AmneziaWG PPA candidate")
 
     def test_references_and_release_ownership_are_strict(self) -> None:
         manifest = self.product_copy()

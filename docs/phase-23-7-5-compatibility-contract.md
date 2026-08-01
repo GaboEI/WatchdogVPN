@@ -554,6 +554,18 @@ partial subset can never satisfy `cap_base_runtime_commands`; unknown EPEL avail
 blocks the chain, and unavailable EPEL or missing official packages exhausts to
 `no_safe_route`.
 
+Every `external_repo_exact` candidate must carry non-generic
+`signing_key_provenance`. Valid evidence is either an explicit package-signing key
+identifier (`keyid` or `fingerprint`) together with a verifiable source such as an
+official project security page or keyserver, or a bootstrap trust statement naming the
+package installed from already-trusted base repositories and stating that it carries the
+external repository GPG key and repository configuration. EPEL 9 satisfies both forms:
+the `epel-release` package is installed from the target system's already-trusted base
+repositories and carries the EPEL repository GPG key/configuration, while Fedora also
+publishes the EPEL 9 package signing key as keyid `8A3872BF3228467C`, fingerprint
+`FF8A D134 4597 106E CE81 3B91 8A38 72BF 3228 467C`, on `fedoraproject.org/security`.
+Generic descriptions such as naming only the release package are invalid.
+
 Provider observations are preserved per operation. Multi-package methods record a
 `package_exists` observation for each package; external repos keep both repository target
 evidence, repository package evidence and package evidence; artifacts keep asset

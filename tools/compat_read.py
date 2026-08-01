@@ -34,6 +34,9 @@ _SHA256_RE = re.compile(r"^[A-Fa-f0-9]{64}$")
 _GIT_COMMIT_RE = re.compile(r"^[A-Fa-f0-9]{40}$")
 _HTTPS_URL_RE = re.compile(r"^https://[^/@\s]+(?:[/:?#][^\s]*)?$")
 _SAFE_RELATIVE_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+:-]*$")
+_KEYID_SUBSTRING_RE = re.compile(r"\bkeyid\s+[A-Fa-f0-9]{8,40}\b")
+_FINGERPRINT_SUBSTRING_RE = re.compile(r"\bfingerprint\s+([A-Fa-f0-9][A-Fa-f0-9 ]{38,}[A-Fa-f0-9])\b")
+_SIGNING_KEY_SOURCE_RE = re.compile(r"\b(?:fedoraproject\.org/security|keyserver\.ubuntu\.com)\b")
 _VERSION_RE = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 _RFC3339_UTC_RE = re.compile(
     r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T"
@@ -399,6 +402,38 @@ def _require_safe_expected_path(value, path):
         raise ManifestError("%s must be a safe relative file name/path" % path)
     if not _SAFE_RELATIVE_PATH_RE.match(text):
         raise ManifestError("%s contains unsafe characters" % path)
+    return text
+
+
+def _has_signing_key_fingerprint(text):
+    for match in _FINGERPRINT_SUBSTRING_RE.finditer(text):
+        compact = match.group(1).replace(" ", "")
+        if len(compact) == 40 and re.match(r"^[A-Fa-f0-9]{40}$", compact):
+            return True
+    return False
+
+
+def _require_signing_key_provenance(value, path, repository_package):
+    text = _require_str(value, path)
+    # This is the only _require_* helper that intentionally searches within
+    # prose: signing_key_provenance is free-form provenance text, not a single
+    # identifier field that can be matched as a whole value.
+    has_explicit_key = bool(_KEYID_SUBSTRING_RE.search(text)) or _has_signing_key_fingerprint(text)
+    has_key_source = bool(_SIGNING_KEY_SOURCE_RE.search(text))
+    has_bootstrap_trust = (
+        repository_package is not None
+        and repository_package in text
+        and "repository GPG key" in text
+        and (
+            "already-trusted base repositories" in text
+            or "trusted base repositories" in text
+        )
+    )
+    if not ((has_explicit_key and has_key_source) or has_bootstrap_trust):
+        raise ManifestError(
+            "%s must identify a signing key with a verifiable source or a trusted base-repository bootstrap package"
+            % path
+        )
     return text
 
 
@@ -844,7 +879,11 @@ def _validate_dependency_requirements(manifest):
             if kind == "external_repo_exact":
                 if "repository_package" in candidate:
                     _require_package_name(candidate.get("repository_package"), cand_path + ".repository_package")
-                _require_str(candidate.get("signing_key_provenance"), cand_path + ".signing_key_provenance")
+                _require_signing_key_provenance(
+                    candidate.get("signing_key_provenance"),
+                    cand_path + ".signing_key_provenance",
+                    candidate.get("repository_package"),
+                )
                 if "exposed_package_names" in candidate:
                     exposed = _require_package_list(candidate.get("exposed_package_names"), cand_path + ".exposed_package_names")
                     if not exposed:
