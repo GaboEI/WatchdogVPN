@@ -443,7 +443,9 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
             if series.lower().startswith("epel"):
                 series_num = series[4:] or series
             arch = self._facts.machine_architecture or "x86_64"
-            return "%s/%s/Everything/%s/os/repodata/repomd.xml" % (base, series_num, arch)
+            # Real EPEL layout: .../9/Everything/x86_64/repodata/repomd.xml
+            # (no /os/ segment). Verified against dl.fedoraproject.org.
+            return "%s/%s/Everything/%s/repodata/repomd.xml" % (base, series_num, arch)
         if kind == "zypper":
             return "%s/%s/repodata/repomd.xml" % (base, series)
         return None
@@ -528,14 +530,16 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
         return observation
 
     def artifact_integrity_metadata_available(self, candidate: resolver.MethodCandidate, target_id: str, selected_asset: resolver.SelectedArtifact) -> resolver.AvailabilityObservation:
-        # Integrity metadata is pinned in the manifest. The real L2 check is
-        # that the manifest declares a valid SHA-256 for the selected asset.
+        # L2 only checks that the manifest structurally declares a SHA-256 for
+        # the selected asset. The actual hash-vs-binary verification is a
+        # transactional provisioning responsibility (Tasks 23.7.5.6a/6b), not
+        # a network availability probe.
         integrity = candidate.data.get("integrity", {})
         declared = integrity.get(selected_asset.architecture) if isinstance(integrity, dict) else None
         if integrity.get("type") == "sha256" and declared == selected_asset.sha256:
             return resolver.ArtifactAvailabilityObservation(
                 resolver.AvailabilityStatus.AVAILABLE.value,
-                evidence="manifest integrity metadata matches selected asset",
+                evidence="manifest declares a SHA-256 for the selected asset architecture",
                 reason="integrity_metadata_present",
                 target_id=target_id,
                 architecture=selected_asset.architecture,
@@ -546,7 +550,7 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
             )
         return resolver.ArtifactAvailabilityObservation(
             resolver.AvailabilityStatus.UNAVAILABLE.value,
-            evidence="manifest integrity metadata missing or mismatched for architecture %s" % selected_asset.architecture,
+            evidence="manifest SHA-256 declaration missing or malformed for architecture %s" % selected_asset.architecture,
             reason="integrity_metadata_missing",
             error_kind="integrity_metadata_missing",
             target_id=target_id,
@@ -1503,7 +1507,9 @@ class L2MatrixResolverTests(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(repository_probe)
-        self.assertIn("Everything/x86_64/os/repodata/repomd.xml", repository_probe[-1])
+        # Real EPEL layout is .../Everything/x86_64/repodata/repomd.xml (no /os/).
+        self.assertIn("Everything/x86_64/repodata/repomd.xml", repository_probe[-1])
+        self.assertNotIn("Everything/x86_64/os/repodata/repomd.xml", repository_probe[-1])
 
 
 @unittest.skipUnless(REAL_L2_ENABLED, "WATCHDOGVPN_REAL_L2=1 not set")
