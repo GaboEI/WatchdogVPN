@@ -88,6 +88,7 @@ export MOCK_DISTRO_FUTURE="0"
 export MOCK_DISTRO_UNSUPPORTED="0"
 export MOCK_DISTRO_UNDETERMINED="1"
 output="$(run_doctor)"
-assert_contains "unsupported distro for this release" "$output" "undetermined distro doctor output treated as unsupported"
+assert_contains "distro support cannot be determined" "$output" "undetermined distro doctor output"
+assert_contains "install python3 and run ./doctor.sh again" "$output" "undetermined distro doctor recovery"
 
 printf 'doctor distro state checks passed\n'
