@@ -95,8 +95,10 @@ class CronUrlTests(unittest.TestCase):
         names = {check["name"] for check in checks}
         # External repositories.
         self.assertIn("https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/noble/Release", urls)
-        self.assertIn("https://dl.fedoraproject.org/pub/epel/epel9/Everything/x86_64/repodata/repomd.xml", urls)
-        self.assertIn("https://dl.fedoraproject.org/pub/epel/epel9/Everything/aarch64/repodata/repomd.xml", urls)
+        self.assertIn("https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/repodata/repomd.xml", urls)
+        self.assertIn("https://dl.fedoraproject.org/pub/epel/9/Everything/aarch64/repodata/repomd.xml", urls)
+        self.assertNotIn("https://dl.fedoraproject.org/pub/epel/epel9/Everything/x86_64/repodata/repomd.xml", urls)
+        self.assertNotIn("https://dl.fedoraproject.org/pub/epel/epel9/Everything/aarch64/repodata/repomd.xml", urls)
         # Artifact assets.
         self.assertIn(
             "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-linux-amd64-glibc.tar.gz",

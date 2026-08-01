@@ -144,6 +144,13 @@ def _load_manifest_for_cron() -> dict[str, Any]:
     return load_manifest_file(str(root / "compat" / "compatibility.json"), product_path=True)
 
 
+def dnf_repository_series_path(series: str) -> str:
+    """Return the path segment used by DNF repository metadata URLs."""
+    if series.lower().startswith("epel"):
+        return series[4:] or series
+    return series
+
+
 def _repo_url_for(candidate: dict[str, Any]) -> list[dict[str, str]]:
     """Derive the external repository URL(s) for a candidate."""
     repo = candidate.get("repository") or {}
@@ -161,11 +168,12 @@ def _repo_url_for(candidate: dict[str, Any]) -> list[dict[str, str]]:
             "url": "%s/dists/%s/Release" % (base_url, series),
         })
     elif package_manager == "dnf":
+        series_path = dnf_repository_series_path(series)
         for arch in arches:
             results.append({
                 "category": "external_repository",
                 "name": "%s_%s_%s" % (repo.get("id", "repo"), series, arch),
-                "url": "%s/%s/Everything/%s/repodata/repomd.xml" % (base_url, series, arch),
+                "url": "%s/%s/Everything/%s/repodata/repomd.xml" % (base_url, series_path, arch),
             })
     else:
         # Other package managers are not represented by external_repo_exact

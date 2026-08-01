@@ -18,6 +18,7 @@ from unittest import mock
 
 from compat import dependency_resolution as resolver
 from compat import detection
+from tools.compat_l2_reporter import dnf_repository_series_path
 
 
 REAL_L2_ENABLED = os.environ.get("WATCHDOGVPN_REAL_L2") == "1"
@@ -554,11 +555,7 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
         if kind == "apt":
             return "%s/dists/%s/Release" % (base, series)
         if kind == "dnf":
-            # EPEL-style naming: epel9 -> 9. Fall back to the raw series if
-            # no numeric suffix is present.
-            series_num = series
-            if series.lower().startswith("epel"):
-                series_num = series[4:] or series
+            series_num = dnf_repository_series_path(series)
             arch = self._facts.machine_architecture or "x86_64"
             # Real EPEL layout: .../9/Everything/x86_64/repodata/repomd.xml
             # (no /os/ segment). Verified against dl.fedoraproject.org.

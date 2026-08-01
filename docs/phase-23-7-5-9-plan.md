@@ -40,7 +40,7 @@ users or public support claims.
 ### Files NOT touched
 
 - `compat/compatibility.schema.json` — schema stays unchanged; only data is updated.
-- `compat/support_model.py`, `compat/detection.py`, `compat/dependency_resolution.py` — pure logic is closed; only tests/reporters are added.
+- `compat/support_model.py`, `compat/dependency_resolution.py` — pure logic is closed; only tests/reporters are added. `compat/detection.py` was touched only by the approved empty-`VERSION_CODENAME` correction in `a75897e`.
 - `compat/provisioning/*` — transactional provisioning is out of scope.
 - `lib/distro.sh`, `lib/common.sh`, `install.sh`, `update.sh`, `doctor.sh` — no semantic changes.
 - Public CLI, daemon, routing, DNS, firewall, TUN, interfaces.
