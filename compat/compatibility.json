@@ -3884,7 +3884,15 @@
       "evidence_refs": [],
       "meets_technical_floor": true,
       "os_release_version_ids": [
-        "9"
+        "9.0",
+        "9.1",
+        "9.2",
+        "9.3",
+        "9.4",
+        "9.5",
+        "9.6",
+        "9.7",
+        "9.8"
       ],
       "policy_state": "pending_evaluation",
       "vendor_maintained": true,
@@ -3980,7 +3988,15 @@
       ],
       "meets_technical_floor": true,
       "os_release_version_ids": [
-        "9"
+        "9.0",
+        "9.1",
+        "9.2",
+        "9.3",
+        "9.4",
+        "9.5",
+        "9.6",
+        "9.7",
+        "9.8"
       ],
       "policy_state": "admitted",
       "vendor_maintained": true,

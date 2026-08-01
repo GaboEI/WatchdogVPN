@@ -661,6 +661,45 @@ availability provider can implement the structured artifact-identity contract (Â
 through the package's published internal API instead of importing
 `compat.dependency_resolution` directly.
 
+### Rocky Linux 9 `VERSION_ID` Evidence For L2 Matrix Identity
+
+During Task 23.7.5.9 L2 matrix validation, the real `rockylinux:9` container reported
+`VERSION_ID="9.3"` while the manifest still enumerated only `"9"` for `rocky_9`. The
+production detection engine therefore resolved the distribution as Rocky but failed to
+resolve the stable release: `resolved_release=None`, `resolution_status=release_unknown`,
+with identity conflict `VERSION_ID=9.3 does not match an enumerated release`. After the
+manifest correction, both the observed container value `9.3` and the separately observed
+Rocky VM value `9.6` resolve to `rocky_9` without identity conflicts.
+
+The admitted `rocky_9.os_release_version_ids` list is intentionally exact minor-release
+data, not major-version prefix matching. The official Rocky Linux news channel announces
+the following Rocky Linux 9 general-availability releases:
+
+| Release | Official Rocky Linux news date | `VERSION_ID` admitted |
+|---|---:|---:|
+| Rocky Linux 9.0 | July 14, 2022 | `9.0` |
+| Rocky Linux 9.1 | November 26, 2022 | `9.1` |
+| Rocky Linux 9.2 | May 16, 2023 | `9.2` |
+| Rocky Linux 9.3 | November 20, 2023 | `9.3` |
+| Rocky Linux 9.4 | May 9, 2024 | `9.4` |
+| Rocky Linux 9.5 | November 19, 2024 | `9.5` |
+| Rocky Linux 9.6 | June 4, 2025 | `9.6` |
+| Rocky Linux 9.7 | December 1, 2025 | `9.7` |
+| Rocky Linux 9.8 | May 27, 2026 | `9.8` |
+
+Direct identity observations for this fix:
+
+- CI L2 artifact from run `30708438425`: `rockylinux:9` reported `VERSION_ID="9.3"`.
+- Real Rocky VM `wdvpn-rocky9-audit`: `/etc/os-release` reported `VERSION_ID="9.6"` and
+  `PRETTY_NAME="Rocky Linux 9.6 (Blue Onyx)"`.
+
+Docker Hub image tags are not treated as the authoritative release list. At the time of
+this correction, Docker Hub exposed minor tags for 9.0, 9.1 and 9.2, while 9.4, 9.5, 9.7
+and 9.8 were not published as Docker tags. That absence is an image-publishing detail, not
+evidence that the Rocky Linux minor releases do not exist; the official Rocky Linux news
+announcements above are the release source used for manifest identity coverage. RHEL 9 is
+left unchanged until exact `VERSION_ID` evidence is available from an accessible source.
+
 ## Transactional Provisioning Realization (Task 23.7.5.6a)
 
 Task 23.7.5.6a adds the generic transactional-provisioning infrastructure that will

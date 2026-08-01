@@ -271,7 +271,7 @@ class DistributionResolutionTests(unittest.TestCase):
         "cachyos": ('ID=cachyos\nID_LIKE="arch"\n', "cachyos", None, "certified"),
         "debian": ('ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n', "debian", "debian_13", "certified"),
         "fedora": ("ID=fedora\nVERSION_ID=44\n", "fedora", "fedora_44", "certified"),
-        "rocky": ("ID=rocky\nVERSION_ID=9\n", "rocky", "rocky_9", "certified"),
+        "rocky": ("ID=rocky\nVERSION_ID=9.6\n", "rocky", "rocky_9", "certified"),
         "ubuntu_24": ("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "ubuntu", "ubuntu_24_04", "certified"),
         "mint": (
             "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=22.3\nVERSION_CODENAME=zena\nUBUNTU_CODENAME=noble\n",
@@ -280,7 +280,7 @@ class DistributionResolutionTests(unittest.TestCase):
             "certified",
         ),
         "leap": ("ID=opensuse-leap\nVERSION_ID=15.6\n", "opensuse_leap", "opensuse_leap_15_6", "certified"),
-        "alma": ("ID=almalinux\nVERSION_ID=9\n", "almalinux", "almalinux_9", "family_inferred"),
+        "alma": ("ID=almalinux\nVERSION_ID=9.6\n", "almalinux", "almalinux_9", "family_inferred"),
         "centos": ("ID=centos\nVERSION_ID=9\nPRETTY_NAME=\"CentOS Stream 9\"\n", "centos_stream", "centos_stream_9", "family_inferred"),
         "rhel": ("ID=rhel\nVERSION_ID=9\n", "rhel", "rhel_9", "family_inferred"),
         "tumbleweed": ("ID=opensuse-tumbleweed\nID_LIKE=opensuse\n", "opensuse_tumbleweed", None, "family_inferred"),
@@ -494,7 +494,7 @@ class CapabilityProbeTests(unittest.TestCase):
 
     def test_runtime_python_executable_is_selected_by_exact_target(self) -> None:
         manifest = product_manifest()
-        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9\n")
+        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9.6\n")
         runner = PythonRuntimeRunner(versions={"python3": "3.9.18", "python3.11": "3.11.9"})
         env = fixture_env(runner=runner)
         result = detection._probe_core("cap_python310", rocky, env)
@@ -512,7 +512,7 @@ class CapabilityProbeTests(unittest.TestCase):
 
     def test_python_cryptography_uses_the_selected_runtime_only(self) -> None:
         manifest = product_manifest()
-        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9\n")
+        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9.6\n")
         env = fixture_env(runner=PythonRuntimeRunner(cryptography={"python3": "42.0.0"}))
         result = detection._probe_core("cap_python_cryptography", rocky, env)
         self.assertEqual(result.domain_status, "provisionable")
@@ -531,7 +531,7 @@ class CapabilityProbeTests(unittest.TestCase):
 
     def test_runtime_python_missing_or_malformed_is_controlled(self) -> None:
         manifest = product_manifest()
-        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9\n")
+        rocky = facts(manifest, "ID=rocky\nVERSION_ID=9.6\n")
         env = fixture_env(runner=PythonRuntimeRunner())
         missing = detection._probe_core("cap_python310", rocky, env)
         self.assertEqual(missing.domain_status, "provisionable")
@@ -582,7 +582,7 @@ class CapabilityProbeTests(unittest.TestCase):
         manifest = product_manifest()
         cases = {
             "ID=fedora\nVERSION_ID=44\n": {"cap_selinux", "cap_firewalld"},
-            "ID=rocky\nVERSION_ID=9\n": {"cap_selinux", "cap_firewalld"},
+            "ID=rocky\nVERSION_ID=9.6\n": {"cap_selinux", "cap_firewalld"},
             "ID=rhel\nVERSION_ID=9\n": {"cap_selinux", "cap_firewalld"},
             "ID=opensuse-leap\nVERSION_ID=15.6\nVERSION_CODENAME=agile\n": {"cap_apparmor", "cap_firewalld"},
             "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n": {"cap_apparmor"},

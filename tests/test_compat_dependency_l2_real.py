@@ -77,13 +77,13 @@ MANAGER_NOT_FOUND_RETURNCODES = frozenset((1, 127))
 
 
 CASES = (
-    {"target": "ubuntu_24_04", "image": "ubuntu:24.04", "id": "ubuntu", "version_id": "24.04", "codename": "noble", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt"},
-    {"target": "ubuntu_26_04", "image": "ubuntu:26.04", "id": "ubuntu", "version_id": "26.04", "codename": "resolute", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt", "optional_image": True},
-    {"target": "debian_13", "image": "debian:13", "id": "debian", "version_id": "13", "codename": "trixie", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt"},
-    {"target": "fedora_44", "image": "fedora:44", "id": "fedora", "version_id": "44", "codename": None, "manager": "dnf", "packages": ("python3", "openvpn"), "kind": "dnf"},
-    {"target": "rocky_9", "image": "rockylinux:9", "id": "rocky", "version_id": "9", "codename": None, "manager": "dnf", "packages": ("python3.11", "epel-release", "openvpn"), "kind": "dnf", "architecture": "x86_64", "repository_id": "epel_9", "series": "epel9", "epel_repo_url": "https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/", "refresh": "true"},
-    {"target": "opensuse_leap_15_6", "image": "opensuse/leap:15.6", "id": "opensuse-leap", "version_id": "15.6", "codename": None, "manager": "zypper", "packages": ("python311", "openvpn"), "kind": "zypper"},
-    {"target": "arch", "image": "archlinux:latest", "id": "arch", "version_id": None, "codename": None, "manager": "pacman", "packages": ("python", "openvpn"), "kind": "pacman", "refresh": "pacman -Sy --noconfirm"},
+    {"target": "ubuntu_24_04", "image": "ubuntu:24.04", "id": "ubuntu", "codename": "noble", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt"},
+    {"target": "ubuntu_26_04", "image": "ubuntu:26.04", "id": "ubuntu", "codename": "resolute", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt", "optional_image": True},
+    {"target": "debian_13", "image": "debian:13", "id": "debian", "codename": "trixie", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt"},
+    {"target": "fedora_44", "image": "fedora:44", "id": "fedora", "codename": None, "manager": "dnf", "packages": ("python3", "openvpn"), "kind": "dnf"},
+    {"target": "rocky_9", "image": "rockylinux:9", "id": "rocky", "codename": None, "manager": "dnf", "packages": ("python3.11", "epel-release", "openvpn"), "kind": "dnf", "architecture": "x86_64", "repository_id": "epel_9", "series": "epel9", "epel_repo_url": "https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/", "refresh": "true"},
+    {"target": "opensuse_leap_15_6", "image": "opensuse/leap:15.6", "id": "opensuse-leap", "codename": None, "manager": "zypper", "packages": ("python311", "openvpn"), "kind": "zypper"},
+    {"target": "arch", "image": "archlinux:latest", "id": "arch", "codename": None, "manager": "pacman", "packages": ("python", "openvpn"), "kind": "pacman", "refresh": "pacman -Sy --noconfirm"},
 )
 
 
@@ -214,7 +214,9 @@ def classify_os_release(phase: dict, case: dict) -> tuple[str, str]:
     values = _extract_os_release(phase.get("stdout") or "")
     if values.get("ID") != case["id"]:
         return "malformed_response", "ID mismatch"
-    if case.get("version_id") and values.get("VERSION_ID") != case["version_id"]:
+    release = detection.load_product_manifest()["releases"][case["target"]]
+    expected_version_ids = tuple(release.get("os_release_version_ids") or ())
+    if expected_version_ids and values.get("VERSION_ID") not in expected_version_ids:
         return "malformed_response", "VERSION_ID mismatch"
     expected_codename = case.get("codename")
     if expected_codename and values.get("VERSION_CODENAME") != expected_codename:
@@ -1271,6 +1273,11 @@ class L2ParserTests(unittest.TestCase):
         status, _ = classify_os_release(phase, CASES[0])
         self.assertEqual(status, "malformed_response")
 
+    def test_os_release_version_ids_come_from_manifest(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "ID=rocky\nVERSION_ID=9.3\n", "stderr": ""}
+        status, _ = classify_os_release(phase, CASES[4])
+        self.assertEqual(status, "available")
+
     def test_manager_distinguishes_absence_from_runtime_error(self) -> None:
         absent = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": ""}
         self.assertEqual(classify_package_manager(absent)[0], "manager_unavailable")
@@ -1454,7 +1461,7 @@ class L2MatrixResolverTests(unittest.TestCase):
         def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
             cmd = args[-1] if args else ""
             if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and args[2:5] == ["cat", "/etc/os-release"]:
-                return subprocess.CompletedProcess([runtime] + args, 0, "ID=rocky\nVERSION_ID=9\n", "")
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=rocky\nVERSION_ID=9.6\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and "command -v -- dnf" in cmd:
                 return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/dnf\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd == "true":

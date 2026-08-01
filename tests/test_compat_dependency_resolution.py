@@ -481,7 +481,7 @@ class DependencyResolverTests(unittest.TestCase):
     def test_fedora_and_rhel_family_epel_are_separated(self) -> None:
         m = manifest()
         fedora = facts(m, "ID=fedora\nVERSION_ID=44\n")
-        rocky = facts(m, "ID=rocky\nVERSION_ID=9\n")
+        rocky = facts(m, "ID=rocky\nVERSION_ID=9.6\n")
         fedora_decision = resolve(m, fedora, "dep_openvpn_runtime", cap("proto_openvpn_runtime"))
         self.assertEqual(fedora_decision.selected_method_id, "openvpn_dnf_fedora_official")
         rocky_decision = resolve(m, rocky, "dep_openvpn_runtime", cap("proto_openvpn_runtime"))
@@ -509,7 +509,7 @@ class DependencyResolverTests(unittest.TestCase):
 
     def test_rhel_base_runtime_requires_official_packages_and_epel_together(self) -> None:
         m = manifest()
-        rocky = facts(m, "ID=rocky\nVERSION_ID=9\n")
+        rocky = facts(m, "ID=rocky\nVERSION_ID=9.6\n")
         candidate_id = "base_runtime_dnf_rhel9_with_epel_exact"
         full = resolve(m, rocky, "dep_base_runtime_commands", cap("cap_base_runtime_commands"))
         self.assertEqual(full.selected_method_id, candidate_id)
@@ -720,7 +720,7 @@ class DependencyResolverTests(unittest.TestCase):
 
     def test_all_availability_observations_accumulate_across_chain(self) -> None:
         m = manifest()
-        distro = facts(m, "ID=rocky\nVERSION_ID=9\n")
+        distro = facts(m, "ID=rocky\nVERSION_ID=9.6\n")
         mutated = json.loads(json.dumps(m))
         first = mutated["dependency_requirements"]["dep_openvpn_runtime"]["method_chain"][0]
         first["id"] = "openvpn_rocky_official_fixture"
@@ -786,7 +786,7 @@ class DependencyResolverTests(unittest.TestCase):
         reordered = json.loads(json.dumps(m))
         reordered["dependency_requirements"]["dep_python_runtime"]["method_chain"].reverse()
         compat_read.validate_manifest(reordered)
-        distro = facts(reordered, "ID=rocky\nVERSION_ID=9\n")
+        distro = facts(reordered, "ID=rocky\nVERSION_ID=9.6\n")
         self.assertEqual(detection._runtime_python_executable(reordered, distro), "python3.11")
 
     def test_capability_observation_and_support_inputs_are_strict(self) -> None:

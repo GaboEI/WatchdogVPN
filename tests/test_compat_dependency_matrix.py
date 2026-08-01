@@ -104,7 +104,7 @@ class FocusedDependencyMatrixContractTests(unittest.TestCase):
             "openvpn": "openvpn_dnf_fedora_official",
         },
         "rocky_9": {
-            "os_release": "ID=rocky\nVERSION_ID=9\n",
+            "os_release": "ID=rocky\nVERSION_ID=9.6\n",
             "support": "certified",
             "release_model": "stable",
             "resolved_release": "rocky_9",
@@ -112,7 +112,7 @@ class FocusedDependencyMatrixContractTests(unittest.TestCase):
             "openvpn": "openvpn_epel_rhel9_exact",
         },
         "almalinux_9": {
-            "os_release": "ID=almalinux\nVERSION_ID=9\n",
+            "os_release": "ID=almalinux\nVERSION_ID=9.6\n",
             "support": "family_inferred",
             "release_model": "stable",
             "resolved_release": "almalinux_9",
