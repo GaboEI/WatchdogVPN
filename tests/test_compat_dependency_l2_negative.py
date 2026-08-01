@@ -144,8 +144,11 @@ class NegativeAvailabilityTests(unittest.TestCase):
         self.assertEqual(decision.resolution_status, "no_safe_route")
 
 
-class NegativeManifestSecurityTests(unittest.TestCase):
-    def test_placeholder_sha256_hashes_rejected_by_manifest_validator(self) -> None:
+class NegativeManifestDataTests(unittest.TestCase):
+    # These are data-regression checks, not exercises of the manifest validator
+    # (validator rejection tests live in tests.test_compat_manifest.py).
+
+    def test_manifest_data_has_no_placeholder_sha256_hashes(self) -> None:
         m = manifest()
         for dep_id, req in m["dependency_requirements"].items():
             for candidate in req["method_chain"]:
@@ -156,7 +159,7 @@ class NegativeManifestSecurityTests(unittest.TestCase):
                         self.assertNotEqual(value, "0" * 64, "placeholder sha256 in %s" % candidate["id"])
                         self.assertNotEqual(value, "1" * 64, "placeholder sha256 in %s" % candidate["id"])
 
-    def test_source_build_candidates_have_commit_revisions(self) -> None:
+    def test_manifest_source_builds_have_commit_revisions(self) -> None:
         m = manifest()
         for dep_id, req in m["dependency_requirements"].items():
             for candidate in req["method_chain"]:
@@ -198,6 +201,25 @@ class NegativeUnsupportedTests(unittest.TestCase):
             family_has_certified_anchor=True,
         )
         self.assertEqual(classify_support_stable(facts).value, "unsupported")
+
+
+class NegativeArchitectureTests(unittest.TestCase):
+    def test_unsupported_architecture_yields_no_safe_route(self) -> None:
+        m = manifest()
+        os_release = detection.parse_os_release_text("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+        facts = detection.distro_facts_from_os_release(
+            os_release,
+            m,
+            kernel_release="6.8.0-test",
+            machine_architecture="riscv64",
+        )
+        self.assertEqual(facts.machine_architecture, "riscv64")
+        decision = resolve_dependency(m, facts, "dep_python_runtime", resolver.StaticAvailabilityProvider.all_available())
+        self.assertEqual(decision.resolution_status, "no_safe_route")
+        self.assertTrue(
+            any(r.reason == "architecture_not_supported" for r in decision.rejected_candidates),
+            "expected architecture_not_supported rejection among %s" % [r.reason for r in decision.rejected_candidates],
+        )
 
 
 class NegativeAggregateTests(unittest.TestCase):

@@ -3,8 +3,9 @@
 **Status:** PLAN APPROVED — conditional. Implementation authorized after the 5
 auditor corrections below were reflected in this document.
 
-**Branch:** `phase-23-7-5-compatibility-contract`  
-**Base commit:** `764b44a`  
+**Branch:** `phase-23-7-5-compatibility-contract`\
+**Base commit:** `764b44a`\
+
 **Main untouched:** `8b15d47`
 
 ---
