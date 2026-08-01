@@ -13,7 +13,11 @@ import shutil
 import subprocess
 import time
 import unittest
+from datetime import datetime
 from unittest import mock
+
+from compat import dependency_resolution as resolver
+from compat import detection
 
 
 REAL_L2_ENABLED = os.environ.get("WATCHDOGVPN_REAL_L2") == "1"
@@ -316,6 +320,188 @@ def is_optional_image_exception(case: dict, result: dict) -> bool:
     return bool(case.get("optional_image")) and result["pull"]["status"] == "image_not_found"
 
 
+def _core_capability_result(capability_id: str) -> detection.CapabilityResult:
+    return detection.CapabilityResult(capability_id, "partial", "provisionable", "fixture", "fixture", "fixture")
+
+
+def _protocol_capability_result(capability_id: str) -> detection.CapabilityResult:
+    return detection.CapabilityResult(capability_id, "absent", "provisionable", "fixture", "fixture", "fixture")
+
+
+def _fixture_core_capabilities(manifest: dict, facts: detection.DistroFacts) -> tuple[detection.CapabilityResult, ...]:
+    if facts.technical_family is None:
+        family_caps = manifest["capabilities"]["core_host_capabilities"]
+    else:
+        family_caps = manifest["technical_families"][facts.technical_family]["core_capabilities"]
+    return tuple(_core_capability_result(cap_id) for cap_id in sorted(family_caps))
+
+
+def _fixture_protocol_capabilities(manifest: dict) -> tuple[detection.CapabilityResult, ...]:
+    return tuple(
+        _protocol_capability_result(cap_id)
+        for cap_id in sorted(manifest["capabilities"]["protocol_capabilities"])
+    )
+
+
+def _all_fixture_capabilities(manifest: dict, facts: detection.DistroFacts) -> tuple[detection.CapabilityResult, ...]:
+    return _fixture_core_capabilities(manifest, facts) + _fixture_protocol_capabilities(manifest)
+
+
+_PACKAGE_QUERY_STATUS_TO_AVAILABILITY = {
+    "available": resolver.AvailabilityStatus.AVAILABLE,
+    "unavailable": resolver.AvailabilityStatus.UNAVAILABLE,
+    "timeout": resolver.AvailabilityStatus.TIMEOUT,
+    "runtime_error": resolver.AvailabilityStatus.PROVIDER_ERROR,
+    "unknown": resolver.AvailabilityStatus.UNKNOWN,
+    "malformed_response": resolver.AvailabilityStatus.MALFORMED_RESPONSE,
+    "manager_unavailable": resolver.AvailabilityStatus.UNAVAILABLE,
+}
+
+
+def _availability_from_query(status: str, reason: str) -> resolver.AvailabilityObservation:
+    enum_value = _PACKAGE_QUERY_STATUS_TO_AVAILABILITY.get(status, resolver.AvailabilityStatus.UNKNOWN)
+    return resolver.AvailabilityObservation(enum_value.value, evidence=reason, reason=reason)
+
+
+class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
+    """Injected availability provider that probes packages inside a running
+    disposable container. The container identity and package manager kind are
+    taken from the L2 case; the actual commands are the same ones the L2
+    harness already uses for direct package queries.
+    """
+
+    provider_type = "container_probe"
+    authoritative = False
+
+    def __init__(self, runtime: str, name: str, case: dict):
+        self._runtime = runtime
+        self._name = name
+        self._case = case
+
+    def _exec(self, command: str) -> dict:
+        return _run_phase(self._runtime, ["exec", self._name, "sh", "-lc", command])
+
+    def package_exists(self, candidate: resolver.MethodCandidate, exact_target: str, package_name: str) -> resolver.AvailabilityObservation:
+        phase = self._exec(_query_command(self._case, package_name))
+        status, reason = classify_package_query(phase, self._case["kind"], package_name)
+        return _availability_from_query(status, reason)
+
+    def repository_supports_exact_target(self, candidate: resolver.MethodCandidate, target_id: str) -> resolver.AvailabilityObservation:
+        compatible = candidate.data.get("compatible_targets", ())
+        # If the candidate declares compatible_targets, only an exact match
+        # proves the repository supports this exact release.
+        if compatible:
+            matched = any(
+                item.get("target_id") == target_id and item.get("series") == candidate.data.get("repository", {}).get("series")
+                for item in compatible
+            )
+            if not matched:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    evidence="compatible_targets=%s target=%s" % (compatible, target_id),
+                    reason="target_release_not_explicitly_compatible",
+                    error_kind="target_release_not_explicitly_compatible",
+                )
+        # Read-only probe: check the repository Release file is reachable.
+        repo = candidate.data.get("repository", {})
+        base_url = repo.get("url", "")
+        series = repo.get("series", "")
+        if not base_url or not series:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="repository metadata incomplete",
+                reason="repository_metadata_incomplete",
+                error_kind="malformed_response",
+            )
+        release_url = "%s/dists/%s/Release" % (base_url.rstrip("/"), series)
+        curl_check = self._exec("command -v curl")
+        if curl_check["runtime_status"] != "executed" or curl_check["returncode"] != 0:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="curl not available in container for repository HEAD probe",
+                reason="repository_probe_tool_missing",
+                error_kind="provider_error",
+            )
+        probe = self._exec("curl -I -L -f -sS --max-time 10 %s" % shlex.quote(release_url))
+        if probe["runtime_status"] != "executed":
+            return _availability_from_query(probe["runtime_status"], "repository release HEAD probe did not execute")
+        if probe["returncode"] == 0:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.AVAILABLE.value,
+                evidence="repository release HEAD reachable: %s" % release_url,
+                reason="repository_release_reachable",
+            )
+        stderr = (probe.get("stderr") or "").lower()
+        stdout = (probe.get("stdout") or "").lower()
+        if "404" in stderr or "404" in stdout or "not found" in stderr or "not found" in stdout:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNAVAILABLE.value,
+                evidence="repository release HEAD returned 404: %s" % release_url,
+                reason="repository_release_not_found",
+                error_kind="repository_release_not_found",
+            )
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.UNKNOWN.value,
+            evidence="repository release HEAD probe inconclusive: %s" % release_url,
+            reason="repository_release_probe_inconclusive",
+            error_kind="repository_release_probe_inconclusive",
+        )
+
+    def source_revision_available(self, candidate: resolver.MethodCandidate, target_id: str) -> resolver.AvailabilityObservation:
+        components = candidate.data.get("components", ())
+        if not components:
+            components = (candidate.data,)
+        urls = []
+        for component in components:
+            repo = component.get("repository", "")
+            tag = component.get("tag", "")
+            if repo and tag:
+                urls.append("%s/releases/tag/%s" % (repo.rstrip("/"), tag))
+        if not urls:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="source build candidate has no reachable tag URLs",
+                reason="source_build_metadata_incomplete",
+                error_kind="malformed_response",
+            )
+        curl_check = self._exec("command -v curl")
+        if curl_check["runtime_status"] != "executed" or curl_check["returncode"] != 0:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="curl not available in container for source tag HEAD probe",
+                reason="source_tag_probe_tool_missing",
+                error_kind="provider_error",
+            )
+        for url in urls:
+            probe = self._exec("curl -I -L -f -sS --max-time 10 %s" % shlex.quote(url))
+            if probe["runtime_status"] != "executed" or probe["returncode"] != 0:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNKNOWN.value,
+                    evidence="source tag HEAD probe failed: %s" % url,
+                    reason="source_tag_probe_failed",
+                    error_kind="source_tag_probe_failed",
+                )
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.AVAILABLE.value,
+            evidence="all source tag HEAD probes reachable",
+            reason="source_tags_reachable",
+        )
+
+    def artifact_exists(self, candidate: resolver.MethodCandidate, target_id: str, selected_asset: resolver.SelectedArtifact) -> resolver.AvailabilityObservation:
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.UNKNOWN.value,
+            evidence="artifact probing not implemented in container L2 provider",
+            reason="artifact_probe_not_implemented",
+        )
+
+    def artifact_integrity_metadata_available(self, candidate: resolver.MethodCandidate, target_id: str, selected_asset: resolver.SelectedArtifact) -> resolver.AvailabilityObservation:
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.UNKNOWN.value,
+            evidence="artifact integrity probing not implemented in container L2 provider",
+            reason="artifact_integrity_probe_not_implemented",
+        )
+
+
 def _extract_os_release(stdout: str) -> dict[str, str]:
     values = {}
     for raw in stdout.splitlines():
@@ -497,6 +683,189 @@ def execute_l2_case(runtime: str, case: dict, name: str) -> dict:
             package_statuses.append(query)
         result["package_queries"] = package_statuses
         result["probe_aggregate"] = aggregate_package_status(package_statuses)
+        return result
+    finally:
+        result["cleanup"] = _cleanup_container(runtime, name)
+        result["overall_status"] = compute_overall_status(result["probe_aggregate"], result["cleanup"])
+
+
+def _resolve_dependency_queries(
+    runtime: str,
+    name: str,
+    case: dict,
+    manifest: dict,
+    facts: detection.DistroFacts,
+    all_capabilities: tuple[detection.CapabilityResult, ...],
+) -> tuple[str, list[dict], list[dict]]:
+    """Run the resolver inside the container context and query the packages of
+    the selected candidate for each dependency requirement.
+
+    Returns (probe_aggregate, dependency_decisions, package_queries).
+    """
+    provider = ContainerAvailabilityProvider(runtime, name, case)
+    evaluation = detection.evaluate(
+        manifest,
+        facts,
+        _fixture_core_capabilities(manifest, facts),
+        _fixture_protocol_capabilities(manifest),
+        now=datetime.now(),
+    )
+    report = resolver.resolve_all(
+        manifest,
+        facts,
+        evaluation.support_classification,
+        all_capabilities,
+        availability=provider,
+    )
+    decisions_out = []
+    queries_out = []
+    for decision in report.decisions:
+        decisions_out.append(
+            {
+                "dependency_id": decision.dependency_id,
+                "capability_id": decision.capability_id,
+                "resolution_status": decision.resolution_status,
+                "selected_method_id": decision.selected_method_id,
+                "selected_method_kind": decision.selected_method_kind,
+                "execution_ready": decision.execution_ready,
+                "reason": decision.reason,
+                "rejected_candidates": [
+                    {
+                        "method_id": r.method_id,
+                        "method_kind": r.method_kind,
+                        "reason": r.reason,
+                        "error_kind": r.error_kind,
+                    }
+                    for r in decision.rejected_candidates
+                ],
+            }
+        )
+        if decision.resolution_status not in ("method_selected", "recipe_not_implemented"):
+            continue
+        if not decision.selected_method_id:
+            continue
+        requirement = manifest["dependency_requirements"][decision.dependency_id]
+        candidate_data = next(
+            (c for c in requirement["method_chain"] if c["id"] == decision.selected_method_id),
+            None,
+        )
+        if candidate_data is None:
+            continue
+        kind = candidate_data["kind"]
+        if kind in ("official_package_exact", "external_repo_exact"):
+            for package_name in candidate_data.get("package_names", ()):
+                command = _query_command(case, package_name)
+                query = _run_phase(runtime, ["exec", name, "sh", "-lc", command])
+                status, reason = classify_package_query(query, case["kind"], package_name)
+                _finalize(query, status, reason)
+                query["package"] = package_name
+                query["dependency_id"] = decision.dependency_id
+                query["method_id"] = decision.selected_method_id
+                query["command"] = command
+                queries_out.append(query)
+        elif kind == "pinned_source_build":
+            query = _run_phase(runtime, ["exec", name, "sh", "-lc", "command -v git"])
+            status, reason = classify_package_manager(query)
+            _finalize(query, status, reason)
+            query["package"] = "git"
+            query["dependency_id"] = decision.dependency_id
+            query["method_id"] = decision.selected_method_id
+            query["command"] = "command -v git"
+            queries_out.append(query)
+    aggregate = aggregate_package_status([{"status": q["status"]} for q in queries_out]) if queries_out else "unknown"
+    return aggregate, decisions_out, queries_out
+
+
+def execute_l2_matrix_case(runtime: str, case: dict, name: str, manifest: dict) -> dict:
+    """Run the full per-family/release L2 matrix case.
+
+    Reuses the lifecycle phases from execute_l2_case, then runs the resolver
+    with a ContainerAvailabilityProvider to select candidates and query the
+    packages they declare.
+    """
+    result = _base_result(runtime, case, name)
+    result["dependency_decisions"] = []
+    result["resolver_package_queries"] = []
+    all_capabilities: tuple[detection.CapabilityResult, ...] = ()
+    try:
+        pull = _run_phase(runtime, ["pull", case["image"]])
+        status, reason = classify_pull_result(pull, case["image"])
+        _finalize(pull, status, reason)
+        result["pull"] = pull
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("image pull failed: %s" % status)
+            return result
+
+        create = _run_phase(runtime, ["create", "--name", name, case["image"], "sleep", "600"])
+        status, reason = classify_lifecycle_phase(create, verb="create")
+        _finalize(create, status, reason)
+        result["create"] = create
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("container create failed")
+            return result
+
+        start = _run_phase(runtime, ["start", name])
+        status, reason = classify_lifecycle_phase(start, verb="start")
+        _finalize(start, status, reason)
+        result["start"] = start
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("container start failed")
+            return result
+
+        os_release = _run_phase(runtime, ["exec", name, "cat", "/etc/os-release"])
+        status, reason = classify_os_release(os_release, case)
+        _finalize(os_release, status, reason)
+        if os_release["runtime_status"] == "executed" and os_release["returncode"] == 0:
+            values = _extract_os_release(os_release["stdout"])
+        else:
+            values = {}
+        os_release["observed_id"] = values.get("ID", "")
+        os_release["observed_version_id"] = values.get("VERSION_ID", "")
+        result["os_release"] = os_release
+        if status != "available":
+            result["probe_aggregate"] = status
+            return result
+
+        manager_command = _manager_command(case["manager"])
+        manager = _run_phase(runtime, ["exec", name, "sh", "-lc", manager_command])
+        status, reason = classify_package_manager(manager)
+        _finalize(manager, status, reason)
+        manager["command"] = manager_command
+        manager["path"] = manager["stdout"].strip() if manager.get("returncode") == 0 else ""
+        result["package_manager"] = manager
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("package manager lookup failed")
+            return result
+
+        refresh_cmd = _refresh_command(case)
+        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd])
+        status, reason = classify_lifecycle_phase(refresh, verb="metadata refresh")
+        _finalize(refresh, status, reason)
+        refresh["command"] = refresh_cmd
+        result["metadata_refresh"] = refresh
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("metadata refresh failed")
+            return result
+
+        os_release_data = detection.parse_os_release_text(os_release["stdout"])
+        facts = detection.distro_facts_from_os_release(
+            os_release_data,
+            manifest,
+            kernel_release="container-l2",
+            machine_architecture="x86_64",
+        )
+        all_capabilities = _all_fixture_capabilities(manifest, facts)
+        aggregate, decisions, queries = _resolve_dependency_queries(
+            runtime, name, case, manifest, facts, all_capabilities
+        )
+        result["dependency_decisions"] = decisions
+        result["resolver_package_queries"] = queries
+        result["probe_aggregate"] = aggregate
         return result
     finally:
         result["cleanup"] = _cleanup_container(runtime, name)
@@ -929,6 +1298,75 @@ class L2ParserTests(unittest.TestCase):
         self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "unavailable"}]), "unavailable")
 
 
+class L2MatrixResolverTests(unittest.TestCase):
+    # Deterministic tests for the resolver-driven matrix harness. They mock the
+    # container runtime so they run without WATCHDOGVPN_REAL_L2 and without any
+    # network access.
+
+    def _matrix_fake_run(self, case: dict, available_packages: frozenset[str]):
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and args[2:5] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and "command -v -- apt-get" in cmd:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd == "apt-get update":
+                return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("command -v curl"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/curl\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("command -v git"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/git\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -I"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "HTTP/1.1 200 OK\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("apt-cache policy"):
+                package = cmd.split()[-1]
+                if package in available_packages:
+                    return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: (none)\n" % package, "")
+            if args[0] == "pull":
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            if args[0] in ("create", "start"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+        return fake_run
+
+    def test_matrix_case_resolves_dependencies_and_queries_packages(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn")))
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertEqual(result["os_release"]["status"], "available")
+        self.assertEqual(result["package_manager"]["status"], "available")
+        self.assertEqual(result["metadata_refresh"]["status"], "available")
+        self.assertTrue(result["resolver_package_queries"])
+        queried_packages = {q["package"] for q in result["resolver_package_queries"]}
+        self.assertIn("python3", queried_packages)
+        self.assertIn("git", queried_packages)
+        self.assertEqual(result["overall_status"], "available")
+
+    def test_matrix_case_fails_when_source_build_tool_missing(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn")))
+
+        def no_git_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("command -v git"):
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "")
+            return fake_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=no_git_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertEqual(result["overall_status"], "unavailable")
+        self.assertTrue(result["resolver_package_queries"])
+        self.assertTrue(
+            any(q["package"] == "git" and q["status"] == "manager_unavailable" for q in result["resolver_package_queries"])
+        )
+
+
 @unittest.skipUnless(REAL_L2_ENABLED, "WATCHDOGVPN_REAL_L2=1 not set")
 class RealFocusedDependencyL2Tests(unittest.TestCase):
     def test_real_container_package_queries(self) -> None:
@@ -939,6 +1377,20 @@ class RealFocusedDependencyL2Tests(unittest.TestCase):
             name = "watchdogvpn-l2-%s-%d" % (case["target"], int(time.time() * 1000))
             with self.subTest(target=case["target"], image=case["image"]):
                 result = execute_l2_case(runtime, case, name)
+                if is_optional_image_exception(case, result):
+                    self.assertIn("image pull failed", result["limitations"][0])
+                    continue
+                self.assertEqual(result["overall_status"], "available", result)
+
+    def test_real_container_dependency_resolution_matrix(self) -> None:
+        runtime = _runtime()
+        if runtime is None:
+            raise unittest.SkipTest("podman or docker is not available for real focused L2 checks")
+        manifest = detection.load_product_manifest()
+        for case in CASES:
+            name = "watchdogvpn-l2-matrix-%s-%d" % (case["target"], int(time.time() * 1000))
+            with self.subTest(target=case["target"], image=case["image"]):
+                result = execute_l2_matrix_case(runtime, case, name, manifest)
                 if is_optional_image_exception(case, result):
                     self.assertIn("image pull failed", result["limitations"][0])
                     continue
