@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -124,6 +126,20 @@ class CronUrlTests(unittest.TestCase):
         self.assertIn("sing_box_official_artifact_stable_x86_64", names)
         self.assertIn("sing_box_official_artifact_stable_aarch64", names)
         self.assertIn("ck_client_official_artifact_stable_x86_64", names)
+
+    def test_container_runtime_uses_executable_lookup(self) -> None:
+        with unittest.mock.patch.object(reporter.shutil, "which", side_effect=lambda name: "/usr/bin/docker" if name == "docker" else None):
+            self.assertEqual(reporter._container_runtime(), "docker")
+
+    def test_reporter_script_entrypoint_can_import_tools_package(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "tools/compat_l2_reporter.py", "--help"],
+            cwd=Path(__file__).resolve().parent.parent,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_cron_urls_update_when_manifest_changes(self) -> None:
         manifest = {

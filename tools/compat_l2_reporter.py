@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.compat_read import load_manifest_file
 
@@ -81,7 +84,7 @@ def _head_url(url: str, timeout: int = 15) -> dict[str, Any]:
 
 def _container_runtime() -> str | None:
     for name in DEFAULT_CONTAINER_RUNTIME:
-        if subprocess.run(["command", "-v", name], capture_output=True, text=True).returncode == 0:
+        if shutil.which(name) is not None:
             return name
     return None
 
