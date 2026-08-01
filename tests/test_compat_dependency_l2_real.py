@@ -214,7 +214,7 @@ def classify_os_release(phase: dict, case: dict) -> tuple[str, str]:
     values = _extract_os_release(phase.get("stdout") or "")
     if values.get("ID") != case["id"]:
         return "malformed_response", "ID mismatch"
-    release = detection.load_product_manifest()["releases"][case["target"]]
+    release = detection.load_product_manifest()["releases"].get(case["target"], {})
     expected_version_ids = tuple(release.get("os_release_version_ids") or ())
     if expected_version_ids and values.get("VERSION_ID") not in expected_version_ids:
         return "malformed_response", "VERSION_ID mismatch"
@@ -1276,6 +1276,11 @@ class L2ParserTests(unittest.TestCase):
     def test_os_release_version_ids_come_from_manifest(self) -> None:
         phase = {"runtime_status": "executed", "returncode": 0, "stdout": "ID=rocky\nVERSION_ID=9.3\n", "stderr": ""}
         status, _ = classify_os_release(phase, CASES[4])
+        self.assertEqual(status, "available")
+
+    def test_rolling_target_without_release_entry_is_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "ID=arch\n", "stderr": ""}
+        status, _ = classify_os_release(phase, CASES[6])
         self.assertEqual(status, "available")
 
     def test_manager_distinguishes_absence_from_runtime_error(self) -> None:
