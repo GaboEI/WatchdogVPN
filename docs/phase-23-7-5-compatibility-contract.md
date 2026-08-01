@@ -2707,7 +2707,6 @@ Files added or modified in this task:
 `.github/workflows/repo-availability-cron.yml`,
 `compat/compatibility.json`,
 `compat/detection.py`,
-`doctor.sh`,
 `docs/phase-23-7-5-9-plan.md` and this document.
 Files explicitly not touched:
 `compat/compatibility.schema.json`,
@@ -2717,7 +2716,8 @@ Files explicitly not touched:
 `lib/distro.sh`,
 `lib/common.sh`,
 `install.sh`,
-`update.sh` and all public CLI / runtime / network / VPN / DNS / firewall code.
+`update.sh`,
+`doctor.sh` and all public CLI / runtime / network / VPN / DNS / firewall code.
 
 Design deviation recorded: the frozen design listed a single
 `.github/workflows/ci.yml` containing both the matrix and the scheduled job.
