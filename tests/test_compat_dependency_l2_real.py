@@ -364,35 +364,97 @@ def _availability_from_query(status: str, reason: str) -> resolver.AvailabilityO
 
 
 class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
-    """Injected availability provider that probes packages inside a running
-    disposable container. The container identity and package manager kind are
-    taken from the L2 case; the actual commands are the same ones the L2
-    harness already uses for direct package queries.
+    """Injected availability provider that probes packages, repositories,
+    source tags and pinned artifacts inside a running disposable container.
+    The container identity, package manager kind and host architecture are
+    taken from the L2 case and observed DistroFacts.
     """
 
     provider_type = "container_probe"
     authoritative = False
 
-    def __init__(self, runtime: str, name: str, case: dict):
+    def __init__(self, runtime: str, name: str, case: dict, facts: detection.DistroFacts):
         self._runtime = runtime
         self._name = name
         self._case = case
+        self._facts = facts
 
     def _exec(self, command: str) -> dict:
         return _run_phase(self._runtime, ["exec", self._name, "sh", "-lc", command])
+
+    def _curl_available(self) -> bool:
+        phase = self._exec("command -v curl")
+        return phase["runtime_status"] == "executed" and phase["returncode"] == 0
+
+    def _head_url(self, url: str, evidence_prefix: str) -> resolver.AvailabilityObservation:
+        if not self._curl_available():
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="curl not available in container for HEAD probe",
+                reason="head_probe_tool_missing",
+                error_kind="provider_error",
+            )
+        probe = self._exec("curl -I -L -f -sS --max-time 15 %s" % shlex.quote(url))
+        if probe["runtime_status"] != "executed":
+            return _availability_from_query(probe["runtime_status"], "%s HEAD probe did not execute" % evidence_prefix)
+        if probe["returncode"] == 0:
+            stdout = probe.get("stdout") or ""
+            content_length = ""
+            for line in stdout.splitlines():
+                if line.lower().startswith("content-length:"):
+                    content_length = line.split(":", 1)[1].strip()
+                    break
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.AVAILABLE.value,
+                evidence="%s HEAD reachable: %s (Content-Length: %s)" % (evidence_prefix, url, content_length or "unknown"),
+                reason="%s_head_reachable" % evidence_prefix.replace(" ", "_"),
+            )
+        stderr = (probe.get("stderr") or "").lower()
+        stdout = (probe.get("stdout") or "").lower()
+        if "404" in stderr or "404" in stdout or "not found" in stderr or "not found" in stdout:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNAVAILABLE.value,
+                evidence="%s HEAD returned 404: %s" % (evidence_prefix, url),
+                reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
+            )
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.UNKNOWN.value,
+            evidence="%s HEAD probe inconclusive: %s" % (evidence_prefix, url),
+            reason="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
+            error_kind="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
+        )
 
     def package_exists(self, candidate: resolver.MethodCandidate, exact_target: str, package_name: str) -> resolver.AvailabilityObservation:
         phase = self._exec(_query_command(self._case, package_name))
         status, reason = classify_package_query(phase, self._case["kind"], package_name)
         return _availability_from_query(status, reason)
 
+    def _repository_metadata_url(self, base_url: str, series: str) -> str | None:
+        """Return the repository metadata URL for the package manager family."""
+        kind = self._case["kind"]
+        base = base_url.rstrip("/")
+        if kind == "apt":
+            return "%s/dists/%s/Release" % (base, series)
+        if kind == "dnf":
+            # EPEL-style naming: epel9 -> 9. Fall back to the raw series if
+            # no numeric suffix is present.
+            series_num = series
+            if series.lower().startswith("epel"):
+                series_num = series[4:] or series
+            arch = self._facts.machine_architecture or "x86_64"
+            return "%s/%s/Everything/%s/os/repodata/repomd.xml" % (base, series_num, arch)
+        if kind == "zypper":
+            return "%s/%s/repodata/repomd.xml" % (base, series)
+        return None
+
     def repository_supports_exact_target(self, candidate: resolver.MethodCandidate, target_id: str) -> resolver.AvailabilityObservation:
         compatible = candidate.data.get("compatible_targets", ())
-        # If the candidate declares compatible_targets, only an exact match
-        # proves the repository supports this exact release.
+        repo = candidate.data.get("repository", {})
+        series = repo.get("series", "")
         if compatible:
             matched = any(
-                item.get("target_id") == target_id and item.get("series") == candidate.data.get("repository", {}).get("series")
+                item.get("target_id") == target_id and item.get("series") == series
                 for item in compatible
             )
             if not matched:
@@ -402,10 +464,7 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
                     reason="target_release_not_explicitly_compatible",
                     error_kind="target_release_not_explicitly_compatible",
                 )
-        # Read-only probe: check the repository Release file is reachable.
-        repo = candidate.data.get("repository", {})
         base_url = repo.get("url", "")
-        series = repo.get("series", "")
         if not base_url or not series:
             return resolver.AvailabilityObservation(
                 resolver.AvailabilityStatus.UNKNOWN.value,
@@ -413,39 +472,15 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
                 reason="repository_metadata_incomplete",
                 error_kind="malformed_response",
             )
-        release_url = "%s/dists/%s/Release" % (base_url.rstrip("/"), series)
-        curl_check = self._exec("command -v curl")
-        if curl_check["runtime_status"] != "executed" or curl_check["returncode"] != 0:
+        metadata_url = self._repository_metadata_url(base_url, series)
+        if metadata_url is None:
             return resolver.AvailabilityObservation(
                 resolver.AvailabilityStatus.UNKNOWN.value,
-                evidence="curl not available in container for repository HEAD probe",
-                reason="repository_probe_tool_missing",
+                evidence="unsupported package manager family for repository probe: %s" % self._case["kind"],
+                reason="repository_probe_family_unsupported",
                 error_kind="provider_error",
             )
-        probe = self._exec("curl -I -L -f -sS --max-time 10 %s" % shlex.quote(release_url))
-        if probe["runtime_status"] != "executed":
-            return _availability_from_query(probe["runtime_status"], "repository release HEAD probe did not execute")
-        if probe["returncode"] == 0:
-            return resolver.AvailabilityObservation(
-                resolver.AvailabilityStatus.AVAILABLE.value,
-                evidence="repository release HEAD reachable: %s" % release_url,
-                reason="repository_release_reachable",
-            )
-        stderr = (probe.get("stderr") or "").lower()
-        stdout = (probe.get("stdout") or "").lower()
-        if "404" in stderr or "404" in stdout or "not found" in stderr or "not found" in stdout:
-            return resolver.AvailabilityObservation(
-                resolver.AvailabilityStatus.UNAVAILABLE.value,
-                evidence="repository release HEAD returned 404: %s" % release_url,
-                reason="repository_release_not_found",
-                error_kind="repository_release_not_found",
-            )
-        return resolver.AvailabilityObservation(
-            resolver.AvailabilityStatus.UNKNOWN.value,
-            evidence="repository release HEAD probe inconclusive: %s" % release_url,
-            reason="repository_release_probe_inconclusive",
-            error_kind="repository_release_probe_inconclusive",
-        )
+        return self._head_url(metadata_url, "repository metadata")
 
     def source_revision_available(self, candidate: resolver.MethodCandidate, target_id: str) -> resolver.AvailabilityObservation:
         components = candidate.data.get("components", ())
@@ -464,23 +499,10 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
                 reason="source_build_metadata_incomplete",
                 error_kind="malformed_response",
             )
-        curl_check = self._exec("command -v curl")
-        if curl_check["runtime_status"] != "executed" or curl_check["returncode"] != 0:
-            return resolver.AvailabilityObservation(
-                resolver.AvailabilityStatus.UNKNOWN.value,
-                evidence="curl not available in container for source tag HEAD probe",
-                reason="source_tag_probe_tool_missing",
-                error_kind="provider_error",
-            )
         for url in urls:
-            probe = self._exec("curl -I -L -f -sS --max-time 10 %s" % shlex.quote(url))
-            if probe["runtime_status"] != "executed" or probe["returncode"] != 0:
-                return resolver.AvailabilityObservation(
-                    resolver.AvailabilityStatus.UNKNOWN.value,
-                    evidence="source tag HEAD probe failed: %s" % url,
-                    reason="source_tag_probe_failed",
-                    error_kind="source_tag_probe_failed",
-                )
+            observation = self._head_url(url, "source tag")
+            if observation.status != resolver.AvailabilityStatus.AVAILABLE.value:
+                return observation
         return resolver.AvailabilityObservation(
             resolver.AvailabilityStatus.AVAILABLE.value,
             evidence="all source tag HEAD probes reachable",
@@ -488,17 +510,51 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
         )
 
     def artifact_exists(self, candidate: resolver.MethodCandidate, target_id: str, selected_asset: resolver.SelectedArtifact) -> resolver.AvailabilityObservation:
-        return resolver.AvailabilityObservation(
-            resolver.AvailabilityStatus.UNKNOWN.value,
-            evidence="artifact probing not implemented in container L2 provider",
-            reason="artifact_probe_not_implemented",
-        )
+        url = "%s/%s" % (selected_asset.official_download_base.rstrip("/"), selected_asset.asset_name)
+        observation = self._head_url(url, "artifact")
+        if not isinstance(observation, resolver.ArtifactAvailabilityObservation):
+            return resolver.ArtifactAvailabilityObservation(
+                observation.status,
+                evidence=observation.evidence,
+                reason=observation.reason,
+                error_kind=observation.error_kind,
+                target_id=target_id,
+                architecture=selected_asset.architecture,
+                asset_name=selected_asset.asset_name,
+                official_download_base=selected_asset.official_download_base,
+                sha256=selected_asset.sha256,
+                expected_executable=selected_asset.expected_executable,
+            )
+        return observation
 
     def artifact_integrity_metadata_available(self, candidate: resolver.MethodCandidate, target_id: str, selected_asset: resolver.SelectedArtifact) -> resolver.AvailabilityObservation:
-        return resolver.AvailabilityObservation(
-            resolver.AvailabilityStatus.UNKNOWN.value,
-            evidence="artifact integrity probing not implemented in container L2 provider",
-            reason="artifact_integrity_probe_not_implemented",
+        # Integrity metadata is pinned in the manifest. The real L2 check is
+        # that the manifest declares a valid SHA-256 for the selected asset.
+        integrity = candidate.data.get("integrity", {})
+        declared = integrity.get(selected_asset.architecture) if isinstance(integrity, dict) else None
+        if integrity.get("type") == "sha256" and declared == selected_asset.sha256:
+            return resolver.ArtifactAvailabilityObservation(
+                resolver.AvailabilityStatus.AVAILABLE.value,
+                evidence="manifest integrity metadata matches selected asset",
+                reason="integrity_metadata_present",
+                target_id=target_id,
+                architecture=selected_asset.architecture,
+                asset_name=selected_asset.asset_name,
+                official_download_base=selected_asset.official_download_base,
+                sha256=selected_asset.sha256,
+                expected_executable=selected_asset.expected_executable,
+            )
+        return resolver.ArtifactAvailabilityObservation(
+            resolver.AvailabilityStatus.UNAVAILABLE.value,
+            evidence="manifest integrity metadata missing or mismatched for architecture %s" % selected_asset.architecture,
+            reason="integrity_metadata_missing",
+            error_kind="integrity_metadata_missing",
+            target_id=target_id,
+            architecture=selected_asset.architecture,
+            asset_name=selected_asset.asset_name,
+            official_download_base=selected_asset.official_download_base,
+            sha256=selected_asset.sha256,
+            expected_executable=selected_asset.expected_executable,
         )
 
 
@@ -702,7 +758,7 @@ def _resolve_dependency_queries(
 
     Returns (probe_aggregate, dependency_decisions, package_queries).
     """
-    provider = ContainerAvailabilityProvider(runtime, name, case)
+    provider = ContainerAvailabilityProvider(runtime, name, case, facts)
     evaluation = detection.evaluate(
         manifest,
         facts,
@@ -1365,6 +1421,89 @@ class L2MatrixResolverTests(unittest.TestCase):
         self.assertTrue(
             any(q["package"] == "git" and q["status"] == "manager_unavailable" for q in result["resolver_package_queries"])
         )
+
+    def test_artifact_dependency_is_probed_and_selected(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn")))
+
+        def artifact_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -I"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "HTTP/1.1 200 OK\nContent-Length: 12345\n", "")
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=artifact_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        sing_box = next(
+            (d for d in result["dependency_decisions"] if d["dependency_id"] == "dep_sing_box_runtime"),
+            None,
+        )
+        self.assertIsNotNone(sing_box)
+        self.assertEqual(sing_box["resolution_status"], "recipe_not_implemented")
+        self.assertEqual(sing_box["selected_method_kind"], "official_artifact_pinned")
+        self.assertEqual(sing_box["selected_method_id"], "sing_box_official_artifact_stable")
+
+    def _rocky_matrix_fake_run(self, case: dict, available_packages: frozenset[str]):
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and args[2:5] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=rocky\nVERSION_ID=9\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and "command -v -- dnf" in cmd:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/dnf\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd == "true":
+                return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("command -v curl"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/curl\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("curl -I"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "HTTP/1.1 200 OK\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("dnf -q") and " list " in cmd:
+                package = cmd.split()[-1]
+                if package in available_packages:
+                    return subprocess.CompletedProcess([runtime] + args, 0, "%s.x86_64 1.0 repo\n" % package, "")
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "No matching Packages to list")
+            if args[0] == "pull":
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            if args[0] in ("create", "start"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+        return fake_run
+
+    def test_dnf_repository_is_probed_with_repomd_xml(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[4]
+        epel_packages = frozenset((
+            "bash", "git", "coreutils", "findutils", "grep", "gawk", "sed", "gzip",
+            "glibc-common", "shadow-utils", "systemd", "sudo", "kmod", "ca-certificates",
+            "python3", "curl", "tar", "iproute", "NetworkManager", "logrotate", "libnotify",
+            "openvpn", "util-linux", "polkit", "nftables", "iptables-nft", "iputils",
+            "procps-ng", "firewalld", "systemd-resolved", "python3.11", "epel-release",
+        ))
+        calls = []
+
+        def instrumented_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            return self._rocky_matrix_fake_run(case, epel_packages)(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=instrumented_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-rocky", manifest)
+        self.assertEqual(result["os_release"]["status"], "available")
+        base_runtime = next(
+            (d for d in result["dependency_decisions"] if d["dependency_id"] == "dep_base_runtime_commands"),
+            None,
+        )
+        self.assertIsNotNone(base_runtime)
+        self.assertEqual(base_runtime["selected_method_id"], "base_runtime_dnf_rhel9_with_epel_exact")
+        self.assertEqual(base_runtime["selected_method_kind"], "external_repo_exact")
+        self.assertEqual(base_runtime["resolution_status"], "recipe_not_implemented")
+        repository_probe = next(
+            (cmd for cmd in calls if len(cmd) >= 2 and cmd[0] == "exec" and cmd[1] == "watchdogvpn-matrix-rocky" and isinstance(cmd[-1], str) and "repodata/repomd.xml" in cmd[-1]),
+            None,
+        )
+        self.assertIsNotNone(repository_probe)
+        self.assertIn("Everything/x86_64/os/repodata/repomd.xml", repository_probe[-1])
 
 
 @unittest.skipUnless(REAL_L2_ENABLED, "WATCHDOGVPN_REAL_L2=1 not set")
