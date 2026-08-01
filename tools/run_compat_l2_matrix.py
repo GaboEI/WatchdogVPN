@@ -81,12 +81,12 @@ def main(argv: list[str] | None = None) -> int:
     Path(args.markdown_output).write_text(reporter.render_matrix_markdown(report), encoding="utf-8")
 
     if args.fail_on_red:
-        for target in report["targets"]:
-            case = next((c for c in l2.CASES if c["target"] == target["target"]), {})
-            if l2.is_optional_image_exception(case, target):
+        for result in results:
+            case = next((c for c in l2.CASES if c["target"] == result["target"]), {})
+            if l2.is_optional_image_exception(case, result):
                 continue
-            if target["overall_status"] != "available":
-                print("FAIL: target %s is %s" % (target["target"], target["overall_status"]), file=sys.stderr)
+            if result.get("overall_status") != "available":
+                print("FAIL: target %s is %s" % (result["target"], result.get("overall_status")), file=sys.stderr)
                 return 1
     return 0
 

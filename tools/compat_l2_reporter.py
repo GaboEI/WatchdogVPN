@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tools.compat_read import load_manifest_file
+
 
 DEFAULT_CONTAINER_RUNTIME = ("docker", "podman")
 MATRIX_IMAGES = (
@@ -136,26 +138,112 @@ def _check_container_image(image: str, runtime: str | None) -> dict[str, Any]:
         }
 
 
-def _collect_cron_urls() -> list[dict[str, str]]:
-    """Return the fixed list of external URLs the cron checks today.
+def _load_manifest_for_cron() -> dict[str, Any]:
+    """Load the product manifest from the canonical repository location."""
+    root = Path(__file__).resolve().parent.parent
+    return load_manifest_file(str(root / "compat" / "compatibility.json"), product_path=True)
 
-    These are derived from the approved plan §3. They are intentionally
-    hardcoded because the cron is a guardrail over the specific external
-    dependencies the manifest currently relies on.
+
+def _repo_url_for(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    """Derive the external repository URL(s) for a candidate."""
+    repo = candidate.get("repository") or {}
+    base_url = (repo.get("url") or "").rstrip("/")
+    series = repo.get("series")
+    if not base_url or not series:
+        return []
+    package_manager = candidate.get("package_manager")
+    arches = candidate.get("architectures") or ["x86_64"]
+    results = []
+    if package_manager == "apt":
+        results.append({
+            "category": "external_repository",
+            "name": "%s_%s" % (repo.get("id", "repo"), series),
+            "url": "%s/dists/%s/Release" % (base_url, series),
+        })
+    elif package_manager == "dnf":
+        for arch in arches:
+            results.append({
+                "category": "external_repository",
+                "name": "%s_%s_%s" % (repo.get("id", "repo"), series, arch),
+                "url": "%s/%s/Everything/%s/repodata/repomd.xml" % (base_url, series, arch),
+            })
+    else:
+        # Other package managers are not represented by external_repo_exact
+        # candidates today; fail loudly rather than silently skipping.
+        raise ValueError("unsupported package_manager for external_repo_exact cron URL: %r" % package_manager)
+    return results
+
+
+def _artifact_urls_for(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    """Derive artifact asset URLs from a candidate."""
+    base_url = (candidate.get("official_download_base") or "").rstrip("/")
+    if not base_url:
+        return []
+    results = []
+    candidate_id = candidate.get("id", "artifact")
+    for asset in candidate.get("assets", []):
+        asset_name = asset.get("asset_name")
+        if not asset_name:
+            continue
+        arch = asset.get("architecture", "unknown")
+        results.append({
+            "category": "artifact",
+            "name": "%s_%s" % (candidate_id, arch),
+            "url": "%s/%s" % (base_url, asset_name),
+        })
+    return results
+
+
+def _source_urls_for(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    """Derive pinned source-build release-tag URLs from a candidate."""
+    results = []
+    candidate_id = candidate.get("id", "source")
+    for component in candidate.get("components", []):
+        repo = (component.get("repository") or "").rstrip("/")
+        tag = component.get("tag")
+        if not repo or not tag:
+            continue
+        component_id = component.get("component_id", "component")
+        results.append({
+            "category": "source",
+            "name": "%s_%s" % (candidate_id, component_id),
+            "url": "%s/releases/tag/%s" % (repo, tag),
+        })
+    return results
+
+
+def _collect_cron_urls_from_manifest(manifest: dict[str, Any]) -> list[dict[str, str]]:
+    """Return the list of external URLs the cron checks, derived from the manifest.
+
+    The cron must track the exact versions, assets, repositories and tags the
+    product manifest declares. Hardcoding them here would silently drift when the
+    manifest is updated, which is exactly the failure mode this guardrail exists
+    to prevent.
     """
-    return [
-        # Container images are checked separately via the registry API.
-        # External repositories.
-        {"category": "external_repository", "name": "amneziawg_ppa_noble", "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/noble/Release"},
-        {"category": "external_repository", "name": "epel_9", "url": "https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/repodata/repomd.xml"},
-        # Artifact assets.
-        {"category": "artifact", "name": "sing_box_amd64", "url": "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-linux-amd64-glibc.tar.gz"},
-        {"category": "artifact", "name": "sing_box_arm64", "url": "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-linux-arm64.tar.gz"},
-        {"category": "artifact", "name": "cloak_amd64", "url": "https://github.com/cbeuw/Cloak/releases/download/v2.12.0/ck-client-linux-amd64-v2.12.0"},
-        # Source-build provenance.
-        {"category": "source", "name": "amneziawg_tools_tag", "url": "https://github.com/amnezia-vpn/amneziawg-tools/releases/tag/v1.0.20260618-2"},
-        {"category": "source", "name": "amneziawg_go_tag", "url": "https://github.com/amnezia-vpn/amneziawg-go/releases/tag/v3.0.2"},
-    ]
+    seen: set[str] = set()
+    checks: list[dict[str, str]] = []
+    for requirement in manifest.get("dependency_requirements", {}).values():
+        for candidate in requirement.get("method_chain", []):
+            kind = candidate.get("kind")
+            collected: list[dict[str, str]] = []
+            if kind == "external_repo_exact":
+                collected = _repo_url_for(candidate)
+            elif kind == "official_artifact_pinned":
+                collected = _artifact_urls_for(candidate)
+            elif kind == "pinned_source_build":
+                collected = _source_urls_for(candidate)
+            for entry in collected:
+                url = entry["url"]
+                if url in seen:
+                    continue
+                seen.add(url)
+                checks.append(entry)
+    return checks
+
+
+def _collect_cron_urls() -> list[dict[str, str]]:
+    """Backwards-compatible wrapper that loads the manifest and derives URLs."""
+    return _collect_cron_urls_from_manifest(_load_manifest_for_cron())
 
 
 def run_cron_checks() -> dict[str, Any]:

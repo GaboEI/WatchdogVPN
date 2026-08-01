@@ -87,6 +87,115 @@ class MatrixReportTests(unittest.TestCase):
             self.assertEqual(rc, 1)
 
 
+class CronUrlTests(unittest.TestCase):
+    def test_cron_urls_derive_from_manifest(self) -> None:
+        manifest = reporter._load_manifest_for_cron()
+        checks = reporter._collect_cron_urls_from_manifest(manifest)
+        urls = {check["url"] for check in checks}
+        names = {check["name"] for check in checks}
+        # External repositories.
+        self.assertIn("https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/noble/Release", urls)
+        self.assertIn("https://dl.fedoraproject.org/pub/epel/epel9/Everything/x86_64/repodata/repomd.xml", urls)
+        self.assertIn("https://dl.fedoraproject.org/pub/epel/epel9/Everything/aarch64/repodata/repomd.xml", urls)
+        # Artifact assets.
+        self.assertIn(
+            "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-linux-amd64-glibc.tar.gz",
+            urls,
+        )
+        self.assertIn(
+            "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-linux-arm64.tar.gz",
+            urls,
+        )
+        self.assertIn(
+            "https://github.com/cbeuw/Cloak/releases/download/v2.12.0/ck-client-linux-amd64-v2.12.0",
+            urls,
+        )
+        # Source-build tags.
+        self.assertIn(
+            "https://github.com/amnezia-vpn/amneziawg-tools/releases/tag/v1.0.20260618-2",
+            urls,
+        )
+        self.assertIn(
+            "https://github.com/amnezia-vpn/amneziawg-go/releases/tag/v3.0.2",
+            urls,
+        )
+        self.assertIn("sing_box_official_artifact_stable_x86_64", names)
+        self.assertIn("sing_box_official_artifact_stable_aarch64", names)
+        self.assertIn("ck_client_official_artifact_stable_x86_64", names)
+
+    def test_cron_urls_update_when_manifest_changes(self) -> None:
+        manifest = {
+            "dependency_requirements": {
+                "dep_sing_box_runtime": {
+                    "capability_id": "proto_sing_box_runtime",
+                    "description": "fixture",
+                    "method_chain": [
+                        {
+                            "id": "sing_box_official_artifact_stable",
+                            "kind": "official_artifact_pinned",
+                            "method_ref": "official_artifact_pinned",
+                            "official_download_base": "https://github.com/SagerNet/sing-box/releases/download/v9.9.9",
+                            "version": "9.9.9",
+                            "assets": [
+                                {
+                                    "architecture": "x86_64",
+                                    "archive_or_binary_kind": "tar.gz",
+                                    "asset_name": "sing-box-9.9.9-linux-amd64.tar.gz",
+                                    "official_download_base": "https://github.com/SagerNet/sing-box/releases/download/v9.9.9",
+                                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                },
+                            ],
+                        },
+                    ],
+                }
+            }
+        }
+        checks = reporter._collect_cron_urls_from_manifest(manifest)
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]["category"], "artifact")
+        self.assertEqual(
+            checks[0]["url"],
+            "https://github.com/SagerNet/sing-box/releases/download/v9.9.9/sing-box-9.9.9-linux-amd64.tar.gz",
+        )
+
+    def test_cron_deduplicates_duplicate_urls(self) -> None:
+        manifest = {
+            "dependency_requirements": {
+                "dep_amneziawg_runtime": {
+                    "capability_id": "proto_amneziawg_runtime",
+                    "description": "fixture",
+                    "method_chain": [
+                        {
+                            "id": "amneziawg_ubuntu_ppa_exact",
+                            "kind": "external_repo_exact",
+                            "method_ref": "external_repo_exact",
+                            "package_manager": "apt",
+                            "repository": {
+                                "id": "amnezia_ubuntu_ppa_noble",
+                                "series": "noble",
+                                "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu",
+                            },
+                        },
+                        {
+                            "id": "amneziawg_mint_base_ppa_exact",
+                            "kind": "external_repo_exact",
+                            "method_ref": "external_repo_exact",
+                            "package_manager": "apt",
+                            "repository": {
+                                "id": "amnezia_ubuntu_ppa_noble_for_mint",
+                                "series": "noble",
+                                "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu",
+                            },
+                        },
+                    ],
+                }
+            }
+        }
+        checks = reporter._collect_cron_urls_from_manifest(manifest)
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]["url"], "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu/dists/noble/Release")
+
+
 class CronReportTests(unittest.TestCase):
     def test_summarize_cron_counts(self) -> None:
         checks = [

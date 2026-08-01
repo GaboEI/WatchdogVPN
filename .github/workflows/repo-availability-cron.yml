@@ -14,6 +14,8 @@ jobs:
     name: Read-only repository availability checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
