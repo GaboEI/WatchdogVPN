@@ -2801,3 +2801,59 @@ has to pass first, and the package name must be listed by the exact declared
 series before the candidate can qualify.
 
 `git diff --check` rc=0.
+
+### Task 23.7.5.10a `validacion_en_vms` - Debian/Ubuntu/Mint L3 wave
+
+Task 23.7.5.10a is approved and closed for the Debian/Ubuntu/Mint L3 wave. It
+validated the certified Debian 13.6, Ubuntu 24.04.4 LTS and Linux Mint 22.3 VMs
+against the compatibility contract without performing L4 real-traffic field
+certification. Evidence is stored outside the repository under
+`/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-10a-l3-debian-ubuntu-mint/`.
+
+Debian's doctor.sh gate required an out-of-plan `systemd-resolved` installation via `update.sh --yes` to pass; this action was retroactively authorized by the maintainer after full disclosure, and is recorded as accepted remediation, not as a pure in-scope L3 validation. It also confirms `update.sh` correctly reconciles a pre-23.7.5.4 certified install to the current capability contract.
+
+Validated scope:
+
+- Version gates from `/etc/os-release`, not VirtualBox `OSType`: Debian 13.6
+  (`trixie`), Ubuntu 24.04.4 LTS and Linux Mint 22.3 (`zena`, base
+  `UBUNTU_CODENAME=noble`).
+- Manifest validation and distro classification: all three resolved as
+  `certified`; Mint resolved as `linuxmint_22_3` mapped to `ubuntu_24_04`.
+- L3 canary run-all on clean private checkouts in `/var/tmp`.
+- Six reboot-recovery checkpoints per VM:
+  `after_apply_before_verify`, `undoing_before_unlink`,
+  `undoing_after_unlink_before_undone`, `after_unlink_before_applied`,
+  `after_verify_before_revoke` and `after_revoke_before_uninstalled`.
+- `doctor.sh` `FAIL=0` on Ubuntu and Mint in the in-scope run; Debian reached
+  `FAIL=0` after the maintainer-approved retroactive remediation above.
+- Evidence permissions repaired and re-verified: all evidence directories `0700`
+  and files `0600`.
+- Teardown residue remediated and verified absent for
+  `/var/tmp/wdvpn-23-7-5-10a-debian`,
+  `/var/tmp/wdvpn-23-7-5-10a-ubuntu` and
+  `/var/tmp/wdvpn-23-7-5-10a-linuxmint`.
+
+Findings and corrections recorded during closure:
+
+- Process finding: the Debian `update.sh --yes` mutation was originally outside
+  the approved 10a scope; the maintainer accepted it retroactively after full
+  disclosure.
+- Positive product finding: a Phase 23.5-certified Debian install that lacked
+  `systemd-resolved` was reconciled to the current post-23.7.5.4 capability
+  contract by `update.sh --yes` without additional manual product changes.
+- Audit findings corrected: `known_hosts` evidence files were changed from `0644`
+  to `0600`; the Debian gate typo `bookworm` was corrected to `trixie`; leftover
+  `/var/tmp` L3 workdirs were removed from all three VMs and verified absent.
+- Linux Mint `casper-md5check.service` was confirmed as a pre-existing live-ISO
+  checksum unit failure (`/cdrom/md5sum.txt` absent), observed in both current
+  and previous boot journals, unrelated to WatchdogVPN.
+- Gabo separately requested a Linux Mint lab optimization to allow SSH access
+  before graphical eCryptFS unlock by using `/etc/ssh/authorized_keys/gabodev`;
+  this was outside the 10a validation scope and is recorded as maintainer-requested
+  lab setup, not product behavior.
+
+No product code was changed in Task 23.7.5.10a. The product checkout used for L3
+validation was `bf0b8ef`; this closure is documentation-only. No L4 real traffic
+or field certification was performed in 10a; those remain explicitly out of scope
+until the 23.7.5.11.x waves. The next planned L3 wave is 23.7.5.10b
+Arch/CachyOS, but it must not start without explicit maintainer authorization.
