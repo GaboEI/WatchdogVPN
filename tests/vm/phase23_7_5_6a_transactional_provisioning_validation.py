@@ -156,8 +156,24 @@ class Evidence:
         print("PHASE23_7_5_6A_VM %s %s" % (phase, json.dumps(data, sort_keys=True, default=str)))
 
     def flush(self) -> None:
-        self.path.write_text(json.dumps(self.entries, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
-        os.chmod(self.path, 0o600)
+        data = (json.dumps(self.entries, indent=2, sort_keys=True, default=str) + "\n").encode("utf-8")
+        fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            written = 0
+            while written < len(data):
+                n = os.write(fd, data[written:])
+                if n == 0:
+                    raise OSError("write returned 0 bytes while flushing evidence to %s" % self.path)
+                written += n
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        parent_fd = os.open(str(self.path.parent), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
 
 
 # --------------------------------------------------------------------------
