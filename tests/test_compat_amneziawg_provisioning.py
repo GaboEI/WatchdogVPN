@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import stat
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from compat import detection
 from compat.dependency_resolution import ResolutionDecision
 from compat.provisioning import engine, journal as journal_mod
 from compat.provisioning.amneziawg import (
+    AMNEZIAWG_OUTPUTS,
     AMNEZIAWG_SOURCE_BUILD_EXECUTOR_VERSION,
     AMNEZIAWG_SOURCE_BUILD_METHOD_KIND,
     AmneziaWGUserspaceSourceBuildExecutor,
@@ -178,6 +180,21 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
                     context=env.context,
                 )
             )
+
+    def test_prepare_enforces_exact_output_modes_under_restrictive_umask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = FakeRunner()
+            env = self._env(root, runner)
+            old_umask = os.umask(0o077)
+            try:
+                outcome = engine.prepare(_decision(), env, apply=True)
+            finally:
+                os.umask(old_umask)
+            self.assertEqual(outcome.status.value, "committed")
+            for name in AMNEZIAWG_OUTPUTS:
+                target = env.context.allowed_roots[0] / name
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
 
     def test_preexisting_output_is_conflict_and_is_not_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

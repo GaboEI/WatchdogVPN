@@ -158,6 +158,10 @@ def create_file_exclusive(path: Path, data: bytes, *, mode: int = 0o600) -> None
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(str(path), flags, mode)
     try:
+        # os.open()'s mode is masked by the process umask; re-assert the exact
+        # intended mode on the created descriptor so the on-disk mode matches
+        # the caller's contract regardless of umask.
+        os.fchmod(fd, mode)
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
@@ -385,6 +389,10 @@ def create_file_exclusive_relative(handle: AllowedRootHandle, validated_path: Pa
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
         fd = os.open(basename, flags, mode, dir_fd=parent_fd)
         try:
+            # os.open()'s mode is masked by the process umask; re-assert the exact
+            # intended mode on the created descriptor so the on-disk mode matches
+            # the caller's contract regardless of umask.
+            os.fchmod(fd, mode)
             with os.fdopen(fd, "wb") as f:
                 f.write(data)
                 f.flush()
