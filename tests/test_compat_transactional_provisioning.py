@@ -5092,5 +5092,345 @@ class NestedAllowedRootPathTests(unittest.TestCase):
         self.assertEqual(sorted(decoy.iterdir()), [])
 
 
+class PathAuthorityStDevInstabilityTests(unittest.TestCase):
+    """Regression tests for the real product finding on CachyOS (Task
+    23.7.5.10b, checkpoint 6): btrfs multi-subvolume kernels assign each
+    mounted subvolume a dynamic ``anon_dev``, so ``st_dev`` of a given path
+    is NOT a durable invariant across reboots. WatchdogVPN must not treat
+    ``st_dev`` as part of the persistent path identity -- it must keep
+    verifying ``st_ino``/``uid``/``mode`` (and v2 integrity) but ignore
+    ``dev`` when comparing a captured path authority against a re-inspection
+    after a reboot. Digests and the model are NOT changed."""
+
+    def setUp(self) -> None:
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp_ctx.name)
+        self.addCleanup(self._tmp_ctx.cleanup)
+
+    def _nested_target(self, harness) -> Path:
+        subdir = harness.sandbox / "nested"
+        subdir.mkdir(mode=0o700)
+        os.chmod(subdir, 0o700)
+        target = subdir / ("%s.marker" % "cap_dev_shift")
+        with open(target, "wb") as fh:
+            fh.write(b"marker-content-for-dev-shift-test")
+        return target
+
+    def test_path_authority_v1_tolerates_st_dev_change(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority(handle, validated)
+
+        tampered = dataclasses.replace(
+            authority,
+            components=tuple(
+                dataclasses.replace(component, dev=component.dev + 1) for component in authority.components
+            ),
+        )
+        paths_mod.verify_path_authority(handle, tampered, validated)
+
+    def test_path_authority_v1_rejects_ino_change(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority(handle, validated)
+
+        tampered = dataclasses.replace(
+            authority,
+            components=tuple(
+                dataclasses.replace(component, ino=component.ino + 1) for component in authority.components
+            ),
+        )
+        with self.assertRaises(PathPolicyError):
+            paths_mod.verify_path_authority(handle, tampered, validated)
+
+    def test_path_authority_v1_rejects_uid_change(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority(handle, validated)
+
+        tampered = dataclasses.replace(
+            authority,
+            components=tuple(
+                dataclasses.replace(component, uid=component.uid + 1) for component in authority.components
+            ),
+        )
+        with self.assertRaises(PathPolicyError):
+            paths_mod.verify_path_authority(handle, tampered, validated)
+
+    def test_path_authority_v1_rejects_mode_change(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority(handle, validated)
+
+        tampered = dataclasses.replace(
+            authority,
+            components=tuple(
+                dataclasses.replace(component, mode=component.mode ^ 0o1) for component in authority.components
+            ),
+        )
+        with self.assertRaises(PathPolicyError):
+            paths_mod.verify_path_authority(handle, tampered, validated)
+
+    def test_path_authority_v2_tolerates_st_dev_change(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority_v2(
+            handle, validated,
+            transaction_id="txn-dev-shift", plan_digest="digest", resource_id=str(validated), integrity=None,
+        )
+
+        tampered = dataclasses.replace(
+            authority,
+            components=tuple(
+                dataclasses.replace(component, dev=component.dev + 1) for component in authority.components
+            ),
+        )
+        paths_mod.verify_path_authority_v2(
+            handle, tampered, validated,
+            transaction_id="txn-dev-shift", plan_digest="digest", resource_id=str(validated),
+        )
+
+    def test_path_authority_v2_rejects_ino_change(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority_v2(
+            handle, validated,
+            transaction_id="txn-dev-shift", plan_digest="digest", resource_id=str(validated), integrity=None,
+        )
+
+        tampered = dataclasses.replace(
+            authority,
+            components=tuple(
+                dataclasses.replace(component, ino=component.ino + 1) for component in authority.components
+            ),
+        )
+        with self.assertRaises(PathPolicyError):
+            paths_mod.verify_path_authority_v2(
+                handle, tampered, validated,
+                transaction_id="txn-dev-shift", plan_digest="digest", resource_id=str(validated),
+            )
+
+    def test_path_authority_v2_rejects_integrity_tampering(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority_v2(
+            handle, validated,
+            transaction_id="txn-dev-shift", plan_digest="digest", resource_id=str(validated), integrity=None,
+        )
+
+        tampered = dataclasses.replace(
+            authority,
+            components=tuple(
+                dataclasses.replace(
+                    component,
+                    integrity="deadbeef" if component.role == "leaf" else component.integrity,
+                )
+                for component in authority.components
+            ),
+        )
+        with self.assertRaises(PathPolicyError):
+            paths_mod.verify_path_authority_v2(
+                handle, tampered, validated,
+                transaction_id="txn-dev-shift", plan_digest="digest", resource_id=str(validated),
+            )
+
+    def test_intermediate_identities_tolerate_st_dev_change(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        identities = paths_mod.capture_intermediate_identities(handle, validated)
+        self.assertTrue(identities)
+
+        tampered = tuple(
+            dataclasses.replace(identity, dev=identity.dev + 1) for identity in identities
+        )
+        paths_mod.verify_intermediate_identities(handle, tampered)
+
+    def test_intermediate_identities_reject_ino_change(self) -> None:
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        identities = paths_mod.capture_intermediate_identities(handle, validated)
+        self.assertTrue(identities)
+
+        tampered = tuple(
+            dataclasses.replace(identity, ino=identity.ino + 1) for identity in identities
+        )
+        with self.assertRaises(PathPolicyError):
+            paths_mod.verify_intermediate_identities(handle, tampered)
+
+    def test_verify_path_authority_tolerates_os_fstat_dev_shift(self) -> None:
+        """Integration-style: simulate a real anon_dev change between boots
+        (as btrfs multi-subvolume does) by shifting st_dev on fstat during
+        verification. The authority is captured first with the real st_dev;
+        verification then runs with os.fstat returning dev+1. Must pass."""
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority(handle, validated)
+
+        real_fstat = os.fstat
+
+        def shifted_fstat(fd):
+            st = real_fstat(fd)
+            return os.stat_result(
+                (st.st_mode, st.st_ino, st.st_dev + 1, st.st_nlink, st.st_uid,
+                 st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime)
+            )
+
+        with mock.patch("os.fstat", side_effect=shifted_fstat):
+            paths_mod.verify_path_authority(handle, authority, validated)
+
+    def test_verify_path_authority_v2_tolerates_os_fstat_dev_shift(self) -> None:
+        """Same anon_dev simulation as the v1 test, but for
+        verify_path_authority_v2: capture the authority with the real
+        st_dev, then run verification with os.fstat returning dev+1 (as a
+        btrfs multi-subvolume anon_dev does across a reboot). Must pass."""
+        harness = _Harness(self.tmp)
+        target = self._nested_target(harness)
+        validated = validate_target_path(target, allowed_roots=harness.context.allowed_roots)
+        handle = open_allowed_root(harness.sandbox)
+        self.addCleanup(handle.close)
+        authority = paths_mod.capture_path_authority_v2(
+            handle, validated,
+            transaction_id="txn-dev-shift-v2", plan_digest="digest", resource_id=str(validated), integrity=None,
+        )
+
+        real_fstat = os.fstat
+
+        def shifted_fstat(fd):
+            st = real_fstat(fd)
+            return os.stat_result(
+                (st.st_mode, st.st_ino, st.st_dev + 1, st.st_nlink, st.st_uid,
+                 st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime)
+            )
+
+        with mock.patch("os.fstat", side_effect=shifted_fstat):
+            paths_mod.verify_path_authority_v2(
+                handle, authority, validated,
+                transaction_id="txn-dev-shift-v2", plan_digest="digest", resource_id=str(validated),
+            )
+
+    def test_uninstall_tolerates_st_dev_change_in_persisted_journal(self) -> None:
+        """End-to-end: after prepare commits, tamper ONLY the persisted dev
+        field of every path-authority component in the ownership journal
+        (simulating a legitimate btrfs anon_dev change across a reboot) and
+        confirm a full uninstall still succeeds. Also confirms ino/uid/mode
+        are NOT weakened (a real swap still fails)."""
+        harness = _Harness(self.tmp)
+        capability_id = "cap_dev_journal_shift"
+        decision = harness.decision(capability_id=capability_id)
+        outcome = engine.prepare(decision, harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+
+        records = journal_mod.read_ownership_records(harness.state_root, capability_id)
+        self.assertTrue(records)
+        shifted = []
+        for record in records:
+            authority = record.candidate.path_authority
+            authority_v2 = record.candidate.path_authority_v2
+            self.assertIsNotNone(authority)
+            self.assertIsNotNone(authority_v2)
+            shifted.append(
+                dataclasses.replace(
+                    record,
+                    candidate=dataclasses.replace(
+                        record.candidate,
+                        path_authority=dataclasses.replace(
+                            authority,
+                            components=tuple(
+                                dataclasses.replace(component, dev=component.dev + 1)
+                                for component in authority.components
+                            ),
+                        ),
+                        path_authority_v2=dataclasses.replace(
+                            authority_v2,
+                            components=tuple(
+                                dataclasses.replace(component, dev=component.dev + 1)
+                                for component in authority_v2.components
+                            ),
+                        ),
+                        intermediate_identities=tuple(
+                            dataclasses.replace(identity, dev=identity.dev + 1)
+                            for identity in record.candidate.intermediate_identities
+                        ),
+                    ),
+                )
+            )
+        journal_mod.write_ownership_records(harness.state_root, capability_id, shifted)
+
+        result = engine.uninstall(capability_id, harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.UNINSTALLED)
+
+    def test_uninstall_still_rejects_ino_change_in_persisted_journal(self) -> None:
+        """Same end-to-end path but tampering ino instead of dev: the swap
+        defense must remain intact (uninstall must fail)."""
+        harness = _Harness(self.tmp)
+        capability_id = "cap_ino_journal_shift"
+        decision = harness.decision(capability_id=capability_id)
+        outcome = engine.prepare(decision, harness.env, apply=True)
+        self.assertEqual(outcome.status, PrepareStatus.COMMITTED)
+
+        records = journal_mod.read_ownership_records(harness.state_root, capability_id)
+        self.assertTrue(records)
+        shifted = []
+        for record in records:
+            authority = record.candidate.path_authority
+            authority_v2 = record.candidate.path_authority_v2
+            shifted.append(
+                dataclasses.replace(
+                    record,
+                    candidate=dataclasses.replace(
+                        record.candidate,
+                        path_authority=dataclasses.replace(
+                            authority,
+                            components=tuple(
+                                dataclasses.replace(component, ino=component.ino + 1)
+                                for component in authority.components
+                            ),
+                        ),
+                        path_authority_v2=dataclasses.replace(
+                            authority_v2,
+                            components=tuple(
+                                dataclasses.replace(component, ino=component.ino + 1)
+                                for component in authority_v2.components
+                            ),
+                        ),
+                    ),
+                )
+            )
+        journal_mod.write_ownership_records(harness.state_root, capability_id, shifted)
+
+        result = engine.uninstall(capability_id, harness.env, apply=True)
+        self.assertEqual(result.status, PrepareStatus.OWNERSHIP_INVALID)
+
+
 if __name__ == "__main__":
     unittest.main()

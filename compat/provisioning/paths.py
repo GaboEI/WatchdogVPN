@@ -1003,11 +1003,15 @@ def verify_intermediate_identities(handle: AllowedRootHandle, expected: Sequence
             raise PathPolicyError("invalid persisted intermediate identity name: %s" % identity.relative_name)
         fd = handle.intermediate_fd(parts)
         st = os.fstat(fd)
-        actual = (st.st_dev, st.st_ino, st.st_uid, stat_module.S_IMODE(st.st_mode))
-        expected_tuple = (identity.dev, identity.ino, identity.uid, identity.mode)
+        # Same as verify_path_authority: st_dev is not a durable invariant
+        # across reboots under btrfs multi-subvolume (anon_dev), so it is
+        # excluded from the identity comparison. st_ino still detects
+        # renames/replacements; st_uid/mode detect ownership/perm changes.
+        actual = (st.st_ino, st.st_uid, stat_module.S_IMODE(st.st_mode))
+        expected_tuple = (identity.ino, identity.uid, identity.mode)
         if actual != expected_tuple:
             raise PathPolicyError(
-                "intermediate %s identity changed: expected dev/ino/uid/mode %r, found %r"
+                "intermediate %s identity changed: expected ino/uid/mode %r, found %r"
                 % (identity.relative_name, expected_tuple, actual)
             )
 
@@ -1035,11 +1039,17 @@ def verify_path_authority(handle: AllowedRootHandle, authority: PathAuthority | 
             raise PathPolicyError("path authority component order/name mismatch for %s" % validated_path)
         fd = handle.fd if index == 0 else handle.intermediate_fd(tuple(Path(component.relative_name).parts))
         st = os.fstat(fd)
-        actual = (st.st_dev, st.st_ino, st.st_uid, stat_module.S_IMODE(st.st_mode))
-        expected_tuple = (component.dev, component.ino, component.uid, component.mode)
+        # st_dev is deliberately NOT part of the durable identity: btrfs
+        # multi-subvolume kernels assign each mounted subvolume a dynamic
+        # anon_dev that can legitimately change between reboots (real product
+        # finding, Task 23.7.5.10b CachyOS checkpoint 6). Renames/replacements
+        # of the inode are still detected via st_ino; ownership/perm changes
+        # via st_uid/mode.
+        actual = (st.st_ino, st.st_uid, stat_module.S_IMODE(st.st_mode))
+        expected_tuple = (component.ino, component.uid, component.mode)
         if actual != expected_tuple:
             raise PathPolicyError(
-                "path authority component %s identity changed: expected dev/ino/uid/mode %r, found %r"
+                "path authority component %s identity changed: expected ino/uid/mode %r, found %r"
                 % (component.relative_name or "<root>", expected_tuple, actual)
             )
 
@@ -1071,8 +1081,48 @@ def verify_path_authority_v2(
         resource_id=authority.resource_id,
         integrity=authority.components[-1].integrity if authority.components else None,
     )
-    if actual != authority:
-        raise PathPolicyError("path authority v2 identity changed for %s" % validated_path)
+    # Compare field-by-field, deliberately EXCLUDING st_dev from every
+    # component: btrfs multi-subvolume anon_dev can legitimately change
+    # between reboots (real product finding, Task 23.7.5.10b CachyOS
+    # checkpoint 6). Everything else -- ino, uid, gid, mode, nlink, and the
+    # leaf integrity -- is still required to match exactly. chain_digest and
+    # authority_digest are NOT re-derived here: they are captured once at
+    # write time and remain valid signatures of what was persisted; dev is
+    # only excluded from this runtime identity comparison, never from the
+    # model or the persisted digests.
+    if actual.schema != authority.schema:
+        raise PathPolicyError("path authority v2 schema mismatch for %s" % validated_path)
+    if actual.transaction_id != authority.transaction_id:
+        raise PathPolicyError("path authority v2 transaction mismatch for %s" % validated_path)
+    if actual.plan_digest != authority.plan_digest:
+        raise PathPolicyError("path authority v2 plan digest mismatch for %s" % validated_path)
+    if actual.resource_id != authority.resource_id:
+        raise PathPolicyError("path authority v2 resource mismatch for %s" % validated_path)
+    if actual.configured_root != authority.configured_root or actual.root_path != authority.root_path:
+        raise PathPolicyError("path authority v2 root mismatch for %s" % validated_path)
+    if actual.target_relative_path != authority.target_relative_path:
+        raise PathPolicyError("path authority v2 target mismatch for %s" % validated_path)
+    if actual.component_count != authority.component_count:
+        raise PathPolicyError("path authority v2 component count mismatch for %s" % validated_path)
+    for actual_component, expected_component in zip(actual.components, authority.components):
+        if actual_component.index != expected_component.index:
+            raise PathPolicyError("path authority v2 component index mismatch for %s" % validated_path)
+        if actual_component.name != expected_component.name:
+            raise PathPolicyError("path authority v2 component name mismatch for %s" % validated_path)
+        if actual_component.role != expected_component.role:
+            raise PathPolicyError("path authority v2 component role mismatch for %s" % validated_path)
+        if actual_component.ino != expected_component.ino:
+            raise PathPolicyError("path authority v2 component inode mismatch for %s" % validated_path)
+        if actual_component.uid != expected_component.uid:
+            raise PathPolicyError("path authority v2 component uid mismatch for %s" % validated_path)
+        if actual_component.gid != expected_component.gid:
+            raise PathPolicyError("path authority v2 component gid mismatch for %s" % validated_path)
+        if actual_component.mode != expected_component.mode:
+            raise PathPolicyError("path authority v2 component mode mismatch for %s" % validated_path)
+        if actual_component.nlink != expected_component.nlink:
+            raise PathPolicyError("path authority v2 component nlink mismatch for %s" % validated_path)
+        if actual_component.integrity != expected_component.integrity:
+            raise PathPolicyError("path authority v2 component integrity mismatch for %s" % validated_path)
 
 
 def stat_identity_relative(handle: AllowedRootHandle, validated_path: Path) -> dict:
