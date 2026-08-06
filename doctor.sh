@@ -263,7 +263,7 @@ if [[ "${DISTRO_SUPPORTED:-0}" == "1" ]]; then
 elif [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
   mark_fail "distro support is planned for a future release"
 elif [[ "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
-  mark_fail "distro support cannot be determined"
+  mark_warn "distro support cannot be determined"
   info "WatchdogVPN could not load its compatibility engine."
   info "Ensure python3 is available and compat/compatibility.json is intact."
   info "recovery: install python3 and run ./doctor.sh again."

@@ -51,8 +51,18 @@ _detect_distro_with_engine() {
     root_dir="$(cd "${BASH_SOURCE[0]%/*}/.." 2>/dev/null && pwd)"
   fi
 
-  local python_cmd="${WATCHDOGVPN_PYTHON:-python3}"
-  if ! command -v "$python_cmd" >/dev/null 2>&1; then
+  local python_cmd=""
+  if [[ -n "${WATCHDOGVPN_PYTHON:-}" ]]; then
+    python_cmd="$WATCHDOGVPN_PYTHON"
+  else
+    for candidate in python3.11 python3.10 python3; do
+      if command -v "$candidate" >/dev/null 2>&1; then
+        python_cmd="$candidate"
+        break
+      fi
+    done
+  fi
+  if [[ -z "$python_cmd" ]]; then
     return 1
   fi
 

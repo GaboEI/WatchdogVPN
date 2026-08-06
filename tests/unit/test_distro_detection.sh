@@ -337,4 +337,18 @@ _detect_distro_fallback "$TMP_DIR/does-not-exist"
 assert_eq "0" "$DISTRO_UNSUPPORTED" "direct fallback does not claim unsupported"
 assert_eq "1" "$DISTRO_UNDETERMINED" "direct fallback marks undetermined"
 
+# Engine resolves python3.11 when available even if python3 also exists.
+# Regression: _detect_distro_with_engine() used to default to python3 only,
+# failing on distros where python3 < 3.7 (e.g. Leap 15.6 python3=3.6).
+write_os_release engine_python_leap \
+  'ID="opensuse-leap"' \
+  'VERSION_ID="15.6"' \
+  'PRETTY_NAME="openSUSE Leap 15.6"'
+(
+  OS_RELEASE_FILE="$TMP_DIR/engine_python_leap" detect_distro
+  if command -v python3.11 >/dev/null 2>&1; then
+    assert_eq "0" "$DISTRO_UNDETERMINED" "engine succeeds, not undetermined"
+  fi
+)
+
 printf 'distro detection checks passed\n'
