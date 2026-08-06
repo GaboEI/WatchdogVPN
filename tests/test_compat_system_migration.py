@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -146,9 +147,18 @@ FIXTURES: Mapping[str, str] = {
 
 
 class CompatSystemMigrationTest(unittest.TestCase):
+    @staticmethod
+    def _resolve_python() -> str:
+        """Resolve the best available Python for the engine, same priority as
+        lib/distro.sh:_detect_distro_with_engine() after 1f4d64c."""
+        for candidate in ("python3.11", "python3.10", "python3"):
+            if shutil.which(candidate):
+                return candidate
+        raise RuntimeError("no python interpreter available")
+
     def _classify_with_engine(self, os_release_path: Path) -> dict:
         result = subprocess.run(
-            ["python3", str(CLASSIFY), "--os-release", str(os_release_path), "classify"],
+            [self._resolve_python(), str(CLASSIFY), "--os-release", str(os_release_path), "classify"],
             cwd=ROOT_DIR,
             text=True,
             stdout=subprocess.PIPE,
@@ -269,7 +279,7 @@ class CompatSystemMigrationTest(unittest.TestCase):
             os_release_path = Path(tmp.name)
         try:
             result = subprocess.run(
-                ["python3", str(CLASSIFY), "--manifest", str(manifest_path),
+                [self._resolve_python(), str(CLASSIFY), "--manifest", str(manifest_path),
                  "--os-release", str(os_release_path), "classify"],
                 cwd=ROOT_DIR,
                 text=True,
@@ -285,7 +295,7 @@ class CompatSystemMigrationTest(unittest.TestCase):
 
     def test_classify_exit_code_on_usage_error(self):
         result = subprocess.run(
-            ["python3", str(CLASSIFY)],
+            [self._resolve_python(), str(CLASSIFY)],
             cwd=ROOT_DIR,
             text=True,
             stdout=subprocess.PIPE,
@@ -297,7 +307,7 @@ class CompatSystemMigrationTest(unittest.TestCase):
     def test_classify_exit_code_on_missing_os_release(self):
         missing_path = ROOT_DIR / "nonexistent_os_release_for_test.txt"
         result = subprocess.run(
-            ["python3", str(CLASSIFY), "--os-release", str(missing_path), "classify"],
+            [self._resolve_python(), str(CLASSIFY), "--os-release", str(missing_path), "classify"],
             cwd=ROOT_DIR,
             text=True,
             stdout=subprocess.PIPE,
@@ -305,6 +315,24 @@ class CompatSystemMigrationTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 2, "missing os-release must exit 2")
+
+    def test_resolve_python_returns_working_interpreter(self):
+        """_resolve_python() must return a Python that can actually parse the
+        classify tool (regression: python3=3.6 on Leap 15.6 cannot parse
+        `from __future__ import annotations`)."""
+        python = self._resolve_python()
+        result = subprocess.run(
+            [python, "-c", "from __future__ import annotations; print('ok')"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"resolved {python} cannot parse future annotations: {result.stderr}")
+
+    def test_resolve_python_prefers_higher_versions(self):
+        """When multiple Pythons are available, _resolve_python() must prefer
+        the highest supported version (3.11 > 3.10 > 3)."""
+        python = self._resolve_python()
+        self.assertIsInstance(python, str)
+        self.assertTrue(len(python) > 0)
 
 
 def _family_short(family_id: str) -> str:
