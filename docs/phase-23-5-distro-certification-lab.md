@@ -19,6 +19,7 @@ claims to support:
 | CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CERTIFIED / CLOSED** — clean install/update provenance and full purge complete; 9 functional rows + the same 3 individually authorized Plan-B rows, with 5/5 resilient green |
 | Debian | `debian` | 23.5 | **CERTIFIED / CLOSED** — Debian 13.6 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 | Ubuntu | `ubuntu` | 23.5 | **CERTIFIED / CLOSED** — Ubuntu 24.04.4 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
+| Kali Linux Rolling | `debian` through `ID_LIKE=debian` | reopened 23.5/23.6 certification | **REOPENED / BLOCKED** — partial field evidence only; OpenVPN+Cloak and provider fixtures are invalid for certification; no support promotion |
 
 openSUSE and a Debian/Ubuntu derivative were intentionally queued for later
 Phase 23.6 tasks. **Fedora itself is now field-certified (Task 23.6.5, closure
@@ -1891,3 +1892,47 @@ No repository runtime bug, unresolved HIGH or MEDIUM finding, accepted technical
 debt or evidence gap was found. With explicit maintainer approval, Phase 23.6 is
 closed directly on `main` - the same direct-to-main closure style as Task
 23.5.6, with no separate feature branch or merge commit for this phase.
+
+## Kali Linux Rolling Certification Reopen - 2026-08-09 (Not Closed)
+
+Status: **REOPENED / BLOCKED - NOT CERTIFIED**. The maintainer authorized
+reopening the Phase 23.5/23.6 procedure on the existing bridge-only VM
+`wdvpnKali`, using `pre-23-7-5-10e-kali-l3-validation`. No new VM or
+infrastructure was created.
+
+The first evidence tree, `watchdogvpn-task-23-5-6-kali-reopened-20260809-a`,
+is invalid and excluded from all claims because a later copy operation
+overwrote common filenames. The valid raw tree is the private
+`watchdogvpn-task-23-5-6-kali-reopened-20260809-b`; its directories are `0700`
+and files are `0600`.
+
+The rolling update gate passed with kernel `7.0.12+kali-amd64` before and after
+the full APT update. The temporary root-owned privilege channel was rebuilt,
+audited and revoked. The VM was finally restored to the authorized clean
+snapshot, broad NOPASSWD grants were removed, and it was left powered off with
+bridge-only networking.
+
+The first clean installation reproduced a real product bug: the shared Debian
+adapter installed `systemd-resolved` on Kali, replacing NetworkManager's DHCP
+resolver path with an unconfigured `127.0.0.53` stub. The uncommitted TDD fix
+excludes `systemd-resolved` from Kali's package set and `resolvectl` from Kali's
+command contract; Debian retains both. The Kali dependency candidate was
+aligned with the adapter. Focused tests, `563` compatibility tests,
+`2347` full tests, syntax and manifest validation pass.
+
+Valid field evidence passed VLESS, Trojan, Hysteria2, AmneziaWG with the pinned
+source build, VMess, TUIC and SOCKS real traffic. App policy with a neutral
+direct domain, DNS apply/reset, controlled kill-switch failure, rotation,
+manual-off and disconnected/connected reboot observations also ran. HTTP
+passed normal and HTTP-proxy traffic but its SOCKS destination timed out;
+Shadowsocks timed out on normal traffic; WireGuard remained the explicit ISP
+block disposition and is not green. Plain OpenVPN was rejected because the
+supplied fixture points to `127.0.0.1`.
+
+Certification remains blocked by two mandatory gates. OpenVPN+Cloak timed out
+in WatchdogVPN and a direct control with the same `ck-client` fixture reproduced
+`cipher: message authentication failed` from the remote server. The only
+supplied provider URL is HTTP while the product requires HTTPS, so provider
+add fails before node and egress validation. Neither result is Plan-B or a
+green. Kali remains `experimental`; no `cert_kali_rolling` or `last_validated`
+promotion is justified.

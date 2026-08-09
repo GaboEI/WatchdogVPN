@@ -726,8 +726,7 @@
             "nftables",
             "iptables",
             "iputils-ping",
-            "procps",
-            "systemd-resolved"
+            "procps"
           ],
           "postcondition": "cap_base_runtime_commands",
           "priority": 2,

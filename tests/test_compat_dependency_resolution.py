@@ -973,7 +973,9 @@ class DependencyResolverTests(unittest.TestCase):
         )
         apt_base = shell_array("distros/ubuntu.sh", "DISTRO_BASE_PACKAGES")
         self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_apt_stable"), apt_base)
-        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_apt_kali_rolling"), apt_base)
+        kali_base = packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_apt_kali_rolling")
+        self.assertNotIn("systemd-resolved", kali_base)
+        self.assertIn("systemd-resolved", apt_base)
         self.assertEqual(
             packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_apt_stable"),
             [shell_scalar("distros/ubuntu.sh", "DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE")],

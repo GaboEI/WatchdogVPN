@@ -20,6 +20,24 @@ assert_not_contains() {
   fi
 }
 
+# Kali keeps NetworkManager's DHCP DNS backend and must not install or require
+# systemd-resolved merely because it shares the Debian package adapter.
+kali_adapter_packages="$(cd "$ROOT_DIR" && DISTRO_ID=kali bash -c 'source distros/debian.sh; printf "%s\n" "${DISTRO_BASE_PACKAGES[@]}"')"
+if grep -Fxq systemd-resolved <<<"$kali_adapter_packages"; then
+  printf 'FAIL: Kali adapter must not install systemd-resolved over NetworkManager DNS\n' >&2
+  exit 1
+fi
+kali_required_commands="$(cd "$ROOT_DIR" && DISTRO_ID=kali bash -c 'source lib/packages.sh; required_commands')"
+if grep -Fxq resolvectl <<<"$kali_required_commands"; then
+  printf 'FAIL: Kali command contract must not require resolvectl\n' >&2
+  exit 1
+fi
+debian_required_commands="$(cd "$ROOT_DIR" && DISTRO_ID=debian bash -c 'source lib/packages.sh; required_commands')"
+if ! grep -Fxq resolvectl <<<"$debian_required_commands"; then
+  printf 'FAIL: Debian command contract must continue requiring resolvectl\n' >&2
+  exit 1
+fi
+
 assert_order() {
   local file="$1" first="$2" second="$3" message="$4" first_line second_line
   # Wiring assertions care about the executable call sites, which appear

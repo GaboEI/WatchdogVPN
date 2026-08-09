@@ -5,7 +5,10 @@ required_commands() {
   printf '%s\n' \
     bash git python3 curl tar ip ss systemctl systemd-run sudo logrotate awk sed \
     grep find sort sha256sum install getent useradd usermod openvpn setpriv \
-    sysctl modinfo nmcli nft iptables ip6tables ping pgrep resolvectl
+    sysctl modinfo nmcli nft iptables ip6tables ping pgrep
+  if [[ "${DISTRO_ID:-}" != "kali" ]]; then
+    printf '%s\n' resolvectl
+  fi
 }
 
 optional_commands() {
