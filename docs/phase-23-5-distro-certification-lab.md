@@ -19,7 +19,7 @@ claims to support:
 | CachyOS | `arch` through `ID_LIKE=arch` | 23.5 | **CERTIFIED / CLOSED** — clean install/update provenance and full purge complete; 9 functional rows + the same 3 individually authorized Plan-B rows, with 5/5 resilient green |
 | Debian | `debian` | 23.5 | **CERTIFIED / CLOSED** — Debian 13.6 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
 | Ubuntu | `ubuntu` | 23.5 | **CERTIFIED / CLOSED** — Ubuntu 24.04.4 bridge-only VM evidence complete; 9 functional rows + the 3 individually authorized Plan-B/no-egress rows, with 5/5 resilient green |
-| Kali Linux Rolling | `debian` through `ID_LIKE=debian` | reopened 23.5/23.6 certification | **REOPENED / BLOCKED** — partial field evidence only; OpenVPN+Cloak and provider fixtures are invalid for certification; no support promotion |
+| Kali Linux Rolling | `debian` through `ID_LIKE=debian` | reopened 23.5/23.6 certification | **FIELD EVIDENCE CLOSED / NO SUPPORT PROMOTION** — 9 functional rows plus 3 individually authorized non-green dispositions; the separate Phase 23.7.5 manifest classification remains `experimental` until its own L3 gate closes |
 
 openSUSE and a Debian/Ubuntu derivative were intentionally queued for later
 Phase 23.6 tasks. **Fedora itself is now field-certified (Task 23.6.5, closure
@@ -1893,9 +1893,9 @@ debt or evidence gap was found. With explicit maintainer approval, Phase 23.6 is
 closed directly on `main` - the same direct-to-main closure style as Task
 23.5.6, with no separate feature branch or merge commit for this phase.
 
-## Kali Linux Rolling Certification Reopen - 2026-08-09 (Not Closed)
+## Kali Linux Rolling Certification Reopen - 2026-08-09 (Closed 2026-08-10)
 
-Status: **REOPENED / BLOCKED - NOT CERTIFIED**. The maintainer authorized
+Status: **FIELD EVIDENCE CLOSED / NO SUPPORT PROMOTION**. The maintainer authorized
 reopening the Phase 23.5/23.6 procedure on the existing bridge-only VM
 `wdvpnKali`, using `pre-23-7-5-10e-kali-l3-validation`. No new VM or
 infrastructure was created.
@@ -1929,10 +1929,46 @@ Shadowsocks timed out on normal traffic; WireGuard remained the explicit ISP
 block disposition and is not green. Plain OpenVPN was rejected because the
 supplied fixture points to `127.0.0.1`.
 
-Certification remains blocked by two mandatory gates. OpenVPN+Cloak timed out
-in WatchdogVPN and a direct control with the same `ck-client` fixture reproduced
-`cipher: message authentication failed` from the remote server. The only
-supplied provider URL is HTTP while the product requires HTTPS, so provider
-add fails before node and egress validation. Neither result is Plan-B or a
-green. Kali remains `experimental`; no `cert_kali_rolling` or `last_validated`
-promotion is justified.
+The original OpenVPN+Cloak and provider blocks were subsequently resolved with
+fresh private infrastructure material and are superseded by the closure below.
+
+### Closure evidence - 2026-08-10
+
+The OpenVPN+Cloak failure was an infrastructure defect in the new server's
+Docker bridge veth checksum/segmentation offload, not a WatchdogVPN defect or a
+malformed profile. The control channel and TLS handshake completed, while data
+segments were retransmitted without acknowledgement. Disabling the affected
+container peer's checksum and segmentation offloads restored sustained traffic.
+A root-owned udev rule applies that setting when Docker creates a veth; it was
+independently confirmed after the Cloak container restarted with a new veth.
+
+The corrected private OpenVPN+Cloak profile was then imported and connected by
+the real WatchdogVPN application on the bridge-only Kali VM. It passed the
+product health gate, routed real traffic through the tunnel to the expected
+remote egress, passed an ICMP control, and disconnected cleanly with no managed
+runtime artifacts. This control is not a substitute for the prior matrix; it
+closes its formerly blocked OpenVPN+Cloak row.
+
+The maintainer also supplied an HTTPS provider source. Its add, node connection,
+real traffic, update/rotation, and removal lifecycle passed in the valid private
+evidence. Plain OpenVPN remains a non-green, maintainer-authorized disposition
+based on the approved external parity validation; WireGuard retains its
+ISP-confirmed non-green disposition; Shadowsocks remains non-green. The honest
+final historical result is **9 functionally proven rows plus 3 individually
+authorized non-green dispositions**, including **5/5 resilient rows with real
+traffic**. No failed resilient row was waived.
+
+Raw private evidence is stored under
+`/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-openvpn-cloak-aeza-migration-20260810/`
+with directories mode `0700` and files mode `0600`. It includes the failure
+analysis, the persistent-server control, the real Kali application egress
+control, and the clean disconnect. A cloud client with an onlink `/32` gateway
+cannot install this profile's transport-exclusion route; that client-specific
+limitation is documented in the private evidence and does not affect the Kali
+result.
+
+This closes only the reopened historical field-evidence gate. Kali remains
+`experimental` under the separate Phase 23.7.5 compatibility contract; no
+`cert_kali_rolling` record or `last_validated` promotion is justified until a
+separately authorized L3 validation can install and validate the product without
+weakening that contract.
