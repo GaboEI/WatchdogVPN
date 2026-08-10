@@ -5,6 +5,7 @@ PYTHON_PACKAGE_DIR="${PYTHON_PACKAGE_DIR:-/usr/local/lib/watchdogvpn}"
 PYTHON_RUNTIME_PACKAGES=(
   app_policy
   cli
+  compat
   config
   core
   daemon
@@ -31,6 +32,7 @@ PYTHON_RUNTIME_SUPPORT_DIRS=(
   bin
   sbin
   systemd
+  tools
   etc
   examples
   distros

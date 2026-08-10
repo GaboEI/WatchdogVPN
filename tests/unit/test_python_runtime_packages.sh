@@ -21,6 +21,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # shellcheck source=../../lib/runtime.sh
 . "$ROOT_DIR/lib/runtime.sh"
+# shellcheck source=../../lib/install_files.sh
+. "$ROOT_DIR/lib/install_files.sh"
 
 listed="$(printf '%s\n' "${PYTHON_RUNTIME_PACKAGES[@]}" | sort -u)"
 
@@ -115,6 +117,58 @@ PY
 
 if [[ -n "$missing_doctor_runtime" ]]; then
   printf 'FAIL: installed doctor runtime manifest is incomplete:\n%s\n' "$missing_doctor_runtime" >&2
+  exit 1
+fi
+
+# Exercise the actual installed-tree layout. Static dependency checks above
+# cannot see the engine paths that lib/distro.sh resolves at runtime.
+runtime_tmp="$(mktemp -d)"
+cleanup_runtime_tmp() {
+  rm -rf -- "$runtime_tmp"
+}
+trap cleanup_runtime_tmp EXIT
+
+sudo() {
+  case "$1" in
+    chown)
+      return 0
+      ;;
+    install)
+      shift
+      local -a args=()
+      while (($#)); do
+        case "$1" in
+          -o|-g)
+            shift 2
+            ;;
+          *)
+            args+=("$1")
+            shift
+            ;;
+        esac
+      done
+      command install "${args[@]}"
+      ;;
+    *)
+      command "$@"
+      ;;
+  esac
+}
+
+INSTALL_DRY_RUN=0
+BACKUP_ROOT="$runtime_tmp/backups"
+PYTHON_PACKAGE_DIR="$runtime_tmp/installed"
+install_python_package_tree "$PYTHON_PACKAGE_DIR"
+
+installed_doctor_output="$("$PYTHON_PACKAGE_DIR/doctor.sh" 2>&1)"
+if [[ "$installed_doctor_output" == *"could not load its compatibility engine"* ]]; then
+  printf 'FAIL: installed doctor cannot load the compatibility engine\n' >&2
+  exit 1
+fi
+
+if [[ ! -r "$PYTHON_PACKAGE_DIR/tools/compat_distro_classify.py" ]] \
+  || [[ ! -r "$PYTHON_PACKAGE_DIR/compat/compatibility.json" ]]; then
+  printf 'FAIL: installed runtime is missing compatibility classifier inputs\n' >&2
   exit 1
 fi
 
