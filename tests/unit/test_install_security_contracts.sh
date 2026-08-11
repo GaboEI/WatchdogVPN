@@ -111,6 +111,7 @@ assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" '
 assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.lookup("verb") === "start"' "polkit policy must not permit stop, restart, or other unit operations"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'prepare_networkmanager_dns_restore_state' "runtime install must create root-only NetworkManager DNS restore state"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install -d -m 0700 -o root -g root "$state_dir"' "NetworkManager DNS restore state must be root-only"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'chmod 0700 "$state_dir"' "NetworkManager DNS restore state must clear inherited setgid bits"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-dns-restore dns.networkmanager_restore' "runtime install must deploy the root DNS-only restore helper"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-cleanup drivers.networkmanager_tun_cleanup' "runtime install must deploy the fixed NetworkManager TUN cleanup helper"
 assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-dns-restore.service" 'User=root' "DNS restore unit must execute as root"

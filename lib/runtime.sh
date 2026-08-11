@@ -127,6 +127,7 @@ install_runtime_files() {
 prepare_networkmanager_dns_restore_state() {
   local state_dir="/var/lib/watchdogvpn/nm-dns-restore"
   run_step sudo install -d -m 0700 -o root -g root "$state_dir"
+  run_step sudo chmod 0700 "$state_dir"
   if root_path_exists "$state_dir/snapshot.json"; then
     run_step sudo chown root:root "$state_dir/snapshot.json"
     run_step sudo chmod 0600 "$state_dir/snapshot.json"
