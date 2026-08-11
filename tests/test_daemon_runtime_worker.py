@@ -307,6 +307,18 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertEqual(response.payload["state"]["active_profile_id"], self.profile.id)
 
+    def test_worker_status_reports_captured_daemon_runtime_provenance(self) -> None:
+        provenance = {"status": "captured", "generation_sha256": "a" * 64}
+        worker = RuntimeWorker(self.make_runtime(), runtime_provenance=provenance)
+        worker.start()
+        try:
+            response = worker.submit(COMMAND_STATUS, timeout=2.0)
+        finally:
+            worker.stop()
+
+        self.assertTrue(response.ok)
+        self.assertEqual(response.payload["runtime_provenance"], provenance)
+
     def test_worker_disconnects_and_broadcasts_state(self) -> None:
         bus = EventBus()
         subscription = bus.subscribe()

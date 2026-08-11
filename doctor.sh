@@ -450,6 +450,7 @@ if [[ -d "$HOME/.local/share/watchdogvpn/watchdogvpn" ]]; then
   done
 fi
 
+provenance_layout_state="$(installed_provenance_layout_state)"
 section "Installed/Source Version Skew"
 installed_commit="$(installed_version_commit 2>/dev/null || true)"
 source_commit="$(source_checkout_commit 2>/dev/null || true)"
@@ -458,6 +459,9 @@ if [[ -z "$installed_commit" ]]; then
 elif [[ -z "$source_commit" ]]; then
   info "not running from a git checkout; cannot compare installed vs source version"
   info "installed: $installed_commit (installed_at=$(installed_version_timestamp 2>/dev/null || printf unknown))"
+elif [[ "$installed_commit" == "$source_commit" && "$provenance_layout_state" != "legacy" ]]; then
+  info "installed marker base commit equals source HEAD: $installed_commit"
+  info "hashed provenance below determines whether that commit is attributable"
 elif [[ "$installed_commit" == "$source_commit" ]]; then
   mark_ok "installed runtime matches source checkout: $installed_commit"
 else
@@ -466,6 +470,42 @@ else
   info "checkout:  $source_commit"
   info "recovery: run ./update.sh to refresh the installed runtime to match this checkout"
 fi
+
+provenance_python="$(watchdogvpn_python 2>/dev/null || true)"
+provenance_output=""
+provenance_rc=3
+if [[ -n "$provenance_python" ]]; then
+  if provenance_output="$("$provenance_python" "$ROOT_DIR/tools/installed_provenance.py" verify \
+    --marker "$WATCHDOGVPN_VERSION_MARKER" \
+    --manifest "$WATCHDOGVPN_PROVENANCE_MANIFEST" \
+    --runtime-root "$PYTHON_PACKAGE_DIR" 2>&1)"; then
+    provenance_rc=0
+  else
+    provenance_rc=$?
+  fi
+fi
+case "$provenance_rc" in
+  0)
+    mark_ok "installed runtime hashes match published provenance"
+    info "$provenance_output"
+    ;;
+  3)
+    if [[ "$provenance_layout_state" == "incomplete" ]]; then
+      mark_fail "installed runtime has incomplete hashed provenance"
+      info "$provenance_output"
+      info "recovery: stop using the installed runtime and run ./update.sh from a trusted clean checkout"
+    else
+      mark_warn "installed runtime has no attributable hashed provenance"
+      info "$provenance_output"
+      info "recovery: run ./update.sh from a clean committed checkout"
+    fi
+    ;;
+  *)
+    mark_fail "installed runtime provenance verification failed"
+    info "$provenance_output"
+    info "recovery: stop using the installed runtime and run ./update.sh from a trusted clean checkout"
+    ;;
+esac
 
 section "PATH Entrypoints"
 check_path_entrypoint watchdog /usr/local/bin/watchdog
@@ -520,6 +560,20 @@ if systemd_unit_known "$daemon_unit"; then
   fi
 
   daemon_pid="$(systemd_show_value "$daemon_unit" MainPID)"
+  daemon_fragment="$(systemd_show_value "$daemon_unit" FragmentPath)"
+  daemon_dropins="$(systemd_show_value "$daemon_unit" DropInPaths)"
+  if [[ "$daemon_fragment" == "/etc/systemd/system/watchdogvpn.service" ]]; then
+    mark_ok "daemon effective fragment matches installed provenance scope"
+  else
+    mark_fail "daemon effective fragment is outside installed provenance: ${daemon_fragment:-unknown}"
+    info "recovery: remove the override and run ./update.sh to reinstall the daemon unit"
+  fi
+  if [[ -z "$daemon_dropins" ]]; then
+    mark_ok "daemon has no systemd drop-ins outside installed provenance"
+  else
+    mark_fail "daemon has systemd drop-ins outside installed provenance: $daemon_dropins"
+    info "recovery: remove product-unit drop-ins and run ./update.sh"
+  fi
   if [[ "$daemon_state" == "active" ]]; then
     if cap_eff_has_bind_service "$daemon_pid"; then
       mark_ok "daemon process can inherit privileged-port bind capability"
@@ -543,6 +597,40 @@ fi
 
 if socket_reachable "$daemon_socket"; then
   mark_ok "daemon socket reachable: $daemon_socket"
+  daemon_status_json="$(WATCHDOGVPN_SOCKET_PATH="$daemon_socket" /usr/local/bin/watchdog status --json 2>/dev/null || true)"
+  daemon_provenance_output=""
+  daemon_provenance_rc=3
+  if [[ -n "$provenance_python" && -n "$daemon_status_json" ]]; then
+    if daemon_provenance_output="$(printf '%s\n' "$daemon_status_json" \
+      | "$provenance_python" "$ROOT_DIR/tools/installed_provenance.py" verify-daemon \
+        --manifest "$WATCHDOGVPN_PROVENANCE_MANIFEST" --status-file - 2>&1)"; then
+      daemon_provenance_rc=0
+    else
+      daemon_provenance_rc=$?
+    fi
+  fi
+  case "$daemon_provenance_rc" in
+    0)
+      mark_ok "daemon process generation matches installed runtime provenance"
+      info "$daemon_provenance_output"
+      ;;
+    3)
+      if [[ "$provenance_layout_state" != "legacy" ]]; then
+        mark_fail "daemon process generation did not prove the installed runtime provenance"
+        info "${daemon_provenance_output:-daemon status was empty or unavailable}"
+        info "recovery: stop the daemon and run ./update.sh from a trusted clean checkout"
+      else
+        mark_warn "daemon process generation has no attributable runtime digest"
+        info "$daemon_provenance_output"
+        info "recovery: run ./update.sh to publish provenance and restart the daemon"
+      fi
+      ;;
+    *)
+      mark_fail "daemon process generation differs from installed runtime provenance"
+      info "$daemon_provenance_output"
+      info "recovery: stop the daemon and run ./update.sh from a trusted clean checkout"
+      ;;
+  esac
 else
   socket_rc=$?
   if ((socket_rc == 13)); then

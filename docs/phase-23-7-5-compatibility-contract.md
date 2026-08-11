@@ -2858,39 +2858,82 @@ or field certification was performed in 10a; those remain explicitly out of scop
 until the 23.7.5.11.x waves. The next planned L3 wave is 23.7.5.10b
 Arch/CachyOS, but it must not start without explicit maintainer authorization.
 
-## Remediación Kali NetworkManager DNS/TUN (2026-08-11)
+## Kali NetworkManager DNS/TUN remediation (2026-08-11)
 
-Antes de cualquier trabajo H1 se cerró una regresión real observada en la VM
-Kali bridge-only: después de aplicar DNS con NetworkManager, el teardown de
-sing-box podía dejar `wdvpn-tun0` y el perfil NM transitorio, o capturar esa
-interfaz dentro del snapshot de restauración DNS.
+Before H1 work, a real regression observed on the bridge-only Kali VM was
+closed: after applying DNS through NetworkManager, sing-box teardown could leave
+`wdvpn-tun0` and its transient NM profile behind, or capture that interface in
+the DNS restoration snapshot.
 
-La corrección quedó publicada en cuatro commits:
+The correction was published in four commits:
 
-- `0545fc9`: aísla la limpieza privilegiada del perfil TUN en una unidad root
-  fija, un helper sin argumentos y una regla Polkit limitada al `start` de esa
-  unidad exacta. Disconnect falla cerrado si la limpieza privilegiada no puede
-  ejecutarse.
-- `450366f`: excluye `wdvpn-tun0` y `watchdogvpn_awg` de los snapshots DNS por
-  nombre de conexión o dispositivo.
-- `8a61090` y `ac38c4a`: eliminan el setgid heredado del directorio root de
-  restauración DNS y fijan su modo final en `root:root:0700`.
+- `0545fc9`: isolates privileged TUN-profile cleanup in a fixed root unit, a
+  no-argument helper and a Polkit rule limited to starting that exact unit.
+  Disconnect fails closed if privileged cleanup cannot run.
+- `450366f`: excludes `wdvpn-tun0` and `watchdogvpn_awg` from DNS snapshots by
+  connection name or device.
+- `8a61090` and `ac38c4a`: remove inherited setgid from the root DNS restoration
+  directory and enforce final mode `root:root:0700`.
 
-Validación local: suite Python completa con 2362 pruebas verdes y 2 omitidas;
-`tests/unit.sh`, `tests/syntax.sh`, contratos de seguridad de instalación,
-transacción runtime, `git diff --check` y validación del manifiesto verdes. La
-matriz L2 del HEAD `ac38c4a` terminó verde en el run #40 (`31496744105`). Los
-runs #36/#37 anteriores clasificaron Rocky 9 como `unknown` por un timeout
-transitorio consultando EPEL; sus otros seis targets y cleanup fueron verdes.
+Local validation passed the complete Python suite with 2362 tests and 2 skips,
+plus `tests/unit.sh`, `tests/syntax.sh`, installation-security contracts, runtime
+transaction tests, `git diff --check` and manifest validation. The L2 matrix for
+exact HEAD `ac38c4a` passed in run #40 (`31496744105`). Earlier runs #36/#37
+classified Rocky 9 as `unknown` after a transient EPEL query timeout; their six
+other targets and cleanup were green.
 
-Validación instalada sobre el HEAD exacto `ac38c4a`: VLESS
-`ubuntu_gabo_yahoo_firefox`, DNS NetworkManager aplicado y HTTPS real por SOCKS
-con código 200. Disconnect dejó estado `standby`, sin TUN, perfil NM, rutas,
-reglas, tabla nftables sing-box, proceso, listeners ni snapshots DNS; el resolver
-volvió a NetworkManager/DHCP (`192.168.0.1`) y no hubo `runtime_mismatch` ni
-errores de restore/cleanup en journal.
+Installed validation on exact HEAD `ac38c4a` passed VLESS
+`ubuntu_gabo_yahoo_firefox`, NetworkManager DNS apply and real SOCKS HTTPS with
+status 200. Disconnect returned to `standby` with no TUN, NM profile, route,
+rule, sing-box nftables table, process, listener or DNS snapshot; the resolver
+returned to NetworkManager/DHCP (`192.168.0.1`) and journal contained no
+restore/cleanup error or `runtime_mismatch`.
 
-Este bloque no promueve Kali: conserva `experimental`, no crea
-`cert_kali_rolling`, no actualiza `last_validated` y no modifica el manifiesto.
-H1 de procedencia instalada verificable queda como siguiente bloque y requiere
-autorización explícita del mantenedor.
+This block does not promote Kali: it remains `experimental`, creates no
+`cert_kali_rolling`, does not update `last_validated`, and does not modify the
+manifest.
+
+## H1 installed runtime provenance
+
+H1 closes the forward-looking evidence gap exposed by the unrecoverable
+historical Kali marker. `tools/installed_provenance.py` builds and verifies a
+canonical SHA-256 inventory of the complete shipped runtime tree. Publication is
+inside the existing install/update transaction and occurs only after the daemon
+smoke test. Source and installed path sets and bytes must match exactly; unsafe
+symlinks, special file types, missing files, added files or changed bytes refuse
+publication and trigger rollback.
+
+The provenance manifest records the full source commit, source state, install
+timestamp, shipped top-level path set, installed ownership/modes, per-file hashes
+and canonical tree/generation digests. The public `installed-version` marker
+binds that manifest by SHA-256. A commit is attributable only when each observed
+shipped path's type, executable mode and bytes match the immutable blobs of the
+resolved `HEAD`, with no extra shipped paths. Dirty, unversioned or unverifiable
+sources can prove only the observed tree and are explicitly labeled
+`tree_verified_source_unattributed`; legacy commit-only markers remain readable
+but cannot satisfy H1. An incomplete schema-2 marker/manifest pair fails closed.
+
+Before publication, install/update compare the active wrapper and unit with
+their pre-deployment expected hashes, reject an effective fragment, drop-in or
+`ExecStart` outside the inventoried chain, and require the newly started daemon
+to report the same digest as a fresh local generation fingerprint. These checks
+remain inside the rollback boundary.
+
+The installed daemon launcher fingerprints the installed tree, active wrapper
+and deployed service unit before and after importing the Python daemon. It
+refuses a generation that changes across that boundary. `watchdog status --json`
+exposes the stable startup digest as `payload.runtime_provenance`. `doctor.sh`
+verifies root ownership and modes (including protected ancestors), current
+installed and deployed bytes, and the marker/manifest binding, then requires the
+active daemon's captured generation digest to match the installed manifest. File
+drift, manifest tampering or a stale daemon generation is a hard doctor failure.
+The effective systemd fragment must be the inventoried unit and out-of-scope
+drop-ins are rejected. Runtime/deployment ancestor policy is repeated at build,
+launch, pre-publication verification and doctor time, while deployment file
+descriptors remain held through a final joint name/inode check. A hibernated or
+automation-disabled install may skip active-generation IPC only when systemd is
+inactive and `MainPID` is zero.
+
+H1 changes neither `compat/compatibility.json` nor any Kali support evidence.
+It provides a prerequisite for future installed validation; it does not recover
+or retroactively attribute the historical unavailable commit.

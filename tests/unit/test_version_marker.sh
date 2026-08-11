@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 assert_contains() {
   local file="$1" pattern="$2" message="$3"
-  if ! grep -Fq "$pattern" "$file"; then
+  if ! grep -Fq -- "$pattern" "$file"; then
     printf 'FAIL: %s\n' "$message" >&2
     printf 'missing pattern in %s: %s\n' "$file" "$pattern" >&2
     exit 1
@@ -17,7 +17,16 @@ assert_contains() {
 assert_contains "$ROOT_DIR/lib/version_marker.sh" 'record_installed_version' "version marker lib must define a recorder"
 assert_contains "$ROOT_DIR/lib/version_marker.sh" 'installed_version_commit' "version marker lib must define an installed-commit reader"
 assert_contains "$ROOT_DIR/lib/version_marker.sh" 'source_checkout_commit' "version marker lib must define a source-checkout-commit reader"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'installed-provenance.json' "version marker publication must include a hashed runtime inventory"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'tools/installed_provenance.py' "version marker recorder must build provenance through the dedicated verifier"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" '--deployment "$WATCHDOGVPN_DAEMON_WRAPPER_PATH"' "provenance must include the active daemon wrapper"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" '--deployment "$WATCHDOGVPN_DAEMON_UNIT_PATH"' "provenance must include the active daemon unit"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" '--expected-uid 0' "provenance publication must require root ownership"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" '--expected-deployment-sha256 "$WATCHDOGVPN_DAEMON_WRAPPER_PATH=$wrapper_sha256"' "publication must compare the wrapper with its pre-install hash"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" '--expected-deployment-sha256 "$WATCHDOGVPN_DAEMON_UNIT_PATH=$unit_sha256"' "publication must compare the unit with its committed runtime copy"
+assert_contains "$ROOT_DIR/tools/installed_provenance.py" 'manifest_sha256=' "version marker must bind the provenance manifest digest"
 assert_contains "$ROOT_DIR/lib/runtime_transaction.sh" 'runtime_transaction_publish_installed_version' "runtime transaction must defer installed-version publication"
+assert_contains "$ROOT_DIR/lib/runtime_transaction.sh" 'WATCHDOGVPN_PROVENANCE_MANIFEST' "runtime transaction must snapshot the provenance manifest"
 assert_contains "$ROOT_DIR/install.sh" 'runtime_transaction_publish_installed_version' "installer must publish the marker only after runtime validation"
 assert_contains "$ROOT_DIR/update.sh" 'runtime_transaction_publish_installed_version' "updater must publish the marker only after runtime validation"
 assert_contains "$ROOT_DIR/install.sh" '. "$ROOT_DIR/lib/version_marker.sh"' "installer must source lib/version_marker.sh"
@@ -33,6 +42,9 @@ assert_contains "$ROOT_DIR/doctor.sh" 'source_checkout_commit' "doctor must comp
 assert_contains "$ROOT_DIR/lib/version_marker.sh" '/usr/local/lib/watchdogvpn/installed-version' "version marker must live in the readable installed runtime tree"
 assert_contains "$ROOT_DIR/lib/version_marker.sh" 'WATCHDOGVPN_LEGACY_VERSION_MARKER' "version marker reader must retain legacy-path compatibility"
 assert_contains "$ROOT_DIR/lib/version_marker.sh" 'install -d -m 0755' "version marker parent must remain readable to normal doctor runs"
+assert_contains "$ROOT_DIR/doctor.sh" 'verify-daemon' "doctor must compare the active daemon generation with installed provenance"
+assert_contains "$ROOT_DIR/doctor.sh" 'daemon process generation did not prove the installed runtime provenance' "doctor must fail closed when an H1 daemon omits its generation digest"
+assert_contains "$ROOT_DIR/doctor.sh" 'provenance_layout_state="$(installed_provenance_layout_state)"' "doctor must classify incomplete H1 publication"
 
 # --- behavioral: record/read/compare actually works, isolated from the real
 #     system (no sudo, a throwaway marker path) ---
@@ -134,5 +146,34 @@ grep -Fq 'public-marker 2026-07-17T00:00:00Z' <<<"$primary_output" || {
   printf 'FAIL: public version marker must take precedence over a legacy marker\n' >&2
   exit 1
 }
+
+layout_dir="$(mktemp -d)"
+layout_marker="$layout_dir/installed-version"
+layout_manifest="$layout_dir/installed-provenance.json"
+# shellcheck source=../../lib/version_marker.sh
+. "$ROOT_DIR/lib/version_marker.sh"
+WATCHDOGVPN_VERSION_MARKER="$layout_marker"
+WATCHDOGVPN_PROVENANCE_MANIFEST="$layout_manifest"
+[[ "$(installed_provenance_layout_state)" == "legacy" ]] || {
+  printf 'FAIL: absent H1 files must retain legacy classification\n' >&2
+  exit 1
+}
+printf 'schema_version=2\n' >"$layout_marker"
+[[ "$(installed_provenance_layout_state)" == "incomplete" ]] || {
+  printf 'FAIL: schema-2 marker without manifest must be incomplete\n' >&2
+  exit 1
+}
+rm -f "$layout_marker"
+printf '{}\n' >"$layout_manifest"
+[[ "$(installed_provenance_layout_state)" == "incomplete" ]] || {
+  printf 'FAIL: manifest without schema-2 marker must be incomplete\n' >&2
+  exit 1
+}
+printf 'schema_version=2\n' >"$layout_marker"
+[[ "$(installed_provenance_layout_state)" == "h1" ]] || {
+  printf 'FAIL: schema-2 marker and manifest must enter H1 verification\n' >&2
+  exit 1
+}
+rm -rf "$layout_dir"
 
 echo "version marker checks passed"

@@ -215,18 +215,60 @@ custom kernels that remove required Linux capabilities are not silently
 claimed as supported, and a hardened/alternate kernel failure is a field
 finding until attributed and formally scoped.
 
-**Installed/source version marker:** `install.sh`/`update.sh` record the
-installed source commit and timestamp (`lib/version_marker.sh`) every time
-the Python runtime package tree is (re)installed. `doctor.sh` compares that
-marker against `git rev-parse HEAD` of the checkout it is run from and warns if
-they differ. The marker certifies files on disk, not already-imported Python
-modules in a long-running daemon. Therefore `update.sh` also snapshots whether
-`watchdogvpn.service` was active before replacement, restarts that active
-service after installation, and requires a different nonzero systemd `MainPID`
-before the IPC smoke test. A hibernating daemon remains stopped. Together these
-checks answer both "does the installed tree match this checkout?" and "is the
-daemon actually executing the refreshed tree?" instead of trusting only the
-hand-edited `VERSION` string in `bin/watchdogvpn`.
+**Installed/source provenance:** `install.sh`/`update.sh` publish two root-owned,
+public-metadata files only after the replacement runtime passes its daemon smoke
+test: `installed-version` and `installed-provenance.json`. The provenance builder
+compares every shipped source file with the installed runtime tree byte for byte,
+records a canonical SHA-256 inventory including installed modes, and binds that
+inventory to the marker with a SHA-256 of the manifest itself. Source bytecode
+caches are purged rather than shipped; any cache later added to the installed
+tree is detectable. Only the two self-referential provenance files are excluded.
+Missing, added, changed, unsafe-symlinked or unsupported file types prevent
+publication and roll the runtime transaction back.
+
+The source commit is attributable only when the observed type, executable mode
+and bytes of every shipped source path match the corresponding blobs in the
+resolved `HEAD` commit, with no extra shipped paths. This compares the hashed
+observation directly with immutable Git objects rather than trusting a later
+working-tree status check. An unversioned, unverifiable or dirty source may
+retain a tree-integrity record for diagnostics, but it is reported as
+`tree_verified_source_unattributed`, never as commit-attributable provenance.
+Legacy commit-only markers remain readable for version-skew diagnostics and are
+explicitly reported as lacking hashed provenance. A schema-2 marker without its
+manifest, or a manifest without its schema-2 marker, is a hard failure.
+
+Before publication, the installer compares the deployed unit with its verified
+runtime-tree copy and the deployed wrapper with the hash retained when that
+wrapper was generated. It also requires the effective systemd fragment,
+drop-ins and `ExecStart` to resolve to the inventoried chain, then compares the
+daemon's status digest with a fresh local generation fingerprint. Any mismatch
+is inside the runtime transaction and rolls the replacement back.
+
+The installed daemon launcher computes a generation digest over the canonical
+runtime tree, the active `/usr/local/bin/watchdogvpn-daemon` wrapper and the
+deployed `watchdogvpn.service` unit. It fingerprints before and after importing
+the daemon modules, refuses a generation that changes across that boundary, and
+exports the stable digest only to that process generation. The daemon captures
+it at startup and exposes it in the read-only `status` response. `doctor.sh`
+independently verifies root ownership, root/directory/file modes, deployed-file
+hashes, the marker-to-manifest binding, every current installed file, and the
+daemon generation's startup digest. A mismatch is a `FAIL`, not a version
+warning. Protected runtime/deployment ancestors must be root-owned real
+directories without group/other write access; that policy is rechecked during
+publication, daemon launch, pre-publication smoke and doctor verification.
+Deployment descriptors remain open until every generation member has been
+hashed and its final name/inode revalidated. The effective systemd fragment
+must be the inventoried unit and no
+out-of-scope drop-ins may alter it. `update.sh` still snapshots whether the
+service was active, restarts an active service, and requires a changed nonzero
+systemd `MainPID`; a hibernating daemon remains stopped. Together these checks
+prove the source subset, installed bytes and active daemon generation instead of
+trusting a hand-edited `VERSION` string or a commit-only marker.
+
+When automation is disabled or the product is hibernating, install/update may
+skip the active-generation IPC check only after proving the service is inactive
+and `MainPID` is zero. A residual daemon turns that skip into a transactional
+failure.
 
 On a first install, adding the invoking user to the `watchdogvpn` group updates
 NSS but cannot alter the supplementary groups of the installer process that is

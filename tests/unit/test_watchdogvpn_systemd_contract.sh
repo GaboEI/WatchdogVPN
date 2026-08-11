@@ -8,7 +8,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 assert_contains() {
   local file="$1" pattern="$2" message="$3"
-  if ! grep -Fq "$pattern" "$file"; then
+  if ! grep -Fq -- "$pattern" "$file"; then
     printf 'FAIL: %s\n' "$message" >&2
     printf 'missing pattern in %s: %s\n' "$file" "$pattern" >&2
     exit 1
@@ -81,6 +81,11 @@ install_root_file() {
 PYTHON_PACKAGE_DIR="$TMP_DIR/python-runtime"
 install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main
 assert_contains "$TMP_DIR/watchdogvpn-daemon" "ROOT_DIR=$TMP_DIR/python-runtime" "installed daemon wrapper must pin the installed Python runtime path"
-assert_contains "$TMP_DIR/watchdogvpn-daemon" "exec $(watchdogvpn_python) -m daemon.main \"\$@\"" "installed daemon wrapper must execute daemon.main via the resolved Python"
+assert_contains "$TMP_DIR/watchdogvpn-daemon" "exec $(watchdogvpn_python) -m tools.installed_provenance launch-daemon" "installed daemon wrapper must use the verified daemon launcher"
+assert_contains "$TMP_DIR/watchdogvpn-daemon" "--deployment /usr/local/bin/watchdogvpn-daemon --deployment /etc/systemd/system/watchdogvpn.service" "daemon generation must include the active wrapper and unit"
+[[ "$WATCHDOGVPN_EXPECTED_DAEMON_WRAPPER_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  printf 'FAIL: wrapper installation must retain its expected pre-install hash\n' >&2
+  exit 1
+}
 
 echo "watchdogvpn systemd contract checks passed"
