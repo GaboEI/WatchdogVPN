@@ -2940,3 +2940,36 @@ inactive and `MainPID` is zero.
 H1 changes neither `compat/compatibility.json` nor any Kali support evidence.
 It provides a prerequisite for future installed validation; it does not recover
 or retroactively attribute the historical unavailable commit.
+
+### H1 validation and closure (2026-08-11)
+
+H1 was implemented in `df836ee` and its independent acceptance audit found one
+HIGH race between the successful active-daemon smoke and manifest construction.
+Commit `300353c` closes that finding by making the exact smoke-approved
+generation digest a mandatory active-publication precondition. A changed mode,
+byte, wrapper or unit between those steps now refuses publication inside the
+runtime transaction. The same audit was resumed after the correction and ended
+with `TAREA_APROBADA`, no new findings.
+
+Final local validation passed 2391 Python tests with 2 skips, `tests/unit.sh`,
+`tests/syntax.sh`, compileall and `git diff --check`. GitHub L2 run
+`31531786946` passed on exact commit `300353c`.
+
+The bridge-only Kali installation on exact commit `300353c` published
+`source_state=clean`, 246 inventoried entries, tree digest
+`6ca44a54064cc4cf9fea0a84b34d926648e80e93c871390a288393298b908e45`,
+generation digest
+`96125c76f8ef68ee755dca09b319bfe2cfcd2c399943dd3ca693cdaf24fdc68f`,
+and manifest digest
+`d16f20f170263720fe9510fd4210d6c6d0fd06ed1d8f2a3846fdbbe84f075231`.
+The active daemon reported the same generation through PID 30443, with the exact
+fragment, no drop-ins and the expected wrapper `ExecStart`. Controlled installed
+file drift returned exit 2; restoration returned both tree and daemon checks to
+`verified`. An intentionally wrong smoke digest also returned exit 2 before
+manifest publication. Final state was standby with only the bridge interface and
+normal DHCP route/rules, and no sing-box runtime residue.
+
+The installed doctor correctly retained one global `FAIL` because Kali remains
+`experimental`; that is not an H1 failure or support promotion. H1 creates no
+`cert_kali_rolling`, does not update `last_validated`, and does not close Task
+23.7.5.10e.
