@@ -2339,6 +2339,19 @@ table inet sing-box {
         self.assertEqual(self.driver._tun_cleanup_route_tables, ("2022",))
         cleanup_mock.assert_called_once()
 
+    @patch.object(SingBoxDriver, "_cleanup_tun_residue")
+    def test_reconcile_stale_tun_state_cleans_orphaned_interface_without_rules(
+        self, cleanup_mock
+    ) -> None:
+        with (
+            patch.object(self.driver, "_singbox_process_alive", return_value=False),
+            patch.object(self.driver, "_discover_singbox_tun_residue", return_value=((), ())),
+            patch.object(self.driver, "_tun_interface_exists", return_value=True),
+        ):
+            self.driver.reconcile_stale_tun_state()
+
+        cleanup_mock.assert_called_once()
+
     @patch.object(SingBoxDriver, "_cleanup_runtime")
     def test_disconnect_kills_hung_process(self, cleanup_mock) -> None:
         process = unittest.mock.Mock()

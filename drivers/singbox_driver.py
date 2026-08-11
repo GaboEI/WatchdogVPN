@@ -1171,7 +1171,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         rule_prefs, route_tables = self._discover_singbox_tun_residue(
             include_orphaned_auto_route_rule=True,
         )
-        if not rule_prefs and not route_tables:
+        if not rule_prefs and not route_tables and not self._tun_interface_exists():
             return
         self._tun_cleanup_rule_prefs = rule_prefs
         self._tun_cleanup_route_tables = route_tables
@@ -1251,6 +1251,17 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 return True
             time.sleep(0.1)
         return False
+
+    def _tun_interface_exists(self) -> bool:
+        if not shutil.which("ip"):
+            return False
+        result = subprocess.run(
+            ["ip", "-o", "link", "show", "wdvpn-tun0"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
 
     def _tun_interface_active(self) -> bool:
         if not shutil.which("ip"):
