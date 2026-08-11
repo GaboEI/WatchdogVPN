@@ -39,6 +39,13 @@ detect_distro() {
   _detect_distro_fallback "$os_release"
 }
 
+# Certification runs may exercise a release before its manifest promotion, but
+# only when both the caller and the field-validation harness opt in explicitly.
+distro_certification_lab_enabled() {
+  [[ "${WATCHDOGVPN_CERTIFICATION_LAB:-0}" == "1" ]] \
+    && [[ "${WATCHDOGVPN_FIELD_VALIDATION:-0}" == "1" ]]
+}
+
 
 # Try the engine first. Returns 0 on success, 1 on any failure.
 _detect_distro_with_engine() {

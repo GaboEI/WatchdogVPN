@@ -30,6 +30,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
+CERTIFICATION_LAB=0
 BACKEND_MODE="custom-vps"
 BACKEND_ACTIVE="custom-vps"
 CUSTOM_VPS_ENABLED="false"
@@ -53,12 +54,13 @@ usage() {
 WatchdogVPN installer
 
 Usage:
-  ./install.sh [--dry-run] [--yes] [--skip-doctor]
+  ./install.sh [--dry-run] [--yes] [--skip-doctor] [--certification-lab]
 
 Options:
   --dry-run       Show what would be installed without changing the system.
   --yes           Use product defaults without enabling an unconfigured Custom VPS service.
   --skip-doctor   Do not run the read-only preflight first.
+  --certification-lab  Allow an explicitly marked field-validation run on an experimental distro.
   --help          Show this help.
 
 What this installer manages:
@@ -78,6 +80,9 @@ while (($#)); do
       ;;
     --skip-doctor)
       RUN_DOCTOR=0
+      ;;
+    --certification-lab)
+      CERTIFICATION_LAB=1
       ;;
     --help|-h)
       usage
@@ -224,8 +229,12 @@ require_supported_distro() {
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
 
   if [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
-    print_future_distro
-    exit 1
+    if ((CERTIFICATION_LAB == 1)) && distro_certification_lab_enabled; then
+      warn "certification-lab override: experimental distro is not promoted to support"
+    else
+      print_future_distro
+      exit 1
+    fi
   fi
 
   if [[ "${DISTRO_UNSUPPORTED:-0}" == "1" || "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then

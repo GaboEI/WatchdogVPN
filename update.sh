@@ -30,6 +30,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
+CERTIFICATION_LAB=0
 
 trap 'runtime_transaction_failure_trap "update.sh"' ERR
 
@@ -38,12 +39,13 @@ usage() {
 WatchdogVPN updater
 
 Usage:
-  ./update.sh [--dry-run] [--yes] [--skip-doctor]
+  ./update.sh [--dry-run] [--yes] [--skip-doctor] [--certification-lab]
 
 Options:
   --dry-run       Show what would be updated without changing the system.
   --yes           Do not ask for update confirmation.
   --skip-doctor   Do not run the read-only preflight first.
+  --certification-lab  Allow an explicitly marked field-validation run on an experimental distro.
   --help          Show this help.
 
 The updater validates the repository, backs up replaced product files, and
@@ -61,6 +63,9 @@ while (($#)); do
       ;;
     --skip-doctor)
       RUN_DOCTOR=0
+      ;;
+    --certification-lab)
+      CERTIFICATION_LAB=1
       ;;
     --help|-h)
       usage
@@ -121,8 +126,12 @@ require_supported_distro() {
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
 
   if [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
-    print_future_distro
-    exit 1
+    if ((CERTIFICATION_LAB == 1)) && distro_certification_lab_enabled; then
+      warn "certification-lab override: experimental distro is not promoted to support"
+    else
+      print_future_distro
+      exit 1
+    fi
   fi
 
   if [[ "${DISTRO_UNSUPPORTED:-0}" == "1" || "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
