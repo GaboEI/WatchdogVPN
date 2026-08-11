@@ -2084,10 +2084,11 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertIn(["ip", "route", "flush", "table", "2022"], commands)
         self.assertIn(["ip", "-6", "route", "flush", "table", "2022"], commands)
         self.assertIn(["nmcli", "con", "delete", "wdvpn-tun0"], commands)
+        self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
 
     @patch("drivers.singbox_driver.shutil.which", return_value=None)
     @patch("drivers.singbox_driver.subprocess.run")
-    def test_cleanup_tun_residue_skips_networkmanager_cleanup_when_nmcli_absent(
+    def test_cleanup_tun_residue_deletes_link_when_nmcli_absent(
         self, run_mock, which_mock
     ) -> None:
         # Rocky Linux 9 field bug (Task 23.6.5b): NetworkManager auto-adopts
@@ -2095,12 +2096,13 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         # recreating the interface even after sing-box's process has fully
         # exited, since NM's own stored desired state - not the kernel
         # device's existence - drives it; only deleting NM's connection
-        # profile actually stops it. This must be a no-op wherever nmcli
-        # is absent (no NetworkManager to have adopted anything).
+        # profile actually stops it. Without NetworkManager, the kernel link
+        # still needs an explicit best-effort deletion.
         self.driver._cleanup_tun_residue()
 
         commands = [call.args[0] for call in run_mock.call_args_list]
         self.assertNotIn(["nmcli", "con", "delete", "wdvpn-tun0"], commands)
+        self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
 
     @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
     @patch("drivers.singbox_driver.subprocess.run")
@@ -2111,6 +2113,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
 
         commands = [call.args[0] for call in run_mock.call_args_list]
         self.assertIn(["nmcli", "con", "delete", "wdvpn-tun0"], commands)
+        self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
 
     @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
     def test_apply_lan_gateway_installs_nft_rules_then_enables_forwarding(self, which_mock) -> None:

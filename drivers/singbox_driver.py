@@ -1213,8 +1213,12 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         # is what actually stops it from coming back. This is a no-op
         # wherever NetworkManager is absent or never adopted the interface.
         if not shutil.which("nmcli"):
+            self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
             return
         self._run_cleanup_command(["nmcli", "con", "delete", "wdvpn-tun0"])
+        # sing-box normally releases its TUN on exit, but a failed auto-route
+        # teardown can leave the kernel link behind without an owning process.
+        self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
 
     def _append_log(self, message: str) -> None:
         _, log_path = self._ensure_runtime_paths()
