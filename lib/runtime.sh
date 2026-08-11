@@ -106,6 +106,7 @@ install_runtime_files() {
   install_python_module_wrapper /usr/local/bin/watchdog cli.main
   install_root_file "$runtime_root/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
   install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main
+  install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-dns-restore dns.networkmanager_restore
 
   install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
 
@@ -119,6 +120,16 @@ install_runtime_files() {
     /etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules \
     0644
   install_systemd_units
+  prepare_networkmanager_dns_restore_state
+}
+
+prepare_networkmanager_dns_restore_state() {
+  local state_dir="/var/lib/watchdogvpn/nm-dns-restore"
+  run_step sudo install -d -m 0700 -o root -g root "$state_dir"
+  if root_path_exists "$state_dir/snapshot.json"; then
+    run_step sudo chown root:root "$state_dir/snapshot.json"
+    run_step sudo chmod 0600 "$state_dir/snapshot.json"
+  fi
 }
 
 # Detects the interface currently carrying the default IPv4 route - the same

@@ -1,11 +1,14 @@
-// WatchdogVPN's unprivileged service must manage DNS ownership for the
-// resolver stack selected by the host. NetworkManager requires its system
-// settings action to restore the captured DNS properties of a system profile.
-// Both permissions remain limited to the dedicated service account.
+// The daemon may flush resolver caches and start only the dedicated root DNS
+// restore unit. That unit accepts no caller input and restores a root-owned,
+// DNS-only snapshot; NetworkManager's broad settings action is never granted.
 polkit.addRule(function(action, subject) {
-    if ((action.id === "org.freedesktop.resolve1.flush-caches" ||
-         action.id === "org.freedesktop.NetworkManager.settings.modify.system") &&
+    if (action.id === "org.freedesktop.resolve1.flush-caches" &&
         subject.user === "watchdogvpn") {
+        return polkit.Result.YES;
+    }
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "watchdogvpn-nm-dns-restore.service" &&
+        action.lookup("verb") === "start" && subject.user === "watchdogvpn") {
         return polkit.Result.YES;
     }
 });

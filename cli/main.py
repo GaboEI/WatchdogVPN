@@ -77,6 +77,7 @@ from dns.state_manager import (
     load_snapshot,
     save_snapshot,
 )
+from dns.networkmanager_restore import save_root_snapshot
 from dns.tester import DNSTester
 from daemon.protocol import Response
 from diagnostics.route_dns import RouteDNSDiagnostic, diagnose_route_dns
@@ -5307,6 +5308,17 @@ def _dns_apply(args: argparse.Namespace) -> int:
         existing_snapshot = load_snapshot(snapshot_path)
         if existing_snapshot is None:
             snapshot_for_apply = manager.save_state(systemd_link=args.systemd_link)
+            if snapshot_for_apply.inventory.manager.value == "networkmanager":
+                save_root_snapshot([
+                    {
+                        "uuid": connection.uuid,
+                        "ipv4.ignore-auto-dns": connection.ipv4_ignore_auto_dns,
+                        "ipv4.dns": connection.ipv4_dns,
+                        "ipv6.ignore-auto-dns": connection.ipv6_ignore_auto_dns,
+                        "ipv6.dns": connection.ipv6_dns,
+                    }
+                    for connection in snapshot_for_apply.network_manager_connections
+                ])
             _save_dns_snapshot(snapshot_path, snapshot_for_apply)
             plan["rollback_snapshot"]["will_create"] = True
         else:

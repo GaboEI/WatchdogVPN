@@ -63,6 +63,7 @@ class DNSCommandRunner(Protocol):
 @dataclass(frozen=True, slots=True)
 class NetworkManagerConnectionState:
     name: str
+    uuid: str = ""
     ipv4_dns: str = ""
     ipv4_ignore_auto_dns: str = "no"
     ipv4_dns_search: str = ""
@@ -73,6 +74,7 @@ class NetworkManagerConnectionState:
     def to_dict(self) -> dict[str, str]:
         return {
             "name": self.name,
+            "uuid": self.uuid,
             "ipv4_dns": self.ipv4_dns,
             "ipv4_ignore_auto_dns": self.ipv4_ignore_auto_dns,
             "ipv4_dns_search": self.ipv4_dns_search,
@@ -85,6 +87,7 @@ class NetworkManagerConnectionState:
     def from_dict(cls, data: dict[str, object]) -> "NetworkManagerConnectionState":
         return cls(
             name=str(data["name"]),
+            uuid=str(data.get("uuid", "")),
             ipv4_dns=str(data.get("ipv4_dns", "")),
             ipv4_ignore_auto_dns=str(data.get("ipv4_ignore_auto_dns", "no")),
             ipv4_dns_search=str(data.get("ipv4_dns_search", "")),
@@ -264,6 +267,7 @@ class SystemDNSStateManager:
             states.append(
                 NetworkManagerConnectionState(
                     name=name,
+                    uuid=self._nmcli_connection_property(name, "connection.uuid"),
                     ipv4_dns=self._nmcli_connection_property(name, "ipv4.dns"),
                     ipv4_ignore_auto_dns=self._nmcli_connection_property(
                         name, "ipv4.ignore-auto-dns"

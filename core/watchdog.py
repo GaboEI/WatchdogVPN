@@ -40,6 +40,7 @@ from drivers.native_policy_driver import NativePolicyDriver
 from drivers.singbox_driver import SingBoxDriver
 from dns.models import DNSPolicy
 from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
+from dns.resolver_inventory import ResolverManager
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 from parsers.endpoint_policy import EndpointPolicyError, profile_endpoint_host, validate_profile_endpoint
@@ -1499,7 +1500,17 @@ class WatchdogRuntime:
         if snapshot is None:
             return
         try:
-            self.dns_state_manager.restore_state(snapshot)
+            if snapshot.inventory.manager == ResolverManager.NETWORK_MANAGER:
+                subprocess.run(
+                    ["systemctl", "start", "watchdogvpn-nm-dns-restore.service"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=15,
+                )
+            else:
+                self.dns_state_manager.restore_state(snapshot)
             self.dns_snapshot_path.unlink()
         except Exception:
             LOGGER.warning("watchdog_dns_restore_on_disconnect status=restore_failed", exc_info=True)

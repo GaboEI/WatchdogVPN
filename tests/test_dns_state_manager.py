@@ -61,6 +61,7 @@ class FakeRunner:
             name = command[-1]
             values = self.connection_values.get(name, ("", "no", "", "", "no", ""))
             index = {
+                "connection.uuid": None,
                 "ipv4.dns": 0,
                 "ipv4.ignore-auto-dns": 1,
                 "ipv4.dns-search": 2,
@@ -68,6 +69,8 @@ class FakeRunner:
                 "ipv6.ignore-auto-dns": 4,
                 "ipv6.dns-search": 5,
             }[prop]
+            if index is None:
+                return "11111111-1111-1111-1111-111111111111"
             return values[index]
         return ""
 
