@@ -111,6 +111,7 @@ assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" '
 assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.lookup("unit") === "watchdogvpn-nm-tun-cleanup.service"' "polkit policy must bind TUN cleanup authorization to the fixed NetworkManager helper"
 assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.lookup("verb") === "start"' "polkit policy must not permit stop, restart, or other unit operations"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'prepare_networkmanager_dns_restore_state' "runtime install must create root-only NetworkManager DNS restore state"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'run_step sudo "$(watchdogvpn_python)" -m compileall -q "$stage"' "root-owned runtime staging must validate bytecode with matching privileges"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install -d -m 0700 -o root -g root "$state_dir"' "NetworkManager DNS restore state must be root-only"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'chmod g-s "$state_dir"' "NetworkManager DNS restore state must explicitly remove inherited setgid"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'chmod 0700 "$state_dir"' "NetworkManager DNS restore state must clear inherited setgid bits"

@@ -624,7 +624,7 @@ _validate_staged_python_runtime() {
       return 1
     }
   done
-  "$(watchdogvpn_python)" -m compileall -q "$stage"
+  run_step sudo "$(watchdogvpn_python)" -m compileall -q "$stage"
 }
 
 migrate_watchdogvpn_shared_state() {
