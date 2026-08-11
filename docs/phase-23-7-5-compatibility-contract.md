@@ -2857,3 +2857,40 @@ validation was `bf0b8ef`; this closure is documentation-only. No L4 real traffic
 or field certification was performed in 10a; those remain explicitly out of scope
 until the 23.7.5.11.x waves. The next planned L3 wave is 23.7.5.10b
 Arch/CachyOS, but it must not start without explicit maintainer authorization.
+
+## Remediación Kali NetworkManager DNS/TUN (2026-08-11)
+
+Antes de cualquier trabajo H1 se cerró una regresión real observada en la VM
+Kali bridge-only: después de aplicar DNS con NetworkManager, el teardown de
+sing-box podía dejar `wdvpn-tun0` y el perfil NM transitorio, o capturar esa
+interfaz dentro del snapshot de restauración DNS.
+
+La corrección quedó publicada en cuatro commits:
+
+- `0545fc9`: aísla la limpieza privilegiada del perfil TUN en una unidad root
+  fija, un helper sin argumentos y una regla Polkit limitada al `start` de esa
+  unidad exacta. Disconnect falla cerrado si la limpieza privilegiada no puede
+  ejecutarse.
+- `450366f`: excluye `wdvpn-tun0` y `watchdogvpn_awg` de los snapshots DNS por
+  nombre de conexión o dispositivo.
+- `8a61090` y `ac38c4a`: eliminan el setgid heredado del directorio root de
+  restauración DNS y fijan su modo final en `root:root:0700`.
+
+Validación local: suite Python completa con 2362 pruebas verdes y 2 omitidas;
+`tests/unit.sh`, `tests/syntax.sh`, contratos de seguridad de instalación,
+transacción runtime, `git diff --check` y validación del manifiesto verdes. La
+matriz L2 del HEAD `ac38c4a` terminó verde en el run #40 (`31496744105`). Los
+runs #36/#37 anteriores clasificaron Rocky 9 como `unknown` por un timeout
+transitorio consultando EPEL; sus otros seis targets y cleanup fueron verdes.
+
+Validación instalada sobre el HEAD exacto `ac38c4a`: VLESS
+`ubuntu_gabo_yahoo_firefox`, DNS NetworkManager aplicado y HTTPS real por SOCKS
+con código 200. Disconnect dejó estado `standby`, sin TUN, perfil NM, rutas,
+reglas, tabla nftables sing-box, proceso, listeners ni snapshots DNS; el resolver
+volvió a NetworkManager/DHCP (`192.168.0.1`) y no hubo `runtime_mismatch` ni
+errores de restore/cleanup en journal.
+
+Este bloque no promueve Kali: conserva `experimental`, no crea
+`cert_kali_rolling`, no actualiza `last_validated` y no modifica el manifiesto.
+H1 de procedencia instalada verificable queda como siguiente bloque y requiere
+autorización explícita del mantenedor.
