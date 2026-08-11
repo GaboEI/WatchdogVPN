@@ -4,6 +4,7 @@ set -euo pipefail
 SYSTEMD_UNITS=(
   watchdogvpn.service
   watchdogvpn-nm-dns-restore.service
+  watchdogvpn-nm-tun-cleanup.service
   vpn-domain-bypass.service
   vpn-domain-bypass.timer
   myvpn-logrotate.service

@@ -2083,7 +2083,10 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertIn(["ip", "-6", "route", "flush", "table", "1771114712"], commands)
         self.assertIn(["ip", "route", "flush", "table", "2022"], commands)
         self.assertIn(["ip", "-6", "route", "flush", "table", "2022"], commands)
-        self.assertIn(["nmcli", "con", "delete", "wdvpn-tun0"], commands)
+        self.assertIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
+            commands,
+        )
         self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
 
     @patch("drivers.singbox_driver.shutil.which", return_value=None)
@@ -2112,8 +2115,55 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.driver._cleanup_tun_residue()
 
         commands = [call.args[0] for call in run_mock.call_args_list]
-        self.assertIn(["nmcli", "con", "delete", "wdvpn-tun0"], commands)
+        self.assertIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
+            commands,
+        )
+        self.assertNotIn(["nmcli", "con", "delete", "wdvpn-tun0"], commands)
         self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_disconnect_fails_when_privileged_networkmanager_cleanup_cannot_start(
+        self, run_mock, which_mock
+    ) -> None:
+        process = unittest.mock.Mock()
+        process.poll.side_effect = [None, 0, 0]
+        process.wait.return_value = 0
+        self.driver._process = process
+        self.driver._tun_expected = True
+
+        def run(command, **kwargs):
+            return subprocess.CompletedProcess(
+                command,
+                1 if command == ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"] else 0,
+                stdout="",
+                stderr="denied",
+            )
+
+        run_mock.side_effect = run
+
+        self.assertFalse(self.driver.disconnect())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_disconnect_fails_when_privileged_networkmanager_cleanup_times_out(
+        self, run_mock, which_mock
+    ) -> None:
+        process = unittest.mock.Mock()
+        process.poll.side_effect = [None, 0, 0]
+        process.wait.return_value = 0
+        self.driver._process = process
+        self.driver._tun_expected = True
+
+        def run(command, **kwargs):
+            if command == ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"]:
+                raise subprocess.TimeoutExpired(command, 15)
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+
+        self.assertFalse(self.driver.disconnect())
 
     @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
     def test_apply_lan_gateway_installs_nft_rules_then_enables_forwarding(self, which_mock) -> None:

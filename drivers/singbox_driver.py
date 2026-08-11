@@ -1177,7 +1177,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._tun_cleanup_route_tables = route_tables
         self._cleanup_tun_residue()
 
-    def _cleanup_tun_residue(self) -> None:
+    def _cleanup_tun_residue(self) -> bool:
         """Best-effort cleanup for sing-box TUN state after child crashes."""
         rule_prefs = self._tun_cleanup_rule_prefs
         route_tables = self._tun_cleanup_route_tables
@@ -1193,10 +1193,11 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             for table in route_tables:
                 self._run_cleanup_command(["ip", "route", "flush", "table", table])
                 self._run_cleanup_command(["ip", "-6", "route", "flush", "table", table])
-        self._forget_networkmanager_tun_connection()
+        networkmanager_cleanup_ok = self._forget_networkmanager_tun_connection()
         self._clear_tun_cleanup_state()
+        return networkmanager_cleanup_ok
 
-    def _forget_networkmanager_tun_connection(self) -> None:
+    def _forget_networkmanager_tun_connection(self) -> bool:
         # On a NetworkManager-managed system, NM auto-adopts a newly-seen
         # interface like wdvpn-tun0 into its own persistent connection
         # profile (autoconnect on by default). Merely killing the sing-box
@@ -1214,11 +1215,23 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         # wherever NetworkManager is absent or never adopted the interface.
         if not shutil.which("nmcli"):
             self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
-            return
-        self._run_cleanup_command(["nmcli", "con", "delete", "wdvpn-tun0"])
+            return True
+        try:
+            result = subprocess.run(
+                ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=15,
+            )
+            helper_started = result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            helper_started = False
         # sing-box normally releases its TUN on exit, but a failed auto-route
         # teardown can leave the kernel link behind without an owning process.
         self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
+        return helper_started
 
     def _append_log(self, message: str) -> None:
         _, log_path = self._ensure_runtime_paths()
@@ -1747,6 +1760,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._active_mode = "global"
         self._tun_expected = False
         stopped = True
+        tun_cleanup_ok = True
         try:
             if process is not None and process.poll() is None:
                 process.terminate()
@@ -1763,7 +1777,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             self._cleanup_lan_gateway()
             process_stopped = process is None or process.poll() is not None
             if cleanup_tun_residue and process_stopped:
-                self._cleanup_tun_residue()
+                tun_cleanup_ok = self._cleanup_tun_residue()
             # Best-effort sweep of every child this driver type has ever
             # recorded, not just the one this instance held a reference to -
             # catches anything orphaned by a past bug or crash too.
@@ -1775,7 +1789,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 self.last_error = "system DNS cache invalidation failed for FakeIP deactivation"
                 return False
             self._fakeip_cache_flush_required = False
-        return stopped
+        return stopped and tun_cleanup_ok
 
     def _owned_proxy_egress_ready(self) -> bool:
         """Require the active sing-box process to own both proxy listeners.
