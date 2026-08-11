@@ -2952,30 +2952,35 @@ construction. Commit `300353c` closed that race by making the exact
 smoke-approved generation digest a mandatory active-publication precondition. A
 later stricter audit rejected the broader H1 blocker because dirty,
 unversioned/unverifiable source and absent/legacy provenance still degraded
-instead of failing closed. The current remediation changes that contract:
-install/update preflight rejects dirty or untracked source, manifest publication
-rejects non-clean attribution, existing unattributed manifests fail verification,
-and `doctor.sh` marks missing/legacy hashed provenance as `FAIL`.
+instead of failing closed, and because TUN cleanup still selected NetworkManager
+profiles by global name. The strict remediation changes that contract: `8476757`
+makes install/update preflight reject dirty or untracked source, manifest
+publication reject non-clean attribution, existing unattributed manifests fail
+verification, and `doctor.sh` mark missing/legacy hashed provenance as `FAIL`.
+It also replaces name-only TUN cleanup with a root-owned registered UUID. Commit
+`961bd3f` fixes the real Kali update failure where root-owned staging required
+`sudo` for compileall.
 
-The earlier local validation for `300353c` passed 2391 Python tests with 2
-skips, `tests/unit.sh`, `tests/syntax.sh`, compileall and `git diff --check`.
-GitHub L2 run `31531786946` passed on exact commit `300353c`. The stricter
-remediation requires a new validation and audit before H1 can be declared closed
-under the original blocker wording.
+Strict-remediation local validation passed 2398 Python tests with 2 skips,
+`tests/unit.sh`, `tests/syntax.sh`, compileall, manifest validation and
+`git diff --check`. The stricter remediation still requires independent judge
+re-audit before H1 can be declared closed under the original blocker wording.
 
-The bridge-only Kali installation on exact commit `300353c` published
-`source_state=clean`, 246 inventoried entries, tree digest
-`6ca44a54064cc4cf9fea0a84b34d926648e80e93c871390a288393298b908e45`,
+The bridge-only Kali installation on exact commit `961bd3f` published
+`source_state=clean`, 247 inventoried entries, tree digest
+`c0f3bab32f46b46f236bf28dad379e14c9b286000736659293ceb1e39b8937f8`,
 generation digest
-`96125c76f8ef68ee755dca09b319bfe2cfcd2c399943dd3ca693cdaf24fdc68f`,
+`d71959d16e457a8d0530c3efc7dc0153f2fc0fe624e0abecb1f6ab6bdefd8c29`,
 and manifest digest
-`d16f20f170263720fe9510fd4210d6c6d0fd06ed1d8f2a3846fdbbe84f075231`.
-The active daemon reported the same generation through PID 30443, with the exact
-fragment, no drop-ins and the expected wrapper `ExecStart`. Controlled installed
-file drift returned exit 2; restoration returned both tree and daemon checks to
-`verified`. An intentionally wrong smoke digest also returned exit 2 before
-manifest publication. Final state was standby with only the bridge interface and
-normal DHCP route/rules, and no sing-box runtime residue.
+`04af7408e0e602282fcdebc58394542d210114a35ae4a896a36eee14fe707e36`.
+The active daemon reported the same generation. A deliberately untracked source
+file made `update.sh --dry-run` fail closed before replacement. Polkit allowed
+the service user to start only `watchdogvpn-nm-tun-register.service` and
+`watchdogvpn-nm-tun-cleanup.service`; it denied unrelated systemd actions and
+foreign NetworkManager profile mutation/delete/add attempts, including
+`connection.id`, `ipv4.gateway`, `ipv4.routes`, `proxy.method` and
+`ipv4.dns-search`. The dummy profiles created for the negative checks were
+removed and no dummy residue remained.
 
 The installed doctor correctly retained one global `FAIL` because Kali remains
 `experimental`; that is not an H1 failure or support promotion. H1 creates no
