@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
+import secrets
+import stat
 from pathlib import Path
 from uuid import UUID
 
 
 CONNECTION_NAME = "wdvpn-tun0"
 CONNECTION_TYPE = "tun"
-OWNED_UUIDS_PATH = Path("/run/watchdogvpn/networkmanager-tun-owned-uuids")
+OWNED_UUIDS_PATH = Path("/run/watchdogvpn-nm-tun/owned-uuid")
 EXPECTED_REGISTRY_UID = 0
 EXPECTED_REGISTRY_GID = 0
+EXPECTED_REGISTRY_DIR_MODE = 0o700
+EXPECTED_REGISTRY_FILE_MODE = 0o600
 
 
 class NetworkManagerTunCleanupError(RuntimeError):
@@ -80,45 +85,150 @@ def _parse_connection_rows(output: str) -> list[tuple[str, str, str, str]]:
 def _write_owned_uuid_registry(connection_uuid: str) -> None:
     if not _is_uuid(connection_uuid):
         raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN UUID")
+    parent_fd: int | None = None
+    tmp_name: str | None = None
     try:
-        OWNED_UUIDS_PATH.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        tmp_path = OWNED_UUIDS_PATH.with_name(f".{OWNED_UUIDS_PATH.name}.tmp")
-        tmp_path.write_text(f"{connection_uuid}\n", encoding="ascii")
-        tmp_path.chmod(0o600)
-        tmp_path.replace(OWNED_UUIDS_PATH)
+        _ensure_registry_parent()
+        parent_fd = _open_registry_parent()
+        _validate_registry_parent_fd(parent_fd)
+        payload = f"{connection_uuid}\n".encode("ascii")
+        for _attempt in range(10):
+            tmp_name = f".{OWNED_UUIDS_PATH.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                tmp_fd = os.open(tmp_name, flags, EXPECTED_REGISTRY_FILE_MODE, dir_fd=parent_fd)
+                break
+            except FileExistsError:
+                tmp_name = None
+        else:
+            raise NetworkManagerTunCleanupError("cannot allocate WatchdogVPN NetworkManager TUN ownership registry")
+        try:
+            os.write(tmp_fd, payload)
+            os.fchmod(tmp_fd, EXPECTED_REGISTRY_FILE_MODE)
+            tmp_stat = os.fstat(tmp_fd)
+            _validate_registry_file_stat(tmp_stat)
+            os.fsync(tmp_fd)
+        finally:
+            os.close(tmp_fd)
+        os.rename(tmp_name, OWNED_UUIDS_PATH.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        tmp_name = None
+        os.fsync(parent_fd)
+        _read_owned_uuid_registry()
     except OSError as exc:
         raise NetworkManagerTunCleanupError("cannot record WatchdogVPN NetworkManager TUN ownership") from exc
+    finally:
+        if tmp_name is not None and parent_fd is not None:
+            try:
+                os.unlink(tmp_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def _read_owned_uuid_registry() -> str | None:
+    parent_fd: int | None = None
+    file_fd: int | None = None
     try:
-        path_stat = OWNED_UUIDS_PATH.stat()
+        parent_fd = _open_registry_parent()
+        file_fd = os.open(
+            OWNED_UUIDS_PATH.name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
     except FileNotFoundError:
         return None
     except OSError as exc:
         raise NetworkManagerTunCleanupError("cannot inspect WatchdogVPN NetworkManager TUN ownership") from exc
-    if (
-        path_stat.st_uid != EXPECTED_REGISTRY_UID
-        or path_stat.st_gid != EXPECTED_REGISTRY_GID
-        or path_stat.st_mode & 0o177
-    ):
-        raise NetworkManagerTunCleanupError("unsafe WatchdogVPN NetworkManager TUN ownership registry")
     try:
-        value = OWNED_UUIDS_PATH.read_text(encoding="ascii").strip()
+        _validate_registry_parent_fd(parent_fd)
+        path_stat = os.fstat(file_fd)
+        _validate_registry_file_stat(path_stat)
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(file_fd, 128)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if sum(len(part) for part in chunks) > 128:
+                raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN ownership registry")
+        value = b"".join(chunks).decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN ownership registry") from exc
     except OSError as exc:
         raise NetworkManagerTunCleanupError("cannot read WatchdogVPN NetworkManager TUN ownership") from exc
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
     if not _is_uuid(value):
         raise NetworkManagerTunCleanupError("invalid WatchdogVPN NetworkManager TUN ownership registry")
     return value
 
 
 def _remove_owned_uuid_registry() -> None:
+    parent_fd: int | None = None
     try:
-        OWNED_UUIDS_PATH.unlink()
+        parent_fd = _open_registry_parent()
+        _validate_registry_parent_fd(parent_fd)
+        os.unlink(OWNED_UUIDS_PATH.name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
     except FileNotFoundError:
         return
     except OSError as exc:
         raise NetworkManagerTunCleanupError("cannot remove WatchdogVPN NetworkManager TUN ownership") from exc
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
+
+
+def _ensure_registry_parent() -> None:
+    try:
+        try:
+            parent_stat = OWNED_UUIDS_PATH.parent.lstat()
+        except FileNotFoundError:
+            OWNED_UUIDS_PATH.parent.mkdir(mode=EXPECTED_REGISTRY_DIR_MODE, parents=True, exist_ok=False)
+        else:
+            if not stat.S_ISDIR(parent_stat.st_mode):
+                raise NetworkManagerTunCleanupError("unsafe WatchdogVPN NetworkManager TUN ownership directory")
+    except OSError as exc:
+        raise NetworkManagerTunCleanupError("cannot prepare WatchdogVPN NetworkManager TUN ownership directory") from exc
+
+
+def _open_registry_parent() -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        return os.open(OWNED_UUIDS_PATH.parent, flags)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise NetworkManagerTunCleanupError("cannot inspect WatchdogVPN NetworkManager TUN ownership directory") from exc
+
+
+def _validate_registry_parent_fd(parent_fd: int) -> None:
+    parent_stat = os.fstat(parent_fd)
+    if not stat.S_ISDIR(parent_stat.st_mode):
+        raise NetworkManagerTunCleanupError("unsafe WatchdogVPN NetworkManager TUN ownership directory")
+    if (
+        parent_stat.st_uid != EXPECTED_REGISTRY_UID
+        or parent_stat.st_gid != EXPECTED_REGISTRY_GID
+        or stat.S_IMODE(parent_stat.st_mode) != EXPECTED_REGISTRY_DIR_MODE
+    ):
+        raise NetworkManagerTunCleanupError("unsafe WatchdogVPN NetworkManager TUN ownership directory")
+
+
+def _validate_registry_file_stat(path_stat: os.stat_result) -> None:
+    if not stat.S_ISREG(path_stat.st_mode):
+        raise NetworkManagerTunCleanupError("unsafe WatchdogVPN NetworkManager TUN ownership registry")
+    if (
+        path_stat.st_uid != EXPECTED_REGISTRY_UID
+        or path_stat.st_gid != EXPECTED_REGISTRY_GID
+        or stat.S_IMODE(path_stat.st_mode) != EXPECTED_REGISTRY_FILE_MODE
+    ):
+        raise NetworkManagerTunCleanupError("unsafe WatchdogVPN NetworkManager TUN ownership registry")
 
 
 def _run_nmcli(command: list[str]) -> subprocess.CompletedProcess[str]:

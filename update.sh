@@ -213,6 +213,9 @@ print_update_plan() {
 print_title "$PROJECT_NAME Update"
 print_preservation_contract
 
+print_section "Source provenance preflight"
+require_clean_source_checkout
+
 require_supported_distro
 require_existing_installation
 
@@ -225,8 +228,6 @@ print_section "Runtime dependencies"
 validate_required_commands
 validate_polkit_runtime_dependency
 validate_python_runtime_dependencies
-install_official_singbox
-install_official_cloak
 
 if ((RUN_DOCTOR == 1)); then
   print_section "Read-only preflight"
@@ -238,7 +239,6 @@ if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
 fi
 
 print_section "Runtime validation"
-require_clean_source_checkout
 validate_repo_runtime
 print_update_plan
 
@@ -249,6 +249,9 @@ fi
 
 capture_watchdogvpn_service_state
 runtime_transaction_begin
+print_section "Protocol runtime provisioning"
+install_official_singbox
+install_official_cloak
 print_section "Replace product files"
 install_runtime_files
 print_section "Systemd verification"

@@ -353,6 +353,9 @@ print_install_plan() {
 print_title "$PROJECT_NAME Installer"
 printf 'Installs WatchdogVPN and guides backend setup.\n'
 
+print_section "Source provenance preflight"
+require_clean_source_checkout
+
 require_supported_distro
 require_system_shape
 
@@ -388,10 +391,12 @@ if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
 fi
 
 print_section "Runtime validation"
-require_clean_source_checkout
 validate_repo_runtime
 capture_watchdogvpn_service_state
 runtime_transaction_begin
+print_section "Protocol runtime provisioning"
+install_official_singbox
+install_official_cloak
 print_section "Install runtime"
 install_runtime_files
 apply_backend_install_selection

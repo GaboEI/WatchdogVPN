@@ -52,6 +52,16 @@ assert_install_order() {
   fi
 }
 
+assert_script_body_order() {
+  local file="$1" first="$2" second="$3" message="$4" first_line second_line
+  first_line="$(awk -v pat="$first" 'seen && $0 ~ pat {print NR; exit} /^print_title / {seen=1}' "$file")"
+  second_line="$(awk -v pat="$second" 'seen && $0 ~ pat {print NR; exit} /^print_title / {seen=1}' "$file")"
+  if [[ -z "$first_line" || -z "$second_line" || "$first_line" -ge "$second_line" ]]; then
+    printf 'FAIL: %s\n' "$message" >&2
+    exit 1
+  fi
+}
+
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700' "domain bypass helper must be installed root-only executable"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_config_defaults' "runtime install must create persistent config defaults"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'migrate_watchdogvpn_shared_state' "runtime install must migrate shared WatchdogVPN state"
@@ -120,6 +130,19 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/l
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-cleanup drivers.networkmanager_tun_cleanup' "runtime install must deploy the fixed NetworkManager TUN cleanup helper"
 assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-dns-restore.service" 'User=root' "DNS restore unit must execute as root"
 assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-dns-restore.service" 'ReadWritePaths=/var/lib/watchdogvpn/nm-dns-restore' "DNS restore unit must only write its root snapshot directory"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'RuntimeDirectory=watchdogvpn-nm-tun' "TUN ownership register unit must use a root-owned runtime directory"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'RuntimeDirectoryMode=0700' "TUN ownership register runtime directory must be root-only"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'RuntimeDirectoryPreserve=yes' "TUN ownership register state must survive until cleanup"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'ReadWritePaths=/run/watchdogvpn-nm-tun' "TUN ownership register unit must not write under daemon-controlled /run/watchdogvpn"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'RuntimeDirectory=watchdogvpn-nm-tun' "TUN cleanup unit must read the root-owned runtime directory"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'RuntimeDirectoryMode=0700' "TUN cleanup runtime directory must be root-only"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'RuntimeDirectoryPreserve=yes' "TUN cleanup state must not vanish before cleanup"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'ReadWritePaths=/run/watchdogvpn-nm-tun' "TUN cleanup unit must not write under daemon-controlled /run/watchdogvpn"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'OWNED_UUIDS_PATH = Path("/run/watchdogvpn-nm-tun/owned-uuid")' "TUN ownership registry must live outside daemon-controlled /run/watchdogvpn"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'os.O_EXCL' "TUN ownership registry temp creation must reject precreated paths"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'O_NOFOLLOW' "TUN ownership registry must reject symlink traversal"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'os.fstat' "TUN ownership registry must validate descriptor identity"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'os.fsync(parent_fd)' "TUN ownership registry must fsync parent directory after atomic updates"
 assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'ExecStart=/usr/local/bin/watchdogvpn-nm-tun-cleanup' "TUN cleanup unit must execute only the fixed no-argument helper"
 assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'ExecStart=/usr/local/bin/watchdogvpn-nm-tun-register' "TUN register unit must execute only the fixed no-argument helper"
 assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'subject.user === "watchdogvpn"' "polkit policy must scope authorization to the service account"
@@ -128,6 +151,12 @@ assert_contains "$ROOT_DIR/install.sh" 'validate_polkit_runtime_dependency' "ins
 assert_contains "$ROOT_DIR/update.sh" 'validate_polkit_runtime_dependency' "updater must validate the resolver authorization runtime before replacement"
 assert_contains "$ROOT_DIR/install.sh" 'require_clean_source_checkout' "installer must fail closed before publication from dirty or unverifiable source"
 assert_contains "$ROOT_DIR/update.sh" 'require_clean_source_checkout' "updater must fail closed before publication from dirty or unverifiable source"
+assert_script_body_order "$ROOT_DIR/install.sh" 'require_clean_source_checkout' 'require_supported_distro' "installer must reject dirty source before distro checks or other preflight"
+assert_script_body_order "$ROOT_DIR/install.sh" 'require_clean_source_checkout' 'install_official_singbox' "installer must reject dirty source before dependency provisioning"
+assert_script_body_order "$ROOT_DIR/install.sh" 'require_clean_source_checkout' 'install_runtime_files' "installer must reject dirty source before runtime mutation"
+assert_script_body_order "$ROOT_DIR/update.sh" 'require_clean_source_checkout' 'require_supported_distro' "updater must reject dirty source before distro checks or other preflight"
+assert_script_body_order "$ROOT_DIR/update.sh" 'require_clean_source_checkout' 'install_official_singbox' "updater must reject dirty source before dependency provisioning"
+assert_script_body_order "$ROOT_DIR/update.sh" 'require_clean_source_checkout' 'install_runtime_files' "updater must reject dirty source before runtime mutation"
 assert_contains "$ROOT_DIR/lib/version_marker.sh" 'git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=all' "source provenance preflight must reject uncommitted and untracked source"
 assert_contains "$ROOT_DIR/distros/arch.sh" 'DISTRO_POLKIT_PACKAGE="polkit"' "Arch-family installs must name the polkit runtime package"
 assert_contains "$ROOT_DIR/distros/debian.sh" 'DISTRO_POLKIT_PACKAGE="polkitd"' "Debian-family installs must name the polkit daemon package"
