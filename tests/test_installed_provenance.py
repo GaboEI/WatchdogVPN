@@ -73,17 +73,41 @@ class InstalledProvenanceTests(unittest.TestCase):
         self.assertEqual(result["commit"], "a" * 40)
         self.assertEqual(result["tree_sha256"], manifest["tree_sha256"])
 
-    def test_dirty_source_is_recorded_without_claiming_attributable_commit(self) -> None:
-        self.build_manifest(source_state="dirty")
+    def test_dirty_source_refuses_publication(self) -> None:
+        with self.assertRaisesRegex(installed_provenance.ProvenanceError, "not attributable"):
+            self.build_manifest(source_state="dirty")
 
-        result = installed_provenance.verify_installation(
-            marker_path=self.marker_path,
-            manifest_path=self.manifest_path,
-            installed_root=self.installed_root,
+    def test_unversioned_source_refuses_publication(self) -> None:
+        identity = installed_provenance.SourceIdentity(commit="unknown", state="unversioned")
+        with patch.object(installed_provenance, "source_identity", return_value=identity):
+            with self.assertRaisesRegex(installed_provenance.ProvenanceError, "not attributable"):
+                installed_provenance.build_manifest(
+                    source_root=self.source_root,
+                    installed_root=self.installed_root,
+                    includes=("daemon", "tools"),
+                    deployment_paths=self.deployment_paths,
+                    installed_at="2026-08-11T00:00:00Z",
+                )
+
+    def test_existing_unattributed_manifest_is_rejected(self) -> None:
+        manifest = self.build_manifest()
+        manifest["source_state"] = "dirty"
+        installed_provenance.write_manifest(self.manifest_path, manifest)
+        manifest_sha256 = hashlib.sha256(self.manifest_path.read_bytes()).hexdigest()
+        self.marker_path.write_text(
+            "schema_version=2\n"
+            f"commit={'a' * 40}\n"
+            "installed_at=2026-08-11T00:00:00Z\n"
+            f"manifest_sha256={manifest_sha256}\n",
+            encoding="utf-8",
         )
 
-        self.assertEqual(result["status"], "tree_verified_source_unattributed")
-        self.assertEqual(result["source_state"], "dirty")
+        with self.assertRaisesRegex(installed_provenance.ProvenanceError, "not attributable"):
+            installed_provenance.verify_installation(
+                marker_path=self.marker_path,
+                manifest_path=self.manifest_path,
+                installed_root=self.installed_root,
+            )
 
     def test_modified_installed_file_is_rejected(self) -> None:
         self.build_manifest()
@@ -503,14 +527,14 @@ class InstalledProvenanceTests(unittest.TestCase):
 
         (self.source_root / "daemon" / "main.py").write_text("VALUE = 2\n", encoding="utf-8")
         (self.installed_root / "daemon" / "main.py").write_text("VALUE = 2\n", encoding="utf-8")
-        dirty_manifest = installed_provenance.build_manifest(
-            source_root=self.source_root,
-            installed_root=self.installed_root,
-            includes=("daemon", "tools"),
-            deployment_paths=self.deployment_paths,
-            installed_at="2026-08-11T00:00:00Z",
-        )
-        self.assertEqual(dirty_manifest["source_state"], "dirty")
+        with self.assertRaisesRegex(installed_provenance.ProvenanceError, "not attributable"):
+            installed_provenance.build_manifest(
+                source_root=self.source_root,
+                installed_root=self.installed_root,
+                includes=("daemon", "tools"),
+                deployment_paths=self.deployment_paths,
+                installed_at="2026-08-11T00:00:00Z",
+            )
 
 
 if __name__ == "__main__":

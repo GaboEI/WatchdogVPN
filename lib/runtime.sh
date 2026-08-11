@@ -109,6 +109,7 @@ install_runtime_files() {
   install_root_file "$runtime_root/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
   install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main
   install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-dns-restore dns.networkmanager_restore
+  install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-register drivers.networkmanager_tun_cleanup
   install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-cleanup drivers.networkmanager_tun_cleanup
 
   install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700

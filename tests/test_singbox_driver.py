@@ -1738,6 +1738,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(driver, "health_check", return_value="ok"),
             patch.object(driver, "_ip_rule_lines", return_value=()),
             patch.object(driver, "_capture_tun_cleanup_state"),
+            patch.object(driver, "_record_networkmanager_tun_connection", return_value=True),
             patch.object(driver, "_cleanup_tun_residue"),
         ):
             self.assertTrue(
@@ -1768,6 +1769,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(driver, "health_check", return_value="ok"),
             patch.object(driver, "_ip_rule_lines", return_value=()),
             patch.object(driver, "_capture_tun_cleanup_state"),
+            patch.object(driver, "_record_networkmanager_tun_connection", return_value=True),
             patch.object(driver, "_cleanup_tun_residue"),
         ):
             self.assertFalse(
@@ -1798,6 +1800,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(driver, "health_check", return_value="ok"),
             patch.object(driver, "_ip_rule_lines", return_value=()),
             patch.object(driver, "_capture_tun_cleanup_state"),
+            patch.object(driver, "_record_networkmanager_tun_connection", return_value=True),
         ):
             self.assertTrue(
                 driver.connect(
@@ -1921,11 +1924,36 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
             patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
             patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
+            patch.object(SingBoxDriver, "_record_networkmanager_tun_connection", return_value=True),
         ):
             self.assertTrue(self.driver.connect(self.profile, mode="tun", management_peers=()))
 
         self.assertEqual(self.driver._active_mode, "tun")
         self.assertTrue(self.driver._tun_expected)
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_connect_tun_rejects_unregistered_networkmanager_ownership(
+        self, popen_mock, generate_mock, binary_mock
+    ) -> None:
+        process = popen_mock.return_value
+        process.poll.return_value = None
+        process.pid = 4242
+
+        with (
+            patch.object(SingBoxDriver, "_wait_for_proxy_port", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_interface", return_value=True),
+            patch.object(SingBoxDriver, "_wait_for_tun_auto_redirect_ready", return_value=True),
+            patch.object(SingBoxDriver, "_owned_proxy_egress_ready", return_value=True),
+            patch.object(SingBoxDriver, "_ip_rule_lines", return_value=()),
+            patch.object(SingBoxDriver, "_record_networkmanager_tun_connection", return_value=False),
+            patch.object(SingBoxDriver, "disconnect", return_value=True) as disconnect_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile, mode="tun", management_peers=()))
+
+        self.assertIn("NetworkManager TUN ownership registration failed", self.driver.last_error)
+        disconnect_mock.assert_called_once()
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")

@@ -1197,6 +1197,22 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._clear_tun_cleanup_state()
         return networkmanager_cleanup_ok
 
+    def _record_networkmanager_tun_connection(self) -> bool:
+        if not shutil.which("nmcli"):
+            return True
+        try:
+            result = subprocess.run(
+                ["systemctl", "start", "watchdogvpn-nm-tun-register.service"],
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=15,
+            )
+            return result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
     def _forget_networkmanager_tun_connection(self) -> bool:
         # On a NetworkManager-managed system, NM auto-adopts a newly-seen
         # interface like wdvpn-tun0 into its own persistent connection
@@ -1728,6 +1744,12 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         if self._process.poll() is None and self.health_check() == "ok":
             if self._tun_expected:
                 self._capture_tun_cleanup_state()
+                if not self._record_networkmanager_tun_connection():
+                    self.last_error = "NetworkManager TUN ownership registration failed"
+                    self._connected_at = None
+                    self._active_profile = None
+                    self.disconnect()
+                    return False
             if self._fakeip_cache_flush_required and not self._dns_cache_flusher():
                 self.last_error = "system DNS cache invalidation failed for FakeIP activation"
                 self._connected_at = None

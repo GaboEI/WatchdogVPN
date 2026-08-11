@@ -2909,9 +2909,12 @@ and canonical tree/generation digests. The public `installed-version` marker
 binds that manifest by SHA-256. A commit is attributable only when each observed
 shipped path's type, executable mode and bytes match the immutable blobs of the
 resolved `HEAD`, with no extra shipped paths. Dirty, unversioned or unverifiable
-sources can prove only the observed tree and are explicitly labeled
-`tree_verified_source_unattributed`; legacy commit-only markers remain readable
-but cannot satisfy H1. An incomplete schema-2 marker/manifest pair fails closed.
+sources fail closed before publication; install/update require a clean committed
+checkout before replacing runtime files, and the provenance builder repeats the
+Git-blob attribution check before writing the manifest. Legacy commit-only
+markers remain readable for version-skew diagnostics but cannot satisfy H1. A
+missing marker, a legacy marker or an incomplete schema-2 marker/manifest pair
+is a hard doctor failure for an H1 runtime.
 
 Before publication, install/update compare the active wrapper and unit with
 their pre-deployment expected hashes, reject an effective fragment, drop-in or
@@ -2941,19 +2944,24 @@ H1 changes neither `compat/compatibility.json` nor any Kali support evidence.
 It provides a prerequisite for future installed validation; it does not recover
 or retroactively attribute the historical unavailable commit.
 
-### H1 validation and closure (2026-08-11)
+### H1 validation and strict-contract remediation (2026-08-11)
 
-H1 was implemented in `df836ee` and its independent acceptance audit found one
-HIGH race between the successful active-daemon smoke and manifest construction.
-Commit `300353c` closes that finding by making the exact smoke-approved
-generation digest a mandatory active-publication precondition. A changed mode,
-byte, wrapper or unit between those steps now refuses publication inside the
-runtime transaction. The same audit was resumed after the correction and ended
-with `TAREA_APROBADA`, no new findings.
+H1 was implemented in `df836ee` and its first independent acceptance audit found
+one HIGH race between the successful active-daemon smoke and manifest
+construction. Commit `300353c` closed that race by making the exact
+smoke-approved generation digest a mandatory active-publication precondition. A
+later stricter audit rejected the broader H1 blocker because dirty,
+unversioned/unverifiable source and absent/legacy provenance still degraded
+instead of failing closed. The current remediation changes that contract:
+install/update preflight rejects dirty or untracked source, manifest publication
+rejects non-clean attribution, existing unattributed manifests fail verification,
+and `doctor.sh` marks missing/legacy hashed provenance as `FAIL`.
 
-Final local validation passed 2391 Python tests with 2 skips, `tests/unit.sh`,
-`tests/syntax.sh`, compileall and `git diff --check`. GitHub L2 run
-`31531786946` passed on exact commit `300353c`.
+The earlier local validation for `300353c` passed 2391 Python tests with 2
+skips, `tests/unit.sh`, `tests/syntax.sh`, compileall and `git diff --check`.
+GitHub L2 run `31531786946` passed on exact commit `300353c`. The stricter
+remediation requires a new validation and audit before H1 can be declared closed
+under the original blocker wording.
 
 The bridge-only Kali installation on exact commit `300353c` published
 `source_state=clean`, 246 inventoried entries, tree digest

@@ -495,7 +495,7 @@ case "$provenance_rc" in
       info "$provenance_output"
       info "recovery: stop using the installed runtime and run ./update.sh from a trusted clean checkout"
     else
-      mark_warn "installed runtime has no attributable hashed provenance"
+      mark_fail "installed runtime has no attributable hashed provenance"
       info "$provenance_output"
       info "recovery: run ./update.sh from a clean committed checkout"
     fi

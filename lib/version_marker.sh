@@ -134,3 +134,19 @@ installed_provenance_layout_state() {
 source_checkout_commit() {
   git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null
 }
+
+require_clean_source_checkout() {
+  local commit status_output
+  commit="$(git -C "$ROOT_DIR" rev-parse --verify HEAD^{commit} 2>/dev/null || true)"
+  if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+    fail "source checkout is not a verifiable git commit"
+    printf 'Run install/update from a committed WatchdogVPN git checkout.\n' >&2
+    return 1
+  fi
+  status_output="$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=all 2>/dev/null || true)"
+  if [[ -n "$status_output" ]]; then
+    fail "source checkout has uncommitted or untracked changes"
+    printf 'Install/update requires a clean committed source tree for attributable provenance.\n' >&2
+    return 1
+  fi
+}

@@ -774,6 +774,10 @@ def build_manifest(
         normalized_includes,
         source_entries,
     )
+    if identity.state != "clean" or identity.commit == "unknown":
+        raise ProvenanceError(
+            f"source checkout is not attributable to a clean committed tree: {identity.state}"
+        )
     runtime_tree_digest = tree_sha256(installed_entries)
     generation_digest = generation_sha256(runtime_tree_digest, deployments)
     if expected_generation_sha256 is not None:
@@ -1027,11 +1031,10 @@ def verify_installation(
             expected_uid=expected_uid,
             expected_gid=expected_gid,
         )
-    status = "verified"
     if manifest["source_state"] != "clean" or manifest["source_commit"] == "unknown":
-        status = "tree_verified_source_unattributed"
+        raise ProvenanceError("installed provenance source is not attributable to a clean committed tree")
     return {
-        "status": status,
+        "status": "verified",
         "commit": manifest["source_commit"],
         "source_state": manifest["source_state"],
         "installed_at": manifest["installed_at"],

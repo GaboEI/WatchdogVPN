@@ -388,6 +388,7 @@ if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
 fi
 
 print_section "Runtime validation"
+require_clean_source_checkout
 validate_repo_runtime
 capture_watchdogvpn_service_state
 runtime_transaction_begin

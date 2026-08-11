@@ -238,6 +238,7 @@ if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
 fi
 
 print_section "Runtime validation"
+require_clean_source_checkout
 validate_repo_runtime
 print_update_plan
 

@@ -8,6 +8,7 @@ polkit.addRule(function(action, subject) {
     }
     if (action.id === "org.freedesktop.systemd1.manage-units" &&
         (action.lookup("unit") === "watchdogvpn-nm-dns-restore.service" ||
+         action.lookup("unit") === "watchdogvpn-nm-tun-register.service" ||
          action.lookup("unit") === "watchdogvpn-nm-tun-cleanup.service") &&
         action.lookup("verb") === "start" && subject.user === "watchdogvpn") {
         return polkit.Result.YES;

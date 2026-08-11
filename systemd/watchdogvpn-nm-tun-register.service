@@ -1,12 +1,12 @@
 [Unit]
-Description=Remove the stale WatchdogVPN NetworkManager TUN connection
+Description=Record the active WatchdogVPN NetworkManager TUN connection identity
 
 [Service]
 Type=oneshot
 User=root
 Group=root
 UMask=0077
-ExecStart=/usr/local/bin/watchdogvpn-nm-tun-cleanup
+ExecStart=/usr/local/bin/watchdogvpn-nm-tun-register
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

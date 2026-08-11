@@ -1533,6 +1533,7 @@ class WatchdogCoreTests(unittest.TestCase):
 
         with (
             patch.object(SingBoxDriver, "preflight_management_path", return_value=()),
+            patch.object(SingBoxDriver, "_record_networkmanager_tun_connection", return_value=True),
             patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="ok")),
         ):
             self.assertTrue(runtime.connect(profile))

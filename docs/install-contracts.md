@@ -230,12 +230,13 @@ The source commit is attributable only when the observed type, executable mode
 and bytes of every shipped source path match the corresponding blobs in the
 resolved `HEAD` commit, with no extra shipped paths. This compares the hashed
 observation directly with immutable Git objects rather than trusting a later
-working-tree status check. An unversioned, unverifiable or dirty source may
-retain a tree-integrity record for diagnostics, but it is reported as
-`tree_verified_source_unattributed`, never as commit-attributable provenance.
-Legacy commit-only markers remain readable for version-skew diagnostics and are
-explicitly reported as lacking hashed provenance. A schema-2 marker without its
-manifest, or a manifest without its schema-2 marker, is a hard failure.
+working-tree status check. An unversioned, unverifiable or dirty source is never
+published: install/update first require a clean committed checkout, and the
+builder repeats the attribution check before writing the marker and manifest.
+Legacy commit-only markers remain readable for version-skew diagnostics but are
+reported as lacking hashed provenance and make H1 doctor verification fail. A
+schema-2 marker without its manifest, a manifest without its schema-2 marker, or
+a fully missing marker is a hard failure for an H1 runtime.
 
 Before publication, the installer compares the deployed unit with its verified
 runtime-tree copy and the deployed wrapper with the hash retained when that
