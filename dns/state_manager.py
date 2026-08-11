@@ -27,6 +27,7 @@ class DNSStateError(RuntimeError):
 
 
 DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
+PRODUCT_OWNED_NETWORKMANAGER_CONNECTIONS = frozenset({"wdvpn-tun0", "watchdogvpn_awg"})
 
 
 def default_snapshot_path() -> Path:
@@ -263,6 +264,11 @@ class SystemDNSStateManager:
                 continue
             name, connection_type, device = fields[:3]
             if connection_type == "loopback" or device in {"", "lo"}:
+                continue
+            if (
+                name in PRODUCT_OWNED_NETWORKMANAGER_CONNECTIONS
+                or device in PRODUCT_OWNED_NETWORKMANAGER_CONNECTIONS
+            ):
                 continue
             states.append(
                 NetworkManagerConnectionState(
