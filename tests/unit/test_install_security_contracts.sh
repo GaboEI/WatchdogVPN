@@ -6,7 +6,7 @@ CERTIFICATION_VAGRANTFILE="$ROOT_DIR/tests/vm/distro-certification/Vagrantfile"
 
 assert_contains() {
   local file="$1" pattern="$2" message="$3"
-  if ! grep -Fq "$pattern" "$file"; then
+  if ! grep -Fq -- "$pattern" "$file"; then
     printf 'FAIL: %s\n' "$message" >&2
     printf 'missing pattern in %s: %s\n' "$file" "$pattern" >&2
     exit 1
@@ -15,7 +15,7 @@ assert_contains() {
 
 assert_not_contains() {
   local file="$1" pattern="$2" message="$3"
-  if grep -Fq "$pattern" "$file"; then
+  if grep -Fq -- "$pattern" "$file"; then
     printf 'FAIL: %s\n' "$message" >&2
     printf 'unexpected pattern in %s: %s\n' "$file" "$pattern" >&2
     exit 1
@@ -133,6 +133,8 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'tools/installed_provenance.py" verif
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'DropInPaths' "daemon smoke test must reject out-of-scope systemd drop-ins"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'ExecStart' "daemon smoke test must verify the effective daemon entrypoint"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'verify_watchdogvpn_daemon_inactive' "skipped daemon smoke must prove no process generation remains active"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'WATCHDOGVPN_VERIFIED_GENERATION_SHA256' "daemon smoke must retain its approved generation digest"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" '--expected-generation-sha256' "publication must bind the manifest to the daemon-approved smoke digest"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo setpriv \' "daemon smoke test must use the required privilege transition tool"
 assert_contains "$ROOT_DIR/lib/runtime.sh" '      --init-groups \' "daemon smoke test must reload supplementary groups from NSS"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'env HOME="$target_home" USER="$target_user" LOGNAME="$target_user"' "daemon smoke test must not inherit root's identity environment after sudo"

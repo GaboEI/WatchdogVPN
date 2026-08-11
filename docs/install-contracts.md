@@ -242,7 +242,10 @@ runtime-tree copy and the deployed wrapper with the hash retained when that
 wrapper was generated. It also requires the effective systemd fragment,
 drop-ins and `ExecStart` to resolve to the inventoried chain, then compares the
 daemon's status digest with a fresh local generation fingerprint. Any mismatch
-is inside the runtime transaction and rolls the replacement back.
+is inside the runtime transaction and rolls the replacement back. The exact
+digest approved by that smoke is retained as a mandatory precondition of active
+manifest construction; a mode, byte or deployment change between smoke and
+publication is rejected rather than published as a different generation.
 
 The installed daemon launcher computes a generation digest over the canonical
 runtime tree, the active `/usr/local/bin/watchdogvpn-daemon` wrapper and the

@@ -228,6 +228,25 @@ class InstalledProvenanceTests(unittest.TestCase):
                     expected_gid=os.getgid(),
                 )
 
+    def test_publication_rejects_generation_changed_after_daemon_smoke(self) -> None:
+        approved_generation = installed_provenance.fingerprint_generation(
+            self.installed_root,
+            self.deployment_paths,
+        )
+        (self.installed_root / "daemon" / "main.py").chmod(0o600)
+        identity = installed_provenance.SourceIdentity(commit="b" * 40, state="clean")
+
+        with patch.object(installed_provenance, "source_identity", return_value=identity):
+            with self.assertRaisesRegex(installed_provenance.ProvenanceError, "daemon-approved smoke digest"):
+                installed_provenance.build_manifest(
+                    source_root=self.source_root,
+                    installed_root=self.installed_root,
+                    includes=("daemon", "tools"),
+                    deployment_paths=self.deployment_paths,
+                    expected_generation_sha256=approved_generation,
+                    installed_at="2026-08-11T00:00:00Z",
+                )
+
     def test_source_and_installed_tree_must_match_before_publication(self) -> None:
         (self.installed_root / "tools" / "helper.py").write_text("HELPER = 2\n", encoding="utf-8")
         identity = installed_provenance.SourceIdentity(commit="b" * 40, state="clean")

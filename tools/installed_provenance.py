@@ -730,6 +730,7 @@ def build_manifest(
     includes: Sequence[str],
     deployment_paths: Sequence[Path] = (),
     expected_deployment_sha256: Mapping[str, str] | None = None,
+    expected_generation_sha256: str | None = None,
     installed_at: str,
     expected_uid: int | None = None,
     expected_gid: int | None = None,
@@ -774,6 +775,12 @@ def build_manifest(
         source_entries,
     )
     runtime_tree_digest = tree_sha256(installed_entries)
+    generation_digest = generation_sha256(runtime_tree_digest, deployments)
+    if expected_generation_sha256 is not None:
+        if not SHA256_RE.fullmatch(expected_generation_sha256):
+            raise ProvenanceError("expected generation digest is invalid")
+        if generation_digest != expected_generation_sha256:
+            raise ProvenanceError("installed generation differs from the daemon-approved smoke digest")
     return {
         "schema_version": SCHEMA_VERSION,
         "source_commit": identity.commit,
@@ -783,7 +790,7 @@ def build_manifest(
         "includes": list(normalized_includes),
         "runtime_root_metadata": root_metadata,
         "tree_sha256": runtime_tree_digest,
-        "generation_sha256": generation_sha256(runtime_tree_digest, deployments),
+        "generation_sha256": generation_digest,
         "files": installed_entries,
         "deployments": deployments,
     }
@@ -1162,6 +1169,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build_parser.add_argument("--include", action="append", required=True)
     build_parser.add_argument("--deployment", action="append", type=Path, default=[])
     build_parser.add_argument("--expected-deployment-sha256", action="append", default=[])
+    build_parser.add_argument("--expected-generation-sha256")
     build_parser.add_argument("--expected-uid", type=int)
     build_parser.add_argument("--expected-gid", type=int)
 
@@ -1204,6 +1212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if args.expected_deployment_sha256
                     else None
                 ),
+                expected_generation_sha256=args.expected_generation_sha256,
                 installed_at=args.installed_at,
                 expected_uid=args.expected_uid,
                 expected_gid=args.expected_gid,

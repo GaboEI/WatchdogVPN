@@ -105,6 +105,24 @@ printf 'commit=new\n' >"$marker"
 printf 'new manifest\n' >"$manifest"
 runtime_transaction_rollback >/dev/null
 assert_old_generation
+
+# A provenance builder refusal after smoke remains inside the transaction and
+# restores runtime files plus the marker/manifest pair.
+reset_generation
+runtime_transaction_begin >/dev/null
+runtime_transaction_snapshot_path "$runtime"
+runtime_transaction_snapshot_path "$wrapper"
+runtime_transaction_snapshot_path "$unit"
+printf 'new runtime\n' >"$runtime/generation"
+printf 'new wrapper\n' >"$wrapper"
+printf 'new unit\n' >"$unit"
+record_installed_version() { return 1; }
+if runtime_transaction_publish_installed_version; then
+  printf 'FAIL: rejected smoke-to-publication generation mismatch was accepted\n' >&2
+  exit 1
+fi
+runtime_transaction_rollback >/dev/null
+assert_old_generation
 [[ ! -e "$runtime/new-file" ]] || {
   printf 'FAIL: rollback retained a mixed-generation runtime file\n' >&2
   exit 1

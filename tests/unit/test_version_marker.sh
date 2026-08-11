@@ -24,6 +24,8 @@ assert_contains "$ROOT_DIR/lib/version_marker.sh" '--deployment "$WATCHDOGVPN_DA
 assert_contains "$ROOT_DIR/lib/version_marker.sh" '--expected-uid 0' "provenance publication must require root ownership"
 assert_contains "$ROOT_DIR/lib/version_marker.sh" '--expected-deployment-sha256 "$WATCHDOGVPN_DAEMON_WRAPPER_PATH=$wrapper_sha256"' "publication must compare the wrapper with its pre-install hash"
 assert_contains "$ROOT_DIR/lib/version_marker.sh" '--expected-deployment-sha256 "$WATCHDOGVPN_DAEMON_UNIT_PATH=$unit_sha256"' "publication must compare the unit with its committed runtime copy"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'installed provenance publication requires a completed daemon generation smoke' "active publication must reject a missing smoke digest"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'provenance_args+=(--expected-generation-sha256 "$WATCHDOGVPN_VERIFIED_GENERATION_SHA256")' "publication must pass the approved smoke digest to the builder"
 assert_contains "$ROOT_DIR/tools/installed_provenance.py" 'manifest_sha256=' "version marker must bind the provenance manifest digest"
 assert_contains "$ROOT_DIR/lib/runtime_transaction.sh" 'runtime_transaction_publish_installed_version' "runtime transaction must defer installed-version publication"
 assert_contains "$ROOT_DIR/lib/runtime_transaction.sh" 'WATCHDOGVPN_PROVENANCE_MANIFEST' "runtime transaction must snapshot the provenance manifest"

@@ -55,6 +55,7 @@ RP_FILTER_DEFAULT_PATH="${WATCHDOGVPN_RP_FILTER_DEFAULT_PATH:-/proc/sys/net/ipv4
 RP_FILTER_CONF_DIR="${WATCHDOGVPN_RP_FILTER_CONF_DIR:-/proc/sys/net/ipv4/conf}"
 SYSCTL_INSTALLED_MARKER_PATH="${WATCHDOGVPN_VERSION_MARKER:-/usr/local/lib/watchdogvpn/installed-version}"
 WATCHDOGVPN_EXPECTED_DAEMON_WRAPPER_SHA256=""
+WATCHDOGVPN_VERIFIED_GENERATION_SHA256="pending"
 
 # Historical WatchdogVPN-owned files removed from the shipped set before this
 # release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept separate
@@ -1037,12 +1038,14 @@ smoke_test_watchdogvpn_daemon() {
 
   if [[ "${ENABLE_VPN_AUTOMATION:-1}" != "1" ]]; then
     verify_watchdogvpn_daemon_inactive
+    WATCHDOGVPN_VERIFIED_GENERATION_SHA256="inactive"
     printf '[SKIP] daemon smoke test; VPN automation is disabled for this install\n'
     return 0
   fi
 
   if [[ -e "${WATCHDOGVPN_HIBERNATE_MARKER:-/etc/watchdogvpn/.hibernating}" ]]; then
     verify_watchdogvpn_daemon_inactive
+    WATCHDOGVPN_VERIFIED_GENERATION_SHA256="inactive"
     printf '[SKIP] daemon smoke test; WatchdogVPN is asleep (run: watchdog_panic wake)\n'
     return 0
   fi
@@ -1074,6 +1077,12 @@ smoke_test_watchdogvpn_daemon() {
     provenance_rc=$?
     set -e
     if ((provenance_rc == 0)); then
+      WATCHDOGVPN_VERIFIED_GENERATION_SHA256="$(printf '%s\n' "$provenance_output" \
+        | "$(watchdogvpn_python)" -c 'import json, sys; print(json.load(sys.stdin)["generation_sha256"])')"
+      if [[ ! "$WATCHDOGVPN_VERIFIED_GENERATION_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+        fail "daemon generation smoke returned an invalid verified digest"
+        return 1
+      fi
       ok "daemon IPC status and installed generation smoke test passed"
       return 0
     fi

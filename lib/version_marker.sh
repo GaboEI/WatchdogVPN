@@ -36,6 +36,22 @@ record_installed_version() {
     printf 'ERROR: cannot establish expected daemon deployment hashes\n' >&2
     return 1
   fi
+  case "${WATCHDOGVPN_VERIFIED_GENERATION_SHA256:-pending}" in
+    inactive)
+      ;;
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+      if [[ ! "$WATCHDOGVPN_VERIFIED_GENERATION_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+        printf 'ERROR: daemon-approved generation digest is invalid\n' >&2
+        rm -f "$marker_tmp" "$manifest_tmp"
+        return 1
+      fi
+      ;;
+    *)
+      printf 'ERROR: installed provenance publication requires a completed daemon generation smoke\n' >&2
+      rm -f "$marker_tmp" "$manifest_tmp"
+      return 1
+      ;;
+  esac
   provenance_args=(
     "$python_bin"
     "$ROOT_DIR/tools/installed_provenance.py"
@@ -52,6 +68,9 @@ record_installed_version() {
     --expected-uid 0
     --expected-gid 0
   )
+  if [[ "$WATCHDOGVPN_VERIFIED_GENERATION_SHA256" != "inactive" ]]; then
+    provenance_args+=(--expected-generation-sha256 "$WATCHDOGVPN_VERIFIED_GENERATION_SHA256")
+  fi
   local item
   for item in \
     "${PYTHON_RUNTIME_PACKAGES[@]}" \

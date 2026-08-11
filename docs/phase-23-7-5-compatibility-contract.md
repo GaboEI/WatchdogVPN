@@ -2917,7 +2917,10 @@ Before publication, install/update compare the active wrapper and unit with
 their pre-deployment expected hashes, reject an effective fragment, drop-in or
 `ExecStart` outside the inventoried chain, and require the newly started daemon
 to report the same digest as a fresh local generation fingerprint. These checks
-remain inside the rollback boundary.
+remain inside the rollback boundary. Active publication receives that exact
+smoke-approved digest and refuses to build a manifest for any generation that
+changed before publication. The explicit inactive/hibernated path has no active
+digest to bind and is accepted only after `ActiveState=inactive` and `MainPID=0`.
 
 The installed daemon launcher fingerprints the installed tree, active wrapper
 and deployed service unit before and after importing the Python daemon. It
