@@ -472,33 +472,47 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
                 reason="head_probe_tool_missing",
                 error_kind="provider_error",
             )
-        probe = self._exec("curl -I -L -f -sS --max-time 15 %s" % shlex.quote(url))
-        if probe["runtime_status"] != "executed":
-            return _availability_from_query(probe["runtime_status"], "%s HEAD probe did not execute" % evidence_prefix)
-        if probe["returncode"] == 0:
-            stdout = probe.get("stdout") or ""
-            content_length = ""
-            for line in stdout.splitlines():
-                if line.lower().startswith("content-length:"):
-                    content_length = line.split(":", 1)[1].strip()
-                    break
-            return resolver.AvailabilityObservation(
-                resolver.AvailabilityStatus.AVAILABLE.value,
-                evidence="%s HEAD reachable: %s (Content-Length: %s)" % (evidence_prefix, url, content_length or "unknown"),
-                reason="%s_head_reachable" % evidence_prefix.replace(" ", "_"),
-            )
-        stderr = (probe.get("stderr") or "").lower()
-        stdout = (probe.get("stdout") or "").lower()
-        if "404" in stderr or "404" in stdout or "not found" in stderr or "not found" in stdout:
-            return resolver.AvailabilityObservation(
-                resolver.AvailabilityStatus.UNAVAILABLE.value,
-                evidence="%s HEAD returned 404: %s" % (evidence_prefix, url),
-                reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
-                error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
-            )
+        # Reintentar fallos transitorios de la sonda (timeouts, resets de
+        # conexión, rate-limiting del runner) antes de concluir que el
+        # artefacto no está disponible. Un 404 definitivo NO se reintenta:
+        # significa que el artefacto genuinamente no existe y debe marcarse
+        # como UNAVAILABLE de inmediato para no enmascarar fallos reales.
+        max_attempts = 3
+        backoff_seconds = 2.0
+        for attempt in range(1, max_attempts + 1):
+            probe = self._exec("curl -I -L -f -sS --max-time 15 %s" % shlex.quote(url))
+            if probe["runtime_status"] != "executed":
+                if attempt < max_attempts:
+                    time.sleep(backoff_seconds * attempt)
+                    continue
+                return _availability_from_query(probe["runtime_status"], "%s HEAD probe did not execute" % evidence_prefix)
+            if probe["returncode"] == 0:
+                stdout = probe.get("stdout") or ""
+                content_length = ""
+                for line in stdout.splitlines():
+                    if line.lower().startswith("content-length:"):
+                        content_length = line.split(":", 1)[1].strip()
+                        break
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence="%s HEAD reachable: %s (Content-Length: %s)" % (evidence_prefix, url, content_length or "unknown"),
+                    reason="%s_head_reachable" % evidence_prefix.replace(" ", "_"),
+                )
+            stderr = (probe.get("stderr") or "").lower()
+            stdout = (probe.get("stdout") or "").lower()
+            if "404" in stderr or "404" in stdout or "not found" in stderr or "not found" in stdout:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    evidence="%s HEAD returned 404: %s" % (evidence_prefix, url),
+                    reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                    error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                )
+            if attempt < max_attempts:
+                time.sleep(backoff_seconds * attempt)
+                continue
         return resolver.AvailabilityObservation(
             resolver.AvailabilityStatus.UNKNOWN.value,
-            evidence="%s HEAD probe inconclusive: %s" % (evidence_prefix, url),
+            evidence="%s HEAD probe inconclusive after %d attempts: %s" % (evidence_prefix, max_attempts, url),
             reason="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
             error_kind="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
         )
