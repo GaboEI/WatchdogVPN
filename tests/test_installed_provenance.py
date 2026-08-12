@@ -89,6 +89,28 @@ class InstalledProvenanceTests(unittest.TestCase):
                     installed_at="2026-08-11T00:00:00Z",
                 )
 
+    def test_git_environment_preserves_sudo_identity_only(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "HOME": "/home/gabodev",
+                "PATH": "/custom/bin",
+                "SUDO_UID": "1000",
+                "SUDO_GID": "1000",
+                "SUDO_USER": "gabodev",
+                "UNRELATED_SECRET": "nope",
+            },
+            clear=True,
+        ):
+            env = installed_provenance._git_env()
+
+        self.assertEqual(env["SUDO_UID"], "1000")
+        self.assertEqual(env["SUDO_GID"], "1000")
+        self.assertEqual(env["SUDO_USER"], "gabodev")
+        self.assertEqual(env["HOME"], "/home/gabodev")
+        self.assertEqual(env["PATH"], "/custom/bin")
+        self.assertNotIn("UNRELATED_SECRET", env)
+
     def test_existing_unattributed_manifest_is_rejected(self) -> None:
         manifest = self.build_manifest()
         manifest["source_state"] = "dirty"

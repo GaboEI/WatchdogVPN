@@ -626,7 +626,7 @@ def _validate_secure_metadata(
             raise ProvenanceError(f"installed runtime path is writable by group or others: {label}")
 
 
-def _run_git(source_root: Path, argv: Sequence[str]) -> subprocess.CompletedProcess[str] | None:
+def _git_env() -> dict[str, str]:
     env = {
         "HOME": os.environ.get("HOME", "/"),
         "LANG": "C",
@@ -635,6 +635,14 @@ def _run_git(source_root: Path, argv: Sequence[str]) -> subprocess.CompletedProc
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_TERMINAL_PROMPT": "0",
     }
+    for name in ("SUDO_UID", "SUDO_GID", "SUDO_USER"):
+        value = os.environ.get(name)
+        if value:
+            env[name] = value
+    return env
+
+
+def _run_git(source_root: Path, argv: Sequence[str]) -> subprocess.CompletedProcess[str] | None:
     try:
         return subprocess.run(
             ["git", "-C", str(source_root), *argv],
@@ -642,28 +650,20 @@ def _run_git(source_root: Path, argv: Sequence[str]) -> subprocess.CompletedProc
             capture_output=True,
             text=True,
             timeout=10,
-            env=env,
+            env=_git_env(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
 
 
 def _run_git_bytes(source_root: Path, argv: Sequence[str]) -> subprocess.CompletedProcess[bytes] | None:
-    env = {
-        "HOME": os.environ.get("HOME", "/"),
-        "LANG": "C",
-        "LC_ALL": "C",
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_TERMINAL_PROMPT": "0",
-    }
     try:
         return subprocess.run(
             ["git", "-C", str(source_root), *argv],
             check=False,
             capture_output=True,
             timeout=10,
-            env=env,
+            env=_git_env(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
