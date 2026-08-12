@@ -7,6 +7,7 @@ detection, provisioning and their integrations are added by later frozen tasks.
 from __future__ import annotations
 
 from compat.support_model import (
+    CertificationReviewStatus,
     CoreCapabilityStatus,
     DomainError,
     FreshnessState,
@@ -24,6 +25,7 @@ from compat.support_model import (
     classify_support,
     classify_support_rolling,
     classify_support_stable,
+    evaluate_certification_review,
     evaluate_freshness,
     parse,
     to_value,
@@ -67,6 +69,7 @@ from compat.dependency_resolution import (
 )
 
 __all__ = [
+    "CertificationReviewStatus",
     "CoreCapabilityStatus",
     "DomainError",
     "FreshnessState",
@@ -84,6 +87,7 @@ __all__ = [
     "classify_support",
     "classify_support_rolling",
     "classify_support_stable",
+    "evaluate_certification_review",
     "evaluate_freshness",
     "parse",
     "to_value",

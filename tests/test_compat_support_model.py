@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from compat import (
+    CertificationReviewStatus,
     CoreCapabilityStatus,
     DomainError,
     FreshnessState,
@@ -28,6 +29,7 @@ from compat import (
     classify_support,
     classify_support_rolling,
     classify_support_stable,
+    evaluate_certification_review,
     evaluate_freshness,
     parse,
     to_value,
@@ -253,6 +255,151 @@ class FreshnessTests(unittest.TestCase):
     def test_non_datetime_last_validated_is_domain_error(self) -> None:
         with self.assertRaises(DomainError):
             evaluate_freshness("2026-01-01", EXPIRY, NOW)  # type: ignore[arg-type]
+
+
+class CertificationReviewTests(unittest.TestCase):
+    """Task 23.7.5.11-PRE: review_due at 11 months, review_overdue at 12
+    months, using the maintainer-authorized thresholds expressed as average
+    Gregorian months (2,628,000s each, matching the manifest's actual
+    validation_metadata.certification_review_policy values).
+    """
+
+    REVIEW_DUE = timedelta(seconds=28908000)  # 11 months
+    REVIEW_OVERDUE = timedelta(seconds=31536000)  # 12 months
+
+    def test_current_before_review_due(self) -> None:
+        cert_date = NOW - timedelta(days=1)
+        self.assertIs(
+            evaluate_certification_review(
+                cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            ),
+            CertificationReviewStatus.CURRENT,
+        )
+
+    def test_current_exactly_at_review_due_boundary(self) -> None:
+        cert_date = NOW - self.REVIEW_DUE
+        self.assertIs(
+            evaluate_certification_review(
+                cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            ),
+            CertificationReviewStatus.CURRENT,
+        )
+
+    def test_review_due_just_past_boundary(self) -> None:
+        cert_date = NOW - self.REVIEW_DUE - timedelta(seconds=1)
+        self.assertIs(
+            evaluate_certification_review(
+                cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            ),
+            CertificationReviewStatus.REVIEW_DUE,
+        )
+
+    def test_review_due_exactly_at_review_overdue_boundary(self) -> None:
+        cert_date = NOW - self.REVIEW_OVERDUE
+        self.assertIs(
+            evaluate_certification_review(
+                cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            ),
+            CertificationReviewStatus.REVIEW_DUE,
+        )
+
+    def test_review_overdue_just_past_boundary(self) -> None:
+        cert_date = NOW - self.REVIEW_OVERDUE - timedelta(seconds=1)
+        self.assertIs(
+            evaluate_certification_review(
+                cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            ),
+            CertificationReviewStatus.REVIEW_OVERDUE,
+        )
+
+    def test_review_overdue_far_in_the_past_stays_review_overdue_never_a_sixth_state(self) -> None:
+        cert_date = NOW - timedelta(days=3650)
+        self.assertIs(
+            evaluate_certification_review(
+                cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            ),
+            CertificationReviewStatus.REVIEW_OVERDUE,
+        )
+
+    def test_revalidation_resets_the_age_with_no_separate_counter(self) -> None:
+        """A fresh cert_date (satisfactory revalidation) alone must bring the
+        status back to CURRENT -- there is no separate state to reset."""
+        stale_cert_date = NOW - self.REVIEW_OVERDUE - timedelta(days=10)
+        self.assertIs(
+            evaluate_certification_review(
+                stale_cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            ),
+            CertificationReviewStatus.REVIEW_OVERDUE,
+        )
+        revalidated_cert_date = NOW - timedelta(days=1)
+        self.assertIs(
+            evaluate_certification_review(
+                revalidated_cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            ),
+            CertificationReviewStatus.CURRENT,
+        )
+
+    def test_future_cert_date_is_domain_error(self) -> None:
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(
+                NOW + timedelta(days=1), review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            )
+
+    def test_non_timedelta_thresholds_are_domain_errors(self) -> None:
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(NOW, review_due=330, review_overdue=self.REVIEW_OVERDUE, now=NOW)  # type: ignore[arg-type]
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(NOW, review_due=self.REVIEW_DUE, review_overdue=365, now=NOW)  # type: ignore[arg-type]
+
+    def test_non_positive_thresholds_are_domain_errors(self) -> None:
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(NOW, review_due=timedelta(0), review_overdue=self.REVIEW_OVERDUE, now=NOW)
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(NOW, review_due=self.REVIEW_DUE, review_overdue=timedelta(days=-1), now=NOW)
+
+    def test_review_due_must_be_strictly_before_review_overdue(self) -> None:
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(NOW, review_due=self.REVIEW_OVERDUE, review_overdue=self.REVIEW_DUE, now=NOW)
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(NOW, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_DUE, now=NOW)
+
+    def test_timezone_aware_now_is_domain_error(self) -> None:
+        aware_now = NOW.replace(tzinfo=timezone.utc)
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(
+                NOW - timedelta(days=1), review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=aware_now
+            )
+
+    def test_timezone_aware_cert_date_is_domain_error(self) -> None:
+        aware_cert_date = (NOW - timedelta(days=1)).replace(tzinfo=timezone.utc)
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(
+                aware_cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+            )
+
+    def test_non_datetime_cert_date_is_domain_error(self) -> None:
+        with self.assertRaises(DomainError):
+            evaluate_certification_review(
+                "2026-01-01", review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW  # type: ignore[arg-type]
+            )
+
+    def test_never_promotes_or_demotes_support_classification(self) -> None:
+        """23.7.5.11-PRE's explicit requirement: this signal is advisory only.
+
+        A CERTIFIED rolling distro stays CERTIFIED regardless of its review
+        status -- classify_support_rolling has no dependency on this function
+        at all, proven here by classifying the same overdue-review facts as
+        both freshly certified and long overdue for review, and getting
+        CERTIFIED both times.
+        """
+        overdue_cert_date = NOW - self.REVIEW_OVERDUE - timedelta(days=100)
+        review_status = evaluate_certification_review(
+            overdue_cert_date, review_due=self.REVIEW_DUE, review_overdue=self.REVIEW_OVERDUE, now=NOW
+        )
+        self.assertIs(review_status, CertificationReviewStatus.REVIEW_OVERDUE)
+        facts = rolling(has_valid_field_certification=True, last_validated=overdue_cert_date)
+        classification = classify_support_rolling(facts, expiry=EXPIRY, now=NOW)
+        self.assertIs(classification, SupportClassification.CERTIFIED)
 
 
 class HostReadinessTests(unittest.TestCase):

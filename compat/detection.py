@@ -17,6 +17,7 @@ import time
 from typing import Callable, Mapping, Sequence
 
 from compat.support_model import (
+    CertificationReviewStatus,
     CoreCapabilityStatus,
     HostReadiness,
     ProtocolReadiness,
@@ -28,6 +29,7 @@ from compat.support_model import (
     classify_protocol_readiness,
     classify_support_rolling,
     classify_support_stable,
+    evaluate_certification_review,
 )
 from tools import compat_read
 
@@ -1277,6 +1279,42 @@ def _support_classification(manifest: Mapping, facts: DistroFacts, *, now: datet
         family_has_certified_anchor=family_anchor,
     )
     return classify_support_stable(synthetic)
+
+
+def _certification_review_status(manifest: Mapping, facts: DistroFacts, *, now: datetime) -> str | None:
+    """Return the review status of the qualifying certification behind this
+    distro's classification, or ``None`` when there is no qualifying
+    certification to review (never certified, or identity unresolved).
+
+    This is purely informational (Task 23.7.5.11-PRE): it never feeds back
+    into ``support_classification``. A distribution stays ``certified``
+    regardless of what this returns.
+    """
+    if facts.resolved_distribution is None:
+        return None
+    distro = manifest["distributions"][facts.resolved_distribution]
+    if distro["release_model"] == "rolling":
+        cert_ids = compat_read._rolling_certifications(manifest, facts.resolved_distribution)
+    elif facts.resolved_release is not None:
+        cert_ids = compat_read._release_certifications(manifest, facts.resolved_release)
+    else:
+        cert_ids = ()
+    if not cert_ids:
+        return None
+    certifications = manifest["certifications"]
+    latest_cert_id = max(cert_ids, key=lambda cert_id: certifications[cert_id]["date"])
+    cert_date = datetime.strptime(
+        compat_read._normalize_rfc3339_utc_to_naive(certifications[latest_cert_id]["date"]),
+        "%Y-%m-%dT%H:%M:%S",
+    )
+    policy = manifest["validation_metadata"]["certification_review_policy"]
+    status = evaluate_certification_review(
+        cert_date,
+        review_due=timedelta(seconds=policy["review_due_seconds"]),
+        review_overdue=timedelta(seconds=policy["review_overdue_seconds"]),
+        now=now,
+    )
+    return status.value
 
 
 def load_product_manifest() -> Mapping:

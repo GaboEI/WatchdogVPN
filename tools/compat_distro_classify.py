@@ -47,19 +47,11 @@ def _load_os_release(args) -> detection.OsReleaseData:
     )
 
 
-def _support_classification_value(manifest, facts) -> str:
-    """Return the support classification string for the given facts.
-
-    This is an internal helper that mirrors detection.evaluate() without
-    running capability probes, because the shell bootstrap only needs the
-    classification and identity fields.
-    """
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    classification = detection._support_classification(manifest, facts, now=now)
-    return classification.value
-
-
-def _build_payload(facts: detection.DistroFacts, support_classification: str) -> dict:
+def _build_payload(
+    facts: detection.DistroFacts,
+    support_classification: str,
+    certification_review_status: str | None,
+) -> dict:
     return {
         "status": "ok",
         "distro_id": facts.id_normalized or facts.id_raw or "unknown",
@@ -72,6 +64,10 @@ def _build_payload(facts: detection.DistroFacts, support_classification: str) ->
         "resolved_release": facts.resolved_release,
         "mapped_base_release": facts.mapped_base_release,
         "support_classification": support_classification,
+        # Advisory only (Task 23.7.5.11-PRE): never promotes or demotes
+        # support_classification. null when there is no qualifying
+        # certification to review.
+        "certification_review_status": certification_review_status,
         "resolution_status": facts.resolution_status or "unknown",
     }
 
@@ -90,8 +86,10 @@ def cmd_classify(args) -> int:
         kernel_release=env.kernel_release,
         machine_architecture=env.machine_architecture,
     )
-    support_classification = _support_classification_value(manifest, facts)
-    _print(_build_payload(facts, support_classification))
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    support_classification = detection._support_classification(manifest, facts, now=now).value
+    review_status = detection._certification_review_status(manifest, facts, now=now)
+    _print(_build_payload(facts, support_classification, review_status))
     return 0
 
 

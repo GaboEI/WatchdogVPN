@@ -4302,6 +4302,10 @@
     }
   },
   "validation_metadata": {
+    "certification_review_policy": {
+      "review_due_seconds": 28908000,
+      "review_overdue_seconds": 31536000
+    },
     "doc_generation": {
       "public_claims_generated": false,
       "reason": "Task 23.7.5.12 owns public documentation generation"

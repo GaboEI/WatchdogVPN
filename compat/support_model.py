@@ -73,6 +73,22 @@ class FreshnessState(Enum):
     ABSENT = "absent"
 
 
+class CertificationReviewStatus(Enum):
+    """Advisory staleness signal for a certification's age (Task 23.7.5.11-PRE).
+
+    This is deliberately **orthogonal** to :class:`SupportClassification`: it
+    never promotes or demotes a distribution's support state. A certified
+    distribution stays ``certified`` regardless of its review status; this
+    enum only tells an operator whether the underlying evidence is due (or
+    overdue) for a voluntary human review. Reaching ``current`` again requires
+    a fresh certification date (a satisfactory revalidation), which resets the
+    age this enum is computed from -- there is no separate counter to reset.
+    """
+    CURRENT = "current"
+    REVIEW_DUE = "review_due"
+    REVIEW_OVERDUE = "review_overdue"
+
+
 class CoreCapabilityStatus(Enum):
     """Status of a single *core host* capability (protocol runtimes are separate)."""
     PRESENT = "present"
@@ -97,6 +113,7 @@ _STATE_ENUMS = (
     FreshnessState,
     CoreCapabilityStatus,
     ProtocolRuntimeStatus,
+    CertificationReviewStatus,
 )
 
 
@@ -214,6 +231,49 @@ def evaluate_freshness(
     if now < last_validated:
         raise DomainError("evaluation instant precedes last_validated (validated in the future)")
     return FreshnessState.EXPIRED if (now - last_validated) > expiry else FreshnessState.CURRENT
+
+
+# --------------------------------------------------------------------------- #
+# Certification review staleness (Task 23.7.5.11-PRE). Pure and clock-injected
+# like ``evaluate_freshness`` above, but semantically separate: it never feeds
+# into ``support_classification``. It only tells an operator whether a
+# certification's age warrants a voluntary human review. The maintainer's
+# authorized policy: review_due at 11 months, review_overdue at 12 months,
+# with no automatic degradation and no mandatory recertification cadence --
+# material change, regression or a critical report can still trigger an
+# earlier review, but that is a process decision, not something this pure
+# function can infer from a date alone.
+# --------------------------------------------------------------------------- #
+
+def evaluate_certification_review(
+    cert_date: datetime,
+    *,
+    review_due: timedelta,
+    review_overdue: timedelta,
+    now: datetime,
+) -> CertificationReviewStatus:
+    if not isinstance(review_due, timedelta) or not isinstance(review_overdue, timedelta):
+        raise DomainError("review_due and review_overdue must be timedelta policy data")
+    if review_due <= timedelta(0) or review_overdue <= timedelta(0):
+        raise DomainError("review_due and review_overdue must be positive timedeltas")
+    if review_due >= review_overdue:
+        raise DomainError("review_due must be strictly earlier than review_overdue")
+    if not isinstance(now, datetime):
+        raise DomainError("the evaluation instant 'now' must be injected as a datetime")
+    if now.tzinfo is not None:
+        raise DomainError("'now' must be a naive datetime (explicit no-tzinfo policy)")
+    if not isinstance(cert_date, datetime):
+        raise DomainError("'cert_date' must be a datetime")
+    if cert_date.tzinfo is not None:
+        raise DomainError("'cert_date' must be a naive datetime (explicit no-tzinfo policy)")
+    if now < cert_date:
+        raise DomainError("evaluation instant precedes cert_date (certified in the future)")
+    age = now - cert_date
+    if age > review_overdue:
+        return CertificationReviewStatus.REVIEW_OVERDUE
+    if age > review_due:
+        return CertificationReviewStatus.REVIEW_DUE
+    return CertificationReviewStatus.CURRENT
 
 
 # --------------------------------------------------------------------------- #

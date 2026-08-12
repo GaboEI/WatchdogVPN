@@ -20,6 +20,7 @@ from compat import (
     SupportClassification,
     classify_support_rolling,
     classify_support_stable,
+    detection,
 )
 
 
@@ -223,6 +224,10 @@ def minimal_manifest() -> dict:
             }
         },
         "validation_metadata": {
+            "certification_review_policy": {
+                "review_due_seconds": 28908000,
+                "review_overdue_seconds": 31536000,
+            },
             "rolling_policies": {
                 "default": {"expiry_seconds": 2592000, "evidence_refs": []},
                 "miniroll": {
@@ -420,6 +425,52 @@ class ManifestValidCasesTests(unittest.TestCase):
         self.assertIs(classify_support_stable(alma), SupportClassification.FAMILY_INFERRED)
         ubuntu_26 = StableReleaseFacts(**compat_read._stable_facts(manifest, "ubuntu_26_04")["facts"])
         self.assertIs(classify_support_stable(ubuntu_26), SupportClassification.EXPERIMENTAL)
+
+    def test_product_certification_review_status_is_advisory_only(self) -> None:
+        """Task 23.7.5.11-PRE, integration-level: review status is computed
+        end to end against the real product manifest and never changes
+        support_classification, for both a stable and a rolling certified
+        distro."""
+        manifest = load_product()
+        ubuntu = detection.distro_facts_from_os_release(
+            detection.parse_os_release_text("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n"),
+            manifest,
+            kernel_release="6.8.0-test",
+            machine_architecture="x86_64",
+        )
+        arch = detection.distro_facts_from_os_release(
+            detection.parse_os_release_text("ID=arch\n"),
+            manifest,
+            kernel_release="6.8.0-test",
+            machine_architecture="x86_64",
+        )
+        soon_after_certification = datetime(2026, 8, 13)
+        far_future = datetime(2028, 8, 13)  # far past review_overdue for both
+        for facts, cert_id in ((ubuntu, "cert_ubuntu_24_04"), (arch, "cert_arch_rolling")):
+            with self.subTest(distro=facts.resolved_distribution):
+                cert_date_str = manifest["certifications"][cert_id]["date"]
+                self.assertEqual(
+                    detection._certification_review_status(manifest, facts, now=soon_after_certification),
+                    "current",
+                )
+                self.assertEqual(
+                    detection._certification_review_status(manifest, facts, now=far_future),
+                    "review_overdue",
+                )
+                # Support classification is completely unaffected by review age.
+                self.assertEqual(
+                    detection._support_classification(manifest, facts, now=far_future).value,
+                    "certified",
+                )
+                self.assertIsNotNone(cert_date_str)
+        # No qualifying certification -> None, not an error.
+        alma = detection.distro_facts_from_os_release(
+            detection.parse_os_release_text("ID=almalinux\nVERSION_ID=9.6\n"),
+            manifest,
+            kernel_release="6.8.0-test",
+            machine_architecture="x86_64",
+        )
+        self.assertIsNone(detection._certification_review_status(manifest, alma, now=soon_after_certification))
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
@@ -805,6 +856,33 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest = self.product_copy()
         manifest["validation_metadata"]["rolling_policies"]["arch"]["last_validated"] = None
         self.assert_invalid(manifest, "diverges")
+
+    def test_certification_review_policy_errors(self) -> None:
+        manifest = self.product_copy()
+        del manifest["validation_metadata"]["certification_review_policy"]
+        self.assert_invalid(manifest, "certification_review_policy")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["certification_review_policy"]["review_due_seconds"] = None
+        self.assert_invalid(manifest, "integer")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["certification_review_policy"]["review_due_seconds"] = 0
+        self.assert_invalid(manifest, "positive")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["certification_review_policy"]["review_overdue_seconds"] = -1
+        self.assert_invalid(manifest, "positive")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["certification_review_policy"]["cadence_days"] = 30
+        self.assert_invalid(manifest, "unknown key")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["certification_review_policy"]["review_due_seconds"] = manifest[
+            "validation_metadata"
+        ]["certification_review_policy"]["review_overdue_seconds"]
+        self.assert_invalid(manifest, "strictly less than")
+        manifest = self.product_copy()
+        manifest["validation_metadata"]["certification_review_policy"]["review_due_seconds"] = (
+            manifest["validation_metadata"]["certification_review_policy"]["review_overdue_seconds"] + 1
+        )
+        self.assert_invalid(manifest, "strictly less than")
 
     def test_timestamp_and_expiry_errors(self) -> None:
         manifest = self.product_copy()

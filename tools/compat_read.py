@@ -210,6 +210,7 @@ _ENTITY_KEYS = {
     "repository_ci": ("evidence", "latest_known_green", "scope"),
     "per_release_ci": ("evidence", "l1_l2_green", "status"),
     "doc_generation": ("public_claims_generated", "reason"),
+    "certification_review_policy": ("review_due_seconds", "review_overdue_seconds"),
 }
 
 
@@ -1630,9 +1631,35 @@ def _validate_certifications(manifest):
                 raise ManifestError("%s does not qualify for support: %s" % (path, reason))
 
 
+def _validate_certification_review_policy(metadata):
+    policy = _require_obj(
+        metadata.get("certification_review_policy"), "validation_metadata.certification_review_policy"
+    )
+    _reject_unknown_keys(
+        policy, _ENTITY_KEYS["certification_review_policy"], "validation_metadata.certification_review_policy"
+    )
+    review_due = _require_positive_int(
+        policy.get("review_due_seconds"), "validation_metadata.certification_review_policy.review_due_seconds"
+    )
+    review_overdue = _require_positive_int(
+        policy.get("review_overdue_seconds"),
+        "validation_metadata.certification_review_policy.review_overdue_seconds",
+    )
+    if review_due >= review_overdue:
+        raise ManifestError(
+            "validation_metadata.certification_review_policy.review_due_seconds "
+            "must be strictly less than review_overdue_seconds"
+        )
+
+
 def _validate_validation_metadata(manifest):
     metadata = _require_obj(manifest["validation_metadata"], "validation_metadata")
-    _reject_unknown_keys(metadata, ("rolling_policies", "repository_ci", "per_release_ci", "doc_generation"), "validation_metadata")
+    _reject_unknown_keys(
+        metadata,
+        ("rolling_policies", "repository_ci", "per_release_ci", "doc_generation", "certification_review_policy"),
+        "validation_metadata",
+    )
+    _validate_certification_review_policy(metadata)
     rolling = _require_obj(metadata.get("rolling_policies"), "validation_metadata.rolling_policies")
     distributions = manifest["distributions"]
     certifications = manifest["certifications"]

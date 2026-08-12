@@ -237,6 +237,28 @@ class CompatSystemMigrationTest(unittest.TestCase):
                 finally:
                     tmp_path.unlink(missing_ok=True)
 
+    def test_classify_cli_exposes_certification_review_status(self):
+        """Task 23.7.5.11-PRE: the shell-facing CLI surfaces
+        certification_review_status without touching support_classification,
+        exercised as a real subprocess against the real product manifest."""
+        for name, content in FIXTURES.items():
+            with self.subTest(name=name):
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
+                    tmp.write(content)
+                    tmp_path = Path(tmp.name)
+                try:
+                    engine = self._classify_with_engine(tmp_path)
+                    self.assertIn("certification_review_status", engine)
+                    if engine["support_classification"] == "certified":
+                        self.assertIn(
+                            engine["certification_review_status"],
+                            ("current", "review_due", "review_overdue"),
+                        )
+                    else:
+                        self.assertIsNone(engine["certification_review_status"])
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+
     def test_future_iff_experimental(self):
         for name, content in FIXTURES.items():
             with self.subTest(name=name):
