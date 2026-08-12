@@ -3585,7 +3585,7 @@
         "inherits_family_support": false,
         "rolling": {
           "eol_or_withdrawn": false,
-          "evidence_expiry_seconds": 2592000,
+          "evidence_expiry_seconds": 31536000,
           "expressly_excluded": false,
           "last_validated": "2026-07-22T00:00:00Z",
           "meets_technical_floor": true
@@ -3605,7 +3605,7 @@
         "inherits_family_support": false,
         "rolling": {
           "eol_or_withdrawn": false,
-          "evidence_expiry_seconds": 2592000,
+          "evidence_expiry_seconds": 31536000,
           "expressly_excluded": false,
           "last_validated": "2026-07-22T00:00:00Z",
           "meets_technical_floor": true
@@ -3688,7 +3688,7 @@
         "inherits_family_support": false,
         "rolling": {
           "eol_or_withdrawn": false,
-          "evidence_expiry_seconds": 2592000,
+          "evidence_expiry_seconds": 31536000,
           "expressly_excluded": false,
           "last_validated": "2026-08-12T00:00:00Z",
           "meets_technical_floor": true
@@ -3748,7 +3748,7 @@
         "inherits_family_support": false,
         "rolling": {
           "eol_or_withdrawn": false,
-          "evidence_expiry_seconds": 2592000,
+          "evidence_expiry_seconds": 31536000,
           "expressly_excluded": false,
           "last_validated": null,
           "meets_technical_floor": true
@@ -4368,30 +4368,30 @@
         "evidence_refs": [
           "cert_arch_rolling"
         ],
-        "expiry_seconds": 2592000,
+        "expiry_seconds": 31536000,
         "last_validated": "2026-07-22T00:00:00Z"
       },
       "cachyos": {
         "evidence_refs": [
           "cert_cachyos_rolling"
         ],
-        "expiry_seconds": 2592000,
+        "expiry_seconds": 31536000,
         "last_validated": "2026-07-22T00:00:00Z"
       },
       "default": {
         "evidence_refs": [],
-        "expiry_seconds": 2592000
+        "expiry_seconds": 31536000
       },
       "kali": {
         "evidence_refs": [
           "cert_kali_rolling"
         ],
-        "expiry_seconds": 2592000,
+        "expiry_seconds": 31536000,
         "last_validated": "2026-08-12T00:00:00Z"
       },
       "opensuse_tumbleweed": {
         "evidence_refs": [],
-        "expiry_seconds": 2592000,
+        "expiry_seconds": 31536000,
         "last_validated": null
       }
     }

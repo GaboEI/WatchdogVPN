@@ -59,7 +59,7 @@ def support(manifest_data, facts):
         facts,
         ready_core(manifest_data, facts),
         present_protocols(manifest_data),
-        now=datetime(2026, 7, 26),
+        now=datetime(2026, 8, 13),
     ).support_classification
 
 
@@ -173,7 +173,7 @@ class FocusedDependencyMatrixContractTests(unittest.TestCase):
         },
         "kali": {
             "os_release": "ID=kali\nID_LIKE=debian\nVERSION_ID=2026.2\n",
-            "support": "experimental",
+            "support": "certified",
             "release_model": "rolling",
             "resolved_release": None,
             "python": "python3",

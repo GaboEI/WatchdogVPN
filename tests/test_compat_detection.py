@@ -284,7 +284,7 @@ class DistributionResolutionTests(unittest.TestCase):
         "centos": ("ID=centos\nVERSION_ID=9\nPRETTY_NAME=\"CentOS Stream 9\"\n", "centos_stream", "centos_stream_9", "family_inferred"),
         "rhel": ("ID=rhel\nVERSION_ID=9\n", "rhel", "rhel_9", "family_inferred"),
         "tumbleweed": ("ID=opensuse-tumbleweed\nID_LIKE=opensuse\n", "opensuse_tumbleweed", None, "family_inferred"),
-        "kali": ("ID=kali\nID_LIKE=debian\nVERSION_ID=2026.2\n", "kali", None, "experimental"),
+        "kali": ("ID=kali\nID_LIKE=debian\nVERSION_ID=2026.2\n", "kali", None, "certified"),
         "ubuntu_26": ("ID=ubuntu\nVERSION_ID=26.04\nVERSION_CODENAME=resolute\n", "ubuntu", "ubuntu_26_04", "experimental"),
     }
 
@@ -295,7 +295,7 @@ class DistributionResolutionTests(unittest.TestCase):
                 distro = facts(manifest, text)
                 self.assertEqual(distro.resolved_distribution, distro_id)
                 self.assertEqual(distro.resolved_release, release_id)
-                report = detection.evaluate(manifest, distro, ready_core(manifest, distro), present_protocols(manifest), now=datetime(2026, 7, 26))
+                report = detection.evaluate(manifest, distro, ready_core(manifest, distro), present_protocols(manifest), now=datetime(2026, 8, 13))
                 self.assertEqual(report.support_classification, expected)
 
     def test_mint_requires_exact_codename_mapping(self) -> None:

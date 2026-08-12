@@ -401,7 +401,7 @@ class ManifestValidCasesTests(unittest.TestCase):
     def test_product_classification_examples_are_derived(self) -> None:
         manifest = load_product()
         cases = {
-            "kali": SupportClassification.EXPERIMENTAL,
+            "kali": SupportClassification.CERTIFIED,
             "arch": SupportClassification.CERTIFIED,
             "cachyos": SupportClassification.CERTIFIED,
             "opensuse_tumbleweed": SupportClassification.FAMILY_INFERRED,
@@ -413,7 +413,7 @@ class ManifestValidCasesTests(unittest.TestCase):
             result = classify_support_rolling(
                 RollingFacts(**data["facts"]),
                 expiry=timedelta(seconds=data["expiry_seconds"]),
-                now=datetime(2026, 7, 26, 0, 0, 0),
+                now=datetime(2026, 8, 13, 0, 0, 0),
             )
             self.assertIs(result, expected, distro_id)
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
@@ -423,7 +423,7 @@ class ManifestValidCasesTests(unittest.TestCase):
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
-        self.assertEqual(len(manifest["certifications"]), 8)
+        self.assertEqual(len(manifest["certifications"]), 9)
         for cert_id, cert in manifest["certifications"].items():
             with self.subTest(cert_id=cert_id):
                 self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))
