@@ -2961,26 +2961,41 @@ It also replaces name-only TUN cleanup with a root-owned registered UUID. Commit
 `961bd3f` fixes the real Kali update failure where root-owned staging required
 `sudo` for compileall.
 
-Strict-remediation local validation passed 2398 Python tests with 2 skips,
-`tests/unit.sh`, `tests/syntax.sh`, compileall, manifest validation and
+A second independent judge rejection found that the new registry still lived
+under daemon-controlled `/run/watchdogvpn`, and that install/update could still
+mutate runtime dependencies before rejecting dirty source. Commit `c39b12b`
+moves the registry to `/run/watchdogvpn-nm-tun/owned-uuid`, backed by systemd
+`RuntimeDirectory=watchdogvpn-nm-tun`, `RuntimeDirectoryMode=0700`,
+`RuntimeDirectoryPreserve=yes`, and `ReadWritePaths=/run/watchdogvpn-nm-tun`.
+Registry IO now uses descriptor validation plus `O_NOFOLLOW`, `O_CREAT`,
+`O_EXCL`, `fstat`, `fsync` and atomic rename. install/update now run
+`require_clean_source_checkout` immediately after argument parsing and before
+distro checks, privilege checks, dependency provisioning or runtime mutation.
+
+Strict-remediation local validation for `c39b12b` passed 2403 Python tests with
+2 skips, 171 focal H1/TUN/sing-box tests, `tests/unit.sh`, `tests/syntax.sh`,
+compileall, manifest validation and
 `git diff --check`. The stricter remediation still requires independent judge
 re-audit before H1 can be declared closed under the original blocker wording.
 
-The bridge-only Kali installation on exact commit `961bd3f` published
+The bridge-only Kali installation on exact commit `c39b12b` published
 `source_state=clean`, 247 inventoried entries, tree digest
-`c0f3bab32f46b46f236bf28dad379e14c9b286000736659293ceb1e39b8937f8`,
+`8fa240354a214ae9f7511b806cfb33f1c3f896e35926be3d8dea07ed3094c001`,
 generation digest
-`d71959d16e457a8d0530c3efc7dc0153f2fc0fe624e0abecb1f6ab6bdefd8c29`,
+`3f73700cdd279f4f2eb92d927d73f369e6ba8e5db37112624f01c49717e9ceaf`,
 and manifest digest
-`04af7408e0e602282fcdebc58394542d210114a35ae4a896a36eee14fe707e36`.
-The active daemon reported the same generation. A deliberately untracked source
-file made `update.sh --dry-run` fail closed before replacement. Polkit allowed
-the service user to start only `watchdogvpn-nm-tun-register.service` and
-`watchdogvpn-nm-tun-cleanup.service`; it denied unrelated systemd actions and
-foreign NetworkManager profile mutation/delete/add attempts, including
-`connection.id`, `ipv4.gateway`, `ipv4.routes`, `proxy.method` and
-`ipv4.dns-search`. The dummy profiles created for the negative checks were
-removed and no dummy residue remained.
+`e2b7965e6b10168894040fd7849be440a90bddebcaa5539c8a7e008369a70abb`.
+The active daemon reported the same generation. `/run/watchdogvpn` remained
+`watchdogvpn:watchdogvpn 750`, while `/run/watchdogvpn-nm-tun` was verified as
+`root:root 700` and not writable by the service user. A deliberately untracked
+source file made `update.sh --dry-run` fail in the `Source provenance preflight`
+section before `Runtime dependencies`, `Protocol runtime provisioning` or
+`Replace product files`. Polkit allowed the service user to start only
+`watchdogvpn-nm-tun-register.service` and `watchdogvpn-nm-tun-cleanup.service`;
+it denied unrelated systemd actions and foreign NetworkManager profile
+mutation/delete/add attempts, including `connection.id`, `ipv4.gateway`,
+`ipv4.routes`, `proxy.method` and `ipv4.dns-search`. The dummy profiles created
+for the negative checks were removed and no dummy residue remained.
 
 The installed doctor correctly retained one global `FAIL` because Kali remains
 `experimental`; that is not an H1 failure or support promotion. H1 creates no
