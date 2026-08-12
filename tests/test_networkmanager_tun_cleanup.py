@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import drivers.networkmanager_tun_cleanup as nm_tun_cleanup
 from drivers.networkmanager_tun_cleanup import (
     NetworkManagerTunCleanupError,
     record_active_tun_connection,
@@ -178,6 +179,32 @@ class NetworkManagerTunCleanupTests(unittest.TestCase):
 
         self.assertEqual(target_file.read_text(encoding="ascii"), "do-not-touch\n")
         self.assertEqual(self.registry_path.read_text(encoding="ascii"), f"{UUID_ONE}\n")
+
+    def test_main_dispatches_explicit_register_mode(self) -> None:
+        with patch.object(nm_tun_cleanup.sys, "argv", ["python-module-wrapper", "register"]), patch(
+            "drivers.networkmanager_tun_cleanup.record_active_tun_connection", return_value=True
+        ) as register, patch(
+            "drivers.networkmanager_tun_cleanup.remove_stale_tun_connections"
+        ) as cleanup:
+            self.assertEqual(nm_tun_cleanup.main(), 0)
+
+        register.assert_called_once_with()
+        cleanup.assert_not_called()
+
+    def test_main_dispatches_explicit_cleanup_mode(self) -> None:
+        with patch.object(nm_tun_cleanup.sys, "argv", ["python-module-wrapper", "cleanup"]), patch(
+            "drivers.networkmanager_tun_cleanup.record_active_tun_connection"
+        ) as register, patch(
+            "drivers.networkmanager_tun_cleanup.remove_stale_tun_connections", return_value=False
+        ) as cleanup:
+            self.assertEqual(nm_tun_cleanup.main(), 0)
+
+        register.assert_not_called()
+        cleanup.assert_called_once_with()
+
+    def test_main_rejects_unknown_explicit_mode(self) -> None:
+        with patch.object(nm_tun_cleanup.sys, "argv", ["python-module-wrapper", "unexpected"]):
+            self.assertEqual(nm_tun_cleanup.main(), 1)
 
     def test_listing_or_delete_failure_is_not_reported_as_clean(self) -> None:
         for side_effect in (

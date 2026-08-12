@@ -257,10 +257,13 @@ def _is_uuid(value: str) -> bool:
 
 def main() -> int:
     try:
-        if Path(sys.argv[0]).name.endswith("register"):
+        mode = sys.argv[1] if len(sys.argv) > 1 else Path(sys.argv[0]).name
+        if mode == "register" or mode.endswith("register"):
             record_active_tun_connection()
-        else:
+        elif mode == "cleanup" or mode.endswith("cleanup"):
             remove_stale_tun_connections()
+        else:
+            raise NetworkManagerTunCleanupError("unknown NetworkManager TUN helper mode")
     except NetworkManagerTunCleanupError:
         return 1
     return 0
