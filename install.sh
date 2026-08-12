@@ -404,6 +404,8 @@ print_section "Systemd verification"
 verify_systemd_units
 print_section "Enable services"
 enable_systemd_units
+print_section "Refresh daemon process"
+restart_watchdogvpn_service_after_runtime_update
 wait_for_services
 print_section "Daemon smoke test"
 smoke_test_watchdogvpn_daemon
