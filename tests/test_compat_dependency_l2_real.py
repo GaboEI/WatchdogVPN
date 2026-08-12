@@ -477,11 +477,15 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
         # artefacto no está disponible. Un 404 definitivo NO se reintenta:
         # significa que el artefacto genuinamente no existe y debe marcarse
         # como UNAVAILABLE de inmediato para no enmascarar fallos reales.
-        max_attempts = 3
-        backoff_seconds = 2.0
+        # Se conserva el último error de curl para incluirlo en la evidencia
+        # y poder diagnosticar fallos persistentes (p.ej. egress del runner).
+        max_attempts = 5
+        backoff_seconds = 3.0
+        last_error = ""
         for attempt in range(1, max_attempts + 1):
             probe = self._exec("curl -I -L -f -sS --max-time 15 %s" % shlex.quote(url))
             if probe["runtime_status"] != "executed":
+                last_error = "exec status=%s" % probe["runtime_status"]
                 if attempt < max_attempts:
                     time.sleep(backoff_seconds * attempt)
                     continue
@@ -507,12 +511,13 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
                     reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
                     error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
                 )
+            last_error = "rc=%s stderr=%r" % (probe.get("returncode"), (probe.get("stderr") or "").strip()[:200])
             if attempt < max_attempts:
                 time.sleep(backoff_seconds * attempt)
                 continue
         return resolver.AvailabilityObservation(
             resolver.AvailabilityStatus.UNKNOWN.value,
-            evidence="%s HEAD probe inconclusive after %d attempts: %s" % (evidence_prefix, max_attempts, url),
+            evidence="%s HEAD probe inconclusive after %d attempts: %s | last_error=%s" % (evidence_prefix, max_attempts, url, last_error),
             reason="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
             error_kind="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
         )
