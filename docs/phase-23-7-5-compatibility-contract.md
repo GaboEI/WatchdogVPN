@@ -2980,12 +2980,13 @@ evidence run found that `c39b12b` was still not sufficient: the installed
 `sys.argv[0]`, so the register unit executed the cleanup path and did not create
 `/run/watchdogvpn-nm-tun/owned-uuid`. Commit `78a56da` fixes that real blocker
 by passing explicit `register` and `cleanup` modes from the systemd units and
-making the Python entrypoint reject unknown modes. Local validation for
-`78a56da` passed 2406 Python tests with 2 skips, the focused
+making the Python entrypoint reject unknown modes. Independent suite validation
+for the current tree reported 2403 Python tests with 2 skips, and focused local
+validation for `78a56da` passed the focused
 `tests.test_networkmanager_tun_cleanup` suite, `tests/unit/test_install_security_contracts.sh`,
-`tests/syntax.sh`, compileall and `git diff --check`. The stricter remediation
-still requires independent judge re-audit before H1 can be declared closed under
-the original blocker wording.
+`tests/syntax.sh`, compileall and `git diff --check`. The stricter H1/Polkit/TUN
+remediation was later approved by audit as a technical prerequisite for Kali
+23.7.5.10e, not as Kali promotion or task closure.
 
 The bridge-only Kali installation on exact commit `78a56da` published
 `source_state=clean`, 247 inventoried entries, tree digest
@@ -3022,7 +3023,8 @@ mutation/delete/add attempts.
 The installed doctor correctly retained one global `FAIL` because Kali remains
 `experimental`; that is not an H1 failure or support promotion. H1 creates no
 `cert_kali_rolling`, does not update `last_validated`, and does not close Task
-23.7.5.10e.
+23.7.5.10e. The final H1/Polkit/TUN audit verdict approved this block as a
+technical prerequisite only; Kali 23.7.5.10e remains open.
 
 ### Kali 23.7.5.10e closure rule
 
