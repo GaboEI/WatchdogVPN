@@ -3020,18 +3020,38 @@ deliberately untracked source file made `update.sh --dry-run` fail in the
 denied unrelated systemd actions and foreign NetworkManager profile
 mutation/delete/add attempts.
 
-The installed doctor correctly retained one global `FAIL` because Kali remains
-`experimental`; that is not an H1 failure or support promotion. H1 creates no
-`cert_kali_rolling`, does not update `last_validated`, and does not close Task
-23.7.5.10e. The final H1/Polkit/TUN audit verdict approved this block as a
-technical prerequisite only; Kali 23.7.5.10e remains open.
+Before the 10e certification, the installed doctor correctly retained one global
+`FAIL` because Kali remained `experimental`; that was not an H1 failure or
+support promotion. H1 created no `cert_kali_rolling` and did not update
+`last_validated`. The final H1/Polkit/TUN audit approved that work as a
+technical prerequisite; the subsequent full 10e certification and audit are
+documented below.
 
-### Kali 23.7.5.10e closure rule
+### Kali 23.7.5.10e certification and promotion
 
-Task 23.7.5.10e has exactly one valid closure path: full Kali certification.
-A limited/no-promotion closure is not a closure path and must not be presented as
-an alternative. The task remains open until Kali has qualifying complete evidence,
-the manifest records the Kali rolling certification, `cert_kali_rolling` and
-`last_validated` are updated, documentation is aligned, and the final audit
-approves the certification. The H1/Polkit/TUN remediation is a prerequisite for
-that closure, not a substitute for it.
+Kali rolling was certified in Task 23.7.5.10e on 2026-08-12 after the complete
+bridge-only L3 validation and independent audit. The validated checkout was
+HEAD `7035b933c257f129dcc314bd191ad4f1ced8ac83` (short `7035b93`) and the
+reference snapshot was `pre-23-7-5-10e-kali-l3-validation`. The private evidence
+is stored under
+`/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-10e-kali-protocol-matrix-20260812T104756Z/`
+and the lifecycle evidence for the same task.
+
+The certification matrix contains 9 `green` protocol results with real egress:
+VLESS, Trojan, Hysteria2, AmneziaWG, OpenVPN+Cloak, VMess, TUIC, SOCKS and
+HTTP. WireGuard, Shadowsocks and plain OpenVPN are `formal_non_green` Plan-B /
+no-egress rows and are not counted as green. Provider lifecycle, DNS,
+app-policy-neutral, kill switch, rotation, manual-off, sleep/wake, reboot and
+final cleanup also passed. The manifest record is `cert_kali_rolling` with
+`scope=physical_field_certification`.
+
+The `--certification-lab` mechanism is an explicit field-validation escape hatch
+for a distribution that is still classified as `experimental`. It is enabled
+only when the caller supplies both `WATCHDOGVPN_CERTIFICATION_LAB=1` and
+`WATCHDOGVPN_FIELD_VALIDATION=1`, together with the `--certification-lab` CLI
+flag. The `distro_certification_lab_enabled()` function is the shared gate used
+by install/update. It permits the controlled installation and validation needed
+for Kali 10e, but it does not itself promote a distribution, change the manifest,
+or create a certification record. The mechanism was added in commit `75a1e63`.
+Kali's later promotion is represented separately by `cert_kali_rolling` and its
+rolling `last_validated` metadata after the full audit approval.

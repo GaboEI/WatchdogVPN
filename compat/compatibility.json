@@ -236,6 +236,64 @@
       "scope": "physical_field_certification",
       "snapshot": "cachyos-2026-07-22"
     },
+    "cert_kali_rolling": {
+      "current": true,
+      "date": "2026-08-12T00:00:00Z",
+      "distribution": "kali",
+      "evidence": "docs/phase-23-7-5-compatibility-contract.md Task 23.7.5.10e Kali rolling certification and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "pre-23-7-5-10e-kali-l3-validation"
+    },
     "cert_debian_13": {
       "current": true,
       "date": "2026-07-22T00:00:00Z",
@@ -3623,7 +3681,7 @@
       "id": "kali",
       "lineage": {
         "family_inference_allowed": false,
-        "has_own_evidence": false,
+        "has_own_evidence": true,
         "is_derivative": true
       },
       "policy": {
@@ -3632,7 +3690,7 @@
           "eol_or_withdrawn": false,
           "evidence_expiry_seconds": 2592000,
           "expressly_excluded": false,
-          "last_validated": null,
+          "last_validated": "2026-08-12T00:00:00Z",
           "meets_technical_floor": true
         }
       },
@@ -4325,9 +4383,11 @@
         "expiry_seconds": 2592000
       },
       "kali": {
-        "evidence_refs": [],
+        "evidence_refs": [
+          "cert_kali_rolling"
+        ],
         "expiry_seconds": 2592000,
-        "last_validated": null
+        "last_validated": "2026-08-12T00:00:00Z"
       },
       "opensuse_tumbleweed": {
         "evidence_refs": [],
