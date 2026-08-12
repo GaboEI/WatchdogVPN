@@ -3001,3 +3001,13 @@ The installed doctor correctly retained one global `FAIL` because Kali remains
 `experimental`; that is not an H1 failure or support promotion. H1 creates no
 `cert_kali_rolling`, does not update `last_validated`, and does not close Task
 23.7.5.10e.
+
+### Kali 23.7.5.10e closure rule
+
+Task 23.7.5.10e has exactly one valid closure path: full Kali certification.
+A limited/no-promotion closure is not a closure path and must not be presented as
+an alternative. The task remains open until Kali has qualifying complete evidence,
+the manifest records the Kali rolling certification, `cert_kali_rolling` and
+`last_validated` are updated, documentation is aligned, and the final audit
+approves the certification. The H1/Polkit/TUN remediation is a prerequisite for
+that closure, not a substitute for it.
