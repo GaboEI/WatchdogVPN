@@ -2994,20 +2994,30 @@ generation digest
 `6907215c332fd2b6b13bdd87bd780a36e477058a8d5a00b11e11b77d0b585f33`,
 and manifest digest
 `0e97b5d2ef85a2a4a28758b53d3ac2f38d5df838fd3cc53d0acaeacf190189cd`.
-The active daemon reported the same generation. The live H1/Polkit/TUN gate
-evidence is stored on Kali at
-`/var/tmp/wdvpn-h1-polkit-tun-78a56da-evidence-20260812T003253Z/`. In that run,
-`/run/watchdogvpn-nm-tun` was verified as `root:root 700` and not writable by
-the service user; the register unit wrote `owned-uuid` as `root:root 600`; the
-registered UUID matched the active owned `wdvpn-tun0` profile exactly; cleanup
-removed only the owned profile and left the deliberately foreign inactive
-`wdvpn-tun0` profile intact until root deleted it. A deliberately untracked
-source file made `update.sh --dry-run` fail in the `Source provenance preflight`
-section before `Runtime dependencies`, `Protocol runtime provisioning` or
-`Replace product files`. Polkit denied unrelated systemd actions and foreign
-NetworkManager profile mutation/delete/add attempts. The test profiles were
-removed and the final inventory showed no `wdvpn-tun0`, dummy NetworkManager
-profile, TUN link, route/rule or `sing-box` residue.
+The active daemon reported the same generation. The first synthetic Kali gate
+evidence at `/var/tmp/wdvpn-h1-polkit-tun-78a56da-evidence-20260812T003253Z/`
+proved the helper and UUID semantics but did not prove the full WatchdogVPN
+connect/disconnect route. The accepted live-route revalidation evidence is
+stored on Kali at
+`/var/tmp/wdvpn-real-route-h1-polkit-tun-78a56da-evidence-20260812T071632Z/`.
+In that run, WatchdogVPN connected the real `ubuntu_gabo_yahoo_firefox` VLESS
+profile through sing-box, created the real active `wdvpn-tun0`, and
+`watchdogvpn-nm-tun-register.service` executed with
+`ExecStart=/usr/local/bin/watchdogvpn-nm-tun-register register`. The register
+unit wrote `/run/watchdogvpn-nm-tun/owned-uuid` as `root:root 600`; the UUID
+matched the active owned TUN profile exactly while a deliberately foreign
+inactive same-name TUN profile used a different UUID. Normal `watchdog
+disconnect --json` then executed `watchdogvpn-nm-tun-cleanup.service` with
+`ExecStart=/usr/local/bin/watchdogvpn-nm-tun-cleanup cleanup`, returned the
+daemon to standby, removed only the registered owned profile, preserved the
+foreign same-name TUN profile until explicit root cleanup, and left final
+inventory with no `wdvpn-tun0`, WatchdogVPN routes/rules, registry entry,
+dummy profile or `sing-box` residue. The synthetic gate also verified that a
+deliberately untracked source file made `update.sh --dry-run` fail in the
+`Source provenance preflight` section before `Runtime dependencies`,
+`Protocol runtime provisioning` or `Replace product files`, and that Polkit
+denied unrelated systemd actions and foreign NetworkManager profile
+mutation/delete/add attempts.
 
 The installed doctor correctly retained one global `FAIL` because Kali remains
 `experimental`; that is not an H1 failure or support promotion. H1 creates no
