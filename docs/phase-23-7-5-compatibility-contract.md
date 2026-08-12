@@ -2974,28 +2974,40 @@ distro checks, privilege checks, dependency provisioning or runtime mutation.
 
 Strict-remediation local validation for `c39b12b` passed 2403 Python tests with
 2 skips, 171 focal H1/TUN/sing-box tests, `tests/unit.sh`, `tests/syntax.sh`,
-compileall, manifest validation and
-`git diff --check`. The stricter remediation still requires independent judge
-re-audit before H1 can be declared closed under the original blocker wording.
+compileall, manifest validation and `git diff --check`. A later live Kali TUN
+evidence run found that `c39b12b` was still not sufficient: the installed
+`python -m drivers.networkmanager_tun_cleanup` wrapper dispatched by
+`sys.argv[0]`, so the register unit executed the cleanup path and did not create
+`/run/watchdogvpn-nm-tun/owned-uuid`. Commit `78a56da` fixes that real blocker
+by passing explicit `register` and `cleanup` modes from the systemd units and
+making the Python entrypoint reject unknown modes. Local validation for
+`78a56da` passed 2406 Python tests with 2 skips, the focused
+`tests.test_networkmanager_tun_cleanup` suite, `tests/unit/test_install_security_contracts.sh`,
+`tests/syntax.sh`, compileall and `git diff --check`. The stricter remediation
+still requires independent judge re-audit before H1 can be declared closed under
+the original blocker wording.
 
-The bridge-only Kali installation on exact commit `c39b12b` published
+The bridge-only Kali installation on exact commit `78a56da` published
 `source_state=clean`, 247 inventoried entries, tree digest
-`8fa240354a214ae9f7511b806cfb33f1c3f896e35926be3d8dea07ed3094c001`,
+`f3d5482e06064f1f0e693b5c53bdc87552ae615b5a75e8b275d636e60455f4bf`,
 generation digest
-`3f73700cdd279f4f2eb92d927d73f369e6ba8e5db37112624f01c49717e9ceaf`,
+`6907215c332fd2b6b13bdd87bd780a36e477058a8d5a00b11e11b77d0b585f33`,
 and manifest digest
-`e2b7965e6b10168894040fd7849be440a90bddebcaa5539c8a7e008369a70abb`.
-The active daemon reported the same generation. `/run/watchdogvpn` remained
-`watchdogvpn:watchdogvpn 750`, while `/run/watchdogvpn-nm-tun` was verified as
-`root:root 700` and not writable by the service user. A deliberately untracked
+`0e97b5d2ef85a2a4a28758b53d3ac2f38d5df838fd3cc53d0acaeacf190189cd`.
+The active daemon reported the same generation. The live H1/Polkit/TUN gate
+evidence is stored on Kali at
+`/var/tmp/wdvpn-h1-polkit-tun-78a56da-evidence-20260812T003253Z/`. In that run,
+`/run/watchdogvpn-nm-tun` was verified as `root:root 700` and not writable by
+the service user; the register unit wrote `owned-uuid` as `root:root 600`; the
+registered UUID matched the active owned `wdvpn-tun0` profile exactly; cleanup
+removed only the owned profile and left the deliberately foreign inactive
+`wdvpn-tun0` profile intact until root deleted it. A deliberately untracked
 source file made `update.sh --dry-run` fail in the `Source provenance preflight`
 section before `Runtime dependencies`, `Protocol runtime provisioning` or
-`Replace product files`. Polkit allowed the service user to start only
-`watchdogvpn-nm-tun-register.service` and `watchdogvpn-nm-tun-cleanup.service`;
-it denied unrelated systemd actions and foreign NetworkManager profile
-mutation/delete/add attempts, including `connection.id`, `ipv4.gateway`,
-`ipv4.routes`, `proxy.method` and `ipv4.dns-search`. The dummy profiles created
-for the negative checks were removed and no dummy residue remained.
+`Replace product files`. Polkit denied unrelated systemd actions and foreign
+NetworkManager profile mutation/delete/add attempts. The test profiles were
+removed and the final inventory showed no `wdvpn-tun0`, dummy NetworkManager
+profile, TUN link, route/rule or `sing-box` residue.
 
 The installed doctor correctly retained one global `FAIL` because Kali remains
 `experimental`; that is not an H1 failure or support promotion. H1 creates no
