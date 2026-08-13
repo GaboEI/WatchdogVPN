@@ -22,7 +22,7 @@ from drivers.runtime_paths import (
 )
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
-from parsers.openvpn_safety import validate_openvpn_profile
+from parsers.openvpn_safety import validate_openvpn_config, validate_openvpn_profile
 
 
 RUNTIME_PREFIX = "watchdogvpn-openvpn-"
@@ -145,28 +145,27 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         host = str(profile.config.get("host") or "").strip()
         if host:
             return host
-        for line in str(profile.config.get("raw_config") or "").splitlines():
-            parts = line.strip().split()
-            if len(parts) >= 2 and parts[0].removeprefix("--") == "remote":
-                return parts[1]
+        try:
+            directives = validate_openvpn_config(str(profile.config.get("raw_config") or ""))
+        except ValueError:
+            return ""
+        for args in directives.get("remote", []):
+            if args:
+                return args[0]
         return ""
 
-    def _remote_directives(self, profile: Profile) -> list[str]:
-        directives: list[str] = []
-        for line in str(profile.config.get("raw_config") or "").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith(("#", ";")):
-                continue
-            key = stripped.split(maxsplit=1)[0].removeprefix("--")
-            if key in {"remote", "remote-random"}:
-                directives.append(" ".join((key, *stripped.split()[1:])))
-        return directives
-
     def _validate_single_ipv4_remote_endpoint(self, profile: Profile) -> bool:
-        directives = self._remote_directives(profile)
-        remote_lines = [line for line in directives if line.split(maxsplit=1)[0] == "remote"]
-        if any(line.split(maxsplit=1)[0] == "remote-random" for line in directives):
+        try:
+            directives = validate_openvpn_config(str(profile.config.get("raw_config") or ""))
+        except ValueError as exc:
+            self.last_error = str(exc)
+            return False
+        remote_lines = directives.get("remote", [])
+        if directives.get("remote-random"):
             self.last_error = "OpenVPN remote-random is not supported by native endpoint protection"
+            return False
+        if directives.get("remote-random-hostname"):
+            self.last_error = "OpenVPN remote-random-hostname is not supported by native endpoint protection"
             return False
         if len(remote_lines) > 1:
             self.last_error = "OpenVPN profiles with multiple remote endpoints are not supported by native endpoint protection"

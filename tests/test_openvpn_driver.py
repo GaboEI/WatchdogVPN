@@ -198,7 +198,7 @@ class OpenVPNDriverTests(unittest.TestCase):
     @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
     @patch("drivers.openvpn_driver.subprocess.run")
     def test_protect_remote_endpoint_route_rejects_ipv6_endpoint(self, run_mock, which_mock) -> None:
-        for remote in ("remote", "--remote"):
+        for remote in ("remote", "--remote", "REMOTE", '"--remote"'):
             with self.subTest(remote=remote):
                 self.driver.last_error = ""
                 profile = Profile(
@@ -222,6 +222,8 @@ class OpenVPNDriverTests(unittest.TestCase):
             "client\nremote 138.124.91.224 1194\nremote 198.51.100.7 1194\n",
             "client\n--remote 138.124.91.224 1194\n--remote 198.51.100.7 1194\n",
             "client\n--remote 138.124.91.224 1194\n--remote 2001:db8::1 1194\n",
+            "client\nREMOTE 138.124.91.224 1194\nREMOTE 198.51.100.7 1194\n",
+            'client\n"--remote" 138.124.91.224 1194\n"--remote" 198.51.100.7 1194\n',
         )
         for raw_config in cases:
             with self.subTest(raw_config=raw_config):
@@ -243,7 +245,7 @@ class OpenVPNDriverTests(unittest.TestCase):
     @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
     @patch("drivers.openvpn_driver.subprocess.run")
     def test_protect_remote_endpoint_route_rejects_remote_random(self, run_mock, which_mock) -> None:
-        for random_directive in ("remote-random", "--remote-random"):
+        for random_directive in ("remote-random", "--remote-random", "REMOTE-RANDOM", "--REMOTE-RANDOM", '"--remote-random"'):
             with self.subTest(random_directive=random_directive):
                 self.driver.last_error = ""
                 profile = Profile(
@@ -260,21 +262,52 @@ class OpenVPNDriverTests(unittest.TestCase):
                 self.assertIsNone(self.driver._owned_endpoint_route)
                 self.assertIn("remote-random", self.driver.last_error)
 
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_remote_random_hostname(self, run_mock, which_mock) -> None:
+        for random_directive in (
+            "remote-random-hostname",
+            "--remote-random-hostname",
+            "REMOTE-RANDOM-HOSTNAME",
+            "--REMOTE-RANDOM-HOSTNAME",
+            '"--remote-random-hostname"',
+        ):
+            with self.subTest(random_directive=random_directive):
+                self.driver.last_error = ""
+                profile = Profile(
+                    id="openvpn-random-hostname",
+                    name="openvpn-random-hostname",
+                    protocol=ProtocolType.OPENVPN,
+                    config={"raw_config": f"client\nremote 138.124.91.224 1194\n{random_directive}\n"},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+                run_mock.assert_not_called()
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn("remote-random-hostname", self.driver.last_error)
+
     @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch("drivers.openvpn_driver.subprocess.Popen")
     @patch("drivers.openvpn_driver.subprocess.run")
     def test_connect_rejects_unsafe_remote_before_runtime_mutation(self, run_mock, popen_mock, binary_mock) -> None:
         cases = (
-            ("ipv6", "client\n--remote 2001:db8::1 1194\n", "IPv6 remote endpoints"),
+            ("ipv6", 'client\n"--remote" 2001:db8::1 1194\n', "IPv6 remote endpoints"),
             (
                 "multiple",
-                "client\n--remote 198.51.100.1 1194\n--remote 2001:db8::1 1194\n",
+                "client\nREMOTE 198.51.100.1 1194\n--remote 2001:db8::1 1194\n",
                 "multiple remote endpoints",
             ),
             (
                 "remote-random",
-                "client\n--remote 198.51.100.1 1194\n--remote-random\n",
+                "client\n--remote 198.51.100.1 1194\n--REMOTE-RANDOM\n",
                 "remote-random",
+            ),
+            (
+                "remote-random-hostname",
+                'client\n--remote 198.51.100.1 1194\n"--remote-random-hostname"\n',
+                "remote-random-hostname",
             ),
         )
         for profile_id, raw_config, expected_error in cases:
