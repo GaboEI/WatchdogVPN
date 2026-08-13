@@ -515,7 +515,7 @@ def fingerprint_generation(
     expected_uid: int | None = None,
     expected_gid: int | None = None,
 ) -> str:
-    entries = collect_tree(root)
+    entries = collect_tree(root, exclude_python_cache=True)
     deployments = collect_deployments(deployment_paths)
     if (expected_uid is None) != (expected_gid is None):
         raise ProvenanceError("expected runtime UID and GID must be specified together")
@@ -743,7 +743,7 @@ def build_manifest(
     if not TIMESTAMP_RE.fullmatch(installed_at):
         raise ProvenanceError("installed_at must be an RFC 3339 UTC timestamp")
     source_entries = collect_tree(source_root, normalized_includes, exclude_python_cache=True)
-    installed_entries = collect_tree(installed_root)
+    installed_entries = collect_tree(installed_root, exclude_python_cache=True)
     if _content_identity(source_entries) != _content_identity(installed_entries):
         raise ProvenanceError("source and installed runtime differ; refusing provenance publication")
     root_metadata = _root_metadata(installed_root)
@@ -899,7 +899,7 @@ def _validate_manifest_entries(entries: list[Any]) -> None:
         if normalized <= previous_path:
             raise ProvenanceError("installed provenance file inventory is not unique and sorted")
         previous_path = normalized
-        if _should_exclude(PurePosixPath(path)):
+        if _should_exclude(PurePosixPath(path), python_cache=True):
             raise ProvenanceError("installed provenance inventory contains an excluded path")
         if entry_type == "file":
             if set(entry) != {"path", "type", "sha256", "size", "mode", "uid", "gid"}:
@@ -1010,7 +1010,7 @@ def verify_installation(
         raise ProvenanceError("installed runtime root differs from provenance manifest")
     if _root_metadata(installed_root) != manifest["runtime_root_metadata"]:
         raise ProvenanceError("installed runtime root metadata differs from published provenance")
-    observed_entries = collect_tree(installed_root)
+    observed_entries = collect_tree(installed_root, exclude_python_cache=True)
     if observed_entries != manifest["files"]:
         raise ProvenanceError("installed runtime tree differs from the published provenance inventory")
     observed_deployments = collect_deployments(

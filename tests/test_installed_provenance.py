@@ -345,23 +345,32 @@ class InstalledProvenanceTests(unittest.TestCase):
                 installed_root=self.installed_root,
             )
 
-    def test_python_cache_in_installed_runtime_changes_fingerprint_and_fails_verification(self) -> None:
+    def test_python_cache_in_installed_runtime_is_ignored_by_provenance_verification(self) -> None:
         self.build_manifest()
         cache_dir = self.installed_root / "daemon" / "__pycache__"
         cache_dir.mkdir()
         (cache_dir / "main.cpython-313.pyc").write_bytes(b"dynamic")
 
         first = installed_provenance.fingerprint_tree(self.installed_root)
+        generation_before = installed_provenance.fingerprint_generation(
+            self.installed_root,
+            self.deployment_paths,
+        )
         (cache_dir / "main.cpython-313.pyc").write_bytes(b"changed")
         second = installed_provenance.fingerprint_tree(self.installed_root)
+        generation_after = installed_provenance.fingerprint_generation(
+            self.installed_root,
+            self.deployment_paths,
+        )
 
         self.assertNotEqual(first, second)
-        with self.assertRaisesRegex(installed_provenance.ProvenanceError, "installed runtime tree differs"):
-            installed_provenance.verify_installation(
-                marker_path=self.marker_path,
-                manifest_path=self.manifest_path,
-                installed_root=self.installed_root,
-            )
+        self.assertEqual(generation_before, generation_after)
+        result = installed_provenance.verify_installation(
+            marker_path=self.marker_path,
+            manifest_path=self.manifest_path,
+            installed_root=self.installed_root,
+        )
+        self.assertEqual(result["status"], "verified")
 
     def test_unsafe_include_is_rejected(self) -> None:
         with self.assertRaisesRegex(installed_provenance.ProvenanceError, "unsafe include path"):
