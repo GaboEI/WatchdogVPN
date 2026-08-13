@@ -1227,12 +1227,12 @@ def _validate_distributions(manifest):
             _require_positive_int(rolling.get("evidence_expiry_seconds"), path + ".policy.rolling.evidence_expiry_seconds")
 
 
-def _expected_protocol_disposition(protocol):
+def _allowed_protocol_dispositions(protocol):
     category = protocol["category"]
     if category == "formal_non_green":
-        return "formal_non_green"
+        return {"formal_non_green", "green"}
     if category in ("resilient", "compatibility"):
-        return "green"
+        return {"green"}
     raise ManifestError("unknown protocol category %r" % category)
 
 
@@ -1300,11 +1300,11 @@ def _certification_qualification_error(manifest, cert_id):
         if type(result) is not dict:
             return "protocol result %s must be an object" % protocol_id
         disposition = result.get("disposition")
-        expected = _expected_protocol_disposition(protocol)
-        if disposition != expected:
+        allowed = _allowed_protocol_dispositions(protocol)
+        if disposition not in allowed:
             return (
-                "protocol %s disposition %s does not match required %s"
-                % (protocol_id, disposition, expected)
+                "protocol %s disposition %s does not match allowed %s"
+                % (protocol_id, disposition, ",".join(sorted(allowed)))
             )
         if disposition in ("failed", "not_run", "not_applicable"):
             return "protocol %s has non-qualifying disposition %s" % (protocol_id, disposition)

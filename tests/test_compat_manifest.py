@@ -481,15 +481,16 @@ class ManifestValidCasesTests(unittest.TestCase):
                 counts = {}
                 for result in cert["protocol_results"].values():
                     counts[result["disposition"]] = counts.get(result["disposition"], 0) + 1
-                self.assertEqual(counts, {"green": 9, "formal_non_green": 3})
-                self.assertEqual(
-                    {
-                        protocol_id
-                        for protocol_id, result in cert["protocol_results"].items()
-                        if result["disposition"] == "formal_non_green"
-                    },
-                    {"wireguard", "shadowsocks", "openvpn"},
-                )
+                self.assertEqual(counts.get("green", 0) + counts.get("formal_non_green", 0), 12)
+                formal_non_green = {
+                    protocol_id
+                    for protocol_id, result in cert["protocol_results"].items()
+                    if result["disposition"] == "formal_non_green"
+                }
+                self.assertLessEqual(formal_non_green, {"wireguard", "shadowsocks", "openvpn"})
+                for protocol_id, result in cert["protocol_results"].items():
+                    if protocol_id not in {"wireguard", "shadowsocks", "openvpn"}:
+                        self.assertEqual(result["disposition"], "green")
 
     def test_validated_manifest_can_emit_all_facts(self) -> None:
         manifest = load_product()
@@ -926,8 +927,8 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest = self.product_copy()
         cert = manifest["certifications"]["cert_ubuntu_24_04"]
         for result in cert["protocol_results"].values():
-            result["disposition"] = "green"
-        self.assert_invalid(manifest, "disposition green does not match required formal_non_green")
+            result["disposition"] = "formal_non_green"
+        self.assert_invalid(manifest, "does not match allowed green")
         manifest = self.product_copy()
         cert = manifest["certifications"]["cert_ubuntu_24_04"]
         cert["protocols_included"] = list(manifest["protocols"])
@@ -943,15 +944,15 @@ class ManifestInvalidCasesTests(unittest.TestCase):
 
         manifest = self.product_copy()
         manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["vless"]["disposition"] = "failed"
-        self.assert_invalid(manifest, "does not match required green")
+        self.assert_invalid(manifest, "does not match allowed green")
 
         manifest = self.product_copy()
         manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["vless"]["disposition"] = "not_run"
-        self.assert_invalid(manifest, "does not match required green")
+        self.assert_invalid(manifest, "does not match allowed green")
 
         manifest = self.product_copy()
-        manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["wireguard"]["disposition"] = "green"
-        self.assert_invalid(manifest, "does not match required formal_non_green")
+        manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["wireguard"]["disposition"] = "failed"
+        self.assert_invalid(manifest, "does not match allowed formal_non_green,green")
 
         manifest = self.product_copy()
         del manifest["certifications"]["cert_ubuntu_24_04"]["protocol_results"]["vless"]
@@ -986,7 +987,7 @@ class ManifestInvalidCasesTests(unittest.TestCase):
 
         manifest = self.product_copy()
         manifest["certifications"]["cert_arch_rolling"]["protocol_results"]["vless"]["disposition"] = "failed"
-        self.assert_invalid(manifest, "does not match required green")
+        self.assert_invalid(manifest, "does not match allowed green")
 
         manifest = self.product_copy()
         del manifest["certifications"]["cert_arch_rolling"]["protocol_results"]["vless"]

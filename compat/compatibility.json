@@ -586,57 +586,57 @@
     },
     "cert_ubuntu_24_04": {
       "current": true,
-      "date": "2026-07-22T00:00:00Z",
+      "date": "2026-08-13T00:00:00Z",
       "distribution": "ubuntu",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.5.5 Ubuntu certification and private evidence",
+      "evidence": "Task 23.7.5.11A.1 Ubuntu 24.04 field certification and private evidence at /home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-1-ubuntu-20260813T104226Z/",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress after guided PPA runtime install; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "http": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "openvpn": {
           "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "evidence": "23.7.5.11A.1 improved but not green: repaired HMAC and unique-CN profile reached TLS/pool assignment, but pure OpenVPN and WatchdogVPN both had no useful real egress; not counted as green"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on authorized bridge-only Ubuntu 24.04 VM wdvpn-ubuntu-2404 using 04_OpenVPN_Cloak_gabo_nuevo_FIX.vpn; nls1-specific zero-RX symptom documented"
         },
         "shadowsocks": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "wireguard": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         }
       },
       "release": "ubuntu_24_04",
