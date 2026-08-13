@@ -20,6 +20,7 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.native.health_check.return_value = "ok"
         self.native.disconnect.return_value = True
         self.native.status.return_value = ConnectionState(active_profile_id="native", status="connected")
+        self.native.egress_interface.return_value = "watchdogvpn_awg"
         self.native.is_available.return_value = True
         self.companion = Mock(spec=SingBoxDriver)
         self.companion.connect.return_value = True
@@ -39,6 +40,7 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.companion.connect.assert_called_once_with(
             self.profile, dns_policy=None, mode="rules", native_transport=True,
             native_bypass_cidrs=("198.51.100.7/32",), management_peers=(),
+            native_egress_interface="watchdogvpn_awg",
         )
         self.companion.disconnect.assert_called_once_with()
         self.native.disconnect.assert_called_once_with()
@@ -65,6 +67,15 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.assertTrue(self.driver.connect(self.profile))
         self.assertTrue(self.driver.disconnect())
         self.assertEqual(calls[-2:], ["companion", "native"])
+
+    def test_connect_fails_closed_without_native_egress_interface(self) -> None:
+        self.native.egress_interface.return_value = None
+
+        self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+
+        self.companion.connect.assert_not_called()
+        self.native.disconnect.assert_called_once_with()
+        self.assertEqual(self.driver.last_error, "native transport egress interface is unavailable")
 
 
 class NativeEndpointBypassCidrsTests(unittest.TestCase):
@@ -110,6 +121,7 @@ class NativeEndpointBypassCidrsTests(unittest.TestCase):
         native = Mock()
         native.connect.return_value = True
         native.status.return_value = ConnectionState(active_profile_id="native", status="connected")
+        native.egress_interface.return_value = "watchdogvpn_awg"
         companion = Mock(spec=SingBoxDriver)
         companion.connect.return_value = True
         companion.preflight_native_management_routes.return_value = {}
@@ -123,6 +135,10 @@ class NativeEndpointBypassCidrsTests(unittest.TestCase):
         self.assertEqual(
             companion.connect.call_args.kwargs["native_bypass_cidrs"],
             ("198.51.100.7/32",),
+        )
+        self.assertEqual(
+            companion.connect.call_args.kwargs["native_egress_interface"],
+            "watchdogvpn_awg",
         )
 
 

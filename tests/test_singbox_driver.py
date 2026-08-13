@@ -646,6 +646,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             capture_modes=("local_proxy", "tun"),
             native_transport=True,
             native_bypass_cidrs=("138.124.58.47/32",),
+            native_egress_interface="tunwd1234",
             management_routes={"198.51.100.9": "enp0s8", "2001:db8::9": "eth0"},
         )
 
@@ -670,7 +671,10 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             ],
         )
         outbounds = {outbound["tag"]: outbound for outbound in config["outbounds"]}
-        self.assertEqual(outbounds["direct"], {"type": "direct", "tag": "direct"})
+        self.assertEqual(
+            outbounds["direct"],
+            {"type": "direct", "tag": "direct", "bind_interface": "tunwd1234"},
+        )
         self.assertEqual(outbounds["watchdogvpn-management-1"]["bind_interface"], "enp0s8")
         self.assertEqual(outbounds["watchdogvpn-management-2"]["bind_interface"], "eth0")
         self.assertNotIn("must-not-be-used", repr(config))
@@ -689,6 +693,20 @@ class SingBoxDriverConfigTests(unittest.TestCase):
         # capture rules finished applying - a self-referential routing loop
         # that silently black-holed all real egress.
         self.assertEqual(tun_inbound["route_exclude_address"], ["138.124.58.47/32"])
+
+    @patch.object(SingBoxDriver, "_write_config")
+    def test_native_transport_requires_native_egress_interface(self, write_mock) -> None:
+        profile = self._profile(ProtocolType.AMNEZIAWG, raw="[Interface]\nAddress = 10.0.0.2/32")
+
+        with self.assertRaisesRegex(ValueError, "native_egress_interface"):
+            self.driver.generate_singbox_config(
+                profile,
+                mode="tun",
+                native_transport=True,
+                native_bypass_cidrs=("138.124.58.47/32",),
+            )
+
+        write_mock.assert_not_called()
 
     @patch.object(SingBoxDriver, "_write_config")
     @patch.object(SingBoxDriver, "_outbound_bind_interface", return_value=None)
@@ -714,6 +732,7 @@ class SingBoxDriverConfigTests(unittest.TestCase):
             mode="rules",
             capture_modes=("local_proxy", "tun"),
             native_transport=True,
+            native_egress_interface="watchdogvpn_awg",
             dns_policy=dns_policy,
         )
 

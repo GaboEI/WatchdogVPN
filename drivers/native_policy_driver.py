@@ -136,9 +136,19 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
             LOGGER.warning("native_policy_connect_native_readiness_incomplete")
             self.native.disconnect()
             return False
+        egress_interface_getter = getattr(self.native, "egress_interface", None)
+        native_egress_interface = (
+            egress_interface_getter() if callable(egress_interface_getter) else None
+        )
+        if not isinstance(native_egress_interface, str) or not native_egress_interface.strip():
+            self.last_error = "native transport egress interface is unavailable"
+            LOGGER.warning("native_policy_connect_native_egress_interface_unavailable")
+            self.native.disconnect()
+            return False
         companion_options = dict(options)
         companion_options["native_transport"] = True
         companion_options["native_bypass_cidrs"] = self._native_endpoint_bypass_cidrs(profile)
+        companion_options["native_egress_interface"] = native_egress_interface.strip()
         # Native preflight above already installed the only safe SSH plan; do not
         # invoke the ordinary profile-bound preflight a second time.
         companion_options["management_peers"] = ()

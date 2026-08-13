@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import ipaddress
 import shutil
 import subprocess
 import time
@@ -64,6 +65,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         self._status_path: Path | None = None
         self._expected_interface = ""
         self._expected_device_type = ""
+        self._owned_endpoint_route: str | None = None
         self.last_error = ""
         cleanup_stale_runtime_dirs(RUNTIME_PREFIX)
 
@@ -124,6 +126,72 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         self._expected_interface = ""
         self._expected_device_type = ""
 
+    def _remote_host(self, profile: Profile) -> str:
+        host = str(profile.config.get("host") or "").strip()
+        if host:
+            return host
+        for line in str(profile.config.get("raw_config") or "").splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == "remote":
+                return parts[1]
+        return ""
+
+    def _default_route_tokens(self) -> list[str] | None:
+        if not shutil.which("ip"):
+            return None
+        result = subprocess.run(
+            ["ip", "-4", "route", "show", "default"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        line = next((item.strip() for item in result.stdout.splitlines() if item.strip()), "")
+        return line.split() if line else None
+
+    def _protect_remote_endpoint_route(self, profile: Profile) -> bool:
+        host = self._remote_host(profile)
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            return True
+        route = f"{host}/32"
+        tokens = self._default_route_tokens()
+        if not tokens:
+            self.last_error = "OpenVPN endpoint route could not resolve the default route"
+            return False
+        command = ["ip", "route", "add", route]
+        if "via" in tokens:
+            index = tokens.index("via")
+            if index + 1 >= len(tokens):
+                self.last_error = "OpenVPN endpoint route default gateway is malformed"
+                return False
+            command.extend(["via", tokens[index + 1]])
+        if "dev" in tokens:
+            index = tokens.index("dev")
+            if index + 1 >= len(tokens):
+                self.last_error = "OpenVPN endpoint route default interface is malformed"
+                return False
+            command.extend(["dev", tokens[index + 1]])
+        if "onlink" in tokens:
+            command.append("onlink")
+        result = subprocess.run(command, text=True, capture_output=True, check=False)
+        if result.returncode == 0:
+            self._owned_endpoint_route = route
+            return True
+        stderr = (result.stderr or "").lower()
+        if "file exists" in stderr:
+            return True
+        self.last_error = "OpenVPN endpoint route protection failed"
+        return False
+
+    def _cleanup_endpoint_route(self) -> None:
+        route = self._owned_endpoint_route
+        self._owned_endpoint_route = None
+        if route and shutil.which("ip"):
+            subprocess.run(["ip", "route", "delete", route], text=True, capture_output=True, check=False)
+
     def _vpn_interface_active(self, profile: Profile | None = None) -> bool:
         if not shutil.which("ip"):
             return False
@@ -181,6 +249,15 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return False
         return "OpenVPN" in status and "Initialization Sequence Completed" in log
 
+    def egress_interface(self) -> str | None:
+        if self._active_profile is None:
+            return None
+        if not self._expected_interface:
+            return None
+        if not self._vpn_interface_active(self._active_profile):
+            return None
+        return self._expected_interface
+
     def connect(
         self,
         profile: Profile,
@@ -207,9 +284,18 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return False
         self.generate_openvpn_config(profile)
         config_path, log_path = self._ensure_runtime_paths()
+        runtime_dir = self._runtime_dir
+        status_path = self._status_path
+        if runtime_dir is None or status_path is None:
+            self.last_error = "OpenVPN runtime paths are unavailable"
+            self._cleanup_runtime()
+            return False
+        if not self._protect_remote_endpoint_route(profile):
+            self._cleanup_runtime()
+            return False
         readiness_options = self._configure_readiness(profile)
         try:
-            self._status_path.unlink(missing_ok=True)
+            status_path.unlink(missing_ok=True)
         except OSError:
             pass
         log_file = log_path.open("w", encoding="utf-8")
@@ -220,7 +306,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             stderr=subprocess.STDOUT,
         )
         log_file.close()
-        record_child_process(self._runtime_dir, "process", self._process.pid, Path(binary).name)
+        record_child_process(runtime_dir, "process", self._process.pid, Path(binary).name)
         self._active_profile = profile
         if self._wait_for_ready(profile):
             self._connected_at = datetime.now(timezone.utc)
@@ -265,6 +351,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             # recorded, not just the one this instance held a reference to -
             # catches anything orphaned by a past bug or crash too.
             kill_all_recorded_children(RUNTIME_PREFIX)
+            self._cleanup_endpoint_route()
             self._cleanup_runtime()
         return stopped
 
@@ -306,5 +393,6 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         self._process = None
         self._active_profile = None
         self._connected_at = None
+        self._cleanup_endpoint_route()
         self._cleanup_runtime()
         return ConnectionState(status="standby")

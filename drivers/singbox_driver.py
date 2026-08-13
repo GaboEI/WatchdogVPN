@@ -1452,6 +1452,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         management_peers: tuple[str, ...] = (),
         native_transport: bool = False,
         native_bypass_cidrs: tuple[str, ...] = (),
+        native_egress_interface: str | None = None,
         management_routes: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
@@ -1464,8 +1465,13 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             "inbounds": self._build_inbounds(lan_proxy),
             "outbounds": [],
         }
+        native_bind_interface = (native_egress_interface or "").strip()
         if native_transport:
-            outbound = self._ensure_direct_outbound(config)
+            if not native_bind_interface:
+                raise ValueError("native_transport requires native_egress_interface")
+            outbound = self._ensure_direct_outbound(
+                config, bind_interface=native_bind_interface
+            )
         else:
             outbound = self._profile_to_route_target(profile, config)
         self._append_chain_outbounds(config, chain_runtime_plans or {})
@@ -1567,9 +1573,11 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 if needs_direct_outbound:
                     self._ensure_direct_outbound(
                         config,
-                        dns_config.direct_domain_resolver,
+                        domain_resolver=dns_config.direct_domain_resolver,
                         bind_interface=(
-                            None if native_transport else self._outbound_bind_interface(profile)
+                            native_bind_interface
+                            if native_transport
+                            else self._outbound_bind_interface(profile)
                         ),
                     )
 
@@ -1590,7 +1598,9 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             self._ensure_direct_outbound(
                 config,
                 bind_interface=(
-                    None if native_transport else self._outbound_bind_interface(profile)
+                    native_bind_interface
+                    if native_transport
+                    else self._outbound_bind_interface(profile)
                 ),
             )
         mode_route_rules = build_singbox_route_rules(
@@ -1677,6 +1687,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         management_peers: tuple[str, ...] | None = None,
         native_transport: bool = False,
         native_bypass_cidrs: tuple[str, ...] = (),
+        native_egress_interface: str | None = None,
         management_routes: dict[str, str] | None = None,
     ) -> bool:
         self.last_error = ""
@@ -1720,6 +1731,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             config_kwargs["native_transport"] = True
         if native_bypass_cidrs:
             config_kwargs["native_bypass_cidrs"] = native_bypass_cidrs
+        if native_egress_interface:
+            config_kwargs["native_egress_interface"] = native_egress_interface
         if management_routes:
             config_kwargs["management_routes"] = management_routes
         if management_peers:
