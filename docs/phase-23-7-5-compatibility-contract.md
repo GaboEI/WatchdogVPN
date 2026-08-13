@@ -3055,3 +3055,65 @@ for Kali 10e, but it does not itself promote a distribution, change the manifest
 or create a certification record. The mechanism was added in commit `75a1e63`.
 Kali's later promotion is represented separately by `cert_kali_rolling` and its
 rolling `last_validated` metadata after the full audit approval.
+
+### Task 23.7.5.11A.1 Ubuntu 24.04 field recertification
+
+Ubuntu 24.04 was recertified under the 23.7.5.11A contract on 2026-08-13 and
+approved by an independent `juez-tester` audit. The target host was `nls1`
+(`Ubuntu 24.04.4 LTS`, kernel `6.8.0-137-generic`) with a clean checkout and
+final installed runtime aligned to commit `c0a525e8950001700a9cb85699aef2818a053993`.
+The private evidence root is
+`/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-1-ubuntu-20260813T104226Z/`.
+
+The final protocol matrix contains 11 `green` protocol results with real
+traffic: VLESS, Trojan, Hysteria2, OpenVPN+Cloak, AmneziaWG, WireGuard, VMess,
+Shadowsocks, SOCKS, HTTP and TUIC. WireGuard and Shadowsocks are green for
+Ubuntu for the first time in the project history because this run produced fresh
+real-egress evidence. Plain OpenVPN is still `formal_non_green`: the repaired
+HMAC/origin profile and the new unique-CN client reached TLS and pool assignment,
+but both direct OpenVPN and WatchdogVPN-routed tests had no useful real egress.
+That row is explicitly not counted as green.
+
+OpenVPN+Cloak is green through an authorized bridge-only Ubuntu 24.04 VM
+(`wdvpn-ubuntu-2404`) using `04_OpenVPN_Cloak_gabo_nuevo_FIX.vpn`. The `nls1`
+attempt showed a server-specific zero-RX tunnel symptom and is documented as a
+target-specific failure, not hidden or used as a substitute for green evidence.
+AmneziaWG was green after the product-guided Ubuntu PPA path supplied `awg`,
+`awg-quick` and the runtime module; no source-build fallback was used.
+
+The certification uncovered and fixed a real installed-provenance bug. Normal
+Python CLI/runtime imports can create `__pycache__/*.pyc` under the installed
+runtime. The manifest publication already excluded Python cache files from the
+source tree, but installed-tree publication, generation fingerprinting and
+verification were not fully symmetric. This made `doctor.sh` report provenance
+drift after normal CLI use even though only benign bytecode cache files had
+changed. Commit `76d1b42` makes `collect_tree(..., exclude_python_cache=True)`
+apply consistently to installed generation fingerprinting, manifest publication
+and verification, and rejects cache paths inside published manifests. The
+regression test now asserts that raw `fingerprint_tree()` still sees bytecode
+changes, while `fingerprint_generation()` stays stable and
+`verify_installation()` returns `verified`.
+
+Commit `c0a525e` updates `cert_ubuntu_24_04` to date `2026-08-13T00:00:00Z`
+with per-protocol evidence notes. It also relaxes the manifest validator so a
+protocol whose global category is `formal_non_green` may remain
+`formal_non_green` for older certifications or become `green` when fresh real
+egress evidence exists; resilient and normal compatibility protocols still
+require `green`. This preserves historical non-green certifications while
+allowing Ubuntu's fresh WireGuard and Shadowsocks greens.
+
+Independent and executor validations both passed: full suite `2425 OK, 2
+skipped`, `python3 tools/compat_read.py validate` OK, `bash tests/syntax.sh` OK
+and `git diff --check` clean. On `nls1`, after final install from `c0a525e`,
+five `watchdog status --json` calls returned rc=0; `python3 -m compileall -q
+/usr/local/lib/watchdogvpn` generated 158 `.pyc` files; installed-provenance
+verification still returned rc=0; and final `doctor.sh` returned
+`OK=146 WARN=1 FAIL=0`. The auditor independently reproduced the provenance fix
+with normal CLI commands generating bytecode, then confirmed `doctor.sh` still
+reported `FAIL=0` without reinstalling.
+
+A second-pass audit found one evidence-handling issue: two repaired OpenVPN
+profiles containing embedded private material were stored as `0664`. Their
+containing evidence directory was `0700`, but the explicit evidence-secret rule
+requires `0600`. The files were corrected to `0600` and rechecked as
+`-rw-------`; no file content changed.
