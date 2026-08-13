@@ -136,6 +136,38 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
                 return parts[1]
         return ""
 
+    def _remote_directives(self, profile: Profile) -> list[str]:
+        directives: list[str] = []
+        for line in str(profile.config.get("raw_config") or "").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", ";")):
+                continue
+            key = stripped.split(maxsplit=1)[0]
+            if key in {"remote", "remote-random"}:
+                directives.append(stripped)
+        return directives
+
+    def _validate_single_ipv4_remote_endpoint(self, profile: Profile) -> bool:
+        directives = self._remote_directives(profile)
+        remote_lines = [line for line in directives if line.split(maxsplit=1)[0] == "remote"]
+        if any(line.split(maxsplit=1)[0] == "remote-random" for line in directives):
+            self.last_error = "OpenVPN remote-random is not supported by native endpoint protection"
+            return False
+        if len(remote_lines) > 1:
+            self.last_error = "OpenVPN profiles with multiple remote endpoints are not supported by native endpoint protection"
+            return False
+        host = self._remote_host(profile)
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            try:
+                ipaddress.IPv6Address(host)
+            except ValueError:
+                return True
+            self.last_error = "OpenVPN IPv6 remote endpoints are not supported by native endpoint protection"
+            return False
+        return True
+
     def _default_route_tokens(self) -> list[str] | None:
         if not shutil.which("ip"):
             return None
@@ -151,11 +183,9 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         return line.split() if line else None
 
     def _protect_remote_endpoint_route(self, profile: Profile) -> bool:
+        if not self._validate_single_ipv4_remote_endpoint(profile):
+            return False
         host = self._remote_host(profile)
-        try:
-            ipaddress.IPv4Address(host)
-        except ValueError:
-            return True
         route = f"{host}/32"
         tokens = self._default_route_tokens()
         if not tokens:
