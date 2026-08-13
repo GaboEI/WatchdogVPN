@@ -116,6 +116,21 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         write_private_file(config_path, f"{raw_config}\n")
         return raw_config
 
+    def _validate_profile_without_runtime(self, profile: Profile) -> bool:
+        try:
+            if profile.protocol is not ProtocolType.OPENVPN:
+                raise ValueError(f"unsupported protocol for OpenVPN driver: {profile.protocol.value}")
+            wrapper = profile.config.get("wrapper") or profile.config.get("transport_wrapper")
+            if wrapper:
+                raise ValueError("wrapped OpenVPN profiles are not handled by the plain OpenVPN driver")
+            if not str(profile.config.get("raw_config") or "").strip():
+                raise ValueError("OpenVPN profile requires raw_config")
+            validate_openvpn_profile(profile)
+        except ValueError as exc:
+            self.last_error = str(exc)
+            return False
+        return self._validate_single_ipv4_remote_endpoint(profile)
+
     def _cleanup_runtime(self) -> None:
         if self._runtime_dir is not None and self._runtime_dir.exists():
             shutil.rmtree(self._runtime_dir, ignore_errors=True)
@@ -132,7 +147,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return host
         for line in str(profile.config.get("raw_config") or "").splitlines():
             parts = line.strip().split()
-            if len(parts) >= 2 and parts[0] == "remote":
+            if len(parts) >= 2 and parts[0].removeprefix("--") == "remote":
                 return parts[1]
         return ""
 
@@ -142,9 +157,9 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             stripped = line.strip()
             if not stripped or stripped.startswith(("#", ";")):
                 continue
-            key = stripped.split(maxsplit=1)[0]
+            key = stripped.split(maxsplit=1)[0].removeprefix("--")
             if key in {"remote", "remote-random"}:
-                directives.append(stripped)
+                directives.append(" ".join((key, *stripped.split()[1:])))
         return directives
 
     def _validate_single_ipv4_remote_endpoint(self, profile: Profile) -> bool:
@@ -311,6 +326,8 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         binary = self.find_openvpn_binary()
         if not binary:
             self.last_error = "required binary not found: openvpn"
+            return False
+        if not self._validate_profile_without_runtime(profile):
             return False
         self.generate_openvpn_config(profile)
         config_path, log_path = self._ensure_runtime_paths()
