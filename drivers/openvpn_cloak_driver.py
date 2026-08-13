@@ -453,6 +453,13 @@ class OpenVPNCloakDriver(BaseDriver, ReentrantConnectGuard):
             return False
         return "OpenVPN" in status and "Initialization Sequence Completed" in log
 
+    def egress_interface(self) -> str | None:
+        if self._active_profile is None or not self._expected_interface:
+            return None
+        if not self._vpn_interface_active():
+            return None
+        return self._expected_interface
+
     def _startup_failure(self) -> bool:
         """Rollback a failed startup without hiding uncertain cleanup evidence."""
         try:

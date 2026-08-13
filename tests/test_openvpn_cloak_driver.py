@@ -584,6 +584,26 @@ class OpenVPNCloakDriverTests(unittest.TestCase):
         self.driver._openvpn_process = ovpn
         self.assertEqual(self.driver.health_check(), "ok")
 
+    @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=True)
+    def test_egress_interface_returns_owned_openvpn_cloak_device(self, _tun) -> None:
+        self.driver._active_profile = self.profile
+        self.driver._expected_interface = "tunwdcloak"
+
+        self.assertEqual(self.driver.egress_interface(), "tunwdcloak")
+
+    @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=False)
+    def test_egress_interface_fails_closed_without_active_device(self, _tun) -> None:
+        self.driver._active_profile = self.profile
+        self.driver._expected_interface = "tunwdcloak"
+
+        self.assertIsNone(self.driver.egress_interface())
+
+    @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=True)
+    def test_egress_interface_fails_closed_without_active_profile(self, _tun) -> None:
+        self.driver._expected_interface = "tunwdcloak"
+
+        self.assertIsNone(self.driver.egress_interface())
+
     # --- Status ---
 
     @patch.object(OpenVPNCloakDriver, "_vpn_interface_active", return_value=False)
