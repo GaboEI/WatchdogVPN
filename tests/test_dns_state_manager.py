@@ -167,7 +167,7 @@ class DNSStateManagerTests(unittest.TestCase):
             self.assertIn(["resolvectl", "revert", "tun0"], runner.commands)
             self.assertEqual(resolv_conf.resolve(), stub.resolve())
 
-    def test_systemd_resolved_restore_skips_revert_when_link_is_gone(self) -> None:
+    def test_systemd_resolved_restore_skips_revert_but_flushes_when_link_is_gone(self) -> None:
         # Field bug: a profile can connect in proxy-only capture mode (no
         # TUN device), so "dns apply --systemd-link wdvpn-tun0" saves a
         # snapshot naming a link that was never actually brought up. If
@@ -177,7 +177,8 @@ class DNSStateManagerTests(unittest.TestCase):
         # same way, since the link never comes back on its own. Restoring
         # against a link that is gone should be a clean no-op instead: the
         # systemd-resolved config that link would have carried is already
-        # gone with the interface itself.
+        # gone with the interface itself.  A cache flush still matters after a
+        # boot transition because stale FakeIP answers can outlive the link.
         with tempfile.TemporaryDirectory() as tmp:
             resolv_conf = Path(tmp) / "resolv.conf"
             resolv_conf.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
@@ -192,6 +193,7 @@ class DNSStateManagerTests(unittest.TestCase):
 
             self.assertIn(["ip", "-o", "link", "show", "tun0"], runner.commands)
             self.assertNotIn(["resolvectl", "revert", "tun0"], runner.commands)
+            self.assertIn(["resolvectl", "flush-caches"], runner.commands)
 
     def test_apply_local_dns_failure_rolls_back_cleanly_when_link_is_gone(self) -> None:
         # Companion bug: when the apply itself fails because the named link

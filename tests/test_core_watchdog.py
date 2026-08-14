@@ -173,12 +173,20 @@ class EventAWGDriver(EventDriver):
 
 
 class FakeKillSwitch:
-    def __init__(self, active: bool = False, enable_result: bool = True) -> None:
+    def __init__(
+        self,
+        active: bool = False,
+        enable_result: bool = True,
+        disable_result: bool = True,
+        disable_leaves_active: bool = False,
+    ) -> None:
         self.active = active
         self.enable_result = enable_result
+        self.disable_result = disable_result
+        self.disable_leaves_active = disable_leaves_active
         self.enable_mock = Mock(side_effect=self._enable)
         self.apply_atomic_mock = Mock(side_effect=self._enable)
-        self.disable_mock = Mock(return_value=True)
+        self.disable_mock = Mock(side_effect=self._disable)
         self.is_active_mock = Mock(side_effect=lambda: self.active)
         self.status_mock = Mock(return_value={})
         self.tunnel_interface = "tun0"
@@ -191,6 +199,11 @@ class FakeKillSwitch:
         if self.enable_result:
             self.active = True
         return self.enable_result
+
+    def _disable(self) -> bool:
+        if self.disable_result and not self.disable_leaves_active:
+            self.active = False
+        return self.disable_result
 
     def enable(self) -> bool:
         return bool(self.enable_mock())
@@ -209,12 +222,19 @@ class FakeKillSwitch:
 
 
 class FakeDNSRunner:
-    def __init__(self, active_services: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        active_services: set[str] | None = None,
+        fail_on: tuple[str, ...] = (),
+    ) -> None:
         self.active_services = active_services or set()
+        self.fail_on = fail_on
         self.commands: list[list[str]] = []
 
     def __call__(self, command: list[str]) -> str:
         self.commands.append(command)
+        if any(token in " ".join(command) for token in self.fail_on):
+            raise RuntimeError(f"forced DNS failure: {' '.join(command)}")
         if command[:2] == ["systemctl", "is-active"] and len(command) == 3:
             return "active" if command[2] in self.active_services else "inactive"
         if command == ["nmcli", "-t", "-f", "NAME", "con", "show", "--active"]:
@@ -233,6 +253,7 @@ class WatchdogCoreTests(unittest.TestCase):
         )
         self.tmpdir = tempfile.TemporaryDirectory()
         self.state_manager = StateManager(Path(self.tmpdir.name) / "state.toml")
+        self.state_manager.set("vpn_autoconnect_enabled", True)
         self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
         self.kill_switch_apply_patch = patch.object(KillSwitch, "apply_atomic", return_value=True)
         self.kill_switch_apply_patch.start()
@@ -243,6 +264,8 @@ class WatchdogCoreTests(unittest.TestCase):
 
     def set_desired_state(self, desired_state: str) -> None:
         self.state_manager.set("vpn_desired_state", desired_state)
+        if desired_state == "on":
+            self.state_manager.set("vpn_autoconnect_enabled", True)
 
     def test_select_driver_routes_to_amneziawg(self) -> None:
         profile = Profile(
@@ -587,7 +610,7 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertEqual(state.status, "connected")
         driver.health_check_mock.assert_called_once_with()
-        driver.status_mock.assert_called_once_with()
+        self.assertEqual(driver.status_mock.call_count, 2)
 
     def test_health_check_returns_standby_when_user_disabled_vpn(self) -> None:
         self.set_desired_state("off")
@@ -686,7 +709,7 @@ class WatchdogCoreTests(unittest.TestCase):
         events: list[str] = []
         driver = FakeDriver()
         driver.connect_mock.side_effect = lambda _profile: events.append("connect") or True
-        kill_switch = FakeKillSwitch()
+        kill_switch = FakeKillSwitch(active=True)
         kill_switch.apply_atomic_mock.side_effect = (
             lambda: events.append("barrier") or kill_switch._enable()
         )
@@ -706,6 +729,110 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertEqual(events, ["barrier", "connect"])
         kill_switch.disable_mock.assert_not_called()
         self.assertTrue(runtime._desired_on_kill_switch_forced)
+
+    def test_restart_startup_stands_by_when_autoconnect_disabled(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": False,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=True)
+        app_config = Mock(spec=AppConfig)
+        app_config.load.return_value = {"kill_switch": {"enabled": False}}
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            kill_switch=kill_switch,
+        )
+
+        state = runtime.startup(require_restart_protection=True)
+
+        self.assertEqual(state.status, "standby")
+        driver.connect_mock.assert_not_called()
+        kill_switch.apply_atomic_mock.assert_not_called()
+        kill_switch.disable_mock.assert_called_once_with()
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(self.state_manager.get("active_profile_id"), "")
+
+    def test_restart_startup_does_not_claim_standby_when_autoconnect_disabled_kill_switch_stays_active(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": False,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        driver = FakeDriver()
+        driver.status_mock.return_value = ConnectionState(status="standby", mode="standby")
+        kill_switch = FakeKillSwitch(active=True, disable_result=True, disable_leaves_active=True)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            kill_switch=kill_switch,
+        )
+
+        state = runtime.startup(require_restart_protection=True)
+
+        self.assertEqual(state.status, "kill_switch_disable_failed")
+        tick_state = runtime.run_iteration()
+
+        self.assertEqual(tick_state.status, "kill_switch_disable_failed")
+        driver.connect_mock.assert_not_called()
+        driver.health_check_mock.assert_not_called()
+        kill_switch.apply_atomic_mock.assert_not_called()
+        kill_switch.disable_mock.assert_called_once_with()
+        self.assertEqual(self.state_manager.get("last_failure_reason"), "kill_switch_disable_failed")
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+        self.assertEqual(self.state_manager.get("active_profile_id"), self.profile.id)
+
+    def test_restart_startup_does_not_claim_standby_when_autoconnect_disabled_dns_restore_fails(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": False,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        self.profile_store.add(self.profile)
+        resolv_conf = Path(self.tmpdir.name) / "resolv.conf"
+        resolv_conf.write_text("nameserver 127.0.0.53\n", encoding="utf-8")
+        runner = FakeDNSRunner(
+            active_services={"systemd-resolved.service"},
+        )
+        dns_state_manager = SystemDNSStateManager(resolv_conf_path=resolv_conf, runner=runner)
+        snapshot = dns_state_manager.save_state(systemd_link="tun0")
+        snapshot_path = Path(self.tmpdir.name) / "dns-state.json"
+        snapshot_path.write_text(json.dumps(snapshot.to_dict()), encoding="utf-8")
+        runner.fail_on = ("resolvectl flush-caches",)
+        runtime = WatchdogRuntime(
+            driver=FakeDriver(),
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            dns_state_manager=dns_state_manager,
+            dns_snapshot_path=snapshot_path,
+            kill_switch=FakeKillSwitch(active=True),
+        )
+        runtime.driver.status_mock.return_value = ConnectionState(status="standby", mode="standby")
+
+        state = runtime.startup(require_restart_protection=True)
+        tick_state = runtime.run_iteration()
+
+        self.assertEqual(state.status, "dns_restore_failed")
+        self.assertEqual(tick_state.status, "dns_restore_failed")
+        runtime.driver.connect_mock.assert_not_called()
+        runtime.driver.health_check_mock.assert_not_called()
+        self.assertTrue(snapshot_path.exists())
+        self.assertEqual(self.state_manager.get("last_failure_reason"), "dns_restore_failed")
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+        self.assertEqual(self.state_manager.get("active_profile_id"), self.profile.id)
 
     def test_restart_startup_refuses_driver_spawn_when_barrier_fails(self) -> None:
         self.state_manager.save(
@@ -939,6 +1066,21 @@ class WatchdogCoreTests(unittest.TestCase):
 
         self.assertIn(["resolvectl", "revert", "tun0"], runner.commands)
         self.assertFalse(snapshot_path.exists())
+
+    def test_disconnect_clears_active_profile_id(self) -> None:
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": False,
+                "active_profile_id": self.profile.id,
+            }
+        )
+        runtime = WatchdogRuntime(driver=FakeDriver(), state_manager=self.state_manager)
+
+        self.assertTrue(runtime.disconnect())
+
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(self.state_manager.get("active_profile_id"), "")
 
     def test_disconnect_does_nothing_when_no_dns_snapshot(self) -> None:
         self.set_desired_state("on")
@@ -1670,6 +1812,49 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertEqual(runtime.health_check(), "ok")
         driver.health_check_mock.assert_called_once_with()
 
+    def test_manual_connect_health_check_works_when_autoconnect_disabled(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("vpn_autoconnect_enabled", False)
+        driver = FakeDriver()
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager)
+
+        runtime.connect(self.profile)
+
+        self.assertEqual(runtime.health_check(), "ok")
+        driver.health_check_mock.assert_called_once_with()
+
+    def test_manual_connection_tick_monitors_active_runtime_when_autoconnect_disabled(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("vpn_autoconnect_enabled", False)
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=False)
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager, kill_switch=kill_switch)
+
+        runtime.connect(self.profile)
+        state = runtime.run_iteration()
+
+        self.assertEqual(state.status, "connected")
+        driver.health_check_mock.assert_called_once_with()
+        kill_switch.apply_atomic_mock.assert_called()
+        self.assertEqual(driver.connect_mock.call_count, 1)
+
+    def test_manual_connection_tick_does_not_recover_failed_health_when_autoconnect_disabled(self) -> None:
+        self.set_desired_state("off")
+        self.state_manager.set("vpn_autoconnect_enabled", False)
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        kill_switch = FakeKillSwitch(active=False)
+        runtime = WatchdogRuntime(driver=driver, state_manager=self.state_manager, kill_switch=kill_switch)
+
+        runtime.connect(self.profile)
+        state = runtime.run_iteration()
+
+        self.assertEqual(state.status, "recovery_disabled")
+        self.assertEqual(self.state_manager.get("last_failure_reason"), "recovery_disabled")
+        driver.health_check_mock.assert_called_once_with()
+        kill_switch.apply_atomic_mock.assert_called()
+        self.assertEqual(driver.connect_mock.call_count, 1)
+
     def test_connect_switches_driver_when_profile_requires_different_driver_type(self) -> None:
         self.set_desired_state("off")
         current_driver = FakeSingBoxDriver()
@@ -1877,6 +2062,7 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.state_manager = StateManager(Path(self.tmpdir.name) / "state.toml")
         self.state_manager.set("vpn_desired_state", "on")
+        self.state_manager.set("vpn_autoconnect_enabled", True)
         self.profile_store = ProfileStore(Path(self.tmpdir.name) / "profiles.json")
         self.profile = Profile(
             id="vless1",

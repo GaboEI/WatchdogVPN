@@ -418,12 +418,44 @@ class NftablesKillSwitchTests(unittest.TestCase):
         self.assertLess(recorder.commands.index(internal_tcp_rule), recorder.commands.index(dns_block_rule))
 
     def test_disable_deletes_nftables_table(self) -> None:
-        recorder = CommandRecorder()
+        recorder = CommandRecorder(
+            {
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(returncode=1),
+            }
+        )
         kill_switch = KillSwitch(runner=recorder, which=fake_which("nft"))
 
         self.assertTrue(kill_switch.disable())
 
-        self.assertEqual(recorder.commands, [["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE]])
+        self.assertEqual(
+            recorder.commands,
+            [
+                ["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE],
+                ["nft", "list", "table", "inet", WATCHDOGVPN_TABLE],
+            ],
+        )
+
+    def test_disable_fails_when_nftables_artifacts_remain_after_delete_failure(self) -> None:
+        kill_switch = KillSwitch(which=fake_which("nft"))
+        remaining_rules = complete_nft_ruleset(kill_switch)
+        recorder = CommandRecorder(
+            {
+                ("nft", "delete", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=1,
+                    stderr="operation not permitted",
+                ),
+                ("nft", "list", "table", "inet", WATCHDOGVPN_TABLE): CommandResult(
+                    returncode=0,
+                    stdout=remaining_rules,
+                ),
+            }
+        )
+        kill_switch.runner = recorder
+
+        self.assertFalse(kill_switch.disable())
+
+        self.assertIn(["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE], recorder.commands)
+        self.assertIn(["nft", "list", "table", "inet", WATCHDOGVPN_TABLE], recorder.commands)
 
     def test_enable_rolls_back_when_nftables_command_fails(self) -> None:
         failing_command = ("nft", "add", "table", "inet", WATCHDOGVPN_TABLE)
@@ -980,7 +1012,14 @@ class IptablesKillSwitchTests(unittest.TestCase):
         self.assertNotIn(["ip6tables", "-I", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN], recorder.commands)
 
     def test_disable_removes_iptables_and_ip6tables_rules(self) -> None:
-        recorder = CommandRecorder()
+        recorder = CommandRecorder(
+            {
+                ("iptables", "-S", WATCHDOGVPN_IPTABLES_CHAIN): CommandResult(returncode=1),
+                ("iptables", "-C", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN): CommandResult(returncode=1),
+                ("ip6tables", "-S", WATCHDOGVPN_IPTABLES_CHAIN): CommandResult(returncode=1),
+                ("ip6tables", "-C", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN): CommandResult(returncode=1),
+            }
+        )
         kill_switch = KillSwitch(runner=recorder, which=fake_which("iptables", "ip6tables"))
 
         self.assertTrue(kill_switch.disable())

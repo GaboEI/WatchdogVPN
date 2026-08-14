@@ -323,8 +323,13 @@ class SystemDNSStateManager:
             # every later "dns reset" against the same stale snapshot. If the
             # link is gone, whatever systemd-resolved config it would have
             # carried is already gone with it - nothing left to revert.
+            self._flush_systemd_resolved_caches()
             return
         self.runner(["resolvectl", "revert", link])
+        self._flush_systemd_resolved_caches()
+
+    def _flush_systemd_resolved_caches(self) -> None:
+        self.runner(["resolvectl", "flush-caches"])
 
     def _link_exists(self, link: str) -> bool:
         try:

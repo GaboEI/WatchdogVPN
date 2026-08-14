@@ -55,6 +55,43 @@ class SingBoxDriverBinaryTests(unittest.TestCase):
             run_mock.call_args_list[1].args[0],
             ["/usr/bin/resolvectl", "flush-caches"],
         )
+        self.assertEqual(run_mock.call_args_list[0].kwargs["timeout"], 5)
+        self.assertEqual(run_mock.call_args_list[1].kwargs["timeout"], 5)
+
+    @patch("drivers.singbox_driver.time.sleep")
+    @patch("drivers.singbox_driver.subprocess.run")
+    @patch("drivers.singbox_driver.shutil.which")
+    def test_fakeip_cache_flush_timeout_is_controlled(self, which_mock, run_mock, sleep_mock) -> None:
+        which_mock.side_effect = lambda name: f"/usr/bin/{name}"
+        run_mock.side_effect = [
+            subprocess.CompletedProcess(
+                args=["systemctl"], returncode=0, stdout="active\n", stderr=""
+            ),
+            subprocess.TimeoutExpired(["resolvectl", "flush-caches"], timeout=5),
+            subprocess.TimeoutExpired(["resolvectl", "flush-caches"], timeout=5),
+            subprocess.TimeoutExpired(["resolvectl", "flush-caches"], timeout=5),
+        ]
+
+        self.assertFalse(_flush_systemd_resolved_caches())
+        self.assertEqual(sleep_mock.call_count, 2)
+
+    @patch("drivers.singbox_driver.time.sleep")
+    @patch("drivers.singbox_driver.subprocess.run")
+    @patch("drivers.singbox_driver.shutil.which")
+    def test_fakeip_cache_flush_retries_transient_timeout(self, which_mock, run_mock, sleep_mock) -> None:
+        which_mock.side_effect = lambda name: f"/usr/bin/{name}"
+        run_mock.side_effect = [
+            subprocess.CompletedProcess(
+                args=["systemctl"], returncode=0, stdout="active\n", stderr=""
+            ),
+            subprocess.TimeoutExpired(["resolvectl", "flush-caches"], timeout=5),
+            subprocess.CompletedProcess(
+                args=["resolvectl"], returncode=0, stdout="", stderr=""
+            ),
+        ]
+
+        self.assertTrue(_flush_systemd_resolved_caches())
+        sleep_mock.assert_called_once_with(1.0)
 
     @patch.dict("drivers.singbox_driver.os.environ", {"WATCHDOGVPN_SINGBOX_BIN": "/opt/watchdogvpn/sing-box"})
     @patch("drivers.singbox_driver.os.path.exists", return_value=True)
@@ -1771,6 +1808,38 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             self.assertEqual(cache_flusher.call_count, 1)
             self.assertTrue(driver.disconnect())
         self.assertEqual(cache_flusher.call_count, 2)
+
+    @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
+    @patch.object(SingBoxDriver, "generate_singbox_config")
+    @patch("drivers.singbox_driver.subprocess.Popen")
+    def test_fakeip_deactivation_flush_failure_does_not_fail_runtime_cleanup(
+        self, popen_mock, generate_mock, binary_mock
+    ) -> None:
+        cache_flusher = unittest.mock.Mock(side_effect=[True, False])
+        driver = SingBoxDriver(dns_cache_flusher=cache_flusher)
+        process = popen_mock.return_value
+        process.poll.side_effect = [None, None, 0]
+        process.pid = 4242
+
+        with (
+            patch.object(driver, "health_check", return_value="ok"),
+            patch.object(driver, "_ip_rule_lines", return_value=()),
+            patch.object(driver, "_capture_tun_cleanup_state"),
+            patch.object(driver, "_record_networkmanager_tun_connection", return_value=True),
+            patch.object(driver, "_cleanup_tun_residue", return_value=True),
+        ):
+            self.assertTrue(
+                driver.connect(
+                    self.profile,
+                    dns_policy=DNSPolicy(),
+                    mode="tun",
+                    management_peers=(),
+                )
+            )
+            self.assertTrue(driver.disconnect())
+
+        self.assertEqual(cache_flusher.call_count, 2)
+        self.assertIn("DNS cache invalidation failed", driver.last_error)
 
     @patch.object(SingBoxDriver, "find_singbox_binary", return_value="/usr/bin/sing-box")
     @patch.object(SingBoxDriver, "generate_singbox_config")

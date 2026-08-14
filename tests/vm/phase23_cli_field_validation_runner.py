@@ -338,7 +338,7 @@ class Runner:
         self.run(
             "preflight",
             "git-rev-parse",
-            ["git", "rev-parse", "HEAD", f"origin/{BRANCH}", "origin/main", "main"],
+            ["git", "rev-parse", "HEAD", f"origin/{BRANCH}"],
             timeout=30,
         )
         self.run("preflight", "update-installed-runtime", ["./update.sh", "--yes"], timeout=600)

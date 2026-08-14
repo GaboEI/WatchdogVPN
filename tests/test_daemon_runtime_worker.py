@@ -290,6 +290,28 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.assertNotIn("paris", " ".join(counters))
         self.assertEqual(counters["command.disconnect.success"], 1)
 
+    def test_tick_does_not_auto_reconnect_diagnostic_failure_when_autoconnect_disabled(self) -> None:
+        bus = EventBus()
+        subscription = bus.subscribe()
+        runtime = self.make_runtime()
+        runtime.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": False,
+                "active_profile_id": self.profile.id,
+                "last_failure_reason": "dns_restore_failed",
+            }
+        )
+        worker = RuntimeWorker(runtime, bus)
+
+        worker._handle_tick()
+        event = subscription.get(timeout=1.0)
+
+        self.assertEqual(event.event, EVENT_HEALTH_CHECK)
+        self.assertEqual(event.payload["status"], "dns_restore_failed")
+        self.assertEqual(runtime.driver.connect_calls, [])
+        self.assertEqual(runtime.driver.connected_profile_id, "")
+
     def test_worker_status_returns_current_state_without_event(self) -> None:
         bus = EventBus()
         subscription = bus.subscribe()

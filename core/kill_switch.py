@@ -187,12 +187,24 @@ class KillSwitch:
         return False
 
     def disable(self) -> bool:
+        command_success = True
         if self.which("nft"):
-            self._disable_nftables()
+            command_success = self._disable_nftables() and command_success
         if self.which("iptables"):
-            self._disable_iptables()
-        self.method = None
-        return True
+            command_success = self._disable_iptables() and command_success
+        status = self.status()
+        if not bool(status["active"]) and not bool(status["artifacts_present"]):
+            self.method = None
+            return True
+        LOGGER.error(
+            "kill_switch_disable_failed command_success=%s active=%s artifacts_present=%s method=%s reasons=%s",
+            command_success,
+            status["active"],
+            status["artifacts_present"],
+            status["method"],
+            status["mismatch_reasons"],
+        )
+        return False
 
     def is_active(self) -> bool:
         return bool(self.status()["active"])
@@ -706,8 +718,7 @@ class KillSwitch:
         return " ".join(rendered)
 
     def _disable_nftables(self) -> bool:
-        self._run_optional(["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE])
-        return True
+        return self._run_optional(["nft", "delete", "table", "inet", WATCHDOGVPN_TABLE])
 
     def _nft_rule(self, *tokens: str) -> list[str]:
         return self._nft_rule_in_chain(WATCHDOGVPN_CHAIN, *tokens)
@@ -917,14 +928,20 @@ class KillSwitch:
         return True
 
     def _disable_iptables(self) -> bool:
-        self._run_optional(["iptables", "-D", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN])
-        self._run_optional(["iptables", "-F", WATCHDOGVPN_IPTABLES_CHAIN])
-        self._run_optional(["iptables", "-X", WATCHDOGVPN_IPTABLES_CHAIN])
+        results = [
+            self._run_optional(["iptables", "-D", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN]),
+            self._run_optional(["iptables", "-F", WATCHDOGVPN_IPTABLES_CHAIN]),
+            self._run_optional(["iptables", "-X", WATCHDOGVPN_IPTABLES_CHAIN]),
+        ]
         if self.which("ip6tables"):
-            self._run_optional(["ip6tables", "-D", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN])
-            self._run_optional(["ip6tables", "-F", WATCHDOGVPN_IPTABLES_CHAIN])
-            self._run_optional(["ip6tables", "-X", WATCHDOGVPN_IPTABLES_CHAIN])
-        return True
+            results.extend(
+                [
+                    self._run_optional(["ip6tables", "-D", "OUTPUT", "-j", WATCHDOGVPN_IPTABLES_CHAIN]),
+                    self._run_optional(["ip6tables", "-F", WATCHDOGVPN_IPTABLES_CHAIN]),
+                    self._run_optional(["ip6tables", "-X", WATCHDOGVPN_IPTABLES_CHAIN]),
+                ]
+            )
+        return all(results)
 
     def _iptables_lan_rules(self, binary: str) -> list[list[str]]:
         return [

@@ -71,6 +71,22 @@ SING_BOX_LOG_LEVELS = {
     "fatal",
     "panic",
 }
+RESOLVED_FLUSH_TIMEOUT_SECONDS = 5
+RESOLVED_FLUSH_ATTEMPTS = 3
+RESOLVED_FLUSH_RETRY_DELAY_SECONDS = 1.0
+
+
+def _resolved_flush_stderr_is_transient(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return any(
+        token in lowered
+        for token in (
+            "connection timed out",
+            "message recipient disconnected",
+            "service_start_timeout",
+            "timed out",
+        )
+    )
 
 
 def _flush_systemd_resolved_caches() -> bool:
@@ -87,12 +103,17 @@ def _flush_systemd_resolved_caches() -> bool:
     systemctl = shutil.which("systemctl")
     if systemctl is None:
         return True
-    active = subprocess.run(
-        [systemctl, "is-active", "systemd-resolved.service"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        active = subprocess.run(
+            [systemctl, "is-active", "systemd-resolved.service"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=RESOLVED_FLUSH_TIMEOUT_SECONDS,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        LOGGER.error("singbox_dns_cache_flush_failed reason=resolver_state_probe_failed error=%s", exc)
+        return False
     state = (active.stdout or "").strip()
     if active.returncode in {3, 4} or state in {"inactive", "failed", "unknown"}:
         return True
@@ -108,19 +129,43 @@ def _flush_systemd_resolved_caches() -> bool:
     if resolvectl is None:
         LOGGER.error("singbox_dns_cache_flush_failed reason=resolvectl_unavailable")
         return False
-    flushed = subprocess.run(
-        [resolvectl, "flush-caches"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if flushed.returncode == 0:
-        return True
-    LOGGER.error(
-        "singbox_dns_cache_flush_failed reason=command_failed rc=%s stderr=%s",
-        flushed.returncode,
-        (flushed.stderr or "").strip(),
-    )
+    for attempt in range(1, RESOLVED_FLUSH_ATTEMPTS + 1):
+        try:
+            flushed = subprocess.run(
+                [resolvectl, "flush-caches"],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=RESOLVED_FLUSH_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            LOGGER.error(
+                "singbox_dns_cache_flush_failed reason=command_timeout attempt=%s/%s timeout_seconds=%s",
+                attempt,
+                RESOLVED_FLUSH_ATTEMPTS,
+                RESOLVED_FLUSH_TIMEOUT_SECONDS,
+            )
+            if attempt < RESOLVED_FLUSH_ATTEMPTS:
+                time.sleep(RESOLVED_FLUSH_RETRY_DELAY_SECONDS)
+                continue
+            return False
+        except (subprocess.SubprocessError, OSError) as exc:
+            LOGGER.error("singbox_dns_cache_flush_failed reason=command_error error=%s", exc)
+            return False
+        if flushed.returncode == 0:
+            return True
+        stderr = (flushed.stderr or "").strip()
+        LOGGER.error(
+            "singbox_dns_cache_flush_failed reason=command_failed attempt=%s/%s rc=%s stderr=%s",
+            attempt,
+            RESOLVED_FLUSH_ATTEMPTS,
+            flushed.returncode,
+            stderr,
+        )
+        if attempt < RESOLVED_FLUSH_ATTEMPTS and _resolved_flush_stderr_is_transient(stderr):
+            time.sleep(RESOLVED_FLUSH_RETRY_DELAY_SECONDS)
+            continue
+        return False
     return False
 
 
@@ -1822,7 +1867,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             if not self._dns_cache_flusher():
                 self._fakeip_cache_flush_required = True
                 self.last_error = "system DNS cache invalidation failed for FakeIP deactivation"
-                return False
+                return stopped and tun_cleanup_ok
             self._fakeip_cache_flush_required = False
         return stopped and tun_cleanup_ok
 
