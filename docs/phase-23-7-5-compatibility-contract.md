@@ -3117,3 +3117,52 @@ profiles containing embedded private material were stored as `0664`. Their
 containing evidence directory was `0700`, but the explicit evidence-secret rule
 requires `0600`. The files were corrected to `0600` and rechecked as
 `-rw-------`; no file content changed.
+
+### Task 23.7.5.11A.2 Debian 13 field recertification
+
+Debian 13 was recertified under the 23.7.5.11A contract on 2026-08-14 and
+approved by an independent `juez-tester` audit. The target host was `nls1`,
+with final installed runtime aligned to commit
+`17348e660aff6aed9a6d584b04c323999816b1c4`. The private final evidence root is
+`/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-2-debian-final-20260814T0800Z/`.
+The final bundle is
+`watchdogvpn-task-23-7-5-11A-2-debian-final-20260814T0800Z.tar.gz` with SHA256
+`d64d0cf013759a7ae1dd9a99394c17ff58a586b691a5dfbbb0217c601747df8a`.
+
+The final protocol matrix contains 12 `green` protocol results with real
+traffic: VLESS, Trojan, Hysteria2, AmneziaWG, WireGuard, VMess, Shadowsocks,
+SOCKS, HTTP, TUIC, plain OpenVPN and OpenVPN+Cloak. WireGuard, Shadowsocks and
+plain OpenVPN become green for Debian for the first time in the project history
+because this run produced fresh real-egress evidence for those rows. The HTTP
+row had one initial IP-probe timeout (`rc=28`), then a documented retry
+(`09_http_retry`) produced egress `138.124.91.224`, HTTP `204` and clean
+teardown.
+
+OpenVPN+Cloak is green through the authorized bridge-only Debian VM
+`wdvpn-debian13-openvpn-cloak` using `oc-138.124.91.224-wdvpnkal`. This is
+recorded as an explicit VM substitution for that row, not as an `nls1` success.
+All other rows were validated on `nls1`: VLESS `ubuntu_gabo_yahoo_firefox`,
+Trojan `gaboturbo.serveminecraft.net`, Hysteria2
+`gaboturbo.serveminecraft.net-2`, AmneziaWG `awg-138.124.91.224-LI3jGvaI`,
+WireGuard `10.9.0.2/32`, VMess `vmess-138.124.91.224-ubuntu`, Shadowsocks
+`shadowsocks-138.124.91.224-ubuntu`, SOCKS `socks-138.124.91.224-ubuntu`, HTTP
+`http-138.124.91.224-ubuntu`, TUIC `tuic-138.124.91.224-ubuntu` and plain
+OpenVPN `openvpn-138.124.91.224-1194`.
+
+The Debian run also found and fixed real runtime safety bugs before the final
+recertification was accepted. Commits `f18179d`, `0c08936` and `17348e6` make
+OpenVPN endpoint validation fail closed before the driver, native policy driver
+or kill switch mutate state. Invalid OpenVPN profiles with hostnames, private
+IPv4 remotes or multiple remotes now return rc `70` before teardown or route
+mutation. Field evidence on `nls1` confirmed H-01/H-02/H-03 did not dismantle an
+active valid OpenVPN tunnel.
+
+Commit `17348e6` is the technical runtime baseline for the final Debian field
+run. The closure commit updates `cert_debian_13` to date
+`2026-08-14T00:00:00Z` and promotes WireGuard, Shadowsocks and plain OpenVPN to
+`green` based on the fresh Debian 11A.2 real-egress evidence. Final
+provenance/doctor state was clean: `nls1` reported `status=verified`, generation
+`57a8b1314162943c36d36b6af80b027d9327930079def7c2833cafd33538c486`, no TUN or
+runtime artifacts, kill switch inactive, and doctor `OK=146 WARN=1 FAIL=0`; the
+authorized VM reported `status=verified`, the same generation, no TUN or runtime
+artifacts, kill switch inactive, and doctor `OK=144 WARN=3 FAIL=0`.

@@ -296,57 +296,57 @@
     },
     "cert_debian_13": {
       "current": true,
-      "date": "2026-07-22T00:00:00Z",
+      "date": "2026-08-14T00:00:00Z",
       "distribution": "debian",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.5.4 Debian certification and private evidence",
+      "evidence": "docs/phase-23-7-5-compatibility-contract.md Task 23.7.5.11A.2 Debian 13 field recertification and private evidence bundle watchdogvpn-task-23-7-5-11A-2-debian-final-20260814T0800Z.tar.gz sha256 d64d0cf013759a7ae1dd9a99394c17ff58a586b691a5dfbbb0217c601747df8a",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: awg-138.124.91.224-LI3jGvaI"
         },
         "http": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1 after documented retry: http-138.124.91.224-ubuntu"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: gaboturbo.serveminecraft.net-2"
         },
         "openvpn": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: openvpn-138.124.91.224-1194"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on authorized bridge-only VM wdvpn-debian13-openvpn-cloak: oc-138.124.91.224-wdvpnkal"
         },
         "shadowsocks": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: shadowsocks-138.124.91.224-ubuntu"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: socks-138.124.91.224-ubuntu"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: gaboturbo.serveminecraft.net"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: tuic-138.124.91.224-ubuntu"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: ubuntu_gabo_yahoo_firefox"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: vmess-138.124.91.224-ubuntu"
         },
         "wireguard": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on nls1: 10.9.0.2/32"
         }
       },
       "release": "debian_13",
