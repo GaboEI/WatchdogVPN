@@ -142,9 +142,6 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         self._expected_device_type = ""
 
     def _remote_host(self, profile: Profile) -> str:
-        host = str(profile.config.get("host") or "").strip()
-        if host:
-            return host
         try:
             directives = validate_openvpn_config(str(profile.config.get("raw_config") or ""))
         except ValueError:

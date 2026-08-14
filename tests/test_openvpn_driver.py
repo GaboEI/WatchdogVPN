@@ -296,32 +296,53 @@ class OpenVPNDriverTests(unittest.TestCase):
         self, getaddrinfo_mock, run_mock, popen_mock, binary_mock
     ) -> None:
         cases = (
-            ("ipv6", 'client\n"--remote" 2001:db8::1 1194\n', "IPv6 remote endpoints"),
-            ("hostname", "client\nREMOTE example.com 1194\n", "hostname remote endpoints"),
+            ("ipv6", 'client\n"--remote" 2001:db8::1 1194\n', {}, "IPv6 remote endpoints"),
+            ("hostname", "client\nREMOTE example.com 1194\n", {}, "hostname remote endpoints"),
+            (
+                "host-field-masks-hostname",
+                "client\nremote vpn.example.com 1194\n",
+                {"host": "198.51.100.9"},
+                "hostname remote endpoints",
+            ),
+            (
+                "host-field-masks-ipv6",
+                "client\nremote 2001:db8::1 1194\n",
+                {"host": "198.51.100.9"},
+                "IPv6 remote endpoints",
+            ),
             (
                 "multiple",
                 "client\nREMOTE 198.51.100.1 1194\n--remote 2001:db8::1 1194\n",
+                {},
+                "multiple remote endpoints",
+            ),
+            (
+                "host-field-masks-multiple",
+                "client\nremote 198.51.100.1 1194\nremote 2001:db8::1 1194\n",
+                {"host": "198.51.100.9"},
                 "multiple remote endpoints",
             ),
             (
                 "remote-random",
                 "client\n--remote 198.51.100.1 1194\n--REMOTE-RANDOM\n",
+                {},
                 "remote-random",
             ),
             (
                 "remote-random-hostname",
                 'client\n--remote 198.51.100.1 1194\n"--remote-random-hostname"\n',
+                {},
                 "remote-random-hostname",
             ),
         )
-        for profile_id, raw_config, expected_error in cases:
+        for profile_id, raw_config, extra_config, expected_error in cases:
             with self.subTest(profile_id=profile_id):
                 driver = OpenVPNDriver()
                 profile = Profile(
                     id=profile_id,
                     name=profile_id,
                     protocol=ProtocolType.OPENVPN,
-                    config={"raw_config": raw_config},
+                    config={"raw_config": raw_config, **extra_config},
                     source=ProfileSource.MANUAL,
                 )
 
@@ -339,18 +360,19 @@ class OpenVPNDriverTests(unittest.TestCase):
     @patch("drivers.openvpn_driver.subprocess.run")
     def test_protect_remote_endpoint_route_rejects_hostname_endpoint(self, run_mock, which_mock) -> None:
         cases = (
-            "client\nremote example.com 1194\n",
-            "client\nREMOTE example.com 1194\n",
-            'client\n"--remote" example.com 1194\n',
+            ("client\nremote example.com 1194\n", {}),
+            ("client\nREMOTE example.com 1194\n", {}),
+            ('client\n"--remote" example.com 1194\n', {}),
+            ("client\nremote example.com 1194\n", {"host": "198.51.100.9"}),
         )
-        for raw_config in cases:
+        for raw_config, extra_config in cases:
             with self.subTest(raw_config=raw_config):
                 self.driver.last_error = ""
                 profile = Profile(
                     id="openvpn-hostname",
                     name="openvpn-hostname",
                     protocol=ProtocolType.OPENVPN,
-                    config={"raw_config": raw_config},
+                    config={"raw_config": raw_config, **extra_config},
                     source=ProfileSource.MANUAL,
                 )
 
@@ -359,6 +381,31 @@ class OpenVPNDriverTests(unittest.TestCase):
                 run_mock.assert_not_called()
                 self.assertIsNone(self.driver._owned_endpoint_route)
                 self.assertIn("hostname remote endpoints", self.driver.last_error)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_host_field_divergent_raw_remote(self, run_mock, which_mock) -> None:
+        cases = (
+            ("client\nremote vpn.example.com 1194\n", "hostname remote endpoints"),
+            ("client\nremote 2001:db8::1 1194\n", "IPv6 remote endpoints"),
+            ("client\nremote 198.51.100.1 1194\nremote 2001:db8::1 1194\n", "multiple remote endpoints"),
+        )
+        for raw_config, expected_error in cases:
+            with self.subTest(raw_config=raw_config):
+                self.driver.last_error = ""
+                profile = Profile(
+                    id="openvpn-divergent-host",
+                    name="openvpn-divergent-host",
+                    protocol=ProtocolType.OPENVPN,
+                    config={"host": "198.51.100.9", "raw_config": raw_config},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+                run_mock.assert_not_called()
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn(expected_error, self.driver.last_error)
 
     @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
     @patch("drivers.openvpn_driver.subprocess.run")
