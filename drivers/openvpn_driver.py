@@ -177,7 +177,8 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             try:
                 ipaddress.IPv6Address(host)
             except ValueError:
-                return True
+                self.last_error = "OpenVPN hostname remote endpoints are not supported by native endpoint protection"
+                return False
             self.last_error = "OpenVPN IPv6 remote endpoints are not supported by native endpoint protection"
             return False
         return True
