@@ -3065,14 +3065,14 @@ final installed runtime aligned to commit `c0a525e8950001700a9cb85699aef2818a053
 The private evidence root is
 `/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-1-ubuntu-20260813T104226Z/`.
 
-The final protocol matrix contains 11 `green` protocol results with real
+The initial protocol matrix contained 11 `green` protocol results with real
 traffic: VLESS, Trojan, Hysteria2, OpenVPN+Cloak, AmneziaWG, WireGuard, VMess,
 Shadowsocks, SOCKS, HTTP and TUIC. WireGuard and Shadowsocks are green for
 Ubuntu for the first time in the project history because this run produced fresh
-real-egress evidence. Plain OpenVPN is still `formal_non_green`: the repaired
-HMAC/origin profile and the new unique-CN client reached TLS and pool assignment,
-but both direct OpenVPN and WatchdogVPN-routed tests had no useful real egress.
-That row is explicitly not counted as green.
+real-egress evidence. Plain OpenVPN was initially kept as `formal_non_green`: the
+repaired HMAC/origin profile and the new unique-CN client reached TLS and pool
+assignment, but both direct OpenVPN and WatchdogVPN-routed tests had no useful
+real egress at that time.
 
 OpenVPN+Cloak is green through an authorized bridge-only Ubuntu 24.04 VM
 (`wdvpn-ubuntu-2404`) using `04_OpenVPN_Cloak_gabo_nuevo_FIX.vpn`. The `nls1`
@@ -3117,6 +3117,23 @@ profiles containing embedded private material were stored as `0664`. Their
 containing evidence directory was `0700`, but the explicit evidence-secret rule
 requires `0600`. The files were corrected to `0600` and rechecked as
 `-rw-------`; no file content changed.
+
+The Ubuntu OpenVPN plain row was reopened in a strictly focal pass on 2026-08-14
+after the Debian 11A.2 investigation identified and corrected real WatchdogVPN
+OpenVPN bugs affecting that earlier Ubuntu non-green result. The reopening did
+not repeat the other 11 protocol rows because they were not affected by the
+OpenVPN-specific fixes and their original 11A.1 evidence remains reused. The
+focal target was `nls1` running Ubuntu `24.04.1 LTS`; the installed runtime was
+from commit `28565250b050b56bc003a4d49b95ad30027d22d6`, which includes the
+OpenVPN fixes through `17348e6`. Profile `openvpn-138.124.91.224-1194` connected
+with rc `0`, produced egress IP `138.124.91.224`, returned HTTP `200` for
+YouTube, Facebook and Instagram, disconnected with rc `0`, and left a clean
+teardown (`standby`, no TUN/runtime artifacts, inactive kill switch). The judge
+approved the field revalidation. The focal evidence bundle is
+`watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz`
+with SHA256 `43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871`.
+`cert_ubuntu_24_04` is therefore dated `2026-08-14T00:00:00Z`, plain OpenVPN is
+promoted to `green`, and Ubuntu 11A.1 now has 12/12 `green` protocol results.
 
 ### Task 23.7.5.11A.2 Debian 13 field recertification
 

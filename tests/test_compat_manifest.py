@@ -444,11 +444,15 @@ class ManifestValidCasesTests(unittest.TestCase):
             kernel_release="6.8.0-test",
             machine_architecture="x86_64",
         )
-        soon_after_certification = datetime(2026, 8, 13)
         far_future = datetime(2028, 8, 13)  # far past review_overdue for both
         for facts, cert_id in ((ubuntu, "cert_ubuntu_24_04"), (arch, "cert_arch_rolling")):
             with self.subTest(distro=facts.resolved_distribution):
                 cert_date_str = manifest["certifications"][cert_id]["date"]
+                self.assertIsNotNone(cert_date_str)
+                cert_date = datetime.fromisoformat(
+                    cert_date_str.replace("Z", "+00:00")
+                ).replace(tzinfo=None)
+                soon_after_certification = cert_date + timedelta(days=1)
                 self.assertEqual(
                     detection._certification_review_status(manifest, facts, now=soon_after_certification),
                     "current",
@@ -462,7 +466,6 @@ class ManifestValidCasesTests(unittest.TestCase):
                     detection._support_classification(manifest, facts, now=far_future).value,
                     "certified",
                 )
-                self.assertIsNotNone(cert_date_str)
         # No qualifying certification -> None, not an error.
         alma = detection.distro_facts_from_os_release(
             detection.parse_os_release_text("ID=almalinux\nVERSION_ID=9.6\n"),

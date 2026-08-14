@@ -586,9 +586,9 @@
     },
     "cert_ubuntu_24_04": {
       "current": true,
-      "date": "2026-08-13T00:00:00Z",
+      "date": "2026-08-14T00:00:00Z",
       "distribution": "ubuntu",
-      "evidence": "Task 23.7.5.11A.1 Ubuntu 24.04 field certification and private evidence at /home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-1-ubuntu-20260813T104226Z/",
+      "evidence": "Task 23.7.5.11A.1 Ubuntu 24.04 field certification and private evidence at /home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-1-ubuntu-20260813T104226Z/; focal OpenVPN plain reopening evidence at /home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz (sha256 43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871). Other 11 protocol results reuse the original 11A.1 evidence; only OpenVPN plain received fresh evidence in the focal reopening.",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -603,8 +603,8 @@
           "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "openvpn": {
-          "disposition": "formal_non_green",
-          "evidence": "23.7.5.11A.1 improved but not green: repaired HMAC and unique-CN profile reached TLS/pool assignment, but pure OpenVPN and WatchdogVPN both had no useful real egress; not counted as green"
+          "disposition": "green",
+          "evidence": "23.7.5.11A.1 focal Ubuntu OpenVPN plain reopening approved by judge: nls1 Ubuntu 24.04.1, profile openvpn-138.124.91.224-1194, connect_rc=0, egress_ip=138.124.91.224, HTTP 200 to YouTube/Facebook/Instagram, disconnect_rc=0, clean teardown; evidence bundle watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz sha256=43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871"
         },
         "openvpn_cloak": {
           "disposition": "green",
