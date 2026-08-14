@@ -313,7 +313,7 @@ class OpenVPNConfigParserTests(unittest.TestCase):
             client
             dev tun
             proto udp
-            remote vpn.example.com 1194
+            remote 138.124.91.224 1194
             auth-user-pass
 
             <ca>
@@ -322,8 +322,8 @@ class OpenVPNConfigParserTests(unittest.TestCase):
             """
         )
         self.assertEqual(profile.protocol, ProtocolType.OPENVPN)
-        self.assertEqual(profile.name, "openvpn-vpn.example.com-1194")
-        self.assertEqual(profile.config["host"], "vpn.example.com")
+        self.assertEqual(profile.name, "openvpn-138.124.91.224-1194")
+        self.assertEqual(profile.config["host"], "138.124.91.224")
         self.assertEqual(profile.config["port"], 1194)
         self.assertEqual(profile.config["proto"], "udp")
         self.assertEqual(profile.config["dev"], "tun")

@@ -6,7 +6,8 @@ import socket
 from collections.abc import Callable
 from typing import Any
 
-from models.profile import Profile
+from models.profile import Profile, ProtocolType
+from parsers.openvpn_safety import validated_openvpn_remote_host
 
 
 class EndpointPolicyError(ValueError):
@@ -73,6 +74,8 @@ def canonicalize_remote_endpoint(
 
 def profile_endpoint_host(profile: Profile) -> object | None:
     """Return the endpoint field used by supported runtime drivers."""
+    if profile.protocol is ProtocolType.OPENVPN:
+        return validated_openvpn_remote_host(profile)
     config = profile.config
     for key in ("host", "server"):
         value = config.get(key)
@@ -94,7 +97,10 @@ def validate_profile_endpoint(
     require_resolution: bool = False,
     allow_captured_fakeip_ranges: tuple[str, ...] = (),
 ) -> str:
-    host = profile_endpoint_host(profile)
+    try:
+        host = profile_endpoint_host(profile)
+    except ValueError as exc:
+        raise EndpointPolicyError(str(exc)) from exc
     if host is None:
         raise EndpointPolicyError("profile has no remote endpoint host")
     return canonicalize_remote_endpoint(

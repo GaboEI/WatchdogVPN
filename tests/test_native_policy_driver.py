@@ -77,6 +77,18 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.native.disconnect.assert_called_once_with()
         self.assertEqual(self.driver.last_error, "native transport egress interface is unavailable")
 
+    def test_native_preflight_runs_before_existing_runtime_teardown(self) -> None:
+        self.native.preflight_profile.side_effect = ValueError("invalid raw remote")
+        self.driver._active_profile = self.profile
+
+        self.assertFalse(self.driver.connect(self.profile, mode="rules"))
+
+        self.native.disconnect.assert_not_called()
+        self.companion.disconnect.assert_not_called()
+        self.native.connect.assert_not_called()
+        self.companion.connect.assert_not_called()
+        self.assertEqual(self.driver.last_error, "invalid raw remote")
+
 
 class NativeEndpointBypassCidrsTests(unittest.TestCase):
     """Regression coverage for a real-VM finding: every profile actually
@@ -140,6 +152,19 @@ class NativeEndpointBypassCidrsTests(unittest.TestCase):
             companion.connect.call_args.kwargs["native_egress_interface"],
             "watchdogvpn_awg",
         )
+
+    def test_openvpn_bypass_cidr_uses_raw_config_remote_not_host_metadata(self) -> None:
+        profile = Profile(
+            "openvpn-native",
+            "openvpn-native",
+            ProtocolType.OPENVPN,
+            {"host": "138.124.91.224", "raw_config": "client\nremote 8.8.8.8 1194\n"},
+            ProfileSource.MANUAL,
+        )
+
+        cidrs = NativePolicyDriver._native_endpoint_bypass_cidrs(profile)
+
+        self.assertEqual(cidrs, ("8.8.8.8/32",))
 
 
 if __name__ == "__main__":

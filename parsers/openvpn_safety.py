@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 import shlex
 
@@ -214,3 +215,43 @@ def validate_openvpn_profile(profile: Profile) -> None:
             f"{profile.protocol.value} profile requires raw_config"
         )
     validate_openvpn_config(raw_config)
+
+
+def validated_openvpn_remote_host(profile: Profile) -> str:
+    """Return the single global IPv4 endpoint that OpenVPN will execute."""
+    directives = validate_openvpn_config(str(profile.config.get("raw_config") or ""))
+    if directives.get("remote-random"):
+        raise OpenVPNConfigValidationError(
+            "OpenVPN remote-random is not supported by native endpoint protection"
+        )
+    if directives.get("remote-random-hostname"):
+        raise OpenVPNConfigValidationError(
+            "OpenVPN remote-random-hostname is not supported by native endpoint protection"
+        )
+    remote_lines = directives.get("remote", [])
+    if len(remote_lines) > 1:
+        raise OpenVPNConfigValidationError(
+            "OpenVPN profiles with multiple remote endpoints are not supported by native endpoint protection"
+        )
+    host = ""
+    for args in remote_lines:
+        if args:
+            host = args[0]
+            break
+    try:
+        address = ipaddress.IPv4Address(host)
+    except ValueError:
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError:
+            raise OpenVPNConfigValidationError(
+                "OpenVPN hostname remote endpoints are not supported by native endpoint protection"
+            ) from None
+        raise OpenVPNConfigValidationError(
+            "OpenVPN IPv6 remote endpoints are not supported by native endpoint protection"
+        ) from None
+    if not address.is_global:
+        raise OpenVPNConfigValidationError(
+            "OpenVPN remote endpoints must be global IPv4 addresses for native endpoint protection"
+        )
+    return str(address)

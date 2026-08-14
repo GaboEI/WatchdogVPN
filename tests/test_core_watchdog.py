@@ -11,7 +11,7 @@ from unittest.mock import patch
 from app_policy.models import AppPolicy, AppPolicyAction, AppPolicyMode, AppPolicyRule
 from app_policy.store import AppPolicyStore
 from config.app_config import AppConfig
-from core.watchdog import WatchdogRuntime, build_watchdog, select_driver
+from core.watchdog import EndpointPolicyConnectionError, WatchdogRuntime, build_watchdog, select_driver
 
 from core.kill_switch import KillSwitch
 from core.runtime_observation import EffectiveRuntimeObservation
@@ -1566,6 +1566,38 @@ class WatchdogCoreTests(unittest.TestCase):
         self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
         protect_mock.assert_not_called()
 
+    def test_openvpn_preflight_rejects_raw_remote_before_any_core_mutation(self) -> None:
+        self.set_desired_state("off")
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=False)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            kill_switch=kill_switch,
+        )
+        profile = Profile(
+            id="openvpn-invalid",
+            name="openvpn-invalid",
+            protocol=ProtocolType.OPENVPN,
+            config={"host": "138.124.91.224", "raw_config": "client\nremote vpn.example.com 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        with (
+            patch.object(runtime, "_activate_driver") as activate_mock,
+            patch.object(runtime, "_protect_connection_attempt") as protect_mock,
+            self.assertRaises(EndpointPolicyConnectionError),
+        ):
+            runtime.connect(profile)
+
+        activate_mock.assert_not_called()
+        protect_mock.assert_not_called()
+        driver.disconnect_mock.assert_not_called()
+        driver.connect_mock.assert_not_called()
+        kill_switch.apply_atomic_mock.assert_not_called()
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "off")
+        self.assertEqual(self.state_manager.get("active_profile_id"), "")
+
     def test_connect_persists_desired_state_on(self) -> None:
         self.set_desired_state("off")
         driver = FakeDriver()
@@ -3070,6 +3102,50 @@ class WatchdogIntegrationTests(unittest.TestCase):
         self.assertEqual(result.status, "kill_switch_active")
         self.assertEqual(kill_switch.apply_atomic_mock.call_count, 2)
         self.assertEqual(kill_switch.allowed_endpoints, ("1.1.1.1",))
+
+    @patch("core.watchdog.pool_builder.build_pool", return_value=[])
+    @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))
+    def test_kill_switch_allowed_endpoint_for_openvpn_uses_raw_config_remote(self, _hc, _pool) -> None:
+        driver = FakeDriver()
+        driver.health_check_mock.return_value = "down"
+        kill_switch = FakeKillSwitch(active=False)
+        profile = Profile(
+            id="openvpn-active",
+            name="openvpn-active",
+            protocol=ProtocolType.OPENVPN,
+            config={"host": "138.124.91.224", "raw_config": "client\nremote 8.8.8.8 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+        self.state_manager.set("active_profile_id", profile.id)
+        self.profile_store.add(profile)
+
+        from config.app_config import AppConfig
+        from unittest.mock import MagicMock
+        app_config = MagicMock(spec=AppConfig)
+        app_config.load.return_value = {
+            "watchdog": {"reconnect_attempts": 1},
+            "kill_switch": {"enabled": True},
+            "rotation": {"enabled": True},
+        }
+
+        from rotation.recovery import Recovery
+        from rotation.rotation_engine import RotationEngine
+        clock_value = [0.0]
+        clock = lambda: clock_value[0]
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            app_config=app_config,
+            rotation_engine=RotationEngine(clock=clock, sleep=lambda s: None, warmup_seconds=0.0),
+            recovery=Recovery(clock=clock),
+            kill_switch=kill_switch,
+        )
+
+        result = runtime.run_iteration()
+
+        self.assertEqual(result.status, "kill_switch_active")
+        self.assertEqual(kill_switch.allowed_endpoints, ("8.8.8.8",))
 
     @patch("core.watchdog.pool_builder.build_pool", return_value=[])
     @patch("core.watchdog.health_checker.check_with_latency", return_value=HealthCheckResult(status="down"))

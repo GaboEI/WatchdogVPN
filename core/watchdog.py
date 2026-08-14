@@ -797,15 +797,16 @@ class WatchdogRuntime:
         unsupported = self._requested_policy_capabilities() - policy_capabilities
         if unsupported:
             raise UnsupportedDriverPolicyError(driver_name, unsupported)
-        if profile_endpoint_host(profile) is not None:
-            try:
+        try:
+            endpoint_host = profile_endpoint_host(profile)
+            if endpoint_host is not None:
                 validate_profile_endpoint(
                     profile,
                     require_resolution=True,
                     allow_captured_fakeip_ranges=self._endpoint_policy_fakeip_allowlist(),
                 )
-            except EndpointPolicyError as exc:
-                raise EndpointPolicyConnectionError(f"endpoint policy rejected connection: {exc}") from exc
+        except (EndpointPolicyError, ValueError) as exc:
+            raise EndpointPolicyConnectionError(f"endpoint policy rejected connection: {exc}") from exc
         driver = self._candidate_driver_for_profile(profile)
         options = self._connect_options()
         management_preflight = getattr(driver, "preflight_management_path", None)
@@ -1454,11 +1455,10 @@ class WatchdogRuntime:
     def _kill_switch_allowed_endpoints(self, profile: Profile | None) -> tuple[str, ...]:
         if profile is None:
             return ()
-        host = profile.config.get("host") or profile.config.get("server")
-        if not isinstance(host, str) or not host.strip():
-            endpoint = profile.config.get("endpoint")
-            if isinstance(endpoint, str):
-                host = endpoint.rsplit(":", 1)[0].strip("[]")
+        try:
+            host = profile_endpoint_host(profile)
+        except ValueError:
+            return ()
         if not isinstance(host, str) or not host.strip():
             return ()
         try:

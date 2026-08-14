@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import ipaddress
 import shutil
 import subprocess
 import time
@@ -22,7 +21,7 @@ from drivers.runtime_paths import (
 )
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
-from parsers.openvpn_safety import validate_openvpn_config, validate_openvpn_profile
+from parsers.openvpn_safety import validate_openvpn_profile, validated_openvpn_remote_host
 
 
 RUNTIME_PREFIX = "watchdogvpn-openvpn-"
@@ -131,6 +130,14 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return False
         return self._validate_single_ipv4_remote_endpoint(profile)
 
+    def preflight_profile(self, profile: Profile) -> None:
+        """Validate the candidate profile before any runtime teardown or mutation."""
+        old_error = self.last_error
+        if self._validate_profile_without_runtime(profile):
+            self.last_error = old_error
+            return
+        raise ValueError(self.last_error or "OpenVPN profile preflight failed")
+
     def _cleanup_runtime(self) -> None:
         if self._runtime_dir is not None and self._runtime_dir.exists():
             shutil.rmtree(self._runtime_dir, ignore_errors=True)
@@ -143,40 +150,15 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
 
     def _remote_host(self, profile: Profile) -> str:
         try:
-            directives = validate_openvpn_config(str(profile.config.get("raw_config") or ""))
+            return validated_openvpn_remote_host(profile)
         except ValueError:
             return ""
-        for args in directives.get("remote", []):
-            if args:
-                return args[0]
-        return ""
 
     def _validate_single_ipv4_remote_endpoint(self, profile: Profile) -> bool:
         try:
-            directives = validate_openvpn_config(str(profile.config.get("raw_config") or ""))
+            validated_openvpn_remote_host(profile)
         except ValueError as exc:
             self.last_error = str(exc)
-            return False
-        remote_lines = directives.get("remote", [])
-        if directives.get("remote-random"):
-            self.last_error = "OpenVPN remote-random is not supported by native endpoint protection"
-            return False
-        if directives.get("remote-random-hostname"):
-            self.last_error = "OpenVPN remote-random-hostname is not supported by native endpoint protection"
-            return False
-        if len(remote_lines) > 1:
-            self.last_error = "OpenVPN profiles with multiple remote endpoints are not supported by native endpoint protection"
-            return False
-        host = self._remote_host(profile)
-        try:
-            ipaddress.IPv4Address(host)
-        except ValueError:
-            try:
-                ipaddress.IPv6Address(host)
-            except ValueError:
-                self.last_error = "OpenVPN hostname remote endpoints are not supported by native endpoint protection"
-                return False
-            self.last_error = "OpenVPN IPv6 remote endpoints are not supported by native endpoint protection"
             return False
         return True
 
@@ -317,14 +299,14 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         capture_modes=None,
     ) -> bool:
         self.last_error = ""
+        if not self._validate_profile_without_runtime(profile):
+            return False
         if not self._ensure_disconnected_before_connect():
             self.last_error = "existing OpenVPN runtime teardown failed"
             return False
         binary = self.find_openvpn_binary()
         if not binary:
             self.last_error = "required binary not found: openvpn"
-            return False
-        if not self._validate_profile_without_runtime(profile):
             return False
         self.generate_openvpn_config(profile)
         config_path, log_path = self._ensure_runtime_paths()

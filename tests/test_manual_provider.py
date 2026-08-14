@@ -70,12 +70,12 @@ class ManualProviderTests(unittest.TestCase):
                 client
                 dev tun
                 proto udp
-                remote vpn.example.com 1194
+                remote 138.124.91.224 1194
                 """
             )
 
             self.assertEqual(profile.protocol, ProtocolType.OPENVPN)
-            self.assertEqual(profile.config["host"], "vpn.example.com")
+            self.assertEqual(profile.config["host"], "138.124.91.224")
 
     def test_from_text_saves_all_singbox_profiles_and_returns_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

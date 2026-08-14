@@ -10,7 +10,8 @@ from drivers.amneziawg_driver import INTERFACE_NAME as AMNEZIAWG_INTERFACE_NAME
 from drivers.base import DRIVER_POLICY_CAPABILITIES, BaseDriver, ReentrantConnectGuard
 from drivers.singbox_driver import SingBoxDriver
 from models.connection_state import ConnectionState
-from models.profile import Profile
+from models.profile import Profile, ProtocolType
+from parsers.openvpn_safety import validated_openvpn_remote_host
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,7 +67,9 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
         transport packets. Resolve a hostname before TUN activation; an IP
         export takes the fast deterministic path.
         """
-        raw_host = profile.config.get("host") or profile.config.get("server")
+        raw_host = validated_openvpn_remote_host(profile) if profile.protocol is ProtocolType.OPENVPN else (
+            profile.config.get("host") or profile.config.get("server")
+        )
         if not isinstance(raw_host, str) or not raw_host.strip():
             # WireGuard/AmneziaWG profiles (parsers/wg_config.py,
             # parsers/amneziavpn_format.py) store the peer address under
@@ -103,6 +106,14 @@ class NativePolicyDriver(BaseDriver, ReentrantConnectGuard):
 
     def connect(self, profile: Profile, dns_policy=None, **options: Any) -> bool:
         self.last_error = ""
+        native_preflight = getattr(self.native, "preflight_profile", None)
+        if callable(native_preflight):
+            try:
+                native_preflight(profile)
+            except Exception as exc:
+                self.last_error = str(exc)
+                LOGGER.warning("native_policy_native_preflight_failed")
+                return False
         if not self._ensure_disconnected_before_connect():
             self.last_error = "existing native policy runtime teardown failed"
             LOGGER.warning("native_policy_teardown_before_connect_failed")

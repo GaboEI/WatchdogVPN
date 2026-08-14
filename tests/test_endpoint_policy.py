@@ -87,6 +87,30 @@ class EndpointPolicyTests(unittest.TestCase):
         )
         self.assertEqual(profile_endpoint_host(profile), "2001:4860:4860::8888")
 
+    def test_openvpn_endpoint_is_extracted_from_raw_config_not_host_metadata(self) -> None:
+        profile = Profile(
+            id="test",
+            name="test",
+            protocol=ProtocolType.OPENVPN,
+            config={"host": "138.124.91.224", "raw_config": "client\nremote 8.8.8.8 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        self.assertEqual(profile_endpoint_host(profile), "8.8.8.8")
+        self.assertEqual(validate_profile_endpoint(profile, require_resolution=True), "8.8.8.8")
+
+    def test_openvpn_private_raw_remote_is_rejected_before_metadata_host(self) -> None:
+        profile = Profile(
+            id="test",
+            name="test",
+            protocol=ProtocolType.OPENVPN,
+            config={"host": "138.124.91.224", "raw_config": "client\nremote 10.0.0.1 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        with self.assertRaisesRegex(EndpointPolicyError, "global IPv4"):
+            validate_profile_endpoint(profile, require_resolution=True)
+
     def test_profile_validation_threads_fakeip_allowlist(self) -> None:
         profile = Profile(
             id="test",
