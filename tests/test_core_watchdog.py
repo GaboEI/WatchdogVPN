@@ -993,6 +993,53 @@ class WatchdogCoreTests(unittest.TestCase):
         kill_switch.disable_mock.assert_called_once_with()
         driver.disconnect_mock.assert_called_once_with()
 
+    def test_shutdown_desired_on_disconnect_failed_still_succeeds_fail_closed(self) -> None:
+        # La proteccion fail-closed ya esta aplicada: un teardown incompleto del
+        # driver durante shutdown (p.ej. proceso en D-state con red colapsando)
+        # no debe reportar FAILURE. El kernel limpia en el reboot y el siguiente
+        # arranque reconcilia; no hay fuga de trafico porque el kill switch sigue
+        # activo.
+        self.set_desired_state("on")
+        self.profile_store.add(self.profile)
+        self.state_manager.set("active_profile_id", self.profile.id)
+        driver = FakeDriver()
+        driver.disconnect_mock.return_value = False
+        kill_switch = FakeKillSwitch(active=True)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            kill_switch=kill_switch,
+        )
+
+        self.assertTrue(runtime.shutdown())
+
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+        kill_switch.apply_atomic_mock.assert_called_once_with()
+        kill_switch.disable_mock.assert_not_called()
+        driver.disconnect_mock.assert_called_once_with()
+
+    def test_shutdown_desired_on_protection_failed_still_fails_closed(self) -> None:
+        # Sin proteccion aplicable, un shutdown con desired_on debe seguir
+        # reportando FAILURE: no puede quedar el sistema sin la barrera fail-closed.
+        self.set_desired_state("on")
+        self.profile_store.add(self.profile)
+        self.state_manager.set("active_profile_id", self.profile.id)
+        driver = FakeDriver()
+        kill_switch = FakeKillSwitch(active=False, enable_result=False)
+        runtime = WatchdogRuntime(
+            driver=driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+            kill_switch=kill_switch,
+        )
+
+        self.assertFalse(runtime.shutdown())
+
+        self.assertEqual(self.state_manager.get("vpn_desired_state"), "on")
+        kill_switch.apply_atomic_mock.assert_called_once_with()
+        kill_switch.disable_mock.assert_not_called()
+
     def test_disconnect_keeps_active_kill_switch_when_configured(self) -> None:
         self.set_desired_state("on")
         driver = FakeDriver()

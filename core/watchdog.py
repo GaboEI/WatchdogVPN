@@ -647,9 +647,23 @@ class WatchdogRuntime:
             if not desired_on:
                 self._handle_manual_disconnect_kill_switch()
 
-        if desired_on and not protection_ok:
-            LOGGER.error("watchdog_shutdown_fail_closed_barrier_unavailable")
-        return disconnected and protection_ok
+        if desired_on:
+            if not protection_ok:
+                LOGGER.error("watchdog_shutdown_fail_closed_barrier_unavailable")
+                return False
+            if not disconnected:
+                # La proteccion fail-closed ya esta aplicada (kill switch activo),
+                # por lo que no hay fuga de trafico posible. Durante un shutdown
+                # del sistema (SIGTERM con red colapsando) el driver puede no
+                # terminar su runtime a tiempo (p.ej. proceso en D-state que ni
+                # SIGKILL resuelve en el timeout 5+5s). El kernel limpia en el
+                # reboot y el siguiente arranque reconcilia; se registra para
+                # trazabilidad, pero no se reporta FAILURE.
+                LOGGER.error(
+                    "watchdog_shutdown_driver_cleanup_incomplete_protection_active"
+                )
+            return True
+        return disconnected
 
     def health_check(self) -> str:
         if not self.automatic_actions_enabled():
