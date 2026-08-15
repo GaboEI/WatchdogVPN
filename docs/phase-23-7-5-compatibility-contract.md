@@ -3235,6 +3235,74 @@ Sub-phase 23.7.5.11A (Debian family) is now fully closed for its three certified
 releases: Ubuntu 24.04 (11A.1) and Linux Mint 22.3 (11A.3) belong to technical
 family `ubuntu_apt`; Debian 13 (11A.2) belongs to `debian_apt`. Certification is
 per-release — other Debian/Ubuntu derivatives remain `family_inferred`, not
-`certified`. 23.7.5.11B Arch Linux/CachyOS is defined in the contract but is NOT
-authorized and must not be started without fresh explicit maintainer
-authorization.
+`certified`.
+
+### Task 23.7.5.11B Arch Linux field recertification closure (2026-08-15)
+
+Arch Linux (rolling) was field recertified under the 23.7.5.11B contract on
+`nls1` (Arch Linux rolling, kernel `7.1.8-arch1-3`, hostname `nls-1`, KVM).
+Final runtime HEAD: `cd112b4` (`fix(daemon): tolerate incomplete driver cleanup
+on shutdown with fail-closed barrier`). This is the first distribution of
+sub-phase 11B; CachyOS remains pending and NOT started.
+
+Final matrix: **12/12 `green`** protocol results with real egress on `nls1`.
+WireGuard, Shadowsocks and plain OpenVPN — historically `formal_non_green` in
+`cert_arch_rolling` — are promoted to `green` based on fresh 11B real-egress
+field evidence. The other nine (VLESS, Trojan, Hysteria2, OpenVPN+Cloak,
+AmneziaWG, VMess, TUIC, SOCKS, HTTP) remain green.
+
+Validated on `nls1`:
+- Clean install + provenance (`status=verified`, generation `a1a16df8...`),
+  doctor `FAIL=0`.
+- 12/12 real-egress protocol matrix (per-protocol connect/disconnect with
+  clean teardown, kill switch applied per connection, no residue between
+  protocols).
+- Reboot lifecycle: `autoconnect=false` reboot -> standby clean with direct
+  egress; `autoconnect=true` reboot -> automatic recovery with real VPN egress.
+- Isolated fault harness (real `RuntimeWorker` with isolated state/profile/DNS
+  and fake driver/kill-switch): `dns_restore_failed` and
+  `kill_switch_disable_failed` stay fail-closed, never auto-reconnect, remain
+  diagnosed in `last_failure_reason`.
+- Shutdown FAILURE fix (`cd112b4`): the daemon no longer exits with
+  `status=1/FAILURE` when stopped/rebooted with an active connection while the
+  fail-closed barrier is applied.
+- Final cleanup: standby, profiles `[]`, no TUN, firewall base only.
+
+### 23.7.5.11.x official structure (§14.1, realigned 2026-08-15)
+
+Mandatory order (external design §14.1, revision 4):
+
+```
+11-PRE → 11A → 11B → 11C → 11D → 11E → 11F → 11G
+```
+
+| Sub-phase | Distributions | Notes |
+|---|---|---|
+| 11-PRE | (policy only) | CLOSED. Certification-review advisory signal. |
+| 11A | Ubuntu, Debian, Linux Mint | Debian family. CLOSED (12/12 each). |
+| 11B | Arch Linux, CachyOS | Arch family, rolling. Arch Linux CLOSED (2026-08-15); CachyOS pending. |
+| 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). |
+| 11D | openSUSE Leap, Tumbleweed | Tumbleweed must be fully validated. |
+| 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
+| 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
+| 11G | Pop!_OS | New community-requested distribution; full admission/cert from zero. |
+
+#### 11B — Arch family (Arch Linux, CachyOS)
+
+- Rolling model, no min-anchor concept. No expiry-driven deadline; the
+  11-PRE review signal is advisory only.
+- Reuse/delta-audit policy: AmneziaWG is a mandatory fresh real-traffic re-run
+  in every sub-phase; other protocols are reused only with an explicit audit
+  note when a clean 10.x L3 wave exists under the current HEAD. A full
+  12-protocol validation is authorized whenever a clean server reinstall is
+  actually happening (it did for 11B Arch Linux).
+- **Arch Linux is on `nls1`'s panel template list** (normal one-click
+  reinstall, no pre-phase needed) and is now field recertified.
+- **CachyOS is not** on the template list: it needs the "Pre-phase: server
+  image transplant" procedure (install in a local VM, transplant the installed
+  disk to `/dev/vda`), with the `mkinitcpio` HOOKS/virtio check taken
+  seriously before assuming it boots on the target hardware.
+
+History: sub-phase 11A (Debian family) is fully closed. 23.7.5.11B Arch Linux
+is closed (this closure). 23.7.5.11B CachyOS remains pending and requires
+fresh explicit maintainer authorization before any start.

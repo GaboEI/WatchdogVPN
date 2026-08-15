@@ -398,10 +398,10 @@ class ManifestValidCasesTests(unittest.TestCase):
         result = classify_support_rolling(
             facts,
             expiry=timedelta(seconds=data["expiry_seconds"]),
-            now=datetime(2026, 7, 26, 0, 0, 0),
+            now=datetime(2026, 8, 16, 0, 0, 0),
         )
         self.assertIs(result, SupportClassification.CERTIFIED)
-        self.assertEqual(normalized, "2026-07-22T00:00:00")
+        self.assertEqual(normalized, "2026-08-15T00:00:00")
 
     def test_product_classification_examples_are_derived(self) -> None:
         manifest = load_product()
@@ -418,7 +418,7 @@ class ManifestValidCasesTests(unittest.TestCase):
             result = classify_support_rolling(
                 RollingFacts(**data["facts"]),
                 expiry=timedelta(seconds=data["expiry_seconds"]),
-                now=datetime(2026, 8, 13, 0, 0, 0),
+                now=datetime(2026, 8, 16, 0, 0, 0),
             )
             self.assertIs(result, expected, distro_id)
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
@@ -979,7 +979,7 @@ class ManifestInvalidCasesTests(unittest.TestCase):
             classify_support_rolling(
                 RollingFacts(**{**data["facts"], "last_validated": datetime.fromisoformat(data["facts"]["last_validated"])}),
                 expiry=timedelta(seconds=data["expiry_seconds"]),
-                now=datetime(2026, 7, 26, 0, 0, 0),
+                now=datetime(2026, 8, 16, 0, 0, 0),
             ),
             SupportClassification.CERTIFIED,
         )

@@ -295,7 +295,7 @@ class DistributionResolutionTests(unittest.TestCase):
                 distro = facts(manifest, text)
                 self.assertEqual(distro.resolved_distribution, distro_id)
                 self.assertEqual(distro.resolved_release, release_id)
-                report = detection.evaluate(manifest, distro, ready_core(manifest, distro), present_protocols(manifest), now=datetime(2026, 8, 13))
+                report = detection.evaluate(manifest, distro, ready_core(manifest, distro), present_protocols(manifest), now=datetime(2026, 8, 16))
                 self.assertEqual(report.support_classification, expected)
 
     def test_mint_requires_exact_codename_mapping(self) -> None:
