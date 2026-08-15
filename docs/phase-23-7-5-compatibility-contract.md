@@ -3183,3 +3183,58 @@ provenance/doctor state was clean: `nls1` reported `status=verified`, generation
 runtime artifacts, kill switch inactive, and doctor `OK=146 WARN=1 FAIL=0`; the
 authorized VM reported `status=verified`, the same generation, no TUN or runtime
 artifacts, kill switch inactive, and doctor `OK=144 WARN=3 FAIL=0`.
+
+### Task 23.7.5.11A.3 Linux Mint 22.3 field recertification
+
+Linux Mint 22.3 was recertified under the 23.7.5.11A contract on 2026-08-14 and
+approved for closure by the maintainer. The target host was `nls1` (`Linux Mint
+22.3 (Zena)`, `ID=linuxmint`, `UBUNTU_CODENAME=noble`, kernel
+`7.0.0-28-generic`), with final deployed runtime aligned to commit
+`aa1d3bf6c97f3a1c63577e435dfba4ab15170e76`
+(`fix(runtime): respect manual VPN supervision`) and installed provenance
+verified (`status=verified`). The private protocol-matrix evidence is under
+`/root/wdvpn-23-7-5-11A-3-mint-protocols/evidence`; the controlled deploy/reboot
+evidence is under
+`/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-3-mint-aa1d3bf-controlled-deploy-20260814T222516Z/`;
+the isolated fault-validation evidence is under
+`/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-3-mint-aa1d3bf-isolated-fault-validation-20260814T231258Z/`;
+and the post-test contamination restoration evidence is under
+`/home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-3-mint-test-contamination-cleanup-20260815T002147Z/`.
+
+The final protocol matrix contains 12 `green` protocol results with real
+traffic: VLESS, Trojan, Hysteria2, AmneziaWG, OpenVPN+Cloak, VMess, SOCKS, HTTP,
+TUIC, plain OpenVPN, WireGuard and Shadowsocks. WireGuard, Shadowsocks and plain
+OpenVPN were historically `formal_non_green` Plan-B/no-egress rows in the Mint
+certification; they are promoted to `green` based on fresh Linux Mint 22.3 11A.3
+real-egress field evidence. No `formal_non_green` row remains in this
+certification.
+
+The real reboot lifecycle on `nls1` was validated in both directions: with
+`autoconnect=false`, a reboot returned to `standby` with no TUN, inactive kill
+switch, and direct DNS/egress; with `autoconnect=true`, a reboot recovered
+automatically with `wdvpn-tun0`, sing-box, the nftables kill switch applied and
+VPN egress `138.124.91.224`. Final cleanup left profiles `[]`, `standby`,
+`desired_state=off`, `active_profile_id` empty, no TUN/sing-box/routes/rules,
+direct DNS and direct egress `79.137.197.255`.
+
+The isolated fault harness (real `RuntimeWorker` with isolated
+`StateManager`/`ProfileStore`/DNS snapshot and fake driver/kill-switch) verified
+that `dns_restore_failed` and `kill_switch_disable_failed` remain fail-closed,
+are diagnostically recorded in `last_failure_reason`, and never trigger automatic
+connect/recovery/rotation on subsequent ticks.
+
+Honest limitation recorded: no real DNS/firewall fault injection was performed on
+live `nls1`. Closure was accepted on the basis of real successful reboots, real
+recovery and cleanup, isolated-harness fail-closed coverage, and complete green
+local tests. The cross-cutting follow-up (a real fault-injection test must only
+run on a disposable VM/snapshot, and tests must isolate persistent paths so they
+never write `/var/lib/watchdogvpn` when run as root) does not block this closure
+and must not be attributed to Arch/CachyOS as any form of distro certification.
+
+Sub-phase 23.7.5.11A (Debian family) is now fully closed for its three certified
+releases: Ubuntu 24.04 (11A.1) and Linux Mint 22.3 (11A.3) belong to technical
+family `ubuntu_apt`; Debian 13 (11A.2) belongs to `debian_apt`. Certification is
+per-release — other Debian/Ubuntu derivatives remain `family_inferred`, not
+`certified`. 23.7.5.11B Arch Linux/CachyOS is defined in the contract but is NOT
+authorized and must not be started without fresh explicit maintainer
+authorization.

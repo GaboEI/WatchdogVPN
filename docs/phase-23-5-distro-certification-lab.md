@@ -1732,6 +1732,14 @@ The honest protocol disposition matches the other certified distro families:
 **9 functional rows plus 3 formal non-green Plan-B/no-egress rows, with 5/5
 resilient rows green**, never "12 green".
 
+> **Update (2026-08-14):** this "9 + 3" disposition was the Phase 23.6 result.
+> Under Phase 23.7.5, Linux Mint 22.3 was recertified in Task 23.7.5.11A.3 on
+> `nls1` with runtime `aa1d3bf`; WireGuard, Shadowsocks and plain OpenVPN were
+> promoted to `green` on fresh real-egress field evidence, and the Mint
+> certification now records 12/12 green protocol results (see
+> `docs/phase-23-7-5-compatibility-contract.md`). This section remains as the
+> historical Phase 23.6 record.
+
 - Resilient green with real normal TUN, local SOCKS and local HTTP-proxy egress
   to Facebook, Instagram and YouTube on all three paths: VLESS, Trojan,
   Hysteria2, OpenVPN+Cloak and AmneziaWG. The original AmneziaWG fixture was

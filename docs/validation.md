@@ -58,9 +58,18 @@ Current manually reported validation status:
 Each "Certified" row means a clean install on a real machine passed the full
 install/update, DNS apply/reset, kill switch, split tunnel, panic, reboot and
 purge/reinstall lifecycle plus real per-protocol egress, with a clean teardown.
-The honest per-distro protocol result is 9 functional rows plus 3 formal
-non-green Plan-B/no-egress rows (plain WireGuard, standard Shadowsocks, plain
-OpenVPN), with 5/5 resilient profiles green; no distro is claimed as "12 green".
+
+Protocol results are recorded per distribution in
+`compat/compatibility.json` (the single source of truth) and are
+release-specific — certification never implies the whole family. Under Phase
+23.7.5.11A, three releases were recertified end to end with a 12/12 green
+protocol matrix: Ubuntu 24.04 (11A.1), Debian 13 (11A.2) and Linux Mint 22.3
+(11A.3). Ubuntu and Linux Mint belong to technical family `ubuntu_apt`; Debian
+13 belongs to `debian_apt`. Earlier Phase 23.5/23.6 rows reflected the per-distro
+result at that time; other Debian/Ubuntu derivatives and Red Hat-family /
+SUSE-family derivatives that share an adapter remain `family_inferred`, not
+individually certified.
+
 The CachyOS result also confirms the Arch adapter works for a real install flow
 with advanced DNS, and the installer gives reboot guidance if the tunnel remains
 degraded after setup.
