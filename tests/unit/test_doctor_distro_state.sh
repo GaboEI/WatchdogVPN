@@ -42,6 +42,10 @@ detect_distro() {
 distro_adapter_path() {
   printf '%s/distros/%s.sh' "$1" "${DISTRO_ADAPTER_ID:-$DISTRO_ID}"
 }
+
+distro_experimental_override_accepted() {
+  [[ "${MOCK_DISTRO_OVERRIDE_ACCEPTED:-0}" == "1" ]]
+}
 MOCK
 
 run_doctor() {
@@ -61,8 +65,16 @@ export MOCK_DISTRO_SUPPORTED="0"
 export MOCK_DISTRO_FUTURE="1"
 export MOCK_DISTRO_UNSUPPORTED="0"
 export MOCK_DISTRO_UNDETERMINED="0"
+export MOCK_DISTRO_OVERRIDE_ACCEPTED="0"
 output="$(run_doctor)"
 assert_contains "distro support is planned for a future release" "$output" "future distro doctor output"
+assert_contains "[FAIL]" "$output" "future distro without override is a FAIL"
+
+# Future distro with a user-accepted experimental override
+export MOCK_DISTRO_OVERRIDE_ACCEPTED="1"
+output="$(run_doctor)"
+assert_contains "running under user-accepted experimental override" "$output" "future distro with override doctor output"
+export MOCK_DISTRO_OVERRIDE_ACCEPTED="0"
 
 # Unsupported distro
 export MOCK_DISTRO_ID="exampleos"

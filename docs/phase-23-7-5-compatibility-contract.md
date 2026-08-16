@@ -3056,6 +3056,40 @@ or create a certification record. The mechanism was added in commit `75a1e63`.
 Kali's later promotion is represented separately by `cert_kali_rolling` and its
 rolling `last_validated` metadata after the full audit approval.
 
+### Real end-user experimental-distro override (distinct from the lab gate)
+
+`--certification-lab` was never meant for real users - it exists for our own
+field-validation runs and requires internal environment variables no ordinary
+installer invocation sets. Before this override existed, a distro that
+resolved to `experimental` had no path forward for an actual user except
+editing the shell scripts directly, which is exactly what happened in
+practice: independent reports surfaced of users running WatchdogVPN
+successfully on Manjaro, Pop!_OS and Zorin OS after locating and bypassing
+`require_supported_distro()`'s hard exit themselves.
+
+`lib/distro.sh` now exposes `distro_experimental_override_accepted()` and
+`distro_record_experimental_override()`, and `lib/common.sh` exposes
+`prompt_experimental_distro_override()`. When `DISTRO_FUTURE=1`,
+`install.sh`/`update.sh` offer three ways forward, checked in this order:
+
+1. The internal `--certification-lab` gate (unchanged, still lab-only).
+2. A previously recorded acceptance for the *same* `DISTRO_ID`
+   (`${WATCHDOGVPN_ETC_CONFIG_DIR:-/etc/watchdogvpn}/.experimental-distro-override`,
+   parent directory created as `0700`, marker mode `600`) - a stale acceptance
+   for a different distro never carries over.
+3. `--accept-experimental-distro-risk` for non-interactive/scripted runs, or an
+   interactive `[y/N]` prompt on a real TTY.
+
+None of these three paths change `support_classification` in the manifest or
+create a certification record - the distro remains honestly `experimental`.
+They only let WatchdogVPN run because the user explicitly chose to accept
+that risk, instead of requiring them to edit product code to do so.
+`doctor.sh` reports the override state honestly too: `WARN` instead of `FAIL`
+on `DISTRO_FUTURE` when an accepted override is on record for the currently
+detected distro. Tests: `tests/unit/test_experimental_distro_override.sh`
+(new), `tests/unit/test_doctor_distro_state.sh` (extended with the override
+case).
+
 ### Task 23.7.5.11A.1 Ubuntu 24.04 field recertification
 
 Ubuntu 24.04 was recertified under the 23.7.5.11A contract on 2026-08-13 and
@@ -3268,12 +3302,12 @@ Validated on `nls1`:
   fail-closed barrier is applied.
 - Final cleanup: standby, profiles `[]`, no TUN, firewall base only.
 
-### 23.7.5.11.x official structure (§14.1, realigned 2026-08-15)
+### 23.7.5.11.x official structure (§14.1, realigned 2026-08-16)
 
-Mandatory order (external design §14.1, revision 4):
+Mandatory order (external design §14.1, revision 5):
 
 ```
-11-PRE → 11A → 11B → 11C → 11D → 11E → 11F → 11G
+11-PRE → 11A → 11B → 11C → 11D → 11E → 11F → 11G → 11H
 ```
 
 | Sub-phase | Distributions | Notes |
@@ -3286,6 +3320,16 @@ Mandatory order (external design §14.1, revision 4):
 | 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
 | 11G | Pop!_OS | New community-requested distribution; full admission/cert from zero. |
+| 11H | Manjaro | New community-requested distribution; full admission/cert from zero. **Last reactive community addition to this list** - see policy note below. |
+
+**Policy note (2026-08-16):** 11H Manjaro is the last sub-phase added reactively
+to a community report. Future community distro requests (e.g. Zorin OS) are
+logged as backlog candidates, not automatic new sub-phases; they are handled
+primarily through the real end-user experimental-distro override described
+above, and only become a new formal sub-phase by a fresh, explicit maintainer
+decision comparable in weight to 11G/11H (real recurring usage, low
+incremental cost via an already-certified family, or a concrete business
+reason) - never as a default reaction to a single message.
 
 #### 11B — Arch family (Arch Linux, CachyOS)
 
@@ -3306,3 +3350,44 @@ Mandatory order (external design §14.1, revision 4):
 History: sub-phase 11A (Debian family) is fully closed. 23.7.5.11B Arch Linux
 is closed (this closure). 23.7.5.11B CachyOS remains pending and requires
 fresh explicit maintainer authorization before any start.
+
+#### 11H — Manjaro (new full admission and certification, 2026-08-16)
+
+Added by explicit maintainer decision after a community developer report that
+WatchdogVPN runs on Manjaro once the (then code-only) experimental gate is
+bypassed. Same pattern as 11G Pop!_OS: a real, unsolicited community report,
+not something WatchdogVPN's own roadmap ever targeted.
+
+- **Not an Arch Linux carry-over.** Manjaro resolves via `ID=manjaro`,
+  `ID_LIKE=arch` today (already used for AmneziaWG guidance messaging in
+  `tests/test_amneziawg_guidance.py`, but never for a manifest support
+  decision). 11B Arch Linux's own certification does not transfer to
+  Manjaro; per the contract's precedence rules, `family_inferred` requires
+  its own qualifying facts, not just family lineage.
+- **Full admission/certification from zero**, comparable in depth to 11G
+  Pop!_OS: manifest entry, detection, host/protocol readiness, the 12-protocol
+  field matrix with real egress, reboot lifecycle, isolated fault harness,
+  cleanup, and docs/manifest closure - the same pattern as every other 11.x
+  sub-phase.
+- **Image source and panel availability are still open questions**, to be
+  resolved when 11H is actually scheduled for execution: Manjaro was not in
+  `nls1`'s Aeza template list at the time of the 11B Arch Linux closure
+  (confirmed live: ArchLinux, Ubuntu 26.04, Debian 13, CentOS 9 Stream,
+  AlmaLinux 10, Alpine 3.23, Rocky Linux 9). If it remains absent, 11H needs
+  the same "Pre-phase: server image transplant" procedure as CachyOS/Mint,
+  including its own `mkinitcpio` HOOKS/virtio verification - Manjaro is Arch
+  family, so the same rolling-kernel risk applies.
+- **This is the last community-requested sub-phase added reactively.** See
+  the policy note above the §14.1 table: after 11H, new community distro
+  reports are handled through the real end-user experimental-distro override
+  (`prompt_experimental_distro_override()` / `--accept-experimental-distro-risk`,
+  documented above), not through an automatically-growing sub-phase list.
+
+11H closure condition: same as every other sub-phase - manifest, docs and
+external planning documents all updated together, with independent judge
+audit approval, before Manjaro is represented as anything other than
+`experimental`.
+
+**Not authorized to start.** 11H Manjaro requires its own fresh, explicit
+"go" from the maintainer, exactly like 11B CachyOS did after 11B Arch Linux
+closed.
