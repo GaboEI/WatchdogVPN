@@ -40,6 +40,13 @@ jobs:
           sudo install -m 0755 -d /usr/local/bin /usr/local/sbin /etc/logrotate.d /var/log/myvpn
           sudo install -m 0755 /bin/true /usr/local/bin/watchdogvpn-daemon
           sudo install -m 0755 /bin/true /usr/local/bin/vpn_rp_filter_boot
+          # CI-only stubs so systemd-analyze verify can resolve the NM/TUN
+          # wrapper paths referenced by the watchdogvpn-nm-*.service units.
+          # These are throwaway placeholders for verification only; the real
+          # wrappers are installed by lib/runtime.sh at install/update time.
+          sudo install -m 0755 /bin/true /usr/local/bin/watchdogvpn-nm-dns-restore
+          sudo install -m 0755 /bin/true /usr/local/bin/watchdogvpn-nm-tun-cleanup
+          sudo install -m 0755 /bin/true /usr/local/bin/watchdogvpn-nm-tun-register
           sudo install -m 0700 sbin/vpn_domain_bypass_apply.sh /usr/local/sbin/vpn_domain_bypass_apply.sh
           sudo install -m 0644 etc/logrotate.d/myvpn /etc/logrotate.d/myvpn
           sudo systemd-analyze verify systemd/*.service systemd/*.timer 2>&1 | tee /tmp/watchdogvpn-systemd-verify.log
