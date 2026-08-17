@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - phase-23-7-5-compatibility-contract
+      - phase-23-7-5-11B-arch-cachyos
   pull_request:
     branches:
       - phase-23-7-5-compatibility-contract
+      - phase-23-7-5-11B-arch-cachyos
   workflow_dispatch:
 
 concurrency:

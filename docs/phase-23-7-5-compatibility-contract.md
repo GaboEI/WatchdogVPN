@@ -3056,6 +3056,40 @@ or create a certification record. The mechanism was added in commit `75a1e63`.
 Kali's later promotion is represented separately by `cert_kali_rolling` and its
 rolling `last_validated` metadata after the full audit approval.
 
+### Real end-user experimental-distro override (distinct from the lab gate)
+
+`--certification-lab` was never meant for real users - it exists for our own
+field-validation runs and requires internal environment variables no ordinary
+installer invocation sets. Before this override existed, a distro that
+resolved to `experimental` had no path forward for an actual user except
+editing the shell scripts directly, which is exactly what happened in
+practice: independent reports surfaced of users running WatchdogVPN
+successfully on Manjaro, Pop!_OS and Zorin OS after locating and bypassing
+`require_supported_distro()`'s hard exit themselves.
+
+`lib/distro.sh` now exposes `distro_experimental_override_accepted()` and
+`distro_record_experimental_override()`, and `lib/common.sh` exposes
+`prompt_experimental_distro_override()`. When `DISTRO_FUTURE=1`,
+`install.sh`/`update.sh` offer three ways forward, checked in this order:
+
+1. The internal `--certification-lab` gate (unchanged, still lab-only).
+2. A previously recorded acceptance for the *same* `DISTRO_ID`
+   (`${WATCHDOGVPN_ETC_CONFIG_DIR:-/etc/watchdogvpn}/.experimental-distro-override`,
+   parent directory created as `0700`, marker mode `600`) - a stale acceptance
+   for a different distro never carries over.
+3. `--accept-experimental-distro-risk` for non-interactive/scripted runs, or an
+   interactive `[y/N]` prompt on a real TTY.
+
+None of these three paths change `support_classification` in the manifest or
+create a certification record - the distro remains honestly `experimental`.
+They only let WatchdogVPN run because the user explicitly chose to accept
+that risk, instead of requiring them to edit product code to do so.
+`doctor.sh` reports the override state honestly too: `WARN` instead of `FAIL`
+on `DISTRO_FUTURE` when an accepted override is on record for the currently
+detected distro. Tests: `tests/unit/test_experimental_distro_override.sh`
+(new), `tests/unit/test_doctor_distro_state.sh` (extended with the override
+case).
+
 ### Task 23.7.5.11A.1 Ubuntu 24.04 field recertification
 
 Ubuntu 24.04 was recertified under the 23.7.5.11A contract on 2026-08-13 and
@@ -3235,6 +3269,167 @@ Sub-phase 23.7.5.11A (Debian family) is now fully closed for its three certified
 releases: Ubuntu 24.04 (11A.1) and Linux Mint 22.3 (11A.3) belong to technical
 family `ubuntu_apt`; Debian 13 (11A.2) belongs to `debian_apt`. Certification is
 per-release — other Debian/Ubuntu derivatives remain `family_inferred`, not
-`certified`. 23.7.5.11B Arch Linux/CachyOS is defined in the contract but is NOT
-authorized and must not be started without fresh explicit maintainer
-authorization.
+`certified`.
+
+### Task 23.7.5.11B Arch Linux field recertification closure (2026-08-15)
+
+Arch Linux (rolling) was field recertified under the 23.7.5.11B contract on
+`nls1` (Arch Linux rolling, kernel `7.1.8-arch1-3`, hostname `nls-1`, KVM).
+Final runtime HEAD: `cd112b4` (`fix(daemon): tolerate incomplete driver cleanup
+on shutdown with fail-closed barrier`). This was the first distribution of
+sub-phase 11B; CachyOS was subsequently recertified (2026-08-17), closing the
+sub-phase.
+
+Final matrix: **12/12 `green`** protocol results with real egress on `nls1`.
+WireGuard, Shadowsocks and plain OpenVPN — historically `formal_non_green` in
+`cert_arch_rolling` — are promoted to `green` based on fresh 11B real-egress
+field evidence. The other nine (VLESS, Trojan, Hysteria2, OpenVPN+Cloak,
+AmneziaWG, VMess, TUIC, SOCKS, HTTP) remain green.
+
+Validated on `nls1`:
+- Clean install + provenance (`status=verified`, generation `a1a16df8...`),
+  doctor `FAIL=0`.
+- 12/12 real-egress protocol matrix (per-protocol connect/disconnect with
+  clean teardown, kill switch applied per connection, no residue between
+  protocols).
+- Reboot lifecycle: `autoconnect=false` reboot -> standby clean with direct
+  egress; `autoconnect=true` reboot -> automatic recovery with real VPN egress.
+- Isolated fault harness (real `RuntimeWorker` with isolated state/profile/DNS
+  and fake driver/kill-switch): `dns_restore_failed` and
+  `kill_switch_disable_failed` stay fail-closed, never auto-reconnect, remain
+  diagnosed in `last_failure_reason`.
+- Shutdown FAILURE fix (`cd112b4`): the daemon no longer exits with
+  `status=1/FAILURE` when stopped/rebooted with an active connection while the
+  fail-closed barrier is applied.
+- Final cleanup: standby, profiles `[]`, no TUN, firewall base only.
+
+### Task 23.7.5.11B CachyOS field recertification closure (2026-08-17)
+
+CachyOS (rolling) was field recertified under the 23.7.5.11B contract on `nls1`
+(CachyOS rolling, hostname `nls-1`, KVM, root ext4, GRUB BIOS). Installation used
+checkout `a88bef3` with verified provenance; AmneziaWG used the CachyOS rolling
+pinned source-build method and was verified as `awg`, `awg-quick`, and
+`amneziawg-go`. This closes the second distribution of sub-phase 11B, making the
+whole 11B (Arch Linux + CachyOS) complete.
+
+Final matrix: **12/12 `green`** protocol results with real egress on `nls1`.
+WireGuard, Shadowsocks and plain OpenVPN — historically `formal_non_green` in
+`cert_cachyos_rolling` — are promoted to `green` based on fresh 11B CachyOS
+real-egress field evidence. The other nine (VLESS, Trojan, Hysteria2,
+OpenVPN+Cloak, AmneziaWG, VMess, TUIC, SOCKS, HTTP) remain green.
+
+Five blocks were executed and independently audited:
+1. **Installation & provenance**: clean install on `a88bef3`, provenance verified,
+   doctor `FAIL=0`.
+2. **12/12 real-egress protocol matrix** with HTTP 200x3 per profile; WireGuard,
+   Shadowsocks and plain OpenVPN promoted from `formal_non_green` to `green`.
+3. **Reboot lifecycle A/B**: `autoconnect=false` reboot -> standby clean/direct
+   egress; `autoconnect=true` reboot -> automatic recovery of WireGuard
+   `10.9.0.2/32` with tunnel, kill switch and real VPN egress.
+4. **Isolated fault harness** (real `RuntimeWorker` with isolated
+   state/profile/DNS): `dns_restore_failed` and `kill_switch_disable_failed` stay
+   fail-closed over four real worker ticks, no auto-reconnect, diagnosed in
+   `last_failure_reason`.
+5. **Final cleanup**: deploy key GitHub `160429004` revoked, build-user
+   `wdvpn-build-11b-cachyos` removed, temporary SSH keys and certification
+   artifacts removed; firewall base verified structurally intact (diff empty) pre
+   and post; no-regression confirmed.
+
+Final host state: standby, profiles `[]`, firewall base only (default-deny
+intact), no TUN, no protocol processes, clock synchronized, zero failed units,
+doctor `OK=146 WARN=1 FAIL=0` (sole WARN: truth state DOWN in standby, accepted
+and non-blocking).
+
+Evidence (private): `evidencia_phase23/watchdogvpn-task-23-7-5-11B-cachyos-nls1-*`
+(install, matrix, reboot-lifecycle, reboot-plan, isolated-fault, cierre).
+
+### 23.7.5.11.x official structure (§14.1, realigned 2026-08-16)
+
+Mandatory order (external design §14.1, revision 5):
+
+```
+11-PRE → 11A → 11B → 11C → 11D → 11E → 11F → 11G → 11H
+```
+
+| Sub-phase | Distributions | Notes |
+|---|---|---|
+| 11-PRE | (policy only) | CLOSED. Certification-review advisory signal. |
+| 11A | Ubuntu, Debian, Linux Mint | Debian family. CLOSED (12/12 each). |
+| 11B | Arch Linux, CachyOS | Arch family, rolling. **CLOSED (2026-08-17)** — Arch Linux (2026-08-15) and CachyOS (2026-08-17), 12/12 each. |
+| 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). |
+| 11D | openSUSE Leap, Tumbleweed | Tumbleweed must be fully validated. |
+| 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
+| 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
+| 11G | Pop!_OS | New community-requested distribution; full admission/cert from zero. |
+| 11H | Manjaro | New community-requested distribution; full admission/cert from zero. **Last reactive community addition to this list** - see policy note below. |
+
+**Policy note (2026-08-16):** 11H Manjaro is the last sub-phase added reactively
+to a community report. Future community distro requests (e.g. Zorin OS) are
+logged as backlog candidates, not automatic new sub-phases; they are handled
+primarily through the real end-user experimental-distro override described
+above, and only become a new formal sub-phase by a fresh, explicit maintainer
+decision comparable in weight to 11G/11H (real recurring usage, low
+incremental cost via an already-certified family, or a concrete business
+reason) - never as a default reaction to a single message.
+
+#### 11B — Arch family (Arch Linux, CachyOS)
+
+- Rolling model, no min-anchor concept. No expiry-driven deadline; the
+  11-PRE review signal is advisory only.
+- Reuse/delta-audit policy: AmneziaWG is a mandatory fresh real-traffic re-run
+  in every sub-phase; other protocols are reused only with an explicit audit
+  note when a clean 10.x L3 wave exists under the current HEAD. A full
+  12-protocol validation is authorized whenever a clean server reinstall is
+  actually happening (it did for 11B Arch Linux).
+- **Arch Linux is on `nls1`'s panel template list** (normal one-click
+  reinstall, no pre-phase needed) and is now field recertified.
+- **CachyOS is not** on the template list: it needs the "Pre-phase: server
+  image transplant" procedure (install in a local VM, transplant the installed
+  disk to `/dev/vda`), with the `mkinitcpio` HOOKS/virtio check taken
+  seriously before assuming it boots on the target hardware.
+
+History: sub-phase 11A (Debian family) is fully closed. 23.7.5.11B Arch Linux
+was closed on 2026-08-15 and 23.7.5.11B CachyOS on 2026-08-17, so sub-phase 11B
+(Arch family) is now **fully closed** (12/12 each). The next sub-phase is 11C
+(RPM family: Fedora, Rocky Linux, AlmaLinux 9), not yet authorized.
+
+#### 11H — Manjaro (new full admission and certification, 2026-08-16)
+
+Added by explicit maintainer decision after a community developer report that
+WatchdogVPN runs on Manjaro once the (then code-only) experimental gate is
+bypassed. Same pattern as 11G Pop!_OS: a real, unsolicited community report,
+not something WatchdogVPN's own roadmap ever targeted.
+
+- **Not an Arch Linux carry-over.** Manjaro resolves via `ID=manjaro`,
+  `ID_LIKE=arch` today (already used for AmneziaWG guidance messaging in
+  `tests/test_amneziawg_guidance.py`, but never for a manifest support
+  decision). 11B Arch Linux's own certification does not transfer to
+  Manjaro; per the contract's precedence rules, `family_inferred` requires
+  its own qualifying facts, not just family lineage.
+- **Full admission/certification from zero**, comparable in depth to 11G
+  Pop!_OS: manifest entry, detection, host/protocol readiness, the 12-protocol
+  field matrix with real egress, reboot lifecycle, isolated fault harness,
+  cleanup, and docs/manifest closure - the same pattern as every other 11.x
+  sub-phase.
+- **Image source and panel availability are still open questions**, to be
+  resolved when 11H is actually scheduled for execution: Manjaro was not in
+  `nls1`'s Aeza template list at the time of the 11B Arch Linux closure
+  (confirmed live: ArchLinux, Ubuntu 26.04, Debian 13, CentOS 9 Stream,
+  AlmaLinux 10, Alpine 3.23, Rocky Linux 9). If it remains absent, 11H needs
+  the same "Pre-phase: server image transplant" procedure as CachyOS/Mint,
+  including its own `mkinitcpio` HOOKS/virtio verification - Manjaro is Arch
+  family, so the same rolling-kernel risk applies.
+- **This is the last community-requested sub-phase added reactively.** See
+  the policy note above the §14.1 table: after 11H, new community distro
+  reports are handled through the real end-user experimental-distro override
+  (`prompt_experimental_distro_override()` / `--accept-experimental-distro-risk`,
+  documented above), not through an automatically-growing sub-phase list.
+
+11H closure condition: same as every other sub-phase - manifest, docs and
+external planning documents all updated together, with independent judge
+audit approval, before Manjaro is represented as anything other than
+`experimental`.
+
+**Not authorized to start.** 11H Manjaro requires its own fresh, explicit
+"go" from the maintainer, exactly like 11B CachyOS did after 11B Arch Linux
+closed.

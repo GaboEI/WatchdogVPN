@@ -46,6 +46,55 @@ distro_certification_lab_enabled() {
     && [[ "${WATCHDOGVPN_FIELD_VALIDATION:-0}" == "1" ]]
 }
 
+# Marker recording that a real end user - not the internal certification lab
+# - explicitly accepted the risk of running WatchdogVPN on an experimental
+# distro. This is intentionally separate from distro_certification_lab_enabled:
+# that one is the internal field-validation gate and is never promoted or
+# persisted; this one is the honest end-user informed-consent record, and it
+# never changes support_classification in the manifest - it only lets the
+# product run here because the user, not WatchdogVPN, decided to accept the
+# risk.
+WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER="${WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER:-${WATCHDOGVPN_ETC_CONFIG_DIR:-/etc/watchdogvpn}/.experimental-distro-override}"
+
+# True only when a previously recorded acceptance exists AND matches the
+# distro detected right now. A stale acceptance for a different distro never
+# silently carries over - switching to another unproven distro re-prompts.
+distro_experimental_override_accepted() {
+  [[ -r "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER" ]] || return 1
+  local recorded_distro=""
+  recorded_distro="$(head -n 1 "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER" 2>/dev/null || true)"
+  [[ -n "$recorded_distro" && "$recorded_distro" == "${DISTRO_ID:-}" ]]
+}
+
+# Persist that the user accepted the experimental-distro risk for the distro
+# detected right now. Never called for the certification-lab path - that one
+# stays unpromoted and unrecorded, exactly as before this function existed.
+distro_record_experimental_override() {
+  local marker_dir tmp_marker
+  marker_dir="$(dirname "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER")"
+
+  if [[ "${EUID:-$(id -u)}" -ne 0 && "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER" == /etc/* ]]; then
+    tmp_marker="$(mktemp)"
+    {
+      printf '%s\n' "${DISTRO_ID:-unknown}"
+      printf '%s\n' "${DISTRO_NAME:-Unknown Linux}"
+      date -u '+%Y-%m-%dT%H:%M:%SZ'
+    } >"$tmp_marker"
+    sudo install -d -m 0700 -o root -g root "$marker_dir"
+    sudo install -m 0600 -o root -g root "$tmp_marker" "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER"
+    rm -f "$tmp_marker"
+    return 0
+  fi
+
+  install -d -m 0700 "$marker_dir"
+  {
+    printf '%s\n' "${DISTRO_ID:-unknown}"
+    printf '%s\n' "${DISTRO_NAME:-Unknown Linux}"
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+  } >"$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER"
+  chmod 600 "$WATCHDOGVPN_EXPERIMENTAL_OVERRIDE_MARKER"
+}
+
 
 # Try the engine first. Returns 0 on success, 1 on any failure.
 _detect_distro_with_engine() {

@@ -160,7 +160,16 @@ BACKUP_ROOT="$runtime_tmp/backups"
 PYTHON_PACKAGE_DIR="$runtime_tmp/installed"
 install_python_package_tree "$PYTHON_PACKAGE_DIR"
 
+# The installed doctor may return non-zero when provenance is not published in
+# this environment (e.g. a temp installed tree without a real
+# /usr/local/lib/watchdogvpn/installed-version marker). That provenance FAIL is
+# legitimate and out of scope for this test. We must still capture the output to
+# verify the thing this test actually guards: that the installed doctor can load
+# its compatibility engine. Guard against set -e aborting on the doctor's rc.
+set +e
 installed_doctor_output="$("$PYTHON_PACKAGE_DIR/doctor.sh" 2>&1)"
+installed_doctor_rc=$?
+set -e
 if [[ "$installed_doctor_output" == *"could not load its compatibility engine"* ]]; then
   printf 'FAIL: installed doctor cannot load the compatibility engine\n' >&2
   exit 1

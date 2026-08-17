@@ -261,7 +261,11 @@ if [[ "${DISTRO_SUPPORTED:-0}" == "1" ]]; then
     mark_fail "missing distro adapter: $adapter"
   fi
 elif [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
-  mark_fail "distro support is planned for a future release"
+  if distro_experimental_override_accepted; then
+    mark_warn "distro support is planned for a future release (running under user-accepted experimental override)"
+  else
+    mark_fail "distro support is planned for a future release"
+  fi
 elif [[ "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
   mark_warn "distro support cannot be determined"
   info "WatchdogVPN could not load its compatibility engine."

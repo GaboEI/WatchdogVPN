@@ -31,6 +31,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ASSUME_YES=0
 RUN_DOCTOR=1
 CERTIFICATION_LAB=0
+ACCEPT_EXPERIMENTAL_DISTRO_RISK=0
 
 trap 'runtime_transaction_failure_trap "update.sh"' ERR
 
@@ -40,12 +41,18 @@ WatchdogVPN updater
 
 Usage:
   ./update.sh [--dry-run] [--yes] [--skip-doctor] [--certification-lab]
+              [--accept-experimental-distro-risk]
 
 Options:
   --dry-run       Show what would be updated without changing the system.
   --yes           Do not ask for update confirmation.
   --skip-doctor   Do not run the read-only preflight first.
   --certification-lab  Allow an explicitly marked field-validation run on an experimental distro.
+  --accept-experimental-distro-risk
+                  Run on a recognized-but-not-yet-certified distro without the
+                  interactive prompt (for scripted/non-interactive updates).
+                  Not needed if this distro's risk was already accepted at
+                  install time - that acceptance is reused automatically.
   --help          Show this help.
 
 The updater validates the repository, backs up replaced product files, and
@@ -66,6 +73,9 @@ while (($#)); do
       ;;
     --certification-lab)
       CERTIFICATION_LAB=1
+      ;;
+    --accept-experimental-distro-risk)
+      ACCEPT_EXPERIMENTAL_DISTRO_RISK=1
       ;;
     --help|-h)
       usage
@@ -128,6 +138,14 @@ require_supported_distro() {
   if [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
     if ((CERTIFICATION_LAB == 1)) && distro_certification_lab_enabled; then
       warn "certification-lab override: experimental distro is not promoted to support"
+    elif distro_experimental_override_accepted; then
+      warn "experimental distro override: previously accepted by you for ${DISTRO_NAME} (${DISTRO_ID})"
+    elif ((ACCEPT_EXPERIMENTAL_DISTRO_RISK == 1)); then
+      distro_record_experimental_override
+      warn "experimental distro override: risk accepted via --accept-experimental-distro-risk for ${DISTRO_NAME} (${DISTRO_ID})"
+    elif [[ -t 0 ]] && prompt_experimental_distro_override; then
+      distro_record_experimental_override
+      warn "experimental distro override: you accepted the risk for ${DISTRO_NAME} (${DISTRO_ID})"
     else
       print_future_distro
       exit 1

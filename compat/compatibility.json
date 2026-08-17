@@ -122,9 +122,9 @@
   "certifications": {
     "cert_arch_rolling": {
       "current": true,
-      "date": "2026-07-22T00:00:00Z",
+      "date": "2026-08-15T00:00:00Z",
       "distribution": "arch",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Arch certification closure and private evidence",
+      "evidence": "23.7.5.11B Arch Linux field recertification on nls1 (runtime cd112b4): 12/12 real-egress protocol matrix; reboot lifecycle autoconnect off/on; isolated fault harness fail-closed (dns_restore_failed/kill_switch_disable_failed); cleanup final standby with doctor FAIL=0; shutdown FAILURE fix cd112b4. Evidence under evidencia_phase23/watchdogvpn-task-23-7-5-11B-arch-nls1-*",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -139,16 +139,16 @@
           "evidence": "certification matrix real egress"
         },
         "openvpn": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "23.7.5.11B Arch Linux fresh real-egress field evidence (promoted from formal_non_green)"
         },
         "openvpn_cloak": {
           "disposition": "green",
           "evidence": "certification matrix real egress"
         },
         "shadowsocks": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "23.7.5.11B Arch Linux fresh real-egress field evidence (promoted from formal_non_green)"
         },
         "socks": {
           "disposition": "green",
@@ -171,8 +171,8 @@
           "evidence": "certification matrix real egress"
         },
         "wireguard": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "23.7.5.11B Arch Linux fresh real-egress field evidence (promoted from formal_non_green)"
         }
       },
       "scope": "physical_field_certification",
@@ -180,9 +180,9 @@
     },
     "cert_cachyos_rolling": {
       "current": true,
-      "date": "2026-07-22T00:00:00Z",
+      "date": "2026-08-16T00:00:00Z",
       "distribution": "cachyos",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md CachyOS certification closure and private evidence",
+      "evidence": "23.7.5.11B CachyOS field recertification on nls1: 12/12 real-egress protocol matrix with fresh evidence; WireGuard, Shadowsocks and plain OpenVPN promoted from formal_non_green on fresh real-egress field evidence. Evidence under evidencia_phase23/watchdogvpn-task-23-7-5-11B-cachyos-nls1-matrix-*",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -197,16 +197,16 @@
           "evidence": "certification matrix real egress"
         },
         "openvpn": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "23.7.5.11B CachyOS fresh real-egress field evidence (promoted from formal_non_green)"
         },
         "openvpn_cloak": {
           "disposition": "green",
           "evidence": "certification matrix real egress"
         },
         "shadowsocks": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "23.7.5.11B CachyOS fresh real-egress field evidence (promoted from formal_non_green)"
         },
         "socks": {
           "disposition": "green",
@@ -229,12 +229,12 @@
           "evidence": "certification matrix real egress"
         },
         "wireguard": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "23.7.5.11B CachyOS fresh real-egress field evidence (promoted from formal_non_green)"
         }
       },
       "scope": "physical_field_certification",
-      "snapshot": "cachyos-2026-07-22"
+      "snapshot": "cachyos-2026-08-16"
     },
     "cert_kali_rolling": {
       "current": true,
@@ -3587,7 +3587,7 @@
           "eol_or_withdrawn": false,
           "evidence_expiry_seconds": 31536000,
           "expressly_excluded": false,
-          "last_validated": "2026-07-22T00:00:00Z",
+          "last_validated": "2026-08-15T00:00:00Z",
           "meets_technical_floor": true
         }
       },
@@ -3607,7 +3607,7 @@
           "eol_or_withdrawn": false,
           "evidence_expiry_seconds": 31536000,
           "expressly_excluded": false,
-          "last_validated": "2026-07-22T00:00:00Z",
+          "last_validated": "2026-08-16T00:00:00Z",
           "meets_technical_floor": true
         }
       },
@@ -4373,14 +4373,14 @@
           "cert_arch_rolling"
         ],
         "expiry_seconds": 31536000,
-        "last_validated": "2026-07-22T00:00:00Z"
+        "last_validated": "2026-08-15T00:00:00Z"
       },
       "cachyos": {
         "evidence_refs": [
           "cert_cachyos_rolling"
         ],
         "expiry_seconds": 31536000,
-        "last_validated": "2026-07-22T00:00:00Z"
+        "last_validated": "2026-08-16T00:00:00Z"
       },
       "default": {
         "evidence_refs": [],
