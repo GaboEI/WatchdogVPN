@@ -3276,8 +3276,9 @@ per-release — other Debian/Ubuntu derivatives remain `family_inferred`, not
 Arch Linux (rolling) was field recertified under the 23.7.5.11B contract on
 `nls1` (Arch Linux rolling, kernel `7.1.8-arch1-3`, hostname `nls-1`, KVM).
 Final runtime HEAD: `cd112b4` (`fix(daemon): tolerate incomplete driver cleanup
-on shutdown with fail-closed barrier`). This is the first distribution of
-sub-phase 11B; CachyOS remains pending and NOT started.
+on shutdown with fail-closed barrier`). This was the first distribution of
+sub-phase 11B; CachyOS was subsequently recertified (2026-08-17), closing the
+sub-phase.
 
 Final matrix: **12/12 `green`** protocol results with real egress on `nls1`.
 WireGuard, Shadowsocks and plain OpenVPN — historically `formal_non_green` in
@@ -3302,6 +3303,46 @@ Validated on `nls1`:
   fail-closed barrier is applied.
 - Final cleanup: standby, profiles `[]`, no TUN, firewall base only.
 
+### Task 23.7.5.11B CachyOS field recertification closure (2026-08-17)
+
+CachyOS (rolling) was field recertified under the 23.7.5.11B contract on `nls1`
+(CachyOS rolling, hostname `nls-1`, KVM, root ext4, GRUB BIOS). Installation used
+checkout `a88bef3` with verified provenance; AmneziaWG used the CachyOS rolling
+pinned source-build method and was verified as `awg`, `awg-quick`, and
+`amneziawg-go`. This closes the second distribution of sub-phase 11B, making the
+whole 11B (Arch Linux + CachyOS) complete.
+
+Final matrix: **12/12 `green`** protocol results with real egress on `nls1`.
+WireGuard, Shadowsocks and plain OpenVPN — historically `formal_non_green` in
+`cert_cachyos_rolling` — are promoted to `green` based on fresh 11B CachyOS
+real-egress field evidence. The other nine (VLESS, Trojan, Hysteria2,
+OpenVPN+Cloak, AmneziaWG, VMess, TUIC, SOCKS, HTTP) remain green.
+
+Five blocks were executed and independently audited:
+1. **Installation & provenance**: clean install on `a88bef3`, provenance verified,
+   doctor `FAIL=0`.
+2. **12/12 real-egress protocol matrix** with HTTP 200x3 per profile; WireGuard,
+   Shadowsocks and plain OpenVPN promoted from `formal_non_green` to `green`.
+3. **Reboot lifecycle A/B**: `autoconnect=false` reboot -> standby clean/direct
+   egress; `autoconnect=true` reboot -> automatic recovery of WireGuard
+   `10.9.0.2/32` with tunnel, kill switch and real VPN egress.
+4. **Isolated fault harness** (real `RuntimeWorker` with isolated
+   state/profile/DNS): `dns_restore_failed` and `kill_switch_disable_failed` stay
+   fail-closed over four real worker ticks, no auto-reconnect, diagnosed in
+   `last_failure_reason`.
+5. **Final cleanup**: deploy key GitHub `160429004` revoked, build-user
+   `wdvpn-build-11b-cachyos` removed, temporary SSH keys and certification
+   artifacts removed; firewall base verified structurally intact (diff empty) pre
+   and post; no-regression confirmed.
+
+Final host state: standby, profiles `[]`, firewall base only (default-deny
+intact), no TUN, no protocol processes, clock synchronized, zero failed units,
+doctor `OK=146 WARN=1 FAIL=0` (sole WARN: truth state DOWN in standby, accepted
+and non-blocking).
+
+Evidence (private): `evidencia_phase23/watchdogvpn-task-23-7-5-11B-cachyos-nls1-*`
+(install, matrix, reboot-lifecycle, reboot-plan, isolated-fault, cierre).
+
 ### 23.7.5.11.x official structure (§14.1, realigned 2026-08-16)
 
 Mandatory order (external design §14.1, revision 5):
@@ -3314,7 +3355,7 @@ Mandatory order (external design §14.1, revision 5):
 |---|---|---|
 | 11-PRE | (policy only) | CLOSED. Certification-review advisory signal. |
 | 11A | Ubuntu, Debian, Linux Mint | Debian family. CLOSED (12/12 each). |
-| 11B | Arch Linux, CachyOS | Arch family, rolling. Arch Linux CLOSED (2026-08-15); CachyOS pending. |
+| 11B | Arch Linux, CachyOS | Arch family, rolling. **CLOSED (2026-08-17)** — Arch Linux (2026-08-15) and CachyOS (2026-08-17), 12/12 each. |
 | 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). |
 | 11D | openSUSE Leap, Tumbleweed | Tumbleweed must be fully validated. |
 | 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
@@ -3348,8 +3389,9 @@ reason) - never as a default reaction to a single message.
   seriously before assuming it boots on the target hardware.
 
 History: sub-phase 11A (Debian family) is fully closed. 23.7.5.11B Arch Linux
-is closed (this closure). 23.7.5.11B CachyOS remains pending and requires
-fresh explicit maintainer authorization before any start.
+was closed on 2026-08-15 and 23.7.5.11B CachyOS on 2026-08-17, so sub-phase 11B
+(Arch family) is now **fully closed** (12/12 each). The next sub-phase is 11C
+(RPM family: Fedora, Rocky Linux, AlmaLinux 9), not yet authorized.
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
