@@ -5,10 +5,12 @@ on:
     branches:
       - phase-23-7-5-compatibility-contract
       - phase-23-7-5-11B-arch-cachyos
+      - phase-23-7-5-11C-rpm
   pull_request:
     branches:
       - phase-23-7-5-compatibility-contract
       - phase-23-7-5-11B-arch-cachyos
+      - phase-23-7-5-11C-rpm
   workflow_dispatch:
 
 concurrency:
