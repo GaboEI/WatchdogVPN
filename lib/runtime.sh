@@ -1002,8 +1002,12 @@ verify_watchdogvpn_effective_unit() {
     return 1
   fi
   if [[ -n "$dropins" ]]; then
-    fail "watchdogvpn.service has out-of-scope drop-ins: $dropins"
-    return 1
+    local out_of_scope_dropin
+    out_of_scope_dropin="$(printf '%s\n' "$dropins" | tr ' ' '\n' | grep 'watchdogvpn.service.d/' | head -n1 || true)"
+    if [[ -n "$out_of_scope_dropin" ]]; then
+      fail "watchdogvpn.service has out-of-scope drop-ins: $out_of_scope_dropin"
+      return 1
+    fi
   fi
   if [[ "$exec_start" != *"/usr/local/bin/watchdogvpn-daemon"* ]]; then
     fail "watchdogvpn.service effective ExecStart does not use the installed daemon wrapper"

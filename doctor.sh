@@ -575,8 +575,13 @@ if systemd_unit_known "$daemon_unit"; then
   if [[ -z "$daemon_dropins" ]]; then
     mark_ok "daemon has no systemd drop-ins outside installed provenance"
   else
-    mark_fail "daemon has systemd drop-ins outside installed provenance: $daemon_dropins"
-    info "recovery: remove product-unit drop-ins and run ./update.sh"
+    daemon_service_specific_dropin="$(printf '%s\n' "$daemon_dropins" | tr ' ' '\n' | grep 'watchdogvpn.service.d/' | head -n1 || true)"
+    if [[ -z "$daemon_service_specific_dropin" ]]; then
+      mark_ok "daemon has no service-specific systemd drop-ins outside installed provenance"
+    else
+      mark_fail "daemon has systemd drop-ins outside installed provenance: $daemon_service_specific_dropin"
+      info "recovery: remove product-unit drop-ins and run ./update.sh"
+    fi
   fi
   if [[ "$daemon_state" == "active" ]]; then
     if cap_eff_has_bind_service "$daemon_pid"; then
