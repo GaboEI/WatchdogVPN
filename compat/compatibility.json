@@ -408,7 +408,7 @@
         }
       },
       "release": "fedora_44",
-      "scope": "physical_field_recertification"
+      "scope": "physical_field_certification"
     },
     "cert_linuxmint_22_3": {
       "current": true,
