@@ -18,11 +18,16 @@ and validated in the v2 line:
 | V2Ray/Base64 subscriptions | Newline-separated protocol URI feeds after Base64 decode |
 | sing-box JSON | Profile/config data that preserves sing-box fields needed by the protocol |
 | Clash/Stash YAML | Proxy lists and rule-provider style data where safely mappable |
-| WireGuard/OpenVPN configs | Compatibility imports where the format is explicit and validated |
+| WireGuard/OpenVPN configs | Compatibility imports validated against a fail-closed directive whitelist; see `docs/security.md#openvpn-and-openvpncloak-profile-safety` |
 
 Unsupported or malformed data should fail with clear errors. HTML login pages,
 captive portal bodies, empty subscriptions and loopback endpoints are not valid
 provider output.
+
+OpenVPN and OpenVPN+Cloak profiles are parsed with a fail-closed safety model.
+Dangerous executable directives, external file references and non-global
+endpoints are rejected before the profile is stored. See the security document
+for the exact restrictions and process-isolation guarantees.
 
 ## Resilient vs Compatibility Profiles
 

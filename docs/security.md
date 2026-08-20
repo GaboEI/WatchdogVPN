@@ -219,6 +219,45 @@ Contract:
   as WatchdogVPN should not enable domain bypass at all, or should expect to
   run `vpn_domain_bypass_rescue` before switching between them.
 
+## OpenVPN and OpenVPN+Cloak Profile Safety
+
+WatchdogVPN imports OpenVPN and OpenVPN+Cloak profiles from user-provided files,
+subscriptions and third-party tools. Because these files can contain arbitrary
+directives, the parser applies a fail-closed whitelist before any profile is
+stored or used.
+
+What the parser enforces:
+
+- **Directive whitelist**: only known, safe OpenVPN directives are accepted.
+  Dangerous executable-control directives such as `script-security`, `up`,
+  `down`, `route-up`, `route-pre-down`, `ipchange`, `tls-verify`,
+  `client-connect`, `client-disconnect`, `learn-address`, `plugin`,
+  `management`, `config`, `providers`, `pkcs11-providers`, `engine` and
+  `iproute` are rejected.
+- **No external file references**: `ca`, `cert`, `key`, `tls-auth`,
+  `tls-crypt`, `tls-crypt-v2`, `pkcs12`, `secret`, `extra-certs` and
+  `crl-verify` must be provided inline (`[inline]`); paths to external files
+  are rejected.
+- **No bypass quoting**: quoted forms (`"up" "/bin/sh"`) and double-dash
+  forms (`--plugin`) are rejected.
+- **Strict inline blocks**: inline tags must open and close correctly, must
+  not be nested and must contain data.
+- **Network endpoint restrictions**: profiles must declare exactly one
+  `remote`, the endpoint must be a global IPv4 address (no hostname, no
+  loopback, no IPv6, no multiple remotes).
+- **Process isolation**: the OpenVPN process is launched through `setpriv`
+  with only `net_admin` and `net_raw` capabilities, even when the daemon
+  holds broader privileges.
+
+These checks run at profile import time and are repeated by the drivers
+before writing any runtime config file. Malformed or unsafe profiles are
+rejected with a managed error and are not stored.
+
+Limitations: inline certificate/key material is passed to the underlying
+OpenSSL/OpenVPN stack as supplied by the profile. WatchdogVPN validates the
+shape of the config, not the cryptographic trustworthiness of the PEM
+payload. Users should still obtain profiles from trusted sources.
+
 ## External Installer Risk
 
 WatchdogVPN can guide installation of required open runtime dependencies when
