@@ -3426,10 +3426,49 @@ closed and **APROBADO** by juez-tester:
   (`ssh`+`dhcpv6-client`), SELinux Enforcing. Evidence:
   `...-cierre-20260820T082700Z.tar.gz`.
 
-Deploy key `nls1-11c-deploy-readonly-*` (ID 160694593) NOT revoked — still
-needed for Rocky Linux and AlmaLinux 9 within 11C.
+Deploy key `nls1-11c-deploy-readonly-*` (ID 160832574) NOT revoked — still
+needed for AlmaLinux 9 within 11C.
 
-Remaining 11C scope: Rocky Linux and AlmaLinux 9 (not yet authorized).
+**Rocky Linux 9.8 field recertification CLOSED (2026-08-20)** on `nls1`
+(Rocky Linux 9.8 Blue Onyx, kernel `5.14.0-687.39.1.el9_8`, runtime `b23577b`,
+provenance verified). Bloque Pre + Bloque 1 + Bloque 2 closed and APROBADO by
+juez-tester:
+
+- **Bloque Pre (sanitization):** SELinux **Enforcing** (was Disabled, full
+  relabel, no AVC denials), sudoers reduced to `root ALL=(ALL) ALL` (`%wheel`
+  removed), firewalld public `ssh`+`dhcpv6-client` (cockpit removed), LLMNR off
+  (5355 not listening), journal clean, egress v4 `79.137.197.255` + v6
+  `2a12:5940:2bba::2`.
+- **Bloque 1 (install):** cloned `phase-23-7-5-11C-rpm` HEAD `b23577b`,
+  `compat_distro_classify.py classify` → `rocky rocky_9 certified`, install OK,
+  provenance `status=verified` (`source_commit=b23577b`,
+  `generation_sha256=29c8c1296c...`), doctor `OK=145 WARN=3 FAIL=0`. No
+  product-specific Rocky SELinux bugs under Enforcing.
+- **Bloque 2 (matrix 12/12 green with real egress):** all 12 protocols
+  connected with real egress HTTP 200x3 on `nls1`. **WireGuard, Shadowsocks
+  and plain OpenVPN promoted from `formal_non_green` to `green`** with real
+  egress HTTP 200x3 **plus a 100MiB download** (`size=104857600`, dl_rc=0)
+  through the tunnel. AmneziaWG used the product's guided flow (COPR
+  `amneziawg-tools` + `amneziawg-go` source-build). OpenVPN plain re-validated
+  with the `ovpn_auto.sh` auto-disconnect-by-timeout pattern (validated in
+  Fedora) — the SSH session dropped on `def1` route redirect and the server
+  recovered automatically, confirming the mechanism is required on Rocky too.
+  Evidence:
+  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-matrix-20260820T193340Z.tar.gz`
+  (SHA256 `2bbce34d5a278d6716054311df1894a9c0b96bb0dd9ff0f7bdf4352c761b65e5`).
+- **Work extra (maintainer-ordered, outside Bloque 2 plan):** provider
+  `netz-tg-provider` (35 nodes) added and rotation proven between nodes
+  (UK→AT→EE→BG, real egress each); controlled DNS-leak test showed **no leak**
+  (all DNS incl. forced queries to 1.1.1.1/8.8.8.8/OpenDNS/Quad9 resolve to
+  fakeip `198.18.0.x`, responses from `172.19.0.2`); **fakeip working**
+  (domains resolve to `198.18.0.0/15`, traffic via sing-box listener). Split
+  tunnel domain rule `facebook.com→direct` does NOT divert facebook data
+  traffic in sing-box/fakeip mode (documented honest finding).
+
+`cert_rocky_9` updated: date 2026-08-20, 12/12 green, scope
+`physical_field_certification`, evidence referencing the matrix tarball SHA.
+
+Remaining 11C scope: AlmaLinux 9 (not yet authorized).
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
