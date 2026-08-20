@@ -4329,7 +4329,7 @@
       "fedora_44": {
         "evidence": "23.7.5.11C Fedora field recertification; Block 2 matrix SHA 667398662ca795691cb6620bd66115d5af64b5b6f0c088f1f6004f13548240d9",
         "l1_l2_green": true,
-        "status": "passed"
+        "status": "green"
       },
       "linuxmint_22_3": {
         "evidence": null,
