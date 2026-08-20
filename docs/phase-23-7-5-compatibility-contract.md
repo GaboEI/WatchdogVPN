@@ -3356,7 +3356,7 @@ Mandatory order (external design §14.1, revision 5):
 | 11-PRE | (policy only) | CLOSED. Certification-review advisory signal. |
 | 11A | Ubuntu, Debian, Linux Mint | Debian family. CLOSED (12/12 each). |
 | 11B | Arch Linux, CachyOS | Arch family, rolling. **CLOSED (2026-08-17)** — Arch Linux (2026-08-15) and CachyOS (2026-08-17), 12/12 each. |
-| 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). |
+| 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). **Fedora CLOSED (2026-08-20)** — 12/12 green with real egress on nls1. Rocky Linux and AlmaLinux 9 not yet authorized. |
 | 11D | openSUSE Leap, Tumbleweed | Tumbleweed must be fully validated. |
 | 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
@@ -3392,6 +3392,44 @@ History: sub-phase 11A (Debian family) is fully closed. 23.7.5.11B Arch Linux
 was closed on 2026-08-15 and 23.7.5.11B CachyOS on 2026-08-17, so sub-phase 11B
 (Arch family) is now **fully closed** (12/12 each). The next sub-phase is 11C
 (RPM family: Fedora, Rocky Linux, AlmaLinux 9), not yet authorized.
+
+#### 11C — RPM family (Fedora, Rocky Linux, AlmaLinux 9)
+
+**Fedora 44 field recertification CLOSED (2026-08-20)** on `nls1` (Fedora 44
+Cloud, kernel 7.1.8-200, runtime `bd316eb`, provenance verified). Five blocks
+closed and **APROBADO** by juez-tester:
+
+- **Block 1 (install):** WatchdogVPN installed with provenance verified (gen
+  `f39d2241...`). Real product bug found and fixed (TDD, commit `bd316eb`):
+  installer/doctor rejected the legitimate Fedora global systemd drop-in
+  `/usr/lib/systemd/system/service.d/10-timeout-abort.conf`; fixed to tolerate
+  global package drop-ins while still rejecting service-specific drop-ins.
+  Doctor `OK=146 WARN=3 FAIL=0` after publish.
+- **Block 2 (matrix 12/12):** All **12 protocols GREEN** with real egress HTTP
+  200x3 on `nls1`. WireGuard, Shadowsocks and OpenVPN plain promoted from
+  `formal_non_green` to `green` with fresh field evidence. OpenVPN plain
+  operational finding: first attempt `rc=70` due to NAT/forward on `aeza-vps`
+  server (resolved by maintainer, infra not product); second attempt with
+  `ovpn_auto.sh` auto-disconnect succeeded with real egress HTTP 200x3x6.
+  Evidence: `...-matrix-20260819T183659Z.tar.gz` (SHA
+  `667398662ca795691cb6620bd66115d5af64b5b6f0c088f1f6004f13548240d9`).
+- **Block 3 (reboot lifecycle):** Executed by another implementer. Evidence:
+  `...-reboot-lifecycle-20260819T211139Z.tar.gz`.
+- **Block 4 (isolated fault harness):** `dns_restore_failed` and
+  `kill_switch_disable_failed` validated fail-closed, 4 ticks each, no
+  auto-reconnect, isolation manifest pre/post sha256 identical. Profile sintético,
+  total isolation (CachyOS pattern). Evidence:
+  `...-isolated-fault-20260820T003918Z.tar.gz`.
+- **Block 5 (cleanup):** 11 profiles removed with backup verification (H1),
+  per-step verification (H2), doctor full text (H3), secrets outside bundle
+  (H4). Final state: `perfiles=[]`, standby, no TUN, firewall intact
+  (`ssh`+`dhcpv6-client`), SELinux Enforcing. Evidence:
+  `...-cierre-20260820T082700Z.tar.gz`.
+
+Deploy key `nls1-11c-deploy-readonly-*` (ID 160694593) NOT revoked — still
+needed for Rocky Linux and AlmaLinux 9 within 11C.
+
+Remaining 11C scope: Rocky Linux and AlmaLinux 9 (not yet authorized).
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 

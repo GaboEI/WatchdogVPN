@@ -354,61 +354,61 @@
     },
     "cert_fedora_44": {
       "current": true,
-      "date": "2026-07-22T00:00:00Z",
+      "date": "2026-08-19T00:00:00Z",
       "distribution": "fedora",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.5 Fedora closure and private evidence",
+      "evidence": "23.7.5.11C Fedora field recertification on nls1 (Fedora 44 Cloud, kernel 7.1.8-200); Block 2 matrix evidence at /root/wdvpn-23-7-5-11C-fedora/watchdogvpn-task-23-7-5-11C-fedora-nls1-matrix-20260819T183659Z.tar.gz (SHA 667398662ca795691cb6620bd66115d5af64b5b6f0c088f1f6004f13548240d9); runtime bd316eb, provenance verified (gen f39d2241...)",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "http": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "openvpn": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3x6 on nls1 via ovpn_auto.sh (infra NAT fix on aeza-vps by maintainer; first attempt rc=70 due to def1 route redirect, second attempt with auto-disconnect succeeded; operational finding, not product bug)"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "shadowsocks": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 on nls1"
         },
         "wireguard": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
         }
       },
       "release": "fedora_44",
-      "scope": "physical_field_certification"
+      "scope": "physical_field_recertification"
     },
     "cert_linuxmint_22_3": {
       "current": true,
@@ -4327,9 +4327,9 @@
         "status": "not_run"
       },
       "fedora_44": {
-        "evidence": null,
-        "l1_l2_green": false,
-        "status": "not_run"
+        "evidence": "23.7.5.11C Fedora field recertification; Block 2 matrix SHA 667398662ca795691cb6620bd66115d5af64b5b6f0c088f1f6004f13548240d9",
+        "l1_l2_green": true,
+        "status": "passed"
       },
       "linuxmint_22_3": {
         "evidence": null,
