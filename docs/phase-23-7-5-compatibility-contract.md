@@ -3468,7 +3468,57 @@ juez-tester:
 `cert_rocky_9` updated: date 2026-08-20, 12/12 green, scope
 `physical_field_certification`, evidence referencing the matrix tarball SHA.
 
-Remaining 11C scope: AlmaLinux 9 (not yet authorized).
+**Rocky Linux 9.8 Bloque 3 — reboot lifecycle CLOSED (2026-08-21)** on `nls1`,
+both scenarios executed against runtime `0f086e8`.
+
+- **Product bug found and fixed (TDD, previous session):** the daemon entered a
+  crash-loop at startup with `autoconnect=true` when endpoint resolution failed
+  (`EndpointPolicyConnectionError` escaped `runtime.startup()` →
+  `status=1/FAILURE` restart loop). Fix `0f086e8`
+  (`fix(daemon): degrade to standby on endpoint resolution failure during
+  startup`) captures the error and degrades to standby with
+  `last_failure_reason=endpoint_resolution_failed`. Scope: `core/watchdog.py`
+  (+4) and `tests/test_core_watchdog.py` (+48). Full suite 2469 OK (2 skipped);
+  CI L2 run `32415905576` green. Independent judge verdict: APROBADO (HIGH risk
+  verified point by point; cryptographic proof that `nls1` was NOT redeployed
+  before the fix).
+- **Escenario B (autoconnect=true):** redeployed `nls1` to `0f086e8`
+  (provenance `status=verified`, 247 files, generation `ab7c0932...`);
+  `watchdog_panic wake` after maintainer's `watchdog_panic sleep` (the
+  `.hibernating` marker correctly kept `update.sh` from auto-starting the
+  service); doctor FAIL=0; Trojan connected (TUN + kill switch + HTTP 200x3);
+  real reboot → **NRestarts=0, no crash-loop, standby retrying cleanly**
+  (startup logged `watchdog_startup_endpoint_resolution_failed` and stayed
+  alive); manual reconnect verified (TUN + kill switch + HTTP 200x3); clean
+  manual disconnect; final doctor `OK=146 WARN=2 FAIL=0`.
+  - **Operational finding H1 (HIGH, pre-existing, non-blocking for this
+    scenario):** automatic post-reboot recovery cannot complete for
+    hostname-endpoint profiles: the startup kill switch only allows DNS to the
+    internal resolver `172.19.0.2` (requires sing-box running), so endpoint
+    resolution stays blocked and retries never succeed until manual
+    disconnect→connect. The scenario's explicit criterion ("standby retrying
+    cleanly; crash-loop is not acceptable") is met; the fix does exactly what
+    it promises. Maintainer decision pending: accept as documented limitation
+    or open new work (e.g. kill-switch DNS exemption for profile endpoints).
+- **Escenario A (autoconnect=false):** clean initial state (standby, doctor
+  FAIL=0, no residue); `vpn_autoconnect_enabled=false` verified by direct read
+  of `/var/lib/watchdogvpn/state.toml` (a manual disconnect already sets it
+  false via the respect-manual-supervision semantics of `aa1d3bf`, which is why
+  `watchdog setup --autoconnect disable` reported `no_changes`); Trojan
+  connected (TUN + kill switch + HTTP 200x3); real reboot → daemon started,
+  logged `standby mode - autoconnect disabled`, did NOT attempt to connect;
+  standby with empty active profile, kill switch inactive, nftables table
+  absent, DNS resolving normally, **direct egress with exact server IP
+  `79.137.197.255`**, doctor `OK=146 WARN=2 FAIL=0`, NRestarts=0, journal
+  clean, no residue.
+- Evidence (private):
+  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-reboot-lifecycle-20260821T080614Z.tar.gz`
+  (Escenario B, 220 files, SHA256 `c531f0f6...`) and
+  `...reboot-lifecycle-scenarioA-20260821T085822Z.tar.gz` (Escenario A, 80
+  files, SHA256 `fea640f0...`). Implementer self-audits: both APROBADO.
+
+Remaining 11C scope: AlmaLinux 9 (not yet authorized). Rocky Bloque 4
+(isolated fault harness) next within Rocky, not yet authorized.
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
