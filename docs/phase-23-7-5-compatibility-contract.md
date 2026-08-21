@@ -3517,8 +3517,43 @@ both scenarios executed against runtime `0f086e8`.
   `...reboot-lifecycle-scenarioA-20260821T085822Z.tar.gz` (Escenario A, 80
   files, SHA256 `fea640f0...`). Implementer self-audits: both APROBADO.
 
-Remaining 11C scope: AlmaLinux 9 (not yet authorized). Rocky Bloque 4
-(isolated fault harness) next within Rocky, not yet authorized.
+**Rocky Linux 9.8 Bloque 4 — isolated fault harness CLOSED (2026-08-21)** on
+`nls1`, executed against the `0f086e8` checkout (same commit as the deployed
+runtime). Real `WatchdogRuntime` and `RuntimeWorker` over per-scenario
+`TemporaryDirectory` sandboxes; no real DNS/firewall/VPN mutation.
+
+- **Scenario A (`dns_restore_failed`):** synthetic WireGuard profile
+  `sintetico-wg-fault`; sandbox state seeded `desired=on`,
+  `autoconnect=false`; DNS snapshot with manager `systemd-resolved` restored
+  through the real `SystemDNSStateManager` path with the runner forced to fail
+  on `resolvectl flush-caches`. `startup()` returned
+  `dns_restore_failed` (core/watchdog.py:501-503), kept the fail-closed
+  diagnostic state (`vpn_desired_state` stayed `on`, `active_profile_id`
+  preserved, snapshot not unlinked), and 4 real worker ticks each reported
+  `dns_restore_failed` in standby with zero `connect`/`health_check` calls.
+- **Scenario B (`kill_switch_disable_failed`):** DNS restore succeeded first
+  (snapshot consumed), then the injected kill switch reported
+  `disable()=True` while staying active (partial-disable mode, the stricter
+  half of the `core/watchdog.py:505` condition). `startup()` returned
+  `kill_switch_disable_failed`; 4 real worker ticks each reported the same
+  status with zero connect/health calls and the kill switch still active.
+- **Isolation:** every `WatchdogRuntime` field with real I/O redirected to the
+  sandbox (21-field table in the evidence `design_notes.md`); env-var safety
+  net (`WATCHDOGVPN_CONFIG_DIR` + all `*_FILE`/`*_DIR` overrides) so any
+  forgotten default lands in the sandbox; wide isolation manifest
+  (`/var/lib/watchdogvpn` full tree, `/etc/watchdogvpn`, `resolv.conf`, nft
+  tables, firewalld, links, protocol processes, failed units, checkout
+  cleanliness, `/tmp` residue, AVC window, daemon error journal) byte-identical
+  pre/post; explicit AVC check validated as reliable before trusting its
+  result (`avc_new_events_in_window=0`, SELinux Enforcing); doctor
+  `OK=146 WARN=2 FAIL=0` pre and post; checkout clean at `0f086e8`; no
+  residue. Evidence permissions 0700/0600.
+- Evidence (private):
+  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-isolated-fault-20260821T122253Z.tar.gz`
+  (24 files, SHA256 `2b2b9deb895afa24025d7ea4d386a07904b50bde0ee699a4c99345daefec6d13`).
+  Implementer self-audit: APROBADO.
+
+Remaining 11C scope: AlmaLinux 9 (not yet authorized).
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
