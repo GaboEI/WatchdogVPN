@@ -3356,7 +3356,7 @@ Mandatory order (external design §14.1, revision 5):
 | 11-PRE | (policy only) | CLOSED. Certification-review advisory signal. |
 | 11A | Ubuntu, Debian, Linux Mint | Debian family. CLOSED (12/12 each). |
 | 11B | Arch Linux, CachyOS | Arch family, rolling. **CLOSED (2026-08-17)** — Arch Linux (2026-08-15) and CachyOS (2026-08-17), 12/12 each. |
-| 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). **Fedora CLOSED (2026-08-20)** — 12/12 green with real egress on nls1. Rocky Linux and AlmaLinux 9 not yet authorized. |
+| 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). **Fedora CLOSED (2026-08-20)** — 12/12 green with real egress on nls1. **Rocky Linux CLOSED (2026-08-21)** — 12/12 green, reboot lifecycle, isolated fault harness and final cleanup, all APROBADO. AlmaLinux 9 not yet authorized. |
 | 11D | openSUSE Leap, Tumbleweed | Tumbleweed must be fully validated. |
 | 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
@@ -3553,7 +3553,43 @@ runtime). Real `WatchdogRuntime` and `RuntimeWorker` over per-scenario
   (24 files, SHA256 `2b2b9deb895afa24025d7ea4d386a07904b50bde0ee699a4c99345daefec6d13`).
   Implementer self-audit: APROBADO.
 
-Remaining 11C scope: AlmaLinux 9 (not yet authorized).
+**Rocky Linux 9.8 Bloque 5 — final cleanup CLOSED (2026-08-21)** on `nls1`,
+executed as a real destructive operation with per-step traceability:
+
+- **Backup before any deletion:** `watchdog backup create --section profiles`
+  (rc=0) to `/root/wdvpn-23-7-5-11C-rocky-cierre-backup/` — kept OUTSIDE the
+  evidence bundle (secrets never travel with the package). Independent
+  verification two ways: `watchdog backup inspect --json` (rc=0, valid) and
+  direct zip read of the inner `profiles.json` → **exactly 47 entries**
+  (`{"items": [...], "schema_version": ...}`), id set identical to the live
+  profile set.
+- **Per-profile deletion, 47→0:** each of the 47 profiles (35 subscription +
+  12 manual) removed individually via `watchdog profile remove --json`; every
+  step recorded rc=0 plus a real recount from the CLI after the deletion
+  (descending 47→0, no bulk command). Final count: **0**; on-disk
+  `/var/lib/watchdogvpn/profiles.json` is literally `[]`.
+- **Integrity:** `/var/lib/watchdogvpn/state.toml` sha256 identical before and
+  after the whole backup+deletion sequence (`190fd3b1...`, unchanged); clean
+  state content (`active_profile_id=""`, `last_failure_reason=""`).
+- **Final state:** standby, desired off, kill switch inactive, no TUN,
+  firewall base intact (`public`: ssh + dhcpv6-client), zero failed units, no
+  protocol processes, doctor full text `OK=146 WARN=2 FAIL=0`. Honest note:
+  `providers.json` still holds the registered provider entry (scope was
+  profiles only).
+- Evidence (private):
+  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-cierre-20260821T201051Z.tar.gz`
+  (12 files, SHA256 `4bc47055834b7c70d6aeb27e1a72a1aff6ea15a79ca8aee2de0f8cbefc3d0241`;
+  contains ids/counts/rcs/hashes only — no credentials). Backup archive stays
+  server-side only. Implementer self-audit (checkpoint): APROBADO.
+
+**Rocky Linux 9.8 FULLY CLOSED within 11C (2026-08-21):** Bloques Pre+1+2
+(`06e7b1e`), Bloque 3 reboot lifecycle (`8ad1bd8`, daemon fix `0f086e8`),
+Bloque 4 isolated fault harness (`692b467`) and Bloque 5 final cleanup all
+CLOSED and APROBADO by independent audit. `cert_rocky_9` verified current at
+12/12 green, date 2026-08-20, scope `physical_field_certification`.
+
+Remaining 11C scope: AlmaLinux 9 (not yet authorized; two-step admission
+chain per §14.1). Deploy key `160832574` stays active for AlmaLinux.
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
