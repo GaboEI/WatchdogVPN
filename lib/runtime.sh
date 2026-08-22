@@ -546,6 +546,27 @@ install_python_module_wrapper() {
   rm -f "$tmp"
 }
 
+selinux_relabel_runtime_path() {
+  # Restore the policy-expected SELinux context of a published runtime path.
+  # cp -a preserves the source context, so a checkout staged under /root
+  # publishes admin_home_t into /usr/local/lib/watchdogvpn on enforcing hosts.
+  local path="${1:-}"
+  if [[ -z "$path" ]]; then
+    return 0
+  fi
+  if ! command -v restorecon >/dev/null 2>&1; then
+    printf '[INFO] SELinux context relabel skipped: restorecon not available\n'
+    return 0
+  fi
+  local enforce
+  enforce="$(getenforce 2>/dev/null || printf 'Disabled')"
+  if [[ "$enforce" == "Disabled" ]]; then
+    printf '[INFO] SELinux context relabel skipped: SELinux disabled\n'
+    return 0
+  fi
+  run_step sudo restorecon -R -- "$path"
+}
+
 install_python_package_tree() {
   local dest="${1:-$PYTHON_PACKAGE_DIR}" package item stage source_root="${WATCHDOGVPN_RUNTIME_CANDIDATE_ROOT:-$ROOT_DIR}"
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
@@ -580,6 +601,7 @@ install_python_package_tree() {
     _validate_staged_python_runtime "$stage"
     _purge_python_bytecode "$stage"
     runtime_transaction_replace_directory_from_stage "$stage" "$dest"
+    selinux_relabel_runtime_path "$dest"
     return 0
   fi
   backup_path "$dest"
@@ -602,6 +624,7 @@ install_python_package_tree() {
     run_step sudo chmod 0755 "$dest/$item"
   done
   run_step sudo find "$dest/bin" "$dest/sbin" -type f -exec chmod 0755 {} +
+  selinux_relabel_runtime_path "$dest"
 }
 
 _purge_python_bytecode() {
