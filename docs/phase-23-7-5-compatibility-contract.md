@@ -702,8 +702,12 @@ left unchanged until exact `VERSION_ID` evidence is available from an accessible
 
 ### AlmaLinux 9 `VERSION_ID` Evidence For Manifest Identity
 
-`almalinux_9` is not physically certified by this manifest; it remains `family_inferred` /
-`pending_evaluation`, and its `evidence_refs` stay empty because release `evidence_refs`
+As of Task 23.7.5.11C Bloque A, `almalinux_9` is formally **admitted** as a stable
+release (`releases.almalinux_9.policy_state = "admitted"`, listed in
+`distributions.almalinux.policy.stable.admitted_releases`). Admission is the policy
+promotion of already-recorded facts only; it is not a certification: `almalinux_9`
+remains `family_inferred` (Rocky 9 stays the certified redhat_dnf anchor), has no
+`cert_*` entry, and its `evidence_refs` stay empty because release `evidence_refs`
 are reserved by the validator for current qualifying certification records. The
 `os_release_version_ids` list still requires its own evidence because exact stable-release
 identity is a manifest input, not something inferred from Rocky Linux or the RHEL family.

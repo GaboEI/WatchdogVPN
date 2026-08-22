@@ -370,6 +370,43 @@ class ManifestValidCasesTests(unittest.TestCase):
         self.assertEqual(manifest["distributions"]["arch"]["release_model"], "rolling")
         self.assertTrue(manifest["certifications"]["cert_rocky_9"]["current"])
 
+    def test_almalinux_9_is_admitted_in_product_manifest(self) -> None:
+        """Task 23.7.5.11C Bloque A: almalinux_9 is formally admitted as a
+        stable release. Admission is the policy promotion of already-recorded
+        facts (vendor-maintained, technical floor met, not EOL, exact
+        VERSION_ID evidence already frozen in the contract doc); it must be
+        internally consistent between the release record and the policy lists
+        and it must not invent certification evidence."""
+        manifest = load_product()
+        self.assertTrue(compat_read.validate_manifest(manifest))
+        stable_policy = manifest["distributions"]["almalinux"]["policy"]["stable"]
+        self.assertIn("almalinux_9", stable_policy["admitted_releases"])
+        self.assertNotIn("almalinux_9", stable_policy["pending_releases"])
+        self.assertNotIn("almalinux_9", stable_policy["excluded_releases"])
+        release = manifest["releases"]["almalinux_9"]
+        self.assertEqual(release["policy_state"], "admitted")
+        # Admission promotes recorded facts only: no eligibility fact may have
+        # been flipped as a side effect, and evidence_refs stay empty because
+        # they are reserved for current qualifying certifications.
+        self.assertTrue(release["vendor_maintained"])
+        self.assertTrue(release["meets_technical_floor"])
+        self.assertFalse(release["eol_or_withdrawn"])
+        self.assertEqual(release["evidence_refs"], [])
+
+    def test_almalinux_9_admission_does_not_certify_or_promote_support(self) -> None:
+        """Task 23.7.5.11C Bloque A: admission alone must not certify
+        almalinux_9 and must not promote it past family_inferred while Rocky 9
+        remains the certified redhat_dnf anchor."""
+        manifest = load_product()
+        self.assertNotIn("cert_almalinux_9", manifest["certifications"])
+        data = compat_read._stable_facts(manifest, "almalinux_9")
+        self.assertTrue(data["facts"]["admitted"])
+        self.assertFalse(data["facts"]["future_or_unevaluated"])
+        self.assertFalse(data["facts"]["has_valid_field_certification"])
+        alma = StableReleaseFacts(**data["facts"])
+        result = classify_support_stable(alma)
+        self.assertIs(result, SupportClassification.FAMILY_INFERRED)
+
     def test_capabilities_are_separated(self) -> None:
         capabilities = load_product()["capabilities"]
         self.assertIn("cap_tun", capabilities["core_host_capabilities"])
@@ -712,6 +749,26 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         manifest["validation_metadata"]["per_release_ci"]["ubuntu_24_04"]["status"] = "green"
         manifest["validation_metadata"]["per_release_ci"]["ubuntu_24_04"]["l1_l2_green"] = False
         self.assert_invalid(manifest, "green status requires")
+
+    def test_almalinux_9_policy_state_contradictions_are_rejected(self) -> None:
+        """Task 23.7.5.11C Bloque A negatives: the admitted state of
+        almalinux_9 must stay mutually consistent between the release record's
+        policy_state and the distribution policy lists; any contradiction is a
+        hard ManifestError, never silently accepted."""
+        # Release record still pending while the policy list says admitted.
+        manifest = self.product_copy()
+        manifest["releases"]["almalinux_9"]["policy_state"] = "pending_evaluation"
+        self.assert_invalid(manifest, "policy list contradicts policy_state admitted")
+        # Policy list moved to pending while the release record stays admitted.
+        manifest = self.product_copy()
+        alma_policy = manifest["distributions"]["almalinux"]["policy"]["stable"]
+        alma_policy["admitted_releases"].remove("almalinux_9")
+        alma_policy["pending_releases"].append("almalinux_9")
+        self.assert_invalid(manifest, "policy list contradicts policy_state admitted")
+        # Appearing in two policy lists at once.
+        manifest = self.product_copy()
+        manifest["distributions"]["almalinux"]["policy"]["stable"]["pending_releases"].append("almalinux_9")
+        self.assert_invalid(manifest, "more than once")
 
     def test_certification_evidence_must_match_facts_and_release_refs(self) -> None:
         manifest = self.product_copy()

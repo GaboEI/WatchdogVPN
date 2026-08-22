@@ -3564,11 +3564,11 @@
       "policy": {
         "inherits_family_support": false,
         "stable": {
-          "admitted_releases": [],
-          "excluded_releases": [],
-          "pending_releases": [
+          "admitted_releases": [
             "almalinux_9"
-          ]
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
         }
       },
       "release_model": "stable",
@@ -3982,7 +3982,7 @@
         "9.7",
         "9.8"
       ],
-      "policy_state": "pending_evaluation",
+      "policy_state": "admitted",
       "vendor_maintained": true,
       "version": "9"
     },
