@@ -305,6 +305,65 @@ class SingboxJsonParserTests(unittest.TestCase):
                 {"type": "trojan", "tag": "primary", "server": "sb.example.com", "server_port": 443}
             )
 
+    def test_parse_singbox_json_flattens_nested_tls_reality(self) -> None:
+        profiles = parse_singbox_json(
+            {
+                "type": "vless",
+                "tag": "reality-profile",
+                "server": "sb.example.com",
+                "server_port": 443,
+                "uuid": "uuid-1",
+                "flow": "xtls-rprx-vision",
+                "packet_encoding": "xudp",
+                "tls": {
+                    "enabled": True,
+                    "server_name": "www.yahoo.com",
+                    "utls": {"enabled": True, "fingerprint": "firefox"},
+                    "reality": {
+                        "enabled": True,
+                        "public_key": "pbk-value",
+                        "short_id": "sid-value",
+                    },
+                },
+            }
+        )
+        self.assertEqual(len(profiles), 1)
+        cfg = profiles[0].config
+        self.assertEqual(cfg["pbk"], "pbk-value")
+        self.assertEqual(cfg["sid"], "sid-value")
+        self.assertEqual(cfg["sni"], "www.yahoo.com")
+        self.assertEqual(cfg["fp"], "firefox")
+
+    def test_parse_singbox_json_reality_flatten_does_not_override_explicit(self) -> None:
+        profiles = parse_singbox_json(
+            {
+                "type": "vless",
+                "tag": "explicit",
+                "server": "sb.example.com",
+                "server_port": 443,
+                "uuid": "uuid-1",
+                "pbk": "explicit-pbk",
+                "sid": "explicit-sid",
+                "sni": "explicit.example.com",
+                "fp": "chrome",
+                "tls": {
+                    "enabled": True,
+                    "server_name": "www.yahoo.com",
+                    "utls": {"enabled": True, "fingerprint": "firefox"},
+                    "reality": {
+                        "enabled": True,
+                        "public_key": "nested-pbk",
+                        "short_id": "nested-sid",
+                    },
+                },
+            }
+        )
+        cfg = profiles[0].config
+        self.assertEqual(cfg["pbk"], "explicit-pbk")
+        self.assertEqual(cfg["sid"], "explicit-sid")
+        self.assertEqual(cfg["sni"], "explicit.example.com")
+        self.assertEqual(cfg["fp"], "chrome")
+
 
 class OpenVPNConfigParserTests(unittest.TestCase):
     def test_parse_openvpn_config(self) -> None:

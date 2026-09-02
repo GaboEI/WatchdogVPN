@@ -65,8 +65,39 @@ def _build_profile(outbound: dict[str, Any]) -> Profile | None:
         return None
 
     config = {key: value for key, value in outbound.items() if key != "type"}
-    name = _profile_name(outbound, protocol)
     config.setdefault("raw", outbound)
+    # Native sing-box configs keep TLS/reality settings nested under "tls".
+    # The driver consumes them from top-level keys (pbk/sid/sni/fp), so flatten
+    # them here without overriding explicit top-level values. This is additive
+    # and does not change URI, v2ray, or any other import path.
+    tls: dict[str, Any] = {}
+    if isinstance(outbound.get("tls"), dict):
+        tls = outbound["tls"]
+    if tls:
+        if not any(key in config for key in ("sni", "server_name")):
+            server_name = tls.get("server_name")
+            if server_name:
+                config["sni"] = server_name
+        utls: dict[str, Any] = {}
+        if isinstance(tls.get("utls"), dict):
+            utls = tls["utls"]
+        if not any(key in config for key in ("fp", "fingerprint")):
+            fingerprint = utls.get("fingerprint")
+            if fingerprint:
+                config["fp"] = fingerprint
+        reality: dict[str, Any] = {}
+        if isinstance(tls.get("reality"), dict):
+            reality = tls["reality"]
+        if reality:
+            if not any(key in config for key in ("pbk", "public_key")):
+                public_key = reality.get("public_key")
+                if public_key:
+                    config["pbk"] = public_key
+            if not any(key in config for key in ("sid", "short_id")):
+                short_id = reality.get("short_id")
+                if short_id:
+                    config["sid"] = short_id
+    name = _profile_name(outbound, protocol)
     return Profile(
         id=name,
         name=name,
