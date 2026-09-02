@@ -3592,8 +3592,72 @@ Bloque 4 isolated fault harness (`692b467`) and Bloque 5 final cleanup all
 CLOSED and APROBADO by independent audit. `cert_rocky_9` verified current at
 12/12 green, date 2026-08-20, scope `physical_field_certification`.
 
-Remaining 11C scope: AlmaLinux 9 (not yet authorized; two-step admission
-chain per §14.1). Deploy key `160832574` stays active for AlmaLinux.
+**AlmaLinux 9.5 field recertification — Bloque 2 (matrix 12/12 green) CLOSED
+(2026-09-02)** on `nls1` (AlmaLinux 9.5 Teal Serval, kernel
+`5.14.0-503.15.1.el9_5`, runtime `9258219` after the import-fix update,
+provenance verified). Bloques A, Pre and 1 closed previously (see
+`02_11c_almalinux_9_evidence.md`). Bloque 2 closed and self-audited
+APROBADO, pending independent juez-tester audit:
+
+- **Bloque 2 (matrix 12/12 green with real egress):** all 12 protocols
+  connected with real egress HTTP 200x3 on `nls1`. **WireGuard, Shadowsocks
+  and plain OpenVPN promoted from `formal_non_green` to `green`** with real
+  egress HTTP 200x3 **plus a verified 100MiB download** (`size=104857600`,
+  dl_rc=0) through the tunnel, file deleted after verification. AmneziaWG used
+  the product's guided flow (COPR `tigro/amneziawg` + `amneziawg-go`
+  source-build, doctor `OK=146 WARN=2 FAIL=0` after). OpenVPN plain used the
+  `ovpn_auto.sh` auto-disconnect-by-timeout pattern (the `def1` route redirect
+  drops the admin SSH session; the short window plus a disconnect trap keeps
+  the host recoverable without a manual reboot). VLESS certified with real
+  egress through the imported profile `operators-vpn`
+  (`op-node1.webvork.site:443`, pubip `188.245.244.135`) and through the
+  provider node `netz-tg-provider:united-kingdom` (pubip `217.179.223.170`).
+  Evidence:
+  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212132Z.tar.gz`
+  (SHA256 `a76468f6b3782ea63d5db148fb9e294e58191b99acc10427fbd12b8c2c9431ed`).
+- **Real product bug found and fixed (TDD, commit `9258219`):** the sing-box
+  JSON importer kept `tls.reality.public_key/short_id` (and
+  `tls.server_name`/`utls.fingerprint`) nested, while the driver reads
+  `pbk/sid/sni/fp` at top level, so a native sing-box VLESS profile produced
+  `public_key: None` → sing-box `FATAL invalid public_key` → connect failed.
+  Latent since the parser was added (2026-06-29); never seen before because
+  every previous matrix imported VLESS as a `vless://` URI (which flattens
+  those fields). Fix flattens the nested fields in `_build_profile` only,
+  without overriding explicit top-level values and without touching URI,
+  v2ray or the driver. 2 new tests; full suite 2474 tests OK (skipped=2). CI
+  L2 run `33681775438` green.
+- **Provider `netz-tg-provider` (36 nodes):** subscription live (expires
+  2026-09-16), validated on a **bridge-only VM** (AlmaLinux 9.5 exact, Vagrant
+  box `9.5.20241203`) because the provider ignores the `nls1` egress IP
+  (`de.netzrun.at:5222` TCP-unreachable from `nls1`, reachable from the VM).
+  Three real nodes green with real egress (germany-1-h trojan
+  `5.230.95.227`, united-kingdom vless `217.179.223.170`, estonia vless
+  `185.155.222.104`) and automatic rotation proven with `health_check_ok` and
+  real egress after each hop (austria-vienna-3gbit `94.177.9.148`, bulgaria
+  `185.199.38.90`, bulgaria-2 `88.80.147.29`). Evidence:
+  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-VM-bridge-validation-20260902T212200Z.txt`.
+- **Work extra (maintainer-ordered):** split-tunnel domain rule
+  `facebook.com→direct` is accepted but does NOT divert facebook data traffic
+  in sing-box/fakeip mode (honest finding, same as Rocky); controlled DNS-leak
+  test showed **no leak** (forced queries to 1.1.1.1/8.8.8.8/OpenDNS/Quad9 all
+  resolve to fakeip `198.18.0.11`); **fakeip working** (domains resolve to
+  `198.18.0.0/15`/`fc00::/18`, TUN rx increased while traffic flowed to the
+  sing-box listener, egress through the tunnel).
+- **Infrastructure finding (not product):** the five maintainer VLESS profiles
+  pointing at `gaboturbo.serveminecraft.net` (all sids `d32dfe4438fa06b1`,
+  `c98565c172f03aeb`, `8a7b91d66b82bfee`, `45082fae4605a856`,
+  `31d38336b3d5ffaf`) do not transport reality flow from `nls1` or the VM
+  (`endpoint_censorship_or_network_interference_suspected`, 0/2), while a
+  VLESS of another provider (`operators-vpn`) and the provider nodes connect.
+  The maintainer's reality server (gaboturbo = `138.124.91.224`) is the
+  blocker, not the product.
+
+`cert_almalinux_9` is **not created in Bloque 2**: it is published in Block 6
+only after Blocks 2-5 (matrix, reboot lifecycle, isolated fault harness,
+cleanup) are all satisfied, per the AlmaLinux route. The manifest still keeps
+`almalinux_9` as `admitted` / `family_inferred` until then.
+
+Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
