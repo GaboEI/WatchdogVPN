@@ -3608,13 +3608,21 @@ APROBADO, pending independent juez-tester audit:
   source-build, doctor `OK=146 WARN=2 FAIL=0` after). OpenVPN plain used the
   `ovpn_auto.sh` auto-disconnect-by-timeout pattern (the `def1` route redirect
   drops the admin SSH session; the short window plus a disconnect trap keeps
-  the host recoverable without a manual reboot). VLESS certified with real
-  egress through the imported profile `operators-vpn`
-  (`op-node1.webvork.site:443`, pubip `188.245.244.135`) and through the
-  provider node `netz-tg-provider:united-kingdom` (pubip `217.179.223.170`).
+  the host recoverable without a manual reboot). **Protocol 01 VLESS certified
+  with `01_VLESS_ubuntu_gabo.txt` (`ubuntu_tls_test`)**: connect rc=0, egress
+  HTTP 200x3, pubip `138.124.91.224` (through the tunnel, distinct from the
+  `nls1` direct IP `79.137.197.255`), teardown clean. Supplementary VLESS
+  findings (not the primary certification evidence): imported `operators-vpn`
+  (`op-node1.webvork.site:443`, pubip `188.245.244.135`, provided by the
+  maintainer as a test profile while the reality server was down, since
+  removed) and the provider node `netz-tg-provider:united-kingdom` (pubip
+  `217.179.223.170`).
   Evidence:
   `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz`
-  (SHA256 `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`).
+  (SHA256 `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`);
+  primary VLESS evidence
+  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-vless-ubuntu-tls-20260902T223041Z.tar.gz`
+  (SHA256 `33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678`).
 - **Real product bug found and fixed (TDD, commit `9258219`):** the sing-box
   JSON importer kept `tls.reality.public_key/short_id` (and
   `tls.server_name`/`utls.fingerprint`) nested, while the driver reads
