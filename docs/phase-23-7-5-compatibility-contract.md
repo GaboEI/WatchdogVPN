@@ -3613,8 +3613,8 @@ APROBADO, pending independent juez-tester audit:
   (`op-node1.webvork.site:443`, pubip `188.245.244.135`) and through the
   provider node `netz-tg-provider:united-kingdom` (pubip `217.179.223.170`).
   Evidence:
-  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212132Z.tar.gz`
-  (SHA256 `a76468f6b3782ea63d5db148fb9e294e58191b99acc10427fbd12b8c2c9431ed`).
+  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz`
+  (SHA256 `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`).
 - **Real product bug found and fixed (TDD, commit `9258219`):** the sing-box
   JSON importer kept `tls.reality.public_key/short_id` (and
   `tls.server_name`/`utls.fingerprint`) nested, while the driver reads
