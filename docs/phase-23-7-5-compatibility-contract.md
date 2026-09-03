@@ -3677,8 +3677,8 @@ cleanup) are all satisfied, per the AlmaLinux route. The manifest still keeps
 
 Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
 
-**Bloque 3 (reboot lifecycle A/B) CLOSED, READY FOR INDEPENDENT RE-AUDIT
-(2026-09-03)** on `nls1` (runtime `9258219`, provenance verified; initial boot
+**Bloque 3 (reboot lifecycle A/B) CLOSED and APROBADO (2026-09-03)** on `nls1`
+(runtime `9258219`, provenance verified; initial boot
 `B0=53063369-aca7-4c6d-ab2a-79d540af8822`):
 
 - **Scenario A (autoconnect=false) GREEN:** real reboot with `ubuntu_tls_test`
