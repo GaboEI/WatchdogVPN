@@ -641,6 +641,64 @@
       },
       "release": "ubuntu_24_04",
       "scope": "physical_field_certification"
+    },
+    "cert_almalinux_9": {
+      "current": true,
+      "date": "2026-09-02T00:00:00Z",
+      "distribution": "almalinux",
+      "evidence": "23.7.5.11C AlmaLinux 9.5 field recertification on nls1 (kernel 5.14.0-503.15.1.el9_5); 12/12 protocols green with real egress, promoted trio (WireGuard/Shadowsocks/plain OpenVPN) with verified 100MiB download (size=104857600), protocol 01 VLESS certified with 01_VLESS_ubuntu_gabo.txt (ubuntu_tls_test, tunnel pubip 138.124.91.224); matrix evidence at phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz (SHA256 a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69); primary VLESS evidence at phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-vless-ubuntu-tls-20260902T223041Z.tar.gz (SHA256 33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678); runtime 9258219, provenance verified",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 on nls1"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        }
+      },
+      "release": "almalinux_9",
+      "scope": "physical_field_certification"
     }
   },
   "derivatives": {
@@ -3558,7 +3616,7 @@
       "id": "almalinux",
       "lineage": {
         "family_inference_allowed": true,
-        "has_own_evidence": false,
+        "has_own_evidence": true,
         "is_derivative": true
       },
       "policy": {
@@ -3969,7 +4027,9 @@
     "almalinux_9": {
       "distribution": "almalinux",
       "eol_or_withdrawn": false,
-      "evidence_refs": [],
+      "evidence_refs": [
+        "cert_almalinux_9"
+      ],
       "meets_technical_floor": true,
       "os_release_version_ids": [
         "9.0",

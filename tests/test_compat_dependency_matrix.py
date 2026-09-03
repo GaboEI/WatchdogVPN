@@ -113,7 +113,7 @@ class FocusedDependencyMatrixContractTests(unittest.TestCase):
         },
         "almalinux_9": {
             "os_release": "ID=almalinux\nVERSION_ID=9.6\n",
-            "support": "family_inferred",
+            "support": "certified",
             "release_model": "stable",
             "resolved_release": "almalinux_9",
             "python": "python3.11",

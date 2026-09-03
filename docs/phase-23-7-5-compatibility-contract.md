@@ -702,15 +702,18 @@ left unchanged until exact `VERSION_ID` evidence is available from an accessible
 
 ### AlmaLinux 9 `VERSION_ID` Evidence For Manifest Identity
 
-As of Task 23.7.5.11C Bloque A, `almalinux_9` is formally **admitted** as a stable
-release (`releases.almalinux_9.policy_state = "admitted"`, listed in
-`distributions.almalinux.policy.stable.admitted_releases`). Admission is the policy
-promotion of already-recorded facts only; it is not a certification: `almalinux_9`
-remains `family_inferred` (Rocky 9 stays the certified redhat_dnf anchor), has no
-`cert_*` entry, and its `evidence_refs` stay empty because release `evidence_refs`
-are reserved by the validator for current qualifying certification records. The
-`os_release_version_ids` list still requires its own evidence because exact stable-release
-identity is a manifest input, not something inferred from Rocky Linux or the RHEL family.
+As of Task 23.7.5.11C Block A, `almalinux_9` was formally **admitted** as a
+stable release (`releases.almalinux_9.policy_state = "admitted"`, listed in
+`distributions.almalinux.policy.stable.admitted_releases`). Admission is the
+policy promotion of already-recorded facts only and is never a certification.
+Field certification is now complete: Block 6 created `cert_almalinux_9`
+(current, scope `physical_field_certification`, 12/12 protocol dispositions
+`green` from the Block 2 real-egress matrix) and
+`releases.almalinux_9.evidence_refs = ["cert_almalinux_9"]`, so `almalinux_9`
+classifies as `certified` with its own evidence instead of `family_inferred`
+from the Rocky redhat_dnf anchor. The `os_release_version_ids` list still
+required its own evidence because exact stable-release identity is a manifest
+input, not something inferred from Rocky Linux or the RHEL family.
 
 The official AlmaLinux blog announces the following AlmaLinux 9 stable releases:
 
@@ -3670,10 +3673,13 @@ APROBADO, pending independent juez-tester audit:
   The maintainer's reality server (gaboturbo = `138.124.91.224`) is the
   blocker, not the product.
 
-`cert_almalinux_9` is **not created in Bloque 2**: it is published in Block 6
+`cert_almalinux_9` was **not created in Block 2**: it is published in Block 6
 only after Blocks 2-5 (matrix, reboot lifecycle, isolated fault harness,
-cleanup) are all satisfied, per the AlmaLinux route. The manifest still keeps
-`almalinux_9` as `admitted` / `family_inferred` until then.
+cleanup) are all satisfied, per the AlmaLinux route. **Block 6 published
+`cert_almalinux_9` (2026-09-03)** with 12/12 `green` protocol dispositions from
+the real-egress matrix; `almalinux_9` is now `certified` and
+`releases.almalinux_9.evidence_refs = ["cert_almalinux_9"]`. See the Block 6
+section below.
 
 Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
 
@@ -3756,6 +3762,35 @@ Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
 - Evidence (private, `0700` dirs / `0600` files, anti-secret scan clean):
   `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque4-20260903T114539Z.tar.gz`
   (SHA256 `f0de01b6f73fae342d5c284cc023bc5af24c1a017a70906e3609e48122b18377`).
+
+**Block 6 (publish `cert_almalinux_9`) CLOSED (2026-09-03)** — GitHub
+compatibility-contract reconciliation for AlmaLinux:
+
+- `cert_almalinux_9` created in `compat/compatibility.json` (current, scope
+  `physical_field_certification`, date `2026-09-02` matching the Block 2
+  matrix) with 12/12 `protocol_results` dispositions `green`, each traced to
+  real evidence: the promoted trio (WireGuard, Shadowsocks, plain OpenVPN)
+  with a verified 100 MiB download (`size=104857600`) and the remaining nine
+  protocols with real egress HTTP 200x3 on the certification host; protocol 01
+  VLESS certified with `01_VLESS_ubuntu_gabo.txt` (`ubuntu_tls_test`, tunnel
+  pubip `138.124.91.224`). Host `nls1`, AlmaLinux 9.5 (kernel
+  `5.14.0-503.15.1.el9_5`), runtime `9258219`, provenance verified.
+- `releases.almalinux_9.evidence_refs = ["cert_almalinux_9"]`; the `almalinux`
+  lineage `has_own_evidence` flag flipped to `true` so the derivative release
+  may carry its own certification (same pattern as Linux Mint); `almalinux_9`
+  now classifies as `certified` instead of `family_inferred`.
+- Contract tests updated to the certified state:
+  `test_almalinux_9_certified_after_field_certification` replaces the obsolete
+  admission-does-not-certify test and asserts the promotion to `CERTIFIED`;
+  detection, dependency-matrix and certification-inventory fixtures updated.
+  Full suite green: 2481 passed, 9 skipped (preexisting environment/CI-flag
+  skips), 4915 subtests passed.
+- Evidence (private bundles): Block 2 matrix
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz`
+  (SHA256 `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`);
+  primary VLESS evidence
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-vless-ubuntu-tls-20260902T223041Z.tar.gz`
+  (SHA256 `33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678`).
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 

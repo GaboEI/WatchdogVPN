@@ -386,26 +386,37 @@ class ManifestValidCasesTests(unittest.TestCase):
         release = manifest["releases"]["almalinux_9"]
         self.assertEqual(release["policy_state"], "admitted")
         # Admission promotes recorded facts only: no eligibility fact may have
-        # been flipped as a side effect, and evidence_refs stay empty because
-        # they are reserved for current qualifying certifications.
+        # been flipped as a side effect; evidence_refs point at the current
+        # qualifying certification once field certification exists.
         self.assertTrue(release["vendor_maintained"])
         self.assertTrue(release["meets_technical_floor"])
         self.assertFalse(release["eol_or_withdrawn"])
-        self.assertEqual(release["evidence_refs"], [])
+        self.assertEqual(release["evidence_refs"], ["cert_almalinux_9"])
 
-    def test_almalinux_9_admission_does_not_certify_or_promote_support(self) -> None:
-        """Task 23.7.5.11C Bloque A: admission alone must not certify
-        almalinux_9 and must not promote it past family_inferred while Rocky 9
-        remains the certified redhat_dnf anchor."""
+    def test_almalinux_9_certified_after_field_certification(self) -> None:
+        """Task 23.7.5.11C Block 6: after the 12/12 real-egress field matrix
+        (Block 2) and the closing of the reboot-lifecycle, isolated-fault and
+        final-cleanup gates, cert_almalinux_9 exists as a current qualifying
+        certification and almalinux_9 classifies as CERTIFIED (no longer
+        family_inferred from the Rocky redhat_dnf anchor)."""
         manifest = load_product()
-        self.assertNotIn("cert_almalinux_9", manifest["certifications"])
+        self.assertIn("cert_almalinux_9", manifest["certifications"])
+        self.assertTrue(
+            compat_read.certification_qualifies_for_support(manifest, "cert_almalinux_9")
+        )
+        self.assertEqual(
+            manifest["releases"]["almalinux_9"]["evidence_refs"], ["cert_almalinux_9"]
+        )
+        self.assertEqual(
+            len(manifest["certifications"]["cert_almalinux_9"]["protocol_results"]), 12
+        )
         data = compat_read._stable_facts(manifest, "almalinux_9")
         self.assertTrue(data["facts"]["admitted"])
         self.assertFalse(data["facts"]["future_or_unevaluated"])
-        self.assertFalse(data["facts"]["has_valid_field_certification"])
+        self.assertTrue(data["facts"]["has_valid_field_certification"])
         alma = StableReleaseFacts(**data["facts"])
         result = classify_support_stable(alma)
-        self.assertIs(result, SupportClassification.FAMILY_INFERRED)
+        self.assertIs(result, SupportClassification.CERTIFIED)
 
     def test_capabilities_are_separated(self) -> None:
         capabilities = load_product()["capabilities"]
@@ -424,7 +435,7 @@ class ManifestValidCasesTests(unittest.TestCase):
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
         self.assertIs(classify_support_stable(ubuntu), SupportClassification.CERTIFIED)
         self.assertIs(classify_support_stable(ubuntu_26), SupportClassification.EXPERIMENTAL)
-        self.assertIs(classify_support_stable(alma), SupportClassification.FAMILY_INFERRED)
+        self.assertIs(classify_support_stable(alma), SupportClassification.CERTIFIED)
 
     def test_rolling_facts_can_be_constructed_with_utc_normalization(self) -> None:
         manifest = load_product()
@@ -459,7 +470,7 @@ class ManifestValidCasesTests(unittest.TestCase):
             )
             self.assertIs(result, expected, distro_id)
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
-        self.assertIs(classify_support_stable(alma), SupportClassification.FAMILY_INFERRED)
+        self.assertIs(classify_support_stable(alma), SupportClassification.CERTIFIED)
         ubuntu_26 = StableReleaseFacts(**compat_read._stable_facts(manifest, "ubuntu_26_04")["facts"])
         self.assertIs(classify_support_stable(ubuntu_26), SupportClassification.EXPERIMENTAL)
 
@@ -504,17 +515,17 @@ class ManifestValidCasesTests(unittest.TestCase):
                     "certified",
                 )
         # No qualifying certification -> None, not an error.
-        alma = detection.distro_facts_from_os_release(
-            detection.parse_os_release_text("ID=almalinux\nVERSION_ID=9.6\n"),
+        ubuntu_26 = detection.distro_facts_from_os_release(
+            detection.parse_os_release_text("ID=ubuntu\nVERSION_ID=26.04\nVERSION_CODENAME=resolute\n"),
             manifest,
             kernel_release="6.8.0-test",
             machine_architecture="x86_64",
         )
-        self.assertIsNone(detection._certification_review_status(manifest, alma, now=soon_after_certification))
+        self.assertIsNone(detection._certification_review_status(manifest, ubuntu_26, now=soon_after_certification))
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
-        self.assertEqual(len(manifest["certifications"]), 9)
+        self.assertEqual(len(manifest["certifications"]), 10)
         for cert_id, cert in manifest["certifications"].items():
             with self.subTest(cert_id=cert_id):
                 self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))
@@ -757,16 +768,22 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         hard ManifestError, never silently accepted."""
         # Release record still pending while the policy list says admitted.
         manifest = self.product_copy()
+        del manifest["certifications"]["cert_almalinux_9"]
+        manifest["releases"]["almalinux_9"]["evidence_refs"] = []
         manifest["releases"]["almalinux_9"]["policy_state"] = "pending_evaluation"
         self.assert_invalid(manifest, "policy list contradicts policy_state admitted")
         # Policy list moved to pending while the release record stays admitted.
         manifest = self.product_copy()
+        del manifest["certifications"]["cert_almalinux_9"]
+        manifest["releases"]["almalinux_9"]["evidence_refs"] = []
         alma_policy = manifest["distributions"]["almalinux"]["policy"]["stable"]
         alma_policy["admitted_releases"].remove("almalinux_9")
         alma_policy["pending_releases"].append("almalinux_9")
         self.assert_invalid(manifest, "policy list contradicts policy_state admitted")
         # Appearing in two policy lists at once.
         manifest = self.product_copy()
+        del manifest["certifications"]["cert_almalinux_9"]
+        manifest["releases"]["almalinux_9"]["evidence_refs"] = []
         manifest["distributions"]["almalinux"]["policy"]["stable"]["pending_releases"].append("almalinux_9")
         self.assert_invalid(manifest, "more than once")
 
@@ -827,6 +844,7 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         for cert_id, cert in manifest["certifications"].items():
             if manifest["distributions"][cert["distribution"]]["technical_family"] == "redhat_dnf":
                 cert["current"] = False
+        manifest["releases"]["almalinux_9"]["evidence_refs"] = []
         facts = compat_read._stable_facts(manifest, "almalinux_9")["facts"]
         self.assertFalse(facts["family_has_certified_anchor"])
         self.assertIs(
@@ -836,8 +854,13 @@ class ManifestInvalidCasesTests(unittest.TestCase):
 
     def test_family_inference_requires_qualifying_anchor(self) -> None:
         manifest = self.product_copy()
+        # A certified derivative with own evidence classifies as CERTIFIED.
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
-        self.assertIs(classify_support_stable(alma), SupportClassification.FAMILY_INFERRED)
+        self.assertIs(classify_support_stable(alma), SupportClassification.CERTIFIED)
+        # A derivative without own evidence (CentOS Stream) is FAMILY_INFERRED
+        # from the certified redhat_dnf anchor (Rocky).
+        centos = StableReleaseFacts(**compat_read._stable_facts(manifest, "centos_stream_9")["facts"])
+        self.assertIs(classify_support_stable(centos), SupportClassification.FAMILY_INFERRED)
         tumbleweed_data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
         tumbleweed = RollingFacts(**tumbleweed_data["facts"])
         self.assertIs(
@@ -849,9 +872,14 @@ class ManifestInvalidCasesTests(unittest.TestCase):
             SupportClassification.FAMILY_INFERRED,
         )
 
+        # Without any current redhat_dnf certification there is no anchor: the
+        # derivative drops from FAMILY_INFERRED to EXPERIMENTAL.
         for cert in manifest["certifications"].values():
             if manifest["distributions"][cert["distribution"]]["technical_family"] == "redhat_dnf":
                 cert["current"] = False
+        manifest["releases"]["almalinux_9"]["evidence_refs"] = []
+        centos = StableReleaseFacts(**compat_read._stable_facts(manifest, "centos_stream_9")["facts"])
+        self.assertIs(classify_support_stable(centos), SupportClassification.EXPERIMENTAL)
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
         self.assertIs(classify_support_stable(alma), SupportClassification.EXPERIMENTAL)
 
