@@ -3618,10 +3618,10 @@ APROBADO, pending independent juez-tester audit:
   removed) and the provider node `netz-tg-provider:united-kingdom` (pubip
   `217.179.223.170`).
   Evidence:
-  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz`
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz`
   (SHA256 `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`);
   primary VLESS evidence
-  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-vless-ubuntu-tls-20260902T223041Z.tar.gz`
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-vless-ubuntu-tls-20260902T223041Z.tar.gz`
   (SHA256 `33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678`).
 - **Real product bug found and fixed (TDD, commit `9258219`):** the sing-box
   JSON importer kept `tls.reality.public_key/short_id` (and
@@ -3643,14 +3643,17 @@ APROBADO, pending independent juez-tester audit:
   `185.155.222.104`) and automatic rotation proven with `health_check_ok` and
   real egress after each hop (austria-vienna-3gbit `94.177.9.148`, bulgaria
   `185.199.38.90`, bulgaria-2 `88.80.147.29`). Evidence:
-  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-alma-VM-bridge-validation-20260902T212200Z.txt`.
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-VM-bridge-validation-20260902T212200Z.txt`.
 - **Work extra (maintainer-ordered):** split-tunnel domain rule
   `facebook.com→direct` is accepted but does NOT divert facebook data traffic
   in sing-box/fakeip mode (honest finding, same as Rocky); controlled DNS-leak
   test showed **no leak** (forced queries to 1.1.1.1/8.8.8.8/OpenDNS/Quad9 all
   resolve to fakeip `198.18.0.11`); **fakeip working** (domains resolve to
   `198.18.0.0/15`/`fc00::/18`, TUN rx increased while traffic flowed to the
-  sing-box listener, egress through the tunnel).
+  sing-box listener, egress through the tunnel). Raw §10-12 captures
+  materialized with `ubuntu_tls_test`:
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-s10-12-20260902T235919Z.tar.gz`
+  (SHA256 `9ae87a5d24d06aee7610882389c76f13381b7937afe0bbc8f202f863ec341eb5`).
 - **Infrastructure finding (not product):** the five maintainer VLESS profiles
   pointing at `gaboturbo.serveminecraft.net` (all sids `d32dfe4438fa06b1`,
   `c98565c172f03aeb`, `8a7b91d66b82bfee`, `45082fae4605a856`,
