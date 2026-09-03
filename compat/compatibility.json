@@ -356,55 +356,55 @@
       "current": true,
       "date": "2026-08-19T00:00:00Z",
       "distribution": "fedora",
-      "evidence": "23.7.5.11C Fedora field recertification on nls1 (Fedora 44 Cloud, kernel 7.1.8-200); Block 2 matrix evidence at /root/wdvpn-23-7-5-11C-fedora/watchdogvpn-task-23-7-5-11C-fedora-nls1-matrix-20260819T183659Z.tar.gz (SHA 667398662ca795691cb6620bd66115d5af64b5b6f0c088f1f6004f13548240d9); runtime bd316eb, provenance verified (gen f39d2241...)",
+      "evidence": "23.7.5.11C Fedora 44 field recertification (kernel 7.1.8-200); 12/12 protocols green with real egress; matrix evidence SHA256 98c443893d385cb5fa9cdf6f93db3470742fd6725af413a4e93fec7f1bbbf31b; runtime bd316eb, provenance verified",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "http": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "openvpn": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3x6 on nls1 via ovpn_auto.sh (infra NAT fix on aeza-vps by maintainer; first attempt rc=70 due to def1 route redirect, second attempt with auto-disconnect succeeded; operational finding, not product bug)"
+          "evidence": "real egress HTTP 200x3 via ovpn_auto.sh; first attempt rc=70 due to def1 route redirect, second attempt with auto-disconnect succeeded; operational finding, not product bug"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "shadowsocks": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "wireguard": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         }
       },
       "release": "fedora_44",
@@ -530,7 +530,7 @@
       "current": true,
       "date": "2026-08-20T00:00:00Z",
       "distribution": "rocky",
-      "evidence": "23.7.5.11C Rocky Linux 9.8 field recertification on nls1 (kernel 5.14.0-687.39.1.el9_8); 12/12 protocols green with real egress + 100MiB download for the promoted trio; matrix evidence at evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-matrix-20260820T193340Z.tar.gz (SHA256 2bbce34d5a278d6716054311df1894a9c0b96bb0dd9ff0f7bdf4352c761b65e5); runtime b23577b, provenance verified",
+      "evidence": "23.7.5.11C Rocky Linux 9.8 field recertification (kernel 5.14.0-687.39.1.el9_8); 12/12 protocols green with real egress + 100MiB download for the promoted trio; matrix evidence SHA256 2bbce34d5a278d6716054311df1894a9c0b96bb0dd9ff0f7bdf4352c761b65e5; runtime b23577b, provenance verified",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -546,7 +546,7 @@
         },
         "openvpn": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         },
         "openvpn_cloak": {
           "disposition": "green",
@@ -554,7 +554,7 @@
         },
         "shadowsocks": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         },
         "socks": {
           "disposition": "green",
@@ -578,7 +578,7 @@
         },
         "wireguard": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         }
       },
       "release": "rocky_9",
@@ -646,55 +646,55 @@
       "current": true,
       "date": "2026-09-02T00:00:00Z",
       "distribution": "almalinux",
-      "evidence": "23.7.5.11C AlmaLinux 9.5 field recertification on nls1 (kernel 5.14.0-503.15.1.el9_5); 12/12 protocols green with real egress, promoted trio (WireGuard/Shadowsocks/plain OpenVPN) with verified 100MiB download (size=104857600), protocol 01 VLESS certified with 01_VLESS_ubuntu_gabo.txt (ubuntu_tls_test, tunnel pubip 138.124.91.224); matrix evidence at phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz (SHA256 a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69); primary VLESS evidence at phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-vless-ubuntu-tls-20260902T223041Z.tar.gz (SHA256 33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678); runtime 9258219, provenance verified",
+      "evidence": "23.7.5.11C AlmaLinux 9.5 field recertification (kernel 5.14.0-503.15.1.el9_5); 12/12 protocols green with real egress, promoted trio (WireGuard/Shadowsocks/plain OpenVPN) with verified 100MiB download, protocol 01 VLESS certified; matrix evidence SHA256 a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69; primary VLESS evidence SHA256 33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678; runtime 9258219, provenance verified",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "http": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "openvpn": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "shadowsocks": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 on nls1"
+          "evidence": "real egress HTTP 200x3"
         },
         "wireguard": {
           "disposition": "green",
-          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) on nls1 through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         }
       },
       "release": "almalinux_9",
@@ -4387,7 +4387,7 @@
         "status": "not_run"
       },
       "fedora_44": {
-        "evidence": "L2 Compatibility Matrix CI run 32353570891 green on HEAD 27620d2 (2026-08-20); field matrix evidence at SHA 667398662ca795691cb6620bd66115d5af64b5b6f0c088f1f6004f13548240d9",
+        "evidence": "L2 Compatibility Matrix CI run 32353570891 green on HEAD 27620d2 (2026-08-20); field matrix evidence at SHA 98c443893d385cb5fa9cdf6f93db3470742fd6725af413a4e93fec7f1bbbf31b",
         "l1_l2_green": true,
         "status": "green"
       },

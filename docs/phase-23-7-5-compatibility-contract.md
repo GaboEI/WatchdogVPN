@@ -3363,7 +3363,7 @@ Mandatory order (external design §14.1, revision 5):
 | 11-PRE | (policy only) | CLOSED. Certification-review advisory signal. |
 | 11A | Ubuntu, Debian, Linux Mint | Debian family. CLOSED (12/12 each). |
 | 11B | Arch Linux, CachyOS | Arch family, rolling. **CLOSED (2026-08-17)** — Arch Linux (2026-08-15) and CachyOS (2026-08-17), 12/12 each. |
-| 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). **Fedora CLOSED (2026-08-20)** — 12/12 green with real egress on nls1. **Rocky Linux CLOSED (2026-08-21)** — 12/12 green, reboot lifecycle, isolated fault harness and final cleanup, all APROBADO. AlmaLinux 9 not yet authorized. |
+| 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). **Fedora CLOSED (2026-08-20)** — 12/12 green with real egress. **Rocky Linux CLOSED (2026-08-21)** — 12/12 green, reboot lifecycle, isolated fault harness and final cleanup. **AlmaLinux 9 CLOSED and certified (2026-09-02/03)** — 12/12 green via `cert_almalinux_9`. Family integration gate: PR #16 open, merge pending. |
 | 11D | openSUSE Leap, Tumbleweed | Tumbleweed must be fully validated. |
 | 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
@@ -3398,13 +3398,15 @@ reason) - never as a default reaction to a single message.
 History: sub-phase 11A (Debian family) is fully closed. 23.7.5.11B Arch Linux
 was closed on 2026-08-15 and 23.7.5.11B CachyOS on 2026-08-17, so sub-phase 11B
 (Arch family) is now **fully closed** (12/12 each). The next sub-phase is 11C
-(RPM family: Fedora, Rocky Linux, AlmaLinux 9), not yet authorized.
+(RPM family: Fedora, Rocky Linux, AlmaLinux 9) — Fedora, Rocky and AlmaLinux
+are individually certified 12/12; the family integration gate is PR #16 (open,
+merge pending explicit approval).
 
 #### 11C — RPM family (Fedora, Rocky Linux, AlmaLinux 9)
 
-**Fedora 44 field recertification CLOSED (2026-08-20)** on `nls1` (Fedora 44
-Cloud, kernel 7.1.8-200, runtime `bd316eb`, provenance verified). Five blocks
-closed and **APROBADO** by juez-tester:
+**Fedora 44 field recertification CLOSED (2026-08-20)** (Fedora 44 Cloud,
+kernel 7.1.8-200, runtime `bd316eb`, provenance verified). Five blocks
+closed and approved by independent audit:
 
 - **Block 1 (install):** WatchdogVPN installed with provenance verified (gen
   `f39d2241...`). Real product bug found and fixed (TDD, commit `bd316eb`):
@@ -3413,46 +3415,46 @@ closed and **APROBADO** by juez-tester:
   global package drop-ins while still rejecting service-specific drop-ins.
   Doctor `OK=146 WARN=3 FAIL=0` after publish.
 - **Block 2 (matrix 12/12):** All **12 protocols GREEN** with real egress HTTP
-  200x3 on `nls1`. WireGuard, Shadowsocks and OpenVPN plain promoted from
+  200x3. WireGuard, Shadowsocks and OpenVPN plain promoted from
   `formal_non_green` to `green` with fresh field evidence. OpenVPN plain
-  operational finding: first attempt `rc=70` due to NAT/forward on `aeza-vps`
-  server (resolved by maintainer, infra not product); second attempt with
-  `ovpn_auto.sh` auto-disconnect succeeded with real egress HTTP 200x3x6.
-  Evidence: `...-matrix-20260819T183659Z.tar.gz` (SHA
-  `667398662ca795691cb6620bd66115d5af64b5b6f0c088f1f6004f13548240d9`).
+  operational finding: first attempt `rc=70` due to NAT/forward on the
+  provider's infrastructure server (resolved by maintainer, infra not product);
+  second attempt with `ovpn_auto.sh` auto-disconnect succeeded with real egress
+  HTTP 200x3x6. Evidence: matrix bundle (SHA
+  `98c443893d385cb5fa9cdf6f93db3470742fd6725af413a4e93fec7f1bbbf31b`).
 - **Block 3 (reboot lifecycle):** Executed by another implementer. Evidence:
   `...-reboot-lifecycle-20260819T211139Z.tar.gz`.
 - **Block 4 (isolated fault harness):** `dns_restore_failed` and
   `kill_switch_disable_failed` validated fail-closed, 4 ticks each, no
-  auto-reconnect, isolation manifest pre/post sha256 identical. Profile sintético,
-  total isolation (CachyOS pattern). Evidence:
+  auto-reconnect, isolation manifest pre/post sha256 identical. Synthetic
+  profile, total isolation (CachyOS pattern). Evidence:
   `...-isolated-fault-20260820T003918Z.tar.gz`.
 - **Block 5 (cleanup):** 11 profiles removed with backup verification (H1),
   per-step verification (H2), doctor full text (H3), secrets outside bundle
-  (H4). Final state: `perfiles=[]`, standby, no TUN, firewall intact
+  (H4). Final state: `profiles=[]`, standby, no TUN, firewall intact
   (`ssh`+`dhcpv6-client`), SELinux Enforcing. Evidence:
   `...-cierre-20260820T082700Z.tar.gz`.
 
-Deploy key `nls1-11c-deploy-readonly-*` (ID 160832574) NOT revoked — still
-needed for AlmaLinux 9 within 11C.
+The Fedora-era deploy key was not revoked at this point (still needed for the
+pending AlmaLinux work); its successor and revocation are a maintainer
+decision at the 11C closure gate.
 
-**Rocky Linux 9.8 field recertification CLOSED (2026-08-20)** on `nls1`
-(Rocky Linux 9.8 Blue Onyx, kernel `5.14.0-687.39.1.el9_8`, runtime `b23577b`,
-provenance verified). Bloque Pre + Bloque 1 + Bloque 2 closed and APROBADO by
-juez-tester:
+**Rocky Linux 9.8 field recertification CLOSED (2026-08-20)** (Rocky Linux 9.8
+Blue Onyx, kernel `5.14.0-687.39.1.el9_8`, runtime `b23577b`, provenance
+verified). Block Pre + Block 1 + Block 2 closed and approved by independent
+audit:
 
-- **Bloque Pre (sanitization):** SELinux **Enforcing** (was Disabled, full
+- **Block Pre (sanitization):** SELinux **Enforcing** (was Disabled, full
   relabel, no AVC denials), sudoers reduced to `root ALL=(ALL) ALL` (`%wheel`
   removed), firewalld public `ssh`+`dhcpv6-client` (cockpit removed), LLMNR off
-  (5355 not listening), journal clean, egress v4 `79.137.197.255` + v6
-  `2a12:5940:2bba::2`.
-- **Bloque 1 (install):** cloned `phase-23-7-5-11C-rpm` HEAD `b23577b`,
+  (5355 not listening), journal clean, direct dual-stack egress.
+- **Block 1 (install):** cloned `phase-23-7-5-11C-rpm` HEAD `b23577b`,
   `compat_distro_classify.py classify` → `rocky rocky_9 certified`, install OK,
   provenance `status=verified` (`source_commit=b23577b`,
   `generation_sha256=29c8c1296c...`), doctor `OK=145 WARN=3 FAIL=0`. No
   product-specific Rocky SELinux bugs under Enforcing.
-- **Bloque 2 (matrix 12/12 green with real egress):** all 12 protocols
-  connected with real egress HTTP 200x3 on `nls1`. **WireGuard, Shadowsocks
+- **Block 2 (matrix 12/12 green with real egress):** all 12 protocols
+  connected with real egress HTTP 200x3. **WireGuard, Shadowsocks
   and plain OpenVPN promoted from `formal_non_green` to `green`** with real
   egress HTTP 200x3 **plus a 100MiB download** (`size=104857600`, dl_rc=0)
   through the tunnel. AmneziaWG used the product's guided flow (COPR
@@ -3460,14 +3462,13 @@ juez-tester:
   with the `ovpn_auto.sh` auto-disconnect-by-timeout pattern (validated in
   Fedora) — the SSH session dropped on `def1` route redirect and the server
   recovered automatically, confirming the mechanism is required on Rocky too.
-  Evidence:
-  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-matrix-20260820T193340Z.tar.gz`
-  (SHA256 `2bbce34d5a278d6716054311df1894a9c0b96bb0dd9ff0f7bdf4352c761b65e5`).
-- **Work extra (maintainer-ordered, outside Bloque 2 plan):** provider
-  `netz-tg-provider` (35 nodes) added and rotation proven between nodes
-  (UK→AT→EE→BG, real egress each); controlled DNS-leak test showed **no leak**
+  Evidence: matrix bundle (SHA256
+  `2bbce34d5a278d6716054311df1894a9c0b96bb0dd9ff0f7bdf4352c761b65e5`).
+- **Extra work (maintainer-ordered, outside Block 2 plan):** provider
+  subscription (35 nodes) added and rotation proven between nodes
+  (real egress each); controlled DNS-leak test showed **no leak**
   (all DNS incl. forced queries to 1.1.1.1/8.8.8.8/OpenDNS/Quad9 resolve to
-  fakeip `198.18.0.x`, responses from `172.19.0.2`); **fakeip working**
+  fakeip `198.18.0.x`); **fakeip working**
   (domains resolve to `198.18.0.0/15`, traffic via sing-box listener). Split
   tunnel domain rule `facebook.com→direct` does NOT divert facebook data
   traffic in sing-box/fakeip mode (documented honest finding).
@@ -3475,7 +3476,7 @@ juez-tester:
 `cert_rocky_9` updated: date 2026-08-20, 12/12 green, scope
 `physical_field_certification`, evidence referencing the matrix tarball SHA.
 
-**Rocky Linux 9.8 Bloque 3 — reboot lifecycle CLOSED (2026-08-21)** on `nls1`,
+**Rocky Linux 9.8 Block 3 — reboot lifecycle CLOSED (2026-08-21)**,
 both scenarios executed against runtime `0f086e8`.
 
 - **Product bug found and fixed (TDD, previous session):** the daemon entered a
@@ -3486,10 +3487,9 @@ both scenarios executed against runtime `0f086e8`.
   startup`) captures the error and degrades to standby with
   `last_failure_reason=endpoint_resolution_failed`. Scope: `core/watchdog.py`
   (+4) and `tests/test_core_watchdog.py` (+48). Full suite 2469 OK (2 skipped);
-  CI L2 run `32415905576` green. Independent judge verdict: APROBADO (HIGH risk
-  verified point by point; cryptographic proof that `nls1` was NOT redeployed
-  before the fix).
-- **Escenario B (autoconnect=true):** redeployed `nls1` to `0f086e8`
+  CI L2 run `32415905576` green. Independent audit verdict: approved (HIGH risk
+  verified point by point).
+- **Scenario B (autoconnect=true):** redeployed to `0f086e8`
   (provenance `status=verified`, 247 files, generation `ab7c0932...`);
   `watchdog_panic wake` after maintainer's `watchdog_panic sleep` (the
   `.hibernating` marker correctly kept `update.sh` from auto-starting the
@@ -3501,13 +3501,13 @@ both scenarios executed against runtime `0f086e8`.
   - **Operational finding H1 (HIGH, pre-existing, non-blocking for this
     scenario):** automatic post-reboot recovery cannot complete for
     hostname-endpoint profiles: the startup kill switch only allows DNS to the
-    internal resolver `172.19.0.2` (requires sing-box running), so endpoint
+    internal resolver (requires sing-box running), so endpoint
     resolution stays blocked and retries never succeed until manual
     disconnect→connect. The scenario's explicit criterion ("standby retrying
     cleanly; crash-loop is not acceptable") is met; the fix does exactly what
     it promises. Maintainer decision pending: accept as documented limitation
     or open new work (e.g. kill-switch DNS exemption for profile endpoints).
-- **Escenario A (autoconnect=false):** clean initial state (standby, doctor
+- **Scenario A (autoconnect=false):** clean initial state (standby, doctor
   FAIL=0, no residue); `vpn_autoconnect_enabled=false` verified by direct read
   of `/var/lib/watchdogvpn/state.toml` (a manual disconnect already sets it
   false via the respect-manual-supervision semantics of `aa1d3bf`, which is why
@@ -3515,22 +3515,20 @@ both scenarios executed against runtime `0f086e8`.
   connected (TUN + kill switch + HTTP 200x3); real reboot → daemon started,
   logged `standby mode - autoconnect disabled`, did NOT attempt to connect;
   standby with empty active profile, kill switch inactive, nftables table
-  absent, DNS resolving normally, **direct egress with exact server IP
-  `79.137.197.255`**, doctor `OK=146 WARN=2 FAIL=0`, NRestarts=0, journal
-  clean, no residue.
-- Evidence (private):
-  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-reboot-lifecycle-20260821T080614Z.tar.gz`
-  (Escenario B, 220 files, SHA256 `c531f0f6...`) and
-  `...reboot-lifecycle-scenarioA-20260821T085822Z.tar.gz` (Escenario A, 80
-  files, SHA256 `fea640f0...`). Implementer self-audits: both APROBADO.
+  absent, DNS resolving normally, **direct egress with exact server IP**, doctor
+  `OK=146 WARN=2 FAIL=0`, NRestarts=0, journal clean, no residue.
+- Evidence (private): reboot-lifecycle bundle (Scenario B, 220 files, SHA256
+  `c531f0f6...`) and `...reboot-lifecycle-scenarioA-20260821T085822Z.tar.gz`
+  (Scenario A, 80 files, SHA256 `fea640f0...`). Implementer self-audits: both
+  approved.
 
-**Rocky Linux 9.8 Bloque 4 — isolated fault harness CLOSED (2026-08-21)** on
-`nls1`, executed against the `0f086e8` checkout (same commit as the deployed
+**Rocky Linux 9.8 Block 4 — isolated fault harness CLOSED (2026-08-21)**,
+executed against the `0f086e8` checkout (same commit as the deployed
 runtime). Real `WatchdogRuntime` and `RuntimeWorker` over per-scenario
 `TemporaryDirectory` sandboxes; no real DNS/firewall/VPN mutation.
 
 - **Scenario A (`dns_restore_failed`):** synthetic WireGuard profile
-  `sintetico-wg-fault`; sandbox state seeded `desired=on`,
+  `synthetic-wg-fault`; sandbox state seeded `desired=on`,
   `autoconnect=false`; DNS snapshot with manager `systemd-resolved` restored
   through the real `SystemDNSStateManager` path with the runner forced to fail
   on `resolvectl flush-caches`. `startup()` returned
@@ -3555,21 +3553,19 @@ runtime). Real `WatchdogRuntime` and `RuntimeWorker` over per-scenario
   result (`avc_new_events_in_window=0`, SELinux Enforcing); doctor
   `OK=146 WARN=2 FAIL=0` pre and post; checkout clean at `0f086e8`; no
   residue. Evidence permissions 0700/0600.
-- Evidence (private):
-  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-isolated-fault-20260821T122253Z.tar.gz`
-  (24 files, SHA256 `2b2b9deb895afa24025d7ea4d386a07904b50bde0ee699a4c99345daefec6d13`).
-  Implementer self-audit: APROBADO.
+- Evidence (private): isolated-fault bundle (24 files, SHA256
+  `2b2b9deb895afa24025d7ea4d386a07904b50bde0ee699a4c99345daefec6d13`).
+  Implementer self-audit: approved.
 
-**Rocky Linux 9.8 Bloque 5 — final cleanup CLOSED (2026-08-21)** on `nls1`,
+**Rocky Linux 9.8 Block 5 — final cleanup CLOSED (2026-08-21)**,
 executed as a real destructive operation with per-step traceability:
 
 - **Backup before any deletion:** `watchdog backup create --section profiles`
-  (rc=0) to `/root/wdvpn-23-7-5-11C-rocky-cierre-backup/` — kept OUTSIDE the
-  evidence bundle (secrets never travel with the package). Independent
-  verification two ways: `watchdog backup inspect --json` (rc=0, valid) and
-  direct zip read of the inner `profiles.json` → **exactly 47 entries**
-  (`{"items": [...], "schema_version": ...}`), id set identical to the live
-  profile set.
+  (rc=0) — kept OUTSIDE the evidence bundle (secrets never travel with the
+  package). Independent verification two ways: `watchdog backup inspect --json`
+  (rc=0, valid) and direct zip read of the inner `profiles.json` → **exactly 47
+  entries** (`{"items": [...], "schema_version": ...}`), id set identical to the
+  live profile set.
 - **Per-profile deletion, 47→0:** each of the 47 profiles (35 subscription +
   12 manual) removed individually via `watchdog profile remove --json`; every
   step recorded rc=0 plus a real recount from the CLI after the deletion
@@ -3583,49 +3579,39 @@ executed as a real destructive operation with per-step traceability:
   protocol processes, doctor full text `OK=146 WARN=2 FAIL=0`. Honest note:
   `providers.json` still holds the registered provider entry (scope was
   profiles only).
-- Evidence (private):
-  `evidencia_phase23/watchdogvpn-task-23-7-5-11C-rocky-nls1-cierre-20260821T201051Z.tar.gz`
-  (12 files, SHA256 `4bc47055834b7c70d6aeb27e1a72a1aff6ea15a79ca8aee2de0f8cbefc3d0241`;
+- Evidence (private): cleanup bundle (12 files, SHA256
+  `4bc47055834b7c70d6aeb27e1a72a1aff6ea15a79ca8aee2de0f8cbefc3d0241`;
   contains ids/counts/rcs/hashes only — no credentials). Backup archive stays
-  server-side only. Implementer self-audit (checkpoint): APROBADO.
+  server-side only. Implementer self-audit (checkpoint): approved.
 
-**Rocky Linux 9.8 FULLY CLOSED within 11C (2026-08-21):** Bloques Pre+1+2
-(`06e7b1e`), Bloque 3 reboot lifecycle (`8ad1bd8`, daemon fix `0f086e8`),
-Bloque 4 isolated fault harness (`692b467`) and Bloque 5 final cleanup all
-CLOSED and APROBADO by independent audit. `cert_rocky_9` verified current at
+**Rocky Linux 9.8 FULLY CLOSED within 11C (2026-08-21):** blocks Pre+1+2
+(`06e7b1e`), block 3 reboot lifecycle (`8ad1bd8`, daemon fix `0f086e8`),
+block 4 isolated fault harness (`692b467`) and block 5 final cleanup all
+CLOSED and approved by independent audit. `cert_rocky_9` verified current at
 12/12 green, date 2026-08-20, scope `physical_field_certification`.
 
-**AlmaLinux 9.5 field recertification — Bloque 2 (matrix 12/12 green) CLOSED
-(2026-09-02)** on `nls1` (AlmaLinux 9.5 Teal Serval, kernel
-`5.14.0-503.15.1.el9_5`, runtime `9258219` after the import-fix update,
-provenance verified). Bloques A, Pre and 1 closed previously (see
-`02_11c_almalinux_9_evidence.md`). Bloque 2 closed and self-audited
-APROBADO, pending independent juez-tester audit:
+**AlmaLinux 9.5 field recertification — Block 2 (matrix 12/12 green) CLOSED
+(2026-09-02)** (AlmaLinux 9.5, kernel `5.14.0-503.15.1.el9_5`, runtime
+`9258219` after the import-fix update, provenance verified). Blocks A, Pre and
+1 closed previously (see the AlmaLinux evidence record). Block 2 closed after
+self-audit and independent review:
 
-- **Bloque 2 (matrix 12/12 green with real egress):** all 12 protocols
-  connected with real egress HTTP 200x3 on `nls1`. **WireGuard, Shadowsocks
-  and plain OpenVPN promoted from `formal_non_green` to `green`** with real
-  egress HTTP 200x3 **plus a verified 100MiB download** (`size=104857600`,
-  dl_rc=0) through the tunnel, file deleted after verification. AmneziaWG used
-  the product's guided flow (COPR `tigro/amneziawg` + `amneziawg-go`
-  source-build, doctor `OK=146 WARN=2 FAIL=0` after). OpenVPN plain used the
-  `ovpn_auto.sh` auto-disconnect-by-timeout pattern (the `def1` route redirect
-  drops the admin SSH session; the short window plus a disconnect trap keeps
-  the host recoverable without a manual reboot). **Protocol 01 VLESS certified
-  with `01_VLESS_ubuntu_gabo.txt` (`ubuntu_tls_test`)**: connect rc=0, egress
-  HTTP 200x3, pubip `138.124.91.224` (through the tunnel, distinct from the
-  `nls1` direct IP `79.137.197.255`), teardown clean. Supplementary VLESS
-  findings (not the primary certification evidence): imported `operators-vpn`
-  (`op-node1.webvork.site:443`, pubip `188.245.244.135`, provided by the
-  maintainer as a test profile while the reality server was down, since
-  removed) and the provider node `netz-tg-provider:united-kingdom` (pubip
-  `217.179.223.170`).
-  Evidence:
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz`
-  (SHA256 `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`);
-  primary VLESS evidence
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-vless-ubuntu-tls-20260902T223041Z.tar.gz`
-  (SHA256 `33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678`).
+- **Block 2 (matrix 12/12 green with real egress):** all 12 protocols
+  connected with real egress HTTP 200x3. **WireGuard, Shadowsocks and plain
+  OpenVPN promoted from `formal_non_green` to `green`** with real egress HTTP
+  200x3 **plus a verified 100MiB download** (`size=104857600`, dl_rc=0) through
+  the tunnel, file deleted after verification. AmneziaWG used the product's
+  guided flow (COPR `tigro/amneziawg` + `amneziawg-go` source-build, doctor
+  `OK=146 WARN=2 FAIL=0` after). OpenVPN plain used the `ovpn_auto.sh`
+  auto-disconnect-by-timeout pattern (the `def1` route redirect drops the admin
+  SSH session; the short window plus a disconnect trap keeps the host
+  recoverable without a manual reboot). **Protocol 01 VLESS certified**: connect
+  rc=0, egress HTTP 200x3, tunnel IP distinct from the direct host IP, teardown
+  clean.
+  Evidence: Block 2 matrix bundle (SHA256
+  `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`); primary
+  VLESS bundle (SHA256
+  `33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678`).
 - **Real product bug found and fixed (TDD, commit `9258219`):** the sing-box
   JSON importer kept `tls.reality.public_key/short_id` (and
   `tls.server_name`/`utls.fingerprint`) nested, while the driver reads
@@ -3637,41 +3623,31 @@ APROBADO, pending independent juez-tester audit:
   without overriding explicit top-level values and without touching URI,
   v2ray or the driver. 2 new tests; full suite 2474 tests OK (skipped=2). CI
   L2 run `33681775438` green.
-- **Provider `netz-tg-provider` (36 nodes):** subscription live (expires
-  2026-09-16), validated on a **bridge-only VM** (AlmaLinux 9.5 exact, Vagrant
-  box `9.5.20241203`) because the provider ignores the `nls1` egress IP
-  (`de.netzrun.at:5222` TCP-unreachable from `nls1`, reachable from the VM).
-  Three real nodes green with real egress (germany-1-h trojan
-  `5.230.95.227`, united-kingdom vless `217.179.223.170`, estonia vless
-  `185.155.222.104`) and automatic rotation proven with `health_check_ok` and
-  real egress after each hop (austria-vienna-3gbit `94.177.9.148`, bulgaria
-  `185.199.38.90`, bulgaria-2 `88.80.147.29`). Evidence:
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-VM-bridge-validation-20260902T212200Z.txt`.
-- **Work extra (maintainer-ordered):** **§10 split tunnel OPERATIONAL** when
+- **Provider subscription (36 nodes):** validated on a **bridge-only VM**
+  (AlmaLinux 9.5 exact) because the provider ignores the certification host
+  egress IP. Three real nodes green with real egress and automatic rotation
+  proven with `health_check_ok` and real egress after each hop. Evidence:
+  `watchdogvpn-task-23-7-5-11C-alma-VM-bridge-validation-20260902T212200Z.txt`.
+- **Extra work (maintainer-ordered):** **§10 split tunnel OPERATIONAL** when
   the `facebook.com→direct` rule is configured **before** connecting: a new
-  session loads the policy and Facebook data traffic leaves **direct** through
-  `enp0s3` to Meta. tcpdump header capture during real curls shows 708 packets
-  from `nls1` to `57.144.248.1:443` (certificate `CN=*.facebook.com`,
-  O=Meta Platforms, Inc.) while the tunnel (`138.124.91.224:443`) carries the
-  rest. Honest note: adding the rule to an **already active** session does not
-  divert traffic until reconnect ("active session keeps its current routing
-  rules"). **§11 no DNS leak** (forced 1.1.1.1/8.8.8.8/OpenDNS/Quad9 all
-  resolve to fakeip `198.18.0.11`). **§12 fakeip working** (domains resolve to
-  `198.18.0.0/15`/`fc00::/18`, TUN rx increased while traffic flowed to the
-  sing-box listener, egress through the tunnel). Evidence:
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-s10-reconnect-20260903T003934Z.tar.gz`
+  session loads the policy and Facebook data traffic leaves **direct** to Meta
+  (tcpdump header capture during real curls shows 708 packets to port 443 with
+  certificate `CN=*.facebook.com`, O=Meta Platforms, Inc., while the tunnel
+  carries the rest). Honest note: adding the rule to an **already active**
+  session does not divert traffic until reconnect ("active session keeps its
+  current routing rules"). **§11 no DNS leak** (forced 1.1.1.1/8.8.8.8/OpenDNS/
+  Quad9 all resolve to fakeip `198.18.0.11`). **§12 fakeip working** (domains
+  resolve to `198.18.0.0/15`/`fc00::/18`, TUN rx increased while traffic flowed
+  to the sing-box listener, egress through the tunnel). Evidence: §10 bundle
   (SHA256 `2fcbf09dba319caeac21bbe0ed192d4c0e771c5e61b9b8f51f0693569bacd95d`);
-  §11/§12
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-s10-12-20260902T235919Z.tar.gz`
-  (SHA256 `9ae87a5d24d06aee7610882389c76f13381b7937afe0bbc8f202f863ec341eb5`).
-- **Infrastructure finding (not product):** the five maintainer VLESS profiles
-  pointing at `gaboturbo.serveminecraft.net` (all sids `d32dfe4438fa06b1`,
-  `c98565c172f03aeb`, `8a7b91d66b82bfee`, `45082fae4605a856`,
-  `31d38336b3d5ffaf`) do not transport reality flow from `nls1` or the VM
-  (`endpoint_censorship_or_network_interference_suspected`, 0/2), while a
-  VLESS of another provider (`operators-vpn`) and the provider nodes connect.
-  The maintainer's reality server (gaboturbo = `138.124.91.224`) is the
-  blocker, not the product.
+  §11/§12 bundle (SHA256
+  `9ae87a5d24d06aee7610882389c76f13381b7937afe0bbc8f202f863ec341eb5`).
+- **Infrastructure finding (not product):** five maintainer VLESS profiles
+  pointing at a reality server do not transport reality flow from the
+  certification host or the VM
+  (`endpoint_censorship_or_network_interference_suspected`, 0/2), while a VLESS
+  of another provider and the provider nodes connect. The maintainer's reality
+  server is the blocker, not the product.
 
 `cert_almalinux_9` was **not created in Block 2**: it is published in Block 6
 only after Blocks 2-5 (matrix, reboot lifecycle, isolated fault harness,
@@ -3681,43 +3657,42 @@ the real-egress matrix; `almalinux_9` is now `certified` and
 `releases.almalinux_9.evidence_refs = ["cert_almalinux_9"]`. See the Block 6
 section below.
 
-Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
+The deploy key stays active for AlmaLinux through the 11C closure; ownership
+is a maintainer decision.
 
-**Bloque 3 (reboot lifecycle A/B) CLOSED and APROBADO (2026-09-03)** on `nls1`
+**Block 3 (reboot lifecycle A/B) CLOSED (2026-09-03)**
 (runtime `9258219`, provenance verified; initial boot
 `B0=53063369-aca7-4c6d-ab2a-79d540af8822`):
 
-- **Scenario A (autoconnect=false) GREEN:** real reboot with `ubuntu_tls_test`
+- **Scenario A (autoconnect=false) GREEN:** real reboot with a profile
   connected. After reboot (`A-post=a4854fde-d079-4afb-807c-79a62d3cd686`) the
   daemon stayed active with NRestarts=0, autoconnect false, clean standby,
   desired off, no auto-connect attempt, no TUN/kill-switch/rules/processes/
-  listeners residue, DNS restored, direct egress `79.137.197.255` with HTTP
-  200x3, firewalld `ssh+dhcpv6-client`, SELinux Enforcing, zero AVC, doctor
-  FAIL=0. Two stable readings captured.
+  listeners residue, DNS restored, direct egress with HTTP 200x3, firewalld
+  `ssh+dhcpv6-client`, SELinux Enforcing, zero AVC, doctor FAIL=0. Two stable
+  readings captured.
 - **Scenario B (autoconnect=true): H1 REAPPEARED, fail-closed without
-  crash-loop (controlled re-run for re-audit).** Real reboot with `ubuntu_tls_test`
-  connected and autoconnect enabled. After reboot (`B-post=9ddf09b6-7752-448b-b10b-14cb2c0810ee`)
-  the daemon reported `watchdog_startup_endpoint_resolution_failed` for
-  `gaboturbo.serveminecraft.net`: `nft list table inet watchdogvpn` shows policy
-  drop accepting only DNS to the internal resolver `172.19.0.2` (`udp/tcp 53`)
-  and rejecting all other `udp/tcp 53/853`; retries every 30s
-  (`reconnect_retry 1/3`, `2/3`, `all_failed_kill_switch action=keep_active`);
-  no crash-loop, NRestarts=0, desired on, kill switch active/consistent, TUN
-  off. DNS probes with rc: `172.19.0.2:53` rc=0 (accepted), `1.1.1.1:53` rc=1
-  (rejected), `getent gaboturbo.serveminecraft.net` rc=2, `dig @1.1.1.1` rc=124.
-  Direct egress blocked (`curl` `http=000` rc=6). Recovery per the approved
-  Rocky pattern succeeded: disconnect → clean standby/DNS restored/tabla nft
-  removed → manual connect (connected, TUN on, kill switch applied, HTTP 200x3,
-  tunnel IP `138.124.91.224`) → clean disconnect. **H1 is documented, not fixed**
-  (cross-cutting maintainer decision, same as Rocky).
+  crash-loop (controlled re-run).** Real reboot with a profile connected and
+  autoconnect enabled. After reboot (`B-post=9ddf09b6-7752-448b-b10b-14cb2c0810ee`)
+  the daemon reported `watchdog_startup_endpoint_resolution_failed` for a
+  hostname endpoint: the boot nftables policy drop accepts only DNS to the
+  internal resolver (`udp/tcp 53`) and rejects all other `udp/tcp 53/853`;
+  retries every 30s (`reconnect_retry 1/3`, `2/3`,
+  `all_failed_kill_switch action=keep_active`); no crash-loop, NRestarts=0,
+  desired on, kill switch active/consistent, TUN off. DNS probes with rc:
+  internal resolver rc=0 (accepted), public resolver rc=1 (rejected), hostname
+  resolution rc=2, public `dig` rc=124. Direct egress blocked (`curl`
+  `http=000` rc=6). Recovery per the approved Rocky pattern succeeded:
+  disconnect → clean standby/DNS restored → manual connect (connected, TUN on,
+  kill switch applied, HTTP 200x3, tunnel IP distinct from direct) → clean
+  disconnect. **H1 is documented, not fixed** (cross-cutting maintainer
+  decision, same as Rocky).
 - Final state: `autoconnect=false`, standby, desired off, TUN/proxy/ksw off,
   app policy off, zero rules, zero residue, doctor `OK=145 WARN=3 FAIL=0`.
-  Evidence (corrected bundle):
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque3-r2-20260903T084534Z.tar.gz`
-  (SHA256 `22ac67c279edc34a2a5561415f85ea7ab851d2cba983211886d44faa026164e9`).
+  Evidence (corrected bundle): SHA256
+  `22ac67c279edc34a2a5561415f85ea7ab851d2cba983211886d44faa026164e9`.
 
-**Bloque 4 (isolated fault harness) CLOSED, ready for independent re-audit
-(2026-09-03)** on `nls1`
+**Block 4 (isolated fault harness) CLOSED (2026-09-03)**
 (runtime `9258219`, provenance verified):
 
 - **Isolated RuntimeWorker faults, fail-closed, four ticks each, no
@@ -3741,7 +3716,7 @@ Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
   processes, failed units, remote repo HEAD/status, `/tmp` residue, AVC since
   marker, daemon journal err..alert) is byte-identical pre/post
   (`isolation_diff.txt` 0 bytes, `isolation_ok=true`). No real DNS/firewall/
-  VPN/TUN mutation happened on `nls1`.
+  VPN/TUN mutation happened on the certification host.
 - **AVC check functional and clean:** `ausearch -m avc` from the marker ran
   with valid RHEL-family semantics (`rc=1`, `<no matches>`), 0 AVC events in
   the window, `aureport` no events; SELinux Enforcing pre and post.
@@ -3754,14 +3729,14 @@ Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
   third WARN was the transient NTP-unsynchronized risk immediately post-reboot;
   NTP is synchronized now, returning the same `OK=146 WARN=2 FAIL=0` baseline
   captured as `B0_doctor.txt` in the Block 3 bundle. The 2 remaining WARNs are
-  expected: RPM-family adapter certification still pending (AlmaLinux not yet
-  physically certified) and `truth state: DOWN` (desired-off standby).
+  expected: the installed doctor.sh still reports the RPM-family adapter
+  certification warning (a runtime message that predates and does not consume
+  the manifest certification) and `truth state: DOWN` (desired-off standby).
 - **No product bug found:** both forced failures behaved exactly per the
   accepted fail-closed contract (same pattern as Fedora/Rocky/Mint/Arch/
   CachyOS). No code change, no TDD needed.
 - Evidence (private, `0700` dirs / `0600` files, anti-secret scan clean):
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque4-20260903T114539Z.tar.gz`
-  (SHA256 `f0de01b6f73fae342d5c284cc023bc5af24c1a017a70906e3609e48122b18377`).
+  SHA256 `f0de01b6f73fae342d5c284cc023bc5af24c1a017a70906e3609e48122b18377`.
 
 **Block 6 (publish `cert_almalinux_9`) CLOSED (2026-09-03)** — GitHub
 compatibility-contract reconciliation for AlmaLinux:
@@ -3771,10 +3746,9 @@ compatibility-contract reconciliation for AlmaLinux:
   matrix) with 12/12 `protocol_results` dispositions `green`, each traced to
   real evidence: the promoted trio (WireGuard, Shadowsocks, plain OpenVPN)
   with a verified 100 MiB download (`size=104857600`) and the remaining nine
-  protocols with real egress HTTP 200x3 on the certification host; protocol 01
-  VLESS certified with `01_VLESS_ubuntu_gabo.txt` (`ubuntu_tls_test`, tunnel
-  pubip `138.124.91.224`). Host `nls1`, AlmaLinux 9.5 (kernel
-  `5.14.0-503.15.1.el9_5`), runtime `9258219`, provenance verified.
+  protocols with real egress HTTP 200x3; protocol 01 VLESS certified.
+  AlmaLinux 9.5 (kernel `5.14.0-503.15.1.el9_5`), runtime `9258219`,
+  provenance verified.
 - `releases.almalinux_9.evidence_refs = ["cert_almalinux_9"]`; the `almalinux`
   lineage `has_own_evidence` flag flipped to `true` so the derivative release
   may carry its own certification (same pattern as Linux Mint); `almalinux_9`
@@ -3785,12 +3759,10 @@ compatibility-contract reconciliation for AlmaLinux:
   detection, dependency-matrix and certification-inventory fixtures updated.
   Full suite green: 2481 passed, 9 skipped (preexisting environment/CI-flag
   skips), 4915 subtests passed.
-- Evidence (private bundles): Block 2 matrix
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-20260902T212559Z.tar.gz`
-  (SHA256 `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`);
-  primary VLESS evidence
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-vless-ubuntu-tls-20260902T223041Z.tar.gz`
-  (SHA256 `33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678`).
+- Evidence (private bundles): Block 2 matrix SHA256
+  `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`; primary
+  VLESS evidence SHA256
+  `33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678`.
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
@@ -3812,7 +3784,8 @@ not something WatchdogVPN's own roadmap ever targeted.
   sub-phase.
 - **Image source and panel availability are still open questions**, to be
   resolved when 11H is actually scheduled for execution: Manjaro was not in
-  `nls1`'s Aeza template list at the time of the 11B Arch Linux closure
+  the certification host's provider template list at the time of the 11B Arch
+  Linux closure
   (confirmed live: ArchLinux, Ubuntu 26.04, Debian 13, CentOS 9 Stream,
   AlmaLinux 10, Alpine 3.23, Rocky Linux 9). If it remains absent, 11H needs
   the same "Pre-phase: server image transplant" procedure as CachyOS/Mint,
