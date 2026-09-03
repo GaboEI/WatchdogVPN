@@ -3710,6 +3710,53 @@ Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
   `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque3-r2-20260903T084534Z.tar.gz`
   (SHA256 `22ac67c279edc34a2a5561415f85ea7ab851d2cba983211886d44faa026164e9`).
 
+**Bloque 4 (isolated fault harness) CLOSED, ready for independent re-audit
+(2026-09-03)** on `nls1`
+(runtime `9258219`, provenance verified):
+
+- **Isolated RuntimeWorker faults, fail-closed, four ticks each, no
+  auto-reconnect:** a real `WatchdogRuntime` + `RuntimeWorker` from the
+  `9258219` checkout ran with every I/O field injected to per-scenario
+  temporary trees (environment sandbox). Scenario A `dns_restore_failed`:
+  startup status and all four `health_check` ticks report `dns_restore_failed`,
+  mode `standby`, desired state stays `on` (fail-closed), DNS snapshot
+  persists (not unlinked), the real DNS path is exercised (`resolvectl revert`
+  + forced `resolvectl flush-caches` failure), `connect_calls=0`,
+  `health_calls=0`, worker alive through 4 ticks and stopped cleanly.
+  Scenario B `kill_switch_disable_failed`: startup status and all four ticks
+  report `kill_switch_disable_failed`, mode `standby`, desired state `on`,
+  `kill_switch.disable()` invoked once but the kill switch remains active at
+  startup and after every tick (fail-closed), DNS restore consumed OK,
+  `connect_calls=0`, `health_calls=0`, worker alive through 4 ticks.
+  `VERDICT=PASS`, `FAILURES=[]`.
+- **Sandboxing proven before any no-mutation claim:** the isolation manifest
+  (sha256 of `/var/lib/watchdogvpn` and `/etc/watchdogvpn` files,
+  `/etc/resolv.conf`, nftables tables, firewalld zone hash, ip links, protocol
+  processes, failed units, remote repo HEAD/status, `/tmp` residue, AVC since
+  marker, daemon journal err..alert) is byte-identical pre/post
+  (`isolation_diff.txt` 0 bytes, `isolation_ok=true`). No real DNS/firewall/
+  VPN/TUN mutation happened on `nls1`.
+- **AVC check functional and clean:** `ausearch -m avc` from the marker ran
+  with valid RHEL-family semantics (`rc=1`, `<no matches>`), 0 AVC events in
+  the window, `aureport` no events; SELinux Enforcing pre and post.
+- **Cleanup:** `TemporaryDirectory` trees gone (no `/tmp/wdvpn-11c-alma-fault-*`
+  residue), remote repo checkout clean (`status 0`, HEAD `9258219`).
+- Final host state: daemon standby, desired off, no TUN/proxy/kill-switch,
+  firewalld base only (`inet firewalld` table), zero protocol processes, zero
+  failed units, SELinux Enforcing, doctor pre/post `OK=146 WARN=2 FAIL=0`
+  (0 FAIL). The documented Block 3 `OK=145 WARN=3 FAIL=0` is explained: the
+  third WARN was the transient NTP-unsynchronized risk immediately post-reboot;
+  NTP is synchronized now, returning the same `OK=146 WARN=2 FAIL=0` baseline
+  captured as `B0_doctor.txt` in the Block 3 bundle. The 2 remaining WARNs are
+  expected: RPM-family adapter certification still pending (AlmaLinux not yet
+  physically certified) and `truth state: DOWN` (desired-off standby).
+- **No product bug found:** both forced failures behaved exactly per the
+  accepted fail-closed contract (same pattern as Fedora/Rocky/Mint/Arch/
+  CachyOS). No code change, no TDD needed.
+- Evidence (private, `0700` dirs / `0600` files, anti-secret scan clean):
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque4-20260903T114539Z.tar.gz`
+  (SHA256 `f0de01b6f73fae342d5c284cc023bc5af24c1a017a70906e3609e48122b18377`).
+
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
 Added by explicit maintainer decision after a community developer report that
