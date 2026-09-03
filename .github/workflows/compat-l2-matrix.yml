@@ -6,11 +6,13 @@ on:
       - phase-23-7-5-compatibility-contract
       - phase-23-7-5-11B-arch-cachyos
       - phase-23-7-5-11C-rpm
+      - phase-23-7-5-11D-opensuse
   pull_request:
     branches:
       - phase-23-7-5-compatibility-contract
       - phase-23-7-5-11B-arch-cachyos
       - phase-23-7-5-11C-rpm
+      - phase-23-7-5-11D-opensuse
   workflow_dispatch:
 
 concurrency:
