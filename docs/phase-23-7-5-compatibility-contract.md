@@ -3677,8 +3677,9 @@ cleanup) are all satisfied, per the AlmaLinux route. The manifest still keeps
 
 Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
 
-**Bloque 3 (reboot lifecycle A/B) CLOSED (2026-09-03)** on `nls1` (runtime
-`9258219`, provenance verified; initial boot `B0=53063369-aca7-4c6d-ab2a-79d540af8822`):
+**Bloque 3 (reboot lifecycle A/B) CLOSED, READY FOR INDEPENDENT RE-AUDIT
+(2026-09-03)** on `nls1` (runtime `9258219`, provenance verified; initial boot
+`B0=53063369-aca7-4c6d-ab2a-79d540af8822`):
 
 - **Scenario A (autoconnect=false) GREEN:** real reboot with `ubuntu_tls_test`
   connected. After reboot (`A-post=a4854fde-d079-4afb-807c-79a62d3cd686`) the
@@ -3688,25 +3689,26 @@ Deploy key `160954345` stays active for AlmaLinux through Block 5/7.
   200x3, firewalld `ssh+dhcpv6-client`, SELinux Enforcing, zero AVC, doctor
   FAIL=0. Two stable readings captured.
 - **Scenario B (autoconnect=true): H1 REAPPEARED, fail-closed without
-  crash-loop.** Real reboot with `ubuntu_tls_test` connected and autoconnect
-  enabled. After reboot (`B-post=578cc52b-1a8e-4637-b646-c79ea6e3e309`) the
-  daemon reported `watchdog_startup_endpoint_resolution_failed` for
-  `gaboturbo.serveminecraft.net`: the boot kill switch only permits DNS to the
-  internal resolver `172.19.0.2` (nftables `inet watchdogvpn` rejects all other
-  `udp/tcp 53/853`), so the hostname endpoint cannot be resolved. Observable
-  retries every 30s (`reconnect_retry 1/3`, `2/3`,
-  `all_failed_kill_switch action=keep_active`), no crash-loop, NRestarts=0,
-  desired on, kill switch active/consistent, TUN off, no unprotected egress
-  (direct curl `http=000`). Recovery per the approved Rocky pattern succeeded:
-  disconnect → clean standby/DNS functional → manual connect (connected, TUN
-  on, kill switch applied, HTTP 200x3, tunnel IP `138.124.91.224`) → clean
-  disconnect. **H1 is documented, not fixed** (cross-cutting maintainer
-  decision, same as Rocky).
+  crash-loop (controlled re-run for re-audit).** Real reboot with `ubuntu_tls_test`
+  connected and autoconnect enabled. After reboot (`B-post=9ddf09b6-7752-448b-b10b-14cb2c0810ee`)
+  the daemon reported `watchdog_startup_endpoint_resolution_failed` for
+  `gaboturbo.serveminecraft.net`: `nft list table inet watchdogvpn` shows policy
+  drop accepting only DNS to the internal resolver `172.19.0.2` (`udp/tcp 53`)
+  and rejecting all other `udp/tcp 53/853`; retries every 30s
+  (`reconnect_retry 1/3`, `2/3`, `all_failed_kill_switch action=keep_active`);
+  no crash-loop, NRestarts=0, desired on, kill switch active/consistent, TUN
+  off. DNS probes with rc: `172.19.0.2:53` rc=0 (accepted), `1.1.1.1:53` rc=1
+  (rejected), `getent gaboturbo.serveminecraft.net` rc=2, `dig @1.1.1.1` rc=124.
+  Direct egress blocked (`curl` `http=000` rc=6). Recovery per the approved
+  Rocky pattern succeeded: disconnect → clean standby/DNS restored/tabla nft
+  removed → manual connect (connected, TUN on, kill switch applied, HTTP 200x3,
+  tunnel IP `138.124.91.224`) → clean disconnect. **H1 is documented, not fixed**
+  (cross-cutting maintainer decision, same as Rocky).
 - Final state: `autoconnect=false`, standby, desired off, TUN/proxy/ksw off,
   app policy off, zero rules, zero residue, doctor `OK=145 WARN=3 FAIL=0`.
-  Evidence:
-  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque3-20260903T081140Z.tar.gz`
-  (SHA256 `474c3203a81c8c9feefb1c1f4405eda565f98c73bedf25c78ea00c59d3458eca`).
+  Evidence (corrected bundle):
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque3-r2-20260903T084534Z.tar.gz`
+  (SHA256 `22ac67c279edc34a2a5561415f85ea7ab851d2cba983211886d44faa026164e9`).
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
