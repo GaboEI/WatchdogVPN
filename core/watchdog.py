@@ -532,6 +532,10 @@ class WatchdogRuntime:
             LOGGER.error("watchdog_startup_management_path_unsafe error=%s", exc)
             self._record_last_failure("management_path_unprotected")
             return ConnectionState(status="standby", mode="standby")
+        except EndpointPolicyConnectionError as exc:
+            LOGGER.error("watchdog_startup_endpoint_resolution_failed error=%s", exc)
+            self._record_last_failure("endpoint_resolution_failed")
+            return self.standby_state()
         try:
             active_driver = self._activate_driver(driver)
         except TeardownBarrierError:

@@ -1994,6 +1994,54 @@ class WatchdogCoreTests(unittest.TestCase):
         current_driver.disconnect_mock.assert_not_called()
         rejected_driver.connect_mock.assert_not_called()
 
+    def test_startup_degrades_to_standby_on_endpoint_resolution_failure(self) -> None:
+        profile = Profile(
+            id="trojan-startup-resolution",
+            name="Trojan startup resolution",
+            protocol=ProtocolType.TROJAN,
+            config={
+                "endpoint": "gaboturbo.serveminecraft.net:5222",
+                "password": "test-password",
+            },
+            source=ProfileSource.MANUAL,
+        )
+        self.profile_store.add(profile)
+        self.state_manager.save(
+            {
+                "vpn_desired_state": "on",
+                "vpn_autoconnect_enabled": True,
+                "active_profile_id": profile.id,
+            }
+        )
+        current_driver = FakeDriver()
+        runtime = WatchdogRuntime(
+            driver=current_driver,
+            state_manager=self.state_manager,
+            profile_store=self.profile_store,
+        )
+
+        with patch.object(
+            runtime,
+            "_prepare_driver_for_connection",
+            side_effect=EndpointPolicyConnectionError(
+                "endpoint policy rejected connection: endpoint resolution failed"
+            ),
+        ):
+            with self.assertLogs("core.watchdog", level="ERROR") as logs:
+                state = runtime.startup()
+
+        self.assertEqual(state.status, "standby")
+        self.assertEqual(state.mode, "standby")
+        self.assertEqual(
+            self.state_manager.get("last_failure_reason"),
+            "endpoint_resolution_failed",
+        )
+        self.assertIn(
+            "watchdog_startup_endpoint_resolution_failed",
+            "\n".join(logs.output),
+        )
+        current_driver.connect_mock.assert_not_called()
+
     def test_rotation_rejects_unsupported_policy_before_disconnect(self) -> None:
         profile = Profile(
             id="cloak-policy",

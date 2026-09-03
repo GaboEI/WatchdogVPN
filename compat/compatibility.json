@@ -354,57 +354,57 @@
     },
     "cert_fedora_44": {
       "current": true,
-      "date": "2026-07-22T00:00:00Z",
+      "date": "2026-08-19T00:00:00Z",
       "distribution": "fedora",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.5 Fedora closure and private evidence",
+      "evidence": "23.7.5.11C Fedora 44 field recertification (kernel 7.1.8-200); 12/12 protocols green with real egress; matrix evidence SHA256 98c443893d385cb5fa9cdf6f93db3470742fd6725af413a4e93fec7f1bbbf31b; runtime bd316eb, provenance verified",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "http": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "openvpn": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 via ovpn_auto.sh; first attempt rc=70 due to def1 route redirect, second attempt with auto-disconnect succeeded; operational finding, not product bug"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "shadowsocks": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3"
         },
         "wireguard": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
         }
       },
       "release": "fedora_44",
@@ -528,9 +528,9 @@
     },
     "cert_rocky_9": {
       "current": true,
-      "date": "2026-07-23T00:00:00Z",
+      "date": "2026-08-20T00:00:00Z",
       "distribution": "rocky",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.5b Rocky Linux 9 closure and private evidence",
+      "evidence": "23.7.5.11C Rocky Linux 9.8 field recertification (kernel 5.14.0-687.39.1.el9_8); 12/12 protocols green with real egress + 100MiB download for the promoted trio; matrix evidence SHA256 2bbce34d5a278d6716054311df1894a9c0b96bb0dd9ff0f7bdf4352c761b65e5; runtime b23577b, provenance verified",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -545,16 +545,16 @@
           "evidence": "certification matrix real egress"
         },
         "openvpn": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         },
         "openvpn_cloak": {
           "disposition": "green",
           "evidence": "certification matrix real egress"
         },
         "shadowsocks": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         },
         "socks": {
           "disposition": "green",
@@ -577,8 +577,8 @@
           "evidence": "certification matrix real egress"
         },
         "wireguard": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
         }
       },
       "release": "rocky_9",
@@ -640,6 +640,64 @@
         }
       },
       "release": "ubuntu_24_04",
+      "scope": "physical_field_certification"
+    },
+    "cert_almalinux_9": {
+      "current": true,
+      "date": "2026-09-02T00:00:00Z",
+      "distribution": "almalinux",
+      "evidence": "23.7.5.11C AlmaLinux 9.5 field recertification (kernel 5.14.0-503.15.1.el9_5); 12/12 protocols green with real egress, promoted trio (WireGuard/Shadowsocks/plain OpenVPN) with verified 100MiB download, protocol 01 VLESS certified; matrix evidence SHA256 a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69; primary VLESS evidence SHA256 33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678; runtime 9258219, provenance verified",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        }
+      },
+      "release": "almalinux_9",
       "scope": "physical_field_certification"
     }
   },
@@ -3558,17 +3616,17 @@
       "id": "almalinux",
       "lineage": {
         "family_inference_allowed": true,
-        "has_own_evidence": false,
+        "has_own_evidence": true,
         "is_derivative": true
       },
       "policy": {
         "inherits_family_support": false,
         "stable": {
-          "admitted_releases": [],
-          "excluded_releases": [],
-          "pending_releases": [
+          "admitted_releases": [
             "almalinux_9"
-          ]
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
         }
       },
       "release_model": "stable",
@@ -3969,7 +4027,9 @@
     "almalinux_9": {
       "distribution": "almalinux",
       "eol_or_withdrawn": false,
-      "evidence_refs": [],
+      "evidence_refs": [
+        "cert_almalinux_9"
+      ],
       "meets_technical_floor": true,
       "os_release_version_ids": [
         "9.0",
@@ -3982,7 +4042,7 @@
         "9.7",
         "9.8"
       ],
-      "policy_state": "pending_evaluation",
+      "policy_state": "admitted",
       "vendor_maintained": true,
       "version": "9"
     },
@@ -4327,9 +4387,9 @@
         "status": "not_run"
       },
       "fedora_44": {
-        "evidence": null,
-        "l1_l2_green": false,
-        "status": "not_run"
+        "evidence": "L2 Compatibility Matrix CI run 32353570891 green on HEAD 27620d2 (2026-08-20); field matrix evidence at SHA 98c443893d385cb5fa9cdf6f93db3470742fd6725af413a4e93fec7f1bbbf31b",
+        "l1_l2_green": true,
+        "status": "green"
       },
       "linuxmint_22_3": {
         "evidence": null,

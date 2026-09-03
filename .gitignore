@@ -37,3 +37,7 @@ tmp/
 
 # IDE/editor tool configs that may land in project root
 /config.json
+
+# Local agent/tool state (never repository content; must not dirty the
+# provenance clean-checkout gate regardless of the user's global excludesFile)
+.claude/
