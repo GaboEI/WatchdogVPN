@@ -3644,14 +3644,21 @@ APROBADO, pending independent juez-tester audit:
   real egress after each hop (austria-vienna-3gbit `94.177.9.148`, bulgaria
   `185.199.38.90`, bulgaria-2 `88.80.147.29`). Evidence:
   `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-VM-bridge-validation-20260902T212200Z.txt`.
-- **Work extra (maintainer-ordered):** split-tunnel domain rule
-  `facebook.com→direct` is accepted but does NOT divert facebook data traffic
-  in sing-box/fakeip mode (honest finding, same as Rocky); controlled DNS-leak
-  test showed **no leak** (forced queries to 1.1.1.1/8.8.8.8/OpenDNS/Quad9 all
-  resolve to fakeip `198.18.0.11`); **fakeip working** (domains resolve to
+- **Work extra (maintainer-ordered):** **§10 split tunnel OPERATIONAL** when
+  the `facebook.com→direct` rule is configured **before** connecting: a new
+  session loads the policy and Facebook data traffic leaves **direct** through
+  `enp0s3` to Meta. tcpdump header capture during real curls shows 708 packets
+  from `nls1` to `57.144.248.1:443` (certificate `CN=*.facebook.com`,
+  O=Meta Platforms, Inc.) while the tunnel (`138.124.91.224:443`) carries the
+  rest. Honest note: adding the rule to an **already active** session does not
+  divert traffic until reconnect ("active session keeps its current routing
+  rules"). **§11 no DNS leak** (forced 1.1.1.1/8.8.8.8/OpenDNS/Quad9 all
+  resolve to fakeip `198.18.0.11`). **§12 fakeip working** (domains resolve to
   `198.18.0.0/15`/`fc00::/18`, TUN rx increased while traffic flowed to the
-  sing-box listener, egress through the tunnel). Raw §10-12 captures
-  materialized with `ubuntu_tls_test`:
+  sing-box listener, egress through the tunnel). Evidence:
+  `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-s10-reconnect-20260903T003934Z.tar.gz`
+  (SHA256 `2fcbf09dba319caeac21bbe0ed192d4c0e771c5e61b9b8f51f0693569bacd95d`);
+  §11/§12
   `phase23_evidence/watchdogvpn-task-23-7-5-11C-alma-nls1-bloque2-s10-12-20260902T235919Z.tar.gz`
   (SHA256 `9ae87a5d24d06aee7610882389c76f13381b7937afe0bbc8f202f863ec341eb5`).
 - **Infrastructure finding (not product):** the five maintainer VLESS profiles
