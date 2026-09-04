@@ -468,33 +468,59 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
         if not self._curl_available():
             return resolver.AvailabilityObservation(
                 resolver.AvailabilityStatus.UNKNOWN.value,
-                evidence="curl not available in container for HEAD probe",
+                evidence="curl not available in container for HTTP probe",
                 reason="head_probe_tool_missing",
                 error_kind="provider_error",
             )
         # HTTP probe with HEAD -> GET fallback. Some CDN edge nodes (e.g.
         # dl.fedoraproject.org) reject or fail to answer HEAD (403/405), which
         # previously produced an inconclusive UNKNOWN that blocked the whole L2
-        # gate even though the resource exists and answers GET. The probe now
-        # falls back to a bounded GET for transitory HEAD failures while
-        # keeping the fail-closed contract:
+        # gate even though the resource exists and answers GET. The probe falls
+        # back to a bounded GET for transitory HEAD failures while keeping the
+        # fail-closed contract:
         #   - HEAD 2xx       -> available (no GET).
-        #   - HEAD 404/410   -> unavailable (no GET; definitive absence).
-        #   - HEAD 403/405, timeout or transitory failure -> bounded GET.
-        #   - GET 2xx        -> available (only verified 2xx counts).
+        #   - HEAD 404/410   -> unavailable (definitive absence, no GET).
+        #   - HEAD 403/405, timeout, DNS, connection failure or transitory
+        #     failure -> bounded GET fallback.
+        #   - GET 2xx        -> available (only a verified 2xx counts).
         #   - GET 404/410    -> unavailable.
-        #   - timeout, DNS, 429/5xx, execution failure or ambiguous persistent
-        #     result -> UNKNOWN (blocks the gate; never converted to green).
-        # GET is bounded: --max-time, -r 0-0 (single byte, no full download),
-        # output discarded to /dev/null. Evidence records the final method,
-        # URL, result and per-phase errors.
+        #   - HTTP 2xx reached but transfer stopped by our byte limit
+        #     (curl --max-filesize aborts with rc 63; the 2xx proves the
+        #     resource exists) -> available.
+        #   - timeout, DNS, connection failure, HTTP 000, 429/5xx, execution
+        #     failure or any ambiguous result -> UNKNOWN (blocks the gate).
+        # 404/410 are classified EXCLUSIVELY by the %{http_code} output; an
+        # HTTP 000 or a malformed response is never treated as not-found even
+        # when the URL or stderr happens to contain "404"/"410" (e.g. a DNS
+        # error message mentioning the string). The GET is bounded by a real
+        # byte limit (--max-filesize), the output is discarded to /dev/null,
+        # and evidence records method, URL, HTTP code and the current/max
+        # attempt.
         max_attempts = 3
         backoff_seconds = 2.0
         head_error = ""
         get_error = ""
 
-        def _final_method_label(fallback_get: bool, http_code: str) -> str:
+        def _method_label(fallback_get: bool) -> str:
             return "GET(HEAD-fallback)" if fallback_get else "HEAD"
+
+        def _evidence(fallback_get: bool, http_code: str, attempt: int, outcome: str) -> str:
+            return "%s %s attempt %d/%d -> %s (HTTP %s) [%s]" % (
+                evidence_prefix, _method_label(fallback_get), attempt, max_attempts,
+                outcome, http_code or "none", url,
+            )
+
+        def _code2xx(probe: dict) -> str | None:
+            code = (probe.get("stdout") or "").strip()
+            if probe["returncode"] == 0 and code.isdigit() and 200 <= int(code) < 300:
+                return code
+            return None
+
+        def _not_found_code(probe: dict) -> str | None:
+            code = (probe.get("stdout") or "").strip()
+            if code in ("404", "410"):
+                return code
+            return None
 
         # --- HEAD phase ---
         for attempt in range(1, max_attempts + 1):
@@ -509,36 +535,35 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
                     continue
                 return resolver.AvailabilityObservation(
                     resolver.AvailabilityStatus.UNKNOWN.value,
-                    evidence="%s HEAD probe did not execute: %s" % (evidence_prefix, url),
+                    evidence=_evidence(False, "", attempt, "probe did not execute"),
                     reason="%s_head_probe_failed" % evidence_prefix.replace(" ", "_"),
                     error_kind="%s_head_probe_failed" % evidence_prefix.replace(" ", "_"),
                 )
-            code = (probe.get("stdout") or "").strip()
-            stderr = (probe.get("stderr") or "").lower()
-            if probe["returncode"] == 0 and code.isdigit() and 200 <= int(code) < 300:
+            code = _code2xx(probe)
+            if code is not None:
                 return resolver.AvailabilityObservation(
                     resolver.AvailabilityStatus.AVAILABLE.value,
-                    evidence="%s %s reachable: %s (HTTP %s)" % (
-                        evidence_prefix, _final_method_label(False, code), url, code),
+                    evidence=_evidence(False, code, attempt, "reachable"),
                     reason="%s_head_reachable" % evidence_prefix.replace(" ", "_"),
                 )
-            if code in ("404", "410") or "404" in stderr or "410" in stderr or "not found" in stderr:
+            code = _not_found_code(probe)
+            if code is not None:
                 return resolver.AvailabilityObservation(
                     resolver.AvailabilityStatus.UNAVAILABLE.value,
-                    evidence="%s HEAD returned %s: %s" % (evidence_prefix, code or "not found", url),
+                    evidence=_evidence(False, code, attempt, "not found"),
                     reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
                     error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
                 )
-            # HEAD rejected or transitory failure (403/405, timeout, 429/5xx,
-            # connection reset, ...): fall back to a bounded GET.
-            head_error = "HEAD rc=%s code=%s stderr=%r" % (
-                probe.get("returncode"), code, (probe.get("stderr") or "").strip()[:200])
+            # HEAD rejected or transitory failure (403/405, timeout, DNS,
+            # connection reset, HTTP 000, 429/5xx, ...): bounded GET fallback.
+            head_error = "HEAD rc=%s code=%s" % (
+                probe.get("returncode"), (probe.get("stdout") or "").strip() or "?")
             break
 
-        # --- GET fallback phase (bounded) ---
+        # --- GET fallback phase (bounded by a real byte limit) ---
         for attempt in range(1, max_attempts + 1):
             probe = self._exec(
-                "curl -L -f -sS --max-time 15 -r 0-0 -o /dev/null -w '%%{http_code}' %s"
+                "curl -L -f -sS --max-time 15 --max-filesize 5242880 -o /dev/null -w '%%{http_code}' %s"
                 % shlex.quote(url)
             )
             if probe["runtime_status"] != "executed":
@@ -547,25 +572,34 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
                     time.sleep(backoff_seconds * attempt)
                     continue
                 break
-            code = (probe.get("stdout") or "").strip()
-            stderr = (probe.get("stderr") or "").lower()
-            if probe["returncode"] == 0 and code.isdigit() and 200 <= int(code) < 300:
+            code = _code2xx(probe)
+            if code is not None:
                 return resolver.AvailabilityObservation(
                     resolver.AvailabilityStatus.AVAILABLE.value,
-                    evidence="%s %s reachable: %s (HTTP %s)" % (
-                        evidence_prefix, _final_method_label(True, code), url, code),
+                    evidence=_evidence(True, code, attempt, "reachable"),
                     reason="%s_get_fallback_reachable" % evidence_prefix.replace(" ", "_"),
                 )
-            if code in ("404", "410") or "404" in stderr or "410" in stderr or "not found" in stderr:
+            code = _not_found_code(probe)
+            if code is not None:
                 return resolver.AvailabilityObservation(
                     resolver.AvailabilityStatus.UNAVAILABLE.value,
-                    evidence="%s GET(HEAD-fallback) returned %s: %s" % (
-                        evidence_prefix, code or "not found", url),
+                    evidence=_evidence(True, code, attempt, "not found"),
                     reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
                     error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
                 )
-            get_error = "GET rc=%s code=%s stderr=%r" % (
-                probe.get("returncode"), code, (probe.get("stderr") or "").strip()[:200])
+            code = (probe.get("stdout") or "").strip()
+            if code.isdigit() and 200 <= int(code) < 300 and probe["returncode"] == 63:
+                # Server answered 2xx but curl stopped the transfer because our
+                # byte limit was reached: the resource exists and is reachable.
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence=_evidence(True, code, attempt, "reachable, download bounded by limit"),
+                    reason="%s_get_fallback_reachable" % evidence_prefix.replace(" ", "_"),
+                )
+            # timeout, DNS, connection failure, HTTP 000, 429/5xx or ambiguous
+            # result: retry; persistent -> UNKNOWN (fail-closed).
+            get_error = "GET rc=%s code=%s" % (
+                probe.get("returncode"), code or "?")
             if attempt < max_attempts:
                 time.sleep(backoff_seconds * attempt)
                 continue
@@ -1914,6 +1948,12 @@ class ContainerAvailabilityProviderHeadProbeTests(unittest.TestCase):
     ambiguous) stays UNKNOWN.
     """
 
+    def setUp(self) -> None:
+        # Make retry backoff instant so the retry tests are fast.
+        sleep_patcher = mock.patch(__name__ + ".time.sleep")
+        self._sleep_mock = sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+
     @staticmethod
     def _phase(returncode, stdout="", stderr="", runtime_status="executed"):
         return {
@@ -2040,6 +2080,87 @@ class ContainerAvailabilityProviderHeadProbeTests(unittest.TestCase):
         )
         obs = provider._head_url("https://example.test/artifact", "artifact")
         self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_405_then_get_410_is_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "410", "")],
+        )
+        obs = provider._head_url("https://example.test/gone", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+
+    # --- DNS/HTTP 000 is UNKNOWN even when stderr mentions 404/410 ---
+    # 404/410 are classified exclusively by %{http_code}. A DNS or connection
+    # failure yields http_code 000; an error message quoting "404"/"410" must
+    # not turn that into unavailable.
+
+    def test_http_000_with_404_in_stderr_is_unknown_not_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(6, "000", "getaddrinfo failed; URL contains 404")],
+            get_responses=[self._phase(6, "000", "getaddrinfo failed; URL contains 404")],
+        )
+        obs = provider._head_url("https://404.example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_http_000_with_410_in_stderr_is_unknown_not_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(7, "000", "connection refused; endpoint 410 unavailable")],
+            get_responses=[self._phase(7, "000", "connection refused; endpoint 410 unavailable")],
+        )
+        obs = provider._head_url("https://410.example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- ambiguous response stays UNKNOWN ---
+
+    def test_ambiguous_empty_code_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(0, "", "")],
+            get_responses=[self._phase(0, "", "")],
+        )
+        obs = provider._head_url("https://example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- real byte limit: a server that ignores Range and streams a large
+    # body is stopped by --max-filesize; the 2xx proves the resource exists. ---
+
+    def test_get_bounded_by_byte_limit_when_server_ignores_range_is_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(63, "200", "")],  # curl --max-filesize abort
+        )
+        obs = provider._head_url("https://example.test/large", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        get_calls = self._get_calls(calls)
+        self.assertTrue(
+            any("--max-filesize" in c for c in get_calls),
+            "GET must enforce a real byte limit",
+        )
+        self.assertFalse(
+            any("-r 0-0" in c for c in get_calls),
+            "range 0-0 is not a sufficient download bound",
+        )
+
+    def test_get_byte_limit_stop_requires_2xx_not_unknown(self) -> None:
+        # rc 63 with a non-2xx/ambiguous code is not proof of existence.
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(63, "000", "")],
+        )
+        obs = provider._head_url("https://example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- evidence records method, URL, code and attempt current/max ---
+
+    def test_evidence_records_method_url_code_and_attempt(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertIn("GET(HEAD-fallback)", obs.evidence)
+        self.assertIn("attempt 1/3", obs.evidence)
+        self.assertIn("(HTTP 200)", obs.evidence)
+        self.assertIn("https://example.test/artifact", obs.evidence)
 
 
 if __name__ == "__main__":
