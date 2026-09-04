@@ -2264,6 +2264,8 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.driver._tun_expected = True
 
         def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 0, "active\n", "")
             return subprocess.CompletedProcess(
                 command,
                 1 if command == ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"] else 0,
@@ -2287,6 +2289,8 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.driver._tun_expected = True
 
         def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 0, "active\n", "")
             if command == ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"]:
                 raise subprocess.TimeoutExpired(command, 15)
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
@@ -2337,6 +2341,191 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.assertTrue(self.driver._forget_networkmanager_tun_connection())
         commands = [call.args[0] for call in run_mock.call_args_list]
         self.assertNotIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
+            commands,
+        )
+        self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
+
+    def _nm_state_run(self, run_mock, nm_phase):
+        """Configure run_mock so `systemctl is-active NetworkManager.service`
+        returns nm_phase and every other command returns rc 0."""
+
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return nm_phase
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+
+    # --- fail-closed: an indeterminate NetworkManager state must NOT be
+    # treated as "explicitly inactive" (silent success). Registration and
+    # cleanup must report failure when the state cannot be proven.
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_fails_closed_when_nm_probe_raises_oserror(self, run_mock, which_mock) -> None:
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                raise OSError("boom")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+        self.assertFalse(self.driver._record_networkmanager_tun_connection())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_fails_closed_when_nm_probe_times_out(self, run_mock, which_mock) -> None:
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                raise subprocess.TimeoutExpired(command, 10)
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+        self.assertFalse(self.driver._record_networkmanager_tun_connection())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_fails_closed_when_nm_state_is_failed(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 1, "failed\n", ""),
+        )
+        self.assertFalse(self.driver._record_networkmanager_tun_connection())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_fails_closed_when_nm_state_is_activating(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 0, "activating\n", ""),
+        )
+        self.assertFalse(self.driver._record_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertNotIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-register.service"],
+            commands,
+        )
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_fails_closed_when_nm_state_is_deactivating(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 1, "deactivating\n", ""),
+        )
+        self.assertFalse(self.driver._record_networkmanager_tun_connection())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_fails_closed_when_nm_state_output_empty(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 0, "", ""),
+        )
+        self.assertFalse(self.driver._record_networkmanager_tun_connection())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_fails_closed_when_nm_state_contradictory(self, run_mock, which_mock) -> None:
+        # rc 0 but stdout "inactive" is contradictory, not an inactive proof.
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 0, "inactive\n", ""),
+        )
+        self.assertFalse(self.driver._record_networkmanager_tun_connection())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_forget_fails_closed_and_deletes_link_when_nm_state_unknown(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 1, "failed\n", ""),
+        )
+        self.assertFalse(self.driver._forget_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_forget_fails_closed_and_deletes_link_when_nm_probe_raises_oserror(self, run_mock, which_mock) -> None:
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                raise OSError("boom")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+        self.assertFalse(self.driver._forget_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
+
+    # --- explicitly inactive (Wicked/openSUSE) -> no-op ---
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_is_noop_when_nm_explicitly_inactive(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 3, "inactive\n", ""),
+        )
+        self.assertTrue(self.driver._record_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertNotIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-register.service"],
+            commands,
+        )
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_forget_is_noop_with_link_delete_when_nm_explicitly_inactive(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 3, "inactive\n", ""),
+        )
+        self.assertTrue(self.driver._forget_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertNotIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
+            commands,
+        )
+        self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
+
+    # --- actively running -> helpers run (previous behavior preserved) ---
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_runs_helper_when_nm_active(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 0, "active\n", ""),
+        )
+        self.assertTrue(self.driver._record_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-register.service"],
+            commands,
+        )
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_fails_when_register_helper_fails_with_nm_active(self, run_mock, which_mock) -> None:
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 0, "active\n", "")
+            return subprocess.CompletedProcess(command, 1, "", "denied")
+
+        run_mock.side_effect = run
+        self.assertFalse(self.driver._record_networkmanager_tun_connection())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_forget_runs_helper_when_nm_active(self, run_mock, which_mock) -> None:
+        self._nm_state_run(
+            run_mock,
+            subprocess.CompletedProcess(["systemctl", "is-active", "NetworkManager.service"], 0, "active\n", ""),
+        )
+        self.assertTrue(self.driver._forget_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(
             ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
             commands,
         )
