@@ -26,7 +26,7 @@ DISTRO_BASE_PACKAGES=(
   bash git coreutils findutils grep gawk sed gzip glibc shadow systemd sudo kmod
   ca-certificates python3 curl tar iproute2 NetworkManager logrotate
   libnotify-tools openvpn util-linux polkit nftables iptables iputils procps
-  systemd-resolved firewalld apparmor-utils python311
+  firewalld apparmor-utils python311
 )
 DISTRO_DNS_PACKAGES=(bind-utils)
 DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python311-cryptography"

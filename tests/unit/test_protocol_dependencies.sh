@@ -205,9 +205,12 @@ assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAG
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'distro_prepare_package_repos()' "Fedora adapter must define the RHEL-family EPEL repo hook"
 assert_contains "$ROOT_DIR/distros/fedora.sh" '[[ "${DISTRO_ID:-}" == "fedora" ]] && return 0' "EPEL hook must be a no-op on real Fedora"
 assert_contains "$ROOT_DIR/lib/packages.sh" 'declare -F distro_prepare_package_repos' "package validation must call the optional distro repo-prep hook before installing the base package set"
-for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps openvpn NetworkManager polkit firewalld systemd-resolved apparmor-utils python311; do
+for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps openvpn NetworkManager polkit firewalld apparmor-utils python311; do
   assert_contains "$ROOT_DIR/distros/opensuse.sh" "$package" "openSUSE adapter must map $package"
 done
+# openSUSE uses netconfig/Wicked as its DNS backend; it has no
+# systemd-resolved package and ships no resolvectl command.
+assert_not_contains "$ROOT_DIR/distros/opensuse.sh" 'systemd-resolved' "openSUSE adapter must not map a non-existent systemd-resolved package"
 assert_contains "$ROOT_DIR/distros/opensuse.sh" 'DISTRO_PACKAGE_MANAGER="zypper"' "openSUSE adapter must use zypper"
 # openSUSE Leap's default python3 is 3.6, too old for the runtime, so the
 # adapter pins a modern interpreter and its matching cryptography package.
