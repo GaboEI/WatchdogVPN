@@ -1242,8 +1242,33 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._clear_tun_cleanup_state()
         return networkmanager_cleanup_ok
 
+    def _networkmanager_service_active(self) -> bool:
+        """True when the NetworkManager daemon is actually running.
+
+        Some distributions (openSUSE with Wicked) install the NetworkManager
+        package but never run its daemon: nmcli exists, yet NM cannot adopt
+        the TUN, so the ownership registration/cleanup helpers would always
+        fail. Skip those steps when the NM daemon is not running.
+        """
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "NetworkManager.service"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+            )
+            return result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
     def _record_networkmanager_tun_connection(self) -> bool:
         if not shutil.which("nmcli"):
+            return True
+        if not self._networkmanager_service_active():
+            # Wicked-managed system (openSUSE): the NM daemon is not running,
+            # so it cannot adopt the TUN and there is no ownership to record.
             return True
         try:
             result = subprocess.run(
@@ -1275,6 +1300,12 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         # is what actually stops it from coming back. This is a no-op
         # wherever NetworkManager is absent or never adopted the interface.
         if not shutil.which("nmcli"):
+            self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
+            return True
+        if not self._networkmanager_service_active():
+            # Wicked-managed system (openSUSE): the NM daemon never adopts the
+            # TUN, so the cleanup helper has nothing to remove; still delete
+            # the kernel link best-effort.
             self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
             return True
         try:

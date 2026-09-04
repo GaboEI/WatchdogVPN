@@ -2188,6 +2188,13 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         self.driver._tun_cleanup_rule_prefs = ("1", "9000")
         self.driver._tun_cleanup_route_tables = ("1771114712", "2022")
 
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 0, stdout="active\n", stderr="")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+
         self.driver._cleanup_tun_residue()
 
         commands = [call.args[0] for call in run_mock.call_args_list]
@@ -2228,6 +2235,13 @@ class SingBoxDriverProcessTests(unittest.TestCase):
     def test_cleanup_tun_residue_forgets_networkmanager_connection_when_nmcli_present(
         self, run_mock, which_mock
     ) -> None:
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 0, stdout="active\n", stderr="")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        run_mock.side_effect = run
+
         self.driver._cleanup_tun_residue()
 
         commands = [call.args[0] for call in run_mock.call_args_list]
@@ -2280,6 +2294,53 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         run_mock.side_effect = run
 
         self.assertFalse(self.driver.disconnect())
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_record_tun_connection_is_noop_when_networkmanager_not_running(
+        self, run_mock, which_mock
+    ) -> None:
+        # openSUSE (Wicked) installs the NetworkManager package but never runs
+        # the daemon, so nmcli exists yet NM cannot adopt the TUN. The
+        # ownership registration must be a no-op instead of failing the whole
+        # connect with "NetworkManager TUN ownership registration failed".
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 1, stdout="inactive\n", stderr="")
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+
+        run_mock.side_effect = run
+
+        self.assertTrue(self.driver._record_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertNotIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-register.service"],
+            commands,
+        )
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_forget_tun_connection_is_noop_when_networkmanager_not_running(
+        self, run_mock, which_mock
+    ) -> None:
+        # Same Wicked/openSUSE case for teardown: with the NM daemon not
+        # running there is nothing to unregister, and the cleanup helper must
+        # not be started (it would fail). The kernel link is still deleted
+        # best-effort.
+        def run(command, **kwargs):
+            if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                return subprocess.CompletedProcess(command, 1, stdout="inactive\n", stderr="")
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+
+        run_mock.side_effect = run
+
+        self.assertTrue(self.driver._forget_networkmanager_tun_connection())
+        commands = [call.args[0] for call in run_mock.call_args_list]
+        self.assertNotIn(
+            ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
+            commands,
+        )
+        self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
 
     @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
     def test_apply_lan_gateway_installs_nft_rules_then_enables_forwarding(self, which_mock) -> None:
