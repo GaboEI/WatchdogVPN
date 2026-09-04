@@ -194,12 +194,22 @@ create_system_user_no_home() {
   local user="$1" shell
   if getent passwd "$user" >/dev/null 2>&1; then
     printf '[KEEP] service user exists: %s\n' "$user"
-    return 0
+  else
+    shell="/usr/sbin/nologin"
+    [[ -x "$shell" ]] || shell="/usr/bin/nologin"
+    [[ -x "$shell" ]] || shell="/bin/false"
+    run_step sudo useradd --system --no-create-home --shell "$shell" "$user"
   fi
-  shell="/usr/sbin/nologin"
-  [[ -x "$shell" ]] || shell="/usr/bin/nologin"
-  [[ -x "$shell" ]] || shell="/bin/false"
-  run_step sudo useradd --system --no-create-home --shell "$shell" "$user"
+  # Some distributions (openSUSE Leap 15.6 sets USERGROUPS_ENAB=no) do not
+  # create the homonymous primary group when useradd creates a system user.
+  # Several product paths install files/directories owned -g <user>, so the
+  # group must exist; on distributions where useradd already creates it this
+  # is a no-op.
+  if getent group "$user" >/dev/null 2>&1; then
+    printf '[KEEP] service group exists: %s\n' "$user"
+  else
+    run_step sudo groupadd --system "$user"
+  fi
 }
 
 remove_root_path() {
