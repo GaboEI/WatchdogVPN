@@ -561,6 +561,9 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
             break
 
         # --- GET fallback phase (bounded by a real byte limit) ---
+        get_last_rc = "?"
+        get_last_code = "?"
+        get_attempt_used = 0
         for attempt in range(1, max_attempts + 1):
             probe = self._exec(
                 "curl -L -f -sS --max-time 15 --max-filesize 5242880 -o /dev/null -w '%%{http_code}' %s"
@@ -568,10 +571,16 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
             )
             if probe["runtime_status"] != "executed":
                 get_error = "exec status=%s" % probe["runtime_status"]
+                get_last_rc = "exec-error"
+                get_last_code = "?"
+                get_attempt_used = attempt
                 if attempt < max_attempts:
                     time.sleep(backoff_seconds * attempt)
                     continue
                 break
+            get_last_rc = str(probe.get("returncode"))
+            get_last_code = (probe.get("stdout") or "").strip() or "?"
+            get_attempt_used = attempt
             code = _code2xx(probe)
             if code is not None:
                 return resolver.AvailabilityObservation(
@@ -599,7 +608,7 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
             # timeout, DNS, connection failure, HTTP 000, 429/5xx or ambiguous
             # result: retry; persistent -> UNKNOWN (fail-closed).
             get_error = "GET rc=%s code=%s" % (
-                probe.get("returncode"), code or "?")
+                probe.get("returncode"), (probe.get("stdout") or "").strip() or "?")
             if attempt < max_attempts:
                 time.sleep(backoff_seconds * attempt)
                 continue
@@ -607,8 +616,9 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
 
         return resolver.AvailabilityObservation(
             resolver.AvailabilityStatus.UNKNOWN.value,
-            evidence="%s probe inconclusive after HEAD->GET: %s | head=%s | get=%s" % (
-                evidence_prefix, url, head_error or "none", get_error or "none"),
+            evidence="%s GET(HEAD-fallback) inconclusive at attempt %d/%d: %s | last GET rc=%s code=%s | HEAD %s" % (
+                evidence_prefix, get_attempt_used or max_attempts, max_attempts, url,
+                get_last_rc, get_last_code, head_error or "none"),
             reason="%s_probe_inconclusive" % evidence_prefix.replace(" ", "_"),
             error_kind="%s_probe_inconclusive" % evidence_prefix.replace(" ", "_"),
         )
@@ -2161,6 +2171,94 @@ class ContainerAvailabilityProviderHeadProbeTests(unittest.TestCase):
         self.assertIn("attempt 1/3", obs.evidence)
         self.assertIn("(HTTP 200)", obs.evidence)
         self.assertIn("https://example.test/artifact", obs.evidence)
+
+    # --- the final UNKNOWN evidence must name the GET fallback method, the
+    # URL, the last code and the current/max attempt after persistent retries ---
+
+    def test_persistent_get_timeout_evidence_marks_method_url_code_and_attempt(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(28, "000", "Operation timed out")],  # repeated -> persistent
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+        self.assertIn("GET(HEAD-fallback)", obs.evidence)
+        self.assertIn("https://example.test/artifact", obs.evidence)
+        self.assertIn("attempt 3/3", obs.evidence)
+        self.assertIn("code=000", obs.evidence)
+
+    # --- real byte limit against a disposable local HTTP server: the server
+    # ignores the concept of Range (it just streams a >5 MiB body), and the
+    # real curl command used by _head_url must stop at --max-filesize, must not
+    # transfer the whole body, and _head_url must classify the resource as
+    # available because the server answered 2xx before our limit cut it off.
+    # No Internet, no Docker, no real sleeps.
+
+    def test_get_byte_limit_real_curl_against_local_server_is_available(self) -> None:
+        import http.server
+        import threading
+
+        body_size = 6 * 1024 * 1024  # strictly above the 5 MiB probe limit
+        sent = {"bytes": 0}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args):  # silence request logging
+                pass
+
+            def do_HEAD(self):
+                self.send_response(405)  # force the HEAD -> GET fallback
+                self.end_headers()
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(body_size))
+                self.end_headers()
+                chunk = b"x" * 65536
+                remaining = body_size
+                try:
+                    while remaining > 0:
+                        n = min(len(chunk), remaining)
+                        self.wfile.write(chunk[:n])
+                        sent["bytes"] += n
+                        remaining -= n
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass  # curl aborted at our byte limit; body not fully sent
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = "http://127.0.0.1:%d/artifact" % server.server_address[1]
+
+            # The exact GET fallback command _head_url runs.
+            result = subprocess.run(
+                ["curl", "-L", "-f", "-sS", "--max-time", "15", "--max-filesize", "5242880",
+                 "-o", "/dev/null", "-w", "%{http_code}", url],
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 63, "curl must stop at --max-filesize (rc 63)")
+            self.assertEqual(result.stdout.strip(), "200", "server answered 2xx before the cut-off")
+            self.assertLess(sent["bytes"], body_size, "curl must not transfer the whole body")
+
+            provider = ContainerAvailabilityProvider("docker", "watchdogvpn-head-test", CASES[0], None)
+            exec_calls = []
+
+            def local_exec(command):
+                exec_calls.append(command)
+                if "command -v curl" in command:
+                    return self._phase(0, "/usr/bin/curl\n", "")
+                res = subprocess.run(["sh", "-lc", command], text=True, capture_output=True, timeout=30)
+                return self._phase(res.returncode, res.stdout, res.stderr)
+
+            provider._exec = local_exec
+            obs = provider._head_url(url, "artifact")
+            self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":
