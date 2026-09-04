@@ -237,6 +237,17 @@ require_supported_distro() {
   detect_distro
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
 
+  # Sequencing bootstrap (Phase 23.7.5.11D): if the compatibility engine could
+  # not run for lack of an adequate interpreter but the Bash-only identity
+  # already resolved a known adapter, install only the adapter-declared
+  # interpreter package (e.g. python311 for openSUSE) and re-run authoritative
+  # detection through the Python engine - never through the Bash fallback.
+  local bootstrap_rc=0
+  distro_bootstrap_interpreter_if_needed || bootstrap_rc=$?
+  if ((bootstrap_rc == 2)); then
+    exit 1
+  fi
+
   if [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
     if ((CERTIFICATION_LAB == 1)) && distro_certification_lab_enabled; then
       warn "certification-lab override: experimental distro is not promoted to support"
@@ -254,13 +265,18 @@ require_supported_distro() {
     fi
   fi
 
-  if [[ "${DISTRO_UNSUPPORTED:-0}" == "1" || "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
-    if [[ "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
-      print_undetermined_distro
-    else
-      print_unsupported_distro
-    fi
+  if [[ "${DISTRO_UNSUPPORTED:-0}" == "1" ]]; then
+    print_unsupported_distro
     exit 1
+  fi
+
+  if [[ "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
+    if ((INSTALL_DRY_RUN == 1)) && [[ "${DISTRO_ENGINE_BLOCKED:-0}" == "1" ]]; then
+      warn "dry-run: detection engine blocked (adapter interpreter bootstrap required); continuing in simulation without support classification"
+    else
+      print_undetermined_distro
+      exit 1
+    fi
   fi
 
   local adapter

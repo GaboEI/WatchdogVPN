@@ -29,6 +29,8 @@ detect_distro() {
   DISTRO_FUTURE=0
   DISTRO_UNSUPPORTED=0
   DISTRO_UNDETERMINED=0
+  DISTRO_ENGINE_BLOCKED=0
+  DISTRO_ENGINE_BLOCKED_REASON=""
 
   local os_release="${OS_RELEASE_FILE:-/etc/os-release}"
 
@@ -96,7 +98,23 @@ distro_record_experimental_override() {
 }
 
 
-# Try the engine first. Returns 0 on success, 1 on any failure.
+# Minimum Python (3.MINOR) the detection engine itself requires. The engine
+# (tools/compat_distro_classify.py + compat.detection / compat.support_model)
+# needs only `from __future__ import annotations` and stdlib `dataclasses`,
+# both Python 3.7+. It does NOT need dataclass(slots=True), so this floor is
+# deliberately lower than the runtime floor WATCHDOGVPN_MIN_PYTHON_MINOR (3.10)
+# in lib/common.sh. Keeping the two floors separate is what lets RHEL-family
+# fresh hosts (platform python3 = 3.9) keep classifying through the engine as
+# they do today: reusing the 3.10 runtime floor here would wrongly block them
+# and force an unnecessary interpreter bootstrap on every certified distro.
+WATCHDOGVPN_MIN_DETECT_PYTHON_MINOR="${WATCHDOGVPN_MIN_DETECT_PYTHON_MINOR:-7}"
+
+# Try the engine first. Returns 0 on success, 1 on any failure. When the
+# failure is specifically that no interpreter meets the detection floor, it
+# sets DISTRO_ENGINE_BLOCKED=1 with reason interpreter_missing; detect_distro
+# then degrades to the pure-Bash identity fallback, which never classifies
+# support. The caller (install.sh) may bootstrap the adapter-declared
+# interpreter and re-run detection to obtain the authoritative classification.
 _detect_distro_with_engine() {
   local os_release="$1"
   local root_dir
@@ -108,17 +126,33 @@ _detect_distro_with_engine() {
   fi
 
   local python_cmd=""
+  local candidate
   if [[ -n "${WATCHDOGVPN_PYTHON:-}" ]]; then
-    python_cmd="$WATCHDOGVPN_PYTHON"
+    candidate="$WATCHDOGVPN_PYTHON"
+    # A forced interpreter that does not meet the detection floor must not be
+    # handed to the engine; treat it as interpreter_missing so the caller can
+    # bootstrap the adapter-declared one.
+    if command -v "$candidate" >/dev/null 2>&1 \
+      && "$candidate" -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3, ${WATCHDOGVPN_MIN_DETECT_PYTHON_MINOR}) else 1)" >/dev/null 2>&1; then
+      python_cmd="$candidate"
+    fi
   else
-    for candidate in python3.11 python3.10 python3; do
-      if command -v "$candidate" >/dev/null 2>&1; then
+    # Select the first interpreter that actually meets the DETECTION floor.
+    # This replaces the former unguarded local loop (python3.11 python3.10
+    # python3) that silently handed a too-old python3 (e.g. Leap 15.6's 3.6)
+    # to the classifier, which then died with a SyntaxError.
+    for candidate in python3.14 python3.13 python3.12 python3.11 python3.10 \
+      python3.9 python3.8 python3.7 python3; do
+      if command -v "$candidate" >/dev/null 2>&1 \
+        && "$candidate" -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3, ${WATCHDOGVPN_MIN_DETECT_PYTHON_MINOR}) else 1)" >/dev/null 2>&1; then
         python_cmd="$candidate"
         break
       fi
     done
   fi
   if [[ -z "$python_cmd" ]]; then
+    DISTRO_ENGINE_BLOCKED=1
+    DISTRO_ENGINE_BLOCKED_REASON="interpreter_missing"
     return 1
   fi
 
@@ -303,4 +337,72 @@ _family_short_from_technical() {
 distro_adapter_path() {
   local root="$1"
   printf '%s/distros/%s.sh' "$root" "${DISTRO_ADAPTER_ID:-$DISTRO_ID}"
+}
+
+# Sequencing fix for the compatibility-engine bootstrap (Phase 23.7.5.11D).
+#
+# When the detection engine could not run because no interpreter meets the
+# DETECTION floor (DISTRO_ENGINE_BLOCKED=1, reason interpreter_missing) but the
+# pure-Bash identity fallback already resolved a known adapter and package
+# manager, this provisions ONLY the interpreter package the adapter declares
+# (e.g. python311 for openSUSE) through the normal package path, then re-runs
+# authoritative detection through the Python engine - never through the Bash
+# fallback. This keeps the engine (compat.detection) and the runtime floor
+# (WATCHDOGVPN_MIN_PYTHON_MINOR=10) untouched, and never lets Bash grant
+# support_classification.
+#
+# Return codes:
+#   0  bootstrap not needed, dry-run simulated it, or bootstrap succeeded.
+#   1  bootstrap not applicable (unknown identity, missing adapter, or the
+#      adapter declares no bootstrap package) - leave undetermined handling to
+#      the caller.
+#   2  bootstrap was needed but failed - the caller must abort the install.
+distro_bootstrap_interpreter_if_needed() {
+  [[ "${DISTRO_ENGINE_BLOCKED:-0}" == "1" ]] || return 0
+  [[ "${DISTRO_UNDETERMINED:-0}" == "1" ]] || return 0
+  [[ "${DISTRO_ADAPTER_ID:-unknown}" != "unknown" ]] || return 1
+  [[ "${DISTRO_PACKAGE_MANAGER:-unknown}" != "unknown" ]] || return 1
+
+  local adapter
+  adapter="$(distro_adapter_path "${_WATCHDOGVPN_ROOT_DIR:-$(cd "${BASH_SOURCE[0]%/*}/.." 2>/dev/null && pwd)}")"
+  [[ -r "$adapter" ]] || return 1
+
+  # shellcheck disable=SC1090
+  . "$adapter"
+  if ! declare -F distro_python_bootstrap_package >/dev/null 2>&1; then
+    return 1
+  fi
+  local pkg
+  pkg="$(distro_python_bootstrap_package)"
+  [[ -n "$pkg" ]] || return 1
+
+  info "compatibility engine needs a Python >=3.${WATCHDOGVPN_MIN_DETECT_PYTHON_MINOR}; bootstrapping adapter-declared interpreter package: ${pkg}"
+
+  if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
+    printf '[DRY-RUN] install interpreter package %s via %s, then re-run detection\n' \
+      "$pkg" "$DISTRO_PACKAGE_MANAGER"
+    return 0
+  fi
+
+  if ! declare -F install_package_set >/dev/null 2>&1; then
+    fail "cannot bootstrap interpreter package ${pkg}: package installer unavailable"
+    return 2
+  fi
+  if ! install_package_set "$pkg"; then
+    fail "failed to bootstrap interpreter package ${pkg} via ${DISTRO_PACKAGE_MANAGER}"
+    return 2
+  fi
+
+  if [[ -n "${DISTRO_PYTHON:-}" ]] && ! command -v "${DISTRO_PYTHON}" >/dev/null 2>&1; then
+    fail "interpreter bootstrap installed ${pkg} but ${DISTRO_PYTHON} is still unavailable"
+    return 2
+  fi
+
+  info "re-running compatibility detection with the bootstrapped interpreter"
+  detect_distro
+  if [[ "${DISTRO_ENGINE_BLOCKED:-0}" == "1" ]]; then
+    fail "compatibility engine still blocked after interpreter bootstrap"
+    return 2
+  fi
+  return 0
 }

@@ -12,6 +12,16 @@ DISTRO_PACKAGE_MANAGER="zypper"
 DISTRO_PYTHON="python3.11"
 DISTRO_CERTIFICATION_STATE="implemented_not_certified"
 DISTRO_SUPPORT_NOTE="openSUSE adapter implemented; installed certification remains pending Phase 23.6 evidence."
+
+# Phase 23.7.5.11D sequencing bootstrap: openSUSE Leap 15.6 ships python3=3.6,
+# too old for the detection engine (3.7+). When the engine cannot run yet, the
+# installer bootstraps ONLY the interpreter package below, then re-runs
+# authoritative detection through the engine. Declaring this hook is what opts
+# the adapter into that sequencing step; adapters whose default python3 already
+# meets the detection floor never declare it.
+distro_python_bootstrap_package() {
+  printf '%s\n' "python311"
+}
 DISTRO_BASE_PACKAGES=(
   bash git coreutils findutils grep gawk sed gzip glibc shadow systemd sudo kmod
   ca-certificates python3 curl tar iproute2 NetworkManager logrotate
