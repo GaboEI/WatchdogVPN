@@ -36,11 +36,11 @@ DISTRO_POLKIT_PACKAGE="polkit"
 # Fedora's distros/fedora.sh. The userspace amneziawg-go path is deliberately
 # preferred over the DKMS kernel module here: it needs no kernel headers and
 # is not blocked by Secure Boot module signing, so it strands far fewer users
-# while carrying identical real traffic. Migrate this guidance to a real
-# openSUSE package if one becomes available upstream. WatchdogVPN never runs
-# these commands; it verifies awg and amneziawg-go afterwards.
+# while carrying identical real traffic. Every command pins an official release
+# tag plus its exact commit - main/master/HEAD is never used. WatchdogVPN never
+# runs these commands; it verifies awg and amneziawg-go afterwards.
 DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS=(
-  "sudo zypper --non-interactive install go gcc make"
-  "git clone https://github.com/amnezia-vpn/amneziawg-tools /tmp/amneziawg-tools && make -C /tmp/amneziawg-tools/src && sudo make -C /tmp/amneziawg-tools/src install"
-  "git clone https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && (cd /tmp/amneziawg-go && make) && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
+  "sudo zypper --non-interactive install go gcc make git"
+  "git clone --branch v1.0.20260618-2 https://github.com/amnezia-vpn/amneziawg-tools /tmp/amneziawg-tools && git -C /tmp/amneziawg-tools checkout 61e741780e8465a67a7d7fb6cffe14a8a15d624a && make -C /tmp/amneziawg-tools/src WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETION=no && sudo make -C /tmp/amneziawg-tools/src install"
+  "git clone --branch v3.0.2 https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && git -C /tmp/amneziawg-go checkout 0527dfa47639714dd8f5c9ffbd9d40d19083f0ba && make -C /tmp/amneziawg-go && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
 )

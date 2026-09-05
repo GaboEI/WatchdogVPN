@@ -745,10 +745,12 @@ else
   mark_fail "nftables missing; WatchdogVPN cannot enforce its atomic kill switch"
 fi
 
-if amneziawg_runtime_available; then
-  mark_ok "AmneziaWG tooling detected"
-else
-  mark_warn "AmneziaWG tooling not fully detected; AmneziaWG profiles will not run"
+if amneziawg_profiles_present; then
+  if amneziawg_runtime_available; then
+    mark_ok "AmneziaWG tooling detected"
+  else
+    mark_warn "AmneziaWG tooling not fully detected; AmneziaWG profiles will not run"
+  fi
 fi
 
 if cloak_available; then

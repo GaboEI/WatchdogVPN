@@ -266,11 +266,20 @@ AllowedIPs = 0.0.0.0/0
 """
         guidance = {
             "available": False,
+            "blocked": False,
             "distro": "arch",
-            "commands": ["safe-command"],
-            "tools_url": "https://example.invalid/tools",
-            "kernel_url": "https://example.invalid/kernel",
-            "userspace_fallback_url": "https://example.invalid/go",
+            "distro_adapter": "arch",
+            "tools_available": False,
+            "kernel_module_available": False,
+            "userspace_fallback_available": False,
+            "commands": [{"command": "safe-command", "purpose": "safe"}],
+            "script": "safe-command",
+            "certified_on_opensuse_leap": False,
+            "compatibility": {"status": "not_verified", "note": "not verified"},
+            "releases": [],
+            "sources": ["https://example.invalid/tools", "https://example.invalid/go"],
+            "message": "AmneziaWG profile saved, but its local runtime is not ready yet.",
+            "executed_by_watchdogvpn": False,
         }
         with tempfile.TemporaryDirectory() as tmp:
             profile_file = Path(tmp) / "amneziawg.conf"
@@ -280,15 +289,18 @@ AllowedIPs = 0.0.0.0/0
                 "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
             }
             with patch.dict("os.environ", env, clear=False), patch(
-                "cli.main.dependency_guidance", return_value=guidance
-            ) as dependency_check, redirect_stdout(StringIO()) as stdout:
+                "cli.main.import_guidance_payload", return_value=guidance
+            ) as guidance_check, redirect_stdout(StringIO()) as stdout:
                 rc = cli.main.main(["profile", "add", "--file", str(profile_file), "--json"])
 
         self.assertEqual(rc, 0)
-        dependency_check.assert_called_once_with()
+        guidance_check.assert_called_once_with()
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["profiles"][0]["protocol"], "amneziawg")
-        self.assertEqual(payload["amneziawg_dependency"]["commands"], ["safe-command"])
+        self.assertEqual(
+            payload["amneziawg_dependency"]["commands"],
+            [{"command": "safe-command", "purpose": "safe"}],
+        )
         self.assertNotIn("test-private-key", stdout.getvalue())
         self.assertNotIn("test-public-key", stdout.getvalue())
 
@@ -299,7 +311,7 @@ AllowedIPs = 0.0.0.0/0
                 "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
             }
             with patch.dict("os.environ", env, clear=False), patch(
-                "cli.main.dependency_guidance",
+                "cli.main.import_guidance_payload",
                 side_effect=AssertionError("must not run for a non-AmneziaWG profile"),
             ), redirect_stdout(StringIO()):
                 rc = cli.main.main(

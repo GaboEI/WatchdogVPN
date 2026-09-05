@@ -83,7 +83,28 @@ from daemon.protocol import Response
 from diagnostics.route_dns import RouteDNSDiagnostic, diagnose_route_dns
 from diagnostics.chain_routes import ChainRouteDiagnostic, diagnose_chain_route_action
 from diagnostics.routing import RouteDiagnostic, diagnose_route
-from diagnostics.amneziawg_guidance import dependency_guidance
+from diagnostics.amneziawg_lifecycle import (
+    OfficialReleaseResolver,
+    ReleaseResolutionError,
+    ResolvedRelease,
+    STATE_CONTEXT_ABSENT,
+    build_manifest_matches_current,
+    build_manifest_sha256,
+    build_recipe,
+    clear_pending_releases,
+    detect_platform,
+    import_guidance_payload,
+    lifecycle_state,
+    load_build_manifest,
+    load_pending_releases,
+    previous_installed_release,
+    probe_runtime,
+    recipe_for_certified_pins,
+    record_installed_release,
+    store_pending_releases,
+    validate_build_manifest,
+    verification_report,
+)
 from metrics.models import MetricsDocument, MetricsRedactionMode
 from metrics.store import MetricsStore
 from models.connection_state import FAILURE_STATUSES
@@ -982,6 +1003,35 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_node_parser.add_argument("--json", action="store_true", help="Print JSON")
     provider_node_parser.set_defaults(handler=_provider_node)
 
+    awg_parser = subparsers.add_parser("awg", help="Manage the AmneziaWG lifecycle guidance")
+    awg_subparsers = awg_parser.add_subparsers(dest="awg_command")
+    awg_subparsers.required = True
+
+    awg_status_parser = awg_subparsers.add_parser("status", help="Show AmneziaWG context, runtime and provenance")
+    awg_status_parser.add_argument("--probe", action="store_true", help="Force a runtime probe even without an AWG profile")
+    awg_status_parser.add_argument("--json", action="store_true", help="Print JSON")
+    awg_status_parser.set_defaults(handler=_awg_status)
+
+    awg_setup_parser = awg_subparsers.add_parser("setup", help="Generate the exact official AmneziaWG setup recipe")
+    awg_setup_parser.add_argument("--json", action="store_true", help="Print JSON")
+    awg_setup_parser.set_defaults(handler=_awg_setup)
+
+    awg_update_parser = awg_subparsers.add_parser("update", help="Resolve the latest official AmneziaWG release and show the recipe")
+    awg_update_parser.add_argument("--json", action="store_true", help="Print JSON")
+    awg_update_parser.set_defaults(handler=_awg_update)
+
+    awg_repair_parser = awg_subparsers.add_parser("repair", help="Regenerate the certified recipe to repair an incomplete or inconsistent runtime")
+    awg_repair_parser.add_argument("--json", action="store_true", help="Print JSON")
+    awg_repair_parser.set_defaults(handler=_awg_repair)
+
+    awg_rollback_parser = awg_subparsers.add_parser("rollback", help="Restore the previously recorded AmneziaWG release")
+    awg_rollback_parser.add_argument("--json", action="store_true", help="Print JSON")
+    awg_rollback_parser.set_defaults(handler=_awg_rollback)
+
+    awg_verify_parser = awg_subparsers.add_parser("verify", help="Record and verify the installed AmneziaWG runtime from the pending recipe")
+    awg_verify_parser.add_argument("--json", action="store_true", help="Print JSON")
+    awg_verify_parser.set_defaults(handler=_awg_verify)
+
     node_group_parser = subparsers.add_parser("node-group", help="Manage node groups")
     node_group_subparsers = node_group_parser.add_subparsers(dest="node_group_command")
     node_group_subparsers.required = True
@@ -1852,8 +1902,12 @@ def _panic_script_path(value: str | None) -> Path:
 def _doctor(args: argparse.Namespace) -> int:
     script = _doctor_script_path(args.doctor_script)
     command = [str(script)]
+    env = os.environ.copy()
+    env["WATCHDOGVPN_AWG_PROFILE_COUNT"] = str(
+        sum(1 for profile in ProfileStore().list() if profile.protocol is ProtocolType.AMNEZIAWG)
+    )
     if args.json:
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        completed = subprocess.run(command, text=True, capture_output=True, check=False, env=env)
         exit_code = _normalize_exit_code(int(completed.returncode))
         _print_json(
             {
@@ -1866,7 +1920,6 @@ def _doctor(args: argparse.Namespace) -> int:
             }
         )
         return exit_code
-    env = os.environ.copy()
     if bool(getattr(args, "no_color", False)):
         env["NO_COLOR"] = "1"
     completed = subprocess.run(command, check=False, env=env)
@@ -2001,7 +2054,7 @@ def _setup_plan(args: argparse.Namespace) -> dict[str, object]:
             profile = parsed_profiles[0]
             import_action = "import-profile-file"
         if profile.protocol is ProtocolType.AMNEZIAWG:
-            guidance = dependency_guidance()
+            guidance = import_guidance_payload()
             if not bool(guidance["available"]):
                 amneziawg_guidance = guidance
         fingerprint = profile_fingerprint(profile)
@@ -2941,19 +2994,59 @@ def _profile_add(args: argparse.Namespace) -> int:
 def _imported_amneziawg_guidance(profiles: list[Profile]) -> dict[str, object] | None:
     if not any(profile.protocol is ProtocolType.AMNEZIAWG for profile in profiles):
         return None
-    guidance = dependency_guidance()
+    guidance = import_guidance_payload()
     return None if bool(guidance["available"]) else guidance
 
 
 def _print_amneziawg_dependency_guidance(guidance: dict[str, object]) -> None:
-    """Print the shared shell guidance only after its profile was imported."""
+    """Print the dynamic AmneziaWG guidance only after its profile was imported."""
 
     message = guidance.get("message")
     if isinstance(message, str) and message:
         print(f"\n{message}")
-    else:
-        print("\nAmneziaWG profile saved, but runtime guidance is unavailable.")
-        print("Run watchdog doctor before connecting.")
+    if bool(guidance.get("blocked")):
+        print("No exact recipe was generated. Run `watchdog awg setup` once the issue is resolved.")
+        return
+    commands = guidance.get("commands")
+    if isinstance(commands, list) and commands:
+        _awg_print_recipe(guidance)
+
+
+def _awg_print_recipe(recipe: dict[str, object]) -> None:
+    commands = recipe.get("commands")
+    if not isinstance(commands, list):
+        print("No recipe commands were generated.")
+        return
+    print("\nExact official recipe:")
+    print("IMPORTANT: run all numbered steps in the SAME shell so `$build_dir` persists;")
+    print("or copy and run the self-contained script below (recommended, interrupt-safe).")
+    for index, entry in enumerate(commands, start=1):
+        if not isinstance(entry, dict):
+            continue
+        command = str(entry.get("command", ""))
+        purpose = str(entry.get("purpose", ""))
+        print(f"\n  {index}. {command}")
+        if purpose:
+            print(f"     # {purpose}")
+    compatibility = recipe.get("compatibility")
+    if isinstance(compatibility, dict):
+        status = str(compatibility.get("status", "unknown"))
+        note = str(compatibility.get("note", ""))
+        print(f"\nCompatibility: {status}")
+        if note:
+            print(f"  {note}")
+    script = recipe.get("script")
+    if isinstance(script, str) and script:
+        print("\nOr run the self-contained, interrupt-safe script below (it uses a private mktemp workspace):")
+        for line in script.splitlines():
+            print(f"  {line}")
+    sources = recipe.get("sources")
+    if isinstance(sources, list) and sources:
+        print("\nOfficial sources only:")
+        for source in sources:
+            print(f"  - {source}")
+    print("\nAfter executing the recipe, record the installed release with: watchdog awg verify")
+    print("WatchdogVPN does not run zypper, git clone, make or privileged installs for you.")
 
 
 def _profile_list(args: argparse.Namespace) -> int:
@@ -3307,6 +3400,330 @@ def _provider_node(args: argparse.Namespace) -> int:
         return 0
     state = "enabled" if profile.in_rotation_pool else "disabled"
     print(f"Provider node rotation {state}: {profile.id}")
+    return 0
+
+
+def _awg_profile_count() -> int:
+    return sum(
+        1 for profile in ProfileStore().list() if profile.protocol is ProtocolType.AMNEZIAWG
+    )
+
+
+def _awg_status(args: argparse.Namespace) -> int:
+    awg_profiles = _awg_profile_count()
+    probe_requested = bool(getattr(args, "probe", False))
+    if awg_profiles == 0 and not probe_requested:
+        data: dict[str, object] = {
+            "state": STATE_CONTEXT_ABSENT,
+            "awg_profile_count": 0,
+            "detection_performed": False,
+            "context_absent_noise": True,
+        }
+        if args.json:
+            _print_json(data)
+            return 0
+        print("AmneziaWG lifecycle state: awg_context_absent")
+        print("Persisted AmneziaWG profiles: 0")
+        print("No AmneziaWG profile exists; no runtime detection was performed and doctor shows no AmneziaWG warning.")
+        print("Use `watchdog awg status --probe` to force a runtime probe without an AWG profile.")
+        return 0
+    probe = probe_runtime()
+    state = lifecycle_state(awg_profiles=awg_profiles, probe=probe)
+    manifest = load_build_manifest()
+    manifest_matches = build_manifest_matches_current(manifest, probe) if manifest is not None else False
+    data = {
+        "state": state,
+        "awg_profile_count": awg_profiles,
+        "detection_performed": True,
+        "runtime": probe.as_dict(),
+        "build_manifest_present": manifest is not None,
+        "build_manifest_matches": manifest_matches,
+        "context_absent_noise": awg_profiles == 0,
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print(f"AmneziaWG lifecycle state: {state}")
+    print(f"Persisted AmneziaWG profiles: {awg_profiles}")
+    if awg_profiles == 0:
+        print("No AmneziaWG profile exists; runtime probe performed only because --probe was requested.")
+    for name, component in probe.components.items():
+        status = component.path if component.present else "missing"
+        print(f"  {name}: {status}")
+        if component.version:
+            print(f"    version: {component.version}")
+            print(f"    provenance: {component.provenance}")
+    if manifest is None:
+        print("Build manifest: absent (no independent build evidence; provenance cannot be certified)")
+    elif manifest_matches:
+        print("Build manifest: present and matches the installed binaries")
+    else:
+        print("Build manifest: present but does NOT match the installed binaries (binary substituted or runtime drifted)")
+    if probe.runtime_available:
+        print("Runtime available: yes")
+    else:
+        print("Runtime available: no")
+        print("Next step: run `watchdog awg setup` to generate the exact official recipe, review it and execute it yourself.")
+    return 0
+
+
+def _store_pending_from_recipe(recipe: dict[str, object]) -> None:
+    releases = recipe.get("releases")
+    if not isinstance(releases, list):
+        return
+    pending = [
+        ResolvedRelease(
+            repository=str(entry.get("repository", "")),
+            tag=str(entry.get("tag", "")),
+            commit=str(entry.get("commit", "")),
+            resolved_at=str(entry.get("resolved_at", "")),
+        )
+        for entry in releases
+        if isinstance(entry, dict) and entry.get("repository") and entry.get("commit")
+    ]
+    if pending:
+        store_pending_releases(pending)
+
+
+def _awg_resolve_latest() -> dict[str, object]:
+    resolver = OfficialReleaseResolver()
+    tools = resolver.resolve("amnezia-vpn/amneziawg-tools")
+    transport = resolver.resolve("amnezia-vpn/amneziawg-go")
+    recipe = build_recipe(releases=[tools, transport])
+    _store_pending_from_recipe(recipe)
+    return recipe
+
+
+def _awg_setup(args: argparse.Namespace) -> int:
+    probe = probe_runtime()
+    awg_profiles = _awg_profile_count()
+    state = lifecycle_state(awg_profiles=awg_profiles, probe=probe, just_imported=True)
+    if probe.runtime_available:
+        data: dict[str, object] = {
+            "state": state,
+            "runtime_available": True,
+            "message": "AmneziaWG runtime is available; nothing to set up.",
+        }
+        if args.json:
+            _print_json(data)
+            return 0
+        print("AmneziaWG runtime is already available.")
+        print("Run `watchdog awg status` to inspect provenance, or `watchdog awg update` to check for a newer official release.")
+        return 0
+    try:
+        recipe = _awg_resolve_latest()
+    except ReleaseResolutionError as exc:
+        data = {
+            "state": state,
+            "runtime_available": False,
+            "blocked": True,
+            "executed_by_watchdogvpn": False,
+            "reason": str(exc),
+        }
+        if args.json:
+            _print_json(data)
+            return 0
+        print("AmneziaWG setup could not generate an exact recipe because the official release could not be resolved.")
+        print(f"Reason: {exc}")
+        print("WatchdogVPN never falls back to main/master/HEAD and never executes build commands itself.")
+        return 0
+    data = {
+        "state": state,
+        "runtime_available": False,
+        "blocked": False,
+        "executed_by_watchdogvpn": False,
+        "recipe": recipe,
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    _awg_print_recipe(recipe)
+    return 0
+
+
+def _awg_update(args: argparse.Namespace) -> int:
+    probe = probe_runtime()
+    awg_profiles = _awg_profile_count()
+    try:
+        recipe = _awg_resolve_latest()
+    except ReleaseResolutionError as exc:
+        data = {
+            "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+            "blocked": True,
+            "reason": str(exc),
+        }
+        if args.json:
+            _print_json(data)
+            return 0
+        print("AmneziaWG update could not resolve the latest official release.")
+        print(f"Reason: {exc}")
+        print("No recipe was generated; no fallback to HEAD was used.")
+        return 0
+    current = probe.as_dict()
+    data = {
+        "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+        "current_runtime": current,
+        "certified_on_opensuse_leap": bool(recipe.get("certified_on_opensuse_leap")),
+        "releases": recipe.get("releases"),
+        "executed_by_watchdogvpn": False,
+        "recipe": recipe,
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    certified = bool(recipe.get("certified_on_opensuse_leap"))
+    print("Latest official AmneziaWG release resolution:")
+    for release in recipe.get("releases", []):
+        print(f"  {release['repository']}: tag {release['tag']} commit {release['commit']}")
+    if certified:
+        print("This release matches the WatchdogVPN-certified pins for openSUSE Leap: supported.")
+    else:
+        print("This release is newer than the WatchdogVPN-certified pins: upstream latest, NOT yet certified on openSUSE Leap.")
+    print("WatchdogVPN does not update automatically. Review and run the exact recipe below yourself, then re-run `watchdog awg status`.")
+    _awg_print_recipe(recipe)
+    return 0
+
+
+def _awg_repair(args: argparse.Namespace) -> int:
+    probe = probe_runtime()
+    awg_profiles = _awg_profile_count()
+    recipe = recipe_for_certified_pins()
+    _store_pending_from_recipe(recipe)
+    data = {
+        "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+        "executed_by_watchdogvpn": False,
+        "recipe": recipe,
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    print("AmneziaWG repair recipe (pinned to the WatchdogVPN-certified official tags, no network resolution required).")
+    print("Run the commands yourself; WatchdogVPN never executes them.")
+    _awg_print_recipe(recipe)
+    return 0
+
+
+def _awg_rollback(args: argparse.Namespace) -> int:
+    probe = probe_runtime()
+    awg_profiles = _awg_profile_count()
+    previous = previous_installed_release(probe)
+    data: dict[str, object] = {
+        "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+        "executed_by_watchdogvpn": False,
+    }
+    if not previous:
+        data["rolled_back"] = False
+        data["reason"] = (
+            "No previously installed AmneziaWG release is recorded, so there is nothing to roll back to. "
+            "Use `watchdog awg repair` to restore the certified supported release (restore-supported semantics)."
+        )
+        if args.json:
+            _print_json(data)
+            return 0
+        print("AmneziaWG rollback: no previously installed release is recorded.")
+        print("There is nothing to roll back to. `watchdog awg repair` restores the certified supported release.")
+        return 0
+    releases = [
+        ResolvedRelease(
+            repository=entry.repository,
+            tag=entry.tag,
+            commit=entry.commit,
+            resolved_at=entry.resolved_at,
+        )
+        for entry in previous
+    ]
+    recipe = build_recipe(releases=releases)
+    store_pending_releases(releases)
+    data["rolled_back"] = True
+    data["previous_releases"] = [entry.as_dict() for entry in previous]
+    data["recipe"] = recipe
+    if args.json:
+        _print_json(data)
+        return 0
+    prev_label = " / ".join(f"{entry.tag} @ {entry.commit}" for entry in previous)
+    print(f"AmneziaWG rollback to the previously recorded release pair: {prev_label}")
+    print("This restores the exact previous releases (from recorded metadata), re-aligning awg, awg-quick and amneziawg-go.")
+    print("Review and run the exact recipe below yourself; then confirm with `watchdog awg verify`.")
+    _awg_print_recipe(recipe)
+    return 0
+
+
+def _awg_verify(args: argparse.Namespace) -> int:
+    probe = probe_runtime()
+    awg_profiles = _awg_profile_count()
+    if not probe.all_present:
+        data = {
+            "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+            "recorded": False,
+            "verified": False,
+            "reason": "AmneziaWG runtime is incomplete; execute the recipe first, then re-run verify.",
+            "probe": probe.as_dict(),
+        }
+        if args.json:
+            _print_json(data)
+            return 0
+        print("AmneziaWG runtime is incomplete; execute the recipe first, then re-run `watchdog awg verify`.")
+        return 0
+    pending = load_pending_releases()
+    if not pending:
+        data = {
+            "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+            "recorded": False,
+            "verified": False,
+            "reason": "No pending recipe to verify. Run `watchdog awg setup` and execute its exact recipe first.",
+            "probe": probe.as_dict(),
+        }
+        if args.json:
+            _print_json(data)
+            return 0
+        print("No pending recipe to verify. Run `watchdog awg setup`, execute its exact recipe, then re-run `watchdog awg verify`.")
+        return 0
+    manifest = load_build_manifest()
+    verdict = validate_build_manifest(
+        manifest,
+        pending,
+        probe,
+        platform=detect_platform(),
+    )
+    if not bool(verdict["valid"]):
+        # No independent build evidence: provenance stays unknown and nothing
+        # is recorded. A runtime is never elevated to supported on observation
+        # alone.
+        data = {
+            "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+            "recorded": False,
+            "verified": False,
+            "provenance": "unknown",
+            "reason": str(verdict["reason"]),
+            "checks": verdict.get("checks"),
+            "probe": probe.as_dict(),
+        }
+        if args.json:
+            _print_json(data)
+            return 0
+        print("watchdog awg verify could not certify the installed runtime.")
+        print(f"Reason: {verdict['reason']}")
+        print("The recipe must be run from the exact official sources so it generates and installs its build manifest;")
+        print("without that independent evidence the provenance stays `unknown` and is never `supported`.")
+        return 0
+    recorded = record_installed_release(pending, probe, build_manifest_sha256=build_manifest_sha256())
+    clear_pending_releases()
+    report = verification_report(probe)
+    data = {
+        "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
+        "recorded": True,
+        "verified": True,
+        "recorded_releases": [entry.as_dict() for entry in recorded],
+        "probe": probe.as_dict(),
+        "verification": report,
+    }
+    if args.json:
+        _print_json(data)
+        return 0
+    label = " / ".join(f"{entry.repository} {entry.tag} @ {entry.commit}" for entry in recorded)
+    print(f"Recorded installed AmneziaWG releases: {label}")
+    print("Provenance verified by the recipe's independent build manifest (commits + binary digests).")
+    print("Run `watchdog awg status` to confirm the lifecycle state and `watchdog doctor` to confirm the tooling is detected.")
     return 0
 
 
