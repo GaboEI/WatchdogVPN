@@ -680,6 +680,12 @@ class OfficialReleaseResolver:
             return response.read().decode("utf-8")
 
     def _get_json(self, url: str) -> dict[str, object]:
+        payload = self._get_json_any(url)
+        if not isinstance(payload, dict):
+            raise ReleaseResolutionError(f"GitHub returned an unexpected response shape for {url}")
+        return payload
+
+    def _get_json_any(self, url: str) -> object:
         import json as json_module
 
         try:
@@ -687,20 +693,35 @@ class OfficialReleaseResolver:
         except (OSError, ValueError) as exc:
             raise ReleaseResolutionError(f"cannot reach GitHub to resolve the official release: {url}: {exc}") from exc
         try:
-            payload = json_module.loads(raw)
+            return json_module.loads(raw)
         except (TypeError, ValueError) as exc:
             raise ReleaseResolutionError(f"GitHub returned an unparseable response for {url}") from exc
-        if not isinstance(payload, dict):
-            raise ReleaseResolutionError(f"GitHub returned an unexpected response shape for {url}")
-        return payload
+
+    def _resolve_latest_tag(self, repository: str) -> str:
+        # Prefer the latest GitHub Release. Some official AmneziaWG repositories
+        # (amneziawg-go) publish tags without GitHub Releases, so `/releases/latest`
+        # returns 404; in that case fall back to the latest official tag and
+        # dereference it to its exact commit. main/master/HEAD is never used.
+        try:
+            latest = self._get_json(f"https://api.github.com/repos/{repository}/releases/latest")
+            tag = latest.get("tag_name")
+            if isinstance(tag, str) and tag:
+                return tag
+        except ReleaseResolutionError:
+            pass
+        tags = self._get_json_any(f"https://api.github.com/repos/{repository}/tags?per_page=1")
+        if isinstance(tags, list) and tags and isinstance(tags[0], dict):
+            name = tags[0].get("name")
+            if isinstance(name, str) and name:
+                return name
+        raise ReleaseResolutionError(
+            f"official release for {repository} could not be resolved (no latest release and no resolvable tags)"
+        )
 
     def resolve(self, repository: str) -> ResolvedRelease:
         if repository not in (AMNEZIAWG_TOOLS_REPO, AMNEZIAWG_TRANSPORT_REPO):
             raise ReleaseResolutionError(f"unsupported repository {repository}; only official AmneziaWG sources are allowed")
-        latest = self._get_json(f"https://api.github.com/repos/{repository}/releases/latest")
-        tag = latest.get("tag_name")
-        if not isinstance(tag, str) or not tag:
-            raise ReleaseResolutionError(f"official release for {repository} has no resolvable tag")
+        tag = self._resolve_latest_tag(repository)
         commit = self._resolve_commit_for_tag(repository, tag)
         if not commit:
             raise ReleaseResolutionError(f"official release {repository}@{tag} has no resolvable commit")

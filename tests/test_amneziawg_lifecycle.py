@@ -175,6 +175,21 @@ class ReleaseResolverTests(unittest.TestCase):
         release = resolver.resolve(AMNEZIAWG_TRANSPORT_REPO)
         self.assertEqual(release.commit, commit)
 
+    def test_resolves_latest_tag_when_repo_has_no_releases(self) -> None:
+        def fetch(url: str) -> str:
+            if "/git/ref/tags/" in url:
+                return json.dumps({"ref": "refs/tags/v3.1.20260828", "object": {"sha": "b5928efb6ca19f0153958460c3d141f04abc5c2e", "type": "commit"}})
+            if "/releases/latest" in url:
+                raise OSError("404 Not Found (no GitHub Releases published)")
+            if "/tags" in url:
+                return json.dumps([{"name": "v3.1.20260828", "commit": {"sha": "b5928efb6ca19f0153958460c3d141f04abc5c2e"}}])
+            raise OSError(f"unexpected url {url}")
+
+        resolver = OfficialReleaseResolver(fetch=fetch)
+        release = resolver.resolve(AMNEZIAWG_TRANSPORT_REPO)
+        self.assertEqual(release.tag, "v3.1.20260828")
+        self.assertEqual(release.commit, "b5928efb6ca19f0153958460c3d141f04abc5c2e")
+
     def test_fails_loudly_when_github_unavailable(self) -> None:
         def fetch(_url: str) -> str:
             raise OSError("network down")
