@@ -1271,7 +1271,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         state = (result.stdout or "").strip().lower()
         if state == "active" and result.returncode == 0:
             return "active"
-        if state == "inactive" and result.returncode != 0:
+        if state == "inactive" and result.returncode == 3:
             return "inactive"
         return "unknown"
 

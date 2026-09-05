@@ -2310,7 +2310,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         # connect with "NetworkManager TUN ownership registration failed".
         def run(command, **kwargs):
             if command == ["systemctl", "is-active", "NetworkManager.service"]:
-                return subprocess.CompletedProcess(command, 1, stdout="inactive\n", stderr="")
+                return subprocess.CompletedProcess(command, 3, stdout="inactive\n", stderr="")
             return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
 
         run_mock.side_effect = run
@@ -2333,7 +2333,7 @@ class SingBoxDriverProcessTests(unittest.TestCase):
         # best-effort.
         def run(command, **kwargs):
             if command == ["systemctl", "is-active", "NetworkManager.service"]:
-                return subprocess.CompletedProcess(command, 1, stdout="inactive\n", stderr="")
+                return subprocess.CompletedProcess(command, 3, stdout="inactive\n", stderr="")
             return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
 
         run_mock.side_effect = run
@@ -2530,6 +2530,40 @@ class SingBoxDriverProcessTests(unittest.TestCase):
             commands,
         )
         self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], commands)
+
+    @patch("drivers.singbox_driver.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("drivers.singbox_driver.subprocess.run")
+    def test_inactive_with_unexpected_returncode_is_unknown_fail_closed(self, run_mock, which_mock) -> None:
+        # The explicit-inactive no-op is only recognized on the exact systemd
+        # stopped-state answer (rc 3 + 'inactive'). Any other return code with
+        # 'inactive' output is indeterminate: registration must fail closed
+        # (no helper started) and cleanup must fail closed while still
+        # best-effort deleting the kernel TUN link.
+        for rc in (1, 2, 4):
+            with self.subTest(rc=rc):
+                def run(command, **kwargs):
+                    if command == ["systemctl", "is-active", "NetworkManager.service"]:
+                        return subprocess.CompletedProcess(command, rc, "inactive\n", "")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+
+                run_mock.side_effect = run
+                run_mock.reset_mock()
+
+                self.assertFalse(self.driver._record_networkmanager_tun_connection())
+                record_commands = [call.args[0] for call in run_mock.call_args_list]
+                self.assertNotIn(
+                    ["systemctl", "start", "watchdogvpn-nm-tun-register.service"],
+                    record_commands,
+                )
+
+                run_mock.reset_mock()
+                self.assertFalse(self.driver._forget_networkmanager_tun_connection())
+                forget_commands = [call.args[0] for call in run_mock.call_args_list]
+                self.assertNotIn(
+                    ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
+                    forget_commands,
+                )
+                self.assertIn(["ip", "link", "delete", "wdvpn-tun0"], forget_commands)
 
     @patch("drivers.singbox_driver.shutil.which", return_value="/usr/bin/nft")
     def test_apply_lan_gateway_installs_nft_rules_then_enables_forwarding(self, which_mock) -> None:
