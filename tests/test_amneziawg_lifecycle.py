@@ -248,6 +248,17 @@ class RecipeTests(unittest.TestCase):
         self.assertIs(recipe["certified_on_opensuse_leap"], False)
         self.assertEqual(recipe["compatibility"]["status"], "not_verified")
 
+    def test_recipe_handles_go_toolchain_requirement(self) -> None:
+        recipe = build_recipe(releases=_certified_releases())
+        commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
+        script = str(recipe["script"])
+        self.assertIn("go version", commands)
+        self.assertIn("go version", script)
+        self.assertIn("GOTOOLCHAIN=auto", commands)
+        self.assertIn("GOTOOLCHAIN=auto", script)
+        self.assertIn("amneziawg-go", commands)
+        self.assertIn("1.25", commands)
+
     def test_recipe_for_certified_pins_is_offline_and_exact(self) -> None:
         recipe = recipe_for_certified_pins()
         commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])

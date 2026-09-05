@@ -45,6 +45,14 @@ AMNEZIAWG_OUTPUTS = ("awg", "awg-quick", "amneziawg-go")
 INSTALL_ROOT = Path("/usr/local/bin")
 PROBE_CANDIDATES = (Path("/usr/local/bin"), Path("/usr/bin"))
 
+# amneziawg-go declares `go 1.25.0` in its go.mod (both the certified pin and
+# the latest official release). Distro-packaged Go (for example openSUSE Leap
+# 15.6 ships go 1.21.12 with GOTOOLCHAIN=local) is older, so the recipe checks
+# the local toolchain and, when it is below this floor, enables GOTOOLCHAIN=auto
+# so Go downloads the required toolchain itself. This is a build-time
+# dependency download, never an AWG binary and never a system change.
+AMNEZIAWG_GO_MIN_GO_VERSION = "1.25"
+
 # Certified pins recorded for the L3.1 openSUSE Leap matrix (Task 23.7.5.6b).
 # A runtime whose recorded metadata (binary digest) matches these is
 # "supported". Any newer official release is "experimental" until it passes
@@ -851,6 +859,23 @@ def _manifest_install_command() -> dict[str, str]:
     }
 
 
+def _go_toolchain_step(required: str = AMNEZIAWG_GO_MIN_GO_VERSION) -> dict[str, str]:
+    command = (
+        "go version\n"
+        "if ! go version | grep -Eq '^go version go1\\.(2[5-9]|[3-9][0-9])(\\.|$)|^go version go2\\.'; then\n"
+        f"  printf 'Go is older than {required} required by amneziawg-go; enabling GOTOOLCHAIN=auto so Go downloads the matching toolchain.\\n'\n"
+        "  export GOTOOLCHAIN=auto\n"
+        "fi"
+    )
+    return {
+        "command": command,
+        "purpose": (
+            f"Check the local Go toolchain; if it is below {required} (required by amneziawg-go), "
+            "enable GOTOOLCHAIN=auto so Go downloads the matching toolchain before building"
+        ),
+    }
+
+
 def build_recipe(
     *,
     releases: Sequence[ResolvedRelease],
@@ -887,6 +912,7 @@ def build_recipe(
         }
     )
     commands.append(_build_dependency_command(platform))
+    commands.append(_go_toolchain_step())
     commands.extend(
         [
             {
@@ -975,6 +1001,11 @@ def _recipe_script(
         'build_dir="$(mktemp -d /tmp/watchdogvpn-amneziawg.XXXXXX)"',
         'trap \'rm -rf "$build_dir"\' EXIT',
         dependency,
+        "go version",
+        "if ! go version | grep -Eq '^go version go1\\.(2[5-9]|[3-9][0-9])(\\.|$)|^go version go2\\.'; then",
+        f"  printf 'Go is older than {AMNEZIAWG_GO_MIN_GO_VERSION} required by amneziawg-go; enabling GOTOOLCHAIN=auto so Go downloads the matching toolchain.\\n'",
+        "  export GOTOOLCHAIN=auto",
+        "fi",
         _checkout_and_verify(AMNEZIAWG_TOOLS_REPO, tools_release.tag, tools_release.commit, '"$build_dir/amneziawg-tools"'),
         'make -C "$build_dir/amneziawg-tools/src" WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETION=no',
         _checkout_and_verify(AMNEZIAWG_TRANSPORT_REPO, transport_release.tag, transport_release.commit, '"$build_dir/amneziawg-go"'),
