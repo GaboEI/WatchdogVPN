@@ -94,7 +94,7 @@ class ManualProvider(BaseProvider):
     def load_profiles(self) -> list[Profile]:
         return [profile for profile in self.profile_store.list() if profile.source == ProfileSource.MANUAL]
 
-    def update(self) -> bool:
+    def update(self, provider_id: str | None = None) -> bool:
         return True
 
     def status(self) -> dict:

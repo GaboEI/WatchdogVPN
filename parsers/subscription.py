@@ -21,6 +21,13 @@ DEFAULT_SUBSCRIPTION_USER_AGENT = (
     "WatchdogVPN/2.0 "
     "(compatible; sing-box; Clash; mihomo; v2ray-subscription)"
 )
+SUBSCRIPTION_COMPATIBILITY_USER_AGENTS = (
+    DEFAULT_SUBSCRIPTION_USER_AGENT,
+    "Karing",
+    "clash.meta",
+    "mihomo",
+    "ClashMeta",
+)
 SUBSCRIPTION_USERINFO_HEADER = "subscription-userinfo"
 DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS = 5.0
 DEFAULT_SUBSCRIPTION_READ_TIMEOUT_SECONDS = 10.0
@@ -33,6 +40,8 @@ SUBSCRIPTION_READ_CHUNK_BYTES = 64 * 1024
 class SubscriptionFetchResult:
     profiles: list[Profile]
     metadata: dict[str, Any] = field(default_factory=dict)
+    rejected_profiles: int = 0
+    user_agent: str = ""
 
 
 def _env_float(name: str, default: float) -> float:
@@ -138,14 +147,20 @@ def validate_subscription_url(url: str) -> str:
     return normalized
 
 
-def _fetch(url: str) -> tuple[str, dict[str, str]]:
+def _subscription_user_agents() -> tuple[str, ...]:
+    configured = os.environ.get("WATCHDOGVPN_SUBSCRIPTION_USER_AGENT", "").strip()
+    if not configured:
+        return SUBSCRIPTION_COMPATIBILITY_USER_AGENTS
+    return (configured, *(item for item in SUBSCRIPTION_COMPATIBILITY_USER_AGENTS if item != configured))
+
+
+def _fetch(url: str, *, user_agent: str) -> tuple[str, dict[str, str]]:
     # Only https is accepted: plain http leaks the subscription token (often
     # embedded in the URL path) in cleartext, and urlopen would otherwise
     # also happily honor file://, ftp:// and other local/non-network
     # schemes - "add a provider" must never become "read an arbitrary local
     # file" or "fetch an internal-network URL an operator didn't intend".
     url = validate_subscription_url(url)
-    user_agent = os.environ.get("WATCHDOGVPN_SUBSCRIPTION_USER_AGENT", DEFAULT_SUBSCRIPTION_USER_AGENT)
     connect_timeout, read_timeout, total_timeout, max_response_bytes = _subscription_fetch_limits()
     started = time.monotonic()
     try:
@@ -180,11 +195,6 @@ def _fetch(url: str) -> tuple[str, dict[str, str]]:
     if not raw:
         raise ParseError("empty subscription response")
     return raw.decode("utf-8", errors="replace").strip(), headers
-
-
-def _fetch_text(url: str) -> str:
-    text, _headers = _fetch(url)
-    return text
 
 
 def _looks_like_json(text: str) -> bool:
@@ -231,13 +241,13 @@ def _decode_base64_lines(text: str) -> list[str]:
     return [line.strip() for line in decoded.splitlines() if line.strip()]
 
 
-def _parse_profiles(text: str) -> list[Profile]:
+def _parse_profiles_detailed(text: str) -> tuple[list[Profile], int]:
     if _looks_like_html(text):
         raise ParseError("subscription response looks like HTML, not a VPN subscription")
     if _looks_like_json(text):
-        return parse_singbox_json(text)
+        return parse_singbox_json(text), 0
     if _looks_like_yaml(text):
-        return parse_clash_yaml(text)
+        return parse_clash_yaml(text), 0
 
     try:
         decoded_lines = _decode_base64_lines(text)
@@ -254,31 +264,66 @@ def _parse_profiles(text: str) -> list[Profile]:
         if not profiles:
             detail = f" ({'; '.join(parse_errors[:3])})" if parse_errors else ""
             raise ParseError(f"subscription contains no supported profiles{detail}")
-        return profiles
+        return profiles, len(parse_errors)
 
     if "outbounds" in text:
         try:
-            return parse_singbox_json(text)
+            return parse_singbox_json(text), 0
         except ParseError:
             pass
     if "proxies" in text:
         try:
-            return parse_clash_yaml(text)
+            return parse_clash_yaml(text), 0
         except ParseError:
             pass
     raise ParseError("unsupported subscription format")
 
 
+def _parse_profiles(text: str) -> list[Profile]:
+    profiles, _rejected_profiles = _parse_profiles_detailed(text)
+    return profiles
+
+
 def fetch_and_parse(url: str) -> list[Profile]:
-    text = _fetch_text(url)
-    return _parse_profiles(text)
+    return fetch_subscription(url).profiles
 
 
 def fetch_subscription(url: str) -> SubscriptionFetchResult:
-    text, headers = _fetch(url)
-    profiles = _parse_profiles(text)
-    metadata = _parse_subscription_userinfo(headers.get(SUBSCRIPTION_USERINFO_HEADER))
-    return SubscriptionFetchResult(profiles=profiles, metadata=metadata)
+    errors: list[str] = []
+    candidates: list[SubscriptionFetchResult] = []
+    for user_agent in _subscription_user_agents():
+        try:
+            text, headers = _fetch(url, user_agent=user_agent)
+            profiles, rejected_profiles = _parse_profiles_detailed(text)
+        except ParseError as exc:
+            errors.append(str(exc))
+            if not any(
+                marker in str(exc)
+                for marker in (
+                    "no supported profiles",
+                    "not a VPN subscription",
+                    "unsupported subscription format",
+                )
+            ):
+                raise
+            continue
+        metadata = _parse_subscription_userinfo(headers.get(SUBSCRIPTION_USERINFO_HEADER))
+        candidates.append(
+            SubscriptionFetchResult(
+                profiles=profiles,
+                metadata=metadata,
+                rejected_profiles=rejected_profiles,
+                user_agent=user_agent,
+            )
+        )
+    if candidates:
+        best = candidates[0]
+        for candidate in candidates[1:]:
+            if len(candidate.profiles) > len(best.profiles):
+                best = candidate
+        return best
+    detail = f": {errors[-1]}" if errors else ""
+    raise ParseError(f"subscription negotiation failed{detail}")
 
 
 def _format_bytes(count: float) -> str:

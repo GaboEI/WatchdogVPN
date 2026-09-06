@@ -53,7 +53,7 @@ class SubscriptionProvider(BaseProvider):
         self.fetcher = fetcher or fetch_and_parse
         self.metadata_fetcher = metadata_fetcher
 
-    def _fetch(self, url: str) -> tuple[list[Profile], dict[str, Any]]:
+    def _fetch(self, url: str) -> tuple[list[Profile], dict[str, Any], int]:
         if not self._fetcher_overridden:
             result = fetch_subscription(url)
             if not result.profiles:
@@ -61,17 +61,17 @@ class SubscriptionProvider(BaseProvider):
             metadata = (
                 self.metadata_fetcher(url) if self.metadata_fetcher is not None else result.metadata
             )
-            return result.profiles, metadata
+            return result.profiles, metadata, result.rejected_profiles
         profiles = self._fetch_profiles(url)
         metadata = self.metadata_fetcher(url) if self.metadata_fetcher is not None else {}
-        return profiles, metadata
+        return profiles, metadata, 0
 
     def add(self, url: str, name: str) -> Provider:
         normalized_url = normalized_provider_url(url)
         duplicate = self._provider_with_url(normalized_url)
         if duplicate is not None:
             raise DuplicateProviderError(f"provider already exists: {duplicate.id}")
-        profiles, metadata = self._fetch(normalized_url)
+        profiles, metadata, _rejected_profiles = self._fetch(normalized_url)
 
         def commit(current_providers: list[Provider], current_profiles: list[Profile]) -> tuple[
             list[Provider], list[Profile], Provider
@@ -112,11 +112,13 @@ class SubscriptionProvider(BaseProvider):
                 return provider
         return None
 
-    def update(self, provider_id: str) -> int:
+    def update(self, provider_id: str | None = None) -> int:
+        if provider_id is None:
+            raise ValueError("provider id is required for subscription updates")
         provider = self.provider_store.get(provider_id)
         if provider is None:
             raise ProviderNotFoundError(f"provider not found: {provider_id}")
-        fetched, metadata = self._fetch(provider.url)
+        fetched, metadata, rejected_profiles = self._fetch(provider.url)
 
         def commit(current_providers: list[Provider], current_profiles: list[Profile]) -> tuple[
             list[Provider], list[Profile], int
@@ -131,6 +133,11 @@ class SubscriptionProvider(BaseProvider):
                 for profile in current_profiles
                 if profile.provider_id == current_provider.id
             }
+            if rejected_profiles and len(fetched) < len(existing):
+                raise ParseError(
+                    "subscription update returned an incomplete profile set; "
+                    "existing provider profiles were preserved"
+                )
             normalized = self._normalize_profiles(
                 current_provider,
                 fetched,
