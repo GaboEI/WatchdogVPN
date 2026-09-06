@@ -4,8 +4,9 @@ import base64
 import json
 import socket
 import unittest
+from email.message import Message
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from parsers import (
@@ -506,6 +507,21 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertEqual(fetch_mock.call_count, 5)
         self.assertEqual(fetch_mock.call_args_list[0].kwargs["user_agent"], DEFAULT_SUBSCRIPTION_USER_AGENT)
         self.assertEqual(fetch_mock.call_args_list[1].kwargs["user_agent"], "Karing")
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_retries_user_agent_after_403(self, urlopen_mock) -> None:
+        valid = b"proxies:\n  - name: karing-node\n    type: vless\n    server: node.example.com\n    port: 443\n    uuid: uuid-1\n"
+        _mock_subscription_response(urlopen_mock, valid)
+        urlopen_mock.side_effect = [
+            HTTPError("https://example.com/sub", 403, "Forbidden", Message(), None),
+            *([urlopen_mock.return_value] * 4),
+        ]
+
+        result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(len(result.profiles), 1)
+        self.assertEqual(urlopen_mock.call_count, 5)
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_rejects_oversized_response(self, urlopen_mock) -> None:

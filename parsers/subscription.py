@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -34,6 +34,7 @@ DEFAULT_SUBSCRIPTION_READ_TIMEOUT_SECONDS = 10.0
 DEFAULT_SUBSCRIPTION_TOTAL_TIMEOUT_SECONDS = 20.0
 DEFAULT_SUBSCRIPTION_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SUBSCRIPTION_READ_CHUNK_BYTES = 64 * 1024
+SUBSCRIPTION_RETRYABLE_HTTP_STATUSES = frozenset({403, 406, 415})
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +187,12 @@ def _fetch(url: str, *, user_agent: str) -> tuple[str, dict[str, str]]:
         raise
     except ValueError as exc:
         raise ParseError(f"invalid subscription URL: {url}") from exc
+    except HTTPError as exc:
+        if exc.code in SUBSCRIPTION_RETRYABLE_HTTP_STATUSES:
+            raise ParseError(
+                f"subscription request rejected with HTTP status {exc.code}"
+            ) from exc
+        raise ParseError(f"failed to fetch subscription: {exc}") from exc
     except (socket.timeout, TimeoutError) as exc:
         raise ParseError("subscription fetch timed out") from exc
     except URLError as exc:
@@ -303,6 +310,7 @@ def fetch_subscription(url: str) -> SubscriptionFetchResult:
                     "no supported profiles",
                     "not a VPN subscription",
                     "unsupported subscription format",
+                    "subscription request rejected with HTTP status",
                 )
             ):
                 raise
