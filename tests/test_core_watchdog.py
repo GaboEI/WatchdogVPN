@@ -336,6 +336,42 @@ class WatchdogCoreTests(unittest.TestCase):
         driver = select_driver(None)
         self.assertIsInstance(driver, SingBoxDriver)
 
+    def test_cached_endpoint_override_preserves_hostname_for_tls(self) -> None:
+        profile = Profile(
+            id="cached-vless",
+            name="Cached VLESS",
+            protocol=ProtocolType.VLESS,
+            config={"server": "vpn.example.com", "server_port": 443, "security": "tls"},
+            source=ProfileSource.MANUAL,
+        )
+        runtime = WatchdogRuntime(driver=FakeDriver())
+        runtime.endpoint_resolution_cache.put("vpn.example.com", ["8.8.8.8"])
+
+        prepared = runtime._profile_with_cached_endpoint(profile)
+
+        self.assertEqual(prepared.config["server"], "8.8.8.8")
+        self.assertEqual(prepared.config["sni"], "vpn.example.com")
+        self.assertEqual(profile.config["server"], "vpn.example.com")
+        outbound = SingBoxDriver()._protocol_to_outbound(prepared)
+        self.assertEqual(outbound["server"], "8.8.8.8")
+        self.assertEqual(outbound["tls"]["server_name"], "vpn.example.com")
+
+    def test_cached_endpoint_override_brackets_ipv6_endpoint(self) -> None:
+        profile = Profile(
+            id="cached-native",
+            name="Cached native endpoint",
+            protocol=ProtocolType.AMNEZIAWG,
+            config={"endpoint": "vpn.example.com:443"},
+            source=ProfileSource.MANUAL,
+        )
+        runtime = WatchdogRuntime(driver=FakeDriver())
+        runtime.endpoint_resolution_cache.put("vpn.example.com", ["2001:4860:4860::8888"])
+
+        prepared = runtime._profile_with_cached_endpoint(profile)
+
+        self.assertEqual(prepared.config["endpoint"], "[2001:4860:4860::8888]:443")
+        self.assertEqual(profile.config["endpoint"], "vpn.example.com:443")
+
     @patch.object(SingBoxDriver, "connect", return_value=True)
     @patch.object(SingBoxDriver, "disconnect", return_value=True)
     @patch.object(SingBoxDriver, "health_check", return_value="ok")
@@ -3718,6 +3754,8 @@ class WatchdogIntegrationTests(unittest.TestCase):
             alt_profile,
             require_resolution=True,
             allow_captured_fakeip_ranges=(),
+            resolution_cache=runtime.endpoint_resolution_cache,
+            allow_live_resolution=True,
         )
         driver.disconnect_mock.assert_called_once_with()
         driver.connect_mock.assert_called_once_with(alt_profile)
@@ -3790,9 +3828,13 @@ class WatchdogIntegrationTests(unittest.TestCase):
             *,
             require_resolution: bool,
             allow_captured_fakeip_ranges: tuple[str, ...],
+            resolution_cache,
+            allow_live_resolution: bool,
         ) -> None:
             self.assertTrue(require_resolution)
             self.assertEqual(allow_captured_fakeip_ranges, ())
+            self.assertIs(resolution_cache, runtime.endpoint_resolution_cache)
+            self.assertTrue(allow_live_resolution)
             if profile.id == unresolved.id:
                 raise EndpointPolicyError("resolution failed")
 

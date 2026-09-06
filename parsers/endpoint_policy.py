@@ -4,6 +4,8 @@ from __future__ import annotations
 import ipaddress
 import socket
 from collections.abc import Callable
+from dataclasses import dataclass
+import time
 from typing import Any
 
 from models.profile import Profile, ProtocolType
@@ -15,6 +17,92 @@ class EndpointPolicyError(ValueError):
 
 
 Resolver = Callable[..., list[tuple[Any, ...]]]
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointResolution:
+    """A short-lived, policy-validated endpoint resolution lease."""
+
+    host: str
+    addresses: tuple[str, ...]
+    expires_at: float
+
+
+class EndpointResolutionCache:
+    """Keep validated global addresses available while the kill switch is active."""
+
+    def __init__(
+        self,
+        ttl_seconds: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("endpoint resolution cache TTL must be positive")
+        self._ttl_seconds = float(ttl_seconds)
+        self._clock = clock
+        self._entries: dict[str, EndpointResolution] = {}
+
+    def get(self, host: object) -> EndpointResolution | None:
+        key = _normalise_host(host)
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        if entry.expires_at <= self._clock():
+            self._entries.pop(key, None)
+            return None
+        return entry
+
+    def resolve(self, host: object, *, resolver: Resolver = socket.getaddrinfo) -> EndpointResolution:
+        normalised = _normalise_host(host)
+        cached = self.get(normalised)
+        if cached is not None:
+            return cached
+        addresses = _resolved_addresses(normalised, resolver)
+        unsafe = sorted(
+            str(address)
+            for address in addresses
+            if not getattr(address, "is_global", False)
+        )
+        if unsafe:
+            raise EndpointPolicyError(
+                f"endpoint {normalised!r} resolves to a non-global address: {', '.join(unsafe)}"
+            )
+        entry = EndpointResolution(
+            host=normalised,
+            addresses=tuple(sorted(str(address) for address in addresses)),
+            expires_at=self._clock() + self._ttl_seconds,
+        )
+        self._entries[normalised] = entry
+        return entry
+
+    def put(self, host: object, addresses: tuple[str, ...] | list[str]) -> EndpointResolution:
+        normalised = _normalise_host(host)
+        try:
+            parsed = tuple(sorted({str(ipaddress.ip_address(address)) for address in addresses}))
+        except (TypeError, ValueError) as exc:
+            raise EndpointPolicyError(
+                f"endpoint resolution returned an invalid address for {normalised!r}"
+            ) from exc
+        if not parsed:
+            raise EndpointPolicyError(f"endpoint resolution returned no addresses for {normalised!r}")
+        unsafe = sorted(address for address in parsed if not ipaddress.ip_address(address).is_global)
+        if unsafe:
+            raise EndpointPolicyError(
+                f"endpoint {normalised!r} resolves to a non-global address: {', '.join(unsafe)}"
+            )
+        entry = EndpointResolution(
+            host=normalised,
+            addresses=parsed,
+            expires_at=self._clock() + self._ttl_seconds,
+        )
+        self._entries[normalised] = entry
+        return entry
+
+    def invalidate(self, host: object) -> None:
+        self._entries.pop(_normalise_host(host), None)
+
+    def clear(self) -> None:
+        self._entries.clear()
 
 
 def _normalise_host(value: object) -> str:
@@ -118,6 +206,8 @@ def validate_profile_endpoint(
     require_resolution: bool = False,
     resolve_hostnames: bool = False,
     allow_captured_fakeip_ranges: tuple[str, ...] = (),
+    resolution_cache: EndpointResolutionCache | None = None,
+    allow_live_resolution: bool = True,
 ) -> str:
     try:
         host = profile_endpoint_host(profile)
@@ -125,6 +215,25 @@ def validate_profile_endpoint(
         raise EndpointPolicyError(str(exc)) from exc
     if host is None:
         raise EndpointPolicyError("profile has no remote endpoint host")
+    if require_resolution and resolution_cache is not None:
+        try:
+            literal = ipaddress.ip_address(_normalise_host(host))
+        except ValueError:
+            literal = None
+        if literal is not None:
+            if not literal.is_global:
+                raise EndpointPolicyError(
+                    f"endpoint {literal} resolves to a non-global address: {literal}"
+                )
+            return str(literal)
+        cached = resolution_cache.get(host)
+        if cached is None:
+            if not allow_live_resolution:
+                raise EndpointPolicyError(
+                    f"no fresh validated resolution for endpoint {host!r} while runtime is active"
+                )
+            resolution_cache.resolve(host, resolver=resolver)
+        return _normalise_host(host)
     return canonicalize_remote_endpoint(
         host,
         resolver=resolver,

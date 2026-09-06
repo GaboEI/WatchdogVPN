@@ -5,7 +5,7 @@ import logging
 import os
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
@@ -43,7 +43,12 @@ from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load
 from dns.resolver_inventory import ResolverManager
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
-from parsers.endpoint_policy import EndpointPolicyError, profile_endpoint_host, validate_profile_endpoint
+from parsers.endpoint_policy import (
+    EndpointPolicyError,
+    EndpointResolutionCache,
+    profile_endpoint_host,
+    validate_profile_endpoint,
+)
 from node_groups.models import NodeGroup, NodeGroupSelectionMode, group_target
 from node_groups.resolver import resolve_candidates as resolve_node_group_candidates
 from node_groups.scoring import rank_candidates
@@ -139,6 +144,10 @@ class WatchdogRuntime:
     # error, and assigning it to a driver would make it leak into the next
     # unrelated connection attempt.
     _health_error_detail: str = field(default="", init=False, repr=False)
+
+    endpoint_resolution_cache: EndpointResolutionCache = field(
+        default_factory=EndpointResolutionCache
+    )
 
     def __post_init__(self) -> None:
         if self.driver_selector is ORIGINAL_SELECT_DRIVER and type(self.driver) not in MANAGED_DRIVER_TYPES:
@@ -325,6 +334,9 @@ class WatchdogRuntime:
         if result.status == "ok":
             self._health_error_detail = ""
         else:
+            endpoint_host = profile_endpoint_host(profile)
+            if endpoint_host is not None:
+                self.endpoint_resolution_cache.invalidate(endpoint_host)
             classification = result.classification
             if not isinstance(classification, str) or not classification.replace("_", "").isalpha():
                 classification = "unknown"
@@ -877,6 +889,8 @@ class WatchdogRuntime:
                     profile,
                     require_resolution=True,
                     allow_captured_fakeip_ranges=self._endpoint_policy_fakeip_allowlist(),
+                    resolution_cache=self.endpoint_resolution_cache,
+                    allow_live_resolution=self._active_profile() is None,
                 )
         except (EndpointPolicyError, ValueError) as exc:
             raise EndpointPolicyConnectionError(f"endpoint policy rejected connection: {exc}") from exc
@@ -1008,6 +1022,37 @@ class WatchdogRuntime:
         except Exception:
             return ()
         return (policy.fakeip_inet4_range, policy.fakeip_inet6_range)
+
+    def _profile_with_cached_endpoint(self, profile: Profile) -> Profile:
+        """Use a validated dial address without changing the logical profile."""
+        host = profile_endpoint_host(profile)
+        if host is None:
+            return profile
+        lease = self.endpoint_resolution_cache.get(host)
+        if lease is None:
+            return profile
+        dial_address = lease.addresses[0]
+        config = dict(profile.config)
+        if "host" in config:
+            config["host"] = dial_address
+        elif "server" in config:
+            config["server"] = dial_address
+        elif isinstance(config.get("endpoint"), str):
+            endpoint = str(config["endpoint"])
+            separator = endpoint.rfind(":")
+            dial_endpoint = f"[{dial_address}]" if ":" in dial_address else dial_address
+            config["endpoint"] = (
+                f"{dial_endpoint}{endpoint[separator:]}" if separator > 0 else dial_endpoint
+            )
+        if profile.protocol in {
+            ProtocolType.VLESS,
+            ProtocolType.VMESS,
+            ProtocolType.TROJAN,
+            ProtocolType.HYSTERIA2,
+            ProtocolType.TUIC,
+        }:
+            config.setdefault("sni", host)
+        return replace(profile, config=config)
 
     def _chain_runtime_plans(
         self,
@@ -1624,6 +1669,7 @@ class _RuntimeDriverRouter(BaseDriver):
         self.runtime = runtime
         self._teardown_verified = False
         self._prepared_profile_id: str | None = None
+        self._prepared_profile: Profile | None = None
         self._prepared_connection: tuple[BaseDriver, dict[str, object]] | None = None
 
     @property
@@ -1638,6 +1684,7 @@ class _RuntimeDriverRouter(BaseDriver):
         """Prepare a candidate completely before tearing down the healthy path."""
 
         self._prepared_profile_id = None
+        self._prepared_profile = None
         self._prepared_connection = None
         try:
             prepared = self.runtime._prepare_driver_for_connection(profile)
@@ -1654,6 +1701,7 @@ class _RuntimeDriverRouter(BaseDriver):
             )
             return False
         self._prepared_profile_id = profile.id
+        self._prepared_profile = self.runtime._profile_with_cached_endpoint(profile)
         self._prepared_connection = prepared
         return True
 
@@ -1677,6 +1725,7 @@ class _RuntimeDriverRouter(BaseDriver):
             return False
         if self._prepared_profile_id == profile.id and self._prepared_connection is not None:
             driver, options = self._prepared_connection
+            connection_profile = self._prepared_profile or profile
         else:
             try:
                 driver, options = self.runtime._prepare_driver_for_connection(profile)
@@ -1692,15 +1741,17 @@ class _RuntimeDriverRouter(BaseDriver):
                     exc,
                 )
                 return False
+            connection_profile = profile
         self._prepared_profile_id = None
+        self._prepared_profile = None
         self._prepared_connection = None
         driver = self.runtime._activate_driver(driver, disconnect_current=False)
-        if not self.runtime._protect_connection_attempt(profile):
+        if not self.runtime._protect_connection_attempt(connection_profile):
             return False
         self._teardown_verified = False
         options.setdefault("final_policy", final_policy)
         return driver.connect(
-            profile,
+            connection_profile,
             dns_policy=dns_policy,
             **options,
         )

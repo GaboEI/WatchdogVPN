@@ -6,6 +6,7 @@ import unittest
 from models.profile import Profile, ProfileSource, ProtocolType
 from parsers.endpoint_policy import (
     EndpointPolicyError,
+    EndpointResolutionCache,
     canonicalize_remote_endpoint,
     profile_endpoint_host,
     validate_profile_endpoint,
@@ -20,6 +21,95 @@ def _resolver(*addresses: str):
 
 
 class EndpointPolicyTests(unittest.TestCase):
+    def test_resolution_cache_reuses_validated_global_addresses(self) -> None:
+        calls = 0
+
+        def resolver(*_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return _resolver("8.8.8.8")(*_args, **_kwargs)
+
+        cache = EndpointResolutionCache(ttl_seconds=30.0)
+        first = cache.resolve("cdn.example", resolver=resolver)
+        second = cache.resolve("cdn.example.", resolver=resolver)
+
+        self.assertEqual(first.addresses, ("8.8.8.8",))
+        self.assertEqual(second, first)
+        self.assertEqual(calls, 1)
+
+    def test_resolution_cache_expires_and_resolves_again(self) -> None:
+        now = [100.0]
+        calls = 0
+
+        def resolver(*_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return _resolver("8.8.8.8")(*_args, **_kwargs)
+
+        cache = EndpointResolutionCache(ttl_seconds=30.0, clock=lambda: now[0])
+        cache.resolve("cdn.example", resolver=resolver)
+        now[0] = 130.0
+        self.assertIsNone(cache.get("cdn.example"))
+        cache.resolve("cdn.example", resolver=resolver)
+
+        self.assertEqual(calls, 2)
+
+    def test_resolution_cache_rejects_non_global_addresses(self) -> None:
+        cache = EndpointResolutionCache()
+
+        with self.assertRaisesRegex(EndpointPolicyError, "non-global"):
+            cache.put("cdn.example", ["10.0.0.1"])
+
+    def test_resolution_cache_invalidates_explicitly(self) -> None:
+        cache = EndpointResolutionCache()
+        cache.put("cdn.example", ["8.8.8.8"])
+
+        cache.invalidate("cdn.example.")
+
+        self.assertIsNone(cache.get("cdn.example"))
+
+    def test_active_runtime_uses_cache_without_resolving_again(self) -> None:
+        profile = Profile(
+            id="cached",
+            name="cached",
+            protocol=ProtocolType.VLESS,
+            config={"server": "cdn.example"},
+            source=ProfileSource.MANUAL,
+        )
+        cache = EndpointResolutionCache()
+        cache.put("cdn.example", ["8.8.8.8"])
+
+        def failing_resolver(*_args, **_kwargs):
+            raise AssertionError("active preflight must not resolve through the tunnel")
+
+        self.assertEqual(
+            validate_profile_endpoint(
+                profile,
+                resolver=failing_resolver,
+                require_resolution=True,
+                resolution_cache=cache,
+                allow_live_resolution=False,
+            ),
+            "cdn.example",
+        )
+
+    def test_active_runtime_rejects_hostname_without_fresh_cache(self) -> None:
+        profile = Profile(
+            id="uncached",
+            name="uncached",
+            protocol=ProtocolType.VLESS,
+            config={"server": "cdn.example"},
+            source=ProfileSource.MANUAL,
+        )
+
+        with self.assertRaisesRegex(EndpointPolicyError, "no fresh validated resolution"):
+            validate_profile_endpoint(
+                profile,
+                require_resolution=True,
+                resolution_cache=EndpointResolutionCache(),
+                allow_live_resolution=False,
+            )
+
     def test_legacy_ipv4_spellings_are_resolved_and_rejected(self) -> None:
         for host in ("127.0.0.1", "127.1", "2130706433", "0x7f000001", "0177.0.0.1"):
             with self.subTest(host=host):
