@@ -202,6 +202,29 @@ class SubscriptionProviderTests(unittest.TestCase):
             self.assertEqual(provider_path.read_bytes(), provider_before)
             self.assertEqual(profile_path.read_bytes(), profile_before)
 
+    def test_update_parse_failure_preserves_existing_provider_profiles(self) -> None:
+        calls = {"count": 0}
+
+        def fetcher(_url: str) -> list[Profile]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return [_profile("node", "Node", "provider.example.com")]
+            raise ParseError("subscription contains no supported profiles")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = self._provider(tmp, fetcher)
+            stored = provider.add("https://provider.example/sub", "Provider")
+            provider_path = Path(tmp) / "providers.json"
+            profile_path = Path(tmp) / "profiles.json"
+            provider_before = provider_path.read_bytes()
+            profile_before = profile_path.read_bytes()
+
+            with self.assertRaisesRegex(ParseError, "no supported profiles"):
+                provider.update(stored.id)
+
+            self.assertEqual(provider_path.read_bytes(), provider_before)
+            self.assertEqual(profile_path.read_bytes(), profile_before)
+
     def test_update_matches_existing_nodes_by_fingerprint_not_new_id(self) -> None:
         calls = {"count": 0}
 

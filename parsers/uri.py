@@ -62,7 +62,10 @@ def _safe_port(parsed, label: str) -> int | None:
 
 def _is_loopback_host(host: str) -> bool:
     try:
-        canonicalize_remote_endpoint(host)
+        # Import must not bind a hostname to a transient DNS answer. The
+        # connection preflight performs strict resolution immediately before
+        # the runtime opens the endpoint.
+        canonicalize_remote_endpoint(host, resolve_hostnames=False)
     except EndpointPolicyError:
         return True
     return False

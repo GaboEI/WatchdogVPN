@@ -63,6 +63,12 @@ class UriParserTests(unittest.TestCase):
         with self.assertRaisesRegex(ParseError, "globally routable"):
             parse_uri("vless://uuid@127.0.0.1:443?encryption=none&allow_local=true")
 
+    def test_remote_uri_import_does_not_resolve_hostname(self) -> None:
+        with patch("parsers.endpoint_policy.socket.getaddrinfo", side_effect=socket.gaierror("private answer")):
+            profile = parse_uri("vless://uuid@provider.example:443?encryption=none")
+
+        self.assertEqual(profile.config["host"], "provider.example")
+
     def test_parse_uri_decodes_fragment_name(self) -> None:
         profile = parse_uri("vless://uuid@example.com:443?encryption=none#Austria%2C%20Vienna%20%5B3GBIT%5D")
         self.assertEqual(profile.name, "Austria, Vienna [3GBIT]")
