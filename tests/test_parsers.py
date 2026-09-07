@@ -508,6 +508,26 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertEqual(fetch_mock.call_args_list[0].kwargs["user_agent"], DEFAULT_SUBSCRIPTION_USER_AGENT)
         self.assertEqual(fetch_mock.call_args_list[1].kwargs["user_agent"], "Karing")
 
+    @patch("parsers.subscription._fetch")
+    def test_fetch_keeps_valid_candidate_after_later_format_error(self, fetch_mock) -> None:
+        valid = base64.b64encode(
+            b"vless://uuid@node.example.com:443?encryption=none"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return valid, {}
+            return "proxies:\n  - malformed", {}
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            profiles = fetch_and_parse("https://example.com/sub")
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].config["host"], "node.example.com")
+        self.assertEqual(fetch_mock.call_count, 5)
+
     @patch("parsers.subscription.urlopen")
     def test_fetch_retries_user_agent_after_403(self, urlopen_mock) -> None:
         valid = b"proxies:\n  - name: karing-node\n    type: vless\n    server: node.example.com\n    port: 443\n    uuid: uuid-1\n"

@@ -301,19 +301,17 @@ def fetch_subscription(url: str) -> SubscriptionFetchResult:
     for user_agent in _subscription_user_agents():
         try:
             text, headers = _fetch(url, user_agent=user_agent)
-            profiles, rejected_profiles = _parse_profiles_detailed(text)
         except ParseError as exc:
             errors.append(str(exc))
-            if not any(
-                marker in str(exc)
-                for marker in (
-                    "no supported profiles",
-                    "not a VPN subscription",
-                    "unsupported subscription format",
-                    "subscription request rejected with HTTP status",
-                )
-            ):
+            if "subscription request rejected with HTTP status" not in str(exc):
                 raise
+            continue
+        try:
+            profiles, rejected_profiles = _parse_profiles_detailed(text)
+        except ParseError as exc:
+            # Providers can return different formats per User-Agent. A bad
+            # format must not discard a valid candidate from another UA.
+            errors.append(str(exc))
             continue
         metadata = _parse_subscription_userinfo(headers.get(SUBSCRIPTION_USERINFO_HEADER))
         candidates.append(
