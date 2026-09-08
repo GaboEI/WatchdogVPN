@@ -86,8 +86,8 @@ L3 protocol matrix. Every row achieved `GREEN (real egress)` using the
 protocol identity and private evidence paths from the external
 `EXACT_PROTOCOL_PATHS.md` index. AmneziaWG is an official WatchdogVPN path in
 this result: its guided installation completed and its rerun demonstrated real
-egress. L3.7 remains pending independent audit, so this does not constitute
-final Leap certification. It does not certify openSUSE Tumbleweed or the
+egress. L3.7 and the full L3 gate are CLOSED / APPROVED by independent audit;
+this does not constitute final Leap certification. It does not certify openSUSE Tumbleweed or the
 openSUSE family as a whole.
 
 The reinforced WireGuard, Shadowsocks, and plain OpenVPN trio also passed the
