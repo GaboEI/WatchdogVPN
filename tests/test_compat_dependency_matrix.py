@@ -147,7 +147,7 @@ class FocusedDependencyMatrixContractTests(unittest.TestCase):
             "support": "family_inferred",
             "release_model": "rolling",
             "resolved_release": None,
-            "python": "python3.11",
+            "python": "python3.13",
         },
         "arch": {
             "os_release": "ID=arch\nID_LIKE=arch\n",

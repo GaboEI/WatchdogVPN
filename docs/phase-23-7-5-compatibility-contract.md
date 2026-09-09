@@ -448,8 +448,12 @@ rolling rules applied to stable targets, and arbitrary command-looking evidence.
 The final Python runtime is target-specific data rather than a hardcoded probe:
 Ubuntu/Debian/Mint/Kali use `python3` with `python3-cryptography`; Fedora 44 uses
 `python3` with `python3-cryptography`; Rocky/Alma/RHEL/CentOS Stream 9 use `python3.11`
-with `python3.11-cryptography`; openSUSE Leap/Tumbleweed use `python3.11` from package
-`python311` with `python311-cryptography`; Arch/CachyOS use `python` with
+with `python3.11-cryptography`; openSUSE Leap 15.6 uses `python3.11` from package
+`python311` with `python311-cryptography`, while openSUSE Tumbleweed rolling uses
+`python3.13` from package `python313` with `python313-cryptography` (Tumbleweed builds
+Python modules against its current interpreter, python313, and does not ship
+`python311-cryptography`, so the rolling pair must never reuse the Leap stable pair);
+Arch/CachyOS use `python` with
 `python-cryptography`. Detection probes `cap_python310` and `cap_python_cryptography`
 against that selected interpreter only and records the executable and observed versions.
 If no exact policy matches, or if policies overlap, the probes return conservative

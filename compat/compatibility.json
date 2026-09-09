@@ -1129,14 +1129,14 @@
             "procps",
             "firewalld",
             "apparmor-utils",
-            "python311"
+            "python313"
           ],
           "postcondition": "cap_base_runtime_commands",
           "priority": 6,
           "runtime_python": {
-            "cryptography_package": "python311-cryptography",
-            "executable": "python3.11",
-            "package": "python311"
+            "cryptography_package": "python313-cryptography",
+            "executable": "python3.13",
+            "package": "python313"
           },
           "target_identity": "rolling_distribution",
           "target_scope": {
@@ -1408,14 +1408,14 @@
           "method_ref": "zypper_official_package",
           "package_manager": "zypper",
           "package_names": [
-            "python311"
+            "python313"
           ],
           "postcondition": "cap_python310",
           "priority": 6,
           "runtime_python": {
-            "cryptography_package": "python311-cryptography",
-            "executable": "python3.11",
-            "package": "python311"
+            "cryptography_package": "python313-cryptography",
+            "executable": "python3.13",
+            "package": "python313"
           },
           "target_identity": "rolling_distribution",
           "target_scope": {
@@ -1660,14 +1660,14 @@
           "method_ref": "zypper_official_package",
           "package_manager": "zypper",
           "package_names": [
-            "python311-cryptography"
+            "python313-cryptography"
           ],
           "postcondition": "cap_python_cryptography",
           "priority": 6,
           "runtime_python": {
-            "cryptography_package": "python311-cryptography",
-            "executable": "python3.11",
-            "package": "python311"
+            "cryptography_package": "python313-cryptography",
+            "executable": "python3.13",
+            "package": "python313"
           },
           "target_identity": "rolling_distribution",
           "target_scope": {

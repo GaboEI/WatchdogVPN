@@ -233,6 +233,104 @@ class DependencyResolverTests(unittest.TestCase):
         self.assertEqual(decision.resolution_status, "availability_unknown")
         self.assertIn("availability provider has no package evidence", {item.reason for item in decision.rejected_candidates})
 
+    def test_opensuse_leap_and_tumbleweed_select_distinct_cryptography_candidates(self) -> None:
+        m = manifest()
+        leap = facts(m, "ID=opensuse-leap\nVERSION_ID=15.6\n")
+        tumbleweed = facts(m, "ID=opensuse-tumbleweed\nID_LIKE=opensuse\n")
+        provider = resolver.StaticAvailabilityProvider.all_available()
+
+        leap_decision = resolver.resolve_dependency(
+            m, leap, support(m, leap), (cap("cap_python_cryptography"),),
+            "dep_python_cryptography", availability=provider,
+        )
+        self.assertEqual(leap_decision.selected_method_id, "python_cryptography_zypper_stable")
+        self.assertEqual(
+            next(c for c in m["dependency_requirements"]["dep_python_cryptography"]["method_chain"]
+                 if c["id"] == "python_cryptography_zypper_stable")["package_names"],
+            ["python311-cryptography"],
+        )
+
+        tw_decision = resolver.resolve_dependency(
+            m, tumbleweed, support(m, tumbleweed), (cap("cap_python_cryptography"),),
+            "dep_python_cryptography", availability=provider,
+        )
+        self.assertEqual(tw_decision.selected_method_id, "python_cryptography_zypper_tumbleweed_rolling")
+        self.assertEqual(
+            next(c for c in m["dependency_requirements"]["dep_python_cryptography"]["method_chain"]
+                 if c["id"] == "python_cryptography_zypper_tumbleweed_rolling")["package_names"],
+            ["python313-cryptography"],
+        )
+
+    def test_tumbleweed_unavailable_cryptography_package_is_rejected(self) -> None:
+        # python313-cryptography is the real resolvable package for Tumbleweed;
+        # if a snapshot does NOT provide it, the candidate must be rejected and
+        # the route must fail closed instead of falling back to Leap's
+        # python311-cryptography (which does not exist in the snapshot either).
+        m = manifest()
+        tumbleweed = facts(m, "ID=opensuse-tumbleweed\nID_LIKE=opensuse\n")
+        provider = resolver.StaticAvailabilityProvider(
+            {
+                ("package_exists", "python_cryptography_zypper_tumbleweed_rolling", "opensuse_tumbleweed", "python313-cryptography"): resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    reason="python313-cryptography not found in snapshot",
+                    error_kind="package_missing",
+                ),
+            },
+            default_status=resolver.AvailabilityStatus.AVAILABLE.value,
+        )
+        decision = resolver.resolve_dependency(
+            m, tumbleweed, support(m, tumbleweed), (cap("cap_python_cryptography"),),
+            "dep_python_cryptography", availability=provider,
+        )
+        self.assertIsNone(decision.selected_method_id)
+        self.assertEqual(decision.resolution_status, "no_safe_route")
+        by_id = {item.method_id: item for item in decision.rejected_candidates}
+        self.assertIn("python_cryptography_zypper_tumbleweed_rolling", by_id)
+        self.assertEqual(by_id["python_cryptography_zypper_tumbleweed_rolling"].reason, "python313-cryptography not found in snapshot")
+        # The Leap stable candidate is never a fallback for a rolling target:
+        # it is rejected on rolling identity, not treated as an alternative.
+        self.assertIn("python_cryptography_zypper_stable", by_id)
+        self.assertEqual(by_id["python_cryptography_zypper_stable"].reason, "rolling_target_requires_rolling_identity")
+
+    def test_tumbleweed_unknown_cryptography_availability_fails_closed(self) -> None:
+        # A non-authoritative / unknown availability result must never be
+        # treated as proof the package exists in the snapshot.
+        m = manifest()
+        tumbleweed = facts(m, "ID=opensuse-tumbleweed\nID_LIKE=opensuse\n")
+        provider = resolver.AvailabilityProvider()  # unknown_only, not authoritative
+        decision = resolver.resolve_dependency(
+            m, tumbleweed, support(m, tumbleweed), (cap("cap_python_cryptography"),),
+            "dep_python_cryptography", availability=provider,
+        )
+        self.assertEqual(decision.resolution_status, "availability_unknown")
+        self.assertIsNone(decision.selected_method_id)
+        self.assertFalse(decision.execution_ready)
+        self.assertFalse(decision.provider_authoritative)
+        self.assertIn(
+            "python_cryptography_zypper_tumbleweed_rolling",
+            {item.method_id for item in decision.rejected_candidates},
+        )
+
+    def test_static_all_available_provider_does_not_validate_a_real_snapshot(self) -> None:
+        # StaticAvailabilityProvider.all_available() marks every package
+        # available by default and is NOT authoritative: it cannot validate
+        # that python313-cryptography actually exists in a concrete snapshot.
+        m = manifest()
+        tumbleweed = facts(m, "ID=opensuse-tumbleweed\nID_LIKE=opensuse\n")
+        provider = resolver.StaticAvailabilityProvider.all_available()
+        decision = resolver.resolve_dependency(
+            m, tumbleweed, support(m, tumbleweed), (cap("cap_python_cryptography"),),
+            "dep_python_cryptography", availability=provider,
+        )
+        self.assertEqual(decision.selected_method_id, "python_cryptography_zypper_tumbleweed_rolling")
+        self.assertFalse(decision.provider_authoritative)
+        # The observation is a fixture-level default, not repository evidence:
+        # all_available() is explicitly non-authoritative by contract.
+        self.assertTrue(decision.availability_observations)
+        for observation in decision.availability_observations:
+            self.assertIs(observation["provider_authoritative"], False)
+            self.assertEqual(observation["provider_type"], "static_fixture")
+
     def test_architecture_incompatible_rejects_every_candidate(self) -> None:
         m = manifest()
         distro = facts(m, "ID=fedora\nVERSION_ID=44\n", arch="mips")
@@ -992,8 +1090,13 @@ class DependencyResolverTests(unittest.TestCase):
 
         suse_base = shell_array("distros/opensuse.sh", "DISTRO_BASE_PACKAGES")
         self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_zypper_stable"), suse_base)
-        self.assertEqual(packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_zypper_tumbleweed_rolling"), suse_base)
+        suse_tumbleweed_base = [pkg for pkg in suse_base if pkg != "python311"] + ["python313"]
+        self.assertEqual(
+            packages_for_candidate(m, "dep_base_runtime_commands", "base_runtime_zypper_tumbleweed_rolling"),
+            suse_tumbleweed_base,
+        )
         self.assertEqual(packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_zypper_stable"), [shell_scalar("distros/opensuse.sh", "DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE")])
+        self.assertEqual(packages_for_candidate(m, "dep_python_cryptography", "python_cryptography_zypper_tumbleweed_rolling"), ["python313-cryptography"])
         self.assertEqual(packages_for_candidate(m, "dep_dns_runtime_package", "dns_runtime_zypper_stable"), shell_array("distros/opensuse.sh", "DISTRO_DNS_PACKAGES"))
 
         arch_base = shell_array("distros/arch.sh", "DISTRO_BASE_PACKAGES")

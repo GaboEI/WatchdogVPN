@@ -555,6 +555,55 @@ class CapabilityProbeTests(unittest.TestCase):
         self.assertEqual(crypto.error_kind, "runtime_python_policy_missing")
         self.assertEqual(runner.calls, [])
 
+    def test_opensuse_leap_and_tumbleweed_select_distinct_python_runtimes(self) -> None:
+        # Leap 15.6 pins python3.11/python311; Tumbleweed rolling must select
+        # python3.13/python313 (python311-cryptography does not exist there).
+        # This guards against silently reusing the Leap stable pair for the
+        # rolling release.
+        manifest = product_manifest()
+        leap = facts(manifest, "ID=opensuse-leap\nVERSION_ID=15.6\n")
+        self.assertEqual(leap.release_model, "stable")
+        self.assertEqual(leap.resolved_release, "opensuse_leap_15_6")
+
+        tumbleweed = facts(manifest, "ID=opensuse-tumbleweed\nID_LIKE=opensuse\n")
+        self.assertEqual(tumbleweed.release_model, "rolling")
+        self.assertEqual(tumbleweed.resolved_distribution, "opensuse_tumbleweed")
+
+        leap_status, leap_runtime = detection._runtime_python_policy(manifest, leap)
+        self.assertEqual(leap_status, "exact_runtime_policy_resolved")
+        self.assertEqual(leap_runtime["executable"], "python3.11")
+        self.assertEqual(leap_runtime["package"], "python311")
+        self.assertEqual(leap_runtime["cryptography_package"], "python311-cryptography")
+
+        tw_status, tw_runtime = detection._runtime_python_policy(manifest, tumbleweed)
+        self.assertEqual(tw_status, "exact_runtime_policy_resolved")
+        self.assertEqual(tw_runtime["executable"], "python3.13")
+        self.assertEqual(tw_runtime["package"], "python313")
+        self.assertEqual(tw_runtime["cryptography_package"], "python313-cryptography")
+
+    def test_opensuse_tumbleweed_probe_uses_python313_runtime_only(self) -> None:
+        manifest = product_manifest()
+        tumbleweed = facts(manifest, "ID=opensuse-tumbleweed\nID_LIKE=opensuse\n")
+        # python3.13 present -> cap_python310 present; python3.11 must not be probed.
+        runner = PythonRuntimeRunner(versions={"python3.13": "3.13.14"}, cryptography={"python3.13": "50.0.0"})
+        env = fixture_env(runner=runner)
+        result = detection._probe_core("cap_python310", tumbleweed, env)
+        self.assertEqual(result.domain_status, "present")
+        self.assertIn("runtime_python_executable=python3.13", result.evidence)
+        self.assertTrue(any(call[0] == "python3.13" for call in runner.calls))
+        self.assertFalse(any(call[0] == "python3.11" for call in runner.calls))
+
+        crypto = detection._probe_core("cap_python_cryptography", tumbleweed, env)
+        self.assertEqual(crypto.domain_status, "present")
+        self.assertIn("runtime_python_executable=python3.13", crypto.evidence)
+
+        # cryptography absent on the interpreter -> provisionable (command_missing)
+        runner = PythonRuntimeRunner(versions={"python3.13": "3.13.14"})
+        env = fixture_env(runner=runner)
+        crypto = detection._probe_core("cap_python_cryptography", tumbleweed, env)
+        self.assertEqual(crypto.domain_status, "provisionable")
+        self.assertEqual(crypto.error_kind, "command_missing")
+
     def test_dns_runtime_package_uses_manifest_backend_policy(self) -> None:
         manifest = product_manifest()
         distro = facts(manifest, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")

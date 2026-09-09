@@ -9,6 +9,8 @@ DISTRO_PACKAGE_MANAGER="zypper"
 # the runtime resolver (lib/common.sh:watchdogvpn_python) should use; the
 # matching python311 packages are in the base set and the cryptography package
 # below. This does not retarget the OS default python3, which system tools use.
+# Tumbleweed ships python3 = 3.13 (already above the runtime floor), so its
+# interpreter/cryptography pair is switched to python3.13/python313 below.
 DISTRO_PYTHON="python3.11"
 DISTRO_CERTIFICATION_STATE="implemented_not_certified"
 DISTRO_SUPPORT_NOTE="openSUSE adapter implemented; installed certification remains pending Phase 23.6 evidence."
@@ -31,6 +33,29 @@ DISTRO_BASE_PACKAGES=(
 DISTRO_DNS_PACKAGES=(bind-utils)
 DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python311-cryptography"
 DISTRO_POLKIT_PACKAGE="polkit"
+
+# openSUSE Tumbleweed is a rolling distribution whose default python3 is 3.13,
+# already above the runtime floor, and whose repository does NOT ship
+# python311-cryptography (python modules are built against the current
+# interpreter, python313). Leap 15.6 instead ships python3=3.6, so it pins
+# python3.11 with python311-cryptography. Keep the two releases explicit: the
+# rolling package pair must never silently reuse the Leap stable pair.
+if [[ "${DISTRO_ID:-}" == *tumbleweed* ]]; then
+  DISTRO_PYTHON="python3.13"
+  DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python313-cryptography"
+  _tumbleweed_base=()
+  for _pkg in "${DISTRO_BASE_PACKAGES[@]}"; do
+    if [[ "${_pkg}" != "python311" ]]; then
+      _tumbleweed_base+=("${_pkg}")
+    fi
+  done
+  _tumbleweed_base+=(python313)
+  DISTRO_BASE_PACKAGES=("${_tumbleweed_base[@]}")
+  unset _tumbleweed_base _pkg
+  distro_python_bootstrap_package() {
+    printf '%s\n' "python313"
+  }
+fi
 # AmneziaWG has no official openSUSE package, so the guided trust-boundary
 # setup builds the userspace stack from Amnezia's official source, same as
 # Fedora's distros/fedora.sh. The userspace amneziawg-go path is deliberately
