@@ -3364,7 +3364,7 @@ Mandatory order (external design §14.1, revision 5):
 | 11A | Ubuntu, Debian, Linux Mint | Debian family. CLOSED (12/12 each). |
 | 11B | Arch Linux, CachyOS | Arch family, rolling. **CLOSED (2026-08-17)** — Arch Linux (2026-08-15) and CachyOS (2026-08-17), 12/12 each. |
 | 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). **Fedora CLOSED (2026-08-20)** — 12/12 green with real egress. **Rocky Linux CLOSED (2026-08-21)** — 12/12 green, reboot lifecycle, isolated fault harness and final cleanup. **AlmaLinux 9 CLOSED and certified (2026-09-02/03)** — 12/12 green via `cert_almalinux_9`. Family integration gate: PR #16 open, merge pending. |
-| 11D | openSUSE Leap, Tumbleweed | Tumbleweed must be fully validated. |
+| 11D | openSUSE Leap, Tumbleweed | Leap recertified (L1–L6 closed/approved); Tumbleweed not certified. |
 | 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
 | 11G | Pop!_OS | New community-requested distribution; full admission/cert from zero. |

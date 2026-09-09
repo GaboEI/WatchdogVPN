@@ -94,9 +94,18 @@ The reinforced WireGuard, Shadowsocks, and plain OpenVPN trio also passed the
 corrected 100 MiB public-file requirement, including foreground OpenVPN SSH
 continuity. Provider direct/fail-closed behavior, split tunneling, DNS
 protection, and FakeIP verification are recorded in the external L3.3-L3.6
-evidence records. The three historical `formal_non_green` manifest rows are not
-edited in this task; their reconciliation remains reserved for the authorized
-L7 manifest/documentation gate.
+evidence records. L4 (reboot lifecycle), L5 (isolated fault harness) and L6
+(final cleanup) are CLOSED / APPROVED by independent audit on 2026-09-08.
+
+In L7 the three historical `formal_non_green` manifest rows (openvpn,
+shadowsocks, wireguard) were reconciled to `green` in
+`compat/compatibility.json`: `cert_opensuse_leap_15_6` now records the
+23.7.5.11D field recertification with 12/12 real-egress protocol results
+(runtime `cb41420`, provenance verified), and
+`validation_metadata.per_release_ci.opensuse_leap_15_6` is `green` citing the
+L2 CI run `34140256789` on HEAD `7939411`. This certifies openSUSE Leap 15.6
+as a release; it does not certify openSUSE Tumbleweed or the openSUSE family
+as a whole.
 
 ## Persistent Configuration Update Validation
 
