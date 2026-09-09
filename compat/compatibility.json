@@ -470,57 +470,57 @@
     },
     "cert_opensuse_leap_15_6": {
       "current": true,
-      "date": "2026-07-23T00:00:00Z",
+      "date": "2026-09-08T00:00:00Z",
       "distribution": "opensuse_leap",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.6 openSUSE Leap closure and private evidence",
+      "evidence": "23.7.5.11D openSUSE Leap 15.6 field recertification (runtime cb41420, generation SHA-256 7bcc2884baaf6285cd01ce03eec4accecf5acadef2b25a93f9297afea8814487, provenance verified); 12/12 protocols green with real egress; reinforced trio (WireGuard/Shadowsocks/plain OpenVPN) with verified 100MiB download (SHA-256 3e432abb314fe350334d244d48070bb8556f774aa7876c6c524296c2ac4608bc); L3.1 matrix summary SHA256 f29ff92a8a04785db16f8bcc539e8e59d4e88642f7ff6427ab9ac326d63e7fcd; L3 gate, L4 reboot lifecycle, L5 isolated fault harness and L6 final cleanup CLOSED/APPROVED by independent audit 2026-09-08",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "http": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "openvpn": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600, SHA-256 3e432abb314fe350334d244d48070bb8556f774aa7876c6c524296c2ac4608bc) through the tunnel; promoted from formal_non_green to green in 23.7.5.11D"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "shadowsocks": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600, SHA-256 3e432abb314fe350334d244d48070bb8556f774aa7876c6c524296c2ac4608bc) through the tunnel; promoted from formal_non_green to green in 23.7.5.11D"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "certification matrix real egress"
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
         },
         "wireguard": {
-          "disposition": "formal_non_green",
-          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600, SHA-256 3e432abb314fe350334d244d48070bb8556f774aa7876c6c524296c2ac4608bc) through the tunnel; promoted from formal_non_green to green in 23.7.5.11D"
         }
       },
       "release": "opensuse_leap_15_6",
@@ -4395,9 +4395,9 @@
         "status": "not_run"
       },
       "opensuse_leap_15_6": {
-        "evidence": null,
-        "l1_l2_green": false,
-        "status": "not_run"
+        "evidence": "L2 Compatibility Matrix CI run 34140256789 green on HEAD 7939411 (2026-09-07); L2 field lifecycle CLOSED/APPROVED on nls1 (runtime cb41420)",
+        "l1_l2_green": true,
+        "status": "green"
       },
       "rhel_9": {
         "evidence": null,
