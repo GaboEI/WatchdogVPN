@@ -66,6 +66,6 @@ fi
 # runs these commands; it verifies awg and amneziawg-go afterwards.
 DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS=(
   "sudo zypper --non-interactive install go gcc make git"
-  "git clone --branch v1.0.20260618-2 https://github.com/amnezia-vpn/amneziawg-tools /tmp/amneziawg-tools && git -C /tmp/amneziawg-tools checkout 61e741780e8465a67a7d7fb6cffe14a8a15d624a && make -C /tmp/amneziawg-tools/src WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETION=no && sudo make -C /tmp/amneziawg-tools/src install"
-  "git clone --branch v3.0.2 https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && git -C /tmp/amneziawg-go checkout 0527dfa47639714dd8f5c9ffbd9d40d19083f0ba && make -C /tmp/amneziawg-go && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
+  "git clone --branch v3.1.20260812 https://github.com/amnezia-vpn/amneziawg-tools /tmp/amneziawg-tools && git -C /tmp/amneziawg-tools checkout ee0f0a9aa34ff0a0da4b3433b9512781cfe02843 && make -C /tmp/amneziawg-tools/src WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETION=no && sudo make -C /tmp/amneziawg-tools/src install"
+  "git clone --branch v3.1.20260828 https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && git -C /tmp/amneziawg-go checkout b5928efb6ca19f0153958460c3d141f04abc5c2e && make -C /tmp/amneziawg-go && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
 )

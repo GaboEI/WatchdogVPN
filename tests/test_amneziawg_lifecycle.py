@@ -147,25 +147,25 @@ class ReleaseResolverTests(unittest.TestCase):
     def test_resolves_latest_release_to_commit(self) -> None:
         responses = {
             f"https://api.github.com/repos/{AMNEZIAWG_TOOLS_REPO}/releases/latest": json.dumps(
-                {"tag_name": "v1.0.20260618-2"}
+                {"tag_name": "v3.1.20260812"}
             ),
-            f"https://api.github.com/repos/{AMNEZIAWG_TOOLS_REPO}/git/ref/tags/v1.0.20260618-2": json.dumps(
-                {"ref": "refs/tags/v1.0.20260618-2", "object": {"sha": "61e741780e8465a67a7d7fb6cffe14a8a15d624a", "type": "commit"}}
+            f"https://api.github.com/repos/{AMNEZIAWG_TOOLS_REPO}/git/ref/tags/v3.1.20260812": json.dumps(
+                {"ref": "refs/tags/v3.1.20260812", "object": {"sha": "ee0f0a9aa34ff0a0da4b3433b9512781cfe02843", "type": "commit"}}
             ),
         }
         resolver = OfficialReleaseResolver(fetch=self._fake_fetch(responses))
         release = resolver.resolve(AMNEZIAWG_TOOLS_REPO)
-        self.assertEqual(release.tag, "v1.0.20260618-2")
-        self.assertEqual(release.commit, "61e741780e8465a67a7d7fb6cffe14a8a15d624a")
+        self.assertEqual(release.tag, "v3.1.20260812")
+        self.assertEqual(release.commit, "ee0f0a9aa34ff0a0da4b3433b9512781cfe02843")
         self.assertTrue(release.resolved_at)
 
     def test_dereferences_annotated_tag(self) -> None:
         tag_object = "aa" * 20
         commit = "bb" * 20
         responses = {
-            f"https://api.github.com/repos/{AMNEZIAWG_TRANSPORT_REPO}/releases/latest": json.dumps({"tag_name": "v3.0.2"}),
-            f"https://api.github.com/repos/{AMNEZIAWG_TRANSPORT_REPO}/git/ref/tags/v3.0.2": json.dumps(
-                {"ref": "refs/tags/v3.0.2", "object": {"sha": tag_object, "type": "tag"}}
+            f"https://api.github.com/repos/{AMNEZIAWG_TRANSPORT_REPO}/releases/latest": json.dumps({"tag_name": "v3.1.20260828"}),
+            f"https://api.github.com/repos/{AMNEZIAWG_TRANSPORT_REPO}/git/ref/tags/v3.1.20260828": json.dumps(
+                {"ref": "refs/tags/v3.1.20260828", "object": {"sha": tag_object, "type": "tag"}}
             ),
             f"https://api.github.com/repos/{AMNEZIAWG_TRANSPORT_REPO}/git/tags/{tag_object}": json.dumps(
                 {"object": {"sha": commit, "type": "commit"}}
@@ -213,7 +213,7 @@ class ReleaseResolverTests(unittest.TestCase):
 
 class RecipeTests(unittest.TestCase):
     def test_recipe_pins_tags_and_commits_and_never_uses_head(self) -> None:
-        recipe = build_recipe(releases=_certified_releases())
+        recipe = build_recipe(releases=_certified_releases(), distro="opensuse_leap")
         commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
         self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TOOLS_REPO]["commit"], commands)
         self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TRANSPORT_REPO]["commit"], commands)
@@ -223,8 +223,19 @@ class RecipeTests(unittest.TestCase):
         self.assertIn("watchdog awg verify", commands)
         self.assertIs(recipe["executed_by_watchdogvpn"], False)
         self.assertIs(recipe["certified_on_opensuse_leap"], True)
+        self.assertEqual(recipe["platform_certification"]["status"], "supported")
         self.assertEqual(set(recipe["sources"]), {AMNEZIAWG_TOOLS_URL, AMNEZIAWG_TRANSPORT_URL})
         self.assertEqual(recipe["compatibility"]["status"], "verified")
+
+    def test_recipe_for_tumbleweed_is_supported(self) -> None:
+        recipe = build_recipe(releases=_certified_releases(), distro="opensuse_tumbleweed")
+        self.assertEqual(recipe["platform_certification"]["status"], "supported")
+        self.assertIs(recipe["certified_on_opensuse_leap"], False)
+        self.assertEqual(recipe["platform_certification"]["platform"], "opensuse_tumbleweed")
+        commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
+        self.assertIn("zypper", commands)
+        self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TOOLS_REPO]["commit"], commands)
+        self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TRANSPORT_REPO]["commit"], commands)
 
     def test_recipe_uses_safe_mktemp_workspace_and_verifies_checkout(self) -> None:
         recipe = build_recipe(releases=_certified_releases())
@@ -248,6 +259,16 @@ class RecipeTests(unittest.TestCase):
         self.assertIs(recipe["certified_on_opensuse_leap"], False)
         self.assertEqual(recipe["compatibility"]["status"], "not_verified")
 
+    def test_certified_pair_on_leap_is_not_auto_certified_elsewhere(self) -> None:
+        # A combination certified on openSUSE Leap must not be considered
+        # certified on an unrelated distro just because it matches the legacy
+        # single pair. build_recipe with an explicit foreign distro must mark it
+        # unsupported (no certified pins) rather than silently certified.
+        recipe = build_recipe(releases=_certified_releases(), distro="fedora")
+        self.assertEqual(recipe["platform_certification"]["status"], "unsupported")
+        self.assertIs(recipe["platform_certification"]["certified"], False)
+        self.assertIs(recipe["certified_on_opensuse_leap"], False)
+
     def test_recipe_handles_go_toolchain_requirement(self) -> None:
         recipe = build_recipe(releases=_certified_releases())
         commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
@@ -260,11 +281,25 @@ class RecipeTests(unittest.TestCase):
         self.assertIn("1.25", commands)
 
     def test_recipe_for_certified_pins_is_offline_and_exact(self) -> None:
-        recipe = recipe_for_certified_pins()
+        recipe = recipe_for_certified_pins(distro="opensuse_leap")
         commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
         self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TOOLS_REPO]["commit"], commands)
         self.assertIs(recipe["certified_on_opensuse_leap"], True)
         self.assertNotIn("api.github.com", commands)
+
+    def test_recipe_for_certified_pins_tumbleweed_uses_authorized_pins(self) -> None:
+        recipe = recipe_for_certified_pins(distro="opensuse_tumbleweed")
+        commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
+        self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TOOLS_REPO]["commit"], commands)
+        self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TRANSPORT_REPO]["commit"], commands)
+        self.assertEqual(recipe["platform_certification"]["status"], "supported")
+        self.assertEqual(recipe["platform_certification"]["platform"], "opensuse_tumbleweed")
+        self.assertIs(recipe["certified_on_opensuse_leap"], False)
+        self.assertNotIn("api.github.com", commands)
+
+    def test_recipe_for_certified_pins_unsupported_platform_blocks(self) -> None:
+        with self.assertRaises(ReleaseResolutionError):
+            recipe_for_certified_pins(distro="ubuntu")
 
     def test_verification_report(self) -> None:
         probe = _probe(awg=True, awg_quick=True, amneziawg_go=True)
@@ -669,7 +704,10 @@ class CliHandlerTests(unittest.TestCase):
     def test_awg_repair_is_offline_and_read_only(self) -> None:
         self._write_awg_profile()
         stdout = StringIO()
-        with redirect_stdout(stdout):
+        with mock.patch(
+            "cli.main.recipe_for_certified_pins",
+            return_value=recipe_for_certified_pins(distro="opensuse_leap"),
+        ), redirect_stdout(stdout):
             rc = _awg_repair(self._args(json_output=True))
         self.assertEqual(rc, 0)
         payload = json.loads(stdout.getvalue())
@@ -772,7 +810,10 @@ class CliHandlerTests(unittest.TestCase):
         self.assertTrue(payload["recorded"])
         self.assertIs(payload["verified"], True)
         self.assertTrue(payload["verification"].get("verified"))
-        self.assertEqual({entry["tag"] for entry in payload["recorded_releases"]}, {"v1.0.20260618-2", "v3.0.2"})
+        self.assertEqual(
+            {entry["tag"] for entry in payload["recorded_releases"]},
+            {CERTIFIED_PINS[AMNEZIAWG_TOOLS_REPO]["tag"], CERTIFIED_PINS[AMNEZIAWG_TRANSPORT_REPO]["tag"]},
+        )
         self.assertEqual(lifecycle.load_pending_releases(), [])
         history = lifecycle.load_installed_history()
         self.assertTrue(all(entry.build_manifest_sha256 for entry in history))

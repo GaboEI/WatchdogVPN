@@ -53,21 +53,45 @@ PROBE_CANDIDATES = (Path("/usr/local/bin"), Path("/usr/bin"))
 # dependency download, never an AWG binary and never a system change.
 AMNEZIAWG_GO_MIN_GO_VERSION = "1.25"
 
-# Certified pins recorded for the L3.1 openSUSE Leap matrix (Task 23.7.5.6b).
-# A runtime whose recorded metadata (binary digest) matches these is
-# "supported". Any newer official release is "experimental" until it passes
-# real validation on openSUSE Leap. A detected runtime with no recorded
-# metadata is "unknown" and is never silently overwritten.
-CERTIFIED_PINS: Mapping[str, Mapping[str, str]] = {
-    AMNEZIAWG_TOOLS_REPO: {
-        "tag": "v1.0.20260618-2",
-        "commit": "61e741780e8465a67a7d7fb6cffe14a8a15d624a",
+# Certified pins recorded for the approved L3.1 openSUSE Leap matrix rerun
+# (Task 23.7.5.6b) and the openSUSE Tumbleweed AWG path (T4.1 pending). A
+# runtime whose recorded metadata (binary digest) matches the platform pins is
+# "supported" on that platform. Any newer official release is "experimental"
+# until it passes real validation on the platform. A detected runtime with no
+# recorded metadata is "unknown" and is never silently overwritten.
+CERTIFIED_PINS_BY_PLATFORM: Mapping[str, Mapping[str, Mapping[str, str]]] = {
+    "opensuse_leap": {
+        AMNEZIAWG_TOOLS_REPO: {
+            "tag": "v3.1.20260812",
+            "commit": "ee0f0a9aa34ff0a0da4b3433b9512781cfe02843",
+        },
+        AMNEZIAWG_TRANSPORT_REPO: {
+            "tag": "v3.1.20260828",
+            "commit": "b5928efb6ca19f0153958460c3d141f04abc5c2e",
+        },
     },
-    AMNEZIAWG_TRANSPORT_REPO: {
-        "tag": "v3.0.2",
-        "commit": "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba",
+    "opensuse_tumbleweed": {
+        AMNEZIAWG_TOOLS_REPO: {
+            "tag": "v3.1.20260812",
+            "commit": "ee0f0a9aa34ff0a0da4b3433b9512781cfe02843",
+        },
+        AMNEZIAWG_TRANSPORT_REPO: {
+            "tag": "v3.1.20260828",
+            "commit": "b5928efb6ca19f0153958460c3d141f04abc5c2e",
+        },
     },
 }
+
+# Legacy alias kept for contract compatibility (consumed by callers and tests
+# that read a single certified pair). It is NOT the source of truth for
+# platform-specific certification; use CERTIFIED_PINS_BY_PLATFORM.
+CERTIFIED_PINS: Mapping[str, Mapping[str, str]] = CERTIFIED_PINS_BY_PLATFORM["opensuse_leap"]
+
+# Platform certification states exposed in recipes and status output.
+PLATFORM_CERT_SUPPORTED = "supported"
+PLATFORM_CERT_OTHER_PLATFORM = "known_other_platform"
+PLATFORM_CERT_EXPERIMENTAL = "experimental"
+PLATFORM_CERT_UNSUPPORTED = "unsupported"
 
 # Lifecycle states defined by the maintainer spec.
 STATE_CONTEXT_ABSENT = "awg_context_absent"
@@ -564,7 +588,14 @@ def _provenance_from_metadata(
             # elevates provenance.
             if not entry.build_manifest_sha256:
                 return PROVENANCE_UNKNOWN
-            certified = CERTIFIED_PINS.get(entry.repository, {}).get("commit") == entry.commit
+            # Certification is platform-aware: the recorded distro decides which
+            # pin pair applies. A runtime recorded on a platform for which no
+            # certified pins exist is never "supported".
+            distro = str(entry.distro or "")
+            pins = CERTIFIED_PINS_BY_PLATFORM.get(distro)
+            if pins is None:
+                return PROVENANCE_EXPERIMENTAL
+            certified = pins.get(entry.repository, {}).get("commit") == entry.commit
             return PROVENANCE_SUPPORTED if certified else PROVENANCE_EXPERIMENTAL
     return PROVENANCE_UNKNOWN
 
@@ -786,6 +817,66 @@ def _platform(distro: str | None = None, version: str | None = None, arch: str |
     }
 
 
+def _platform_certification(
+    platform: Mapping[str, str],
+    releases: Sequence[ResolvedRelease] | None = None,
+) -> dict[str, object]:
+    """Resolve the AmneziaWG certification state for the current platform.
+
+    Distinguishes:
+    * supported            - the pinned pair is certified for this platform;
+    * known_other_platform - the pinned pair is certified on another supported
+                             platform but not (yet) on this one;
+    * experimental         - the resolved pair is newer upstream and not
+                             certified anywhere;
+    * unsupported          - this platform has no certified pins.
+    """
+    distro = str(platform.get("distro", "") or "")
+    pins = CERTIFIED_PINS_BY_PLATFORM.get(distro)
+    if pins is None:
+        return {
+            "status": PLATFORM_CERT_UNSUPPORTED,
+            "platform": distro,
+            "note": f"No certified AmneziaWG pins are recorded for platform '{distro}'. The runtime is not supported here.",
+            "certified": False,
+            "certified_platforms": list(CERTIFIED_PINS_BY_PLATFORM),
+        }
+    if releases is not None:
+        by_repo = {release.repository: release for release in releases}
+        tools = by_repo.get(AMNEZIAWG_TOOLS_REPO)
+        transport = by_repo.get(AMNEZIAWG_TRANSPORT_REPO)
+        tools_match = tools is not None and pins.get(AMNEZIAWG_TOOLS_REPO, {}).get("commit") == tools.commit
+        transport_match = transport is not None and pins.get(AMNEZIAWG_TRANSPORT_REPO, {}).get("commit") == transport.commit
+        matches = tools is not None and transport is not None and tools_match and transport_match
+        if matches:
+            return {
+                "status": PLATFORM_CERT_SUPPORTED,
+                "platform": distro,
+                "note": f"Both AmneziaWG components match the WatchdogVPN-certified pins for {distro}.",
+                "certified": True,
+                "certified_platforms": list(CERTIFIED_PINS_BY_PLATFORM),
+                "pins": dict(pins),
+            }
+        return {
+            "status": PLATFORM_CERT_EXPERIMENTAL,
+            "platform": distro,
+            "note": (
+                "The resolved AmneziaWG pair is newer than the WatchdogVPN-certified pins for "
+                f"{distro} and is NOT yet verified. This pair is experimental and is not supported "
+                "until it passes real validation on this platform."
+            ),
+            "certified": False,
+            "certified_platforms": list(CERTIFIED_PINS_BY_PLATFORM),
+        }
+    return {
+        "status": PLATFORM_CERT_SUPPORTED if distro in CERTIFIED_PINS_BY_PLATFORM else PLATFORM_CERT_UNSUPPORTED,
+        "platform": distro,
+        "certified": distro in CERTIFIED_PINS_BY_PLATFORM,
+        "certified_platforms": list(CERTIFIED_PINS_BY_PLATFORM),
+        "pins": dict(pins),
+    }
+
+
 def _build_dependency_command(platform: Mapping[str, str]) -> dict[str, str]:
     if platform["distro"] in ("opensuse_leap", "opensuse_tumbleweed"):
         install = "sudo zypper --non-interactive install go gcc make git"
@@ -956,30 +1047,28 @@ def build_recipe(
         }
     )
 
-    certified = all(
-        CERTIFIED_PINS.get(release.repository, {}).get("commit") == release.commit
-        for release in (tools_release, transport_release)
-    )
+    certification = _platform_certification(platform, releases)
+    certified = bool(certification["certified"])
+    status = str(certification["status"])
     compatibility = (
         {
             "status": "verified",
-            "note": "Both components match the WatchdogVPN-certified pins for openSUSE Leap.",
+            "platform": str(platform["distro"]),
+            "note": str(certification["note"]),
         }
         if certified
         else {
             "status": "not_verified",
-            "note": (
-                "Latest upstream pair resolved, but compatibility between amneziawg-tools and "
-                "amneziawg-go is NOT yet verified. This pair is experimental and is NOT supported "
-                "until it passes real validation on openSUSE Leap."
-            ),
+            "platform": str(platform["distro"]),
+            "note": str(certification["note"]),
         }
     )
     return {
         "commands": commands,
         "script": _recipe_script(tools_release, transport_release, platform),
         "platform": platform,
-        "certified_on_opensuse_leap": certified,
+        "platform_certification": certification,
+        "certified_on_opensuse_leap": certified and str(platform["distro"]) == "opensuse_leap",
         "compatibility": compatibility,
         "releases": [release.as_dict() for release in (tools_release, transport_release)],
         "sources": [AMNEZIAWG_TOOLS_URL, AMNEZIAWG_TRANSPORT_URL],
@@ -1034,15 +1123,21 @@ def recipe_for_certified_pins(
     restores the certified supported release, not a user's previous release.
     """
     platform = _platform(distro, version, arch)
-    tools_pin = CERTIFIED_PINS[AMNEZIAWG_TOOLS_REPO]
-    transport_pin = CERTIFIED_PINS[AMNEZIAWG_TRANSPORT_REPO]
+    distro_name = str(platform["distro"])
+    pins = CERTIFIED_PINS_BY_PLATFORM.get(distro_name)
+    if pins is None:
+        raise ReleaseResolutionError(
+            f"no certified AmneziaWG pins are recorded for platform '{distro_name}'; "
+            "a certified repair recipe cannot be generated for this platform"
+        )
+    tools_pin = pins[AMNEZIAWG_TOOLS_REPO]
+    transport_pin = pins[AMNEZIAWG_TRANSPORT_REPO]
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     releases = [
         ResolvedRelease(AMNEZIAWG_TOOLS_REPO, tools_pin["tag"], tools_pin["commit"], now),
         ResolvedRelease(AMNEZIAWG_TRANSPORT_REPO, transport_pin["tag"], transport_pin["commit"], now),
     ]
     recipe = build_recipe(releases=releases, distro=distro, version=version, arch=arch)
-    recipe["certified_on_opensuse_leap"] = True
     recipe["resolution_note"] = "Recipe pinned to the certified WatchdogVPN release tags; no network resolution was required."
     return recipe
 
@@ -1092,6 +1187,7 @@ def import_guidance_payload(*, distro: str | None = None, version: str | None = 
     base["commands"] = recipe["commands"]
     base["script"] = recipe["script"]
     base["certified_on_opensuse_leap"] = recipe["certified_on_opensuse_leap"]
+    base["platform_certification"] = recipe["platform_certification"]
     base["compatibility"] = recipe["compatibility"]
     base["releases"] = recipe["releases"]
     base["sources"] = recipe["sources"]

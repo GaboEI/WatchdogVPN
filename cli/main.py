@@ -88,6 +88,7 @@ from diagnostics.amneziawg_lifecycle import (
     ReleaseResolutionError,
     ResolvedRelease,
     STATE_CONTEXT_ABSENT,
+    _platform_certification,
     build_manifest_matches_current,
     build_manifest_sha256,
     build_recipe,
@@ -3035,6 +3036,11 @@ def _awg_print_recipe(recipe: dict[str, object]) -> None:
         print(f"\nCompatibility: {status}")
         if note:
             print(f"  {note}")
+    cert = recipe.get("platform_certification")
+    if isinstance(cert, dict):
+        cert_status = str(cert.get("status", "unknown"))
+        cert_platform = str(cert.get("platform", "unknown"))
+        print(f"\nPlatform certification: {cert_status} ({cert_platform})")
     script = recipe.get("script")
     if isinstance(script, str) and script:
         print("\nOr run the self-contained, interrupt-safe script below (it uses a private mktemp workspace):")
@@ -3431,6 +3437,7 @@ def _awg_status(args: argparse.Namespace) -> int:
     state = lifecycle_state(awg_profiles=awg_profiles, probe=probe)
     manifest = load_build_manifest()
     manifest_matches = build_manifest_matches_current(manifest, probe) if manifest is not None else False
+    platform = detect_platform()
     data = {
         "state": state,
         "awg_profile_count": awg_profiles,
@@ -3438,6 +3445,7 @@ def _awg_status(args: argparse.Namespace) -> int:
         "runtime": probe.as_dict(),
         "build_manifest_present": manifest is not None,
         "build_manifest_matches": manifest_matches,
+        "platform_certification": _platform_certification(platform),
         "context_absent_noise": awg_profiles == 0,
     }
     if args.json:
@@ -3560,10 +3568,12 @@ def _awg_update(args: argparse.Namespace) -> int:
         print("No recipe was generated; no fallback to HEAD was used.")
         return 0
     current = probe.as_dict()
+    cert = recipe.get("platform_certification") if isinstance(recipe.get("platform_certification"), dict) else {}
     data = {
         "state": lifecycle_state(awg_profiles=awg_profiles, probe=probe),
         "current_runtime": current,
         "certified_on_opensuse_leap": bool(recipe.get("certified_on_opensuse_leap")),
+        "platform_certification": cert,
         "releases": recipe.get("releases"),
         "executed_by_watchdogvpn": False,
         "recipe": recipe,
@@ -3571,14 +3581,22 @@ def _awg_update(args: argparse.Namespace) -> int:
     if args.json:
         _print_json(data)
         return 0
+    cert_typed: dict[str, object] = cert if isinstance(cert, dict) else {}
     certified = bool(recipe.get("certified_on_opensuse_leap"))
+    cert_status = str(cert_typed.get("status", "unknown"))
+    cert_platform = str(cert_typed.get("platform", "unknown"))
+    cert_note = str(cert_typed.get("note", ""))
     print("Latest official AmneziaWG release resolution:")
     for release in recipe.get("releases", []):
         print(f"  {release['repository']}: tag {release['tag']} commit {release['commit']}")
     if certified:
-        print("This release matches the WatchdogVPN-certified pins for openSUSE Leap: supported.")
+        print(f"This release matches the WatchdogVPN-certified pins for {cert_platform}: supported.")
+    elif cert_status == "known_other_platform":
+        print(f"This release matches WatchdogVPN-certified pins recorded for another platform (not {cert_platform}): {cert_note}")
     else:
-        print("This release is newer than the WatchdogVPN-certified pins: upstream latest, NOT yet certified on openSUSE Leap.")
+        print("This release is newer than the WatchdogVPN-certified pins: upstream latest, NOT yet certified on this platform.")
+    if cert_note:
+        print(f"  {cert_note}")
     print("WatchdogVPN does not update automatically. Review and run the exact recipe below yourself, then re-run `watchdog awg status`.")
     _awg_print_recipe(recipe)
     return 0
