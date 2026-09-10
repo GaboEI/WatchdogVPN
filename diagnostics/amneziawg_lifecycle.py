@@ -808,10 +808,29 @@ def detect_platform() -> dict[str, str]:
     return {"distro": distro, "version": version, "arch": arch}
 
 
+def _normalize_distro(distro: str) -> str:
+    """Normalize an os-release ID to the canonical form used internally.
+
+    openSUSE variants report `ID=opensuse-leap` / `ID=opensuse-tumbleweed` in
+    /etc/os-release (hyphen), while the AWG lifecycle and distro adapters use
+    `opensuse_leap` / `opensuse_tumbleweed` (underscore). Normalizing at the
+    boundary keeps both the detected and the manually-injected distro aligned
+    with the certified-platform keys and the package-manager selection.
+    """
+    mapping = {
+        "opensuse-leap": "opensuse_leap",
+        "opensuse_tumbleweed": "opensuse_tumbleweed",
+        "opensuse-tumbleweed": "opensuse_tumbleweed",
+        "opensuse": "opensuse_leap",
+    }
+    return mapping.get(distro, distro)
+
+
 def _platform(distro: str | None = None, version: str | None = None, arch: str | None = None) -> dict[str, str]:
     detected = detect_platform()
+    raw_distro = distro or os.environ.get("WATCHDOGVPN_LIFECYCLE_DISTRO", detected["distro"])
     return {
-        "distro": distro or os.environ.get("WATCHDOGVPN_LIFECYCLE_DISTRO", detected["distro"]),
+        "distro": _normalize_distro(str(raw_distro)),
         "version": version or os.environ.get("WATCHDOGVPN_LIFECYCLE_DISTRO_VERSION", detected["version"]),
         "arch": arch or os.environ.get("WATCHDOGVPN_LIFECYCLE_ARCH", detected["arch"]),
     }
@@ -831,7 +850,7 @@ def _platform_certification(
                              certified anywhere;
     * unsupported          - this platform has no certified pins.
     """
-    distro = str(platform.get("distro", "") or "")
+    distro = _normalize_distro(str(platform.get("distro", "") or ""))
     pins = CERTIFIED_PINS_BY_PLATFORM.get(distro)
     if pins is None:
         return {

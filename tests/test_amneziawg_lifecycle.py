@@ -237,6 +237,21 @@ class RecipeTests(unittest.TestCase):
         self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TOOLS_REPO]["commit"], commands)
         self.assertIn(CERTIFIED_PINS[AMNEZIAWG_TRANSPORT_REPO]["commit"], commands)
 
+    def test_recipe_normalizes_os_release_hyphenated_tumbleweed(self) -> None:
+        # /etc/os-release reports ID=opensuse-tumbleweed (hyphen); the internal
+        # canonical form is opensuse_tumbleweed. The recipe must still resolve
+        # as supported for the platform, matching the real host detection.
+        recipe = build_recipe(releases=_certified_releases(), distro="opensuse-tumbleweed")
+        self.assertEqual(recipe["platform_certification"]["status"], "supported")
+        self.assertEqual(recipe["platform_certification"]["platform"], "opensuse_tumbleweed")
+        commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
+        self.assertIn("zypper", commands)
+
+    def test_recipe_normalizes_os_release_hyphenated_leap(self) -> None:
+        recipe = build_recipe(releases=_certified_releases(), distro="opensuse-leap")
+        self.assertEqual(recipe["platform_certification"]["status"], "supported")
+        self.assertIs(recipe["certified_on_opensuse_leap"], True)
+
     def test_recipe_uses_safe_mktemp_workspace_and_verifies_checkout(self) -> None:
         recipe = build_recipe(releases=_certified_releases())
         commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
