@@ -1,6 +1,7 @@
 """AmneziaWG lifecycle guidance for the WatchdogVPN CLI and doctor.
 
-Implements the maintainer-approved AmneziaWG lifecycle for openSUSE Leap:
+Implements the maintainer-approved AmneziaWG lifecycle for openSUSE Leap and
+openSUSE Tumbleweed (platform-aware):
 
 * contextual detection (no global detection or doctor noise when no AmneziaWG
   profile exists);
@@ -15,7 +16,10 @@ Implements the maintainer-approved AmneziaWG lifecycle for openSUSE Leap:
   previously installed release;
 * user-executed setup/update/repair/rollback: this module only generates and
   verifies, it never runs zypper, git clone, make, privileged installs or any
-  network/interface mutation.
+  network/interface mutation;
+* platform-aware certification: a certified pin pair is evaluated per platform
+  (supported / known_other_platform / experimental / unsupported), so a pair
+  certified on one distribution is never silently promoted on another.
 
 Only sources allowed: https://github.com/amnezia-vpn/amneziawg-tools and
 https://github.com/amnezia-vpn/amneziawg-go. No binaries are shipped in the
@@ -54,11 +58,11 @@ PROBE_CANDIDATES = (Path("/usr/local/bin"), Path("/usr/bin"))
 AMNEZIAWG_GO_MIN_GO_VERSION = "1.25"
 
 # Certified pins recorded for the approved L3.1 openSUSE Leap matrix rerun
-# (Task 23.7.5.6b) and the openSUSE Tumbleweed AWG path (T4.1 pending). A
-# runtime whose recorded metadata (binary digest) matches the platform pins is
-# "supported" on that platform. Any newer official release is "experimental"
-# until it passes real validation on the platform. A detected runtime with no
-# recorded metadata is "unknown" and is never silently overwritten.
+# (Task 23.7.5.6b) and the openSUSE Tumbleweed AWG path. A runtime whose
+# recorded metadata (binary digest) matches the platform pins is "supported"
+# on that platform. Any newer official release is "experimental" until it
+# passes real validation on the platform. A detected runtime with no recorded
+# metadata is "unknown" and is never silently overwritten.
 CERTIFIED_PINS_BY_PLATFORM: Mapping[str, Mapping[str, Mapping[str, str]]] = {
     "opensuse_leap": {
         AMNEZIAWG_TOOLS_REPO: {
@@ -844,15 +848,54 @@ def _platform_certification(
 
     Distinguishes:
     * supported            - the pinned pair is certified for this platform;
-    * known_other_platform - the pinned pair is certified on another supported
+    * known_other_platform - the pair is certified on another supported
                              platform but not (yet) on this one;
     * experimental         - the resolved pair is newer upstream and not
                              certified anywhere;
-    * unsupported          - this platform has no certified pins.
+    * unsupported          - this platform has no certified pins and the pair
+                             (when provided) does not match any certified pair.
     """
     distro = _normalize_distro(str(platform.get("distro", "") or ""))
     pins = CERTIFIED_PINS_BY_PLATFORM.get(distro)
+
+    def _matches_pins(pair: Mapping[str, Mapping[str, str]], by_repo: Mapping[str, ResolvedRelease]) -> bool:
+        tools = by_repo.get(AMNEZIAWG_TOOLS_REPO)
+        transport = by_repo.get(AMNEZIAWG_TRANSPORT_REPO)
+        if tools is None or transport is None:
+            return False
+        return (
+            pair.get(AMNEZIAWG_TOOLS_REPO, {}).get("commit") == tools.commit
+            and pair.get(AMNEZIAWG_TRANSPORT_REPO, {}).get("commit") == transport.commit
+        )
+
+    # Find the platform (if any) whose certified pins match the provided pair.
+    certified_elsewhere: str | None = None
+    if releases is not None:
+        by_repo = {release.repository: release for release in releases}
+        for other_platform, other_pins in CERTIFIED_PINS_BY_PLATFORM.items():
+            if other_platform != distro and _matches_pins(other_pins, by_repo):
+                certified_elsewhere = other_platform
+                break
+
     if pins is None:
+        # No certified pins for this platform. If the provided pair matches a
+        # certified pair on another platform, report known_other_platform;
+        # otherwise unsupported (or experimental if a non-certified pair was
+        # resolved for a platform with no pins at all is not distinguishable
+        # from unsupported - unsupported is the contract here).
+        if certified_elsewhere is not None:
+            return {
+                "status": PLATFORM_CERT_OTHER_PLATFORM,
+                "platform": distro,
+                "certified_on_platform": certified_elsewhere,
+                "note": (
+                    f"The resolved AmneziaWG pair matches the WatchdogVPN-certified pins for "
+                    f"{certified_elsewhere}, but this platform ({distro}) has no certified pins. "
+                    "The pair is known from another supported platform; it is not certified here yet."
+                ),
+                "certified": False,
+                "certified_platforms": list(CERTIFIED_PINS_BY_PLATFORM),
+            }
         return {
             "status": PLATFORM_CERT_UNSUPPORTED,
             "platform": distro,
@@ -860,6 +903,7 @@ def _platform_certification(
             "certified": False,
             "certified_platforms": list(CERTIFIED_PINS_BY_PLATFORM),
         }
+
     if releases is not None:
         by_repo = {release.repository: release for release in releases}
         tools = by_repo.get(AMNEZIAWG_TOOLS_REPO)
@@ -875,6 +919,19 @@ def _platform_certification(
                 "certified": True,
                 "certified_platforms": list(CERTIFIED_PINS_BY_PLATFORM),
                 "pins": dict(pins),
+            }
+        if certified_elsewhere is not None:
+            return {
+                "status": PLATFORM_CERT_OTHER_PLATFORM,
+                "platform": distro,
+                "certified_on_platform": certified_elsewhere,
+                "note": (
+                    f"The resolved AmneziaWG pair matches the WatchdogVPN-certified pins for "
+                    f"{certified_elsewhere}, but not the certified pins for {distro}. The pair is "
+                    "known from another supported platform; it is not certified here yet."
+                ),
+                "certified": False,
+                "certified_platforms": list(CERTIFIED_PINS_BY_PLATFORM),
             }
         return {
             "status": PLATFORM_CERT_EXPERIMENTAL,
@@ -1218,8 +1275,12 @@ def import_guidance_payload(*, distro: str | None = None, version: str | None = 
 
 
 def _distro_adapter_id(distro: str) -> str:
+    # Accept both the /etc/os-release IDs (hyphenated, e.g. opensuse-leap) and
+    # the canonical internal form (underscore, e.g. opensuse_leap) so adapter
+    # selection stays correct after _platform() normalization.
+    canonical = _normalize_distro(distro)
     mapping = {
-        "opensuse-leap": "opensuse",
+        "opensuse_leap": "opensuse",
         "opensuse_tumbleweed": "opensuse",
         "opensuse": "opensuse",
         "ubuntu": "ubuntu",
@@ -1233,7 +1294,7 @@ def _distro_adapter_id(distro: str) -> str:
         "arch": "arch",
         "cachyos": "arch",
     }
-    return mapping.get(distro, "unknown")
+    return mapping.get(canonical, "unknown")
 
 
 def build_manifest_matches_current(manifest: dict[str, object] | None, probe: RuntimeProbe) -> bool:

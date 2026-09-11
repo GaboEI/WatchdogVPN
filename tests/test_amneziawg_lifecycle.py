@@ -30,10 +30,16 @@ from diagnostics.amneziawg_lifecycle import (
     AMNEZIAWG_TOOLS_URL,
     CERTIFIED_PINS,
     OfficialReleaseResolver,
+    PLATFORM_CERT_EXPERIMENTAL,
+    PLATFORM_CERT_OTHER_PLATFORM,
+    PLATFORM_CERT_SUPPORTED,
+    PLATFORM_CERT_UNSUPPORTED,
     ReleaseResolutionError,
     ResolvedRelease,
     RuntimeComponent,
     RuntimeProbe,
+    _distro_adapter_id,
+    _platform_certification,
     build_recipe,
     import_guidance_payload,
     lifecycle_state,
@@ -276,13 +282,55 @@ class RecipeTests(unittest.TestCase):
 
     def test_certified_pair_on_leap_is_not_auto_certified_elsewhere(self) -> None:
         # A combination certified on openSUSE Leap must not be considered
-        # certified on an unrelated distro just because it matches the legacy
-        # single pair. build_recipe with an explicit foreign distro must mark it
-        # unsupported (no certified pins) rather than silently certified.
+        # certified on an unrelated distro. A platform with no certified pins
+        # but a pair that matches another platform's certified pins must be
+        # reported as known_other_platform, never silently supported.
         recipe = build_recipe(releases=_certified_releases(), distro="fedora")
-        self.assertEqual(recipe["platform_certification"]["status"], "unsupported")
+        self.assertEqual(recipe["platform_certification"]["status"], PLATFORM_CERT_OTHER_PLATFORM)
         self.assertIs(recipe["platform_certification"]["certified"], False)
         self.assertIs(recipe["certified_on_opensuse_leap"], False)
+
+    def test_platform_certification_four_state_matrix(self) -> None:
+        # supported: pair matches the platform pins.
+        platform = {"distro": "opensuse_leap", "version": "15.6", "arch": "x86_64"}
+        cert = _platform_certification(platform, _certified_releases())
+        self.assertEqual(cert["status"], PLATFORM_CERT_SUPPORTED)
+        self.assertIs(cert["certified"], True)
+
+        # known_other_platform: platform without pins, pair matches another
+        # platform's certified pins.
+        fedora = {"distro": "fedora", "version": "44", "arch": "x86_64"}
+        cert = _platform_certification(fedora, _certified_releases())
+        self.assertEqual(cert["status"], PLATFORM_CERT_OTHER_PLATFORM)
+        self.assertEqual(cert.get("certified_on_platform"), "opensuse_leap")
+        self.assertIs(cert["certified"], False)
+
+        # experimental: platform has pins but the pair does not match them and
+        # does not match any other platform either.
+        now = "2026-09-05T00:00:00Z"
+        newer = [
+            ResolvedRelease(AMNEZIAWG_TOOLS_REPO, "v9.9.9", "dd" * 20, now),
+            ResolvedRelease(AMNEZIAWG_TRANSPORT_REPO, "v9.9.9", "ee" * 20, now),
+        ]
+        cert = _platform_certification(platform, newer)
+        self.assertEqual(cert["status"], PLATFORM_CERT_EXPERIMENTAL)
+        self.assertIs(cert["certified"], False)
+
+        # unsupported: platform without pins and a pair that matches nothing.
+        cert = _platform_certification(fedora, newer)
+        self.assertEqual(cert["status"], PLATFORM_CERT_UNSUPPORTED)
+        self.assertIs(cert["certified"], False)
+
+    def test_distro_adapter_id_accepts_canonical_and_os_release_forms(self) -> None:
+        # The normalized canonical form (underscore) and the /etc/os-release
+        # form (hyphen) must both resolve to the correct adapter.
+        self.assertEqual(_distro_adapter_id("opensuse-leap"), "opensuse")
+        self.assertEqual(_distro_adapter_id("opensuse_leap"), "opensuse")
+        self.assertEqual(_distro_adapter_id("opensuse-tumbleweed"), "opensuse")
+        self.assertEqual(_distro_adapter_id("opensuse_tumbleweed"), "opensuse")
+        self.assertEqual(_distro_adapter_id("opensuse"), "opensuse")
+        self.assertEqual(_distro_adapter_id("fedora"), "fedora")
+        self.assertEqual(_distro_adapter_id("unknown-thing"), "unknown")
 
     def test_recipe_handles_go_toolchain_requirement(self) -> None:
         recipe = build_recipe(releases=_certified_releases())
