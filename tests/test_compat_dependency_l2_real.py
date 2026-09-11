@@ -837,7 +837,18 @@ def _manager_command(manager: str) -> str:
 
 def _refresh_command(case: dict) -> str:
     if case["kind"] == "apt":
-        return "apt-get update"
+        # archive.ubuntu.com / security.ubuntu.com are frequently slow or
+        # rate-limited from CI runners (GitHub Actions), causing apt-get update
+        # to stall for minutes or time out. Point apt at Ubuntu's EC2
+        # us-east-1 mirror, which serves both archive and security releases and
+        # is reachable from the CI runner region; this only changes which host
+        # serves the same official Ubuntu repositories.
+        apt_mirror = "us-east-1.ec2.archive.ubuntu.com"
+        return (
+            "sed -i -e 's#archive.ubuntu.com#%s#g' -e 's#security.ubuntu.com#%s#g' "
+            "/etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true; "
+            "apt-get update"
+        ) % (apt_mirror, apt_mirror)
     if case["kind"] == "zypper":
         return "zypper --non-interactive refresh"
     return case.get("refresh", "true")
