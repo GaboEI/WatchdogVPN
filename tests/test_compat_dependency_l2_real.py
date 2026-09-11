@@ -23,6 +23,14 @@ from tools.compat_l2_reporter import dnf_repository_series_path
 
 REAL_L2_ENABLED = os.environ.get("WATCHDOGVPN_REAL_L2") == "1"
 TIMEOUT_SECONDS = 120
+# Metadata refresh (apt-get update / dnf / zypper refresh) hits the distro's
+# package mirrors over the network. Those mirrors can be slow or transiently
+# rate-limited from CI runners (observed for archive.ubuntu.com), so the
+# refresh phase gets a wider, infra-only deadline than the strict validation
+# timeouts (pull/create/start/os-release/package-query/cleanup still use
+# TIMEOUT_SECONDS). This does not weaken the compatibility validation: the
+# target still must complete the refresh and the rest of the lifecycle.
+METADATA_REFRESH_TIMEOUT_SECONDS = 300
 OUTPUT_LIMIT = 12000
 CONTROLLED_MANAGERS = frozenset(("apt-get", "dnf", "zypper", "pacman"))
 
@@ -960,7 +968,7 @@ def execute_l2_case(runtime: str, case: dict, name: str) -> dict:
             return result
 
         refresh_cmd = _refresh_command(case)
-        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd])
+        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd], timeout=METADATA_REFRESH_TIMEOUT_SECONDS)
         status, reason = classify_lifecycle_phase(refresh, verb="metadata refresh")
         _finalize(refresh, status, reason)
         refresh["command"] = refresh_cmd
@@ -1171,7 +1179,7 @@ def execute_l2_matrix_case(runtime: str, case: dict, name: str, manifest: dict) 
             return result
 
         refresh_cmd = _refresh_command(case)
-        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd])
+        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd], timeout=METADATA_REFRESH_TIMEOUT_SECONDS)
         status, reason = classify_lifecycle_phase(refresh, verb="metadata refresh")
         _finalize(refresh, status, reason)
         refresh["command"] = refresh_cmd
