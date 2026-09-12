@@ -457,7 +457,7 @@ class ManifestValidCasesTests(unittest.TestCase):
             "kali": SupportClassification.CERTIFIED,
             "arch": SupportClassification.CERTIFIED,
             "cachyos": SupportClassification.CERTIFIED,
-            "opensuse_tumbleweed": SupportClassification.FAMILY_INFERRED,
+            "opensuse_tumbleweed": SupportClassification.CERTIFIED,
         }
         for distro_id, expected in cases.items():
             data = compat_read._rolling_facts(manifest, distro_id)
@@ -466,7 +466,7 @@ class ManifestValidCasesTests(unittest.TestCase):
             result = classify_support_rolling(
                 RollingFacts(**data["facts"]),
                 expiry=timedelta(seconds=data["expiry_seconds"]),
-                now=datetime(2026, 8, 16, 0, 0, 0),
+                now=datetime(2026, 9, 12, 0, 0, 0),
             )
             self.assertIs(result, expected, distro_id)
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
@@ -525,7 +525,7 @@ class ManifestValidCasesTests(unittest.TestCase):
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
-        self.assertEqual(len(manifest["certifications"]), 10)
+        self.assertEqual(len(manifest["certifications"]), 11)
         for cert_id, cert in manifest["certifications"].items():
             with self.subTest(cert_id=cert_id):
                 self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))
@@ -861,15 +861,23 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         # from the certified redhat_dnf anchor (Rocky).
         centos = StableReleaseFacts(**compat_read._stable_facts(manifest, "centos_stream_9")["facts"])
         self.assertIs(classify_support_stable(centos), SupportClassification.FAMILY_INFERRED)
+        # A certified rolling derivative with its own evidence (Tumbleweed) is
+        # CERTIFIED regardless of the family anchor.
         tumbleweed_data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
-        tumbleweed = RollingFacts(**tumbleweed_data["facts"])
+        tumbleweed = RollingFacts(
+            **{
+                **tumbleweed_data["facts"],
+                "last_validated": datetime.fromisoformat(tumbleweed_data["facts"]["last_validated"]),
+            }
+        )
+        self.assertTrue(tumbleweed.has_valid_field_certification)
         self.assertIs(
             classify_support_rolling(
                 tumbleweed,
                 expiry=timedelta(seconds=tumbleweed_data["expiry_seconds"]),
-                now=datetime(2026, 7, 26, 0, 0, 0),
+                now=datetime(2026, 9, 12, 0, 0, 0),
             ),
-            SupportClassification.FAMILY_INFERRED,
+            SupportClassification.CERTIFIED,
         )
 
         # Without any current redhat_dnf certification there is no anchor: the
@@ -883,25 +891,48 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
         self.assertIs(classify_support_stable(alma), SupportClassification.EXPERIMENTAL)
 
+        # The rolling family-inference path is preserved with a synthetic
+        # Tumbleweed that has no own evidence: it is FAMILY_INFERRED from the
+        # certified suse_zypper anchor (Leap).
+        manifest = self.product_copy()
+        manifest["distributions"]["opensuse_tumbleweed"]["lineage"]["has_own_evidence"] = False
+        manifest["distributions"]["opensuse_tumbleweed"]["lineage"]["family_inference_allowed"] = True
+        manifest["certifications"]["cert_opensuse_tumbleweed_rolling"]["current"] = False
+        manifest["validation_metadata"]["rolling_policies"]["opensuse_tumbleweed"]["evidence_refs"] = []
+        manifest["validation_metadata"]["rolling_policies"]["opensuse_tumbleweed"]["last_validated"] = None
+        manifest["distributions"]["opensuse_tumbleweed"]["policy"]["rolling"]["last_validated"] = None
+        data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
+        derived = RollingFacts(**data["facts"])
+        self.assertFalse(derived.has_valid_field_certification)
+        self.assertTrue(derived.family_has_certified_anchor)
+        self.assertIs(
+            classify_support_rolling(
+                derived,
+                expiry=timedelta(seconds=data["expiry_seconds"]),
+                now=datetime(2026, 9, 12, 0, 0, 0),
+            ),
+            SupportClassification.FAMILY_INFERRED,
+        )
+
+        # With no certified suse_zypper anchor either, the derivative drops to
+        # EXPERIMENTAL.
+        manifest["certifications"]["cert_opensuse_leap_15_6"]["current"] = False
+        manifest["releases"]["opensuse_leap_15_6"]["evidence_refs"] = []
+        data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
+        self.assertFalse(data["facts"]["family_has_certified_anchor"])
+        self.assertIs(
+            classify_support_rolling(
+                RollingFacts(**data["facts"]),
+                expiry=timedelta(seconds=data["expiry_seconds"]),
+                now=datetime(2026, 9, 12, 0, 0, 0),
+            ),
+            SupportClassification.EXPERIMENTAL,
+        )
+
         manifest = self.product_copy()
         manifest["certifications"]["cert_opensuse_leap_15_6"]["protocol_results"]["vless"]["disposition"] = "failed"
         with self.assertRaises(compat_read.ManifestError):
             compat_read.validate_manifest(manifest)
-
-        manifest = self.product_copy()
-        manifest["certifications"]["cert_opensuse_leap_15_6"]["current"] = False
-        manifest["releases"]["opensuse_leap_15_6"]["evidence_refs"] = []
-        tumbleweed_data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
-        tumbleweed = RollingFacts(**tumbleweed_data["facts"])
-        self.assertFalse(tumbleweed.family_has_certified_anchor)
-        self.assertIs(
-            classify_support_rolling(
-                tumbleweed,
-                expiry=timedelta(seconds=tumbleweed_data["expiry_seconds"]),
-                now=datetime(2026, 7, 26, 0, 0, 0),
-            ),
-            SupportClassification.EXPERIMENTAL,
-        )
 
     def test_derivative_cycles_and_ambiguous_or_borrowed_mapping_rejected(self) -> None:
         manifest = self.product_copy()

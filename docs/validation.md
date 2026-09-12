@@ -67,17 +67,19 @@ protocol matrix: Ubuntu 24.04 (11A.1), Debian 13 (11A.2) and Linux Mint 22.3
 (11A.3). Ubuntu and Linux Mint belong to technical family `ubuntu_apt`; Debian
 13 belongs to `debian_apt`. Earlier Phase 23.5/23.6 rows reflected the per-distro
 result at that time; other Debian/Ubuntu derivatives and Red Hat-family /
-SUSE-family derivatives that share an adapter remain `family_inferred`, not
-individually certified.
+SUSE-family derivatives that share an adapter are individually certified only
+with their own field evidence: openSUSE Leap 15.6 and openSUSE Tumbleweed
+`20260907` each carry their own certification.
 
 The CachyOS result also confirms the Arch adapter works for a real install flow
 with advanced DNS, and the installer gives reboot guidance if the tunnel remains
 degraded after setup.
 
-Family-inferred, not yet individually certified: AlmaLinux, RHEL and CentOS
-Stream (share the Red Hat-family adapter); openSUSE Tumbleweed; other
-Debian/Ubuntu derivatives beyond Linux Mint. They share a certified adapter but
-have not themselves been field-tested, so they are not recorded as certified.
+Family-inferred, not yet individually certified: RHEL and CentOS Stream (share
+the Red Hat-family adapter); other Debian/Ubuntu derivatives beyond Linux Mint.
+They share a certified adapter but have not themselves been field-tested, so they
+are not recorded as certified. AlmaLinux (11C) and openSUSE Tumbleweed (11D) are
+individually certified with their own field evidence.
 
 ### Phase 23.7.5.11D openSUSE Leap Recertification
 
@@ -87,8 +89,10 @@ protocol identity and private evidence paths from the external
 `EXACT_PROTOCOL_PATHS.md` index. AmneziaWG is an official WatchdogVPN path in
 this result: its guided installation completed and its rerun demonstrated real
 egress. L3.7 and the full L3 gate are CLOSED / APPROVED by independent audit;
-this does not constitute final Leap certification. It does not certify openSUSE Tumbleweed or the
-openSUSE family as a whole.
+this does not by itself certify the openSUSE Tumbleweed route or declare the
+openSUSE family closed. The Tumbleweed route was certified separately under 11D
+(T0–T7, see below); the 11D openSUSE-family closure candidate remains pending
+independent audit.
 
 The reinforced WireGuard, Shadowsocks, and plain OpenVPN trio also passed the
 corrected 100 MiB public-file requirement, including foreground OpenVPN SSH
@@ -104,8 +108,22 @@ shadowsocks, wireguard) were reconciled to `green` in
 (runtime `cb41420`, provenance verified), and
 `validation_metadata.per_release_ci.opensuse_leap_15_6` is `green` citing the
 L2 CI run `34140256789` on HEAD `7939411`. This certifies openSUSE Leap 15.6
-as a release; it does not certify openSUSE Tumbleweed or the openSUSE family
-as a whole.
+as a release; it does not by itself declare the openSUSE family closed.
+
+### Phase 23.7.5.11D openSUSE Tumbleweed Certification (2026-09-11)
+
+The openSUSE Tumbleweed rolling route completed T0–T7 on `nls1` against snapshot
+`20260907` and is reconciled in `compat/compatibility.json` as
+`cert_opensuse_tumbleweed_rolling` (current, scope
+`physical_field_certification`, snapshot `openSUSE Tumbleweed 20260907`, 12/12
+`protocol_results` all `green`, each traced to real egress from the T4.1 protocol
+matrix). `distributions.opensuse_tumbleweed.lineage.has_own_evidence` is `true`
+with `last_validated` `2026-09-10`, so `opensuse_tumbleweed` classifies as
+`certified` for the captured snapshot instead of `family_inferred`. The reboot
+lifecycle (T5), isolated fault harness (T6) and final cleanup (T7) are
+CLOSED / APPROVED by independent audit. This is the 11D openSUSE-family closure
+candidate; it does not open the family PR, merge `main`, or declare public
+certification, and it remains pending independent audit.
 
 ## Persistent Configuration Update Validation
 

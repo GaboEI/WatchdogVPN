@@ -264,12 +264,12 @@ a rolling distribution must be above the technical floor, not expressly excluded
 EOL/withdrawn. A historical or current-looking certification for an ineligible target
 cannot produce a certified fact or a family anchor.
 
-Initial manifest content is conservative and sourced from the Phase 23.5/23.6/23.7.5
-record: the eight physically certified distributions/releases/snapshots are represented
-with certification records; AlmaLinux, RHEL, CentOS Stream, openSUSE Tumbleweed, Kali and
-non-certified derivative cases carry absent or inferred evidence rather than promoted
-support; Ubuntu 26.04 is represented as pending/not-yet-admitted evidence, not as a field
-certification. The protocol list records required runtimes and evidence policy, including
+Manifest content is conservative and sourced from the Phase 23.5/23.6/23.7.5
+record: the physically certified distributions/releases/snapshots are represented
+with certification records (including AlmaLinux 9, Kali and openSUSE Tumbleweed
+after their 11C/11D field certifications); RHEL and CentOS Stream carry absent or
+inferred evidence rather than promoted support; Ubuntu 26.04 is represented as
+pending/not-yet-admitted evidence, not as a field certification. The protocol list records required runtimes and evidence policy, including
 the permanent distinction between functional rows and the three formal non-green Plan-B /
 no-egress rows; it does not claim that all twelve protocols are green across a family.
 Each certification stores per-protocol results with dispositions `green`,
@@ -3368,7 +3368,7 @@ Mandatory order (external design §14.1, revision 5):
 | 11A | Ubuntu, Debian, Linux Mint | Debian family. CLOSED (12/12 each). |
 | 11B | Arch Linux, CachyOS | Arch family, rolling. **CLOSED (2026-08-17)** — Arch Linux (2026-08-15) and CachyOS (2026-08-17), 12/12 each. |
 | 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). **Fedora CLOSED (2026-08-20)** — 12/12 green with real egress. **Rocky Linux CLOSED (2026-08-21)** — 12/12 green, reboot lifecycle, isolated fault harness and final cleanup. **AlmaLinux 9 CLOSED and certified (2026-09-02/03)** — 12/12 green via `cert_almalinux_9`. Family integration gate: PR #16 open, merge pending. |
-| 11D | openSUSE Leap, Tumbleweed | Leap recertified (L1–L6 closed/approved); Tumbleweed not certified. |
+| 11D | openSUSE Leap, Tumbleweed | **11D family closure candidate (2026-09-11).** openSUSE Leap 15.6 CLOSED — 12/12 green via `cert_opensuse_leap_15_6`. openSUSE Tumbleweed `20260907` CLOSED / certified — 12/12 green with real egress via `cert_opensuse_tumbleweed_rolling`; T0–T7 closed/approved. Family PR pending independent audit; not merged to `main`. |
 | 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
 | 11G | Pop!_OS | New community-requested distribution; full admission/cert from zero. |
@@ -3767,6 +3767,34 @@ compatibility-contract reconciliation for AlmaLinux:
   `a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69`; primary
   VLESS evidence SHA256
   `33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678`.
+
+#### 11D — openSUSE family (Leap 15.6 and Tumbleweed 20260907, 2026-09-11)
+
+openSUSE Leap 15.6 was recertified under 23.7.5.11D (L1–L7 CLOSED / APPROVED,
+`cert_opensuse_leap_15_6`, 12/12 green with real egress). The openSUSE Tumbleweed
+rolling route then completed T0–T7 on `nls1` (snapshot `20260907`), and T8
+reconciles the manifest to that approved physical evidence.
+
+- `certifications.cert_opensuse_tumbleweed_rolling`: `current`, scope
+  `physical_field_certification`, snapshot `openSUSE Tumbleweed 20260907`, with
+  12/12 `protocol_results` all `green`, each traced to real egress from the T4.1
+  protocol matrix (TW-E04) — including AmneziaWG resolved through the guided
+  official provisioning flow and validated with real AWG egress. No disposition
+  is `formal_non_green`, `failed`, `not_run` or `not_applicable`; a listener,
+  process, handshake or connection state is never accepted as evidence.
+- `distributions.opensuse_tumbleweed.lineage.has_own_evidence = true` (and
+  `family_inference_allowed = false`); `policy.rolling.last_validated =
+  "2026-09-10T00:00:00Z"`; `validation_metadata.rolling_policies.opensuse_tumbleweed.evidence_refs
+  = ["cert_opensuse_tumbleweed_rolling"]`, so `opensuse_tumbleweed` classifies as
+  `certified` for the captured rolling snapshot instead of `family_inferred`.
+- T5 reboot lifecycle (TW-E06), T6 isolated fault harness (TW-E07) and T7 final
+  cleanup (TW-E08) are CLOSED / APPROVED by independent audit; the T7 cleanup left
+  the host in clean standby with `profiles=[]`, `providers=[]`, no VPN/TUN/process
+  residue and `doctor FAIL=0`.
+- This is the 11D openSUSE-family closure candidate. It does **not** open the
+  family PR to `main`, does **not** merge, and does **not** declare public
+  certification: those remain 11D-FINAL / 23.7.5.12–14, separate and unauthorized.
+  Independent audit of this reconciliation is mandatory before acceptance.
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 

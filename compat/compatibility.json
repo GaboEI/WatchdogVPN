@@ -120,6 +120,64 @@
     }
   },
   "certifications": {
+    "cert_opensuse_tumbleweed_rolling": {
+      "current": true,
+      "date": "2026-09-10T00:00:00Z",
+      "distribution": "opensuse_tumbleweed",
+      "evidence": "23.7.5.11D openSUSE Tumbleweed 20260907 field certification on nls1 (runtime eb969bd, generation SHA-256 c21912e05a6c82b894f1b5f979a04fae132520fc6ac25cda41d3d44b24a1fc0d, provenance verified): 12/12 protocols green with real egress (T4.1 protocol matrix, TW-E04), AmneziaWG resolved through the guided official provisioning flow and validated with real AWG egress; reboot lifecycle (T5, TW-E06), isolated fault harness (T6, TW-E07) and final cleanup (T7, TW-E08) CLOSED/APPROVED by independent audit 2026-09-11",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real AWG egress via the guided official provisioning flow: 9/9 HTTPS 200 through the tunnel (example/github/ipify), tunnel egress distinct from direct, kill switch applied (23.7.5.11D T4.1 AWG resolution, TW-E04)"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel, kill switch applied (23.7.5.11D T4.1/T4.2 Tumbleweed validation, TW-E04)"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel, kill switch applied (23.7.5.11D T4.1/T4.2 Tumbleweed validation, TW-E04)"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel; tunnel egress 138.124.91.224 distinct from direct (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel, kill switch applied (23.7.5.11D T4.1/T4.2 Tumbleweed validation, TW-E04)"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "openSUSE Tumbleweed 20260907"
+    },
     "cert_arch_rolling": {
       "current": true,
       "date": "2026-08-15T00:00:00Z",
@@ -3796,8 +3854,8 @@
     "opensuse_tumbleweed": {
       "id": "opensuse_tumbleweed",
       "lineage": {
-        "family_inference_allowed": true,
-        "has_own_evidence": false,
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
         "is_derivative": true
       },
       "policy": {
@@ -3806,7 +3864,7 @@
           "eol_or_withdrawn": false,
           "evidence_expiry_seconds": 31536000,
           "expressly_excluded": false,
-          "last_validated": null,
+          "last_validated": "2026-09-10T00:00:00Z",
           "meets_technical_floor": true
         }
       },
@@ -4452,9 +4510,11 @@
         "last_validated": "2026-08-12T00:00:00Z"
       },
       "opensuse_tumbleweed": {
-        "evidence_refs": [],
+        "evidence_refs": [
+          "cert_opensuse_tumbleweed_rolling"
+        ],
         "expiry_seconds": 31536000,
-        "last_validated": null
+        "last_validated": "2026-09-10T00:00:00Z"
       }
     }
   }
