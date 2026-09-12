@@ -68,6 +68,24 @@ class EndpointPolicyTests(unittest.TestCase):
             "vpn.example",
         )
 
+    def test_import_validation_does_not_resolve_hostname(self) -> None:
+        def private_resolver(*_args, **_kwargs):
+            return _resolver("10.0.0.1")(*_args, **_kwargs)
+
+        self.assertEqual(
+            validate_profile_endpoint(
+                Profile(
+                    id="test",
+                    name="test",
+                    protocol=ProtocolType.VLESS,
+                    config={"host": "provider.example"},
+                    source=ProfileSource.MANUAL,
+                ),
+                resolver=private_resolver,
+            ),
+            "provider.example",
+        )
+
     def test_resolution_failure_is_fail_closed(self) -> None:
         def failing_resolver(*_args, **_kwargs):
             raise socket.gaierror(socket.EAI_NONAME, "not found")

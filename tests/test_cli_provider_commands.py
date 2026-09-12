@@ -230,20 +230,33 @@ class CliProviderCommandTests(unittest.TestCase):
             source=ProfileSource.SUBSCRIPTION,
             provider_id=provider.id,
         )
-        guidance = {"available": False, "distro": "arch", "commands": ["safe-command"]}
+        guidance = {
+            "available": False,
+            "blocked": False,
+            "distro": "arch",
+            "distro_adapter": "arch",
+            "commands": [{"command": "safe-command", "purpose": "safe"}],
+            "script": "safe-command",
+            "certified_on_opensuse_leap": False,
+            "compatibility": {"status": "not_verified", "note": "not verified"},
+            "releases": [],
+            "sources": [],
+            "message": "AmneziaWG profile saved, but its local runtime is not ready yet.",
+            "executed_by_watchdogvpn": False,
+        }
         with tempfile.TemporaryDirectory() as tmp:
             env = {
                 "WATCHDOGVPN_CONFIG_DIR": tmp,
                 "WATCHDOGVPN_PROFILES_FILE": str(Path(tmp) / "profiles.json"),
             }
             with patch.dict("os.environ", env, clear=False), patch(
-                "cli.main.dependency_guidance", return_value=guidance
-            ) as dependency_check:
+                "cli.main.import_guidance_payload", return_value=guidance
+            ) as guidance_check:
                 ProfileStore(Path(tmp) / "profiles.json").add(profile)
                 result = cli.main._provider_amneziawg_guidance(provider)
 
         self.assertEqual(result, guidance)
-        dependency_check.assert_called_once_with()
+        guidance_check.assert_called_once_with()
 
     def test_provider_add_keyboard_interrupt_is_clean_human_error(self) -> None:
         with patch("cli.main.SubscriptionProvider") as provider_cls:

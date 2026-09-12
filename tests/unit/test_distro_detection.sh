@@ -274,15 +274,25 @@ write_os_release engine_failure \
   'VERSION_CODENAME=trixie'
 
 _mk_fake_python() {
-  printf '%s\n' "$1" > "$TMP_DIR/fake-python"
+  local body="$1"
+  {
+    printf '#!/bin/bash\n'
+    # Simulate an interpreter that satisfies the detection floor (3.7+), so
+    # the version gate passes and the engine failure mode below is reached.
+    printf 'if [[ "$1" == "-c" ]]; then\n'
+    printf '  if [[ "$2" =~ \\(3,\\ ([0-9]+)\\) ]]; then\n'
+    printf '    exit 0\n'
+    printf '  fi\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf '%s\n' "$body"
+  } > "$TMP_DIR/fake-python"
   chmod +x "$TMP_DIR/fake-python"
 }
 
 # 1. Engine returns invalid JSON.
-_mk_fake_python '#!/usr/bin/env bash
-printf "not json\n"
-exit 0
-'
+_mk_fake_python 'printf "not json\n"
+exit 0'
 (
   PATH="$TMP_DIR"
   WATCHDOGVPN_PYTHON="$TMP_DIR/fake-python"
@@ -293,10 +303,8 @@ exit 0
 )
 
 # 2. Engine exits non-zero.
-_mk_fake_python '#!/usr/bin/env bash
-printf "engine crash\n" >&2
-exit 2
-'
+_mk_fake_python 'printf "engine crash\n" >&2
+exit 2'
 (
   PATH="$TMP_DIR"
   WATCHDOGVPN_PYTHON="$TMP_DIR/fake-python"
@@ -307,9 +315,7 @@ exit 2
 )
 
 # 3. Engine hangs (timeout 1s via the wrapper used by lib/distro.sh).
-_mk_fake_python '#!/usr/bin/env bash
-sleep 60
-'
+_mk_fake_python 'sleep 60'
 (
   PATH="$TMP_DIR"
   WATCHDOGVPN_PYTHON="$TMP_DIR/fake-python"
@@ -350,5 +356,56 @@ write_os_release engine_python_leap \
     assert_eq "0" "$DISTRO_UNDETERMINED" "engine succeeds, not undetermined"
   fi
 )
+
+# Leap 15.6 ships python3=3.6 with no python3.11 preinstalled. The detection
+# engine needs 3.7+ (stdlib dataclasses + `from __future__ import
+# annotations`), so a 3.6 interpreter must never be handed to it. detect_distro
+# must mark the engine blocked with reason interpreter_missing and fall back to
+# the pure-Bash identity (opensuse/zypper) without ever claiming support.
+_mk_python_36() {
+  {
+    printf '#!/bin/bash\n'
+    printf 'if [[ "$1" == "-c" ]]; then\n'
+    printf '  if [[ "$2" =~ \\(3,\\ ([0-9]+)\\) ]]; then\n'
+    printf '    [[ 6 -ge "${BASH_REMATCH[1]}" ]] && exit 0 || exit 1\n'
+    printf '  fi\n'
+    printf '  exit 1\n'
+    printf 'fi\n'
+    printf 'exit 1\n'
+  } > "$TMP_DIR/python3"
+  chmod +x "$TMP_DIR/python3"
+}
+
+write_os_release leap_36 \
+  'ID="opensuse-leap"' \
+  'ID_LIKE="suse opensuse"' \
+  'VERSION_ID="15.6"' \
+  'PRETTY_NAME="openSUSE Leap 15.6"'
+_mk_python_36
+(
+  PATH="$TMP_DIR"
+  OS_RELEASE_FILE="$TMP_DIR/leap_36" detect_distro
+  assert_eq "opensuse-leap" "$DISTRO_ID" "leap-36 id"
+  assert_eq "opensuse" "$DISTRO_ADAPTER_ID" "leap-36 adapter"
+  assert_eq "suse" "$DISTRO_FAMILY" "leap-36 family"
+  assert_eq "zypper" "$DISTRO_PACKAGE_MANAGER" "leap-36 package manager"
+  assert_eq "0" "$DISTRO_SUPPORTED" "leap-36 does not claim supported"
+  assert_eq "1" "$DISTRO_UNDETERMINED" "leap-36 marks undetermined"
+  assert_eq "1" "$DISTRO_ENGINE_BLOCKED" "leap-36 marks engine blocked"
+  assert_eq "interpreter_missing" "$DISTRO_ENGINE_BLOCKED_REASON" "leap-36 engine blocked reason"
+)
+
+# Tumbleweed shares the opensuse adapter but ships a modern default python3, so
+# the engine must classify it directly with no interpreter bootstrap. This is
+# the non-regression guard for the sequencing fix: Tumbleweed must stay
+# non-operative for the new bootstrap step.
+write_os_release tumbleweed \
+  'ID="opensuse-tumbleweed"' \
+  'ID_LIKE="suse opensuse"' \
+  'VERSION_ID="20260727"' \
+  'PRETTY_NAME="openSUSE Tumbleweed"'
+detect_distro
+assert_engine_consistent "tumbleweed"
+assert_eq "0" "$DISTRO_ENGINE_BLOCKED" "tumbleweed engine not blocked"
 
 printf 'distro detection checks passed\n'

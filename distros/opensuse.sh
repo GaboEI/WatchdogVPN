@@ -9,28 +9,63 @@ DISTRO_PACKAGE_MANAGER="zypper"
 # the runtime resolver (lib/common.sh:watchdogvpn_python) should use; the
 # matching python311 packages are in the base set and the cryptography package
 # below. This does not retarget the OS default python3, which system tools use.
+# Tumbleweed ships python3 = 3.13 (already above the runtime floor), so its
+# interpreter/cryptography pair is switched to python3.13/python313 below.
 DISTRO_PYTHON="python3.11"
 DISTRO_CERTIFICATION_STATE="implemented_not_certified"
 DISTRO_SUPPORT_NOTE="openSUSE adapter implemented; installed certification remains pending Phase 23.6 evidence."
+
+# Phase 23.7.5.11D sequencing bootstrap: openSUSE Leap 15.6 ships python3=3.6,
+# too old for the detection engine (3.7+). When the engine cannot run yet, the
+# installer bootstraps ONLY the interpreter package below, then re-runs
+# authoritative detection through the engine. Declaring this hook is what opts
+# the adapter into that sequencing step; adapters whose default python3 already
+# meets the detection floor never declare it.
+distro_python_bootstrap_package() {
+  printf '%s\n' "python311"
+}
 DISTRO_BASE_PACKAGES=(
   bash git coreutils findutils grep gawk sed gzip glibc shadow systemd sudo kmod
   ca-certificates python3 curl tar iproute2 NetworkManager logrotate
   libnotify-tools openvpn util-linux polkit nftables iptables iputils procps
-  systemd-resolved firewalld apparmor-utils python311
+  firewalld apparmor-utils python311
 )
 DISTRO_DNS_PACKAGES=(bind-utils)
 DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python311-cryptography"
 DISTRO_POLKIT_PACKAGE="polkit"
+
+# openSUSE Tumbleweed is a rolling distribution whose default python3 is 3.13,
+# already above the runtime floor, and whose repository does NOT ship
+# python311-cryptography (python modules are built against the current
+# interpreter, python313). Leap 15.6 instead ships python3=3.6, so it pins
+# python3.11 with python311-cryptography. Keep the two releases explicit: the
+# rolling package pair must never silently reuse the Leap stable pair.
+if [[ "${DISTRO_ID:-}" == *tumbleweed* ]]; then
+  DISTRO_PYTHON="python3.13"
+  DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python313-cryptography"
+  _tumbleweed_base=()
+  for _pkg in "${DISTRO_BASE_PACKAGES[@]}"; do
+    if [[ "${_pkg}" != "python311" ]]; then
+      _tumbleweed_base+=("${_pkg}")
+    fi
+  done
+  _tumbleweed_base+=(python313)
+  DISTRO_BASE_PACKAGES=("${_tumbleweed_base[@]}")
+  unset _tumbleweed_base _pkg
+  distro_python_bootstrap_package() {
+    printf '%s\n' "python313"
+  }
+fi
 # AmneziaWG has no official openSUSE package, so the guided trust-boundary
 # setup builds the userspace stack from Amnezia's official source, same as
 # Fedora's distros/fedora.sh. The userspace amneziawg-go path is deliberately
 # preferred over the DKMS kernel module here: it needs no kernel headers and
 # is not blocked by Secure Boot module signing, so it strands far fewer users
-# while carrying identical real traffic. Migrate this guidance to a real
-# openSUSE package if one becomes available upstream. WatchdogVPN never runs
-# these commands; it verifies awg and amneziawg-go afterwards.
+# while carrying identical real traffic. Every command pins an official release
+# tag plus its exact commit - main/master/HEAD is never used. WatchdogVPN never
+# runs these commands; it verifies awg and amneziawg-go afterwards.
 DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS=(
-  "sudo zypper --non-interactive install go gcc make"
-  "git clone https://github.com/amnezia-vpn/amneziawg-tools /tmp/amneziawg-tools && make -C /tmp/amneziawg-tools/src && sudo make -C /tmp/amneziawg-tools/src install"
-  "git clone https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && (cd /tmp/amneziawg-go && make) && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
+  "sudo zypper --non-interactive install go gcc make git"
+  "git clone --branch v3.1.20260812 https://github.com/amnezia-vpn/amneziawg-tools /tmp/amneziawg-tools && git -C /tmp/amneziawg-tools checkout ee0f0a9aa34ff0a0da4b3433b9512781cfe02843 && make -C /tmp/amneziawg-tools/src WITH_WGQUICK=yes WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETION=no && sudo make -C /tmp/amneziawg-tools/src install"
+  "git clone --branch v3.1.20260828 https://github.com/amnezia-vpn/amneziawg-go /tmp/amneziawg-go && git -C /tmp/amneziawg-go checkout b5928efb6ca19f0153958460c3d141f04abc5c2e && make -C /tmp/amneziawg-go && sudo install -m 0755 /tmp/amneziawg-go/amneziawg-go /usr/local/bin/amneziawg-go"
 )

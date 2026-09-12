@@ -1242,9 +1242,53 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._clear_tun_cleanup_state()
         return networkmanager_cleanup_ok
 
+    def _networkmanager_state(self) -> str:
+        """Return the NetworkManager daemon state as 'active', 'inactive' or
+        'unknown'.
+
+        Some distributions (openSUSE with Wicked) install the NetworkManager
+        package but never run its daemon: nmcli exists, yet NM cannot adopt
+        the TUN, so the ownership registration/cleanup helpers would always
+        fail. Those helpers are skipped ONLY on an explicit, unambiguous
+        systemd answer of 'inactive' (the normal stopped-state answer, rc=3
+        with stdout 'inactive'). Any error, timeout, unexpected return code,
+        empty/ambiguous output, or a state such as 'failed', 'activating' or
+        'deactivating' is 'unknown' so callers fail closed instead of
+        silently skipping NetworkManager protection and teardown on a host
+        where NM actually manages the network.
+        """
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "NetworkManager.service"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return "unknown"
+        state = (result.stdout or "").strip().lower()
+        if state == "active" and result.returncode == 0:
+            return "active"
+        if state == "inactive" and result.returncode == 3:
+            return "inactive"
+        return "unknown"
+
     def _record_networkmanager_tun_connection(self) -> bool:
         if not shutil.which("nmcli"):
             return True
+        state = self._networkmanager_state()
+        if state == "inactive":
+            # Wicked-managed system (openSUSE): the NM daemon is explicitly
+            # not running, so it cannot adopt the TUN and there is no
+            # ownership to record.
+            return True
+        if state == "unknown":
+            # Cannot prove that NM is not running: fail closed rather than
+            # silently skipping the registration, which would leave a
+            # NetworkManager-managed TUN unprotected.
+            return False
         try:
             result = subprocess.run(
                 ["systemctl", "start", "watchdogvpn-nm-tun-register.service"],
@@ -1273,10 +1317,23 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         # leftover interface didn't match the persisted desired-off state.
         # Deleting NM's connection profile - not just the kernel device -
         # is what actually stops it from coming back. This is a no-op
-        # wherever NetworkManager is absent or never adopted the interface.
+        # wherever NetworkManager is explicitly absent or inactive.
         if not shutil.which("nmcli"):
             self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
             return True
+        state = self._networkmanager_state()
+        if state == "inactive":
+            # Wicked-managed system (openSUSE): the NM daemon is explicitly
+            # not running, so it never adopts the TUN; still delete the
+            # kernel link best-effort.
+            self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
+            return True
+        if state == "unknown":
+            # Cannot prove that NM is not running: fail closed (upper layers
+            # must not report a clean teardown) but still attempt the kernel
+            # link deletion best-effort.
+            self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
+            return False
         try:
             result = subprocess.run(
                 ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],

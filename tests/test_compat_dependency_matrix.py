@@ -59,7 +59,7 @@ def support(manifest_data, facts):
         facts,
         ready_core(manifest_data, facts),
         present_protocols(manifest_data),
-        now=datetime(2026, 8, 16),
+        now=datetime(2026, 9, 12),
     ).support_classification
 
 
@@ -144,10 +144,10 @@ class FocusedDependencyMatrixContractTests(unittest.TestCase):
         },
         "opensuse_tumbleweed": {
             "os_release": "ID=opensuse-tumbleweed\nID_LIKE=opensuse\n",
-            "support": "family_inferred",
+            "support": "certified",
             "release_model": "rolling",
             "resolved_release": None,
-            "python": "python3.11",
+            "python": "python3.13",
         },
         "arch": {
             "os_release": "ID=arch\nID_LIKE=arch\n",

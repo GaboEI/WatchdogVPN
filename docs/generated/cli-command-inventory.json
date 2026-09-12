@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
   "cli": "watchdog",
-  "route_count": 136,
-  "command_route_count": 135,
-  "parser_route_count": 128,
+  "route_count": 143,
+  "command_route_count": 142,
+  "parser_route_count": 135,
   "passthrough_route_count": 8,
-  "group_route_count": 19,
-  "leaf_route_count": 117,
+  "group_route_count": 20,
+  "leaf_route_count": 123,
   "routes": [
     {
       "path": [],
@@ -31,6 +31,7 @@
         "backup",
         "profile",
         "provider",
+        "awg",
         "node-group",
         "dns",
         "config",
@@ -1979,6 +1980,179 @@
           ]
         }
       ]
+    },
+    {
+      "path": [
+        "awg"
+      ],
+      "command": "watchdog awg",
+      "kind": "group",
+      "source": "argparse",
+      "summary": "Manage the AmneziaWG lifecycle guidance",
+      "usage": "usage: watchdog awg [-h] {status,setup,update,repair,rollback,verify} ...",
+      "help_command": "watchdog awg --help",
+      "children": [
+        "status",
+        "setup",
+        "update",
+        "repair",
+        "rollback",
+        "verify"
+      ],
+      "arguments": [],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "awg",
+        "status"
+      ],
+      "command": "watchdog awg status",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Show AmneziaWG context, runtime and provenance",
+      "usage": "usage: watchdog awg status [-h] [--probe] [--json]",
+      "help_command": "watchdog awg status --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--probe",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Force a runtime probe even without an AWG profile"
+        },
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "awg",
+        "setup"
+      ],
+      "command": "watchdog awg setup",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Generate the exact official AmneziaWG setup recipe",
+      "usage": "usage: watchdog awg setup [-h] [--json]",
+      "help_command": "watchdog awg setup --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "awg",
+        "update"
+      ],
+      "command": "watchdog awg update",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Resolve the latest official AmneziaWG release and show the recipe",
+      "usage": "usage: watchdog awg update [-h] [--json]",
+      "help_command": "watchdog awg update --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "awg",
+        "repair"
+      ],
+      "command": "watchdog awg repair",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Regenerate the certified recipe to repair an incomplete or inconsistent runtime",
+      "usage": "usage: watchdog awg repair [-h] [--json]",
+      "help_command": "watchdog awg repair --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "awg",
+        "rollback"
+      ],
+      "command": "watchdog awg rollback",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Restore the previously recorded AmneziaWG release",
+      "usage": "usage: watchdog awg rollback [-h] [--json]",
+      "help_command": "watchdog awg rollback --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
+    },
+    {
+      "path": [
+        "awg",
+        "verify"
+      ],
+      "command": "watchdog awg verify",
+      "kind": "command",
+      "source": "argparse",
+      "summary": "Record and verify the installed AmneziaWG runtime from the pending recipe",
+      "usage": "usage: watchdog awg verify [-h] [--json]",
+      "help_command": "watchdog awg verify --help",
+      "children": [],
+      "arguments": [
+        {
+          "name": "--json",
+          "kind": "option",
+          "required": false,
+          "cardinality": "flag",
+          "choices": [],
+          "description": "Print JSON"
+        }
+      ],
+      "mutually_exclusive_groups": []
     },
     {
       "path": [

@@ -23,6 +23,14 @@ from tools.compat_l2_reporter import dnf_repository_series_path
 
 REAL_L2_ENABLED = os.environ.get("WATCHDOGVPN_REAL_L2") == "1"
 TIMEOUT_SECONDS = 120
+# Metadata refresh (apt-get update / dnf / zypper refresh) hits the distro's
+# package mirrors over the network. Those mirrors can be slow or transiently
+# rate-limited from CI runners (observed for archive.ubuntu.com), so the
+# refresh phase gets a wider, infra-only deadline than the strict validation
+# timeouts (pull/create/start/os-release/package-query/cleanup still use
+# TIMEOUT_SECONDS). This does not weaken the compatibility validation: the
+# target still must complete the refresh and the rest of the lifecycle.
+METADATA_REFRESH_TIMEOUT_SECONDS = 300
 OUTPUT_LIMIT = 12000
 CONTROLLED_MANAGERS = frozenset(("apt-get", "dnf", "zypper", "pacman"))
 
@@ -468,58 +476,159 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
         if not self._curl_available():
             return resolver.AvailabilityObservation(
                 resolver.AvailabilityStatus.UNKNOWN.value,
-                evidence="curl not available in container for HEAD probe",
+                evidence="curl not available in container for HTTP probe",
                 reason="head_probe_tool_missing",
                 error_kind="provider_error",
             )
-        # Reintentar fallos transitorios de la sonda (timeouts, resets de
-        # conexión, rate-limiting del runner) antes de concluir que el
-        # artefacto no está disponible. Un 404 definitivo NO se reintenta:
-        # significa que el artefacto genuinamente no existe y debe marcarse
-        # como UNAVAILABLE de inmediato para no enmascarar fallos reales.
-        # Se conserva el último error de curl para incluirlo en la evidencia
-        # y poder diagnosticar fallos persistentes (p.ej. egress del runner).
-        max_attempts = 5
-        backoff_seconds = 3.0
-        last_error = ""
+        # HTTP probe with HEAD -> GET fallback. Some CDN edge nodes (e.g.
+        # dl.fedoraproject.org) reject or fail to answer HEAD (403/405), which
+        # previously produced an inconclusive UNKNOWN that blocked the whole L2
+        # gate even though the resource exists and answers GET. The probe falls
+        # back to a bounded GET for transitory HEAD failures while keeping the
+        # fail-closed contract:
+        #   - HEAD 2xx       -> available (no GET).
+        #   - HEAD 404/410   -> unavailable (definitive absence, no GET).
+        #   - HEAD 403/405, timeout, DNS, connection failure or transitory
+        #     failure -> bounded GET fallback.
+        #   - GET 2xx        -> available (only a verified 2xx counts).
+        #   - GET 404/410    -> unavailable.
+        #   - HTTP 2xx reached but transfer stopped by our byte limit
+        #     (curl --max-filesize aborts with rc 63; the 2xx proves the
+        #     resource exists) -> available.
+        #   - timeout, DNS, connection failure, HTTP 000, 429/5xx, execution
+        #     failure or any ambiguous result -> UNKNOWN (blocks the gate).
+        # 404/410 are classified EXCLUSIVELY by the %{http_code} output; an
+        # HTTP 000 or a malformed response is never treated as not-found even
+        # when the URL or stderr happens to contain "404"/"410" (e.g. a DNS
+        # error message mentioning the string). The GET is bounded by a real
+        # byte limit (--max-filesize), the output is discarded to /dev/null,
+        # and evidence records method, URL, HTTP code and the current/max
+        # attempt.
+        max_attempts = 3
+        backoff_seconds = 2.0
+        head_error = ""
+        get_error = ""
+
+        def _method_label(fallback_get: bool) -> str:
+            return "GET(HEAD-fallback)" if fallback_get else "HEAD"
+
+        def _evidence(fallback_get: bool, http_code: str, attempt: int, outcome: str) -> str:
+            return "%s %s attempt %d/%d -> %s (HTTP %s) [%s]" % (
+                evidence_prefix, _method_label(fallback_get), attempt, max_attempts,
+                outcome, http_code or "none", url,
+            )
+
+        def _code2xx(probe: dict) -> str | None:
+            code = (probe.get("stdout") or "").strip()
+            if probe["returncode"] == 0 and code.isdigit() and 200 <= int(code) < 300:
+                return code
+            return None
+
+        def _not_found_code(probe: dict) -> str | None:
+            code = (probe.get("stdout") or "").strip()
+            if code in ("404", "410"):
+                return code
+            return None
+
+        # --- HEAD phase ---
         for attempt in range(1, max_attempts + 1):
-            probe = self._exec("curl -I -L -f -sS --max-time 15 %s" % shlex.quote(url))
+            probe = self._exec(
+                "curl -I -L -f -sS --max-time 15 -o /dev/null -w '%%{http_code}' %s"
+                % shlex.quote(url)
+            )
             if probe["runtime_status"] != "executed":
-                last_error = "exec status=%s" % probe["runtime_status"]
+                head_error = "exec status=%s" % probe["runtime_status"]
                 if attempt < max_attempts:
                     time.sleep(backoff_seconds * attempt)
                     continue
-                return _availability_from_query(probe["runtime_status"], "%s HEAD probe did not execute" % evidence_prefix)
-            if probe["returncode"] == 0:
-                stdout = probe.get("stdout") or ""
-                content_length = ""
-                for line in stdout.splitlines():
-                    if line.lower().startswith("content-length:"):
-                        content_length = line.split(":", 1)[1].strip()
-                        break
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNKNOWN.value,
+                    evidence=_evidence(False, "", attempt, "probe did not execute"),
+                    reason="%s_head_probe_failed" % evidence_prefix.replace(" ", "_"),
+                    error_kind="%s_head_probe_failed" % evidence_prefix.replace(" ", "_"),
+                )
+            code = _code2xx(probe)
+            if code is not None:
                 return resolver.AvailabilityObservation(
                     resolver.AvailabilityStatus.AVAILABLE.value,
-                    evidence="%s HEAD reachable: %s (Content-Length: %s)" % (evidence_prefix, url, content_length or "unknown"),
+                    evidence=_evidence(False, code, attempt, "reachable"),
                     reason="%s_head_reachable" % evidence_prefix.replace(" ", "_"),
                 )
-            stderr = (probe.get("stderr") or "").lower()
-            stdout = (probe.get("stdout") or "").lower()
-            if "404" in stderr or "404" in stdout or "not found" in stderr or "not found" in stdout:
+            code = _not_found_code(probe)
+            if code is not None:
                 return resolver.AvailabilityObservation(
                     resolver.AvailabilityStatus.UNAVAILABLE.value,
-                    evidence="%s HEAD returned 404: %s" % (evidence_prefix, url),
+                    evidence=_evidence(False, code, attempt, "not found"),
                     reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
                     error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
                 )
-            last_error = "rc=%s stderr=%r" % (probe.get("returncode"), (probe.get("stderr") or "").strip()[:200])
+            # HEAD rejected or transitory failure (403/405, timeout, DNS,
+            # connection reset, HTTP 000, 429/5xx, ...): bounded GET fallback.
+            head_error = "HEAD rc=%s code=%s" % (
+                probe.get("returncode"), (probe.get("stdout") or "").strip() or "?")
+            break
+
+        # --- GET fallback phase (bounded by a real byte limit) ---
+        get_last_rc = "?"
+        get_last_code = "?"
+        get_attempt_used = 0
+        for attempt in range(1, max_attempts + 1):
+            probe = self._exec(
+                "curl -L -f -sS --max-time 15 --max-filesize 5242880 -o /dev/null -w '%%{http_code}' %s"
+                % shlex.quote(url)
+            )
+            if probe["runtime_status"] != "executed":
+                get_error = "exec status=%s" % probe["runtime_status"]
+                get_last_rc = "exec-error"
+                get_last_code = "?"
+                get_attempt_used = attempt
+                if attempt < max_attempts:
+                    time.sleep(backoff_seconds * attempt)
+                    continue
+                break
+            get_last_rc = str(probe.get("returncode"))
+            get_last_code = (probe.get("stdout") or "").strip() or "?"
+            get_attempt_used = attempt
+            code = _code2xx(probe)
+            if code is not None:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence=_evidence(True, code, attempt, "reachable"),
+                    reason="%s_get_fallback_reachable" % evidence_prefix.replace(" ", "_"),
+                )
+            code = _not_found_code(probe)
+            if code is not None:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    evidence=_evidence(True, code, attempt, "not found"),
+                    reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                    error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                )
+            code = (probe.get("stdout") or "").strip()
+            if code.isdigit() and 200 <= int(code) < 300 and probe["returncode"] == 63:
+                # Server answered 2xx but curl stopped the transfer because our
+                # byte limit was reached: the resource exists and is reachable.
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence=_evidence(True, code, attempt, "reachable, download bounded by limit"),
+                    reason="%s_get_fallback_reachable" % evidence_prefix.replace(" ", "_"),
+                )
+            # timeout, DNS, connection failure, HTTP 000, 429/5xx or ambiguous
+            # result: retry; persistent -> UNKNOWN (fail-closed).
+            get_error = "GET rc=%s code=%s" % (
+                probe.get("returncode"), (probe.get("stdout") or "").strip() or "?")
             if attempt < max_attempts:
                 time.sleep(backoff_seconds * attempt)
                 continue
+            break
+
         return resolver.AvailabilityObservation(
             resolver.AvailabilityStatus.UNKNOWN.value,
-            evidence="%s HEAD probe inconclusive after %d attempts: %s | last_error=%s" % (evidence_prefix, max_attempts, url, last_error),
-            reason="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
-            error_kind="%s_head_inconclusive" % evidence_prefix.replace(" ", "_"),
+            evidence="%s GET(HEAD-fallback) inconclusive at attempt %d/%d: %s | last GET rc=%s code=%s | HEAD %s" % (
+                evidence_prefix, get_attempt_used or max_attempts, max_attempts, url,
+                get_last_rc, get_last_code, head_error or "none"),
+            reason="%s_probe_inconclusive" % evidence_prefix.replace(" ", "_"),
+            error_kind="%s_probe_inconclusive" % evidence_prefix.replace(" ", "_"),
         )
 
     def _external_apt_package_exists(self, candidate: resolver.MethodCandidate, package_name: str) -> resolver.AvailabilityObservation:
@@ -728,7 +837,18 @@ def _manager_command(manager: str) -> str:
 
 def _refresh_command(case: dict) -> str:
     if case["kind"] == "apt":
-        return "apt-get update"
+        # archive.ubuntu.com / security.ubuntu.com are frequently slow or
+        # rate-limited from CI runners (GitHub Actions), causing apt-get update
+        # to stall for minutes or time out. Point apt at Ubuntu's EC2
+        # us-east-1 mirror, which serves both archive and security releases and
+        # is reachable from the CI runner region; this only changes which host
+        # serves the same official Ubuntu repositories.
+        apt_mirror = "us-east-1.ec2.archive.ubuntu.com"
+        return (
+            "sed -i -e 's#archive.ubuntu.com#%s#g' -e 's#security.ubuntu.com#%s#g' "
+            "/etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true; "
+            "apt-get update"
+        ) % (apt_mirror, apt_mirror)
     if case["kind"] == "zypper":
         return "zypper --non-interactive refresh"
     return case.get("refresh", "true")
@@ -859,7 +979,7 @@ def execute_l2_case(runtime: str, case: dict, name: str) -> dict:
             return result
 
         refresh_cmd = _refresh_command(case)
-        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd])
+        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd], timeout=METADATA_REFRESH_TIMEOUT_SECONDS)
         status, reason = classify_lifecycle_phase(refresh, verb="metadata refresh")
         _finalize(refresh, status, reason)
         refresh["command"] = refresh_cmd
@@ -1070,7 +1190,7 @@ def execute_l2_matrix_case(runtime: str, case: dict, name: str, manifest: dict) 
             return result
 
         refresh_cmd = _refresh_command(case)
-        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd])
+        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd], timeout=METADATA_REFRESH_TIMEOUT_SECONDS)
         status, reason = classify_lifecycle_phase(refresh, verb="metadata refresh")
         _finalize(refresh, status, reason)
         refresh["command"] = refresh_cmd
@@ -1581,7 +1701,7 @@ class L2MatrixResolverTests(unittest.TestCase):
             if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and "Packages.gz" in cmd and "Package: amneziawg" in cmd:
                 return subprocess.CompletedProcess([runtime] + args, 0, "Package: amneziawg\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -I"):
-                return subprocess.CompletedProcess([runtime] + args, 0, "HTTP/1.1 200 OK\n", "")
+                return subprocess.CompletedProcess([runtime] + args, 0, "200\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("apt-cache policy"):
                 package = cmd.split()[-1]
                 if package in available_packages:
@@ -1647,7 +1767,7 @@ class L2MatrixResolverTests(unittest.TestCase):
         def artifact_run(runtime, args, timeout=TIMEOUT_SECONDS):
             cmd = args[-1] if args else ""
             if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -I"):
-                return subprocess.CompletedProcess([runtime] + args, 0, "HTTP/1.1 200 OK\nContent-Length: 12345\n", "")
+                return subprocess.CompletedProcess([runtime] + args, 0, "200\n", "")
             return base_run(runtime, args, timeout)
 
         with mock.patch(__name__ + "._run", side_effect=artifact_run):
@@ -1762,7 +1882,7 @@ class L2MatrixResolverTests(unittest.TestCase):
             if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("command -v curl"):
                 return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/curl\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("curl -I"):
-                return subprocess.CompletedProcess([runtime] + args, 0, "HTTP/1.1 200 OK\n", "")
+                return subprocess.CompletedProcess([runtime] + args, 0, "200\n", "")
             if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("dnf -q") and " list " in cmd:
                 package = cmd.split()[-1]
                 if package in available_packages:
@@ -1843,6 +1963,321 @@ class RealFocusedDependencyL2Tests(unittest.TestCase):
                     self.assertIn("image pull failed", result["limitations"][0])
                     continue
                 self.assertEqual(result["overall_status"], "available", result)
+
+
+class ContainerAvailabilityProviderHeadProbeTests(unittest.TestCase):
+    """Direct unit tests for _head_url's HEAD -> GET fallback.
+
+    Some CDN edge nodes (e.g. dl.fedoraproject.org) reject or fail to answer
+    HTTP HEAD (403/405), which made _head_url return UNKNOWN and block the
+    whole L2 gate even though the resource exists and answers GET. The probe
+    must fall back to a bounded GET for transitory HEAD failures while keeping
+    the fail-closed contract: definitive 404/410 is unavailable, and any
+    persistent inconclusive result (timeout, DNS, 429, 5xx, execution failure,
+    ambiguous) stays UNKNOWN.
+    """
+
+    def setUp(self) -> None:
+        # Make retry backoff instant so the retry tests are fast.
+        sleep_patcher = mock.patch(__name__ + ".time.sleep")
+        self._sleep_mock = sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+
+    @staticmethod
+    def _phase(returncode, stdout="", stderr="", runtime_status="executed"):
+        return {
+            "runtime_status": runtime_status,
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+
+    def _provider(self, head_responses, get_responses):
+        provider = ContainerAvailabilityProvider("docker", "watchdogvpn-head-test", CASES[0], None)
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            if "command -v curl" in command:
+                return self._phase(0, "/usr/bin/curl\n", "")
+            responses = get_responses
+            if command.strip().startswith("curl -I"):
+                responses = head_responses
+            if responses:
+                reply = responses[0]
+                if len(responses) > 1:
+                    responses.pop(0)
+                return reply
+            return self._phase(1, "", "probe response list exhausted")
+
+        provider._exec = fake_exec
+        return provider, calls
+
+    def _get_calls(self, calls):
+        return [c for c in calls if c.strip().startswith("curl ") and "-I" not in c]
+
+    # --- fallback HEAD -> GET, 2xx => available (the reported CI bug) ---
+
+    def test_head_405_falls_back_to_get_2xx_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        self.assertTrue(self._get_calls(calls), "GET fallback must run after HEAD 405")
+
+    def test_head_403_falls_back_to_get_2xx_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "403", "")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        self.assertTrue(self._get_calls(calls), "GET fallback must run after HEAD 403")
+
+    def test_head_timeout_falls_back_to_get_2xx_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(28, "", "Operation timed out")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        self.assertTrue(self._get_calls(calls), "GET fallback must run after HEAD timeout")
+
+    # --- definitive not-found stays unavailable, no GET ---
+
+    def test_head_404_is_unavailable_without_get(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "404", "")],
+            get_responses=[],
+        )
+        obs = provider._head_url("https://example.test/missing", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+        self.assertFalse(self._get_calls(calls), "GET must not run on definitive HEAD 404")
+
+    def test_head_410_is_unavailable_without_get(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "410", "")],
+            get_responses=[],
+        )
+        obs = provider._head_url("https://example.test/gone", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+        self.assertFalse(self._get_calls(calls), "GET must not run on definitive HEAD 410")
+
+    # --- GET 404/410 => unavailable ---
+
+    def test_head_405_then_get_404_is_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "404", "")],
+        )
+        obs = provider._head_url("https://example.test/missing", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+        self.assertTrue(self._get_calls(calls), "GET must have been attempted")
+
+    # --- persistent inconclusive results stay UNKNOWN (fail-closed) ---
+
+    def test_head_405_then_get_429_persistent_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "429", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_405_then_get_5xx_persistent_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "500", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_405_then_get_execution_failure_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(1, "", "curl: exit", runtime_status="runtime_error")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_timeout_then_get_timeout_persistent_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(28, "", "Operation timed out")],
+            get_responses=[self._phase(28, "", "Operation timed out")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_405_then_get_410_is_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "410", "")],
+        )
+        obs = provider._head_url("https://example.test/gone", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+
+    # --- DNS/HTTP 000 is UNKNOWN even when stderr mentions 404/410 ---
+    # 404/410 are classified exclusively by %{http_code}. A DNS or connection
+    # failure yields http_code 000; an error message quoting "404"/"410" must
+    # not turn that into unavailable.
+
+    def test_http_000_with_404_in_stderr_is_unknown_not_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(6, "000", "getaddrinfo failed; URL contains 404")],
+            get_responses=[self._phase(6, "000", "getaddrinfo failed; URL contains 404")],
+        )
+        obs = provider._head_url("https://404.example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_http_000_with_410_in_stderr_is_unknown_not_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(7, "000", "connection refused; endpoint 410 unavailable")],
+            get_responses=[self._phase(7, "000", "connection refused; endpoint 410 unavailable")],
+        )
+        obs = provider._head_url("https://410.example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- ambiguous response stays UNKNOWN ---
+
+    def test_ambiguous_empty_code_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(0, "", "")],
+            get_responses=[self._phase(0, "", "")],
+        )
+        obs = provider._head_url("https://example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- real byte limit: a server that ignores Range and streams a large
+    # body is stopped by --max-filesize; the 2xx proves the resource exists. ---
+
+    def test_get_bounded_by_byte_limit_when_server_ignores_range_is_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(63, "200", "")],  # curl --max-filesize abort
+        )
+        obs = provider._head_url("https://example.test/large", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        get_calls = self._get_calls(calls)
+        self.assertTrue(
+            any("--max-filesize" in c for c in get_calls),
+            "GET must enforce a real byte limit",
+        )
+        self.assertFalse(
+            any("-r 0-0" in c for c in get_calls),
+            "range 0-0 is not a sufficient download bound",
+        )
+
+    def test_get_byte_limit_stop_requires_2xx_not_unknown(self) -> None:
+        # rc 63 with a non-2xx/ambiguous code is not proof of existence.
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(63, "000", "")],
+        )
+        obs = provider._head_url("https://example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- evidence records method, URL, code and attempt current/max ---
+
+    def test_evidence_records_method_url_code_and_attempt(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertIn("GET(HEAD-fallback)", obs.evidence)
+        self.assertIn("attempt 1/3", obs.evidence)
+        self.assertIn("(HTTP 200)", obs.evidence)
+        self.assertIn("https://example.test/artifact", obs.evidence)
+
+    # --- the final UNKNOWN evidence must name the GET fallback method, the
+    # URL, the last code and the current/max attempt after persistent retries ---
+
+    def test_persistent_get_timeout_evidence_marks_method_url_code_and_attempt(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(28, "000", "Operation timed out")],  # repeated -> persistent
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+        self.assertIn("GET(HEAD-fallback)", obs.evidence)
+        self.assertIn("https://example.test/artifact", obs.evidence)
+        self.assertIn("attempt 3/3", obs.evidence)
+        self.assertIn("code=000", obs.evidence)
+
+    # --- real byte limit against a disposable local HTTP server: the server
+    # ignores the concept of Range (it just streams a >5 MiB body), and the
+    # real curl command used by _head_url must stop at --max-filesize, must not
+    # transfer the whole body, and _head_url must classify the resource as
+    # available because the server answered 2xx before our limit cut it off.
+    # No Internet, no Docker, no real sleeps.
+
+    def test_get_byte_limit_real_curl_against_local_server_is_available(self) -> None:
+        import http.server
+        import threading
+
+        body_size = 6 * 1024 * 1024  # strictly above the 5 MiB probe limit
+        sent = {"bytes": 0}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args):  # silence request logging
+                pass
+
+            def do_HEAD(self):
+                self.send_response(405)  # force the HEAD -> GET fallback
+                self.end_headers()
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(body_size))
+                self.end_headers()
+                chunk = b"x" * 65536
+                remaining = body_size
+                try:
+                    while remaining > 0:
+                        n = min(len(chunk), remaining)
+                        self.wfile.write(chunk[:n])
+                        sent["bytes"] += n
+                        remaining -= n
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass  # curl aborted at our byte limit; body not fully sent
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = "http://127.0.0.1:%d/artifact" % server.server_address[1]
+
+            # The exact GET fallback command _head_url runs.
+            result = subprocess.run(
+                ["curl", "-L", "-f", "-sS", "--max-time", "15", "--max-filesize", "5242880",
+                 "-o", "/dev/null", "-w", "%{http_code}", url],
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 63, "curl must stop at --max-filesize (rc 63)")
+            self.assertEqual(result.stdout.strip(), "200", "server answered 2xx before the cut-off")
+            self.assertLess(sent["bytes"], body_size, "curl must not transfer the whole body")
+
+            provider = ContainerAvailabilityProvider("docker", "watchdogvpn-head-test", CASES[0], None)
+            exec_calls = []
+
+            def local_exec(command):
+                exec_calls.append(command)
+                if "command -v curl" in command:
+                    return self._phase(0, "/usr/bin/curl\n", "")
+                res = subprocess.run(["sh", "-lc", command], text=True, capture_output=True, timeout=30)
+                return self._phase(res.returncode, res.stdout, res.stderr)
+
+            provider._exec = local_exec
+            obs = provider._head_url(url, "artifact")
+            self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

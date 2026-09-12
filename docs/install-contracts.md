@@ -11,9 +11,10 @@ This document defines how the product scripts should behave.
   field-certified (Phase 23.6); AlmaLinux, RHEL and CentOS Stream share the same
   adapter but remain family-inferred until individually field-tested.
 - openSUSE support means installer/update package reconciliation is implemented
-  through `zypper`. openSUSE Leap 15.6 is field-certified (Phase 23.6); openSUSE
-  Tumbleweed shares the adapter but remains family-inferred until individually
-  field-tested.
+  through `zypper`. openSUSE Leap 15.6 and openSUSE Tumbleweed `20260907` are
+  both field-certified with their own evidence (Phase 23.6 for Leap; Phase
+  23.7.5.11D for Tumbleweed, `cert_opensuse_tumbleweed_rolling`, 12/12 green with
+  real egress).
 - Debian/Ubuntu derivatives that do not report a native `ID` (for example Linux
   Mint or Pop!_OS, reporting `ID_LIKE="ubuntu debian"` or `ID_LIKE="debian"`)
   resolve to the Ubuntu or Debian adapter through a conservative `ID_LIKE`

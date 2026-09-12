@@ -11,10 +11,13 @@ class BaseProvider(ABC):
         """Return the provider profiles currently known to the system."""
 
     @abstractmethod
-    def update(self) -> bool:
-        """Refresh provider state from its source."""
+    def update(self, provider_id: str | None = None) -> bool | int:
+        """Refresh provider state from its source.
+
+        Provider implementations may use an identifier and return a
+        provider-specific result, such as a boolean or change count.
+        """
 
     @abstractmethod
     def status(self) -> dict:
         """Return provider status metadata."""
-
