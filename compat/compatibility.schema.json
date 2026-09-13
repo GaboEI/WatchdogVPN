@@ -52,7 +52,7 @@
       "type": "object"
     },
     "dependency_requirements": {
-      "description": "Declarative dependency-to-method chains for the internal 23.7.5.5 resolver. These are data, not executable recipes.",
+      "description": "Declarative dependency-to-method chains for the internal 23.7.5.5 resolver. These are data, not executable recipes. A pinned_source_build source component may declare \"resolution\": \"latest_official_release\" instead of a frozen tag/revision; the executor then resolves the latest official release at execution time.",
       "type": "object"
     },
     "provisioning_methods": {

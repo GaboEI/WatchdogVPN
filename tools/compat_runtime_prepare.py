@@ -66,7 +66,7 @@ class AmneziaWGSourceOnlyProvider(resolver.AvailabilityProvider):
             )
         return resolver.AvailabilityObservation(
             resolver.AvailabilityStatus.AVAILABLE.value,
-            evidence="all source components declare release tags and exact Git commits for target %s" % target_id,
+            evidence="source components are resolved to the latest official release at execution time for target %s" % target_id,
         )
 
 
@@ -154,11 +154,11 @@ def _source_build_candidates(manifest):
             yield candidate
 
 
-def _register_source_build_executors(registry: TrustedExecutorRegistry, manifest, args, build_user: str) -> None:
+def _register_source_build_executors(registry: TrustedExecutorRegistry, manifest, args, build_user: str, release_resolver=None) -> None:
     for candidate in _source_build_candidates(manifest):
         executor = AmneziaWGUserspaceSourceBuildExecutor(
             method_id=candidate["id"],
-            components=components_from_candidate(candidate),
+            components=components_from_candidate(candidate, release_resolver=release_resolver),
             build_user=build_user,
             workspace_root=Path(args.workspace_root),
             install_root=Path(args.install_root),
@@ -166,7 +166,7 @@ def _register_source_build_executors(registry: TrustedExecutorRegistry, manifest
         registry.register(method_kind=candidate["kind"], method_id=candidate["id"], executor=executor)
 
 
-def _build_env(args, manifest, decision, *, mutating: bool) -> engine.ProvisioningEnvironment:
+def _build_env(args, manifest, decision, *, mutating: bool, release_resolver=None) -> engine.ProvisioningEnvironment:
     if mutating:
         if not args.build_user:
             raise ValueError("--build-user is required for mutating provisioning commands")
@@ -174,7 +174,7 @@ def _build_env(args, manifest, decision, *, mutating: bool) -> engine.Provisioni
     else:
         build_user = args.build_user or _default_plan_user()
     registry = TrustedExecutorRegistry()
-    _register_source_build_executors(registry, manifest, args, build_user)
+    _register_source_build_executors(registry, manifest, args, build_user, release_resolver=release_resolver)
     context = ExecutionContext(
         allowed_roots=(Path(args.install_root),),
         forbidden_roots=(),

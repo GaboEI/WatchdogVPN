@@ -167,9 +167,16 @@ class NegativeManifestDataTests(unittest.TestCase):
                     components = candidate.get("components", ())
                     if components:
                         for component in components:
-                            self.assertEqual(component.get("revision_type"), "commit")
-                            self.assertRegex(component.get("revision", ""), r"^[0-9a-f]{40}$")
-                            self.assertTrue(component.get("tag"))
+                            if component.get("resolution") == "latest_official_release":
+                                # Dynamic: resolved to the latest official release
+                                # at execution time, so no frozen pin is declared.
+                                self.assertNotIn("revision_type", component)
+                                self.assertNotIn("revision", component)
+                                self.assertNotIn("tag", component)
+                            else:
+                                self.assertEqual(component.get("revision_type"), "commit")
+                                self.assertRegex(component.get("revision", ""), r"^[0-9a-f]{40}$")
+                                self.assertTrue(component.get("tag"))
                     else:
                         self.assertEqual(candidate.get("revision_type"), "commit")
                         self.assertRegex(candidate.get("revision", ""), r"^[0-9a-f]{40}$")

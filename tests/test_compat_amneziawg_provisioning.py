@@ -24,11 +24,17 @@ from compat.provisioning.amneziawg import (
     AMNEZIAWG_SOURCE_BUILD_METHOD_KIND,
     AmneziaWGUserspaceSourceBuildExecutor,
     SourceComponent,
+    components_from_candidate,
 )
 from compat.provisioning.executors import ExecutionContext, TrustedExecutorRegistry
 from compat.provisioning.model import TransactionState
 from compat.provisioning.paths import LAB_CUSTODY_ISOLATION_POLICY
 from compat.provisioning.process import CommandResult, CommandRunner
+from diagnostics.amneziawg_lifecycle import (
+    AMNEZIAWG_TOOLS_REPO,
+    AMNEZIAWG_TRANSPORT_REPO,
+    ResolvedRelease,
+)
 from tools import compat_runtime_prepare
 
 
@@ -331,7 +337,13 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
                 global_lock_root=str(root / "locks"),
             )
             manifest = detection.load_product_manifest()
-            env = compat_runtime_prepare._build_env(args, manifest, _decision(), mutating=False)
+            env = compat_runtime_prepare._build_env(
+                args,
+                manifest,
+                _decision(),
+                mutating=False,
+                release_resolver=_fake_release_resolver(),
+            )
             source_candidates = [
                 candidate
                 for candidate in manifest["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"]
@@ -440,6 +452,109 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
                 harness._baseline = original_baseline
                 harness._run = original_run
                 harness._tool_args = original_tool_args
+
+
+class _FakeReleaseResolver:
+    def __init__(self, mapping):
+        self._mapping = mapping
+        self.calls = []
+
+    def resolve(self, repository):
+        self.calls.append(repository)
+        return self._mapping[repository]
+
+
+def _resolved(repository, tag, commit):
+    return ResolvedRelease(repository, tag, commit, "2026-09-13T00:00:00Z")
+
+
+def _fake_release_resolver():
+    return _FakeReleaseResolver(
+        {
+            AMNEZIAWG_TOOLS_REPO: _resolved(AMNEZIAWG_TOOLS_REPO, "v9.9.9", "a" * 40),
+            AMNEZIAWG_TRANSPORT_REPO: _resolved(AMNEZIAWG_TRANSPORT_REPO, "v8.8.8", "b" * 40),
+        }
+    )
+
+
+def _dynamic_source_candidate(pins=None):
+    candidate = {
+        "id": "amneziawg_pinned_source_build_apt_stable_future",
+        "kind": "pinned_source_build",
+        "components": [
+            {
+                "component_id": "amneziawg_tools",
+                "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+                "expected_outputs": ["awg", "awg-quick"],
+                "resolution": "latest_official_release",
+            },
+            {
+                "component_id": "amneziawg_transport",
+                "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+                "expected_outputs": ["amneziawg-go"],
+                "resolution": "latest_official_release",
+            },
+        ],
+    }
+    if pins:
+        candidate["components"][0].update(pins)
+    return candidate
+
+
+class AmneziaWGDynamicResolutionTests(unittest.TestCase):
+    def _resolver(self):
+        return _fake_release_resolver()
+
+    def test_components_from_candidate_resolves_latest_official_release(self) -> None:
+        resolver = self._resolver()
+        components = components_from_candidate(_dynamic_source_candidate(), release_resolver=resolver)
+        by_id = {component.component_id: component for component in components}
+        self.assertEqual(by_id["amneziawg_tools"].tag, "v9.9.9")
+        self.assertEqual(by_id["amneziawg_tools"].revision, "a" * 40)
+        self.assertEqual(by_id["amneziawg_transport"].tag, "v8.8.8")
+        self.assertEqual(by_id["amneziawg_transport"].revision, "b" * 40)
+        self.assertEqual(resolver.calls, [AMNEZIAWG_TOOLS_REPO, AMNEZIAWG_TRANSPORT_REPO])
+
+    def test_components_from_candidate_ignores_frozen_pins(self) -> None:
+        # A stale frozen pin present in the candidate must not be the source of
+        # truth: the resolver's latest official release always wins.
+        candidate = _dynamic_source_candidate(
+            pins={"tag": "v1.0.20260618-2", "revision": "f" * 40, "revision_type": "commit"}
+        )
+        components = components_from_candidate(candidate, release_resolver=self._resolver())
+        by_id = {component.component_id: component for component in components}
+        self.assertEqual(by_id["amneziawg_tools"].tag, "v9.9.9")
+        self.assertEqual(by_id["amneziawg_tools"].revision, "a" * 40)
+
+    def test_declarative_manifest_awg_source_build_declares_dynamic_resolution(self) -> None:
+        repo_root = Path(compat_runtime_prepare.__file__).resolve().parents[1]
+        manifest = json.loads((repo_root / "compat" / "compatibility.json").read_text(encoding="utf-8"))
+        candidates = [
+            candidate
+            for candidate in manifest["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"]
+            if candidate["kind"] == "pinned_source_build"
+        ]
+        self.assertTrue(candidates)
+        for candidate in candidates:
+            for component in candidate["components"]:
+                self.assertEqual(component.get("resolution"), "latest_official_release")
+                self.assertNotIn("tag", component)
+                self.assertNotIn("revision", component)
+                self.assertNotIn("revision_type", component)
+
+    def test_no_public_flow_wires_the_dormant_awg_executor(self) -> None:
+        repo_root = Path(compat_runtime_prepare.__file__).resolve().parents[1]
+        forbidden = (
+            "compat.provisioning",
+            "AmneziaWGUserspaceSourceBuildExecutor",
+            "components_from_candidate",
+        )
+        for rel in ("install.sh", "update.sh", "doctor.sh", "cli/main.py"):
+            text = (repo_root / rel).read_text(encoding="utf-8")
+            for token in forbidden:
+                self.assertNotIn(token, text, "%s must not wire the dormant AWG executor" % rel)
+        internal = (repo_root / "tools" / "compat_runtime_prepare.py").read_text(encoding="utf-8")
+        self.assertIn("components_from_candidate", internal)
 
 
 def _load_vm_harness():

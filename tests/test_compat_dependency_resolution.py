@@ -341,7 +341,7 @@ class DependencyResolverTests(unittest.TestCase):
 
     def test_source_without_pin_and_artifact_without_integrity_are_not_executable(self) -> None:
         m = json.loads(json.dumps(manifest()))
-        m["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][0]["revision"] = "unresolved"
+        del m["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][0]["resolution"]
         distro = facts(m, "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
         decision = resolve(m, distro, "dep_amneziawg_runtime", cap("proto_amneziawg_runtime"))
         source = [item for item in decision.rejected_candidates if item.method_id == "amneziawg_pinned_source_build_apt_stable_future"][0]
@@ -433,7 +433,7 @@ class DependencyResolverTests(unittest.TestCase):
 
     def test_static_metadata_rejection_happens_before_provider(self) -> None:
         m = json.loads(json.dumps(manifest()))
-        m["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][0]["revision"] = "unresolved"
+        del m["dependency_requirements"]["dep_amneziawg_runtime"]["method_chain"][3]["components"][0]["resolution"]
         distro = facts(m, "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
 
         class SpyProvider(resolver.StaticAvailabilityProvider):
@@ -475,10 +475,12 @@ class DependencyResolverTests(unittest.TestCase):
                 self.assertIn("amneziawg-go", components["amneziawg_transport"]["expected_outputs"])
                 self.assertEqual(components["amneziawg_tools"]["repository"], "https://github.com/amnezia-vpn/amneziawg-tools")
                 self.assertEqual(components["amneziawg_transport"]["repository"], "https://github.com/amnezia-vpn/amneziawg-go")
-                self.assertEqual(components["amneziawg_tools"]["tag"], "v1.0.20260618-2")
-                self.assertEqual(components["amneziawg_tools"]["revision"], "61e741780e8465a67a7d7fb6cffe14a8a15d624a")
-                self.assertEqual(components["amneziawg_transport"]["tag"], "v3.0.2")
-                self.assertEqual(components["amneziawg_transport"]["revision"], "0527dfa47639714dd8f5c9ffbd9d40d19083f0ba")
+                # Dynamic resolution: no frozen tag/revision is declared.
+                for component in components.values():
+                    self.assertEqual(component["resolution"], "latest_official_release")
+                    self.assertNotIn("tag", component)
+                    self.assertNotIn("revision", component)
+                    self.assertNotIn("revision_type", component)
                 self.assertEqual(candidate["implementation_status"], "implemented")
         by_id = {candidate["id"]: candidate for candidate in source_candidates}
         self.assertIn("golang-go", by_id["amneziawg_pinned_source_build_apt_stable_future"]["build_dependencies"])

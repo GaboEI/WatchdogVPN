@@ -114,13 +114,13 @@ class CronUrlTests(unittest.TestCase):
             "https://github.com/cbeuw/Cloak/releases/download/v2.12.0/ck-client-linux-amd64-v2.12.0",
             urls,
         )
-        # Source-build tags.
+        # Source builds resolve the latest official release dynamically.
         self.assertIn(
-            "https://github.com/amnezia-vpn/amneziawg-tools/releases/tag/v1.0.20260618-2",
+            "https://github.com/amnezia-vpn/amneziawg-tools/releases/latest",
             urls,
         )
         self.assertIn(
-            "https://github.com/amnezia-vpn/amneziawg-go/releases/tag/v3.0.2",
+            "https://github.com/amnezia-vpn/amneziawg-go/releases/latest",
             urls,
         )
         self.assertIn("sing_box_official_artifact_stable_x86_64", names)

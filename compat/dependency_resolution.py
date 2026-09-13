@@ -860,10 +860,7 @@ def _candidate_has_complete_security_metadata(candidate: MethodCandidate) -> boo
         components = candidate.data.get("components", ())
         if components:
             return all(
-                component.get("revision_type") == "commit"
-                and _is_git_commit(component.get("revision"))
-                and type(component.get("tag")) is str
-                and component.get("tag")
+                _source_component_has_complete_security_metadata(component)
                 for component in components
             )
         revision = candidate.data.get("revision")
@@ -871,6 +868,23 @@ def _candidate_has_complete_security_metadata(candidate: MethodCandidate) -> boo
             return False
         return True
     return True
+
+
+def _source_component_has_complete_security_metadata(component) -> bool:
+    """A source component is complete with an exact pin or dynamic resolution.
+
+    A component declaring ``resolution: latest_official_release`` is resolved to
+    an exact official commit at execution time, so it carries complete security
+    metadata without freezing a tag/revision in the manifest.
+    """
+    if component.get("resolution") == "latest_official_release":
+        return True
+    return (
+        component.get("revision_type") == "commit"
+        and _is_git_commit(component.get("revision"))
+        and type(component.get("tag")) is str
+        and bool(component.get("tag"))
+    )
 
 
 def _is_sha256(value) -> bool:
