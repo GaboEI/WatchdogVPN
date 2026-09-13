@@ -332,6 +332,35 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(_distro_adapter_id("fedora"), "fedora")
         self.assertEqual(_distro_adapter_id("unknown-thing"), "unknown")
 
+    def test_kali_resolves_to_its_debian_family_adapter(self) -> None:
+        # Kali is Debian-family (compat: kali -> debian_apt -> adapter debian);
+        # it must resolve to the debian family, never to an unrelated distro.
+        self.assertEqual(_distro_adapter_id("kali"), "debian")
+        self.assertEqual(_distro_adapter_id("kali-rolling"), "debian")
+        self.assertEqual(_distro_adapter_id("kali_rolling"), "debian")
+
+    def test_kali_recipe_uses_apt_and_never_another_distro_manager(self) -> None:
+        recipe = build_recipe(releases=_certified_releases(), distro="kali")
+        commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
+        script = str(recipe["script"])
+        self.assertIn("apt", commands)
+        self.assertNotIn("zypper", commands)
+        self.assertIn("apt", script)
+        self.assertNotIn("zypper", script)
+
+    def test_unknown_distro_gets_generic_detecting_recipe_not_another_distro(self) -> None:
+        # A distro with no recipe of its own and no resolvable family must get
+        # a generic recipe that detects the host package manager at runtime,
+        # never a hardcoded manager borrowed from an unrelated distro.
+        recipe = build_recipe(releases=_certified_releases(), distro="mysteryos")
+        commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])
+        self.assertIn("command -v apt-get", commands)
+        self.assertIn("command -v zypper", commands)
+        self.assertNotEqual(
+            commands.strip(),
+            "sudo zypper --non-interactive install go gcc make git",
+        )
+
     def test_recipe_handles_go_toolchain_requirement(self) -> None:
         recipe = build_recipe(releases=_certified_releases())
         commands = " ".join(str(entry.get("command", "")) for entry in recipe["commands"])

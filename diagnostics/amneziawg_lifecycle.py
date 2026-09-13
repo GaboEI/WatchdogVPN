@@ -953,18 +953,44 @@ def _platform_certification(
     }
 
 
+# Dependency-install step per resolved distro adapter. This is the ONLY place
+# the recipe picks a package manager. A distro with no adapter of its own
+# resolves to its family adapter first (e.g. Kali -> debian); a distro whose
+# adapter cannot be resolved gets a generic step that detects the host package
+# manager at run time. The recipe must never emit another distro's package
+# manager (for example zypper on a Debian-family host).
+_ADAPTER_DEPENDENCY_INSTALL: Mapping[str, str] = {
+    "ubuntu": "sudo apt-get install -y golang-go git make gcc",
+    "debian": "sudo apt-get install -y golang-go git make gcc",
+    "fedora": "sudo dnf install -y golang git make gcc",
+    "opensuse": "sudo zypper --non-interactive install go gcc make git",
+    "arch": "sudo pacman -S --needed --noconfirm go git make gcc",
+}
+
+# Generic, distro-agnostic step for hosts whose adapter cannot be resolved:
+# it detects the package manager present at run time and never assumes one.
+_GENERIC_DEPENDENCY_INSTALL = (
+    "if command -v apt-get >/dev/null 2>&1; then "
+    "sudo apt-get install -y golang-go git make gcc; "
+    "elif command -v dnf >/dev/null 2>&1; then "
+    "sudo dnf install -y golang git make gcc; "
+    "elif command -v zypper >/dev/null 2>&1; then "
+    "sudo zypper --non-interactive install go gcc make git; "
+    "elif command -v pacman >/dev/null 2>&1; then "
+    "sudo pacman -S --needed --noconfirm go git make gcc; "
+    "else echo 'Install Go, gcc, make and git with this distribution package manager, then re-run this step.' >&2; exit 1; fi"
+)
+
+
 def _build_dependency_command(platform: Mapping[str, str]) -> dict[str, str]:
-    if platform["distro"] in ("opensuse_leap", "opensuse_tumbleweed"):
-        install = "sudo zypper --non-interactive install go gcc make git"
-    elif platform["distro"] in ("fedora", "rhel", "centos", "rocky", "almalinux"):
-        install = "sudo dnf install -y golang git make gcc"
-    elif platform["distro"] in ("ubuntu", "debian", "linuxmint"):
-        install = "sudo apt-get install -y golang-go git make gcc"
-    elif platform["distro"] in ("arch", "cachyos"):
-        install = "sudo pacman -S --needed --noconfirm go git make gcc"
-    else:
-        install = "sudo zypper --non-interactive install go gcc make git"
-    return {"command": install, "purpose": "Install the build dependencies required to build AmneziaWG from official source"}
+    adapter = _distro_adapter_id(str(platform.get("distro", "") or ""))
+    install = _ADAPTER_DEPENDENCY_INSTALL.get(adapter)
+    if install is None:
+        install = _GENERIC_DEPENDENCY_INSTALL
+    return {
+        "command": install,
+        "purpose": "Install the build dependencies required to build AmneziaWG from official source",
+    }
 
 
 def _checkout_and_verify(repository: str, tag: str, commit: str, workdir: str) -> str:
@@ -1285,6 +1311,9 @@ def _distro_adapter_id(distro: str) -> str:
         "opensuse": "opensuse",
         "ubuntu": "ubuntu",
         "debian": "debian",
+        "kali": "debian",
+        "kali_rolling": "debian",
+        "kali-rolling": "debian",
         "linuxmint": "ubuntu",
         "fedora": "fedora",
         "rhel": "fedora",
