@@ -8,6 +8,7 @@ on:
       - phase-23-7-5-11C-rpm
       - phase-23-7-5-11D-opensuse
       - phase-23-7-5-11E-kali
+      - phase-23-7-5-11G-pop-os
   pull_request:
     branches:
       - phase-23-7-5-compatibility-contract
@@ -15,6 +16,7 @@ on:
       - phase-23-7-5-11C-rpm
       - phase-23-7-5-11D-opensuse
       - phase-23-7-5-11E-kali
+      - phase-23-7-5-11G-pop-os
   workflow_dispatch:
 
 concurrency:
