@@ -3067,6 +3067,41 @@ or create a certification record. The mechanism was added in commit `75a1e63`.
 Kali's later promotion is represented separately by `cert_kali_rolling` and its
 rolling `last_validated` metadata after the full audit approval.
 
+### Task 23.7.5.11E Kali Linux field recertification (2026-09-14)
+
+Kali rolling was recertified under the 23.7.5.11E contract on `nls1` (Kali
+GNU/Linux Rolling 2026.3, installed runtime `a8bc2d1`; boot identity, baseline
+and provenance recorded in the 11E evidence register). The 11E run re-earned the
+full current-host chain K0-K9 and validated the three protocols that 10e had left
+`formal_non_green`.
+
+**Kali is declared 100% compatible with the product and its 12 protocols.** The
+manifest record is `cert_kali_rolling_11e` (`scope=physical_field_certification`,
+`current=true`, snapshot `Kali GNU/Linux Rolling 2026.3`), dated distinctly from
+the historical 10e record `cert_kali_rolling` (2026-08-12), which is preserved
+unchanged. `validation_metadata.rolling_policies.kali.evidence_refs` now lists
+both current certifications, and Kali's rolling `last_validated` is `2026-09-14`.
+
+Protocol evidence backing the 12/12 green disposition:
+
+- **Fresh 23.7.5.11E real egress (K3.1/K3.2, evidence register `KALI-E04`):**
+  plain OpenVPN, WireGuard, Shadowsocks and AmneziaWG each achieved real tunnel
+  egress distinct from the physical host (OpenVPN/WireGuard/Shadowsocks
+  `138.124.91.224`, AmneziaWG `104.28.211.192`), kill switch applied, and a
+  verified ~100 MiB transfer (HTTP 200, size `104857600`, SHA-256 match); the
+  plain-OpenVPN outbound SSH continuity test over the tunnel passed. The
+  AmneziaWG path required a product fix (`a8bc2d1`) to resolve the distro package
+  manager correctly on Kali.
+- **Convalidated real-egress green from Task 23.7.5.10e (`cert_kali_rolling`):**
+  HTTP, Hysteria2, OpenVPN+Cloak, SOCKS, Trojan, TUIC, VLESS and VMess.
+
+The full 11E chain is CLOSED / APPROVED: 11E-PRE, K0 (fresh baseline), K1
+(install/runtime provenance), K2 (resolver/network lifecycle), K3 (protocols and
+FakeIP), TECHDEBT1, K5 (isolated fault harness), K6 (Polkit surface), K7
+(AppArmor state/enforcement), K8 (bounded H1 provenance) and K9 (final cleanup
+and baseline restore). Evidence: the 11E evidence register
+`phase_23_7_5/field_certification_11x/06_11e_kali_linux/02_11e_kali_linux_evidence.md`.
+
 ### Real end-user experimental-distro override (distinct from the lab gate)
 
 `--certification-lab` was never meant for real users - it exists for our own
@@ -3369,7 +3404,7 @@ Mandatory order (external design §14.1, revision 5):
 | 11B | Arch Linux, CachyOS | Arch family, rolling. **CLOSED (2026-08-17)** — Arch Linux (2026-08-15) and CachyOS (2026-08-17), 12/12 each. |
 | 11C | Fedora, Rocky Linux, AlmaLinux 9 | RPM family. AlmaLinux officially in scope (two-step admission + field cert). **Fedora CLOSED (2026-08-20)** — 12/12 green with real egress. **Rocky Linux CLOSED (2026-08-21)** — 12/12 green, reboot lifecycle, isolated fault harness and final cleanup. **AlmaLinux 9 CLOSED and certified (2026-09-02/03)** — 12/12 green via `cert_almalinux_9`. Family integration gate: PR #16 open, merge pending. |
 | 11D | openSUSE Leap, Tumbleweed | **11D family closure candidate (2026-09-11).** openSUSE Leap 15.6 CLOSED — 12/12 green via `cert_opensuse_leap_15_6`. openSUSE Tumbleweed `20260907` CLOSED / certified — 12/12 green with real egress via `cert_opensuse_tumbleweed_rolling`; T0–T7 closed/approved. Family PR pending independent audit; not merged to `main`. |
-| 11E | Kali Linux | Audit 10e evidence first; may reuse if it satisfies. |
+| 11E | Kali Linux | **CLOSED / APPROVED (2026-09-14).** Kali GNU/Linux Rolling 2026.3 field recertified on `nls1`; 12/12 protocols green with real egress via `cert_kali_rolling_11e` (the three 10e `formal_non_green` protocols — plain OpenVPN, Shadowsocks, WireGuard — validated fresh in 11E, plus AmneziaWG). Historical 10e record `cert_kali_rolling` preserved. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
 | 11G | Pop!_OS | New community-requested distribution; full admission/cert from zero. |
 | 11H | Manjaro | New community-requested distribution; full admission/cert from zero. **Last reactive community addition to this list** - see policy note below. |

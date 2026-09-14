@@ -206,19 +206,25 @@ def _artifact_urls_for(candidate: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _source_urls_for(candidate: dict[str, Any]) -> list[dict[str, str]]:
-    """Derive pinned source-build release-tag URLs from a candidate."""
+    """Derive source-build release URLs from a candidate.
+
+    A frozen ``tag`` yields its exact release-tag URL; a component that resolves
+    the latest official release dynamically has no frozen tag, so it yields the
+    repository's latest-release URL instead.
+    """
     results = []
     candidate_id = candidate.get("id", "source")
     for component in candidate.get("components", []):
         repo = (component.get("repository") or "").rstrip("/")
-        tag = component.get("tag")
-        if not repo or not tag:
+        if not repo:
             continue
         component_id = component.get("component_id", "component")
+        tag = component.get("tag")
+        url = "%s/releases/tag/%s" % (repo, tag) if tag else "%s/releases/latest" % repo
         results.append({
             "category": "source",
             "name": "%s_%s" % (candidate_id, component_id),
-            "url": "%s/releases/tag/%s" % (repo, tag),
+            "url": url,
         })
     return results
 

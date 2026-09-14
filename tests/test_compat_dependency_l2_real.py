@@ -733,24 +733,30 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
         urls = []
         for component in components:
             repo = component.get("repository", "")
+            if component.get("resolution") == "latest_official_release":
+                # Dynamic resolution: the executor resolves the latest official
+                # release at execution time, so probe the repository's latest release.
+                if repo:
+                    urls.append("%s/releases/latest" % repo.rstrip("/"))
+                continue
             tag = component.get("tag", "")
             if repo and tag:
                 urls.append("%s/releases/tag/%s" % (repo.rstrip("/"), tag))
         if not urls:
             return resolver.AvailabilityObservation(
                 resolver.AvailabilityStatus.UNKNOWN.value,
-                evidence="source build candidate has no reachable tag URLs",
+                evidence="source build candidate has no reachable release URLs",
                 reason="source_build_metadata_incomplete",
                 error_kind="malformed_response",
             )
         for url in urls:
-            observation = self._head_url(url, "source tag")
+            observation = self._head_url(url, "source release")
             if observation.status != resolver.AvailabilityStatus.AVAILABLE.value:
                 return observation
         return resolver.AvailabilityObservation(
             resolver.AvailabilityStatus.AVAILABLE.value,
-            evidence="all source tag HEAD probes reachable",
-            reason="source_tags_reachable",
+            evidence="all source release HEAD probes reachable",
+            reason="source_releases_reachable",
         )
 
     def artifact_exists(self, candidate: resolver.MethodCandidate, target_id: str, selected_asset: resolver.SelectedArtifact) -> resolver.AvailabilityObservation:

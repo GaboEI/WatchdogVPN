@@ -9,7 +9,7 @@ from pathlib import Path
 import pwd
 import shutil
 import stat as stat_module
-from typing import Mapping
+from typing import Mapping, Protocol
 
 from compat.provisioning.errors import PathPolicyError
 from compat.provisioning.executors import ExecutionContext, Executor, handle_for_allowed_root
@@ -32,6 +32,12 @@ from compat.provisioning.paths import (
     validate_target_path,
 )
 from compat.provisioning.process import CommandResult, CommandRunner, SubprocessCommandRunner
+from diagnostics.amneziawg_lifecycle import (
+    AMNEZIAWG_TOOLS_REPO,
+    AMNEZIAWG_TRANSPORT_REPO,
+    OfficialReleaseResolver,
+    ResolvedRelease,
+)
 
 
 AMNEZIAWG_SOURCE_BUILD_METHOD_KIND = "pinned_source_build"
@@ -42,6 +48,22 @@ AMNEZIAWG_OUTPUTS = ("awg", "awg-quick", "amneziawg-go")
 AMNEZIAWG_BUILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 AMNEZIAWG_BUILD_LOCALE = "C.UTF-8"
 _DYNAMIC_SHA256 = "__watchdogvpn_dynamic_verified_sha256__"
+
+# Component id to official repository slug resolved dynamically by the shared
+# OfficialReleaseResolver. The compatibility manifest no longer freezes a
+# source tag/revision for these components: what gets installed is resolved to
+# the latest official release at execution time.
+_OFFICIAL_RELEASE_REPOSITORY = {
+    "amneziawg_tools": AMNEZIAWG_TOOLS_REPO,
+    "amneziawg_transport": AMNEZIAWG_TRANSPORT_REPO,
+}
+
+
+class OfficialReleaseResolution(Protocol):
+    """Structural type for anything that resolves an official release."""
+
+    def resolve(self, repository: str) -> ResolvedRelease:
+        ...
 
 
 @dataclass(frozen=True)
@@ -334,17 +356,39 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
         return VerificationResult(status="verified", evidence={"path": str(validated), "sha256": actual_sha256, "mode": "0o755", "uid": identity["uid"], "gid": identity["gid"], "nlink": identity["nlink"]})
 
 
-def components_from_candidate(candidate: Mapping) -> tuple[SourceComponent, ...]:
-    return tuple(
-        SourceComponent(
-            component_id=str(item["component_id"]),
-            repository=str(item["repository"]),
-            tag=str(item["tag"]),
-            revision=str(item["revision"]),
-            expected_outputs=tuple(str(output) for output in item["expected_outputs"]),
+def components_from_candidate(
+    candidate: Mapping,
+    *,
+    release_resolver: OfficialReleaseResolution | None = None,
+) -> tuple[SourceComponent, ...]:
+    """Resolve source components to the latest official release.
+
+    The compatibility manifest's frozen ``tag``/``revision`` are no longer the
+    source of truth for what is installed: each component is resolved to the
+    latest official release (tag + exact commit) at execution time through the
+    same ``OfficialReleaseResolver`` used by the guided flow. A resolver may be
+    injected for deterministic tests.
+    """
+    resolver = release_resolver or OfficialReleaseResolver()
+    components: list[SourceComponent] = []
+    for item in candidate.get("components", ()):
+        component_id = str(item["component_id"])
+        repository_slug = _OFFICIAL_RELEASE_REPOSITORY.get(component_id)
+        if repository_slug is None:
+            raise ValueError(
+                "no official AmneziaWG release repository mapped for component %s" % component_id
+            )
+        release = resolver.resolve(repository_slug)
+        components.append(
+            SourceComponent(
+                component_id=component_id,
+                repository=str(item["repository"]),
+                tag=release.tag,
+                revision=release.commit,
+                expected_outputs=tuple(str(output) for output in item["expected_outputs"]),
+            )
         )
-        for item in candidate.get("components", ())
-    )
+    return tuple(components)
 
 
 def _validate_build_user(build_user: str) -> str:
