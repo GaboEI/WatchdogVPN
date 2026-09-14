@@ -62,7 +62,7 @@ def support(manifest_data, distro: detection.DistroFacts) -> str:
         distro,
         ready_core(manifest_data, distro),
         present_protocols(manifest_data),
-        now=datetime(2026, 9, 12),
+        now=datetime(2026, 9, 14),
     )
     return report.support_classification
 

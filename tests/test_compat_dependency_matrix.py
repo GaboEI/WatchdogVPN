@@ -59,7 +59,7 @@ def support(manifest_data, facts):
         facts,
         ready_core(manifest_data, facts),
         present_protocols(manifest_data),
-        now=datetime(2026, 9, 12),
+        now=datetime(2026, 9, 14),
     ).support_classification
 
 

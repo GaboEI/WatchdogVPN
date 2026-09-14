@@ -466,7 +466,7 @@ class ManifestValidCasesTests(unittest.TestCase):
             result = classify_support_rolling(
                 RollingFacts(**data["facts"]),
                 expiry=timedelta(seconds=data["expiry_seconds"]),
-                now=datetime(2026, 9, 12, 0, 0, 0),
+                now=datetime(2026, 9, 14, 0, 0, 0),
             )
             self.assertIs(result, expected, distro_id)
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
@@ -525,7 +525,7 @@ class ManifestValidCasesTests(unittest.TestCase):
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
-        self.assertEqual(len(manifest["certifications"]), 11)
+        self.assertEqual(len(manifest["certifications"]), 12)
         for cert_id, cert in manifest["certifications"].items():
             with self.subTest(cert_id=cert_id):
                 self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))
@@ -875,7 +875,7 @@ class ManifestInvalidCasesTests(unittest.TestCase):
             classify_support_rolling(
                 tumbleweed,
                 expiry=timedelta(seconds=tumbleweed_data["expiry_seconds"]),
-                now=datetime(2026, 9, 12, 0, 0, 0),
+                now=datetime(2026, 9, 14, 0, 0, 0),
             ),
             SupportClassification.CERTIFIED,
         )
@@ -909,7 +909,7 @@ class ManifestInvalidCasesTests(unittest.TestCase):
             classify_support_rolling(
                 derived,
                 expiry=timedelta(seconds=data["expiry_seconds"]),
-                now=datetime(2026, 9, 12, 0, 0, 0),
+                now=datetime(2026, 9, 14, 0, 0, 0),
             ),
             SupportClassification.FAMILY_INFERRED,
         )
@@ -924,7 +924,7 @@ class ManifestInvalidCasesTests(unittest.TestCase):
             classify_support_rolling(
                 RollingFacts(**data["facts"]),
                 expiry=timedelta(seconds=data["expiry_seconds"]),
-                now=datetime(2026, 9, 12, 0, 0, 0),
+                now=datetime(2026, 9, 14, 0, 0, 0),
             ),
             SupportClassification.EXPERIMENTAL,
         )

@@ -468,6 +468,64 @@
       "release": "fedora_44",
       "scope": "physical_field_certification"
     },
+    "cert_kali_rolling_11e": {
+      "current": true,
+      "date": "2026-09-14T00:00:00Z",
+      "distribution": "kali",
+      "evidence": "23.7.5.11E Kali field recertification on nls1 (Kali GNU/Linux Rolling 2026.3; runtime a8bc2d1; K0 baseline and K1-K9 gates CLOSED/APPROVED): 12/12 protocols green with real egress. Plain OpenVPN, WireGuard, Shadowsocks and AmneziaWG validated fresh in 11E with real tunnel egress and a verified 100 MiB transfer (K3.1/K3.2, KALI-E04); the remaining 8 protocols are real-egress green convalidated from Task 23.7.5.10e. FakeIP validated (K3.6). Evidence: the 11E Kali evidence register (02_11e_kali_linux_evidence.md, KALI-E04).",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11E Kali real egress via the guided official provisioning flow; tunnel egress 104.28.211.192 distinct from direct; 100 MiB transfer HTTP 200 size 104857600; kill switch applied (KALI-E04, K3.1)"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11E Kali real egress: 5/5 independent sites, tunnel egress 138.124.91.224 distinct from direct with warp=off; 100 MiB transfer HTTP 200 size 104857600; kill switch applied; outbound SSH continuity PASS (KALI-E04, K3.1/K3.2)"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11E Kali real egress: 4/5 sites IPv4 138.124.91.224 plus 1/5 IPv6, warp=off; 100 MiB transfer HTTP 200 size 104857600; kill switch applied (KALI-E04, K3.1/K3.2)"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11E Kali real egress: 5/5 independent sites, tunnel egress 138.124.91.224 distinct from direct with warp=off; 100 MiB transfer HTTP 200 size 104857600; kill switch applied (KALI-E04, K3.1/K3.2)"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "Kali GNU/Linux Rolling 2026.3"
+    },
     "cert_linuxmint_22_3": {
       "current": true,
       "date": "2026-08-14T00:00:00Z",
@@ -3780,7 +3838,7 @@
           "eol_or_withdrawn": false,
           "evidence_expiry_seconds": 31536000,
           "expressly_excluded": false,
-          "last_validated": "2026-08-12T00:00:00Z",
+          "last_validated": "2026-09-14T00:00:00Z",
           "meets_technical_floor": true
         }
       },
@@ -4480,10 +4538,11 @@
       },
       "kali": {
         "evidence_refs": [
-          "cert_kali_rolling"
+          "cert_kali_rolling",
+          "cert_kali_rolling_11e"
         ],
         "expiry_seconds": 31536000,
-        "last_validated": "2026-08-12T00:00:00Z"
+        "last_validated": "2026-09-14T00:00:00Z"
       },
       "opensuse_tumbleweed": {
         "evidence_refs": [
