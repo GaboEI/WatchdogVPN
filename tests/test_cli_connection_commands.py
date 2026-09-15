@@ -191,6 +191,24 @@ class CliConnectionCommandTests(unittest.TestCase):
         self.assertTrue(lifecycle["runtime_active"])
         self.assertFalse(lifecycle["disconnected_cleanly"])
 
+    def test_status_json_reports_empty_profile_store_as_unavailable(self) -> None:
+        profiles_path = Path(os.environ["WATCHDOGVPN_CONFIG_DIR"]) / "profiles.json"
+        profiles_path.write_text("[]\n", encoding="utf-8")
+        response = Response(
+            ok=True,
+            payload={"state": {"status": "standby", "mode": "standby"}},
+        )
+        with patch("cli.main.WatchdogIPCClient") as client_cls:
+            client_cls.return_value.status.return_value = response
+            with redirect_stdout(StringIO()) as stdout:
+                result = cli.main.main(["status", "--json"])
+
+        self.assertEqual(result, 0)
+        lifecycle = json.loads(stdout.getvalue())["payload"]["lifecycle"]
+        self.assertIs(lifecycle["profile_available"], False)
+        self.assertTrue(lifecycle["disconnected_cleanly"])
+        self.assertFalse(lifecycle["failure_or_degraded"])
+
     def test_status_json_surfaces_critical_effective_runtime_mismatch(self) -> None:
         response = Response(
             ok=True,
