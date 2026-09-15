@@ -3865,6 +3865,24 @@
       "release_model": "stable",
       "technical_family": "ubuntu_apt"
     },
+    "pop": {
+      "id": "pop",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": false,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "ubuntu_apt"
+    },
     "opensuse_leap": {
       "id": "opensuse_leap",
       "lineage": {

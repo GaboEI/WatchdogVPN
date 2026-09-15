@@ -418,6 +418,46 @@ class DistributionResolutionTests(unittest.TestCase):
         self.assertEqual(report.support_classification, "unsupported")
 
 
+class PopAdmissionTests(unittest.TestCase):
+    def test_pop_id_wins_over_ubuntu_id_like(self) -> None:
+        manifest = product_manifest()
+        pop = facts(
+            manifest,
+            """
+            ID=pop
+            ID_LIKE="ubuntu debian"
+            VERSION_ID=24.04
+            VERSION_CODENAME=noble
+            PRETTY_NAME="Pop!_OS 24.04 LTS"
+            """,
+        )
+
+        self.assertEqual(pop.id_normalized, "pop")
+        self.assertEqual(pop.resolved_distribution, "pop")
+        self.assertNotEqual(pop.resolved_distribution, "ubuntu")
+        self.assertEqual(pop.technical_family, "ubuntu_apt")
+        self.assertTrue(pop.is_derivative)
+        self.assertIsNone(pop.resolved_release)
+        self.assertEqual(pop.resolution_status, "release_unknown")
+        self.assertEqual(
+            detection._support_classification(manifest, pop, now=datetime(2026, 9, 15)).value,
+            "experimental",
+        )
+
+    def test_pop_admission_is_explicit_and_does_not_depend_on_id_like(self) -> None:
+        manifest = product_manifest()
+        pop = facts(manifest, "ID=pop\nID_LIKE=ubuntu\nVERSION_ID=24.04\n")
+        ubuntu = facts(manifest, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+
+        self.assertEqual(pop.resolved_distribution, "pop")
+        self.assertEqual(ubuntu.resolved_distribution, "ubuntu")
+        self.assertNotEqual(pop.mapping_evidence, "id_like:ubuntu")
+        self.assertEqual(manifest["distributions"]["pop"]["technical_family"], "ubuntu_apt")
+        self.assertFalse(manifest["distributions"]["pop"]["lineage"]["has_own_evidence"])
+        self.assertFalse(manifest["distributions"]["pop"]["lineage"]["family_inference_allowed"])
+        self.assertEqual(manifest["distributions"]["pop"]["policy"]["stable"]["admitted_releases"], [])
+
+
 class CapabilityProbeTests(unittest.TestCase):
     def test_core_capabilities_are_complete_and_never_empty(self) -> None:
         manifest = product_manifest()
