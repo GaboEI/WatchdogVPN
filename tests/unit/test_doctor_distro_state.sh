@@ -46,6 +46,11 @@ distro_adapter_path() {
 distro_experimental_override_accepted() {
   [[ "${MOCK_DISTRO_OVERRIDE_ACCEPTED:-0}" == "1" ]]
 }
+
+distro_certification_lab_enabled() {
+  [[ "${MOCK_CERTIFICATION_LAB:-0}" == "1" ]] \
+    && [[ "${MOCK_FIELD_VALIDATION:-0}" == "1" ]]
+}
 MOCK
 
 run_doctor() {
@@ -75,6 +80,19 @@ export MOCK_DISTRO_OVERRIDE_ACCEPTED="1"
 output="$(run_doctor)"
 assert_contains "running under user-accepted experimental override" "$output" "future distro with override doctor output"
 export MOCK_DISTRO_OVERRIDE_ACCEPTED="0"
+
+# Internal certification-lab validation must not require or create end-user
+# consent, while still preserving the experimental support classification.
+export MOCK_CERTIFICATION_LAB="1"
+export MOCK_FIELD_VALIDATION="1"
+output="$(run_doctor)"
+assert_contains "running under certification-lab validation" "$output" "future distro with certification-lab output"
+if [[ "$output" == *"[FAIL] distro support is planned for a future release"* ]]; then
+  printf 'FAIL certification-lab future distro is non-blocking: distro remained a FAIL\n' >&2
+  exit 1
+fi
+export MOCK_CERTIFICATION_LAB="0"
+export MOCK_FIELD_VALIDATION="0"
 
 # Unsupported distro
 export MOCK_DISTRO_ID="exampleos"

@@ -261,7 +261,9 @@ if [[ "${DISTRO_SUPPORTED:-0}" == "1" ]]; then
     mark_fail "missing distro adapter: $adapter"
   fi
 elif [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
-  if distro_experimental_override_accepted; then
+  if distro_certification_lab_enabled; then
+    mark_warn "distro support is planned for a future release (running under certification-lab validation)"
+  elif distro_experimental_override_accepted; then
     mark_warn "distro support is planned for a future release (running under user-accepted experimental override)"
   else
     mark_fail "distro support is planned for a future release"
