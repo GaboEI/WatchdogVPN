@@ -3406,7 +3406,7 @@ Mandatory order (external design §14.1, revision 5):
 | 11D | openSUSE Leap, Tumbleweed | **11D family closure candidate (2026-09-11).** openSUSE Leap 15.6 CLOSED — 12/12 green via `cert_opensuse_leap_15_6`. openSUSE Tumbleweed `20260907` CLOSED / certified — 12/12 green with real egress via `cert_opensuse_tumbleweed_rolling`; T0–T7 closed/approved. Family PR pending independent audit; not merged to `main`. |
 | 11E | Kali Linux | **CLOSED / APPROVED (2026-09-14).** Kali GNU/Linux Rolling 2026.3 field recertified on `nls1`; 12/12 protocols green with real egress via `cert_kali_rolling_11e` (the three 10e `formal_non_green` protocols — plain OpenVPN, Shadowsocks, WireGuard — validated fresh in 11E, plus AmneziaWG). Historical 10e record `cert_kali_rolling` preserved. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
-| 11G | Pop!_OS | New community-requested distribution; full admission and certification from zero. **11G closure candidate (2026-09-17).** Pop!_OS 24.04 LTS admitted as the stable release `pop_24_04` and certified via `cert_pop_24_04` (12/12 real-egress green); admission, release policy, dependency selection, tests and user-facing docs reconciled. Family PR pending independent audit; not merged to `main`. |
+| 11G | Pop!_OS | New community-requested distribution; full admission and certification from zero. Pop!_OS 24.04 LTS admitted as the stable release `pop_24_04` with 12/12 real-egress green (`cert_pop_24_04`). |
 | 11H | Manjaro | New community-requested distribution; full admission/cert from zero. **Last reactive community addition to this list** - see policy note below. |
 
 **Policy note (2026-08-16):** 11H Manjaro is the last sub-phase added reactively
@@ -3830,31 +3830,6 @@ reconciles the manifest to that approved physical evidence.
   family PR to `main`, does **not** merge, and does **not** declare public
   certification: those remain 11D-FINAL / 23.7.5.12–14, separate and unauthorized.
   Independent audit of this reconciliation is mandatory before acceptance.
-
-#### 11G — Pop!_OS (Pop!_OS 24.04 LTS, 2026-09-17)
-
-Pop!_OS was admitted with its own explicit identity (`ID=pop`) instead of being
-inferred as Ubuntu, and its stable release `pop_24_04` (codename `noble`, version
-id `24.04`, a codename derivative mapping onto the Ubuntu 24.04 base) is
-certified after its full field validation.
-
-- `certifications.cert_pop_24_04`: `current`, scope `physical_field_certification`,
-  release `pop_24_04`, with 12/12 `protocol_results` `green`, each traced to real
-  tunnel egress (HTTP 200 x3 through the tunnel with the tunnel egress distinct
-  from the direct egress, kill switch applied and a clean teardown). No
-  disposition is `formal_non_green`, `failed`, `not_run` or `not_applicable`; a
-  listener, process, handshake or connection state is never accepted as evidence.
-- `distributions.pop.lineage.has_own_evidence = true` with
-  `family_inference_allowed = false` and `policy.stable.admitted_releases =
-  ["pop_24_04"]`; `releases.pop_24_04.evidence_refs = ["cert_pop_24_04"]`;
-  `validation_metadata.per_release_ci` gains `pop_24_04`, so `pop` classifies as
-  `certified` instead of `experimental`.
-- The DNS lifecycle, split tunneling, FakeIP, kill-switch, reboot lifecycle,
-  isolated fault-failure handling and final cleanup gates are CLOSED / APPROVED
-  by independent audit.
-- This is the 11G closure candidate: it does not merge `main` and does not, by
-  itself, declare public certification. Independent audit of this reconciliation
-  is mandatory before acceptance; Pop!_OS remains `experimental` until then.
 
 #### 11H — Manjaro (new full admission and certification, 2026-08-16)
 
