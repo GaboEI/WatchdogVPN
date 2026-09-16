@@ -54,6 +54,7 @@ Current manually reported validation status:
 | openSUSE Leap 15.6 | Certified | AppArmor present; `zypper` adapter; full lifecycle and real egress (Phase 23.6). |
 | Rocky Linux 9 | Certified | SELinux enforcing; Red Hat-family adapter; full lifecycle and real egress (Phase 23.6). |
 | Linux Mint 22.3 | Certified | Ubuntu adapter via `ID_LIKE`; full lifecycle and real egress (Phase 23.6). |
+| Pop!_OS 24.04 LTS | Certified (proposed) | Explicit `ID=pop` admission; Ubuntu-family adapter; full lifecycle and real per-protocol egress. |
 
 Each "Certified" row means a clean install on a real machine passed the full
 install/update, DNS apply/reset, kill switch, split tunnel, panic, reboot and

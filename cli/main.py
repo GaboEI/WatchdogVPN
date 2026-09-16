@@ -2711,12 +2711,19 @@ def _connection_response_document(response: Response, *, command: str) -> dict[s
     payload = dict(data.get("payload") or {})
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
     error_kind = payload.get("error_kind")
+    profile_available = None
+    if command == "status":
+        try:
+            profile_available = bool(ProfileStore().list())
+        except (OSError, PersistentStoreError, ValueError):
+            profile_available = None
     payload["lifecycle"] = _connection_lifecycle_summary(
         command=command,
         daemon_reachable=True,
         state=state if isinstance(state, dict) else {},
         error=response.error,
         error_kind=error_kind if isinstance(error_kind, str) else None,
+        profile_available=profile_available,
     )
     if response.error:
         payload["recovery_hints"] = _connection_recovery_hints(response.error)
@@ -2751,6 +2758,7 @@ def _connection_lifecycle_summary(
     state: dict[str, object],
     error: str | None,
     error_kind: str | None = None,
+    profile_available: bool | None = None,
 ) -> dict[str, object]:
     desired_state = _connection_desired_state()
     runtime_status = str(state.get("status") or "unknown")
@@ -2787,7 +2795,13 @@ def _connection_lifecycle_summary(
         or lan_gateway_status == "degraded"
         or bool(last_failure_reason)
     )
-    # profile_available is derived from a structured error_kind (set by
+    # For status, profile_available means that the local profile store contains
+    # at least one profile. For connection outcomes, it means whether the
+    # requested profile was resolved, as derived from structured error_kind.
+    # It must not default to True for a status response with an empty store.
+    if command == "status":
+        resolved_profile_available = profile_available
+    # profile_available is otherwise derived from a structured error_kind (set by
     # daemon/runtime_worker.py::_handle_connect), not by guessing at the
     # free-text error message (WDCLI-005: that used to substring-match
     # "profile not found", which silently defaulted to True for any other
@@ -2796,14 +2810,14 @@ def _connection_lifecycle_summary(
     # identity to assess at all, and an unstructured/transport-level error
     # (e.g. WatchdogIPCError, daemon never reached) carries no error_kind -
     # neither case should guess True or False.
-    if error is None:
-        profile_available: bool | None = True
+    elif error is None:
+        resolved_profile_available: bool | None = True
     elif error_kind == "profile_not_found":
-        profile_available = False
+        resolved_profile_available = False
     elif error_kind in {"connect_failed", "unsupported_policy", "management_path_unprotected", "cleanup_failed"}:
-        profile_available = True
+        resolved_profile_available = True
     else:
-        profile_available = None
+        resolved_profile_available = None
     profile_id = state.get("active_profile_id") or ""
     return {
         "command": command,
@@ -2821,7 +2835,7 @@ def _connection_lifecycle_summary(
         "runtime_mismatch_severity": str(state.get("runtime_mismatch_severity") or ""),
         "runtime_artifacts": runtime_artifacts,
         "lan_gateway_status": lan_gateway_status,
-        "profile_available": profile_available,
+        "profile_available": resolved_profile_available,
         # Nothing in the codebase currently distinguishes "daemon reachable
         # but runtime subsystem down" from "daemon reachable" - the old
         # substring match on "unavailable" was guessing at a distinction

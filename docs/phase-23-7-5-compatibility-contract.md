@@ -3406,7 +3406,7 @@ Mandatory order (external design §14.1, revision 5):
 | 11D | openSUSE Leap, Tumbleweed | **11D family closure candidate (2026-09-11).** openSUSE Leap 15.6 CLOSED — 12/12 green via `cert_opensuse_leap_15_6`. openSUSE Tumbleweed `20260907` CLOSED / certified — 12/12 green with real egress via `cert_opensuse_tumbleweed_rolling`; T0–T7 closed/approved. Family PR pending independent audit; not merged to `main`. |
 | 11E | Kali Linux | **CLOSED / APPROVED (2026-09-14).** Kali GNU/Linux Rolling 2026.3 field recertified on `nls1`; 12/12 protocols green with real egress via `cert_kali_rolling_11e` (the three 10e `formal_non_green` protocols — plain OpenVPN, Shadowsocks, WireGuard — validated fresh in 11E, plus AmneziaWG). Historical 10e record `cert_kali_rolling` preserved. |
 | 11F | CentOS Stream | Official; full L1-L5 pass from zero. RHEL out of scope. |
-| 11G | Pop!_OS | New community-requested distribution; full admission/cert from zero. |
+| 11G | Pop!_OS | New community-requested distribution; full admission and certification from zero. Pop!_OS 24.04 LTS admitted as the stable release `pop_24_04` with 12/12 real-egress green (`cert_pop_24_04`). |
 | 11H | Manjaro | New community-requested distribution; full admission/cert from zero. **Last reactive community addition to this list** - see policy note below. |
 
 **Policy note (2026-08-16):** 11H Manjaro is the last sub-phase added reactively

@@ -526,6 +526,64 @@
       "scope": "physical_field_certification",
       "snapshot": "Kali GNU/Linux Rolling 2026.3"
     },
+    "cert_pop_24_04": {
+      "current": true,
+      "date": "2026-09-16T00:00:00Z",
+      "distribution": "pop",
+      "evidence": "Pop!_OS 24.04 LTS field certification on physical hardware: 12/12 protocols green with real tunnel egress (tunnel egress distinct from the direct egress, HTTP 200 x3), kill-switch protection and clean teardown; DNS apply/reset, split tunneling and FakeIP validated; reboot lifecycle, isolated fault-failure handling and final cleanup approved.",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel via the guided official provisioning flow: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        }
+      },
+      "release": "pop_24_04",
+      "scope": "physical_field_certification"
+    },
     "cert_linuxmint_22_3": {
       "current": true,
       "date": "2026-08-14T00:00:00Z",
@@ -839,6 +897,15 @@
       "mapping_source": "ubuntu_codename",
       "mapping_type": "codename_map"
     },
+    "pop_version_codename": {
+      "codename_map": {
+        "noble": "ubuntu_24_04"
+      },
+      "distribution": "pop",
+      "lineage_distribution": "ubuntu",
+      "mapping_source": "version_codename",
+      "mapping_type": "codename_map"
+    },
     "opensuse_tumbleweed_lineage": {
       "base_version_gating": false,
       "distribution": "opensuse_tumbleweed",
@@ -908,6 +975,7 @@
             "stable_releases": [
               "debian_13",
               "linuxmint_22_3",
+              "pop_24_04",
               "ubuntu_24_04",
               "ubuntu_26_04"
             ],
@@ -1362,6 +1430,7 @@
             "stable_releases": [
               "debian_13",
               "linuxmint_22_3",
+              "pop_24_04",
               "ubuntu_24_04",
               "ubuntu_26_04"
             ],
@@ -1614,6 +1683,7 @@
             "stable_releases": [
               "debian_13",
               "linuxmint_22_3",
+              "pop_24_04",
               "ubuntu_24_04",
               "ubuntu_26_04"
             ],
@@ -1848,6 +1918,7 @@
             "stable_releases": [
               "debian_13",
               "linuxmint_22_3",
+              "pop_24_04",
               "ubuntu_24_04",
               "ubuntu_26_04"
             ],
@@ -2257,6 +2328,7 @@
             "stable_releases": [
               "debian_13",
               "linuxmint_22_3",
+              "pop_24_04",
               "ubuntu_24_04",
               "ubuntu_26_04"
             ],
@@ -2446,6 +2518,7 @@
             "stable_releases": [
               "debian_13",
               "linuxmint_22_3",
+              "pop_24_04",
               "ubuntu_24_04",
               "ubuntu_26_04"
             ],
@@ -2648,6 +2721,7 @@
             "stable_releases": [
               "debian_13",
               "linuxmint_22_3",
+              "pop_24_04",
               "ubuntu_24_04",
               "ubuntu_26_04"
             ],
@@ -3865,6 +3939,26 @@
       "release_model": "stable",
       "technical_family": "ubuntu_apt"
     },
+    "pop": {
+      "id": "pop",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "pop_24_04"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "ubuntu_apt"
+    },
     "opensuse_leap": {
       "id": "opensuse_leap",
       "lineage": {
@@ -4218,6 +4312,21 @@
       "vendor_maintained": true,
       "version": "9"
     },
+    "pop_24_04": {
+      "codename": "noble",
+      "distribution": "pop",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_pop_24_04"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "24.04"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "24.04"
+    },
     "rocky_9": {
       "distribution": "rocky",
       "eol_or_withdrawn": false,
@@ -4490,6 +4599,11 @@
         "evidence": "L2 Compatibility Matrix CI run 34140256789 green on HEAD 7939411 (2026-09-07); L2 field lifecycle CLOSED/APPROVED on nls1 (runtime cb41420)",
         "l1_l2_green": true,
         "status": "green"
+      },
+      "pop_24_04": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
       },
       "rhel_9": {
         "evidence": null,

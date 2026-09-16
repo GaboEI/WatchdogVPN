@@ -418,6 +418,64 @@ class DistributionResolutionTests(unittest.TestCase):
         self.assertEqual(report.support_classification, "unsupported")
 
 
+class PopAdmissionTests(unittest.TestCase):
+    def test_pop_id_wins_over_ubuntu_id_like(self) -> None:
+        manifest = product_manifest()
+        pop = facts(
+            manifest,
+            """
+            ID=pop
+            ID_LIKE="ubuntu debian"
+            VERSION_ID=24.04
+            VERSION_CODENAME=noble
+            PRETTY_NAME="Pop!_OS 24.04 LTS"
+            """,
+        )
+
+        self.assertEqual(pop.id_normalized, "pop")
+        self.assertEqual(pop.resolved_distribution, "pop")
+        self.assertNotEqual(pop.resolved_distribution, "ubuntu")
+        self.assertEqual(pop.technical_family, "ubuntu_apt")
+        self.assertTrue(pop.is_derivative)
+        self.assertEqual(pop.resolved_release, "pop_24_04")
+        self.assertEqual(pop.resolution_status, "resolved")
+        self.assertEqual(
+            detection._support_classification(manifest, pop, now=datetime(2026, 9, 17)).value,
+            "certified",
+        )
+
+    def test_pop_admission_is_explicit_and_does_not_depend_on_id_like(self) -> None:
+        manifest = product_manifest()
+        pop = facts(manifest, "ID=pop\nID_LIKE=ubuntu\nVERSION_ID=24.04\n")
+        ubuntu = facts(manifest, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+
+        self.assertEqual(pop.resolved_distribution, "pop")
+        self.assertEqual(ubuntu.resolved_distribution, "ubuntu")
+        self.assertNotEqual(pop.mapping_evidence, "id_like:ubuntu")
+        self.assertEqual(manifest["distributions"]["pop"]["technical_family"], "ubuntu_apt")
+        self.assertTrue(manifest["distributions"]["pop"]["lineage"]["has_own_evidence"])
+        self.assertFalse(manifest["distributions"]["pop"]["lineage"]["family_inference_allowed"])
+        self.assertEqual(
+            manifest["distributions"]["pop"]["policy"]["stable"]["admitted_releases"],
+            ["pop_24_04"],
+        )
+
+    def test_pop_24_04_is_an_explicit_stable_release_and_not_ubuntu(self) -> None:
+        manifest = product_manifest()
+        release = manifest["releases"]["pop_24_04"]
+        self.assertEqual(release["distribution"], "pop")
+        self.assertEqual(release["policy_state"], "admitted")
+        self.assertEqual(release["codename"], "noble")
+        self.assertEqual(release["os_release_version_ids"], ["24.04"])
+        self.assertEqual(release["evidence_refs"], ["cert_pop_24_04"])
+        # The Ubuntu lineage mapping authorizes the derivative base only; it must
+        # not resolve Pop!_OS to the Ubuntu release itself.
+        self.assertNotIn("ubuntu_24_04", manifest["distributions"]["pop"]["policy"]["stable"]["admitted_releases"])
+        pop = facts(manifest, "ID=pop\nID_LIKE=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n")
+        self.assertEqual(pop.resolved_release, "pop_24_04")
+        self.assertNotEqual(pop.resolved_release, "ubuntu_24_04")
+
+
 class CapabilityProbeTests(unittest.TestCase):
     def test_core_capabilities_are_complete_and_never_empty(self) -> None:
         manifest = product_manifest()
