@@ -54,6 +54,7 @@ Current manually reported validation status:
 | openSUSE Leap 15.6 | Certified | AppArmor present; `zypper` adapter; full lifecycle and real egress (Phase 23.6). |
 | Rocky Linux 9 | Certified | SELinux enforcing; Red Hat-family adapter; full lifecycle and real egress (Phase 23.6). |
 | Linux Mint 22.3 | Certified | Ubuntu adapter via `ID_LIKE`; full lifecycle and real egress (Phase 23.6). |
+| Pop!_OS 24.04 LTS | Certified (proposed) | Explicit `ID=pop` admission (never inferred as Ubuntu); Ubuntu-family adapter; full lifecycle and real per-protocol egress. Pending independent review and maintainer merge. |
 
 Each "Certified" row means a clean install on a real machine passed the full
 install/update, DNS apply/reset, kill switch, split tunnel, panic, reboot and
@@ -76,10 +77,11 @@ with advanced DNS, and the installer gives reboot guidance if the tunnel remains
 degraded after setup.
 
 Family-inferred, not yet individually certified: RHEL and CentOS Stream (share
-the Red Hat-family adapter); other Debian/Ubuntu derivatives beyond Linux Mint.
-They share a certified adapter but have not themselves been field-tested, so they
-are not recorded as certified. AlmaLinux (11C) and openSUSE Tumbleweed (11D) are
-individually certified with their own field evidence.
+the Red Hat-family adapter); other Debian/Ubuntu derivatives beyond Linux Mint
+and Pop!_OS. They share a certified adapter but have not themselves been
+field-tested, so they are not recorded as certified. AlmaLinux (11C), openSUSE
+Tumbleweed (11D) and Pop!_OS 24.04 LTS are individually certified with their own
+field evidence.
 
 ### Phase 23.7.5.11D openSUSE Leap Recertification
 
@@ -124,6 +126,20 @@ lifecycle (T5), isolated fault harness (T6) and final cleanup (T7) are
 CLOSED / APPROVED by independent audit. This is the 11D openSUSE-family closure
 candidate; it does not open the family PR, merge `main`, or declare public
 certification, and it remains pending independent audit.
+
+### Pop!_OS 24.04 LTS Certification
+
+Pop!_OS 24.04 LTS resolves through its own explicit `ID=pop` admission (a
+codename derivative mapping onto the Ubuntu 24.04 base; it is never silently
+classified as Ubuntu) and is reconciled in `compat/compatibility.json` as the
+admitted stable release `pop_24_04` with the current physical field
+certification `cert_pop_24_04`: 12/12 `protocol_results` are `green`, each
+traced to real tunnel egress (HTTP 200 x3 through the tunnel with the tunnel
+egress distinct from the direct egress, kill switch applied and a clean
+teardown). DNS apply/reset, split tunneling and FakeIP were validated, and the
+reboot lifecycle, isolated fault-failure handling and final cleanup passed.
+Pop!_OS 24.04 LTS therefore classifies as `certified` instead of `experimental`,
+pending independent review and the maintainer's merge.
 
 ## Persistent Configuration Update Validation
 

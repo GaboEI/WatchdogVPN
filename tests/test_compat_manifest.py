@@ -418,6 +418,47 @@ class ManifestValidCasesTests(unittest.TestCase):
         result = classify_support_stable(alma)
         self.assertIs(result, SupportClassification.CERTIFIED)
 
+    def test_pop_24_04_release_policy_and_protocol_declarations(self) -> None:
+        """Pop!_OS 24.04 LTS is admitted as its own stable release with a
+        current physical field certification, resolves independently of its
+        Ubuntu lineage (never as Ubuntu itself), declares exactly the twelve
+        manifest protocols, and classifies as CERTIFIED."""
+        manifest = load_product()
+        self.assertTrue(compat_read.validate_manifest(manifest))
+
+        policy = manifest["distributions"]["pop"]["policy"]["stable"]
+        self.assertEqual(policy["admitted_releases"], ["pop_24_04"])
+        self.assertEqual(policy["pending_releases"], [])
+        self.assertEqual(policy["excluded_releases"], [])
+        self.assertTrue(manifest["distributions"]["pop"]["lineage"]["has_own_evidence"])
+
+        release = manifest["releases"]["pop_24_04"]
+        self.assertEqual(release["distribution"], "pop")
+        self.assertEqual(release["policy_state"], "admitted")
+        self.assertEqual(release["codename"], "noble")
+        self.assertEqual(release["os_release_version_ids"], ["24.04"])
+        self.assertTrue(release["vendor_maintained"])
+        self.assertTrue(release["meets_technical_floor"])
+        self.assertFalse(release["eol_or_withdrawn"])
+        self.assertEqual(release["evidence_refs"], ["cert_pop_24_04"])
+
+        cert = manifest["certifications"]["cert_pop_24_04"]
+        self.assertTrue(compat_read.certification_qualifies_for_support(manifest, "cert_pop_24_04"))
+        self.assertEqual(cert["scope"], "physical_field_certification")
+        self.assertEqual(cert["release"], "pop_24_04")
+        self.assertNotIn("snapshot", cert)
+        self.assertEqual(set(cert["protocol_results"]), set(manifest["protocols"]))
+        self.assertEqual(len(cert["protocol_results"]), 12)
+        for protocol_id, result in cert["protocol_results"].items():
+            self.assertEqual(result["disposition"], "green", protocol_id)
+            self.assertTrue(result["evidence"], protocol_id)
+
+        data = compat_read._stable_facts(manifest, "pop_24_04")
+        self.assertTrue(data["facts"]["admitted"])
+        self.assertTrue(data["facts"]["has_valid_field_certification"])
+        self.assertFalse(data["facts"]["family_inference_allowed"])
+        self.assertIs(classify_support_stable(StableReleaseFacts(**data["facts"])), SupportClassification.CERTIFIED)
+
     def test_capabilities_are_separated(self) -> None:
         capabilities = load_product()["capabilities"]
         self.assertIn("cap_tun", capabilities["core_host_capabilities"])
@@ -525,7 +566,7 @@ class ManifestValidCasesTests(unittest.TestCase):
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
-        self.assertEqual(len(manifest["certifications"]), 12)
+        self.assertEqual(len(manifest["certifications"]), 13)
         for cert_id, cert in manifest["certifications"].items():
             with self.subTest(cert_id=cert_id):
                 self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))

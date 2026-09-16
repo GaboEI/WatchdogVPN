@@ -15,14 +15,15 @@ This document defines how the product scripts should behave.
   both field-certified with their own evidence (Phase 23.6 for Leap; Phase
   23.7.5.11D for Tumbleweed, `cert_opensuse_tumbleweed_rolling`, 12/12 green with
   real egress).
-- Debian/Ubuntu derivatives that do not report a native `ID` (for example Linux
-  Mint or Pop!_OS, reporting `ID_LIKE="ubuntu debian"` or `ID_LIKE="debian"`)
-  resolve to the Ubuntu or Debian adapter through a conservative `ID_LIKE`
-  fallback, mirroring the existing Arch-derivative fallback. Ubuntu takes
-  precedence when a derivative reports both, and only families with a shipped
-  adapter are accepted. Linux Mint 22.3 is field-certified through this Ubuntu
-  fallback (Phase 23.6); other derivatives remain family-inferred until
-  individually field-tested.
+- Debian/Ubuntu derivatives resolve to the Ubuntu or Debian adapter. Derivatives
+  with their own explicit identity, such as Pop!_OS (`ID=pop`, admitted as the
+  stable release `pop_24_04`), use that identity directly and are never silently
+  classified as Ubuntu; derivatives without one (for example Linux Mint) resolve
+  through the conservative `ID_LIKE` fallback, mirroring the existing
+  Arch-derivative fallback. Ubuntu takes precedence when a derivative reports
+  both, and only families with a shipped adapter are accepted. Linux Mint 22.3
+  and Pop!_OS 24.04 LTS are field-certified with their own evidence; other
+  derivatives remain family-inferred until individually field-tested.
 - Runtime behavior should be shared across distros.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.
