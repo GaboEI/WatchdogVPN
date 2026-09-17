@@ -897,6 +897,12 @@
       "mapping_source": "ubuntu_codename",
       "mapping_type": "codename_map"
     },
+    "manjaro_lineage": {
+      "base_version_gating": false,
+      "distribution": "manjaro",
+      "lineage_distribution": "arch",
+      "mapping_type": "rolling_lineage"
+    },
     "pop_version_codename": {
       "codename_map": {
         "noble": "ubuntu_24_04"
@@ -1387,7 +1393,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -1640,7 +1647,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -1893,7 +1901,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2070,7 +2079,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2290,7 +2300,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2480,7 +2491,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2670,7 +2682,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2930,7 +2943,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -3063,6 +3077,7 @@
               "arch",
               "cachyos",
               "kali",
+              "manjaro",
               "opensuse_tumbleweed"
             ],
             "stable_releases": [],
@@ -3201,6 +3216,7 @@
               "arch",
               "cachyos",
               "kali",
+              "manjaro",
               "opensuse_tumbleweed"
             ],
             "stable_releases": [],
@@ -3764,7 +3780,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -3938,6 +3955,26 @@
       },
       "release_model": "stable",
       "technical_family": "ubuntu_apt"
+    },
+    "manjaro": {
+      "id": "manjaro",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": false,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": null,
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "arch_pacman"
     },
     "pop": {
       "id": "pop",

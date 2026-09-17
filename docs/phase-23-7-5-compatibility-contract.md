@@ -3869,6 +3869,15 @@ external planning documents all updated together, with independent judge
 audit approval, before Manjaro is represented as anything other than
 `experimental`.
 
-**Not authorized to start.** 11H Manjaro requires its own fresh, explicit
-"go" from the maintainer, exactly like 11B CachyOS did after 11B Arch Linux
-closed.
+**M1 admission (2026-09-17).** The manifest now admits Manjaro explicitly:
+`distributions.manjaro` (`release_model: rolling`, `technical_family:
+arch_pacman`, derivative with `has_own_evidence: false` and
+`family_inference_allowed: false`) plus `derivatives.manjaro_lineage`
+(lineage-only to `arch`). `ID=manjaro` resolves to `manjaro`, never to
+`arch`; the family only selects the `arch_pacman` adapter and package path,
+and no Arch or CachyOS certification, evidence, freshness or release policy is
+inherited. `support_classification` remains `experimental` and no Manjaro
+certification exists. The remainder of the 11H route (install/provenance,
+resolver and kill-switch, the 12-protocol field matrix, reboot lifecycle,
+isolated fault harness, cleanup and closure) remains unauthorized and
+unstarted, and requires its own fresh maintainer "go".
