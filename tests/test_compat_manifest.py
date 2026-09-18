@@ -566,7 +566,7 @@ class ManifestValidCasesTests(unittest.TestCase):
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
-        self.assertEqual(len(manifest["certifications"]), 13)
+        self.assertEqual(len(manifest["certifications"]), 14)
         for cert_id, cert in manifest["certifications"].items():
             with self.subTest(cert_id=cert_id):
                 self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))

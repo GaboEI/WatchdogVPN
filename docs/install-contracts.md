@@ -15,6 +15,10 @@ This document defines how the product scripts should behave.
   both field-certified with their own evidence (Phase 23.6 for Leap; Phase
   23.7.5.11D for Tumbleweed, `cert_opensuse_tumbleweed_rolling`, 12/12 green with
   real egress).
+- Arch-family support uses the `arch` adapter. Arch Linux and CachyOS are
+  field-certified; Manjaro (`ID=manjaro`, rolling) is field-certified with its
+  own evidence under Phase 23.7.5.11H (`cert_manjaro_rolling`, 12/12 green with
+  real egress).
 - Debian/Ubuntu derivatives resolve to the Ubuntu or Debian adapter. Derivatives
   with their own explicit identity, such as Pop!_OS (`ID=pop`, admitted as the
   stable release `pop_24_04`), use that identity directly and are never silently

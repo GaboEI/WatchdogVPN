@@ -526,6 +526,64 @@
       "scope": "physical_field_certification",
       "snapshot": "Kali GNU/Linux Rolling 2026.3"
     },
+    "cert_manjaro_rolling": {
+      "current": true,
+      "date": "2026-09-18T00:00:00Z",
+      "distribution": "manjaro",
+      "evidence": "Manjaro rolling snapshot (XFCE 26.1.0 image 260812, kernel 6.1.187-2-MANJARO) field certification on nls1: 12/12 canonical-index protocols green with real tunnel egress (tunnel egress distinct from the direct egress, HTTP 200 x3), kill-switch protection and clean cross-protocol teardown; format, reboot, suspend-to-disk resume and autoconnect lifecycle (M5), isolated worker fault handling (M6) and decommission with baseline restore (M7) CLOSED_APPROVED by independent Judge-Tester audit; approved-provider import, three usable VLESS nodes with distinct tunnel egress and forced provider rotation verified (M4.3). Evidence register MAN-E00–MAN-E09.",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel via the guided official provisioning flow: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06; guided AWG build verified in M3, MAN-E04)"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; product-owned tunnel interfaces observed; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3 plus a bounded approximately 100 MiB transfer; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06); approved provider imported privately with three usable VLESS nodes, distinct tunnel egress and forced provider rotation verified (M4.3, MAN-E05)"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3 plus a bounded approximately 100 MiB transfer; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "Manjaro XFCE 26.1.0 image 260812, kernel 6.1.187-2-MANJARO"
+    },
     "cert_pop_24_04": {
       "current": true,
       "date": "2026-09-16T00:00:00Z",
@@ -896,6 +954,12 @@
       "lineage_distribution": "ubuntu",
       "mapping_source": "ubuntu_codename",
       "mapping_type": "codename_map"
+    },
+    "manjaro_lineage": {
+      "base_version_gating": false,
+      "distribution": "manjaro",
+      "lineage_distribution": "arch",
+      "mapping_type": "rolling_lineage"
     },
     "pop_version_codename": {
       "codename_map": {
@@ -1387,7 +1451,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -1640,7 +1705,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -1893,7 +1959,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2070,7 +2137,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2290,7 +2358,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2480,7 +2549,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2670,7 +2740,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -2930,7 +3001,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -3063,6 +3135,7 @@
               "arch",
               "cachyos",
               "kali",
+              "manjaro",
               "opensuse_tumbleweed"
             ],
             "stable_releases": [],
@@ -3201,6 +3274,7 @@
               "arch",
               "cachyos",
               "kali",
+              "manjaro",
               "opensuse_tumbleweed"
             ],
             "stable_releases": [],
@@ -3764,7 +3838,8 @@
           "target_scope": {
             "rolling_distributions": [
               "arch",
-              "cachyos"
+              "cachyos",
+              "manjaro"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -3938,6 +4013,26 @@
       },
       "release_model": "stable",
       "technical_family": "ubuntu_apt"
+    },
+    "manjaro": {
+      "id": "manjaro",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": "2026-09-18T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "arch_pacman"
     },
     "pop": {
       "id": "pop",
@@ -4657,6 +4752,13 @@
         ],
         "expiry_seconds": 31536000,
         "last_validated": "2026-09-14T00:00:00Z"
+      },
+      "manjaro": {
+        "evidence_refs": [
+          "cert_manjaro_rolling"
+        ],
+        "expiry_seconds": 31536000,
+        "last_validated": "2026-09-18T00:00:00Z"
       },
       "opensuse_tumbleweed": {
         "evidence_refs": [

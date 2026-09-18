@@ -449,6 +449,39 @@ def classify_external_apt_package_query(phase: dict, package_name: str) -> tuple
     return "unknown", "external APT package index probe failed"
 
 
+# Bounded retry policy for the external APT package-index probe. The probe
+# fetches a third-party repository index (e.g. a Launchpad PPA) with a single
+# curl+gzip executed inside the CI container. A transitory network/CDN failure
+# there surfaced as an inconclusive UNKNOWN on the first attempt and blocked
+# the whole L2 gate even though the index is reachable -- the same class of CI
+# flake previously fixed for _head_url's HEAD probe. rc 0 (available) and rc 1
+# (definitive absence) are final and never retried; only an inconclusive rc 2
+# (curl/gzip failure) is retried. A persistent failure still yields an
+# inconclusive phase, so the fail-closed contract is preserved.
+EXTERNAL_APT_QUERY_MAX_ATTEMPTS = 3
+EXTERNAL_APT_QUERY_BACKOFF_SECONDS = 2.0
+
+
+def run_external_apt_package_query(
+    exec_command,
+    command: str,
+    package_name: str,
+    *,
+    max_attempts: int = EXTERNAL_APT_QUERY_MAX_ATTEMPTS,
+    backoff_seconds: float = EXTERNAL_APT_QUERY_BACKOFF_SECONDS,
+) -> dict:
+    """Run an external APT package-index query, retrying only transitory failures."""
+    phase = exec_command(command)
+    status, _ = classify_external_apt_package_query(phase, package_name)
+    attempt = 1
+    while status == "unknown" and attempt < max_attempts:
+        time.sleep(backoff_seconds * attempt)
+        attempt += 1
+        phase = exec_command(command)
+        status, _ = classify_external_apt_package_query(phase, package_name)
+    return phase
+
+
 class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
     """Injected availability provider that probes packages, repositories,
     source tags and pinned artifacts inside a running disposable container.
@@ -641,7 +674,7 @@ class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
                 reason="repository_metadata_incomplete",
                 error_kind="malformed_response",
             )
-        phase = self._exec(command)
+        phase = run_external_apt_package_query(self._exec, command, package_name)
         status, reason = classify_external_apt_package_query(phase, package_name)
         if status == "available":
             return resolver.AvailabilityObservation(
@@ -1100,10 +1133,15 @@ def _resolve_dependency_queries(
                 if command is None:
                     query = _phase("malformed_response", reason="external APT repository metadata incomplete")
                 else:
-                    query = _run_phase(runtime, ["exec", name, "sh", "-lc", command])
                     if external_apt_query:
+                        query = run_external_apt_package_query(
+                            lambda cmd: _run_phase(runtime, ["exec", name, "sh", "-lc", cmd]),
+                            command,
+                            package_name,
+                        )
                         status, reason = classify_external_apt_package_query(query, package_name)
                     else:
+                        query = _run_phase(runtime, ["exec", name, "sh", "-lc", command])
                         status, reason = classify_package_query(query, case["kind"], package_name)
                     _finalize(query, status, reason)
                 query["package"] = package_name
@@ -2284,6 +2322,94 @@ class ContainerAvailabilityProviderHeadProbeTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+
+class ExternalAptQueryRetryTests(unittest.TestCase):
+    """Bounded retry for the external APT package-index probe.
+
+    A transitory curl/gzip failure (rc 2) used to surface as an inconclusive
+    UNKNOWN on the first attempt and blocked the whole L2 gate even though the
+    index is reachable. The probe must retry transitory failures, but rc 0
+    (available) and rc 1 (definitive absence) stay final and are never retried;
+    a persistent rc 2 still ends as an inconclusive phase (fail-closed).
+    """
+
+    def setUp(self) -> None:
+        sleep_patcher = mock.patch(__name__ + ".time.sleep")
+        self._sleep_mock = sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+
+    @staticmethod
+    def _phase(returncode, stdout="", stderr="", runtime_status="executed"):
+        return {
+            "runtime_status": runtime_status,
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+
+    def test_transitory_failure_is_retried_until_available(self) -> None:
+        responses = [
+            self._phase(2, "", "curl: (7) Failed to connect"),
+            self._phase(0, "Package: amneziawg\n"),
+        ]
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return responses.pop(0)
+
+        phase = run_external_apt_package_query(fake_exec, "cmd", "amneziawg")
+        self.assertEqual(phase["returncode"], 0)
+        self.assertEqual(len(calls), 2, "one retry must run after a transitory failure")
+        self.assertTrue(self._sleep_mock.called)
+
+    def test_definitive_available_is_not_retried(self) -> None:
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return self._phase(0, "Package: amneziawg\n")
+
+        phase = run_external_apt_package_query(fake_exec, "cmd", "amneziawg")
+        self.assertEqual(phase["returncode"], 0)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(self._sleep_mock.called)
+
+    def test_definitive_absence_is_not_retried(self) -> None:
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return self._phase(1, "", "")
+
+        phase = run_external_apt_package_query(fake_exec, "cmd", "amneziawg")
+        self.assertEqual(phase["returncode"], 1)
+        self.assertEqual(len(calls), 1, "rc 1 is definitive and must not be retried")
+        self.assertFalse(self._sleep_mock.called)
+
+    def test_persistent_transitory_failure_stays_inconclusive(self) -> None:
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return self._phase(2, "", "curl: (28) timeout")
+
+        phase = run_external_apt_package_query(fake_exec, "cmd", "amneziawg")
+        self.assertEqual(phase["returncode"], 2)
+        status, _ = classify_external_apt_package_query(phase, "amneziawg")
+        self.assertEqual(status, "unknown", "persistent failure must stay fail-closed")
+        self.assertEqual(len(calls), EXTERNAL_APT_QUERY_MAX_ATTEMPTS)
+
+    def test_max_attempts_is_honored(self) -> None:
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return self._phase(2, "", "")
+
+        run_external_apt_package_query(fake_exec, "cmd", "amneziawg", max_attempts=1)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":
