@@ -3877,10 +3877,12 @@ arch_pacman`, derivative with `has_own_evidence: false` and
 `arch`; the family only selects the `arch_pacman` adapter and package path,
 and no Arch or CachyOS certification, evidence, freshness or release policy is
 inherited. At admission time `support_classification` was `experimental` and
-no Manjaro certification existed (superseded by the M8 certification below). The remainder of the 11H route (install/provenance,
+no Manjaro certification existed (superseded by the M8 certification below).
+At that admission point, the remainder of the 11H route (install/provenance,
 resolver and kill-switch, the 12-protocol field matrix, reboot lifecycle,
-isolated fault harness, cleanup and closure) remains unauthorized and
-unstarted, and requires its own fresh maintainer "go".
+isolated fault harness, cleanup and closure) was unauthorized and unstarted
+and required its own maintainer "go"; those gates were subsequently completed
+and independently approved (see the M8 certification below).
 
 **M2-M7 gates and M8 certification (2026-09-17/18).** All Manjaro gates
 completed and were independently approved: M2 install/provenance, M3
