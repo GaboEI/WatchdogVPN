@@ -48,7 +48,7 @@ privileged network behavior from a CLI-first architecture. It focuses on:
 
 Phases 12 through 23 are implemented and audited, including the full operator
 CLI (Phase 22) and CLI-backed field validation (Phase 23). Phases 23.5 and 23.6
-then field-certified WatchdogVPN across eight Linux distributions. The remaining
+then field-certified WatchdogVPN across 13 Linux distributions. The remaining
 work before a frozen `v2.0.0` is:
 
 | Order | Phase | Purpose |

@@ -82,6 +82,13 @@ They share a certified adapter but have not themselves been field-tested, so the
 are not recorded as certified. AlmaLinux (11C) and openSUSE Tumbleweed (11D) are
 individually certified with their own field evidence.
 
+Manjaro (`ID=manjaro`, rolling, Arch family) is individually certified under
+Phase 23.7.5.11H with its own evidence (`cert_manjaro_rolling`): the Manjaro XFCE
+26.1.0 snapshot (kernel `6.1.187-2-MANJARO`) passed a 12/12 green protocol matrix
+with real tunnel egress, kill-switch protection and clean teardown, plus the
+reboot/suspend/autoconnect lifecycle, isolated worker fault handling and final
+decommission with baseline restore. It is never inferred from the Arch family.
+
 ### Phase 23.7.5.11D openSUSE Leap Recertification
 
 The authorized 11D documentation records a complete 12/12 openSUSE Leap 15.6

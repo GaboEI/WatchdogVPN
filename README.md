@@ -11,7 +11,7 @@
 - **Status:** v2.0.0 in active development (product line target; not a released
   tag). The installed CLI reports its own version via `watchdog version`
   (currently `v0.3.1`).
-- **Platform:** Linux — 8 distributions field-certified (see [Supported Platforms](#supported-platforms))
+- **Platform:** Linux — 13 distributions field-certified (see [Supported Platforms](#supported-platforms))
 - **Interface:** CLI first, TUI after CLI-backed validation
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 
@@ -169,17 +169,22 @@ certification.
 | --- | --- |
 | Arch Linux | native |
 | CachyOS | Arch family via `ID_LIKE` |
+| Manjaro (XFCE 26.1.0) | explicit `ID=manjaro`, Arch adapter |
 | Debian 13.6 | native |
 | Ubuntu 24.04.4 LTS | native |
-| Fedora Workstation 44 | Fedora/Red Hat-family adapter |
-| openSUSE Leap 15.6 | openSUSE adapter |
-| Rocky Linux 9 | Fedora/Red Hat-family adapter |
 | Linux Mint 22.3 | Ubuntu family via `ID_LIKE` |
+| Pop!_OS 24.04 LTS | explicit `ID=pop` (release `pop_24_04`) |
+| Fedora Workstation 44 | Fedora/Red Hat-family adapter |
+| Rocky Linux 9 | Fedora/Red Hat-family adapter |
+| AlmaLinux 9 | Fedora/Red Hat-family adapter |
+| openSUSE Leap 15.6 | openSUSE adapter |
+| openSUSE Tumbleweed 20260907 | openSUSE adapter |
+| Kali Linux Rolling 2026.3 | Debian family via `ID_LIKE` |
 
-**Compatible by family, not yet individually certified:** AlmaLinux, RHEL and
-CentOS Stream (share the Red Hat-family adapter); openSUSE Tumbleweed; other
-Debian/Ubuntu derivatives beyond Linux Mint. These are expected to work but have
-not been field-tested, so they are not claimed as certified.
+**Compatible by family, not yet individually certified:** RHEL and CentOS
+Stream (share the Red Hat-family adapter); other Debian/Ubuntu derivatives
+beyond Linux Mint and Pop!_OS. These are expected to work but have not been
+field-tested, so they are not claimed as certified.
 
 Each certification exercises the full install/update, DNS apply/reset, kill
 switch, split tunnel, panic, reboot and purge/reinstall lifecycle plus real

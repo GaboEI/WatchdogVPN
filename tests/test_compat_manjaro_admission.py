@@ -25,7 +25,7 @@ from compat.support_model import (
 from tools import compat_read
 
 ROOT = Path(__file__).resolve().parents[1]
-NOW = datetime(2026, 9, 17)
+NOW = datetime(2026, 9, 18)
 MANJARO_OS_RELEASE = "ID=manjaro\nID_LIKE=arch\nBUILD_ID=rolling\n"
 
 
@@ -90,37 +90,61 @@ class ManjaroAdmissionTests(unittest.TestCase):
 
         self.assertNotEqual(d.resolved_distribution, "arch")
         self.assertIsNone(d.resolved_release)
-        self.assertEqual(support(m, d), "experimental")
-        self.assertNotIn(support(m, d), {"certified", "family_inferred", "supported"})
+        # M8: Manjaro is officially certified from its own M1-M7 evidence; it is
+        # never inferred from the Arch family.
+        self.assertEqual(support(m, d), "certified")
 
         entry = m["distributions"]["manjaro"]
         self.assertTrue(entry["lineage"]["is_derivative"])
-        self.assertFalse(entry["lineage"]["has_own_evidence"])
+        self.assertTrue(entry["lineage"]["has_own_evidence"])
         self.assertFalse(entry["lineage"]["family_inference_allowed"])
         self.assertFalse(entry["policy"]["inherits_family_support"])
 
-        # No Manjaro release and no Manjaro certification exist, and the
-        # arch/cachyos certifications stay attached to their own distributions.
-        self.assertFalse(any(rel["distribution"] == "manjaro" for rel in m["releases"].values()))
-        self.assertFalse(
-            any(cert.get("distribution") == "manjaro" for cert in m["certifications"].values())
+        # The certification is Manjaro's own, not an Arch/CachyOS one.
+        self.assertTrue(
+            compat_read.certification_qualifies_for_support(m, "cert_manjaro_rolling")
         )
+        self.assertEqual(m["certifications"]["cert_manjaro_rolling"]["distribution"], "manjaro")
+        self.assertEqual(len(m["certifications"]["cert_manjaro_rolling"]["protocol_results"]), 12)
         for cert_id in ("cert_arch_rolling", "cert_cachyos_rolling"):
             if cert_id in m["certifications"]:
                 self.assertNotEqual(m["certifications"][cert_id].get("distribution"), "manjaro")
 
-    def test_rolling_facts_remain_experimental_without_manjaro_evidence(self) -> None:
+    def test_rolling_facts_certified_by_own_evidence_not_by_family(self) -> None:
         m = manifest()
         data = compat_read._rolling_facts(m, "manjaro")
 
         self.assertEqual(data["model"], "rolling")
-        self.assertIsNone(data["facts"]["last_validated"])
-        self.assertFalse(data["facts"]["has_valid_field_certification"])
-        self.assertFalse(data["facts"]["has_own_evidence"])
+        self.assertTrue(data["facts"]["has_valid_field_certification"])
+        self.assertTrue(data["facts"]["has_own_evidence"])
         self.assertFalse(data["facts"]["family_inference_allowed"])
-        # The arch family does have a certified anchor; Manjaro must not inherit it.
+        # The arch family does have a certified anchor; Manjaro's own certification
+        # is what certifies it, never family inference.
         self.assertTrue(data["facts"]["family_has_certified_anchor"])
 
+        facts_in = dict(data["facts"])
+        self.assertIsNotNone(facts_in["last_validated"])
+        facts_in["last_validated"] = datetime.strptime(
+            facts_in["last_validated"], "%Y-%m-%dT%H:%M:%S"
+        )
+        result = classify_support_rolling(
+            RollingFacts(**facts_in),
+            expiry=timedelta(seconds=data["expiry_seconds"]),
+            now=NOW,
+        )
+        self.assertIs(result, SupportClassification.CERTIFIED)
+
+    def test_manjaro_without_own_evidence_fails_closed(self) -> None:
+        m = manifest()
+        mutated = json.loads(json.dumps(m))
+        del mutated["certifications"]["cert_manjaro_rolling"]
+        mutated["distributions"]["manjaro"]["lineage"]["has_own_evidence"] = False
+        mutated["validation_metadata"]["rolling_policies"]["manjaro"]["last_validated"] = None
+        data = compat_read._rolling_facts(mutated, "manjaro")
+
+        self.assertFalse(data["facts"]["has_valid_field_certification"])
+        self.assertFalse(data["facts"]["has_own_evidence"])
+        self.assertIsNone(data["facts"]["last_validated"])
         result = classify_support_rolling(
             RollingFacts(**data["facts"]),
             expiry=timedelta(seconds=data["expiry_seconds"]),
@@ -150,6 +174,7 @@ class ManjaroAdmissionTests(unittest.TestCase):
         # (c) A non-derivative Manjaro without own evidence is rejected.
         malformed2 = json.loads(json.dumps(m))
         malformed2["distributions"]["manjaro"]["lineage"]["is_derivative"] = False
+        malformed2["distributions"]["manjaro"]["lineage"]["has_own_evidence"] = False
         with self.assertRaises(compat_read.ManifestError):
             compat_read.validate_manifest(malformed2)
 
@@ -216,6 +241,7 @@ class ManjaroAdmissionTests(unittest.TestCase):
                 "python3.13",
                 "certified",
             ),
+            "ID=manjaro\nID_LIKE=arch\n": ("manjaro", "python", "certified"),
         }
         provider = resolver.StaticAvailabilityProvider.all_available()
         for text, (distro_id, executable, expected_support) in expected.items():

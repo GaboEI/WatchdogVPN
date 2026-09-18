@@ -37,8 +37,8 @@ assert_file_contains() {
 }
 
 # No marker yet: no override recorded.
-DISTRO_ID="manjaro"
-DISTRO_NAME="Manjaro Linux"
+DISTRO_ID="alpine"
+DISTRO_NAME="Alpine Linux"
 if distro_experimental_override_accepted; then
   printf 'FAIL: no marker should mean no accepted override\n' >&2
   exit 1
@@ -72,8 +72,8 @@ if distro_experimental_override_accepted; then
 fi
 
 # Re-detecting the original distro still honors the earlier acceptance.
-DISTRO_ID="manjaro"
-DISTRO_NAME="Manjaro Linux"
+DISTRO_ID="alpine"
+DISTRO_NAME="Alpine Linux"
 if ! distro_experimental_override_accepted; then
   printf 'FAIL: re-detecting the original distro must still be accepted\n' >&2
   exit 1
