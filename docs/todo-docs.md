@@ -11,7 +11,8 @@ a later consolidation pass so new readers can clearly distinguish:
 
 - current v2.0.0 direction and phase status;
 - historical v0.x alpha planning documents;
-- future v3.0.0 GUI direction.
+- the approved post-v2 sequence: v2.5.0 Linux GUI, v3.0.0 macOS, v3.5.0 iOS,
+  v4.0.0 Android, and v4.5.0 Windows.
 
 Candidate files for a dedicated cleanup pass:
 

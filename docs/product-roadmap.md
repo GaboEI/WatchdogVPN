@@ -154,6 +154,8 @@ Every major phase should close with:
 
 ## Future Direction After v2.0.0
 
-After the Linux v2 line is stable, future work can consider broader GUI and
-multiplatform expansion. That future work should inherit the v2 core rather
-than bypass it.
+After the Linux v2 line is stable, the planned sequence is Linux desktop GUI
+in v2.5.0, macOS desktop in v3.0.0, iOS in v3.5.0, Android in v4.0.0, and
+native Windows desktop in v4.5.0. Each version must inherit the validated v2
+core rather than bypass it, and must have a dedicated release plan before
+implementation.
