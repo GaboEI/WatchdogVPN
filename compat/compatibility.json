@@ -1183,7 +1183,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "rhel_9",
               "rocky_9"
             ],
@@ -1247,10 +1246,6 @@
             },
             {
               "target_id": "rhel_9",
-              "series": "epel9"
-            },
-            {
-              "target_id": "centos_stream_9",
               "series": "epel9"
             }
           ],
@@ -1459,6 +1454,70 @@
               "arch_pacman"
             ]
           }
+        },
+        {
+          "id": "base_runtime_dnf_rhel9_with_epel_exact_centos_stream_rolling",
+          "priority": 8,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "glibc-common",
+            "shadow-utils",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python3",
+            "curl",
+            "tar",
+            "iproute",
+            "NetworkManager",
+            "logrotate",
+            "libnotify",
+            "openvpn",
+            "util-linux",
+            "polkit",
+            "nftables",
+            "iptables-nft",
+            "iputils",
+            "procps-ng",
+            "firewalld",
+            "systemd-resolved",
+            "python3.11"
+          ],
+          "runtime_python": {
+            "executable": "python3.11",
+            "package": "python3.11",
+            "cryptography_package": "python3.11-cryptography"
+          },
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_base_runtime_commands",
+          "evidence": [
+            "distros/fedora.sh RHEL-family branch requires EPEL before complete base runtime package reconciliation because openvpn is EPEL-only"
+          ]
         }
       ]
     },
@@ -1601,7 +1660,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "rhel_9",
               "rocky_9"
             ],
@@ -1711,6 +1769,40 @@
             "stable_releases": [],
             "technical_families": [
               "arch_pacman"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_dnf_rhel9_official_centos_stream_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "python3.11"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 8,
+          "runtime_python": {
+            "cryptography_package": "python3.11-cryptography",
+            "executable": "python3.11",
+            "package": "python3.11"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
             ]
           }
         }
@@ -1855,7 +1947,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "rhel_9",
               "rocky_9"
             ],
@@ -1967,6 +2058,40 @@
               "arch_pacman"
             ]
           }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_dnf_rhel9_official_centos_stream_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "python3.11-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 8,
+          "runtime_python": {
+            "cryptography_package": "python3.11-cryptography",
+            "executable": "python3.11",
+            "package": "python3.11"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
         }
       ]
     },
@@ -2047,7 +2172,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "fedora_44",
               "rhel_9",
               "rocky_9"
@@ -2150,6 +2274,35 @@
             "aarch64"
           ],
           "package_manager": "pacman",
+          "package_names": [
+            "polkit"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_polkit",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "polkit_dnf_stable_centos_stream_rolling",
+          "priority": 7,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
           "package_names": [
             "polkit"
           ],
@@ -2268,7 +2421,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "fedora_44",
               "rhel_9",
               "rocky_9"
@@ -2379,6 +2531,35 @@
           "evidence": [
             "lib/packages.sh package inventory audit"
           ]
+        },
+        {
+          "id": "dns_runtime_dnf_stable_centos_stream_rolling",
+          "priority": 8,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "bind-utils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
         }
       ]
     },
@@ -2459,7 +2640,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "fedora_44",
               "rhel_9",
               "rocky_9"
@@ -2570,6 +2750,35 @@
           "evidence": [
             "lib/packages.sh DISTRO_BASE_PACKAGES audit"
           ]
+        },
+        {
+          "id": "network_manager_dnf_official_centos_stream_rolling",
+          "priority": 7,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "NetworkManager"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_network_manager",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
         }
       ]
     },
@@ -2650,7 +2859,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "fedora_44",
               "rhel_9",
               "rocky_9"
@@ -2753,6 +2961,35 @@
             "aarch64"
           ],
           "package_manager": "pacman",
+          "package_names": [
+            "nftables"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_nftables",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "nftables_dnf_official_centos_stream_rolling",
+          "priority": 7,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
           "package_names": [
             "nftables"
           ],
@@ -2872,10 +3109,6 @@
             },
             {
               "series": "epel9",
-              "target_id": "centos_stream_9"
-            },
-            {
-              "series": "epel9",
               "target_id": "rhel_9"
             },
             {
@@ -2912,7 +3145,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "rhel_9",
               "rocky_9"
             ],
@@ -3009,6 +3241,35 @@
               "arch_pacman"
             ]
           }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "id": "openvpn_epel_rhel9_exact_centos_stream_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 8,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
         }
       ]
     },
@@ -3065,7 +3326,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "debian_13",
               "fedora_44",
               "linuxmint_22_3",
@@ -3136,7 +3396,8 @@
               "cachyos",
               "kali",
               "manjaro",
-              "opensuse_tumbleweed"
+              "opensuse_tumbleweed",
+              "centos_stream"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -3204,7 +3465,6 @@
             "rolling_distributions": [],
             "stable_releases": [
               "almalinux_9",
-              "centos_stream_9",
               "debian_13",
               "fedora_44",
               "linuxmint_22_3",
@@ -3275,7 +3535,8 @@
               "cachyos",
               "kali",
               "manjaro",
-              "opensuse_tumbleweed"
+              "opensuse_tumbleweed",
+              "centos_stream"
             ],
             "stable_releases": [],
             "technical_families": [
@@ -3557,8 +3818,7 @@
               "fedora_44",
               "rocky_9",
               "almalinux_9",
-              "rhel_9",
-              "centos_stream_9"
+              "rhel_9"
             ],
             "technical_families": [
               "redhat_dnf"
@@ -3846,6 +4106,76 @@
               "arch_pacman"
             ]
           }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "golang",
+            "git",
+            "make",
+            "gcc"
+          ],
+          "components": [
+            {
+              "build_dependencies": [
+                "golang",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_tools",
+              "expected_outputs": [
+                "awg",
+                "awg-quick"
+              ],
+              "postcondition": "amneziawg_tools_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+              "resolution": "latest_official_release"
+            },
+            {
+              "build_dependencies": [
+                "golang",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_transport",
+              "expected_outputs": [
+                "amneziawg-go"
+              ],
+              "postcondition": "amneziawg_transport_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+              "resolution": "latest_official_release"
+            }
+          ],
+          "evidence": [
+            "Task 23.7.5.6b source-build hardening resolves the latest official AmneziaWG release (tag plus exact commit) at execution time, and the manifest no longer freezes a tag or revision"
+          ],
+          "expected_outputs": [
+            "awg",
+            "awg-quick",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_dnf_stable_centos_stream_rolling",
+          "implementation_status": "implemented",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 10,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
         }
       ]
     }
@@ -3923,15 +4253,15 @@
       ],
       "policy": {
         "inherits_family_support": false,
-        "stable": {
-          "admitted_releases": [],
-          "excluded_releases": [],
-          "pending_releases": [
-            "centos_stream_9"
-          ]
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": null,
+          "meets_technical_floor": true
         }
       },
-      "release_model": "stable",
+      "release_model": "rolling",
       "technical_family": "redhat_dnf"
     },
     "debian": {
@@ -4325,18 +4655,6 @@
       "vendor_maintained": true,
       "version": "9"
     },
-    "centos_stream_9": {
-      "distribution": "centos_stream",
-      "eol_or_withdrawn": false,
-      "evidence_refs": [],
-      "meets_technical_floor": true,
-      "os_release_version_ids": [
-        "9"
-      ],
-      "policy_state": "pending_evaluation",
-      "vendor_maintained": true,
-      "version": "9"
-    },
     "debian_13": {
       "codename": "trixie",
       "distribution": "debian",
@@ -4666,11 +4984,6 @@
     },
     "per_release_ci": {
       "almalinux_9": {
-        "evidence": null,
-        "l1_l2_green": false,
-        "status": "not_run"
-      },
-      "centos_stream_9": {
         "evidence": null,
         "l1_l2_green": false,
         "status": "not_run"

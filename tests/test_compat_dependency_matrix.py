@@ -127,13 +127,13 @@ class FocusedDependencyMatrixContractTests(unittest.TestCase):
             "python": "python3.11",
             "openvpn": "openvpn_epel_rhel9_exact",
         },
-        "centos_stream_9": {
+        "centos_stream": {
             "os_release": "ID=centos\nVERSION_ID=9\nPRETTY_NAME=\"CentOS Stream 9\"\n",
             "support": "family_inferred",
-            "release_model": "stable",
-            "resolved_release": "centos_stream_9",
+            "release_model": "rolling",
+            "resolved_release": None,
             "python": "python3.11",
-            "openvpn": "openvpn_epel_rhel9_exact",
+            "openvpn": "openvpn_epel_rhel9_exact_centos_stream_rolling",
         },
         "opensuse_leap_15_6": {
             "os_release": "ID=opensuse-leap\nVERSION_ID=15.6\n",

@@ -281,7 +281,7 @@ class DistributionResolutionTests(unittest.TestCase):
         ),
         "leap": ("ID=opensuse-leap\nVERSION_ID=15.6\n", "opensuse_leap", "opensuse_leap_15_6", "certified"),
         "alma": ("ID=almalinux\nVERSION_ID=9.6\n", "almalinux", "almalinux_9", "certified"),
-        "centos": ("ID=centos\nVERSION_ID=9\nPRETTY_NAME=\"CentOS Stream 9\"\n", "centos_stream", "centos_stream_9", "family_inferred"),
+        "centos": ("ID=centos\nVERSION_ID=9\nPRETTY_NAME=\"CentOS Stream 9\"\n", "centos_stream", None, "family_inferred"),
         "rhel": ("ID=rhel\nVERSION_ID=9\n", "rhel", "rhel_9", "family_inferred"),
         "tumbleweed": ("ID=opensuse-tumbleweed\nID_LIKE=opensuse\n", "opensuse_tumbleweed", None, "certified"),
         "kali": ("ID=kali\nID_LIKE=debian\nVERSION_ID=2026.2\n", "kali", None, "certified"),

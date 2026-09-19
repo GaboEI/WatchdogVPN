@@ -898,10 +898,20 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         # A certified derivative with own evidence classifies as CERTIFIED.
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
         self.assertIs(classify_support_stable(alma), SupportClassification.CERTIFIED)
-        # A derivative without own evidence (CentOS Stream) is FAMILY_INFERRED
-        # from the certified redhat_dnf anchor (Rocky).
-        centos = StableReleaseFacts(**compat_read._stable_facts(manifest, "centos_stream_9")["facts"])
-        self.assertIs(classify_support_stable(centos), SupportClassification.FAMILY_INFERRED)
+        # A rolling derivative without own evidence (CentOS Stream) is
+        # FAMILY_INFERRED from the certified redhat_dnf anchor (Fedora/Rocky/AlmaLinux).
+        centos_data = compat_read._rolling_facts(manifest, "centos_stream")
+        centos = RollingFacts(**centos_data["facts"])
+        self.assertFalse(centos.has_valid_field_certification)
+        self.assertTrue(centos.family_has_certified_anchor)
+        self.assertIs(
+            classify_support_rolling(
+                centos,
+                expiry=timedelta(seconds=centos_data["expiry_seconds"]),
+                now=datetime(2026, 9, 14, 0, 0, 0),
+            ),
+            SupportClassification.FAMILY_INFERRED,
+        )
         # A certified rolling derivative with its own evidence (Tumbleweed) is
         # CERTIFIED regardless of the family anchor.
         tumbleweed_data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
@@ -927,8 +937,17 @@ class ManifestInvalidCasesTests(unittest.TestCase):
             if manifest["distributions"][cert["distribution"]]["technical_family"] == "redhat_dnf":
                 cert["current"] = False
         manifest["releases"]["almalinux_9"]["evidence_refs"] = []
-        centos = StableReleaseFacts(**compat_read._stable_facts(manifest, "centos_stream_9")["facts"])
-        self.assertIs(classify_support_stable(centos), SupportClassification.EXPERIMENTAL)
+        centos_data = compat_read._rolling_facts(manifest, "centos_stream")
+        centos = RollingFacts(**centos_data["facts"])
+        self.assertFalse(centos.family_has_certified_anchor)
+        self.assertIs(
+            classify_support_rolling(
+                centos,
+                expiry=timedelta(seconds=centos_data["expiry_seconds"]),
+                now=datetime(2026, 9, 14, 0, 0, 0),
+            ),
+            SupportClassification.EXPERIMENTAL,
+        )
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
         self.assertIs(classify_support_stable(alma), SupportClassification.EXPERIMENTAL)
 
