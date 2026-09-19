@@ -10,6 +10,7 @@ on:
       - phase-23-7-5-11E-kali
       - phase-23-7-5-11G-pop-os
       - phase-23-7-5-11H-manjaro
+      - phase-23-7-5-11F-centos-stream
   pull_request:
     branches:
       - phase-23-7-5-compatibility-contract
@@ -19,6 +20,7 @@ on:
       - phase-23-7-5-11E-kali
       - phase-23-7-5-11G-pop-os
       - phase-23-7-5-11H-manjaro
+      - phase-23-7-5-11F-centos-stream
   workflow_dispatch:
 
 concurrency:
