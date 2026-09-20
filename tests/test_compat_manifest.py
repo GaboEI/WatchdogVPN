@@ -566,7 +566,16 @@ class ManifestValidCasesTests(unittest.TestCase):
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
-        self.assertEqual(len(manifest["certifications"]), 14)
+        # Every declared certification must qualify; the count is derived from
+        # the manifest, never hardcoded, so adding a certification cannot pass
+        # by editing a literal here.
+        declared = set(manifest["certifications"])
+        qualifying = {
+            cert_id
+            for cert_id in declared
+            if compat_read.certification_qualifies_for_support(manifest, cert_id)
+        }
+        self.assertEqual(qualifying, declared)
         for cert_id, cert in manifest["certifications"].items():
             with self.subTest(cert_id=cert_id):
                 self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))
@@ -898,10 +907,25 @@ class ManifestInvalidCasesTests(unittest.TestCase):
         # A certified derivative with own evidence classifies as CERTIFIED.
         alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
         self.assertIs(classify_support_stable(alma), SupportClassification.CERTIFIED)
-        # A derivative without own evidence (CentOS Stream) is FAMILY_INFERRED
-        # from the certified redhat_dnf anchor (Rocky).
-        centos = StableReleaseFacts(**compat_read._stable_facts(manifest, "centos_stream_9")["facts"])
-        self.assertIs(classify_support_stable(centos), SupportClassification.FAMILY_INFERRED)
+        # CentOS Stream carries its own rolling certification: it is CERTIFIED
+        # from its own evidence, never inferred from the redhat_dnf family.
+        centos_data = compat_read._rolling_facts(manifest, "centos_stream")
+        centos = RollingFacts(
+            **{
+                **centos_data["facts"],
+                "last_validated": datetime.fromisoformat(centos_data["facts"]["last_validated"]),
+            }
+        )
+        self.assertTrue(centos.has_valid_field_certification)
+        self.assertTrue(centos.has_own_evidence)
+        self.assertIs(
+            classify_support_rolling(
+                centos,
+                expiry=timedelta(seconds=centos_data["expiry_seconds"]),
+                now=datetime(2026, 9, 20, 0, 0, 0),
+            ),
+            SupportClassification.CERTIFIED,
+        )
         # A certified rolling derivative with its own evidence (Tumbleweed) is
         # CERTIFIED regardless of the family anchor.
         tumbleweed_data = compat_read._rolling_facts(manifest, "opensuse_tumbleweed")
@@ -916,20 +940,50 @@ class ManifestInvalidCasesTests(unittest.TestCase):
             classify_support_rolling(
                 tumbleweed,
                 expiry=timedelta(seconds=tumbleweed_data["expiry_seconds"]),
-                now=datetime(2026, 9, 14, 0, 0, 0),
+                now=datetime(2026, 9, 20, 0, 0, 0),
             ),
             SupportClassification.CERTIFIED,
         )
 
+        # The family-inference path is preserved with a synthetic derivative that
+        # has no own evidence: it is FAMILY_INFERRED from the certified
+        # redhat_dnf anchor (Fedora/Rocky/AlmaLinux).
+        inferred = self.product_copy()
+        inferred["certifications"]["cert_centos_stream_rolling"]["current"] = False
+        inferred["distributions"]["centos_stream"]["lineage"]["has_own_evidence"] = False
+        inferred["validation_metadata"]["rolling_policies"]["centos_stream"]["last_validated"] = None
+        inferred["distributions"]["centos_stream"]["policy"]["rolling"]["last_validated"] = None
+        inferred_data = compat_read._rolling_facts(inferred, "centos_stream")
+        inferred_facts = RollingFacts(**inferred_data["facts"])
+        self.assertFalse(inferred_facts.has_valid_field_certification)
+        self.assertTrue(inferred_facts.family_has_certified_anchor)
+        self.assertIs(
+            classify_support_rolling(
+                inferred_facts,
+                expiry=timedelta(seconds=inferred_data["expiry_seconds"]),
+                now=datetime(2026, 9, 20, 0, 0, 0),
+            ),
+            SupportClassification.FAMILY_INFERRED,
+        )
+
         # Without any current redhat_dnf certification there is no anchor: the
         # derivative drops from FAMILY_INFERRED to EXPERIMENTAL.
-        for cert in manifest["certifications"].values():
-            if manifest["distributions"][cert["distribution"]]["technical_family"] == "redhat_dnf":
+        for cert in inferred["certifications"].values():
+            if inferred["distributions"][cert["distribution"]]["technical_family"] == "redhat_dnf":
                 cert["current"] = False
-        manifest["releases"]["almalinux_9"]["evidence_refs"] = []
-        centos = StableReleaseFacts(**compat_read._stable_facts(manifest, "centos_stream_9")["facts"])
-        self.assertIs(classify_support_stable(centos), SupportClassification.EXPERIMENTAL)
-        alma = StableReleaseFacts(**compat_read._stable_facts(manifest, "almalinux_9")["facts"])
+        inferred["releases"]["almalinux_9"]["evidence_refs"] = []
+        inferred_data = compat_read._rolling_facts(inferred, "centos_stream")
+        inferred_facts = RollingFacts(**inferred_data["facts"])
+        self.assertFalse(inferred_facts.family_has_certified_anchor)
+        self.assertIs(
+            classify_support_rolling(
+                inferred_facts,
+                expiry=timedelta(seconds=inferred_data["expiry_seconds"]),
+                now=datetime(2026, 9, 20, 0, 0, 0),
+            ),
+            SupportClassification.EXPERIMENTAL,
+        )
+        alma = StableReleaseFacts(**compat_read._stable_facts(inferred, "almalinux_9")["facts"])
         self.assertIs(classify_support_stable(alma), SupportClassification.EXPERIMENTAL)
 
         # The rolling family-inference path is preserved with a synthetic

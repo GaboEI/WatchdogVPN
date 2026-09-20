@@ -11,7 +11,7 @@
 - **Status:** v2.0.0 in active development (product line target; not a released
   tag). The installed CLI reports its own version via `watchdog version`
   (currently `v0.3.1`).
-- **Platform:** Linux — 13 distributions field-certified (see [Supported Platforms](#supported-platforms))
+- **Platform:** Linux — 14 distributions field-certified (see [Supported Platforms](#supported-platforms))
 - **Interface:** CLI first, TUI after CLI-backed validation
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 
@@ -177,14 +177,21 @@ certification.
 | Fedora Workstation 44 | Fedora/Red Hat-family adapter |
 | Rocky Linux 9 | Fedora/Red Hat-family adapter |
 | AlmaLinux 9 | Fedora/Red Hat-family adapter |
+| CentOS Stream 9 | explicit `ID=centos`, Fedora/Red Hat-family adapter |
 | openSUSE Leap 15.6 | openSUSE adapter |
 | openSUSE Tumbleweed 20260907 | openSUSE adapter |
 | Kali Linux Rolling 2026.3 | Debian family via `ID_LIKE` |
 
-**Compatible by family, not yet individually certified:** RHEL and CentOS
-Stream (share the Red Hat-family adapter); other Debian/Ubuntu derivatives
-beyond Linux Mint and Pop!_OS. These are expected to work but have not been
-field-tested, so they are not claimed as certified.
+**Compatible by family, not yet individually certified:** RHEL (shares the Red
+Hat-family adapter); other Debian/Ubuntu derivatives beyond Linux Mint and
+Pop!_OS. These are expected to work but have not been field-tested, so they are
+not claimed as certified.
+
+CentOS Stream 9 (rolling) is certified and supported, and is compatible with the
+same protocols as every other certified distribution: VLESS, Trojan, Hysteria2,
+AmneziaWG, OpenVPN over Cloak, WireGuard, TUIC, HTTP, Shadowsocks, VMess, SOCKS
+and plain OpenVPN. **CentOS Stream certification does not certify RHEL**: RHEL is
+a separate product with its own release model and is not claimed as certified.
 
 Each certification exercises the full install/update, DNS apply/reset, kill
 switch, split tunnel, panic, reboot and purge/reinstall lifecycle plus real
