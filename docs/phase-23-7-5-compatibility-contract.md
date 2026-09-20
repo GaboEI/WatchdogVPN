@@ -266,9 +266,9 @@ cannot produce a certified fact or a family anchor.
 
 Manifest content is conservative and sourced from the Phase 23.5/23.6/23.7.5
 record: the physically certified distributions/releases/snapshots are represented
-with certification records (including AlmaLinux 9, Kali and openSUSE Tumbleweed
-after their 11C/11D field certifications); RHEL and CentOS Stream carry absent or
-inferred evidence rather than promoted support; Ubuntu 26.04 is represented as
+with certification records (including AlmaLinux 9, Kali, openSUSE Tumbleweed,
+Manjaro and CentOS Stream after their field certifications); RHEL carries absent
+or inferred evidence rather than promoted support; Ubuntu 26.04 is represented as
 pending/not-yet-admitted evidence, not as a field certification. The protocol list records required runtimes and evidence policy, including
 the permanent distinction between functional rows and the three formal non-green Plan-B /
 no-egress rows; it does not claim that all twelve protocols are green across a family.

@@ -53,6 +53,7 @@ Current manually reported validation status:
 | Fedora Workstation 44 | Certified | SELinux enforcing; Fedora/Red Hat-family `dnf` adapter; full lifecycle and real egress (Phase 23.6). |
 | openSUSE Leap 15.6 | Certified | AppArmor present; `zypper` adapter; full lifecycle and real egress (Phase 23.6). |
 | Rocky Linux 9 | Certified | SELinux enforcing; Red Hat-family adapter; full lifecycle and real egress (Phase 23.6). |
+| CentOS Stream 9 (rolling) | Certified | SELinux enforcing; explicit `ID=centos`, Fedora/Red Hat-family `dnf` adapter; full lifecycle and real per-protocol egress. |
 | Linux Mint 22.3 | Certified | Ubuntu adapter via `ID_LIKE`; full lifecycle and real egress (Phase 23.6). |
 | Pop!_OS 24.04 LTS | Certified (proposed) | Explicit `ID=pop` admission; Ubuntu-family adapter; full lifecycle and real per-protocol egress. |
 
@@ -76,11 +77,11 @@ The CachyOS result also confirms the Arch adapter works for a real install flow
 with advanced DNS, and the installer gives reboot guidance if the tunnel remains
 degraded after setup.
 
-Family-inferred, not yet individually certified: RHEL and CentOS Stream (share
-the Red Hat-family adapter); other Debian/Ubuntu derivatives beyond Linux Mint.
-They share a certified adapter but have not themselves been field-tested, so they
-are not recorded as certified. AlmaLinux (11C) and openSUSE Tumbleweed (11D) are
-individually certified with their own field evidence.
+Family-inferred, not yet individually certified: RHEL (shares the Red Hat-family
+adapter); other Debian/Ubuntu derivatives beyond Linux Mint. RHEL shares a
+certified adapter but has not itself been field-tested, so it is not recorded as
+certified. AlmaLinux and openSUSE Tumbleweed are individually certified with
+their own field evidence.
 
 Manjaro (`ID=manjaro`, rolling, Arch family) is individually certified under
 Phase 23.7.5.11H with its own evidence (`cert_manjaro_rolling`): the Manjaro XFCE
@@ -88,6 +89,19 @@ Phase 23.7.5.11H with its own evidence (`cert_manjaro_rolling`): the Manjaro XFC
 with real tunnel egress, kill-switch protection and clean teardown, plus the
 reboot/suspend/autoconnect lifecycle, isolated worker fault handling and final
 decommission with baseline restore. It is never inferred from the Arch family.
+
+CentOS Stream 9 (`ID=centos`, rolling, Fedora/Red Hat-family `dnf` adapter) is
+individually certified with its own evidence (`cert_centos_stream_rolling`): the
+CentOS Stream 9 rolling snapshot (kernel `5.14.0-745.el9`) passed a 12/12 green
+protocol matrix with real tunnel egress, kill-switch protection and clean
+teardown, plus DNS-leak protection, FakeIP verification, split-tunnel path
+separation, provider import and forced rotation, the reboot/suspend lifecycle
+with autoconnect fail-closed recovery, isolated fail-closed worker fault
+handling, and a final cleanup that restored the network baseline with an empty
+product state. It supports the same 12 protocols as every other certified
+distribution: VLESS, Trojan, Hysteria2, AmneziaWG, OpenVPN over Cloak, WireGuard,
+TUIC, HTTP, Shadowsocks, VMess, SOCKS and plain OpenVPN. **CentOS Stream
+certification does not certify RHEL.**
 
 ### Phase 23.7.5.11D openSUSE Leap Recertification
 

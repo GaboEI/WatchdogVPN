@@ -59,7 +59,7 @@ def support(manifest_data, facts):
         facts,
         ready_core(manifest_data, facts),
         present_protocols(manifest_data),
-        now=datetime(2026, 9, 14),
+        now=datetime(2026, 9, 20),
     ).support_classification
 
 
@@ -129,7 +129,7 @@ class FocusedDependencyMatrixContractTests(unittest.TestCase):
         },
         "centos_stream": {
             "os_release": "ID=centos\nVERSION_ID=9\nPRETTY_NAME=\"CentOS Stream 9\"\n",
-            "support": "family_inferred",
+            "support": "certified",
             "release_model": "rolling",
             "resolved_release": None,
             "python": "python3.11",

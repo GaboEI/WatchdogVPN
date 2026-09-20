@@ -39,11 +39,21 @@ class PublicCertificationCountTests(unittest.TestCase):
         manifest = detection.load_product_manifest()
         records = qualifying_certification_ids(manifest)
         distros = qualifying_distributions(manifest)
-        self.assertEqual(len(distros), 13)
-        self.assertEqual(len(records), 14)
-        self.assertIn("manjaro", distros)
+        # Every declared certification must qualify for support and carry the
+        # full 12-protocol physical-field profile. The public count is derived
+        # from the manifest, never hardcoded here.
+        self.assertEqual(set(records), set(manifest["certifications"]))
         for cert_id in records:
             self.assertEqual(len(manifest["certifications"][cert_id]["protocol_results"]), 12)
+        self.assertEqual(
+            len(distros),
+            len({manifest["certifications"][cert_id]["distribution"] for cert_id in records}),
+        )
+        self.assertIn("manjaro", distros)
+        self.assertIn("centos_stream", distros)
+        self.assertTrue(
+            compat_read.certification_qualifies_for_support(manifest, "cert_centos_stream_rolling")
+        )
 
     def test_readme_count_matches_manifest(self) -> None:
         manifest = detection.load_product_manifest()
