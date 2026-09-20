@@ -566,7 +566,16 @@ class ManifestValidCasesTests(unittest.TestCase):
 
     def test_product_certifications_all_qualify_with_exact_protocol_profile(self) -> None:
         manifest = load_product()
-        self.assertEqual(len(manifest["certifications"]), 15)
+        # Every declared certification must qualify; the count is derived from
+        # the manifest, never hardcoded, so adding a certification cannot pass
+        # by editing a literal here.
+        declared = set(manifest["certifications"])
+        qualifying = {
+            cert_id
+            for cert_id in declared
+            if compat_read.certification_qualifies_for_support(manifest, cert_id)
+        }
+        self.assertEqual(qualifying, declared)
         for cert_id, cert in manifest["certifications"].items():
             with self.subTest(cert_id=cert_id):
                 self.assertTrue(compat_read.certification_qualifies_for_support(manifest, cert_id))

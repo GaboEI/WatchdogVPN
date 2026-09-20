@@ -151,7 +151,7 @@ class CentosStreamCertificationTests(unittest.TestCase):
 
         self.assertEqual(set(results.keys()), EXPECTED_PROTOCOLS)
         self.assertEqual(set(results.keys()), set(m["protocols"].keys()))
-        self.assertEqual(len(results), 12)
+        self.assertEqual(len(results), len(m["protocols"]))
         for protocol_id, result in results.items():
             self.assertEqual(result["disposition"], "green", protocol_id)
             self.assertTrue(result["evidence"].strip(), protocol_id)

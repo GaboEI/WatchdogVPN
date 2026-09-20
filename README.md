@@ -187,12 +187,11 @@ Hat-family adapter); other Debian/Ubuntu derivatives beyond Linux Mint and
 Pop!_OS. These are expected to work but have not been field-tested, so they are
 not claimed as certified.
 
-CentOS Stream 9 (rolling) is certified with its own field evidence and supports
-the same 12 protocols as every other certified distribution: VLESS, Trojan,
-Hysteria2, AmneziaWG, OpenVPN over Cloak, WireGuard, TUIC, HTTP, Shadowsocks,
-VMess, SOCKS and plain OpenVPN. **CentOS Stream certification does not certify
-RHEL**: RHEL is a separate product with its own release model and is not claimed
-as certified.
+CentOS Stream 9 (rolling) is certified and supported, and is compatible with the
+same protocols as every other certified distribution: VLESS, Trojan, Hysteria2,
+AmneziaWG, OpenVPN over Cloak, WireGuard, TUIC, HTTP, Shadowsocks, VMess, SOCKS
+and plain OpenVPN. **CentOS Stream certification does not certify RHEL**: RHEL is
+a separate product with its own release model and is not claimed as certified.
 
 Each certification exercises the full install/update, DNS apply/reset, kill
 switch, split tunnel, panic, reboot and purge/reinstall lifecycle plus real

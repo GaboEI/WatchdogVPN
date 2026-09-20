@@ -8,9 +8,9 @@ This document defines how the product scripts should behave.
   Hat-family adapter path and the openSUSE adapter path.
 - Fedora/Red Hat-family support means installer/update package reconciliation
   is implemented through `dnf`. Fedora Workstation 44, Rocky Linux 9, AlmaLinux 9
-  and CentOS Stream 9 (rolling) are field-certified with their own evidence.
-  RHEL shares the same adapter but remains family-inferred until individually
-  field-tested. CentOS Stream certification does not certify RHEL.
+  and CentOS Stream 9 (rolling) are certified and supported. RHEL shares the same
+  adapter but remains family-inferred until individually certified. CentOS Stream
+  certification does not certify RHEL.
 - openSUSE support means installer/update package reconciliation is implemented
   through `zypper`. openSUSE Leap 15.6 and openSUSE Tumbleweed `20260907` are
   both field-certified with their own evidence (Phase 23.6 for Leap; Phase

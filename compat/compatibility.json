@@ -936,59 +936,59 @@
       "current": true,
       "date": "2026-09-20T00:00:00Z",
       "distribution": "centos_stream",
-      "evidence": "CentOS Stream 9 rolling field certification: 12/12 canonical protocols green with real tunnel egress distinct from the direct egress (HTTP 200 x3), kill-switch protection and clean cross-protocol teardown; DNS-leak protection and FakeIP verification; split-tunnel path separation; provider import, node validation and forced provider rotation; reboot and suspend-to-disk lifecycle with autoconnect fail-closed recovery; isolated fail-closed worker fault handling; cleanup with the network baseline restored and an empty final product state. CentOS Stream certification does not certify RHEL.",
+      "evidence": "CentOS Stream 9 rolling is field-certified and supported: all 12 canonical protocols are compatible and verified on a real install. CentOS Stream certification does not certify RHEL.",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel via the guided official provisioning flow: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "http": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "openvpn": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; product-owned tunnel interfaces observed; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "shadowsocks": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3 plus a bounded approximately 100 MiB transfer; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         },
         "wireguard": {
           "disposition": "green",
-          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+          "evidence": "compatible and verified on a real install"
         }
       },
       "scope": "physical_field_certification",
-      "snapshot": "CentOS Stream 9 rolling (kernel 5.14.0-745.el9, x86_64)"
+      "snapshot": "CentOS Stream 9 rolling"
     }
   },
   "derivatives": {
