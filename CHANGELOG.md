@@ -13,9 +13,11 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 - Field-certify WatchdogVPN end to end on eight Linux distributions with real
   per-protocol egress and clean teardown: Arch, CachyOS, Debian 13.6 and Ubuntu
   24.04.4 LTS (Phase 23.5), plus Fedora Workstation 44, openSUSE Leap 15.6,
-  Rocky Linux 9 and Linux Mint 22.3 (Phase 23.6). AlmaLinux, RHEL, CentOS
-  Stream, openSUSE Tumbleweed and other Debian/Ubuntu derivatives share a
-  certified adapter but remain family-inferred until individually field-tested.
+  Rocky Linux 9 and Linux Mint 22.3 (Phase 23.6). Later field certification
+  (Phase 23.7.5.11) individually certified AlmaLinux 9, CentOS Stream 9,
+  openSUSE Tumbleweed, Manjaro, Pop!_OS and Kali Linux; RHEL and other
+  derivatives share a certified adapter and remain family-inferred until
+  individually field-tested.
 - Add the Fedora/Red Hat-family `dnf` adapter and the openSUSE `zypper` adapter,
   plus a conservative `ID_LIKE` fallback that maps Debian/Ubuntu derivatives
   (for example Linux Mint) to the correct adapter without promoting unrelated

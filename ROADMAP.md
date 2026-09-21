@@ -41,7 +41,7 @@ privileged network behavior from a CLI-first architecture. It focuses on:
 | Routing rules / connection modes | Implemented and audited |
 | Legacy provider/runtime cleanup | Completed |
 | Full CLI and field validation | Implemented and audited (Phases 22-23) |
-| Multi-distro certification | Field-certified on 8 Linux distributions (Phases 23.5-23.6); family-inferred distros documented, not claimed as certified |
+| Multi-distro certification | Field-certified on 14 Linux distributions (Phases 23.5-23.7.5); family-inferred distros documented, not claimed as certified |
 | Roadmap reconciliation | Completed after v2 scope expansion |
 
 ## Active v2 Work Ahead
