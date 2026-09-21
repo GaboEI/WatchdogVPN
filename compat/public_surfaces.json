@@ -1050,6 +1050,13 @@
       "owner": "maintainer",
       "managed_region": null,
       "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "external:github-about",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
     }
   ]
 }
