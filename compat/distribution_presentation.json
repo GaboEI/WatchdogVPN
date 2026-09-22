@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Single authoritative, versioned, machine-readable source of public distribution display labels for Task 23.7.5.12 public compatibility documentation generation. Keyed by the exact manifest distribution id (compat/compatibility.json distributions.<id>.id). Presentation-only: it does not define support, certification, policy, or classification facts, which come only from the compatibility manifest and compat/support_model.py. Do not duplicate these values in generator code, tests, fixtures, comments, or any second policy file.",
+  "distributions": {
+    "almalinux": "AlmaLinux",
+    "arch": "Arch Linux",
+    "cachyos": "CachyOS",
+    "centos_stream": "CentOS Stream",
+    "debian": "Debian",
+    "fedora": "Fedora",
+    "kali": "Kali GNU/Linux",
+    "linuxmint": "Linux Mint",
+    "manjaro": "Manjaro",
+    "opensuse_leap": "openSUSE Leap",
+    "opensuse_tumbleweed": "openSUSE Tumbleweed",
+    "pop": "Pop!_OS",
+    "rhel": "Red Hat Enterprise Linux",
+    "rocky": "Rocky Linux",
+    "ubuntu": "Ubuntu"
+  }
+}
