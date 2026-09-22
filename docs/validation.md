@@ -1,380 +1,129 @@
-# Validation
+# Compatibility and Checks
 
-This repository separates lightweight validation from system-level validation.
+This page describes how the product reports support and how the system can be
+checked locally.
 
-## Local Syntax Checks
+## Health Check
 
-These checks do not modify the system:
+The read-only product health check reports the current system state without
+modifying it:
 
 ```sh
-python3 -m compileall -q tui tests/unit/test_tui_modules.py
-bash tests/syntax.sh
-bash tests/unit.sh
 ./doctor.sh
 ```
 
-## Public Clone Smoke Test
+## Distribution Compatibility
 
-Last recorded public clone smoke test: 2026-05-15.
+WatchdogVPN support is defined per release. The table below lists every
+distribution and release the product knows about, its release model and its
+current support classification.
 
-Commands:
+<!-- BEGIN GENERATED: compat-support-table -->
+| Distribution | Release | Model | Support | Certification | Freshness | Protocols |
+| --- | --- | --- | --- | --- | --- | --- |
+| AlmaLinux | AlmaLinux 9 | stable | certified | 2026-09-02 | — | All 12 in-scope protocols |
+| Arch Linux | Arch Linux | rolling | certified | 2026-08-15 | current (365 days) | All 12 in-scope protocols |
+| CachyOS | CachyOS | rolling | certified | 2026-08-16 | current (365 days) | All 12 in-scope protocols |
+| CentOS Stream | CentOS Stream | rolling | certified | 2026-09-20 | current (365 days) | All 12 in-scope protocols |
+| Debian | Debian 13.6 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Fedora | Fedora 44 | stable | certified | 2026-08-19 | — | All 12 in-scope protocols |
+| Kali GNU/Linux | Kali GNU/Linux | rolling | certified | 2026-09-14 | current (365 days) | All 12 in-scope protocols |
+| Linux Mint | Linux Mint 22.3 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Manjaro | Manjaro | rolling | certified | 2026-09-18 | current (365 days) | All 12 in-scope protocols |
+| Pop!_OS | Pop!_OS 24.04 | stable | certified | 2026-09-16 | — | All 12 in-scope protocols |
+| Red Hat Enterprise Linux | Red Hat Enterprise Linux 9 | stable | family_inferred | — | — | — |
+| Rocky Linux | Rocky Linux 9 | stable | certified | 2026-08-20 | — | All 12 in-scope protocols |
+| Ubuntu | Ubuntu 24.04.4 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Ubuntu | Ubuntu 26.04 | stable | experimental | — | — | — |
+| openSUSE Leap | openSUSE Leap 15.6 | stable | certified | 2026-09-08 | — | All 12 in-scope protocols |
+| openSUSE Tumbleweed | openSUSE Tumbleweed | rolling | certified | 2026-09-10 | current (365 days) | All 12 in-scope protocols |
 
-```sh
-git clone https://github.com/GaboEI/WatchdogVPN.git /tmp/watchdogvpn-public-test
-cd /tmp/watchdogvpn-public-test
-python3 -m compileall -q tui tests/unit/test_tui_modules.py
-bash tests/syntax.sh
-bash tests/unit.sh
-./install.sh --dry-run --yes --skip-doctor
-./doctor.sh
-```
+<!-- END GENERATED: compat-support-table -->
 
-Recorded result:
+`certified` means the exact release is fully supported across installation, the
+in-scope protocols and the full lifecycle. Compatibility is release-specific:
+it is never inherited from a distribution family, and one release is never
+certified through another.
 
-- HTTPS clone succeeded from the public repository.
-- Python compile check passed.
-- Syntax checks passed.
-- Unit behavior checks passed.
-- Installer dry-run passed without modifying the system.
-- `doctor.sh` executed, but returned expected environment failures in a
-  non-systemd/non-NetworkManager test context. A full doctor pass still requires
-  a real supported Linux host.
+`family_inferred` and `experimental` releases are compatible by package family
+but are not certified on their own. In particular, **Red Hat Enterprise Linux is
+not certified**; it has its own release model and is never certified through
+CentOS Stream. Other Debian/Ubuntu derivatives beyond Linux Mint and Pop!_OS are
+likewise not individually certified.
 
-## Real Distribution Validation
+Rolling distributions (Arch Linux, CachyOS, Manjaro, Kali, CentOS Stream and
+openSUSE Tumbleweed) are certified against a specific release and carry an
+expiry window; the table reports their current freshness state.
 
-Current manually reported validation status:
+<!-- BEGIN GENERATED: compat-protocol-list -->
+The following protocol families are in scope for certified releases:
 
-| Distribution | Status | Notes |
-| --- | --- | --- |
-| Arch Linux | Certified | Real non-virtualized workstation; default and packaged-LTS kernel evidence (Phase 23.5). |
-| CachyOS | Certified | Arch adapter via `ID_LIKE`; real install flow with advanced DNS; VPN recovered after reboot (Phase 23.5). |
-| Debian 13.6 | Certified | Fresh bridge-only VM; full lifecycle and real per-protocol egress (Phase 23.5). |
-| Ubuntu 24.04.4 LTS | Certified | Fresh bridge-only VM; full lifecycle and real per-protocol egress (Phase 23.5). |
-| Fedora Workstation 44 | Certified | SELinux enforcing; Fedora/Red Hat-family `dnf` adapter; full lifecycle and real egress (Phase 23.6). |
-| openSUSE Leap 15.6 | Certified | AppArmor present; `zypper` adapter; full lifecycle and real egress (Phase 23.6). |
-| Rocky Linux 9 | Certified | SELinux enforcing; Red Hat-family adapter; full lifecycle and real egress (Phase 23.6). |
-| CentOS Stream 9 (rolling) | Certified | Fedora/Red Hat-family `dnf` adapter; compatible with the full protocol set. |
-| Linux Mint 22.3 | Certified | Ubuntu adapter via `ID_LIKE`; full lifecycle and real egress (Phase 23.6). |
-| Pop!_OS 24.04 LTS | Certified | Explicit `ID=pop` admission; Ubuntu-family adapter; full lifecycle and real per-protocol egress. |
+- AmneziaWG
+- HTTP proxy
+- Hysteria2
+- OpenVPN
+- OpenVPN + Cloak/OverCloud
+- Shadowsocks
+- SOCKS
+- Trojan
+- TUIC
+- VLESS
+- VMess
+- WireGuard
 
-Each "Certified" row means a clean install on a real machine passed the full
-install/update, DNS apply/reset, kill switch, split tunnel, panic, reboot and
-purge/reinstall lifecycle plus real per-protocol egress, with a clean teardown.
+This list applies to certified releases only. A `family_inferred` or
+`experimental` release does not imply full protocol coverage, and every
+certified release is supported exactly as its own row states.
 
-Protocol results are recorded per distribution in
-`compat/compatibility.json` (the single source of truth) and are
-release-specific — certification never implies the whole family. Under Phase
-23.7.5.11A, three releases were recertified end to end with a 12/12 green
-protocol matrix: Ubuntu 24.04 (11A.1), Debian 13 (11A.2) and Linux Mint 22.3
-(11A.3). Ubuntu and Linux Mint belong to technical family `ubuntu_apt`; Debian
-13 belongs to `debian_apt`. Earlier Phase 23.5/23.6 rows reflected the per-distro
-result at that time; other Debian/Ubuntu derivatives and Red Hat-family /
-SUSE-family derivatives that share an adapter are individually certified only
-with their own field evidence: openSUSE Leap 15.6 and openSUSE Tumbleweed
-`20260907` each carry their own certification.
+<!-- END GENERATED: compat-protocol-list -->
 
-The CachyOS result also confirms the Arch adapter works for a real install flow
-with advanced DNS, and the installer gives reboot guidance if the tunnel remains
-degraded after setup.
+## Configuration Guarantees
 
-Family-inferred, not yet individually certified: RHEL (shares the Red Hat-family
-adapter); other Debian/Ubuntu derivatives beyond Linux Mint. RHEL shares a
-certified adapter but has not itself been individually certified, so it is not
-recorded as certified. AlmaLinux and openSUSE Tumbleweed are individually
-certified.
+The product enforces the following configuration behavior:
 
-Manjaro (`ID=manjaro`, rolling, Arch family) is individually certified under
-Phase 23.7.5.11H with its own evidence (`cert_manjaro_rolling`): the Manjaro XFCE
-26.1.0 snapshot (kernel `6.1.187-2-MANJARO`) passed a 12/12 green protocol matrix
-with real tunnel egress, kill-switch protection and clean teardown, plus the
-reboot/suspend/autoconnect lifecycle, isolated worker fault handling and final
-decommission with baseline restore. It is never inferred from the Arch family.
-
-CentOS Stream 9 (rolling, Fedora/Red Hat-family `dnf` adapter) is individually
-certified and supported, and is compatible with the full protocol set: VLESS,
-Trojan, Hysteria2, AmneziaWG, OpenVPN over Cloak, WireGuard, TUIC, HTTP,
-Shadowsocks, VMess, SOCKS and plain OpenVPN. **CentOS Stream certification does
-not certify RHEL.**
-
-### Phase 23.7.5.11D openSUSE Leap Recertification
-
-The authorized 11D documentation records a complete 12/12 openSUSE Leap 15.6
-L3 protocol matrix. Every row achieved `GREEN (real egress)` using the
-protocol identity and private evidence paths from the external
-`EXACT_PROTOCOL_PATHS.md` index. AmneziaWG is an official WatchdogVPN path in
-this result: its guided installation completed and its rerun demonstrated real
-egress. L3.7 and the full L3 gate are CLOSED / APPROVED by independent audit;
-this does not by itself certify the openSUSE Tumbleweed route or declare the
-openSUSE family closed. The Tumbleweed route was certified separately under 11D
-(T0–T7, see below); the 11D openSUSE-family closure candidate remains pending
-independent audit.
-
-The reinforced WireGuard, Shadowsocks, and plain OpenVPN trio also passed the
-corrected 100 MiB public-file requirement, including foreground OpenVPN SSH
-continuity. Provider direct/fail-closed behavior, split tunneling, DNS
-protection, and FakeIP verification are recorded in the external L3.3-L3.6
-evidence records. L4 (reboot lifecycle), L5 (isolated fault harness) and L6
-(final cleanup) are CLOSED / APPROVED by independent audit on 2026-09-08.
-
-In L7 the three historical `formal_non_green` manifest rows (openvpn,
-shadowsocks, wireguard) were reconciled to `green` in
-`compat/compatibility.json`: `cert_opensuse_leap_15_6` now records the
-23.7.5.11D field recertification with 12/12 real-egress protocol results
-(runtime `cb41420`, provenance verified), and
-`validation_metadata.per_release_ci.opensuse_leap_15_6` is `green` citing the
-L2 CI run `34140256789` on HEAD `7939411`. This certifies openSUSE Leap 15.6
-as a release; it does not by itself declare the openSUSE family closed.
-
-### Phase 23.7.5.11D openSUSE Tumbleweed Certification (2026-09-11)
-
-The openSUSE Tumbleweed rolling route completed T0–T7 on `nls1` against snapshot
-`20260907` and is reconciled in `compat/compatibility.json` as
-`cert_opensuse_tumbleweed_rolling` (current, scope
-`physical_field_certification`, snapshot `openSUSE Tumbleweed 20260907`, 12/12
-`protocol_results` all `green`, each traced to real egress from the T4.1 protocol
-matrix). `distributions.opensuse_tumbleweed.lineage.has_own_evidence` is `true`
-with `last_validated` `2026-09-10`, so `opensuse_tumbleweed` classifies as
-`certified` for the captured snapshot instead of `family_inferred`. The reboot
-lifecycle (T5), isolated fault harness (T6) and final cleanup (T7) are
-CLOSED / APPROVED by independent audit. This is the 11D openSUSE-family closure
-candidate; it does not open the family PR, merge `main`, or declare public
-certification, and it remains pending independent audit.
-
-## Persistent Configuration Update Validation
-
-Last recorded persistent configuration update validation: 2026-05-16.
-
-Host type:
-
-- Arch Linux real workstation.
-- Existing WatchdogVPN runtime already installed.
-- Existing VPN services active.
-
-Commands:
-
-```sh
-cd ~/WatchdogVPN
-git status --short --branch
-sudo -v
-./update.sh --skip-doctor
-hash -r
-command -v watchdogvpn
-watchdogvpn version
-watchdogvpn config get language.current
-watchdogvpn config get tui.theme
-watchdogvpn config get reporting.sanitize_ipv4
-./doctor.sh
-vpnctl status
-vpnctl connect US
-```
-
-Recorded result:
-
-- Repository was clean and synchronized with `origin/main`.
-- `update.sh --skip-doctor` completed successfully.
-- Installed CLI resolved to `/usr/local/bin/watchdogvpn`.
-- Installed CLI reported `WatchdogVPN v0.1.1`.
-- Persistent config reads returned:
-  - `language.current`: `en`
-  - `tui.theme`: `default`
-  - `reporting.sanitize_ipv4`: `true`
-- `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
-- `vpnctl status` reported real VPN state `UP`.
-- `vpnctl connect US` completed and kept real VPN state `UP`.
+- Update preserves an existing `/etc/watchdogvpn/config.toml` and its values.
+- TUI Settings reset restores `language.current`, `tui.theme`, `tui.color` and
+  `tui.unicode` to their defaults.
+- Settings reset does not touch DNS, timers, reporting, VPN state, logs or
+  bypass configuration.
+- The Update Center shows product-facing status separately from maintainer
+  technical details and does not run `pull`, `push`, `update.sh` or privileged
+  commands from the status screen.
+- Runtime update replaces the product-managed runtime and preserves user
+  configuration, logs and shared runtime state.
 - Provider CLI text is not treated as authoritative; tunnel, route and public
   IP truth checks are the operational source of truth.
 
-## TUI Settings Runtime Validation
+## Runtime Truth Model
 
-Last recorded TUI Settings runtime validation: 2026-05-16.
+`vpn_truth_check` reports a single state from the observable layers:
 
-Host type:
+- The reachable v2 daemon takes precedence over the legacy custom-vps backend,
+  so an active `wdvpn-tun0` runtime is never checked against a stale static
+  `tun0` setting.
+- Managed TUN mode is `UP` only when lifecycle state, the observed runtime
+  interface, managed routing artifacts, kill-switch consistency and normal
+  public egress agree.
+- Managed proxy mode is `UP` only when lifecycle state, owned proxy listener
+  evidence, kill-switch consistency and a public-IP request through the local
+  proxy agree.
+- `DEGRADED` means a managed runtime exists but one or more observable layers
+  disagree.
+- `DOWN` means no usable managed runtime is active.
+- custom-vps keeps the historical `tun0`/route/public-IP contract only as a
+  compatibility fallback when daemon lifecycle truth is unavailable.
 
-- Arch Linux real workstation.
-- Existing WatchdogVPN runtime already installed.
-- Persistent config present at `/etc/watchdogvpn/config.toml`.
+## Kill-Switch Model
 
-Commands:
-
-```sh
-sudo -v
-./update.sh --skip-doctor
-watchdogvpn config get language.current
-watchdogvpn config get tui.theme
-watchdogvpn config get tui.color
-watchdogvpn config get tui.unicode
-VPN
-./doctor.sh
-```
-
-Recorded result:
-
-- `update.sh --skip-doctor` completed successfully.
-- Existing `/etc/watchdogvpn/config.toml.example` was preserved.
-- Existing `/etc/watchdogvpn/config.toml` was preserved.
-- TUI Settings reset restored:
-  - `language.current`: `en`
-  - `tui.theme`: `default`
-  - `tui.color`: `true`
-  - `tui.unicode`: `true`
-- `VPN` opened after update.
-- `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
-- Settings reset did not touch DNS, timers, reporting, VPN state, logs or
-  bypass configuration.
-
-## TUI Update Center Runtime Validation
-
-Last recorded TUI Update Center runtime validation: 2026-05-17.
-
-Host type:
-
-- Arch Linux real workstation.
-- Existing WatchdogVPN runtime already installed.
-- Source checkout present at `~/WatchdogVPN`.
-
-Commands:
-
-```sh
-cd ~/WatchdogVPN
-git status --short --branch
-git fetch origin --tags
-git pull --ff-only origin main
-bash tests/unit.sh
-bash tests/syntax.sh
-python3 -m compileall -q tui tests/unit/test_tui_modules.py
-git diff --check
-sudo -v
-./update.sh --skip-doctor
-hash -r
-watchdogvpn version
-VPN
-```
-
-TUI paths checked:
-
-- `Update -> Ver estado`
-- `Update -> Comprobar remoto`
-- `Update -> Actualizar runtime`
-- `Update -> Detalles tecnicos`
-
-Recorded result:
-
-- Repository was clean and synchronized with `origin/main`.
-- Unit behavior checks passed.
-- Syntax checks passed.
-- Python compile check passed.
-- `git diff --check` passed.
-- Installed runtime update completed successfully.
-- Installed `watchdogvpn` resolved after `hash -r`.
-- `watchdogvpn version` reported the installed product version.
-- `VPN` opened after update.
-- Update Center presented product-facing status separately from maintainer
-  technical details.
-- Update Center detected the source checkout from the installed TUI context
-  instead of treating `~/.local` as the repository.
-- Update Center did not run `pull`, `push`, `update.sh` or privileged commands
-  from the product status screen.
-
-## Runtime Update Engine Installed Validation
-
-Last recorded runtime update engine installed validation: 2026-05-18.
-
-Host type:
-
-- Ubuntu 24.04 real workstation.
-- Existing WatchdogVPN runtime already installed.
-- Source checkout present at `~/WatchdogVPN`.
-
-Commands:
-
-```sh
-cd ~/WatchdogVPN
-git status --short --branch
-./bin/watchdogvpn runtime-update --preflight
-/usr/local/bin/watchdogvpn runtime-update --preflight
-./update.sh --dry-run --yes --skip-doctor
-sudo -v
-./update.sh --yes --skip-doctor
-hash -r
-cmp -s ./bin/watchdogvpn /usr/local/bin/watchdogvpn; echo cmp_exit=$?
-/usr/local/bin/watchdogvpn runtime-update --preflight
-./doctor.sh
-```
-
-Recorded result:
-
-- Repository was clean and synchronized with `origin/main`.
-- Checkout `./bin/watchdogvpn runtime-update --preflight` passed.
-- Before the first real update, installed `/usr/local/bin/watchdogvpn` was
-  still the older preflight-only runtime update implementation.
-- `./update.sh --dry-run --yes --skip-doctor` passed and showed the expected
-  replacement plan, including `/usr/local/bin/watchdogvpn` backup and install.
-- Real `./update.sh --yes --skip-doctor` completed successfully after `sudo`
-  authentication in a real terminal.
-- Product-managed runtime files were backed up under `/var/backups/watchdogvpn/`.
-- User TUI launcher and installed TUI module directory were backed up before
-  replacement.
-- Existing `/etc/watchdogvpn/config.toml.example` and
-  `/etc/watchdogvpn/config.toml` were preserved.
-- `systemd-analyze verify` emitted an unrelated legacy `/var/run/anydesk.pid`
-  warning for `anydesk.service`; WatchdogVPN systemd verification continued.
-- Final release update after the `v0.3.1` version bump completed successfully.
-- Installed `/usr/local/bin/watchdogvpn version` reported `WatchdogVPN v0.3.1`.
-- `cmp_exit=0` confirmed installed `/usr/local/bin/watchdogvpn` matched
-  `./bin/watchdogvpn`.
-- Installed `/usr/local/bin/watchdogvpn runtime-update --preflight` passed and
-  showed the confirmed-execution preflight text for commit `36618ae`.
-- `doctor.sh` reported `OK=68 WARN=0 FAIL=0`.
-- Installed service state after update:
-  - `watchdogvpn.service`: active and enabled
-  - `vpn-domain-bypass.timer`: active and enabled
-  - `myvpn-logrotate.timer`: active and enabled
-- Network truth state was `UP`.
-
-## Unit Behavior Checks
-
-`tests/unit.sh` runs behavior checks with mocked system commands and temporary
-state. These tests do not require a real VPN tunnel, do not write to `/etc`,
-`/run`, `/var` or systemd, and do not restart services.
-
-Current coverage:
-
-- `vpn_truth_check` state contract:
-  - the reachable v2 daemon takes precedence over the legacy custom-vps
-    backend, so an active `wdvpn-tun0` runtime is never checked against a stale
-    static `tun0` setting;
-  - managed TUN mode is `UP` only when lifecycle state, the observed runtime
-    interface, managed routing artifacts, kill-switch consistency and normal
-    public egress agree;
-  - managed proxy mode is `UP` only when lifecycle state, owned proxy listener
-    evidence, kill-switch consistency and a public-IP request through the
-    local proxy agree;
-  - `DEGRADED` means a managed runtime exists but one or more observable layers
-    disagree or egress cannot be proved;
-  - `DOWN` means no usable managed runtime is active;
-  - custom-vps retains the historical `tun0`/route/public-IP contract only as a
-    compatibility fallback when daemon lifecycle truth is unavailable;
-  - `--shell`, `--quiet` and `--json` output behavior
-- daemon/runtime behavior:
-  - standby state is explicit
-  - connect, disconnect, status and rotate go through daemon IPC
-  - runtime state is persisted in the shared WatchdogVPN state directory
-- kill-switch behavior:
-  - sing-box capture traffic is not trusted from a mark alone
-  - nftables admits the capture mark in the output chain only when an atomic
-    companion postrouting chain also rejects that mark from every final
-    interface except the configured managed TUN
-  - external DNS rejects precede the capture-mark allow, and the separate
-    outbound mark still requires the daemon UID
-  - ruleset inspection treats a missing output allow or postrouting guard as
-    inconsistent
-  - the iptables fallback continues to reject unscoped sing-box mark allows
-- TUI module behavior:
-  - extracted action command builders, command helpers, state collectors,
-    render helpers, constants, formatters, parsers and validators keep stable
-    behavior
-  - installed layout with `VPN` plus `watchdogvpn/` remains importable
-  - non-interactive launcher execution exits cleanly before terminal setup
+- sing-box capture traffic is not trusted from a mark alone.
+- nftables admits the capture mark in the output chain only when an atomic
+  companion postrouting chain also rejects that mark from every final interface
+  except the configured managed TUN.
+- External DNS rejects precede the capture-mark allow, and the separate
+  outbound mark still requires the daemon UID.
+- Ruleset inspection treats a missing output allow or postrouting guard as
+  inconsistent.
+- The iptables fallback rejects unscoped sing-box mark allows.
 
 ## System-Level Checks
 
@@ -394,9 +143,9 @@ watchdog status --json
 VPN
 ```
 
-## Acceptance Criteria
+## Valid Installation Criteria
 
-A clean install is considered valid when:
+A clean install is valid when:
 
 - `doctor.sh` reports no blocking failures.
 - The TUI opens with `VPN`.

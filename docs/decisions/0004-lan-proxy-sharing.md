@@ -1,21 +1,19 @@
-# ADR 0004: LAN Proxy Sharing
-
-Date: 2026-07-06
+# 0004 - LAN proxy sharing
 
 ## Status
 
-Accepted and implemented after Phase 20 validation.
+Accepted
 
 ## Context
 
-WatchdogVPN currently generates local SOCKS and HTTP sing-box inbounds for the
-host user interface and health checks. Those inbounds listen on `127.0.0.1`
-only. Phase 15 asked whether WatchdogVPN should also expose SOCKS/HTTP service
-to LAN devices.
+WatchdogVPN generates local SOCKS and HTTP sing-box inbounds for the host user
+interface and health checks. Those inbounds listen on `127.0.0.1` only. LAN
+sharing asks whether WatchdogVPN should also expose SOCKS/HTTP service to LAN
+devices.
 
 LAN sharing changes the trust boundary. A localhost helper becomes a network
 service reachable by other machines on the local network. Accepting it safely
-would require, at minimum:
+requires, at minimum:
 
 - disabled-by-default behavior;
 - an explicit non-loopback bind address;
@@ -23,50 +21,42 @@ would require, at minimum:
 - firewall and port warnings;
 - kill-switch validation for traffic entering from LAN clients;
 - DNS leak validation for LAN-client resolution paths;
-- live validation that teardown closes the LAN listener and leaves no broad bind.
+- live validation that teardown closes the LAN listener and leaves no broad
+  bind.
 
-The current v2.0 runtime is built and tested around local machine protection,
-but LAN sharing is a high-value product capability for operators who manage
-networks, servers and multi-device environments. It should be built as a
-first-class feature, not as an incidental bind-address toggle.
+LAN sharing is a high-value capability for operators who manage networks,
+servers and multi-device environments, so it is built as a first-class, opt-in
+feature rather than an incidental bind-address toggle.
 
 ## Decision
 
-Do not expose WatchdogVPN SOCKS or HTTP proxy service to LAN devices by
-default.
+Do not expose WatchdogVPN SOCKS or HTTP proxy service to LAN devices by default.
 
-The default sing-box SOCKS and HTTP inbounds must remain loopback-only. DNS
-hijack listeners also remain loopback-only. No `0.0.0.0`, `::`, implicit LAN
-interface or wildcard listener is part of the default supported v2.0
-configuration.
+The default sing-box SOCKS and HTTP inbounds remain loopback-only. DNS hijack
+listeners also remain loopback-only. No `0.0.0.0`, `::`, implicit LAN interface
+or wildcard listener is part of the default supported configuration.
 
-LAN proxy sharing and full LAN gateway/router mode were promoted to the
-dedicated Phase 20 track, before the final Full CLI phase. That work was
-developed on a separate branch, validated in VM network scenarios only, and
-merged back to `main` only after the branch proved the feature correct, secure
-and fully validated.
+LAN proxy sharing and full LAN gateway/router mode are supported as an explicit
+opt-in track with these contracts:
 
-Phase 20 Task 20.1 opened that track with
-`docs/phase-20-task-20-1-lan-sharing-threat-model.md`. Task 20.3 implemented
-authenticated LAN SOCKS/HTTP proxy inbounds. Task 20.5 accepted
-gateway/router mode under
-`docs/phase-20-task-20-5-gateway-router-design-gate.md`, with
-disabled-by-default IPv4 forwarding/NAT, explicit interface selection, manual
-client setup, DNS and kill-switch contracts, reversible firewall ownership and
-VM-only validation. Task 20.7 closed the final VM matrix and security audit in
-`docs/qa-audit-2026-07-08-phase-20-lan-sharing-gateway.md`. The accepted
-implementation does not authorize wildcard binds, automatic DHCP/router
-mutation, IPv6 forwarding or persistent forwarding changes.
+- authenticated LAN SOCKS/HTTP proxy inbounds;
+- gateway/router mode disabled by default;
+- explicit interface selection;
+- manual client setup;
+- DNS and kill-switch contracts;
+- reversible firewall ownership;
+- no wildcard binds, no automatic DHCP/router mutation, no IPv6 forwarding, and
+  no persistent forwarding changes.
 
 ## Consequences
 
 - No default LAN exposure is introduced.
 - WatchdogVPN avoids creating an accidental unauthenticated LAN proxy path.
-- LAN sharing is a validated core capability, but remains disabled by default.
-- Task 20.3 satisfies the initial authenticated proxy-listener requirement,
-  and Task 20.5 decided that gateway/router remained in Phase 20 instead of
-  being split again.
-- Gateway/router implementation must stay disabled by default, explicit,
-  reversible and VM-validated.
+- LAN sharing is available as a first-class capability but remains disabled by
+  default.
+- Gateway/router implementation must stay disabled by default, explicit and
+  reversible.
+- Gateway/router support is scoped to controlled network scenarios; it is not
+  supported for physical LAN deployments.
 - Future work that adds LAN sharing must update this decision instead of
   weakening the existing localhost-only inbounds silently.

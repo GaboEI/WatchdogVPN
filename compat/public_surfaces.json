@@ -965,14 +965,14 @@
       "type": "VERIFIED",
       "owner": "maintainer",
       "managed_region": null,
-      "disposition": "RETAIN_PRODUCT"
+      "disposition": "MIGRATE_TO_VAULT"
     },
     {
       "path": "docs/release-notes-v0.3.1.md",
       "type": "VERIFIED",
       "owner": "maintainer",
       "managed_region": null,
-      "disposition": "RETAIN_PRODUCT"
+      "disposition": "MIGRATE_TO_VAULT"
     },
     {
       "path": "docs/repo-maintenance-2026-07-03.md",

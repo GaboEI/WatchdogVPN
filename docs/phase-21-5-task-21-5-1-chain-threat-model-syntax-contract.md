@@ -1,28 +1,11 @@
-# Phase 21.5 Task 21.5.1 - Chain Threat Model And Syntax Contract
+# Proxy Chain: Threat Model and Syntax
 
-Date: 2026-07-08
-Status: closed
-
-## Scope
-
-Task 21.5.1 defines the threat model, persistent syntax, rejected shapes,
-operator wording, migration behavior and privacy boundaries for proxy and route
-chains.
-
-This task does not accept chain syntax in runtime validators yet. It does not
-change daemon behavior, generate runtime configuration, start or stop
-connections, refresh providers, mutate DNS, routes, firewall, forwarding, LAN
-sharing, gateway mode or system proxy state.
-
-The implementation gate remains: chain syntax must stay rejected until Task
-21.5.2 validates the model, cycle detection and missing-target behavior, and
-Task 21.5.3 maps chains to runtime behavior without silent fallback.
+A proxy chain is an ordered sequence of hops that traffic must traverse before it
+exits. Chains are high-risk because they can change where traffic exits, how DNS
+is resolved, which health decision controls failover, and whether an unavailable
+hop fails closed or leaks to a less protected path.
 
 ## Threat Model
-
-Chains are high-risk because they can change where traffic exits, how DNS is
-resolved, which health decision controls failover, and whether an unavailable
-hop fails closed or leaks to a less protected path.
 
 Primary risks:
 
@@ -42,7 +25,7 @@ network access or the current profile.
 
 ## Product Concepts
 
-Phase 21.5 preserves the Phase 19 separation:
+Chains preserve the existing separation of concerns:
 
 - routing policy decides whether rules are evaluated;
 - capture mode decides how traffic enters WatchdogVPN;
@@ -65,16 +48,16 @@ chain:<chain_id>
 ^[a-z0-9][a-z0-9_-]{0,63}$
 ```
 
-Supported future use sites after validation and runtime mapping:
+Supported use sites once the persistent model and runtime mapping are in place:
 
 - route rules;
 - app-policy rules;
 - app-policy default action;
-- `default_route_action`, only after Task 21.5.3 proves global-chain runtime
-  behavior and DNS behavior.
+- `default_route_action`, once global-chain runtime behavior and DNS behavior
+  are proven.
 
-Current behavior before Task 21.5.2/21.5.3 remains rejection. No parser should
-accept `chain:<id>` until the persistent model and runtime mapping are ready.
+Parsers must reject `chain:<id>` until the persistent model and runtime mapping
+exist. No parser should accept it earlier.
 
 ## Persistent Chain Store
 
@@ -111,7 +94,7 @@ The planned persistent store is a separate `chains.json` document:
 }
 ```
 
-The exact model lands in Task 21.5.2, but it must preserve these constraints:
+The persistent model must preserve these constraints:
 
 - `schema_version = 1`;
 - chain IDs are immutable lowercase slugs;
@@ -125,12 +108,12 @@ The exact model lands in Task 21.5.2, but it must preserve these constraints:
 
 ## Supported Hop Types
 
-Task 21.5 accepts these v2.0 hop types for implementation:
+The v2.0 hop types are:
 
 | Hop type | Target | Meaning | Runtime requirement |
 | --- | --- | --- | --- |
 | `profile` | `Profile.id` | Use one concrete profile as a hop. | Profile exists, is enabled, has supported protocol/runtime mapping and is healthy enough for the chain policy. |
-| `group` | `NodeGroup.name` | Resolve one concrete profile from a node group at runtime. | Group exists, is enabled, resolves deterministically under its selection policy, and selected profile satisfies the chain health policy. |
+| `group` | `NodeGroup.name` | Resolve one concrete profile from a node group at runtime. | Group exists, is enabled, resolves deterministically under its selection policy, and the selected profile satisfies the chain health policy. |
 
 Rejected hop types for v2.0:
 
@@ -143,7 +126,7 @@ Rejected hop types for v2.0:
 - raw runtime outbound tags supplied by the user.
 
 Nested chains are intentionally rejected in v2.0. They multiply cycle and DNS
-ownership risk. A future task may revisit nested chains only after v2.0 ships
+ownership risk. A future version may revisit nested chains only after v2.0 ships
 with direct chain behavior validated.
 
 ## Hop Order
@@ -176,8 +159,8 @@ Meaning:
   blocked;
 - DNS rules may still reject or explicitly divert domains, but diagnostics must
   explain when a DNS rule overrides normal chain ownership;
-- missing chain DNS capability is fail-closed for domain traffic unless a later
-  task defines and validates a narrower explicit exception.
+- missing chain DNS capability is fail-closed for domain traffic unless a
+  narrower explicit exception is defined and validated.
 
 Rejected DNS behavior:
 
@@ -209,16 +192,16 @@ Fail closed means:
 - runtime chain generation failure: do not connect with a shorter or different
   route.
 
-Optional failover may be added in later Phase 21.5 tasks only inside explicit
-group selection or explicitly modeled alternate hops. It must never downgrade
-to direct/current by default.
+Optional failover may only be added inside explicit group selection or
+explicitly modeled alternate hops. It must never downgrade to direct/current by
+default.
 
 ## Loop And Cycle Contract
 
-Task 21.5.2 must make these states invalid before persistence or runtime use:
+These states are invalid before persistence or runtime use:
 
-- chain references itself;
-- chain references another chain, because nested chains are rejected;
+- a chain references itself;
+- a chain references another chain, because nested chains are rejected;
 - a group selected inside a chain resolves to a profile that would require the
   same chain route action;
 - imported route/app-policy data creates a chain action targeting a missing or
@@ -234,7 +217,8 @@ Migration from pre-chain state:
 
 - no automatic chain definitions are created;
 - existing route/app-policy/default actions remain unchanged;
-- existing rejected `chain:<id>` values remain rejected until Task 21.5.2/21.5.3;
+- existing rejected `chain:<id>` values remain rejected until the persistent
+  model and runtime mapping are in place;
 - backup restore must validate chain documents before replacing local state.
 
 Importer behavior:
@@ -258,7 +242,7 @@ Use precise wording:
   resolved;
 - "Candidate" only when diagnostics cannot prove runtime state and are
   reporting configured policy;
-- "Runtime observed" only when daemon/backend evidence exists.
+- "Runtime observed" only when the daemon/backend was actually observed.
 
 Avoid wording that implies a chain is simply a group, current profile, global
 mode, capture mode or automatic privacy upgrade.
@@ -303,40 +287,3 @@ Forbidden by default:
 - per-network chain automation history;
 - provider endpoint URLs or subscription tokens;
 - raw profile config values.
-
-## Validation Gates For Later Tasks
-
-Task 21.5.2 must add model and validation tests for:
-
-- valid chain documents;
-- duplicate IDs;
-- invalid IDs;
-- empty hops;
-- unknown hop type;
-- nested chain rejection;
-- missing targets;
-- disabled targets;
-- unknown fields;
-- migration/round-trip;
-- support-export redaction boundaries.
-
-Task 21.5.3 must prove runtime mapping fails closed and never silently
-collapses chain actions to current/direct/group.
-
-Task 21.5.5 must run installed-VM validation for route, DNS, failure injection,
-teardown, daemon logs, route/rule/interface/firewall inspection and external
-VPN down/up workflow where safe.
-
-## Task 21.5.1 Acceptance
-
-Task 21.5.1 closes when:
-
-- supported hop types are defined;
-- persistent syntax and route-action syntax are documented;
-- nested/rejected shapes are explicit;
-- DNS ownership is defined;
-- failure behavior is fail-closed by default;
-- migration/import behavior is defined;
-- operator wording is defined;
-- privacy boundaries are defined;
-- no runtime/network behavior changes are introduced.

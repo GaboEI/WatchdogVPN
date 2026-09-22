@@ -1,24 +1,19 @@
-# Phase 19 Task 19.9: Proxy-Chain and Route-Chain Decision
+# Proxy-chain and route-chain
 
-Date: 2026-07-08
+Explicit proxy-chain and route-chain actions are out of scope for the current
+routing model and are scheduled for a dedicated, later phase.
 
-## Decision
-
-Explicit proxy-chain and route-chain actions are split out of Phase 19 and
-scheduled for a dedicated v2 phase before the final Full CLI and v2.0.0
-release.
-
-The product model stays open to chain actions, but current Phase 19 validators
-must not accept `chain:<name>` or silently map it to the current profile, a
-node group, or direct routing before the dedicated chain phase implements the
-full runtime contract.
+The product model stays open to chain actions, but current validators must not
+accept `chain:<name>` or silently map it to the current profile, a node group,
+or direct routing before the dedicated chain phase implements the full runtime
+contract.
 
 The architectural decision is recorded in
 [`docs/decisions/0007-proxy-route-chain-decision.md`](decisions/0007-proxy-route-chain-decision.md).
 
-## Current v2.0.0 Route Actions
+## Current route actions
 
-Current accepted route actions remain:
+Accepted route actions remain:
 
 - `direct`;
 - `current` / `current_profile`;
@@ -48,17 +43,17 @@ define:
 - diagnostics and metrics that explain the chain without recording sensitive
   browsing history;
 - rule-set/importer behavior for chain targets;
-- installed-VM validation for route, DNS, teardown and failure paths.
+- route, DNS, teardown and failure paths kept correct.
 
 Accepting chain actions before those contracts exist would make configuration
 look supported while runtime behavior is under-specified.
 
-## Validation Contract
+## Current boundary
 
-Task 19.9 pins the current boundary with tests:
+`chain:<name>` is rejected:
 
 - route rules reject `chain:<name>`;
 - app-policy rules/defaults reject `chain:<name>`;
 - persistent `default_route_action` rejects `chain:<name>`.
 
-No runtime route, capture, DNS or TUN behavior is changed by this task.
+No runtime route, capture, DNS or TUN behavior is changed.

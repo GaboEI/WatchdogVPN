@@ -1,42 +1,26 @@
-# Phase 20 Task 20.5 - Gateway/Router Mode Design Gate
+# Gateway/Router Mode Contract
 
-Date: 2026-07-08
-Status: closed
+Gateway/router mode lets selected LAN clients use the WatchdogVPN host as a
+routed gateway. It is a bounded sub-track with stricter rules than LAN proxy
+sharing, and it stays disabled by default.
 
-## Scope
-
-Task 20.5 decides whether full gateway/router mode stays in Phase 20 or is
-split into a later phase, and defines the contract Task 20.6 must satisfy
-before any runtime implementation is accepted.
-
-This task is design-only. It does not add NAT, forwarding, route advertisement,
-DNS listener exposure, firewall mutation, daemon behavior, sing-box behavior or
-new routing/capture behavior.
-
-## Decision
-
-Gateway/router mode is accepted for the Phase 20 branch, not split into a later
-phase, but only as a bounded sub-track with stricter rules than LAN proxy
-sharing.
-
-Task 20.6 may implement gateway/router mode only if it remains:
+Gateway/router mode is accepted only as a bounded sub-track, not as a
+general-purpose router. It must remain:
 
 - disabled by default;
-- outside `main` on the dedicated Phase 20 branch until Task 20.7 closes;
-- VM/lab-only for all live forwarding tests;
 - explicit about the LAN-facing interface and client setup;
 - reversible after normal disconnect, failed connect and daemon restart;
 - fail-closed for LAN-originated traffic when the protected path is
   unavailable.
 
-IPv4 gateway mode is the accepted Task 20.6 target. IPv6 forwarding,
-router-advertisement behavior and automatic LAN router/DHCP changes remain
-rejected until a later explicit design task accepts them.
+IPv4 gateway mode is the accepted target. IPv6 forwarding, router-advertisement
+behavior and automatic LAN router/DHCP changes remain rejected until an explicit
+design accepts them.
 
 ## Gateway Contract
 
-Task 20.6 must not expose a "gateway" mode unless LAN-originated packets are
-actually constrained to the protected path and covered by teardown.
+A "gateway" mode must not be exposed unless LAN-originated packets are actually
+constrained to the protected path and covered by teardown.
 
 Minimum runtime contract:
 
@@ -53,7 +37,7 @@ Minimum runtime contract:
 
 ## Forwarding Contract
 
-Task 20.6 may enable IPv4 forwarding only for the active gateway session.
+IPv4 forwarding may be enabled only for the active gateway session.
 
 Required behavior:
 
@@ -66,14 +50,14 @@ Required behavior:
 - Report forwarding state in diagnostics without hiding externally managed
   forwarding state.
 
-If the previous IPv4 forwarding value was already enabled, teardown must leave
-it enabled and report that it was externally enabled before WatchdogVPN applied
+If the previous IPv4 forwarding value was already enabled, teardown must leave it
+enabled and report that it was externally enabled before WatchdogVPN applied
 gateway state.
 
 ## NAT And Firewall Contract
 
-Gateway mode requires product-owned, reversible firewall state. Task 20.6 must
-not rely on the LAN router as the access-control boundary.
+Gateway mode requires product-owned, reversible firewall state. The
+implementation must not rely on the LAN router as the access-control boundary.
 
 Required behavior:
 
@@ -89,16 +73,15 @@ Required behavior:
 - Diagnostics must distinguish "not applied", "applied by WatchdogVPN" and
   "external/unmanaged" firewall state.
 
-Task 20.6 chose nftables for the first gateway implementation. If nftables is
-not available, gateway apply fails closed instead of installing partial
-iptables-equivalent state. This backend must be validated in VM before Task
-20.7 can close.
+nftables is the first gateway implementation backend. If nftables is not
+available, gateway apply fails closed instead of installing partial
+iptables-equivalent state.
 
 ## DNS Contract
 
 Gateway/router mode must not imply DNS protection by accident.
 
-Task 20.6 must implement one explicit DNS behavior before gateway mode can be
+One explicit DNS behavior must be implemented before gateway mode can be
 reported as supported:
 
 - a WatchdogVPN-owned LAN DNS path with teardown and leak validation; or
@@ -111,9 +94,9 @@ make the DNS mode visible.
 
 ## Client Setup Contract
 
-Phase 20 gateway/router mode uses manual client setup only.
+Gateway/router mode uses manual client setup only.
 
-Rejected in Task 20.6:
+Rejected:
 
 - automatic DHCP mutation;
 - router advertisement;
@@ -121,14 +104,14 @@ Rejected in Task 20.6:
 - silent changes to the LAN router;
 - automatic persistent routes on client devices.
 
-The CLI/docs may show the operator the gateway IP and manual client settings,
-but must not claim automatic route advertisement.
+The CLI and docs may show the operator the gateway IP and manual client
+settings, but must not claim automatic route advertisement.
 
 ## Kill-Switch Contract
 
 LAN-originated traffic must not bypass the host kill-switch model.
 
-Task 20.6 must prove:
+The implementation must guarantee:
 
 - upstream unavailable means LAN client traffic fails closed;
 - gateway teardown does not leave a direct egress path;
@@ -137,35 +120,3 @@ Task 20.6 must prove:
   daemon restart cleanup;
 - diagnostics distinguish gateway disabled, gateway configured, gateway applied
   and gateway degraded states.
-
-## Validation Contract For Task 20.6 And 20.7
-
-Live gateway validation must run only in VM/lab.
-
-Minimum topology:
-
-- WatchdogVPN gateway VM on the Phase 20 branch;
-- separate LAN client VM or isolated network namespace that is not the gateway
-  process namespace;
-- controlled upstream protected path or fake upstream that can be forced down;
-- before/after captures of `ip -br addr`, `ip route`, `ip rule`, forwarding
-  sysctls, firewall ruleset, active listeners and daemon logs.
-
-Task 20.6 may add implementation and focused VM helpers, but Task 20.7 remains
-responsible for the full matrix and the final no-HIGH/MEDIUM audit before this
-branch can merge to `main`.
-
-## Validation
-
-Task 20.5 is design-only. No installed runtime, route, DNS, forwarding,
-firewall, daemon or listener state was changed.
-
-Local validation passed:
-
-```bash
-bash tests/unit.sh
-bash tests/syntax.sh
-python3 -m unittest discover -s tests -p 'test_*.py'
-git diff --check
-PYTHONPYCACHEPREFIX=/tmp/watchdogvpn-pycache python3 -m compileall -q .
-```

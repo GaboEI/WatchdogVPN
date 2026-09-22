@@ -3,8 +3,7 @@
 Status: alpha maintenance release.
 
 `v0.1.1` is the first maintenance release after the public `v0.1.0-alpha`
-tag. It focuses on support readiness, real-system validation and a safer
-installed command layout.
+tag. It focuses on support readiness and a safer installed command layout.
 
 ## Highlights
 
@@ -14,25 +13,22 @@ installed command layout.
 - Add the initial `watchdogvpn` product CLI.
 - Add `watchdogvpn report` for local sanitized diagnostic reports.
 - Document GitHub milestones, labels and issue drafts for post-alpha planning.
-- Record a public clone smoke test.
-- Record successful Debian real install validation, including DNS tooling.
-- Add Arch-derived distro detection so CachyOS can use the Arch adapter.
-- Record successful CachyOS real install validation with advanced DNS.
+- Add Arch-family support for CachyOS.
 - Improve post-install VPN settle handling with one recovery restart and clear
   reboot guidance when the tunnel remains degraded.
 - Move the installed TUI support package out of `~/.local/bin` so it no longer
   shadows the `watchdogvpn` CLI command.
 - Skip desktop-file placement cleanly when tiling/minimal desktop environments
-  do not expose a real Desktop folder.
+  do not expose a Desktop folder.
 
 ## Supported and Targeted Platforms
 
 | Distribution | Status |
 | --- | --- |
-| Ubuntu 24.04 | Tested on a real workstation |
-| Arch Linux | Tested on a real workstation |
-| Debian | Tested with a real install flow, including DNS tooling |
-| CachyOS | Tested with a real install flow, advanced DNS and post-reboot VPN recovery |
+| Ubuntu 24.04 | Supported (stable) |
+| Arch Linux | Supported (rolling) |
+| Debian 13.6 | Supported (stable) |
+| CachyOS | Supported (rolling) |
 | Fedora | Future target |
 
 ## Upgrade Notes
@@ -79,15 +75,13 @@ After updating, `command -v watchdogvpn` should return:
 
 - This is still an alpha release, not a stable 1.0 release.
 - TUI command helpers use explicit argv wrappers instead of subprocess shell mode.
-- External installer verification for the initial provider CLI and optional DNS
-  component is not yet cryptographically pinned.
+- External installer downloads for the initial provider CLI and optional DNS
+  component are not yet cryptographically pinned.
 - The first backend is provider-CLI based. WireGuard/private backend support is
   not implemented yet.
 - Fedora support remains a future target.
 
-## Validation
-
-Validated locally before release:
+## Local Checks
 
 ```sh
 bash tests/unit.sh
@@ -96,9 +90,3 @@ python3 -m compileall -q tui tests/unit/test_tui_modules.py
 git diff --check
 HOME=/tmp ./bin/watchdogvpn report
 ```
-
-Real-machine validation recorded:
-
-- Arch Linux workstation.
-- Debian install flow with DNS tooling.
-- CachyOS install flow with advanced DNS and post-reboot VPN recovery.

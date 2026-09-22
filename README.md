@@ -11,8 +11,8 @@
 - **Status:** v2.0.0 in active development (product line target; not a released
   tag). The installed CLI reports its own version via `watchdog version`
   (currently `v0.3.1`).
-- **Platform:** Linux — 14 distributions field-certified (see [Supported Platforms](#supported-platforms))
-- **Interface:** CLI first, TUI after CLI-backed validation
+- **Platform:** Linux — certified on 14 distributions (see [Supported Platforms](#supported-platforms))
+- **Interface:** CLI first, TUI second
 - **License:** GPL-3.0-or-later. See [LICENSE](LICENSE).
 
 WatchdogVPN is a local network control plane for resilient VPN/proxy routing on
@@ -41,8 +41,8 @@ clear state, safer recovery paths and auditable decisions.
 
 ## Current v2 Foundation
 
-The v2 line is being rebuilt in validated phases. The current repository already
-contains the core foundation:
+The v2 line is being rebuilt in stages. The current repository already contains
+the core foundation:
 
 | Area | Current State |
 | --- | --- |
@@ -51,11 +51,11 @@ contains the core foundation:
 | Protocol drivers | sing-box, AmneziaWG, OpenVPN and OpenVPN+Cloak driver paths |
 | Rotation/recovery | controlled rotation, cooldowns, known-good handling and failure categories |
 | Kill switch | nftables/iptables fail-closed model with DNS leak ordering |
-| DNS v2 | DNS policy model, resolver testing, TUN hijack, FakeIP, ECS, static IP mappings and rollback |
+| DNS v2 | DNS policy model, resolver control, TUN hijack, FakeIP, ECS, static IP mappings and rollback |
 | Routing rules | persistent rule groups, rule engine and sing-box route generation |
 | Split tunnel / app policy | `watchdog split-tunnel` CLI surface shipped; `watchdog app-policy` remains the compatibility alias |
-| Installer/update | non-destructive install/update contracts with backup and validation |
-| Audits | phase-level QA audits with HIGH/MEDIUM findings fixed before advancement |
+| Installer/update | non-destructive install/update contracts with backup and safety checks |
+| Hardening | strict input handling and fail-closed defaults across the runtime |
 
 ## Active Roadmap Before v2.0.0
 
@@ -63,9 +63,9 @@ These rows are remaining work before a frozen v2.0.0 operator surface. Several
 areas already have a CLI; the roadmap below is about hardening, product freeze
 and TUI—not claiming those commands are absent.
 
-| Phase | Goal |
+| Track | Goal |
 | --- | --- |
-| Split-tunnel / app-policy hardening | refine matchers, enforcement evidence and operator UX beyond the shipped CLI |
+| Split-tunnel / app-policy hardening | refine matchers, enforcement guarantees and operator UX beyond the shipped CLI |
 | Policy diagnostics hardening | deepen `watchdog rules explain` / DNS diagnose confidence and runtime-backed cases |
 | Node groups / auto-selection hardening | improve health-aware selection on top of the existing `watchdog node-group` CLI |
 | DNS/network hardening | refine DNS diagnostics, time checks and LAN-service decisions |
@@ -75,7 +75,7 @@ and TUI—not claiming those commands are absent.
 | LAN sharing / gateway mode | branch-gated LAN proxy and gateway capability for network operators |
 | Network context automation and diagnostics | network-aware activation plus unified diagnostics before final CLI freeze |
 | CLI freeze | freeze the operator surface after remaining capabilities settle |
-| Field validation | real CLI-driven validation before final TUI work |
+| CLI hardening | complete the operator surface before final TUI work |
 | TUI premium experience | final v2 TUI over proven behavior |
 
 Detailed sequencing lives in the local master plan used by the maintainer. The
@@ -89,20 +89,20 @@ derives public cardinality and mutually exclusive-group semantics itself, so
 supported Python releases do not depend on `argparse`'s private formatting or
 requiredness internals.
 
-Phase 17 keeps automatic remote backup sync deferred. The supported portable
-workflow is explicit ZIP export/import, preferably encrypted before moving the
-archive off the local machine.
+Automatic remote backup sync remains deferred. The supported portable workflow
+is explicit ZIP export/import, preferably encrypted before moving the archive
+off the local machine.
 
-Before the final CLI is frozen, WatchdogVPN will align its routing model so
+Before the CLI is frozen, WatchdogVPN will align its routing model so
 Rule/Global are routing policies, Proxy/TUN/LAN are capture or entry
 mechanisms, and Direct/Current/Block/Group are route actions. After that,
 WatchdogVPN includes a carefully gated LAN sharing track for network operators:
 authenticated LAN proxy sharing and full gateway/router mode for devices that
 intentionally use the WatchdogVPN host as their protected path. This remains
 disabled by default and requires explicit bind/firewall controls, kill-switch
-coverage, DNS honesty and teardown validation.
+coverage, DNS honesty and clean teardown.
 
-Before the final CLI is frozen, WatchdogVPN will also add network-context
+Before the CLI is frozen, WatchdogVPN will also add network-context
 automation and unified diagnostics. That track is expected to cover
 trusted/untrusted network policy, interface/default-route changes, safe
 autoconnect behavior, provider update metadata and redacted support exports.
@@ -119,14 +119,14 @@ not automatically mean it is appropriate for hostile DPI environments.
 | --- | --- |
 | Resilient / anti-DPI oriented | VLESS+Reality, Trojan TLS/uTLS, Hysteria2, AmneziaWG, OpenVPN+Cloak/OverCloud |
 | Compatibility | plain WireGuard, VMess, standard Shadowsocks, SOCKS, HTTP, normal OpenVPN |
-| Conditional | TUIC and Shadowsocks may be treated as resilient only when configured and validated for restrictive networks |
+| Conditional | TUIC and Shadowsocks may be treated as resilient only when configured appropriately for restrictive networks |
 
 Compatibility profiles are useful, but WatchdogVPN should not describe them as
-censorship-resistant unless the concrete configuration has been validated.
+censorship-resistant unless the concrete configuration is appropriate for them.
 
 ## Core Concepts
 
-### Real-State Verification
+### Real-State Truth
 
 Provider status text is not treated as truth. WatchdogVPN checks observable
 state such as tunnel interface, route, DNS behavior and public IP where
@@ -157,46 +157,63 @@ unless the user explicitly approves destructive behavior.
 
 ## Supported Platforms
 
-WatchdogVPN runs on Linux. This list reflects **what was actually field-tested** —
-a clean install on a real machine, real traffic through the tunnel, and a clean
-teardown — kept strictly separate from what is only *expected* to work because it
-shares an adapter. Family-inferred compatibility is never presented as a
-certification.
+WatchdogVPN runs on Linux. The table below lists the currently supported
+releases, each with its release model, support state and protocol coverage.
 
-**Certified (field-tested end to end):**
+<!-- BEGIN GENERATED: compat-support-table -->
+| Distribution | Release | Model | Support | Certification | Freshness | Protocols |
+| --- | --- | --- | --- | --- | --- | --- |
+| AlmaLinux | AlmaLinux 9 | stable | certified | 2026-09-02 | — | All 12 in-scope protocols |
+| Arch Linux | Arch Linux | rolling | certified | 2026-08-15 | current (365 days) | All 12 in-scope protocols |
+| CachyOS | CachyOS | rolling | certified | 2026-08-16 | current (365 days) | All 12 in-scope protocols |
+| CentOS Stream | CentOS Stream | rolling | certified | 2026-09-20 | current (365 days) | All 12 in-scope protocols |
+| Debian | Debian 13.6 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Fedora | Fedora 44 | stable | certified | 2026-08-19 | — | All 12 in-scope protocols |
+| Kali GNU/Linux | Kali GNU/Linux | rolling | certified | 2026-09-14 | current (365 days) | All 12 in-scope protocols |
+| Linux Mint | Linux Mint 22.3 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Manjaro | Manjaro | rolling | certified | 2026-09-18 | current (365 days) | All 12 in-scope protocols |
+| Pop!_OS | Pop!_OS 24.04 | stable | certified | 2026-09-16 | — | All 12 in-scope protocols |
+| Red Hat Enterprise Linux | Red Hat Enterprise Linux 9 | stable | family_inferred | — | — | — |
+| Rocky Linux | Rocky Linux 9 | stable | certified | 2026-08-20 | — | All 12 in-scope protocols |
+| Ubuntu | Ubuntu 24.04.4 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Ubuntu | Ubuntu 26.04 | stable | experimental | — | — | — |
+| openSUSE Leap | openSUSE Leap 15.6 | stable | certified | 2026-09-08 | — | All 12 in-scope protocols |
+| openSUSE Tumbleweed | openSUSE Tumbleweed | rolling | certified | 2026-09-10 | current (365 days) | All 12 in-scope protocols |
 
-| Distribution | Adapter / detection |
-| --- | --- |
-| Arch Linux | native |
-| CachyOS | Arch family via `ID_LIKE` |
-| Manjaro (XFCE 26.1.0) | explicit `ID=manjaro`, Arch adapter |
-| Debian 13.6 | native |
-| Ubuntu 24.04.4 LTS | native |
-| Linux Mint 22.3 | Ubuntu family via `ID_LIKE` |
-| Pop!_OS 24.04 LTS | explicit `ID=pop` (release `pop_24_04`) |
-| Fedora Workstation 44 | Fedora/Red Hat-family adapter |
-| Rocky Linux 9 | Fedora/Red Hat-family adapter |
-| AlmaLinux 9 | Fedora/Red Hat-family adapter |
-| CentOS Stream 9 | explicit `ID=centos`, Fedora/Red Hat-family adapter |
-| openSUSE Leap 15.6 | openSUSE adapter |
-| openSUSE Tumbleweed 20260907 | openSUSE adapter |
-| Kali Linux Rolling 2026.3 | Debian family via `ID_LIKE` |
+<!-- END GENERATED: compat-support-table -->
 
-**Compatible by family, not yet individually certified:** RHEL (shares the Red
-Hat-family adapter); other Debian/Ubuntu derivatives beyond Linux Mint and
-Pop!_OS. These are expected to work but have not been field-tested, so they are
-not claimed as certified.
+`certified` means the exact release is fully supported across installation, the
+in-scope protocols and the full lifecycle. `family_inferred` and
+`experimental` releases share a packaging family with a certified release but
+are **not certified on their own**: they are compatible but are not claimed as
+certified and may need preparation on a specific machine. A release
+is never certified through another distribution.
 
-CentOS Stream 9 (rolling) is certified and supported, and is compatible with the
-same protocols as every other certified distribution: VLESS, Trojan, Hysteria2,
-AmneziaWG, OpenVPN over Cloak, WireGuard, TUIC, HTTP, Shadowsocks, VMess, SOCKS
-and plain OpenVPN. **CentOS Stream certification does not certify RHEL**: RHEL is
-a separate product with its own release model and is not claimed as certified.
+<!-- BEGIN GENERATED: compat-protocol-list -->
+The following protocol families are in scope for certified releases:
 
-Each certification exercises the full install/update, DNS apply/reset, kill
-switch, split tunnel, panic, reboot and purge/reinstall lifecycle plus real
-per-protocol egress on that release; details live in
-[docs/validation.md](docs/validation.md).
+- AmneziaWG
+- HTTP proxy
+- Hysteria2
+- OpenVPN
+- OpenVPN + Cloak/OverCloud
+- Shadowsocks
+- SOCKS
+- Trojan
+- TUIC
+- VLESS
+- VMess
+- WireGuard
+
+This list applies to certified releases only. A `family_inferred` or
+`experimental` release does not imply full protocol coverage, and every
+certified release is supported exactly as its own row states.
+
+<!-- END GENERATED: compat-protocol-list -->
+
+**Red Hat Enterprise Linux is not certified.** RHEL has its own release model
+and is never certified through CentOS Stream. Other Debian/Ubuntu derivatives
+beyond Linux Mint and Pop!_OS are likewise not individually certified.
 
 ## Installation
 
@@ -253,10 +270,10 @@ git pull
 ./update.sh
 ```
 
-The updater validates the checkout, backs up managed files and preserves user
+The updater checks the checkout, backs up managed files and preserves user
 configuration, logs, shared runtime state and DNS configuration. If the daemon
 was already active, the updater restarts it after replacing the runtime and
-verifies that a new process generation is serving the post-update IPC smoke test.
+requires the new process generation to be serving before it completes.
 
 ## Uninstalling
 
@@ -289,7 +306,7 @@ backups under `/var/backups/watchdogvpn`; it does not create new internal
 copies while deleting data. A plain uninstall preserves all of them. The CLI
 `--delete-all-data` flow first exports the user's explicit backup outside
 product-owned paths, so an encrypted export is not undermined by a second
-silent unencrypted copy. The confirmed full purge also removes the invoking
+silent unencrypted copy. The full purge also removes the invoking
 user's preserved legacy migration source at `~/.config/watchdogvpn` and the
 fixed historical root copy; it never scans or deletes unrelated users' homes.
 Every uninstall removes the product's ephemeral
@@ -312,9 +329,9 @@ formats, expectations and submission guidance.
 Useful contributions include:
 
 - protocol/profile parser fixtures;
-- distro validation;
+- distro compatibility reports;
 - documentation corrections;
-- tests for installer, DNS, routing, daemon and recovery behavior;
+- installer, DNS, routing, daemon and recovery improvements;
 - carefully scoped bug reports with sanitized logs.
 
 Before opening an issue, read [Reporting Issues](docs/reporting.md) and
@@ -329,7 +346,7 @@ cli/        Python CLI surface for v2 functionality
 config/     Persistent stores and application config
 core/       Runtime orchestration
 daemon/     daemon IPC and worker entrypoints
-dns/        DNS v2 policy, testing and apply/restore logic
+dns/        DNS v2 policy and apply/restore logic
 drivers/    Protocol/runtime drivers
 models/     Shared data models
 providers/  Manual and subscription provider imports
@@ -337,24 +354,18 @@ rotation/   Health checks, rotation and recovery
 rules/      Routing rule models, parser and sing-box generation
 systemd/    Services and timers
 tui/        Terminal UI
-docs/       Architecture, security, validation and release docs
-tests/      Unit, syntax and runtime contract tests
+docs/       Architecture, security and release docs
+tests/      Automated behavior and syntax checks
 ```
 
-## Validation
+## Health Check
 
-Common local checks:
+The product health check is read-only and reports the current system state
+without modifying it:
 
 ```sh
-python3 -m unittest discover tests
-bash tests/unit.sh
-bash tests/syntax.sh
-systemd-analyze verify systemd/*.service systemd/*.timer
 ./doctor.sh
 ```
-
-Some validations require an installed system target or privileges. They are run
-manually and documented in phase/audit notes when needed.
 
 ## Documentation
 
@@ -373,10 +384,9 @@ manually and documented in phase/audit notes when needed.
 ## Safety Rule
 
 WatchdogVPN must preserve existing user configuration unless the user
-explicitly approves a change. When a feature touches DNS, routing, daemon state,
-privileged files or installed runtime paths, unit tests are not enough: the
-behavior must be validated against the real machine or a faithful system-level
-test.
+explicitly approves a change. Features that touch DNS, routing, daemon state,
+privileged files or installed runtime paths must be reversible and must never
+silently change user-owned state.
 
 ## License
 

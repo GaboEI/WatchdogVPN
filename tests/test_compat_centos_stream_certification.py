@@ -197,9 +197,9 @@ class CentosStreamCertificationTests(unittest.TestCase):
         self.assertEqual(centos_records, ["cert_centos_stream_rolling"])
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        match = re.search(r"(\d+)\s+distributions field-certified", readme)
+        match = re.search(r"certified on (\d+) distributions", readme)
         if match is None:
-            self.fail("README must state the field-certified count")
+            self.fail("README must state the certified distribution count")
         self.assertEqual(int(match.group(1)), len(distros))
 
     def test_centos_without_own_evidence_fails_closed(self) -> None:

@@ -8,9 +8,9 @@ Accepted.
 
 ## Context
 
-ADR 0007 split proxy-chain and route-chain runtime out of Phase 19 because a
-chain requires more than syntax. Phase 21.5 must now define the product
-contract before validators can accept `chain:<id>`.
+ADR 0007 deferred proxy-chain and route-chain runtime because a chain requires
+more than syntax. The product contract must now define the behavior before
+validators can accept `chain:<id>`.
 
 Chains affect routing, DNS, health, failover and diagnostics across multiple
 hops. A partial implementation that silently collapses to the current profile,
@@ -20,8 +20,8 @@ prove.
 
 ## Decision
 
-WatchdogVPN will add `chain:<chain_id>` as a first-class route action in Phase
-21.5 after model validation and runtime mapping land.
+WatchdogVPN will add `chain:<chain_id>` as a first-class route action once the
+model validation and runtime mapping land.
 
 Accepted v2.0 chain hop types:
 
@@ -50,8 +50,8 @@ The default DNS posture is chain-owned:
 
 ## Consequences
 
-- `chain:<id>` remains rejected until the Phase 21.5 model and runtime mapping
-  are implemented and validated.
+- `chain:<id>` remains rejected until the chain model and runtime mapping
+  are implemented.
 - Nested chains are intentionally deferred beyond v2.0.
 - Route/app-policy/default-action integration must use one canonical chain
   parser and must never silently coerce a chain action.
@@ -59,5 +59,4 @@ The default DNS posture is chain-owned:
   unavailable hop reasons.
 - Support export must redact local topology and endpoint identifiers while
   preserving status and counts.
-- Installed-VM validation is required before Phase 21.5 may merge back to
-  `main`.
+- The chain contract is accepted only once its runtime mapping is implemented.

@@ -42,7 +42,7 @@ It may:
 - run the WatchdogVPN updater;
 - refresh installed runtime commands;
 - trigger `sudo` through `./update.sh`;
-- run post-update validation.
+- run post-update checks.
 
 Because of that, it must never run silently.
 
@@ -170,25 +170,18 @@ The main TUI update screen should not expose Git commands to normal users.
 - Background updates.
 - Automatic scheduled updates.
 
-## Test Requirements
+## Required Behavior
 
-Unit tests should cover:
+The runtime update must uphold these guarantees:
 
-- dirty tree refusal;
-- no upstream refusal;
-- ahead refusal;
-- diverged refusal;
-- wrong branch refusal;
-- missing `update.sh` refusal;
-- missing `doctor.sh` refusal;
-- confirmation required;
-- successful planned command order using mocks;
-- failure stops later steps;
-- failed step and last successful step are reported.
-
-Manual validation should cover:
-
-- installed Arch workstation;
-- installed Ubuntu workstation;
-- at least one clean update from a previous release checkout;
-- failed update path if feasible without risking the system.
+- a dirty tree is refused;
+- a missing upstream is refused;
+- an ahead branch is refused;
+- a diverged branch is refused;
+- a wrong branch is refused;
+- a missing `update.sh` is refused;
+- a missing `doctor.sh` is refused;
+- confirmation is required before any change;
+- steps run in the planned order;
+- a failure stops later steps;
+- the failed step and the last successful step are reported.

@@ -44,8 +44,15 @@ Outside after.
 
 def load_authoritative_map() -> dict:
     """The only place tests obtain public display labels: the repository artifact."""
-    document = json.loads(PRESENTATION_MAP.read_text(encoding="utf-8"))
-    return document["distributions"]
+    return json.loads(PRESENTATION_MAP.read_text(encoding="utf-8"))
+
+
+def load_authoritative_distributions() -> dict:
+    return load_authoritative_map()["distributions"]
+
+
+def load_authoritative_protocols() -> dict:
+    return load_authoritative_map()["protocols"]
 
 
 def run_tool(args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -86,7 +93,7 @@ class PublicDocsGeneratorTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.base = Path(self._tmp.name)
-        self.labels = load_authoritative_map()
+        self.labels = load_authoritative_distributions()
         self.manifest_path = self.base / "manifest.json"
         shutil.copyfile(PRODUCT_MANIFEST, self.manifest_path)
 
@@ -118,19 +125,24 @@ class PublicDocsGeneratorTests(unittest.TestCase):
         document = json.loads(PRESENTATION_MAP.read_text(encoding="utf-8"))
         self.assertEqual(document.get("schema_version"), docs.PRESENTATION_MAP_SCHEMA_VERSION)
         self.assertIsInstance(document.get("distributions"), dict)
+        self.assertIsInstance(document.get("protocols"), dict)
 
         # The generator module must not embed any label value, map, or fallback.
         source = TOOL.read_text(encoding="utf-8")
         self.assertNotIn("DISTRIBUTION_DISPLAY_LABELS", source)
-        for label in load_authoritative_map().values():
-            self.assertNotIn(label, source, "label value %r must not be embedded in the tool" % label)
+        for section in ("distributions", "protocols"):
+            for label in load_authoritative_map()[section].values():
+                self.assertNotIn(
+                    label, source, "label value %r must not be embedded in the tool" % label
+                )
 
     def test_presentation_map_covers_current_manifest_ids_exactly(self) -> None:
         manifest = docs.load_manifest(self.manifest_path)
         labels = load_authoritative_map()
+        distributions = labels["distributions"]
         manifest_ids = set(manifest["distributions"])
-        self.assertEqual(set(labels), manifest_ids)
-        for dist_id, label in labels.items():
+        self.assertEqual(set(distributions), manifest_ids)
+        for dist_id, label in distributions.items():
             self.assertIsInstance(label, str)
             self.assertTrue(label.strip(), "empty label for %r" % dist_id)
 
@@ -217,11 +229,14 @@ class PublicDocsGeneratorTests(unittest.TestCase):
         bytes_2 = (root / "doc.md").read_bytes()
         self.assertEqual(bytes_1, bytes_2)
 
-    def test_clean_repository_check_passes_without_markers(self) -> None:
-        # Real repository has no managed regions yet (12B.2 wires them).
+    def test_real_repository_check_passes_with_managed_regions(self) -> None:
+        # 12B.2 wires managed regions into the public surfaces; the checked-in
+        # repository must already be in sync with the generator.
         result = run_tool(["--check"])
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("files_with_markers=0", result.stdout)
+        self.assertIn("files_with_markers=", result.stdout)
+        self.assertNotIn("files_with_markers=0", result.stdout)
+        self.assertNotIn("drift", result.stderr)
 
     def test_check_passes_after_generate_and_detects_controlled_drift(self) -> None:
         root = self._fixture()
@@ -356,9 +371,84 @@ class PublicDocsGeneratorTests(unittest.TestCase):
         with self.assertRaises(docs.GeneratorError):
             docs._assert_projection_public(bad_projection)
 
+    def test_protocol_map_covers_manifest_protocol_ids_exactly(self) -> None:
+        manifest = docs.load_manifest(self.manifest_path)
+        protocols = load_authoritative_protocols()
+        manifest_ids = set(manifest["protocols"])
+        self.assertEqual(set(protocols), manifest_ids)
+        self.assertEqual(len(protocols), 12)
+        for proto_id, label in protocols.items():
+            self.assertIsInstance(label, str)
+            self.assertTrue(label.strip(), "empty label for %r" % proto_id)
+
+    def test_protocol_map_missing_id_fails_closed_no_write(self) -> None:
+        def drop_one(document: dict) -> None:
+            del document["protocols"][sorted(document["protocols"])[0]]
+
+        path = self._mutated_map(drop_one)
+        self._assert_fail_closed_no_write(path, "protocols presentation map must match")
+
+    def test_protocol_map_unknown_id_fails_closed_no_write(self) -> None:
+        path = self._mutated_map(
+            lambda doc: doc["protocols"].__setitem__("not_a_real_protocol", "Not Real")
+        )
+        self._assert_fail_closed_no_write(path, "protocols presentation map must match")
+
+    def test_protocol_map_empty_label_fails_closed_no_write(self) -> None:
+        def blank(document: dict) -> None:
+            document["protocols"][sorted(document["protocols"])[0]] = ""
+
+        self._assert_fail_closed_no_write(self._mutated_map(blank), "protocols label for")
+
+    def test_generated_regions_use_human_readable_protocol_names(self) -> None:
+        manifest = docs.load_manifest(self.manifest_path)
+        projection = docs.build_public_projection(
+            manifest, now=datetime(2026, 9, 22, 0, 0, 0)
+        )
+        section = docs.render_compat_protocol_list(projection)
+        for label in load_authoritative_protocols().values():
+            self.assertIn(label, section, "human-readable name %r must appear" % label)
+        self.assertIn("in scope for certified releases", section)
+        self.assertIn("family_inferred", section)
+        self.assertIn("experimental", section)
+        # Raw ids must not be the primary presentation.
+        self.assertNotIn("openvpn_cloak", section)
+
+    def test_generated_tables_never_emit_green_or_ratio(self) -> None:
+        manifest = docs.load_manifest(self.manifest_path)
+        projection = docs.build_public_projection(
+            manifest, now=datetime(2026, 9, 22, 0, 0, 0)
+        )
+        table = docs.render_compat_support_table(projection)
+        section = docs.render_compat_protocol_list(projection)
+        for rendered in (table, section):
+            self.assertNotIn("green", rendered)
+            self.assertNotIn("12/12", rendered)
+        # A fully covered certified release uses the user-facing wording.
+        certified = [r for r in projection["rows"] if r["support_classification"] == "certified"]
+        self.assertTrue(certified)
+        for row in certified:
+            self.assertIn("in-scope protocols", row["protocol_summary"])
+
+    def test_non_certified_releases_do_not_claim_protocol_coverage(self) -> None:
+        manifest = docs.load_manifest(self.manifest_path)
+        projection = docs.build_public_projection(
+            manifest, now=datetime(2026, 9, 22, 0, 0, 0)
+        )
+        table = docs.render_compat_support_table(projection)
+        for row in projection["rows"]:
+            if row["support_classification"] != "certified":
+                self.assertEqual(row["protocol_summary"], "—")
+        rhel = next(r for r in projection["rows"] if r["distribution_id"] == "rhel")
+        self.assertEqual(rhel["support_classification"], "family_inferred")
+        self.assertEqual(rhel["protocol_summary"], "—")
+        rhel_line = next(line for line in table.splitlines() if "family_inferred" in line)
+        self.assertIn("| — |", rhel_line)
+        self.assertNotIn("in-scope protocols", rhel_line)
+
     def test_family_inferred_and_rolling_claim_boundaries(self) -> None:
         manifest = docs.load_manifest(self.manifest_path)
-        labels = load_authoritative_map()
+        labels = load_authoritative_distributions()
         projection = docs.build_public_projection(
             manifest, now=datetime(2026, 9, 22, 0, 0, 0)
         )
@@ -396,7 +486,7 @@ class PublicDocsGeneratorTests(unittest.TestCase):
 
     def test_deterministic_order_lf_and_trailing_newline(self) -> None:
         manifest = docs.load_manifest(self.manifest_path)
-        labels = load_authoritative_map()
+        labels = load_authoritative_distributions()
         now = datetime(2026, 9, 22, 0, 0, 0)
         first = docs.build_public_projection(manifest, now=now)
         second = docs.build_public_projection(manifest, now=now)

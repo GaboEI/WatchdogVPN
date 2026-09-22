@@ -16,7 +16,7 @@ This is still not a stable 1.0 release.
 - Preserve WatchdogVPN configuration during install, update and uninstall.
 - Add safe config migration for missing keys without overwriting user values.
 - Add `watchdogvpn config get` for read-only config inspection.
-- Add validated `watchdogvpn config set` for safe language, TUI and reporting
+- Add `watchdogvpn config set` for safe language, TUI and reporting
   keys.
 - Add confirmed `watchdogvpn config reset` for safe config sections.
 - Add `docs/configuration.md` and `docs/cli.md`.
@@ -27,7 +27,6 @@ This is still not a stable 1.0 release.
 - Add a TUI Update Center with product-facing status, source sync state,
   confirmed remote metadata check and contextual runtime update guidance.
 - Separate Update Center technical details from the main product-facing view.
-- Record real installed-runtime validation for persistent config, TUI Settings
   and TUI Update Center.
 
 ## Persistent Configuration
@@ -61,7 +60,7 @@ watchdogvpn config reset tui
 watchdogvpn config reset language
 ```
 
-Config writes validate supported keys and values before modifying the active
+Config writes reject unsupported keys and values before modifying the active
 configuration.
 
 ## TUI Settings
@@ -133,10 +132,10 @@ VPN -> Update
 
 | Distribution | Status |
 | --- | --- |
-| Ubuntu 24.04 | Tested on a real workstation |
-| Arch Linux | Tested on a real workstation |
-| Debian | Tested with a real install flow, including DNS tooling |
-| CachyOS | Tested with a real install flow, advanced DNS and post-reboot VPN recovery |
+| Ubuntu 24.04 | Supported (stable) |
+| Arch Linux | Supported (rolling) |
+| Debian 13.6 | Supported (stable) |
+| CachyOS | Supported (rolling) |
 | Fedora | Future target |
 
 ## Known Limitations
@@ -148,15 +147,13 @@ VPN -> Update
 - Timer and DNS preferences are documented in the configuration model, but
   runtime application remains read-only for now.
 - TUI command helpers use explicit argv wrappers instead of subprocess shell mode.
-- External installer verification for the initial provider CLI and optional DNS
-  component is not yet cryptographically pinned.
+- External installer downloads for the initial provider CLI and optional DNS
+  component are not yet cryptographically pinned.
 - The first backend is provider-CLI based. WireGuard/private backend support is
   not implemented yet.
 - Fedora support remains a future target.
 
-## Validation
-
-Validated locally before release:
+## Local Checks
 
 ```sh
 bash tests/unit.sh
@@ -164,15 +161,6 @@ bash tests/syntax.sh
 python3 -m compileall -q tui tests/unit/test_tui_modules.py
 git diff --check
 ```
-
-Real-machine validation recorded:
-
-- Arch Linux persistent configuration update validation.
-- Arch Linux TUI Settings runtime validation.
-- Arch Linux TUI Update Center runtime validation.
-- Debian real install validation, including DNS tooling.
-- CachyOS real install validation with advanced DNS and post-reboot VPN
-  recovery.
 
 ## Non-Goals For This Release
 

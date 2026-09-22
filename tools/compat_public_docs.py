@@ -68,13 +68,17 @@ END_STRICT_RE = re.compile(r"<!-- END GENERATED: ([a-z0-9][a-z0-9-]*) -->")
 BEGIN_LOOSE_RE = re.compile(r"<!--\s*BEGIN GENERATED:")
 END_LOOSE_RE = re.compile(r"<!--\s*END GENERATED:")
 
-# Single authoritative, versioned, machine-readable Distribution Presentation
-# Map. Presentation-only; it is not a source of support, certification, policy,
-# or classification facts. The mapping values live ONLY in this repository
-# artifact; no copy exists in this module, tests, fixtures, or any other file.
+# Single authoritative, versioned, machine-readable Presentation Map.
+# Presentation-only; it is not a source of support, certification, policy,
+# membership, or classification facts. It carries the public display labels for
+# both distribution ids (`distributions`) and in-scope protocol ids
+# (`protocols`). The mapping values live ONLY in this repository artifact; no
+# copy exists in this module, tests, fixtures, or any other file.
 PRESENTATION_MAP_PATH = ROOT / "compat" / "distribution_presentation.json"
-PRESENTATION_MAP_SCHEMA_VERSION = "1.0.0"
-PRESENTATION_MAP_TOP_LEVEL_KEYS = frozenset({"schema_version", "description", "distributions"})
+PRESENTATION_MAP_SCHEMA_VERSION = "1.1.0"
+PRESENTATION_MAP_TOP_LEVEL_KEYS = frozenset(
+    {"schema_version", "description", "distributions", "protocols"}
+)
 
 SUPPORT_VALUES = frozenset(
     {"certified", "supported", "family_inferred", "experimental", "unsupported"}
@@ -156,42 +160,57 @@ def load_presentation_map(path: Path | None = None) -> dict:
             "fail-closed: unsupported presentation map schema_version %r (expected %r)"
             % (document.get("schema_version"), PRESENTATION_MAP_SCHEMA_VERSION)
         )
-    mapping = document.get("distributions")
-    if not isinstance(mapping, dict) or not mapping:
-        raise GeneratorError(
-            "fail-closed: presentation map distributions must be a non-empty object"
-        )
-    for key, value in mapping.items():
-        if not isinstance(key, str) or not key:
+    for section in ("distributions", "protocols"):
+        mapping = document.get(section)
+        if not isinstance(mapping, dict) or not mapping:
             raise GeneratorError(
-                "fail-closed: presentation map distribution id must be a non-empty string"
+                "fail-closed: presentation map %s must be a non-empty object" % (section,)
             )
-        if not isinstance(value, str) or not value.strip():
-            raise GeneratorError(
-                "fail-closed: presentation map label for %r must be a non-empty string" % (key,)
-            )
-    return mapping
+        for key, value in mapping.items():
+            if not isinstance(key, str) or not key:
+                raise GeneratorError(
+                    "fail-closed: presentation map %s id must be a non-empty string" % (section,)
+                )
+            if not isinstance(value, str) or not value.strip():
+                raise GeneratorError(
+                    "fail-closed: presentation map %s label for %r must be a non-empty string"
+                    % (section, key)
+                )
+    return document
 
 
 def _assert_presentation_map_covers_manifest(presentation_map: dict, manifest: dict) -> None:
-    manifest_ids = set(manifest.get("distributions", {}))
-    map_ids = set(presentation_map)
-    missing = sorted(manifest_ids - map_ids)
-    extra = sorted(map_ids - manifest_ids)
-    if missing or extra:
-        raise GeneratorError(
-            "fail-closed: distribution presentation map must match the manifest id set "
-            "exactly (missing=%s extra=%s)" % (missing, extra)
-        )
+    for section, manifest_ids in (
+        ("distributions", set(manifest.get("distributions", {}))),
+        ("protocols", set(manifest.get("protocols", {}))),
+    ):
+        map_ids = set(presentation_map.get(section, {}))
+        missing = sorted(manifest_ids - map_ids)
+        extra = sorted(map_ids - manifest_ids)
+        if missing or extra:
+            raise GeneratorError(
+                "fail-closed: %s presentation map must match the manifest id set "
+                "exactly (missing=%s extra=%s)" % (section, missing, extra)
+            )
 
 
 def _distribution_label(dist_id: str, presentation_map: dict) -> str:
     try:
-        return presentation_map[dist_id]
+        return presentation_map["distributions"][dist_id]
     except KeyError as exc:
         raise GeneratorError(
             "fail-closed: distribution id %r is absent from the Distribution Presentation Map"
             % (dist_id,)
+        ) from exc
+
+
+def _protocol_label(proto_id: str, presentation_map: dict) -> str:
+    try:
+        return presentation_map["protocols"][proto_id]
+    except KeyError as exc:
+        raise GeneratorError(
+            "fail-closed: protocol id %r is absent from the Protocol Presentation Map"
+            % (proto_id,)
         ) from exc
 
 
@@ -271,23 +290,24 @@ def _format_expiry_window(expiry_seconds: int) -> str:
 
 
 def _protocol_summary(cert: dict | None, protocol_ids: Sequence[str]) -> str:
+    """User-facing protocol coverage for a release, never an opaque test label."""
     if cert is None:
         return "—"
     results = cert.get("protocol_results") or {}
     if not results:
         return "—"
-    green = 0
-    total = 0
+    in_scope = len(protocol_ids)
+    covered = 0
     for proto_id in protocol_ids:
         if proto_id not in results:
             continue
-        total += 1
-        disposition = results[proto_id].get("disposition")
-        if disposition == "green":
-            green += 1
-    if total == 0:
+        if results[proto_id].get("disposition") == "green":
+            covered += 1
+    if covered == 0:
         return "—"
-    return "%d/%d green" % (green, total)
+    if covered == in_scope:
+        return "All %d in-scope protocols" % in_scope
+    return "%d of %d in-scope protocols" % (covered, in_scope)
 
 
 def build_public_projection(
@@ -306,6 +326,7 @@ def build_public_projection(
     protocol_ids = sorted(manifest.get("protocols", {}).keys())
     if not protocol_ids:
         raise GeneratorError("fail-closed: manifest protocols list is empty")
+    protocol_labels = [_protocol_label(proto_id, presentation_map) for proto_id in protocol_ids]
 
     certs = _current_certifications(manifest)
     rows: list[dict] = []
@@ -386,6 +407,7 @@ def build_public_projection(
     projection = {
         "rows": rows,
         "protocol_ids": list(protocol_ids),
+        "protocol_labels": list(protocol_labels),
     }
     _assert_projection_public(projection)
     return projection
@@ -416,11 +438,27 @@ def _assert_projection_public(projection: dict) -> None:
         "rolling_expiry_window",
         "protocol_summary",
     }
-    allowed_top = {"rows", "protocol_ids"}
+    allowed_top = {"rows", "protocol_ids", "protocol_labels"}
     if set(projection) != allowed_top:
         raise GeneratorError(
             "fail-closed: unexpected projection top-level keys: %r" % (sorted(projection),)
         )
+    labels = projection["protocol_labels"]
+    if (
+        not isinstance(labels, list)
+        or len(labels) != len(projection["protocol_ids"])
+        or not all(isinstance(label, str) and label.strip() for label in labels)
+    ):
+        raise GeneratorError(
+            "fail-closed: protocol_labels must be one non-empty label per protocol id"
+        )
+    for text in labels:
+        for pattern in _PRIVATE_VALUE_PATTERNS:
+            if pattern.search(text):
+                raise GeneratorError(
+                    "fail-closed: private or non-public value matched pattern %s in protocol labels"
+                    % (pattern.pattern,)
+                )
     for row in projection["rows"]:
         if set(row) != allowed_row_keys:
             raise GeneratorError(
@@ -476,7 +514,21 @@ def render_compat_support_table(projection: dict) -> str:
 
 
 def render_compat_protocol_list(projection: dict) -> str:
-    return ", ".join(projection["protocol_ids"]) + "\n"
+    labels = sorted(projection["protocol_labels"], key=lambda label: label.lower())
+    lines = [
+        "The following protocol families are in scope for certified releases:",
+        "",
+    ]
+    lines.extend("- %s" % label for label in labels)
+    lines.extend(
+        [
+            "",
+            "This list applies to certified releases only. A `family_inferred` or",
+            "`experimental` release does not imply full protocol coverage, and every",
+            "certified release is supported exactly as its own row states.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
 REGION_RENDERERS: dict[str, Callable[[dict], str]] = {

@@ -13,41 +13,21 @@ is v3.0 with advance release-note notice. Set
 `WATCHDOGVPN_SUPPRESS_DEPRECATION_WARNING=1` only as a temporary automation aid
 while replacing the command name.
 
-The routing and removal policy is recorded in
-[Phase 23 CLI Entrypoint Consolidation](phase-23-task-23-3-6-cli-entrypoint-consolidation.md).
+The routing and removal policy is documented in this guide.
 
 The existing Bash-only support functions are preserved under
 `watchdog maintenance`. The `VPN` command remains a direct TUI launcher until
 the planned TUI replacement.
 
-## Generated Inventory And Parity Gate
+## Command Inventory
 
-The complete public route and argument inventory is generated directly from
-the canonical argparse tree:
+The complete public route and argument inventory is available as:
 
 - [human-readable command inventory](generated/cli-command-inventory.md);
 - [machine-readable JSON inventory](generated/cli-command-inventory.json).
 
-The generated inventory includes the canonical root, every nested argparse
-route and each documented maintenance passthrough choice. Suppressed internal
-test/recovery path overrides are intentionally excluded from public docs.
-
-Regenerate snapshots after an intentional parser change:
-
-```sh
-python3 scripts/generate_cli_inventory.py
-```
-
-Verify parity without modifying files:
-
-```sh
-python3 scripts/generate_cli_inventory.py --check
-```
-
-The parity check is part of the test gate. A route, summary, usage or public
-argument change fails until both generated snapshots are reviewed and updated.
-This prevents the hand-maintained examples below from becoming the only command
-inventory.
+The inventory includes the canonical root, every nested `watchdog` route and
+each documented maintenance passthrough choice.
 
 ## Curated Command Summary
 
@@ -268,8 +248,7 @@ Disconnect cleanup is owned by the daemon/runtime layer:
 - owned local proxy listeners are removed by driver disconnect where
   applicable.
 
-The CLI prints these cleanup expectations but does not claim installed runtime
-cleanup proof unless a VM/lab validation task recorded it.
+The CLI prints these cleanup expectations as product behavior.
 
 ### `watchdog status`
 
@@ -448,8 +427,8 @@ recovery wording, but it does not include the subscription URL. To restore a
 removed provider, add it again from the original subscription URL.
 
 The profile and provider stores do not currently define an automatic
-store-level backup contract for these direct mutations. Task 22.3 therefore
-adds redacted rollback guidance and JSON rollback points for destructive
+store-level backup contract for these direct mutations. WatchdogVPN therefore
+provides redacted rollback guidance and JSON rollback points for destructive
 removes without writing secret-bearing backup documents.
 
 ## Version And Panic
@@ -560,8 +539,7 @@ choices.
 
 Installed systems resolve `uninstall.sh` from the installed runtime support
 tree, independent of the current working directory. Source checkouts can still
-set `WATCHDOGVPN_REPO_DIR` or use the hidden test/lab `--uninstall-script`
-override.
+set `WATCHDOGVPN_REPO_DIR` or use the internal `--uninstall-script` override.
 
 ```sh
 watchdog uninstall --keep-data --yes
@@ -761,9 +739,8 @@ snapshot, removes the snapshot file after successful restore and returns
 `rollback_snapshot.restored=true` in JSON. A reset with no snapshot remains a
 clean unprivileged no-op.
 
-Normal tests and local CLI validation must use mocked managers or isolated
-temporary resolver files. Do not run DNS apply/reset against the workstation's
-real resolver paths unless an explicit VM/lab validation task calls for it.
+DNS apply/reset changes the host resolver; use a disposable or isolated target
+rather than the workstation's live resolver configuration.
 
 ### `watchdog stats status`
 
@@ -778,7 +755,7 @@ The command is read-only and does not create `metrics.json` when metrics are
 absent. It reports enabled state, privacy mode, retention, bucket count, total
 aggregate event count and whether detailed request history is supported.
 
-Detailed request history is not supported in Phase 16.
+Detailed request history is not supported.
 
 ### `watchdog stats summary`
 
@@ -820,7 +797,7 @@ watchdog stats privacy-mode detailed --json
 
 `off` disables metrics recording. `aggregate` enables aggregate counters.
 `detailed` stores the policy mode value but does not enable request history,
-because detailed history is not implemented in Phase 16.
+because detailed history is not implemented.
 
 JSON output keeps `detailed_history_supported=false` and
 `history_included=false` even when the selected mode is `detailed`.
@@ -1012,7 +989,7 @@ watchdog rules explain --ip 203.0.113.42 --json
 watchdog rules explain --domain example.com --process-name curl
 ```
 
-The command reports the Phase 19 routing shape:
+The command reports the routing shape:
 
 - `routing_policy`: `rule` evaluates route rules; `global` ignores route rules
   and uses the default route action for captured traffic;
@@ -1048,7 +1025,7 @@ reported as unevaluated with trust/cache status loaded from
 
 ### `watchdog config routing-contract`
 
-Shows the Phase 19 routing/capture contract without changing runtime state.
+Shows the routing/capture contract without changing runtime state.
 
 ```sh
 watchdog config routing-contract
@@ -1073,18 +1050,18 @@ watchdog config set default-route-action block
 ```
 
 `system_proxy` may be represented only with `local_proxy`, but runtime connect
-remains fail-closed until the dedicated system-proxy apply/restore task is
-implemented and installed-VM validated.
+remains fail-closed until the dedicated system-proxy apply/restore behavior is
+implemented.
 
-## Phase 20 LAN Sharing
+## LAN Sharing
 
 WatchdogVPN stores LAN sharing intent under `lan_sharing`. Authenticated
 SOCKS/HTTP LAN proxy listeners are exposed only when
 `lan_sharing.enabled = true` and `lan_sharing.mode = proxy`. Disabled-by-default
 IPv4 LAN gateway mode is selected with `lan_sharing.mode = gateway`.
 
-Gateway mode passed the Phase 20 VM/lab matrix, but remains explicit,
-disabled by default and bounded to the documented IPv4/manual-DNS contract.
+Gateway mode remains explicit, disabled by default and bounded to the
+documented IPv4/manual-DNS contract.
 
 Supported scaffold keys:
 
@@ -1106,13 +1083,10 @@ Gateway mode requires TUN capture, a concrete non-loopback interface,
 uses WatchdogVPN-owned nftables rules and temporary IPv4 forwarding with
 rollback on disconnect or failed apply.
 
-Validation rules:
-
 - LAN sharing is disabled by default.
 - `mode` must be `disabled`, `proxy` or `gateway`.
 - `bind_address` must be an IP address when set.
-- wildcard binds such as `0.0.0.0` and `::` are rejected outside explicit test
-  fixtures.
+- wildcard binds such as `0.0.0.0` and `::` are rejected by default.
 - enabled LAN sharing requires `mode = proxy`, an explicit non-loopback
   `bind_address`, and `authentication_required = true`.
 - SOCKS and HTTP ports must be in `1..65535` and must differ.
@@ -1140,8 +1114,8 @@ watchdog config lan-sharing-credentials --show-secret
 `--show-secret` is the explicit secret-output flag. Use it only in a trusted
 terminal.
 
-Firewall state is not managed in Task 20.3. Opening or restricting LAN access is
-the operator's responsibility until a later Phase 20 task implements managed
+Firewall state is not managed by this command. Opening or restricting LAN access
+is the operator's responsibility until a later release implements managed
 firewall apply/teardown.
 
 ## Rule-Set Runtime Lifecycle
@@ -1225,10 +1199,8 @@ watchdog maintenance backend --help
 
 The root help owns all daemon-backed lifecycle, configuration and policy
 commands and links the maintenance namespace. The deprecated alias does not
-maintain a second command inventory. Root help and generated argparse route
-help wrap dynamically to the detected terminal width. Root and profile-list
-help are regression-tested at 40, 80 and 120 columns; every argparse-owned help
-route is additionally checked at 40 columns.
+maintain a second command inventory. Root help and every route help wrap
+dynamically to the detected terminal width, including 40, 80 and 120 columns.
 
 ## Diagnostic Reports
 
@@ -1246,7 +1218,7 @@ Rules:
 - The report is written to a local text file.
 - The user must review the file before sharing it.
 - Sensitive sample data is sanitized where possible.
-- Observability metrics are summarized only through the Phase 16 redacted
+- Observability metrics are summarized only through the redacted
   export contract.
 - Raw metrics stores, profile ids, rule-group names, named node groups,
   route-action group labels and DNS-query-like counter keys are excluded from

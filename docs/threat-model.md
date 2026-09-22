@@ -38,16 +38,16 @@ hardening.
 | Provider/profile configuration is invalid | Recovery loops cannot fix setup | stores and runtime commands fail closed with explicit errors |
 | Bad VPN endpoint | Rotation may land on unusable node | the v2 rotation/runtime path validates state before accepting a connection |
 | DNS profile breaks resolution | User may lose name resolution | DNS v2 `apply`/`reset` snapshot the prior resolver state and restore it on request; `vpn_dns_rescue` remains available as a manual fallback |
-| Observability becomes browsing history | Local metrics or support exports may reveal destinations, process activity or provider choices | Phase 16 defaults to aggregate local counters; raw destination/process history is not silently enabled and must be opt-in, retention-bounded, purgeable and excluded from normal diagnostics exports |
-| Network context becomes location history | SSID, BSSID, interface names, gateway details or route changes may reveal home/work/travel context | Phase 21 classifies network facts before implementation: raw SSID/BSSID/interface identifiers are sensitive local context, default persistence is rejected, and normal support exports must redact local network identifiers |
-| Chain routing silently uses a weaker path | A multi-hop route may collapse to current, direct or a shorter path while the operator believes all hops are active | Phase 21.5 defines `chain:<id>` as a first-class route action only after validation/runtime mapping; v2.0 chains use explicit profile/group hops, reject nested chains, own DNS by default and fail closed when unresolved |
-| Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | LAN sharing remains disabled by default. Local SOCKS/HTTP and DNS hijack inbounds stay loopback-only unless the operator explicitly enables authenticated LAN proxy mode or bounded gateway mode. Gateway mode is IPv4/manual/VM-validated, requires TUN capture, owns reversible firewall/NAT state and must clean up forwarding/firewall state on teardown. |
+| Observability becomes browsing history | Local metrics or support exports may reveal destinations, process activity or provider choices | Observability defaults to aggregate local counters; raw destination/process history is not silently enabled and must be opt-in, retention-bounded, purgeable and excluded from normal diagnostics exports |
+| Network context becomes location history | SSID, BSSID, interface names, gateway details or route changes may reveal home/work/travel context | Network-context automation classifies network facts before storage: raw SSID/BSSID/interface identifiers are sensitive local context, default persistence is rejected, and normal support exports must redact local network identifiers |
+| Chain routing silently uses a weaker path | A multi-hop route may collapse to current, direct or a shorter path while the operator believes all hops are active | `chain:<id>` is a first-class route action only after the model and runtime mapping land; v2.0 chains use explicit profile/group hops, reject nested chains, own DNS by default and fail closed when unresolved |
+| Local proxy service is reachable from LAN unintentionally | Other devices may use the host as an unintended proxy | LAN sharing remains disabled by default. Local SOCKS/HTTP and DNS hijack inbounds stay loopback-only unless the operator explicitly enables authenticated LAN proxy mode or bounded gateway mode. Gateway mode is IPv4/manual, requires TUN capture, owns reversible firewall/NAT state and must clean up forwarding/firewall state on teardown. |
 | Uninstall breaks DNS | Host may remain offline after removal | `vpn_dns_rescue` restores fallback DNS behavior |
 | Repeated timer executions overlap | Race conditions and route churn | rotation uses `flock`; timers are one-shot services |
 | User-specific bypass domains leak into new installs | New users inherit irrelevant routing policy | default bypass example starts empty |
 | Privileged scripts are modified or misused | System integrity risk | scripts are installed root-owned with restrictive permissions |
 | Shell command injection through TUI input | Privileged command execution risk | current quoting mitigates some paths; full command-layer hardening is planned |
-| External installer download is compromised or changes | Remote code execution risk | risk is documented; manual install and future checksum/signature validation are planned |
+| External installer download is compromised or changes | Remote code execution risk | risk is documented; manual install and future checksum/signature checks are planned |
 
 ## Risk Classification
 
@@ -56,13 +56,12 @@ hardening.
 - The provider CLI is not trusted as the source of truth.
 - The product requires sudo for system-level actions.
 - Some TUI helpers still use shell command strings.
-- Automatic CLI installer verification is not yet cryptographically pinned.
-- GitHub Actions currently performs baseline validation, not full integration
-  simulation.
-- LAN proxy/gateway sharing is accepted only because Phase 20 completed
-  VM-only validation, authentication, explicit bind/firewall controls,
-  kill-switch validation, DNS leak validation and teardown validation. It must
-  remain disabled by default.
+- Automatic CLI installer downloads are not yet cryptographically pinned.
+- Continuous integration currently runs baseline checks, not a full integration
+  environment.
+- LAN proxy/gateway sharing requires authentication, explicit bind/firewall
+  controls, kill-switch coverage, DNS leak protection and clean teardown. It
+  must remain disabled by default.
 
 ### Must Not Happen
 
@@ -85,8 +84,8 @@ hardening.
   rotation paths.
 - Split the TUI into command, parser, state and render modules.
 - Keep Python subprocess usage out of shell mode.
-- Add verified/manual installation documentation for supported provider paths.
-- Promote `shellcheck` and `shfmt` from advisory CI checks to required checks
+- Document manual installation for supported provider paths.
+- Promote `shellcheck` and `shfmt` from advisory checks to required checks
   after cleanup.
 - Add release-specific known limitations.
 
@@ -96,7 +95,7 @@ Important design answers:
 
 - Provider CLI status is not the source of truth because a provider CLI can
   report a stale or incomplete state.
-- `vpn_truth_check` exists to validate observable network reality: tunnel, route
+- `vpn_truth_check` exists to report observable network reality: tunnel, route
   and public IP.
 - Bash is used for privileged runtime scripts because system administration
   tasks integrate naturally with systemd, NetworkManager, iproute2 and logrotate.
