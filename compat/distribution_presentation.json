@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.1.0",
+  "description": "Single authoritative, versioned, machine-readable source of public display labels for Task 23.7.5.12 public compatibility documentation generation. `distributions` is keyed by the exact manifest distribution id (compat/compatibility.json distributions.<id>.id); `protocols` is keyed by the exact manifest protocol id (compat/compatibility.json protocols.<id>). Presentation-only: it does not define support, certification, policy, membership, or classification facts, which come only from the compatibility manifest and compat/support_model.py. Do not duplicate these values in generator code, tests, fixtures, comments, or any second policy file.",
+  "distributions": {
+    "almalinux": "AlmaLinux",
+    "arch": "Arch Linux",
+    "cachyos": "CachyOS",
+    "centos_stream": "CentOS Stream",
+    "debian": "Debian",
+    "fedora": "Fedora",
+    "kali": "Kali GNU/Linux",
+    "linuxmint": "Linux Mint",
+    "manjaro": "Manjaro",
+    "opensuse_leap": "openSUSE Leap",
+    "opensuse_tumbleweed": "openSUSE Tumbleweed",
+    "pop": "Pop!_OS",
+    "rhel": "Red Hat Enterprise Linux",
+    "rocky": "Rocky Linux",
+    "ubuntu": "Ubuntu"
+  },
+  "protocols": {
+    "amneziawg": "AmneziaWG",
+    "http": "HTTP proxy",
+    "hysteria2": "Hysteria2",
+    "openvpn": "OpenVPN",
+    "openvpn_cloak": "OpenVPN + Cloak/OverCloud",
+    "shadowsocks": "Shadowsocks",
+    "socks": "SOCKS",
+    "trojan": "Trojan",
+    "tuic": "TUIC",
+    "vless": "VLESS",
+    "vmess": "VMess",
+    "wireguard": "WireGuard"
+  }
+}

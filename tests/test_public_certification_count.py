@@ -59,18 +59,18 @@ class PublicCertificationCountTests(unittest.TestCase):
         manifest = detection.load_product_manifest()
         expected = len(qualifying_distributions(manifest))
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        match = re.search(r"(\d+)\s+distributions field-certified", readme)
+        match = re.search(r"certified on (\d+) distributions", readme)
         if match is None:
-            self.fail("README must state the field-certified count")
+            self.fail("README must state the certified distribution count")
         self.assertEqual(int(match.group(1)), expected)
 
     def test_roadmap_count_matches_manifest(self) -> None:
         manifest = detection.load_product_manifest()
         expected = len(qualifying_distributions(manifest))
         roadmap = (ROOT / "ROADMAP.md").read_text(encoding="utf-8")
-        match = re.search(r"field-certified WatchdogVPN across (\d+) Linux distributions", roadmap)
+        match = re.search(r"certified across (\d+)\s+Linux\s+distributions", roadmap)
         if match is None:
-            self.fail("ROADMAP must state the field-certified count")
+            self.fail("ROADMAP must state the certified distribution count")
         self.assertEqual(int(match.group(1)), expected)
 
 

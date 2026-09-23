@@ -32,6 +32,15 @@ jobs:
       - name: Unit behavior tests
         run: bash tests/unit.sh
 
+      - name: Public compatibility documentation policy
+        run: |
+          python3 tools/compat_read.py validate
+          python3 tools/compat_public_docs.py --check
+          python3 -m unittest discover -s tests -p 'test_compat_public_docs.py'
+          python3 -m unittest discover -s tests -p 'test_compat_public_privacy.py'
+          python3 -m unittest discover -s tests -p 'test_compat_public_editorial.py'
+          python3 tools/compat_public_policy.py check
+
       - name: Systemd unit verification
         run: |
           if ! getent passwd watchdogvpn >/dev/null; then

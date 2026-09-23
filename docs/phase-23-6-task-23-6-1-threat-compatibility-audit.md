@@ -1,256 +1,83 @@
-# Phase 23.6 Task 23.6.1 Threat/Compatibility Audit
+# Cross-Distribution Threat and Compatibility Findings
 
-Status: **CLOSED**
+This note records the cross-distribution threat and compatibility findings that
+shaped WatchdogVPN's Red Hat-family and openSUSE support paths. It is a technical
+case, not a certification: no distribution named here is certified by these
+findings. For current per-distribution support status, see the supported
+platforms surface and `docs/validation.md`.
 
-Started from baseline commit: `7441701`
-Closure commit: repository commit that records this closure entry
+## Problem
 
-Task 23.6.1 covers Fedora, the wider Red Hat/RHEL-compatible family, and
-openSUSE before any new support is claimed. This is an audit and lab-selection
-task only: a VM boot, package-manager probe, or unit dry run is not a distro
-certification green.
+WatchdogVPN's install and runtime behavior relied on assumptions that held on
+some Linux distributions but not on others. Before extending support to the Red
+Hat family (Fedora, Red Hat Enterprise Linux, CentOS Stream, Rocky Linux,
+AlmaLinux) and openSUSE (Leap, Tumbleweed), the product had to answer three
+questions:
 
-Closure decision: Task 23.6.1 is closed as a threat/compatibility audit. It
-does not certify Fedora, RHEL, AlmaLinux, RockyLinux or openSUSE support.
-Support implementation starts in Task 23.6.2 and Task 23.6.3, and later
-certification tasks must still prove install/update provenance, real runtime,
-real traffic, teardown and doctor state on their selected targets.
+- can it detect the distribution and select a package-management path?
+- can it install its required dependencies without assuming they are already
+  present?
+- can it coexist with the distribution's security and firewall posture without
+  weakening it?
 
-## Evidence
+## Findings And Resolutions
 
-Private evidence is stored outside the repository under:
+### Detector and package-manager coverage
 
-`/home/gabodev/Desktop/temporales/watchdogvpn-task-23-6-1-threat-compat-audit`
+- **Finding:** future Red Hat-family handling existed in `lib/distro.sh`, but
+  openSUSE fell through to generic unsupported; there was no
+  `distros/opensuse.sh` and no `zypper` branch in `lib/packages.sh`.
+- **Resolution:** a Red Hat-family detector with a `dnf`/RPM package path
+  (`distros/fedora.sh`) and an openSUSE detector with a `zypper` package path
+  (`distros/opensuse.sh`, `lib/packages.sh`) are implemented. openSUSE detection
+  handles both `opensuse-leap` (stable) and `opensuse-tumbleweed` (rolling)
+  release models explicitly.
 
-The directory must remain `0700`; evidence files must remain `0600`.
+### Dependencies cannot be assumed present
 
-Current evidence files:
-
-- `opensuse_leap_baseline_20260722T0826Z.log`
-- `almalinux9_baseline_20260722T0900Z.log`
-- `rockylinux9_baseline_20260722T0901Z.log`
-- `bridge_ssh_preflight_update_20260722T0902Z.log`
-- `fedora_workstation44_iso_vm_provenance_20260722T0920Z.log`
-- `fedora44_installed_baseline_20260722T1030Z.log`
-- `redhat_opensuse_vagrant_lab_20260722T084044Z.log`
-
-## Vagrant Lab Findings
-
-All attempted Vagrant guests used the Phase 23.5/23.6 generic Vagrantfile in
-bridge-only mode with `VAGRANT_EXPERIMENTAL=none_communicator`. No guest was
-started with a graphical interface. No WatchdogVPN install or runtime support
-claim was attempted.
-
-| Target | Box | Result | Certification meaning |
-| --- | --- | --- | --- |
-| openSUSE Leap 15.6 | `opensuse/Leap-15.6.x86_64` `15.6.13.356` | Booted bridge-only and produced an internal baseline over direct SSH. | Usable as the current openSUSE baseline candidate. |
-| openSUSE Tumbleweed | `opensuse/Tumbleweed.x86_64` `1.0.20241025` | Imported and booted bridge-only. MAC/IP discovery found `192.168.0.215`, but SSH on port 22 refused the direct Vagrant key path. | Not sufficient for internal baseline evidence yet. |
-| AlmaLinux 9 official | `almalinux/9` `9.7.20260518` | Imported and booted bridge-only. MAC/IP discovery found `192.168.0.176`; direct SSH with the Vagrant key worked and produced an internal baseline. | Usable as a Red Hat/RHEL-compatible control baseline, not RHEL certification. |
-| RockyLinux 9 | `bento/rockylinux-9` `202510.26.0` | Imported and booted bridge-only. GuestInfo/MAC discovery found `192.168.0.150`; direct SSH with the Vagrant key worked and produced an internal baseline. | Usable as a second Red Hat/RHEL-compatible control baseline, not RHEL certification. |
-| AlmaLinux 9 bento | `bento/almalinux-9` `202511.24.0` | VirtualBox 7.0.16 rejected the OVF before boot because it contains an NVRAM hardware item with `ResourceType=32768`. | Box/provider incompatibility; not WatchdogVPN evidence. |
-
-The repeatable preflight for a usable VM baseline is:
-
-1. Verify `VBoxManage showvminfo` reports `nic1=bridged`, the expected
-   `bridgeadapter1`, and `nic2..nic4=none`.
-2. Record the VirtualBox adapter MAC.
-3. Prefer GuestInfo when present; otherwise do a bounded TCP/SSH sweep from
-   `ubuntu-host` and cross-check the resulting ARP entry against that MAC.
-4. Attempt direct SSH with the box's documented Vagrant key/user.
-5. Only if SSH works, record the internal baseline. If SSH is refused or the MAC
-   never produces an IP, the image is lab-incomplete and cannot support a green.
-
-Fedora official Vagrant Cloud names such as `fedora/44-cloud-base` were not
-available through `vagrant cloud box show` during discovery. Fedora's official
-Cloud download page currently lists Fedora Cloud 44 Vagrant VirtualBox media as
-beta, so the Fedora Vagrant path remains unresolved for Task 23.6.5.
-
-Fedora Workstation 44 ISO provenance is now pinned separately from the Vagrant
-lab. The official Workstation download page resolves to
-`Fedora-Workstation-Live-44-1.7.x86_64.iso`; the official checksum file
-`Fedora-Workstation-44-1.7-x86_64-CHECKSUM` verifies the ISO with SHA256
-`1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf`. A
-separate graphical VirtualBox VM named `Fedora Workstation 44` exists on
-`ubuntu-host` with EFI, 2 CPU, 6144 MB RAM, a 64 GB VDI, the verified ISO
-mounted, and `nic1=bridged` on `enp4s0` with `nic2=none`. VirtualBox 7.0.16
-reports `Unattended installation supported = no` for this Live ISO, so Fedora
-required an interactive install before it could produce an internal installed
-baseline.
-
-Actual RHEL should not be treated as a free automatic VM target. Red Hat
-Developer access can provide RHEL images, but it requires a Red Hat account and
-subscription/registration workflow. Until the maintainer provides that
-credentialed path, AlmaLinux or RockyLinux are only RHEL-compatible controls,
-not RHEL certification.
-
-## openSUSE Leap Baseline
-
-The openSUSE Leap 15.6 baseline shows:
-
-- `/etc/os-release`: `ID=opensuse-leap`, `ID_LIKE="suse opensuse"`.
-- Kernel: `6.4.0-150600.23.22-default`.
-- PID 1: systemd.
-- Network baseline: only `lo` and bridged `eth0`; default policy rules.
-- `/dev/net/tun` exists.
-- `NetworkManager`, `systemd-resolved`, and `firewalld` are inactive at image
+- **Finding:** control baselines on the Red Hat family showed that `git`,
+  `openvpn` and `resolvectl` cannot be assumed installed; some Enterprise
+  Linux 9-like images additionally lacked `nft`, `iptables`, `ip6tables` and
+  `firewall-cmd`. openSUSE images similarly lacked many required commands at
   baseline.
-- Present commands include `zypper`, `rpm`, `systemctl`, `systemd-run`,
-  `sudo`, `python3`, `curl`, `tar`, `ip`, `ss`, `ping`, and `setpriv`.
-- Missing required WatchdogVPN commands include `git`, `logrotate`, `nmcli`,
-  `nft`, `iptables`, `ip6tables`, `openvpn`, `modinfo`, `pkaction`,
-  `resolvectl`, `firewall-cmd`, `aa-status`, and `getenforce`.
+- **Resolution:** package installation uses the distribution's managed
+  package-manager path for every required command. Pre-installing required
+  packages manually before WatchdogVPN runs is not a supported install path.
 
-This is a strong dependency-provenance baseline: any future openSUSE green must
-come from WatchdogVPN installing or explicitly guiding these requirements, not
-from manual pre-installation or a prepared machine.
+### Security posture must not be weakened
 
-## Red Hat-Family Control Baselines
+- **Finding:** the Red Hat family can run SELinux enforcing with `firewalld`
+  active or inactive, and openSUSE uses AppArmor with image-default tooling
+  variation. It is easy to make install succeed by relaxing these controls.
+- **Resolution:** the adapters must not disable SELinux, AppArmor or
+  `firewalld`. Doctor/support output must report the SELinux enforcing state,
+  the `firewalld` active/inactive state and the selected firewall backend, and
+  must distinguish an image-default absence of tooling from a
+  WatchdogVPN-managed installation. Lowering a security control to pass is not
+  acceptable.
 
-Fedora 44 Workstation installed baseline:
+### Runtime and sandbox coverage
 
-- `/etc/os-release`: `ID=fedora`, `VERSION_ID=44`,
-  `VARIANT_ID=workstation`.
-- Kernel: `6.19.10-300.fc44.x86_64`.
-- PID 1: systemd.
-- Network baseline: only `lo` and bridged `enp0s3`; default policy rules.
-- `/dev/net/tun` exists.
-- `NetworkManager`, `systemd-resolved`, `firewalld`, and `sshd` are active.
-- SELinux enabled and enforcing, targeted policy.
-- Present commands include `dnf`, `rpm`, `systemctl`, `systemd-run`, `sudo`,
-  `python3`, `curl`, `tar`, `ip`, `ss`, `ping`, `setpriv`, `git`,
-  `logrotate`, `nmcli`, `nft`, `iptables`, `ip6tables`, `openvpn`,
-  `modinfo`, `pkaction`, `resolvectl`, `firewall-cmd`, `getenforce`,
-  `ausearch`, `journalctl`, and `sshd`.
-- Missing command from the cross-distro audit inventory: `aa-status`.
+- **Finding:** a dependency-only pass does not prove the real service runs
+  correctly under each family's security sandbox.
+- **Resolution:** the real `systemd/watchdogvpn.service` sandbox must be
+  exercised on each newly supported family, alongside the package-management
+  lifecycle, firewall/nftables interaction and SELinux/AppArmor posture.
 
-Fedora baseline caveat: this is an installed Fedora Workstation VM after the
-maintainer completed GNOME initial setup and explicitly authorized SSH
-enablement for audit access. `openssh-server` was already installed;
-`systemctl enable --now sshd`, `firewall-cmd --add-service=ssh --permanent` and
-`firewall-cmd --reload` were run manually in the guest before baseline capture.
-Do not represent this as an untouched post-install firewall baseline.
+## Guarantees
 
-AlmaLinux 9.7 official and RockyLinux 9 both provide bridge-only direct SSH
-baselines and can be used to audit the current Red Hat-family assumptions before
-Fedora/RHEL certification.
+- Red Hat-family and openSUSE support each ship a detector, a package-manager
+  path, installer/update/doctor/cleanup coverage and explicit detection tests.
+- Detection tests pin each family identifier explicitly, so a new image does not
+  silently fall through to generic unsupported behavior.
+- The product never trades a security control for a successful install.
 
-AlmaLinux 9.7 baseline:
+## Limitations
 
-- `/etc/os-release`: `ID=almalinux`, `ID_LIKE="rhel centos fedora"`.
-- Kernel: `5.14.0-611.54.6.el9_7.x86_64`.
-- PID 1: systemd.
-- Network baseline: only `lo` and bridged `eth0`; default policy rules.
-- `/dev/net/tun` exists.
-- `NetworkManager` active; `systemd-resolved` and `firewalld` inactive.
-- SELinux enabled and enforcing, targeted policy.
-- Present commands include `dnf`, `rpm`, `systemctl`, `systemd-run`, `sudo`,
-  `python3`, `curl`, `tar`, `ip`, `ss`, `ping`, `setpriv`, `logrotate`,
-  `nmcli`, `modinfo`, `pkaction`, `getenforce`, `ausearch`, and `journalctl`.
-- Missing required WatchdogVPN commands include `git`, `nft`, `iptables`,
-  `ip6tables`, `openvpn`, `resolvectl`, `firewall-cmd`, and `aa-status`.
-
-RockyLinux 9.6 baseline:
-
-- `/etc/os-release`: `ID=rocky`, `ID_LIKE="rhel centos fedora"`.
-- Kernel: `5.14.0-570.52.1.el9_6.x86_64`.
-- PID 1: systemd.
-- Network baseline: only `lo` and bridged `enp0s3`; default policy rules.
-- `/dev/net/tun` exists.
-- `NetworkManager` active; `systemd-resolved` inactive; `firewalld` active.
-- SELinux enabled and enforcing, targeted policy.
-- Present commands include `dnf`, `rpm`, `systemctl`, `systemd-run`, `sudo`,
-  `python3`, `curl`, `tar`, `ip`, `ss`, `ping`, `setpriv`, `logrotate`,
-  `nmcli`, `nft`, `iptables`, `ip6tables`, `modinfo`, `pkaction`,
-  `firewall-cmd`, `getenforce`, `ausearch`, and `journalctl`.
-- Missing required WatchdogVPN commands include `git`, `openvpn`, and
-  `resolvectl`.
-
-AlmaLinux and RockyLinux are intentionally complementary controls. AlmaLinux
-proves the installer must not assume firewall tooling is already present on an
-EL9-like image. RockyLinux proves the product must coexist with an image where
-`firewalld`, `nft` and iptables frontends are already active/present. Both
-remain compatible controls only. They do not certify actual RHEL without a
-maintainer-provided Red Hat Developer/subscription path.
-
-## Product Gaps Before Implementation
-
-Task 23.6.2/23.6.3 update: the Red Hat-family detector/`dnf` adapter and
-openSUSE detector/`zypper` adapter are now implemented after this audit. The
-bullets below remain the Task 23.6.1 pre-implementation findings that drove
-that work; they are not a claim that those gaps remain open after Task 23.6.3.
-
-- Superseded by Task 23.6.2/23.6.3: `lib/distro.sh` had future Red
-  Hat-family handling for Fedora/RHEL/CentOS/Rocky/AlmaLinux, while openSUSE
-  fell through to generic unsupported.
-- Superseded by Task 23.6.2: `distros/fedora.sh` existed as a future
-  `dnf`/RPM package foundation, but the detector deliberately kept the family
-  unsupported.
-- Superseded by Task 23.6.3: there was no `distros/opensuse.sh`.
-- Superseded by Task 23.6.3: `lib/packages.sh` had no `zypper` install branch.
-- Red Hat-family detection tests cover Fedora and RHEL, but should also pin
-  CentOS, RockyLinux and AlmaLinux behavior before support work starts.
-- openSUSE detection tests should pin both `ID=opensuse-leap` and
-  `ID=opensuse-tumbleweed` with `ID_LIKE="suse opensuse"`.
-- Fedora/Red Hat-family validation must record SELinux enforcing state,
-  firewalld state, nftables/iptables interaction, package-manager lifecycle,
-  and the real `systemd/watchdogvpn.service` sandbox.
-- openSUSE validation must record AppArmor state, firewalld state when present
-  or image-default absence when absent, zypper lifecycle, nftables/iptables
-  interaction, and the real `systemd/watchdogvpn.service` sandbox.
-- Lowering SELinux/AppArmor/firewalld to get a green is not acceptable.
-
-## Implementation Gates For Task 23.6.2 and Task 23.6.3
-
-The next support-code tasks must treat these audit findings as gates:
-
-- Red Hat-family detection must keep Fedora, RHEL, CentOS, RockyLinux and
-  AlmaLinux unsupported until the adapter, installer, update, doctor and
-  cleanup paths are all implemented and tested. Unit tests should pin each ID
-  explicitly.
-- Fedora/RHEL-family package installation must use WatchdogVPN-managed `dnf`
-  paths for every required command. Current EL9 control baselines prove `git`,
-  `openvpn`, and `resolvectl` cannot be assumed present; AlmaLinux additionally
-  proves `nft`, `iptables`, `ip6tables` and `firewall-cmd` cannot be assumed
-  present.
-- The Fedora/RHEL-family adapter must not disable SELinux or firewalld. It must
-  report SELinux enforcing state, firewalld active/inactive state, and the
-  selected firewall backend clearly through doctor/support evidence.
-- Runtime tests on Red Hat-family systems must include Fedora Workstation with
-  SELinux enforcing, systemd-resolved active, firewalld active and OpenVPN
-  already present; one EL9-like case with firewalld inactive/missing tooling;
-  and one EL9-like case with firewalld active and nft/iptables frontends
-  present. Fedora 44, AlmaLinux 9 and RockyLinux 9 are suitable controls for
-  those three postures.
-- openSUSE detection must handle `ID=opensuse-leap` and
-  `ID=opensuse-tumbleweed` explicitly, including `ID_LIKE="suse opensuse"`.
-- openSUSE package installation must add a real `zypper` path in
-  `lib/packages.sh`; installing required packages manually before
-  WatchdogVPN runs is not valid evidence.
-- openSUSE doctor/support evidence must record AppArmor state when tools are
-  available and must distinguish image-default absence of firewalld/AppArmor
-  tooling from WatchdogVPN-managed installation.
-- The real `systemd/watchdogvpn.service` sandbox must be exercised on each new
-  family before certification. A dependency-only pass is not enough.
-
-## Authoritative Source Notes
-
-- Fedora Developer documentation confirms official Fedora Vagrant boxes exist,
-  but the Fedora Cloud 44 Vagrant VirtualBox artifact discovered for this audit
-  is still listed as beta on Fedora's Cloud download page.
-- openSUSE documentation identifies official Vagrant boxes such as
-  `opensuse/Tumbleweed.x86_64`; Vagrant Cloud also provides
-  `opensuse/Leap-15.6.x86_64`.
-- Red Hat Developer documentation requires a Red Hat account/subscription path
-  for actual RHEL access. RHEL-compatible clones cannot be represented as RHEL
-  certification.
-- openSUSE uses `zypper` as its native package-management path.
-
-## Next Gate
-
-Task 23.6.2 owns the Fedora/Red Hat-family implementation changes derived from
-this audit, and Task 23.6.3 owns the openSUSE implementation changes. Fedora
-44, AlmaLinux 9, RockyLinux 9 and openSUSE Leap 15.6 baselines remain the
-controls for certification planning, with the explicit caveat that Fedora
-SSH/firewalld access was manually enabled for audit access before baseline
-capture. Tumbleweed remains optional unless the maintainer chooses it over Leap
-for openSUSE certification.
+- Red Hat Enterprise Linux itself requires a credentialed Red Hat
+  account/subscription path. Red Hat-compatible distributions such as AlmaLinux
+  and Rocky Linux are compatible controls, not RHEL certification.
+- Red Hat Enterprise Linux is family-inferred, not certified.
+- A virtual-machine boot, a package-manager probe or a unit dry run is not a
+  certification result. A certified release is a release the manifest carries a
+  current certification for.

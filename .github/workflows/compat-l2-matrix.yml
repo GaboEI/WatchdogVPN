@@ -11,6 +11,7 @@ on:
       - phase-23-7-5-11G-pop-os
       - phase-23-7-5-11H-manjaro
       - phase-23-7-5-11F-centos-stream
+      - phase-23-7-5-12-public-documentation
   pull_request:
     branches:
       - phase-23-7-5-compatibility-contract

@@ -1,29 +1,24 @@
-# Phase 13 Task 13.5 - Built-in and Remote Rule-Set Trust Model
-
-> Date: 2026-07-05
-> Status: CLOSED - trust model defined; runtime lifecycle promoted in Phase 19.
+# Rule-Set Trust Model
 
 ## Decision
 
-Remote and built-in rule sets are treated as security-sensitive policy inputs.
-A remote rule set can influence whether traffic exits through the current
-profile, direct egress, a group, or block. WatchdogVPN must not treat a failed
-or changed rule set as a harmless miss.
+Remote and built-in rule sets are security-sensitive policy inputs. A remote
+rule set can influence whether traffic exits through the current profile, direct
+egress, a group, or block. A failed or changed rule set must not be treated as a
+harmless miss.
 
-Task 13.5 defines the trust contract and diagnostics model. Runtime downloader
-and cache behavior were later implemented by Phase 19 Task 19.5.
+WatchdogVPN defines the trust contract and diagnostics model here; runtime
+download and cache behavior implements it.
 
-## Current sing-box Baseline
+## sing-box Baseline
 
-sing-box supports remote rule-set objects with URL, download detour,
-update interval, format, and cache behavior. The official configuration
-reference does not document a checksum/pinning field for remote rule-set
-content:
-
-https://sing-box.sagernet.org/configuration/rule-set/
+sing-box supports remote rule-set objects with URL, download detour, update
+interval, format, and cache behavior. Its configuration reference does not
+document a checksum or pinning field for remote rule-set content:
+<https://sing-box.sagernet.org/configuration/rule-set/>.
 
 Because no checksum field is exposed in that configuration surface, WatchdogVPN
-must own integrity policy before enabling remote rule-set runtime use.
+owns integrity policy before enabling remote rule-set runtime use.
 
 ## Trust Policy
 
@@ -66,9 +61,9 @@ Examples:
   critical and should fail closed.
 - A rule set used only for optional routing optimization may warn and skip.
 
-## Update And Staleness
+## Update and Staleness
 
-Remote rule-set policy must define both:
+Remote rule-set policy defines both:
 
 - `update_interval_seconds`: when WatchdogVPN should attempt refresh.
 - `max_stale_seconds`: maximum age at which cached content remains acceptable.
@@ -81,7 +76,22 @@ exceeds `max_stale_seconds`, failure behavior applies:
 - non-critical: warn and skip
 
 Checksum mismatch is never a normal stale condition. It is a verification
-failure and must be reported as `failed`.
+failure and is reported as `failed`.
+
+## Runtime Lifecycle
+
+WatchdogVPN owns remote downloads and emits local sing-box rule-set
+declarations instead of sing-box `remote` rule-set objects. The runtime:
+
+- downloads remote rule sets;
+- maintains rule-set cache files;
+- invokes verified local sing-box rule-set objects generated from
+  WatchdogVPN-owned cache files;
+- enforces fail-closed behavior in the live route generator;
+- schedules due refreshes at runtime connect preflight;
+- exposes manual operator refresh and status commands.
+
+Trust policies remain explicit; remote policies still require SHA-256 pins.
 
 ## Diagnostic States
 
@@ -97,7 +107,7 @@ These states are different from rule-match confidence. A route explanation can
 remain `runtime-required` while still reporting whether the relevant rule set is
 not evaluated, loaded, stale, or failed.
 
-## Model Added In Task 13.5
+## Model
 
 `rules.ruleset_trust` defines:
 
@@ -111,35 +121,9 @@ not evaluated, loaded, stale, or failed.
 `RuleSetTrustPolicy` enforces SHA-256 pinning for remote rule sets and derives
 default failure behavior from criticality.
 
-`RuleExplanationUnevaluatedRuleSet` now carries optional trust/status fields:
+`RuleExplanationUnevaluatedRuleSet` carries optional trust/status fields:
 
 - `state`
 - `failure_behavior`
 - `critical`
 - `error`
-
-## Phase 19 Runtime Follow-Up
-
-Phase 19 Task 19.5 implemented:
-
-- downloading remote rule sets
-- maintaining rule-set cache files
-- invoking verified local sing-box rule-set objects generated from
-  WatchdogVPN-owned cache files
-- enforcing fail-closed behavior in the live route generator
-- due-refresh scheduling at runtime connect preflight
-- manual operator refresh and status commands
-
-WatchdogVPN intentionally owns remote downloads and emits local sing-box
-rule-set declarations instead of sing-box `remote` rule-set objects. Trust
-policies remain explicit; remote policies still require SHA-256 pins.
-
-## Acceptance
-
-Task 13.5 closes when:
-
-- remote rule-set pinning policy is explicit and tested
-- failure behavior is explicit and tested
-- stale/update semantics are documented
-- diagnostics distinguish not-evaluated, loaded, stale, and failed rule sets
-- Phase 19 Task 19.5 owns the runtime lifecycle follow-up

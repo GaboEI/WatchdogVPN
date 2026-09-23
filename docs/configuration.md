@@ -74,7 +74,7 @@ backup root:
 ```
 
 Install, update and non-full uninstall operations preserve these internal
-recovery backups. A confirmed full purge removes this fixed product-owned root
+recovery backups. A full purge removes this fixed product-owned root
 and disables creation of new internal copies during deletion. A custom
 `BACKUP_ROOT` is never recursively deleted by the purge contract.
 
@@ -133,7 +133,7 @@ Configured backend mode. Supported value: `custom-vps`.
 Local metadata for a user-owned VPS backend. These fields must not store
 passwords, private keys, API tokens or other secrets. `service_name` is required
 before runtime commands can control `custom-vps`; `interface` is recommended so
-truth checks can validate tunnel, route and public IP.
+truth checks can inspect tunnel, route and public IP.
 
 See [Custom VPS Backend](custom-vps-backend.md) for the installer flow and
 diagnostic commands.
@@ -151,9 +151,9 @@ must never override an explicit user choice.
 
 `dns.advanced_mode`
 
-Legacy v1 key retained for compatibility only. The DNS v2 system (Phase 10)
+Legacy v1 key retained for compatibility only. The DNS v2 system
 uses its own policy file (`dns-policy.json`, managed through `watchdog dns
-status|test|apply|reset`) and does not read this key.
+apply/reset`) and does not read this key.
 
 `dns.profile`
 
@@ -188,7 +188,7 @@ Fresh install:
 - Create `config.toml` from defaults only when it does not already exist.
 - Do not store credentials, tokens, account data or private keys in
   `config.toml`.
-- Validate the generated file before continuing.
+- Check the generated file before continuing.
 
 Existing install:
 
@@ -204,7 +204,7 @@ Update must be conservative.
 - Preserve all existing user values.
 - Add new default keys when missing.
 - Keep unknown keys unless they are known to be unsafe.
-- Validate the migrated file before replacing the active file.
+- Check the migrated file before replacing the active file.
 - If migration fails, keep the old file and print a clear warning.
 
 The updater must never reset DNS, language, theme or reporting
@@ -223,9 +223,7 @@ Full purge:
 
 ## Reset Contract
 
-Reset must be explicit.
-
-Planned command forms:
+Reset must be explicit. Command forms:
 
 ```sh
 watchdog maintenance config reset
@@ -245,9 +243,7 @@ Rules:
 
 ## CLI Contract
 
-For the complete command reference, see [WatchdogVPN CLI](cli.md).
-
-Planned command forms:
+For the complete command reference, see [WatchdogVPN CLI](cli.md). Command forms:
 
 ```sh
 watchdog maintenance config get
@@ -264,12 +260,12 @@ Behavior:
 
 - `get` with no key prints the sanitized configuration. Implemented.
 - `get section.key` prints only one value. Implemented.
-- `set section.key value` validates key and value before writing. Implemented
+- `set section.key value` rejects invalid keys and values before writing. Implemented
   for safe user-interface and reporting keys.
 - `reset [section|all] --yes` restores safe sections to defaults. Implemented
   for `language`, `tui`, `reporting` and `all`.
 - Unknown keys must fail with a clear error.
-- Values that can affect systemd or DNS must be validated before being applied.
+- Values that can affect systemd or DNS must be checked before being applied.
 
 `config set` currently supports only:
 
@@ -301,9 +297,9 @@ tui.unicode
 It can also reset the safe language and TUI sections through explicit
 confirmation. This does not reset DNS, timers or reporting preferences.
 
-## Validation Rules
+## Input Rules
 
-Required validation:
+Required handling:
 
 - Timer intervals must use supported systemd-compatible durations.
 - DNS profile must be a known profile.
@@ -312,28 +308,15 @@ Required validation:
 - Boolean values must be parsed strictly.
 - Reporting sanitization options must default to safe values.
 
-## Tests Required For v0.2.0
+## Configuration guarantees
 
-Planned test files:
-
-```text
-tests/unit/test_config_create_default.sh
-tests/unit/test_config_preserve_existing.sh
-tests/unit/test_config_add_missing_keys.sh
-tests/unit/test_config_reset_requires_confirmation.sh
-tests/unit/test_update_preserves_config.sh
-tests/unit/test_watchdogvpn_config_cli.sh
-```
-
-Acceptance criteria:
-
-- Fresh install creates default config.
+- Fresh install creates a default config.
 - Update does not overwrite user preferences.
 - Migration adds missing keys.
 - Reset requires confirmation.
 - Uninstall preserves config by default.
 - `--purge-config` removes config explicitly.
-- CLI get/set/reset commands validate inputs.
+- CLI get/set/reset commands reject invalid inputs.
 
 ## Non-Goals For v0.2.0
 

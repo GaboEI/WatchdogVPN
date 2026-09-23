@@ -4,37 +4,56 @@ This document defines how the product scripts should behave.
 
 ## Principles
 
-- One repository supports Ubuntu, Debian, Arch Linux, the Fedora/Red
-  Hat-family adapter path and the openSUSE adapter path.
-- Fedora/Red Hat-family support means installer/update package reconciliation
-  is implemented through `dnf`. Fedora Workstation 44, Rocky Linux 9, AlmaLinux 9
-  and CentOS Stream 9 (rolling) are certified and supported. RHEL shares the same
-  adapter but remains family-inferred until individually certified. CentOS Stream
-  certification does not certify RHEL.
-- openSUSE support means installer/update package reconciliation is implemented
-  through `zypper`. openSUSE Leap 15.6 and openSUSE Tumbleweed `20260907` are
-  both field-certified with their own evidence (Phase 23.6 for Leap; Phase
-  23.7.5.11D for Tumbleweed, `cert_opensuse_tumbleweed_rolling`, 12/12 green with
-  real egress).
-- Arch-family support uses the `arch` adapter. Arch Linux and CachyOS are
-  field-certified; Manjaro (`ID=manjaro`, rolling) is field-certified with its
-  own evidence under Phase 23.7.5.11H (`cert_manjaro_rolling`, 12/12 green with
-  real egress).
-- Debian/Ubuntu derivatives resolve to the Ubuntu or Debian adapter. Derivatives
-  with their own explicit identity, such as Pop!_OS (`ID=pop`, admitted as the
-  stable release `pop_24_04`), use that identity directly and are never silently
-  classified as Ubuntu; derivatives without one (for example Linux Mint) resolve
-  through the conservative `ID_LIKE` fallback, mirroring the existing
-  Arch-derivative fallback. Ubuntu takes precedence when a derivative reports
-  both, and only families with a shipped adapter are accepted. Linux Mint 22.3
-  and Pop!_OS 24.04 LTS are field-certified with their own evidence; other
-  derivatives remain family-inferred until individually field-tested.
+- One repository supports Ubuntu, Debian, Arch Linux, the Fedora/Red Hat-family
+  and openSUSE package families.
+- Fedora/Red Hat-family support reconciles packages through `dnf`. Fedora, Rocky
+  Linux, AlmaLinux and CentOS Stream (rolling) are certified and supported. Red
+  Hat Enterprise Linux shares the same package family but is not individually
+  certified, and CentOS Stream certification does not certify RHEL.
+- openSUSE support reconciles packages through `zypper`. openSUSE Leap 15.6 and
+  openSUSE Tumbleweed are certified and supported.
+- Arch-family support covers Arch Linux, CachyOS and rolling Manjaro, each
+  certified on its own release.
+- Debian/Ubuntu derivatives use the Ubuntu or Debian package path. A derivative
+  with its own explicit identity, such as Pop!_OS, keeps that identity and is
+  never silently classified as Ubuntu; a derivative without one, such as Linux
+  Mint, resolves through its declared distribution family. Ubuntu takes
+  precedence when a derivative reports both, and only supported families are
+  accepted. Linux Mint and Pop!_OS are certified; other derivatives are
+  compatible but not individually certified.
 - Runtime behavior should be shared across distros.
 - Distro differences belong in `distros/` and installer helpers.
 - The installer should not ask internal technical questions.
 - Existing user configuration must not be overwritten without backup.
 - The installer configures WatchdogVPN's own runtime and does not depend on a
   third-party commercial VPN CLI.
+
+## Supported Releases
+
+WatchdogVPN supports the releases listed below, each with its release model,
+support state and protocol coverage.
+
+<!-- BEGIN GENERATED: compat-support-table -->
+| Distribution | Release | Model | Support | Certification | Freshness | Protocols |
+| --- | --- | --- | --- | --- | --- | --- |
+| AlmaLinux | AlmaLinux 9 | stable | certified | 2026-09-02 | — | All 12 in-scope protocols |
+| Arch Linux | Arch Linux | rolling | certified | 2026-08-15 | current (365 days) | All 12 in-scope protocols |
+| CachyOS | CachyOS | rolling | certified | 2026-08-16 | current (365 days) | All 12 in-scope protocols |
+| CentOS Stream | CentOS Stream | rolling | certified | 2026-09-20 | current (365 days) | All 12 in-scope protocols |
+| Debian | Debian 13.6 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Fedora | Fedora 44 | stable | certified | 2026-08-19 | — | All 12 in-scope protocols |
+| Kali GNU/Linux | Kali GNU/Linux | rolling | certified | 2026-09-14 | current (365 days) | All 12 in-scope protocols |
+| Linux Mint | Linux Mint 22.3 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Manjaro | Manjaro | rolling | certified | 2026-09-18 | current (365 days) | All 12 in-scope protocols |
+| Pop!_OS | Pop!_OS 24.04 | stable | certified | 2026-09-16 | — | All 12 in-scope protocols |
+| Red Hat Enterprise Linux | Red Hat Enterprise Linux 9 | stable | family_inferred | — | — | — |
+| Rocky Linux | Rocky Linux 9 | stable | certified | 2026-08-20 | — | All 12 in-scope protocols |
+| Ubuntu | Ubuntu 24.04.4 | stable | certified | 2026-08-14 | — | All 12 in-scope protocols |
+| Ubuntu | Ubuntu 26.04 | stable | experimental | — | — | — |
+| openSUSE Leap | openSUSE Leap 15.6 | stable | certified | 2026-09-08 | — | All 12 in-scope protocols |
+| openSUSE Tumbleweed | openSUSE Tumbleweed | rolling | certified | 2026-09-10 | current (365 days) | All 12 in-scope protocols |
+
+<!-- END GENERATED: compat-support-table -->
 
 ## User-Facing Questions
 
@@ -114,21 +133,22 @@ Result levels:
 
 ## Dependency Contract
 
-Protocol/feature runtime dependencies (Phase 18 Task 18.3):
+Protocol/feature runtime dependencies:
 
 - **Distribution runtime set**: every real `install.sh` and `update.sh` run
-  reconciles the complete adapter-owned package set even when the current
+  reconciles the complete distribution package set even when the current
   machine already happens to expose all commonly checked commands. The set
   includes OpenVPN, NetworkManager, Polkit, nftables plus the legacy iptables
   cleanup tools, `iproute2`, `ping`, process recovery tools, notifications and
-  the installer/user-management base utilities. The explicit adapters also
+  the installer/user-management base utilities. The explicit distribution
+  definitions also
   own `ss`, `sysctl`, `modinfo`, CA trust and the standard text/file tools used
   by installation and recovery. `git` is provisioned so a checkout-based
   install/update can publish and later compare its exact source commit instead
   of silently recording `unknown`. After the package manager returns, WatchdogVPN
   re-checks every mandatory executable and aborts if any remain unavailable.
   `nft` is a hard security dependency: a successful installation may not rely
-  on a firewall backend inherited from a developer or certification image.
+  on a firewall backend inherited from the host image.
 
 - **sing-box**: required by most Custom VPS protocols. `install.sh` downloads
   the official release archive for the pinned version if not already
@@ -154,9 +174,9 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   `watchdog setup --profile-file`, or a provider update, the
   CLI checks the runtime and, if it is missing, prints prevalidated,
   distro-specific commands where available plus the official source links.
-  The commands live in the selected `distros/` adapter, so adding a future
+  The commands are defined per distribution, so adding a future
   distribution does not require a second detector or a CLI change.
-  `doctor.sh` only reports read-only detection state (`WARN` if missing).
+  `doctor.sh` only reports read-only dependency state (`WARN` if missing).
   A valid runtime has
   AmneziaWG-specific `awg` tooling plus either the `amneziawg` kernel module or
   the `amneziawg-go` userspace fallback used directly by the native driver.
@@ -165,7 +185,7 @@ Protocol/feature runtime dependencies (Phase 18 Task 18.3):
   substitute for AmneziaWG-specific profiles; plain WireGuard remains its own
   compatibility protocol.
 - **Python `cryptography` module**: needed for encrypted backups
-  (`watchdog backup --encrypt-backup`, Phase 17). `install.sh` and
+  (`watchdog backup --encrypt-backup`). `install.sh` and
   `update.sh` install the distro package (`python3-cryptography` on
   Ubuntu/Debian, `python-cryptography` on Arch) if missing and then re-check
   the import. Installation fails closed if the module remains unavailable;
@@ -180,33 +200,13 @@ clear failure message that aborts before installing anything on mismatch.
 user who runs `update.sh` instead of reinstalling from scratch must not get a
 weaker experience than a fresh install.
 
-### Certification dependency-provenance gate
-
-This is a permanent gate for every distro task and survives chat/session
-changes. Immediately before closure, answer with evidence: did the installed
-candidate work because WatchdogVPN provisioned every mandatory dependency, or
-because a developer/test image already contained extra components? Record the
-pre-install command/package baseline and the post-install provenance. A green
-that depends on an unexplained pre-existing component is invalid and the task
-remains open until that dependency is installed by both `install.sh` and
-`update.sh`, validated by `doctor.sh`, regression-tested for every supported
-adapter, and revalidated installed. The only protocol-runtime exception is
-AmneziaWG, whose third-party trust decision remains explicit guided setup with
-distro-owned commands and post-setup detection. Bootstrap requirements that
-must exist before any installer can execute (a supported systemd Linux,
-`bash`, package manager, network access and usable root/sudo authority) are
-preconditions, not hidden runtime dependencies.
-
 ### Kernel portability contract
 
-Distribution support is capability-based, not pinned to the exact kernel
-release used by one VM. WatchdogVPN does not require a particular kernel
-version, but the running kernel must provide `/dev/net/tun`, nftables hooks,
-policy routing and the systemd security/capability behavior exercised by the
-installed daemon. Install, update and `doctor.sh` fail when the TUN device is
-absent; installed
-certification must additionally prove real TUN creation, nftables application,
-routing, cleanup and egress rather than infer them from the distro name.
+WatchdogVPN support is capability-based, not pinned to the exact kernel release
+used by one machine. WatchdogVPN does not require a particular kernel version,
+but the running kernel must provide `/dev/net/tun`, nftables hooks, policy
+routing and the systemd security/capability behavior exercised by the installed
+daemon. Install, update and `doctor.sh` fail when the TUN device is absent.
 
 For Arch-family AmneziaWG setup, the guided command derives the active kernel
 package base from `/usr/lib/modules/$(uname -r)/pkgbase` and installs the
@@ -215,12 +215,8 @@ packaged default, LTS and alternate kernel families when their matching header
 package exists. `amneziawg-go` remains the userspace fallback when a compatible
 native module cannot be built or loaded.
 
-A broad Arch-family compatibility statement requires installed evidence on
-the current distribution-default kernel plus a representative alternate/LTS
-kernel. Evidence on one kernel certifies only that observed kernel. Arbitrary
-custom kernels that remove required Linux capabilities are not silently
-claimed as supported, and a hardened/alternate kernel failure is a field
-finding until attributed and formally scoped.
+Kernels that remove required Linux capabilities are not supported and are not
+silently claimed as supported.
 
 **Installed/source provenance:** `install.sh`/`update.sh` publish two root-owned,
 public-metadata files only after the replacement runtime passes its daemon smoke
@@ -283,7 +279,7 @@ failure.
 
 On a first install, adding the invoking user to the `watchdogvpn` group updates
 NSS but cannot alter the supplementary groups of the installer process that is
-already running. The final read-only IPC smoke test therefore drops back to the
+already running. The final read-only IPC check therefore drops back to the
 invoking user's UID/GID with `setpriv --init-groups` and verifies `watchdog
 status --json` using the freshly loaded group vector and that user's real
 `HOME`, `USER` and `LOGNAME`; sudo's root identity environment is not allowed to
@@ -324,7 +320,7 @@ Expected flow:
 1. Run read-only doctor and mixed-install preflight checks.
 2. Explain that the product installs the WatchdogVPN runtime and can configure
    the custom-vps service-control path.
-3. Detect distro and load its adapter.
+3. Detect the distribution and select its package path.
 4. Validate dependencies.
 5. Ask product-level options.
 6. Show an installation plan with target paths, options and backup location.
@@ -361,13 +357,13 @@ an unsupported backend is also blocked rather than preserved silently.
 
 It runs the same dependency checks as `install.sh` (sing-box, Cloak and
 Python `cryptography`) and, on every run, sweeps
-orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts if a
-legacy-contaminated machine still has them - not only on a full uninstall.
+orphaned AdGuard-era systemd units and scripts if a legacy-contaminated
+machine still has them - not only on a full uninstall.
 It also records the installed-vs-source version marker used by
 `doctor.sh`'s version-skew check (see "Dependency Contract" above). If the
 daemon was active when the update began, it must be restarted after the new
 files and units are installed; the updater rejects an unchanged, missing or
-zero `MainPID` before running the final IPC smoke test. If the daemon was
+zero `MainPID` before running the final IPC check. If the daemon was
 inactive, the normal hibernate-aware enable path decides whether it should be
 started, so an explicit panic/sleep state is never undone by an update.
 
@@ -390,9 +386,8 @@ It should remove:
   desktop launcher feature itself was removed; `install.sh`/`update.sh` no
   longer offer or refresh it, but `uninstall.sh` still cleans up a leftover
   one)
-- orphaned pre-Phase-2.6 (AdGuard-era) systemd units and scripts, if a
-  legacy-contaminated machine still has them (see
-  `docs/phase-18-task-18-1-legacy-contamination-inventory.md`)
+- orphaned AdGuard-era systemd units and scripts, if a legacy-contaminated
+  machine still has them
 
 It must ask before deleting:
 
@@ -412,14 +407,14 @@ only the user's explicit outside export survives. An overrideable custom
 `BACKUP_ROOT` is never used as a recursive deletion target.
 
 The migration source `~/.config/watchdogvpn/` remains preserved during
-install, update and ordinary uninstall. The same confirmed full purge removes
-that legacy source for the invoking user and the fixed historical root copy at
-`/root/.config/watchdogvpn/`; when the script itself was invoked via sudo, the
+install, update and ordinary uninstall. That same full purge removes
+that legacy source for the invoking user and the fixed historical root-account
+copy; when the script itself was invoked via sudo, the
 invoking user's NSS home is handled as well. It does not enumerate or delete
 other users' homes. The explicit CLI export is created from the already
 migrated shared state before these duplicate sources are removed.
 Root-managed paths are existence-checked through the shared privileged helper;
-an inaccessible parent such as `/root` must not be interpreted as an absent
+an inaccessible parent directory must not be interpreted as an absent
 child and silently skip backup or removal. Dry runs use only non-interactive
 cached sudo for this additional read-only check.
 

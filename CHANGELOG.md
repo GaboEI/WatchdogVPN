@@ -10,28 +10,23 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 
 ### Added
 
-- Field-certify WatchdogVPN end to end on eight Linux distributions with real
-  per-protocol egress and clean teardown: Arch, CachyOS, Debian 13.6 and Ubuntu
-  24.04.4 LTS (Phase 23.5), plus Fedora Workstation 44, openSUSE Leap 15.6,
-  Rocky Linux 9 and Linux Mint 22.3 (Phase 23.6). Later field certification
-  (Phase 23.7.5.11) individually certified AlmaLinux 9, CentOS Stream 9,
-  openSUSE Tumbleweed, Manjaro, Pop!_OS and Kali Linux; RHEL and other
-  derivatives share a certified adapter and remain family-inferred until
-  individually field-tested.
-- Add the Fedora/Red Hat-family `dnf` adapter and the openSUSE `zypper` adapter,
-  plus a conservative `ID_LIKE` fallback that maps Debian/Ubuntu derivatives
-  (for example Linux Mint) to the correct adapter without promoting unrelated
-  distributions.
+- Support WatchdogVPN on fourteen Linux distributions, including Arch,
+  CachyOS, Debian 13.6,
+  Ubuntu 24.04.4 LTS, Fedora Workstation 44, openSUSE Leap 15.6, Rocky Linux 9,
+  Linux Mint 22.3, AlmaLinux 9, CentOS Stream 9, openSUSE Tumbleweed, Manjaro,
+  Pop!_OS and Kali Linux. Red Hat Enterprise Linux and other derivatives share a
+  package family but are not individually certified.
+- Add Fedora/Red Hat-family (`dnf`) and openSUSE (`zypper`) package support.
 - Add a public provider collaboration guide documenting accepted profile and
   subscription families, provider metadata expectations, routing-rule safety
   and submission guidance.
-- Add the DNS v2 system (Phase 10): resolver schema and presets, a resolver
+- Add the DNS v2 system: resolver schema and presets, a resolver
   tester with auto-setup recommendations, a system DNS state manager
   (`systemd-resolved`, NetworkManager, classic `resolv.conf`) with snapshot
   restore, sing-box DNS policy generation, TUN DNS hijack, FakeIP, ECS for
   direct traffic, static IP mapping and DNS diversion rules.
 - Add `watchdog dns status|test|apply|reset` CLI commands and matching TUI DNS
-  controls, all backed by real behavior with no placeholders.
+  controls.
 - Harden the kill switch to reject DNS/DoT traffic before `established,related`
   flows, closing a DNS leak window for already-established conntrack entries.
 - Wire the DNS v2 policy into the live sing-box connect path (direct connect,
@@ -52,27 +47,27 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 
 ### Changed
 
-- Harden persistent state and config storage before Phase 11 with locked atomic
+- Harden persistent state and config storage with locked atomic
   writes, controlled corrupt-file errors, strict boolean/type validation,
   fail-closed invalid `vpn_desired_state` handling, and rotation cooldown
   protection for future health-check timestamps.
-- Harden profile and provider input validation before Phase 11 with controlled
+- Harden profile and provider input validation with controlled
   URI port errors, explicit loopback endpoint rejection, HTML subscription
   detection, clearer zero-node subscription errors, explicit empty sing-box/Clash
   parser failures, and WireGuard runtime-validation metadata.
-- Harden CLI persistent validation error handling before Phase 11 so malformed
+- Harden CLI persistent validation error handling so malformed
   persisted stores report stable `error: ...` output instead of Python
   tracebacks, including JSON command paths.
 - Respect the global rotation enable flag during automatic recovery, report
   unavailable rotation separately from failed candidates, and apply configured
   recovery backoff limits at runtime.
 - Harden driver process management with private per-run runtime config paths,
-  version-checked availability, readiness-gated connect success, stale
+  version-checked availability, readiness-checked connect, stale
   AmneziaWG interface reconciliation, and guarded forced process cleanup.
 - Start the `v2.0.0` documentation reorientation with the new Linux
   resilience-layer identity.
-- Refresh Pre-Phase 11 repo documentation coherence for DNS v2 shipped state,
-  guided DNS removal wording and recent v2 phase status.
+- Refresh repository documentation for the shipped DNS v2 state and current
+  support status.
 - Rework the README, ROADMAP, product roadmap, Security Policy and GitHub About
   metadata to reflect the current v2 direction: Linux resilience layer,
   protocol category integrity, planned split tunneling/node groups/observability
@@ -89,9 +84,9 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 - Add experimental Custom VPS service-control backend for user-owned tunnels via
   a configured local systemd service.
 - Add non-secret `custom_vps` configuration placeholders and fail-closed
-  validation while required Custom VPS fields are missing.
+  checks while required Custom VPS fields are missing.
 - Add a backend contract helper with stable legacy-provider support, experimental
-  `custom-vps` support and fail-closed validation for unsupported backend names.
+  `custom-vps` support and fail-closed rejection of unsupported backend names.
 - Add backend visibility to `watchdogvpn backend status`, reports, truth-check
   output and the TUI dashboard without integrating new providers yet.
 - Add a manual-off runtime state for user-requested VPN shutdowns.
@@ -106,7 +101,7 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 
 - Add the `watchdogvpn runtime-update` safety contract for the `v0.3.1` update
   engine.
-- Add `watchdogvpn runtime-update --preflight` to validate safe runtime-update
+- Add `watchdogvpn runtime-update --preflight` to check safe runtime-update
   conditions without fetching, pulling, running `update.sh` or using `sudo`.
 - Add confirmed `watchdogvpn runtime-update` execution with exact `yes`
   confirmation.
@@ -131,7 +126,7 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 - Add read-only `watchdogvpn update-plan` for safe manual update guidance based
   on the current local checkout state.
 - Polish `watchdogvpn help <topic>`, config help and update command argument
-  validation for the v0.3.0 CLI surface.
+  handling for the v0.3.0 CLI surface.
 - Add `v0.3.0` release notes.
 
 ## v0.2.0 - 2026-05-17
@@ -144,12 +139,10 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 - Add safe config migration for missing keys without overwriting existing user
   preferences.
 - Add read-only `watchdogvpn config get` support.
-- Add validated `watchdogvpn config set` support for safe language, TUI and
+- Add `watchdogvpn config set` support for safe language, TUI and
   reporting keys.
 - Add confirmed `watchdogvpn config reset` support for safe config sections.
 - Add `docs/cli.md` with the current `watchdogvpn` command reference.
-- Record real Arch update validation for the persistent configuration
-  foundation.
 - Add a read-only TUI Settings view for persistent configuration preferences.
 - Add TUI Settings actions for safe language, theme, color and unicode
   preferences.
@@ -157,7 +150,6 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
   after Settings changes.
 - Add confirmed TUI Settings reset for language and visual preferences without
   touching DNS or timers.
-- Record real Arch runtime validation for TUI Settings update and reset.
 - Add a read-only TUI Update Center for local version, repository state and
   recommended update routines.
 - Add read-only Update Center sync status for `up to date`, `behind`, `ahead`,
@@ -168,7 +160,6 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
   based on dirty, behind, ahead, diverged or clean repository states.
 - Polish the TUI Update Center into a product-facing status view and move
   maintainer commands into a separate technical details screen.
-- Record real installed-runtime validation for the TUI Update Center.
 - Add `v0.2.0` release notes.
 
 ## v0.1.1 - 2026-05-16
@@ -176,13 +167,9 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 - Add `SECURITY.md` for public vulnerability reporting guidance.
 - Add GitHub issue templates for bug reports and feature requests.
 - Add `docs/reporting.md` with safe diagnostic sharing guidance.
-- Record a public clone smoke test for the alpha repository.
-- Record successful Debian real install validation, including DNS tooling.
-- Add Arch-derived distro detection so CachyOS can use the Arch adapter.
+- Add Arch-family support for CachyOS.
 - Skip desktop-file placement cleanly when tiling/minimal desktop environments
-  do not expose a real Desktop folder.
-- Record CachyOS real install validation with advanced DNS and post-reboot VPN
-  recovery observation.
+  do not expose a Desktop folder.
 - Add a post-install VPN settle check with one recovery restart and clear reboot
   guidance when the tunnel remains degraded.
 - Add initial `watchdogvpn` product CLI with local sanitized diagnostic report
@@ -205,14 +192,13 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
 
 ### Install, Update and Uninstall
 
-- Add the first real `install.sh` flow with dry-run support, distro adapters,
-  backups, runtime installation, systemd enablement and optional desktop hooks.
-- Add the first real `update.sh` flow for backed-up runtime refreshes that
+- Add the first `install.sh` flow with dry-run support, distribution
+  package definitions, backups, runtime installation, systemd enablement and
+  optional desktop hooks.
+- Add the first `update.sh` flow for backed-up runtime refreshes that
   preserve user configuration, state and logs.
-- Add the first real `uninstall.sh` flow that removes product-managed files
+- Add the first `uninstall.sh` flow that removes product-managed files
   while preserving configuration, logs and state unless explicitly purged.
-- Add final installer validation for doctor checks, DNS local health and service
-  settlement.
 - Keep legacy provider state owned by the dedicated service user during
   install/update.
 - Guide first-time service-user login during installation and add `~/.local/bin`
@@ -263,7 +249,7 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
   custom rotation/watchdog intervals.
 - Remove the 5-minute activation trigger from the legacy rotation timer so
   automatic location rotation only runs after boot, on the stable interval, or
-  through real remediation paths.
+  through the supported remediation paths.
 
 ### TUI and Notifications
 
@@ -273,8 +259,8 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
   `tui/watchdogvpn/`.
 - Install, update, uninstall and doctor now track the extracted TUI support
   package next to the `VPN` launcher.
-- Validate each installed TUI support module in `doctor.sh` and make the
-  launcher safe to execute in non-interactive checks.
+- Check each installed TUI support module in `doctor.sh` and make the
+  launcher safe to execute in non-interactive runs.
 - Make VPN location notifications user-facing by hiding public IPs and using
   readable location names.
 - Keep manual notification tests quiet when the current user cannot write the
@@ -283,14 +269,14 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
   update and uninstall flow.
 - Refresh README and problem-context documentation around the product
   philosophy, install/update/uninstall commands and current support status.
-- Add real TUI screenshots and a demo document with representative doctor,
+- Add TUI screenshots and a demo document with representative doctor,
   status, DNS and timer output.
 
 ### Documentation, CI and Security
 
 - Add README alpha status, support matrix, license state and known limitations.
 - Add alpha release notes and a release checklist for the first public tag.
-- Add GitHub Actions CI for Python/Bash syntax, systemd unit verification and
+- Add GitHub Actions CI for Python/Bash syntax, systemd unit checks and
   advisory shell style checks.
 - Add unit behavior tests with mocks for `vpn_truth_check` and watchdog
   remediation decisions.
@@ -304,6 +290,5 @@ a provider-specific tool into a broader VPN/proxy resilience layer.
   installation and DNS rescue ordering during uninstall.
 - Start reducing subprocess shell-mode usage by adding argument-list subprocess helpers
   for simple TUI command execution.
-- Add an operational audit for excessive VPN rotations and identify
-  timer/restart-triggered rotations as the main suspect after real connectivity
-  failures are excluded.
+- Reduce unexpected automatic rotations by fixing timer/restart-triggered
+  rotation behavior after connectivity failures are excluded.

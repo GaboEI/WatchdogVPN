@@ -52,10 +52,9 @@ $ ./doctor.sh
 WatchdogVPN - Doctor
 Read-only preflight. No system changes will be made.
 
-== Distro ==
-[INFO] distro: Ubuntu 24.04.4 LTS (ubuntu)
-[OK] distro supported
-[OK] distro adapter: distros/ubuntu.sh
+== Distribution ==
+[INFO] distribution: Ubuntu 24.04.4 LTS
+[OK] distribution supported
 [INFO] package manager: apt
 
 == System ==
@@ -94,7 +93,7 @@ VPN STATUS: UP (REAL)
 
 tun0: UP
 route: TUN
-public ip: 185.174.159.38
+public ip: 198.51.100.42
 
 provider status: not authoritative
 ```
@@ -104,10 +103,10 @@ and public IP checks are the operational source of truth.
 
 ## Example: DNS
 
-DNS v2 ships with the Phase 10 system: `watchdog dns status|test|apply|reset`,
+DNS v2 ships with the DNS v2 system: `watchdog dns status|test|apply|reset`,
 with `auto`, `off`, `custom` and `advanced` modes, FakeIP, ECS, static IP
 mapping and diversion rules. The old guided third-party DNS integration is
-removed. See `docs/dns-cli.md` and `docs/phase-10-design.md` for details.
+removed. See `docs/dns-cli.md` for details.
 
 ## Example: Timers
 

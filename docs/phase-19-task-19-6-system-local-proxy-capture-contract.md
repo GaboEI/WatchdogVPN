@@ -1,18 +1,13 @@
-# Phase 19 Task 19.6 - System Proxy and Local Proxy Capture Contract
+# System proxy and local proxy capture contract
 
-> Date: 2026-07-08
-> Status: CLOSED - contract defined, unsafe silent system-proxy use blocked.
+This document defines the Linux capture contract for WatchdogVPN's local proxy
+and system proxy integration.
 
-## Scope
+System proxy mutation is not implemented. Runtime use of `system_proxy` is
+deliberately blocked until apply, cleanup, crash recovery, uninstall and
+environment detection are implemented and validated.
 
-Task 19.6 defines the Linux capture contract for WatchdogVPN's local proxy and
-future system proxy integration before the final CLI exposes capture controls.
-
-This task does not implement system proxy mutation. It deliberately blocks
-runtime use of `system_proxy` until apply, cleanup, crash recovery, uninstall
-and environment detection are implemented and validated.
-
-## Local Proxy Contract
+## Local proxy contract
 
 WatchdogVPN's local proxy is a loopback-only sing-box inbound pair:
 
@@ -20,21 +15,20 @@ WatchdogVPN's local proxy is a loopback-only sing-box inbound pair:
 - HTTP: `127.0.0.1:2081`
 
 Local proxy capture means an application explicitly sends traffic to one of
-these local proxy endpoints. It does not capture arbitrary process traffic by
-itself.
+these endpoints. It does not capture arbitrary process traffic by itself.
 
 Security and ownership rules:
 
-- Bind address must remain loopback-only.
-- Wildcard binds are not allowed in Phase 19.
-- LAN exposure belongs to Phase 20 and must not be added here.
+- Bind address must remain loopback-only; wildcard binds are not allowed.
+- LAN exposure is separate work and must not be added here.
 - Ports `2080` and `2081` are owned by the active WatchdogVPN sing-box runtime
   while connected.
-- Port conflicts must fail the connection rather than silently switching to an
+- Port conflicts fail the connection rather than silently switching to an
   undocumented port.
-- Local proxy authentication is not required while the listener is loopback-only.
-- If future work permits non-loopback bind addresses, authentication or a
-  written protocol-specific exception becomes mandatory before merge.
+- Local proxy authentication is not required while the listener is
+  loopback-only.
+- If non-loopback bind addresses are ever permitted, authentication or a written
+  protocol-specific exception becomes mandatory.
 
 Cleanup:
 
@@ -45,13 +39,13 @@ Cleanup:
 
 Limitations:
 
-- Apps that are not configured to use the local proxy bypass this capture path.
+- Apps not configured to use the local proxy bypass this capture path.
 - UDP/ICMP are not captured by HTTP/SOCKS unless an application or protocol
   explicitly tunnels them through the proxy.
-- DNS behavior depends on the application and configured DNS policy; local
-  proxy alone is not proof of full-system DNS capture.
+- DNS behavior depends on the application and configured DNS policy; local proxy
+  alone is not proof of full-system DNS capture.
 
-## System Proxy Contract
+## System proxy contract
 
 System proxy capture means WatchdogVPN changes supported desktop/session proxy
 settings so proxy-aware applications use the local SOCKS/HTTP listener.
@@ -68,7 +62,7 @@ System proxy is incomplete capture:
 Because system proxy changes user/session state outside the sing-box process,
 WatchdogVPN must not enable it without reliable apply and cleanup semantics.
 
-### Supported Mechanisms For Future Implementation
+### Supported mechanisms
 
 Future implementation may support only explicitly detected mechanisms:
 
@@ -77,9 +71,9 @@ Future implementation may support only explicitly detected mechanisms:
 - environment-variable export only for child processes launched by WatchdogVPN,
   not as a global system proxy claim.
 
-### Unsupported Environments
+### Unsupported environments
 
-The final CLI must warn honestly and refuse apply when detection is unsupported:
+The CLI must warn honestly and refuse apply when detection is unsupported:
 
 - headless sessions without a desktop proxy settings backend;
 - SSH/non-graphical shells without a managed user session;
@@ -88,11 +82,11 @@ The final CLI must warn honestly and refuse apply when detection is unsupported:
 - locked-down desktops where settings cannot be read back;
 - NetworkManager proxy gaps that do not cover application-level proxy use.
 
-## Runtime Guardrail
+## Runtime guardrail
 
 `capture_modes = "local_proxy,system_proxy"` remains a valid persisted shape so
-future configuration can represent the intended capture state. However,
-runtime connect currently fails closed with:
+configuration can represent the intended capture state. Runtime connect fails
+closed with:
 
 ```text
 system_proxy capture is not implemented yet; use local_proxy or tun
@@ -101,7 +95,7 @@ system_proxy capture is not implemented yet; use local_proxy or tun
 This prevents a dangerous false claim where WatchdogVPN would say system proxy
 is active while only the loopback local proxy exists.
 
-## Cleanup And Recovery Requirements Before Enablement
+## Cleanup and recovery requirements before enablement
 
 Before `system_proxy` can be enabled, implementation must provide:
 
@@ -111,14 +105,12 @@ Before `system_proxy` can be enabled, implementation must provide:
 - crash recovery on daemon startup;
 - uninstall cleanup or explicit restoration guidance;
 - detection that the active session is the one being modified;
-- proof that cleanup happens when connect fails after applying settings;
-- tests for missing backend, readback mismatch, partial apply and restore
-  failure.
+- proof that cleanup happens when connect fails after applying settings.
 
 If cleanup cannot prove ownership of a setting, WatchdogVPN must not erase it.
-It should report manual recovery instructions instead.
+It reports manual recovery instructions instead.
 
-## Coexistence Rules
+## Coexistence rules
 
 - `local_proxy` may run alone.
 - `local_proxy` may coexist with `tun`.
@@ -128,26 +120,5 @@ It should report manual recovery instructions instead.
   path for traffic that ignores proxy settings.
 - `direct` is never a capture mode; it remains a route action.
 - No capture mode is an error for sing-box runtime paths.
-- LAN proxy sharing and LAN gateway/router mode remain out of scope until
-  Phase 20.
-
-## Validation
-
-Local validation:
-
-```bash
-python3 -m unittest tests.test_config_storage tests.test_core_watchdog tests.test_singbox_driver
-git diff --check
-```
-
-Coverage includes:
-
-- persisted `system_proxy` is valid only when paired with `local_proxy`;
-- runtime refuses unimplemented system-proxy capture before calling the driver;
-- local SOCKS/HTTP proxy inbounds remain loopback-only;
-- local proxy remains present alongside TUN.
-
-Installed VM validation is required before final closure because this task
-changes runtime connect behavior for `system_proxy` states. The validation does
-not need to apply live system proxy settings because this task explicitly keeps
-system proxy disabled until a future implementation.
+- LAN proxy sharing and LAN gateway/router mode remain out of scope for this
+  contract.
