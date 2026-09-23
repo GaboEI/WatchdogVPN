@@ -5037,7 +5037,7 @@
       "review_overdue_seconds": 31536000
     },
     "doc_generation": {
-      "public_claims_generated": false,
+      "public_claims_generated": true,
       "reason": "Task 23.7.5.12 owns public documentation generation"
     },
     "per_release_ci": {
