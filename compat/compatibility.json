@@ -124,7 +124,7 @@
       "current": true,
       "date": "2026-09-10T00:00:00Z",
       "distribution": "opensuse_tumbleweed",
-      "evidence": "23.7.5.11D openSUSE Tumbleweed 20260907 field certification on nls1 (runtime eb969bd, generation SHA-256 c21912e05a6c82b894f1b5f979a04fae132520fc6ac25cda41d3d44b24a1fc0d, provenance verified): 12/12 protocols green with real egress (T4.1 protocol matrix, TW-E04), AmneziaWG resolved through the guided official provisioning flow and validated with real AWG egress; reboot lifecycle (T5, TW-E06), isolated fault harness (T6, TW-E07) and final cleanup (T7, TW-E08) CLOSED/APPROVED by independent audit 2026-09-11",
+      "evidence": "23.7.5.11D openSUSE Tumbleweed 20260907 field certification on field-host-1 (runtime eb969bd, generation SHA-256 c21912e05a6c82b894f1b5f979a04fae132520fc6ac25cda41d3d44b24a1fc0d, provenance verified): 12/12 protocols green with real egress (T4.1 protocol matrix, TW-E04), AmneziaWG resolved through the guided official provisioning flow and validated with real AWG egress; reboot lifecycle (T5, TW-E06), isolated fault harness (T6, TW-E07) and final cleanup (T7, TW-E08) CLOSED/APPROVED by independent audit 2026-09-11",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -182,7 +182,7 @@
       "current": true,
       "date": "2026-08-15T00:00:00Z",
       "distribution": "arch",
-      "evidence": "23.7.5.11B Arch Linux field recertification on nls1 (runtime cd112b4): 12/12 real-egress protocol matrix; reboot lifecycle autoconnect off/on; isolated fault harness fail-closed (dns_restore_failed/kill_switch_disable_failed); cleanup final standby with doctor FAIL=0; shutdown FAILURE fix cd112b4. Evidence under evidencia_phase23/watchdogvpn-task-23-7-5-11B-arch-nls1-*",
+      "evidence": "23.7.5.11B Arch Linux field recertification on field-host-1 (runtime cd112b4): 12/12 real-egress protocol matrix; reboot lifecycle autoconnect off/on; isolated fault harness fail-closed (dns_restore_failed/kill_switch_disable_failed); cleanup final standby with doctor FAIL=0; shutdown FAILURE fix cd112b4. Evidence under vault-evidence/watchdogvpn-task-23-7-5-11B-arch-field-host-1-*",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -240,7 +240,7 @@
       "current": true,
       "date": "2026-08-16T00:00:00Z",
       "distribution": "cachyos",
-      "evidence": "23.7.5.11B CachyOS field recertification on nls1: 12/12 real-egress protocol matrix with fresh evidence; WireGuard, Shadowsocks and plain OpenVPN promoted from formal_non_green on fresh real-egress field evidence. Evidence under evidencia_phase23/watchdogvpn-task-23-7-5-11B-cachyos-nls1-matrix-*",
+      "evidence": "23.7.5.11B CachyOS field recertification on field-host-1: 12/12 real-egress protocol matrix with fresh evidence; WireGuard, Shadowsocks and plain OpenVPN promoted from formal_non_green on fresh real-egress field evidence. Evidence under vault-evidence/watchdogvpn-task-23-7-5-11B-cachyos-field-host-1-matrix-*",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -360,51 +360,51 @@
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: awg-138.124.91.224-LI3jGvaI"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: awg-138.124.91.224-LI3jGvaI"
         },
         "http": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1 after documented retry: http-138.124.91.224-ubuntu"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1 after documented retry: http-138.124.91.224-ubuntu"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: gaboturbo.serveminecraft.net-2"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: gaboturbo.serveminecraft.net-2"
         },
         "openvpn": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: openvpn-138.124.91.224-1194"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: openvpn-138.124.91.224-1194"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on authorized bridge-only VM wdvpn-debian13-openvpn-cloak: oc-138.124.91.224-wdvpnkal"
+          "evidence": "11A.2 Debian 13 fresh real egress on authorized bridge-only VM lab-vm-2: oc-138.124.91.224-wdvpnkal"
         },
         "shadowsocks": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: shadowsocks-138.124.91.224-ubuntu"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: shadowsocks-138.124.91.224-ubuntu"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: socks-138.124.91.224-ubuntu"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: socks-138.124.91.224-ubuntu"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: gaboturbo.serveminecraft.net"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: gaboturbo.serveminecraft.net"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: tuic-138.124.91.224-ubuntu"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: tuic-138.124.91.224-ubuntu"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: ubuntu_gabo_yahoo_firefox"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: ubuntu_gabo_yahoo_firefox"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: vmess-138.124.91.224-ubuntu"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: vmess-138.124.91.224-ubuntu"
         },
         "wireguard": {
           "disposition": "green",
-          "evidence": "11A.2 Debian 13 fresh real egress on nls1: 10.9.0.2/32"
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: wireguard tunnel egress verified"
         }
       },
       "release": "debian_13",
@@ -472,7 +472,7 @@
       "current": true,
       "date": "2026-09-14T00:00:00Z",
       "distribution": "kali",
-      "evidence": "23.7.5.11E Kali field recertification on nls1 (Kali GNU/Linux Rolling 2026.3; runtime a8bc2d1; K0 baseline and K1-K9 gates CLOSED/APPROVED): 12/12 protocols green with real egress. Plain OpenVPN, WireGuard, Shadowsocks and AmneziaWG validated fresh in 11E with real tunnel egress and a verified 100 MiB transfer (K3.1/K3.2, KALI-E04); the remaining 8 protocols are real-egress green convalidated from Task 23.7.5.10e. FakeIP validated (K3.6). Evidence: the 11E Kali evidence register (02_11e_kali_linux_evidence.md, KALI-E04).",
+      "evidence": "23.7.5.11E Kali field recertification on field-host-1 (Kali GNU/Linux Rolling 2026.3; runtime a8bc2d1; K0 baseline and K1-K9 gates CLOSED/APPROVED): 12/12 protocols green with real egress. Plain OpenVPN, WireGuard, Shadowsocks and AmneziaWG validated fresh in 11E with real tunnel egress and a verified 100 MiB transfer (K3.1/K3.2, KALI-E04); the remaining 8 protocols are real-egress green convalidated from Task 23.7.5.10e. FakeIP validated (K3.6). Evidence: the 11E Kali evidence register (02_11e_kali_linux_evidence.md, KALI-E04).",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -530,7 +530,7 @@
       "current": true,
       "date": "2026-09-18T00:00:00Z",
       "distribution": "manjaro",
-      "evidence": "Manjaro rolling snapshot (XFCE 26.1.0 image 260812, kernel 6.1.187-2-MANJARO) field certification on nls1: 12/12 canonical-index protocols green with real tunnel egress (tunnel egress distinct from the direct egress, HTTP 200 x3), kill-switch protection and clean cross-protocol teardown; format, reboot, suspend-to-disk resume and autoconnect lifecycle (M5), isolated worker fault handling (M6) and decommission with baseline restore (M7) CLOSED_APPROVED by independent Judge-Tester audit; approved-provider import, three usable VLESS nodes with distinct tunnel egress and forced provider rotation verified (M4.3). Evidence register MAN-E00–MAN-E09.",
+      "evidence": "Manjaro rolling snapshot (XFCE 26.1.0 image 260812, kernel 6.1.187-2-MANJARO) field certification on field-host-1: 12/12 canonical-index protocols green with real tunnel egress (tunnel egress distinct from the direct egress, HTTP 200 x3), kill-switch protection and clean cross-protocol teardown; format, reboot, suspend-to-disk resume and autoconnect lifecycle (M5), isolated worker fault handling (M6) and decommission with baseline restore (M7) CLOSED_APPROVED by independent Judge-Tester audit; approved-provider import, three usable VLESS nodes with distinct tunnel egress and forced provider rotation verified (M4.3). Evidence register MAN-E00–MAN-E09.",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -646,7 +646,7 @@
       "current": true,
       "date": "2026-08-14T00:00:00Z",
       "distribution": "linuxmint",
-      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.7 Linux Mint 22.3 closure and private evidence; 23.7.5.11A.3 Linux Mint 22.3 field recertification on nls1 at /home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-3-mint-aa1d3bf-controlled-deploy-20260814T222516Z/ with isolated fault-validation evidence at /home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-3-mint-aa1d3bf-isolated-fault-validation-20260814T231258Z/",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.7 Linux Mint 22.3 closure and private evidence; 23.7.5.11A.3 Linux Mint 22.3 field recertification on field-host-1 at vault-evidence/watchdogvpn-task-23-7-5-11A-3-mint-aa1d3bf-controlled-deploy-20260814T222516Z/ with isolated fault-validation evidence at vault-evidence/watchdogvpn-task-23-7-5-11A-3-mint-aa1d3bf-isolated-fault-validation-20260814T231258Z/",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -820,7 +820,7 @@
       "current": true,
       "date": "2026-08-14T00:00:00Z",
       "distribution": "ubuntu",
-      "evidence": "Task 23.7.5.11A.1 Ubuntu 24.04 field certification and private evidence at /home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-1-ubuntu-20260813T104226Z/; focal OpenVPN plain reopening evidence at /home/gabodev/Desktop/temporales/evidencia_phase23/watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz (sha256 43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871). Other 11 protocol results reuse the original 11A.1 evidence; only OpenVPN plain received fresh evidence in the focal reopening.",
+      "evidence": "Task 23.7.5.11A.1 Ubuntu 24.04 field certification and private evidence at vault-evidence/watchdogvpn-task-23-7-5-11A-1-ubuntu-20260813T104226Z/; focal OpenVPN plain reopening evidence at vault-evidence/watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz (sha256 43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871). Other 11 protocol results reuse the original 11A.1 evidence; only OpenVPN plain received fresh evidence in the focal reopening.",
       "protocol_results": {
         "amneziawg": {
           "disposition": "green",
@@ -828,47 +828,47 @@
         },
         "http": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "hysteria2": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "openvpn": {
           "disposition": "green",
-          "evidence": "23.7.5.11A.1 focal Ubuntu OpenVPN plain reopening approved by judge: nls1 Ubuntu 24.04.1, profile openvpn-138.124.91.224-1194, connect_rc=0, egress_ip=138.124.91.224, HTTP 200 to YouTube/Facebook/Instagram, disconnect_rc=0, clean teardown; evidence bundle watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz sha256=43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871"
+          "evidence": "23.7.5.11A.1 focal Ubuntu OpenVPN plain reopening approved by judge: field-host-1 Ubuntu 24.04.1, profile openvpn-138.124.91.224-1194, connect_rc=0, egress_ip=138.124.91.224, HTTP 200 to YouTube/Facebook/Instagram, disconnect_rc=0, clean teardown; evidence bundle watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz sha256=43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871"
         },
         "openvpn_cloak": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on authorized bridge-only Ubuntu 24.04 VM wdvpn-ubuntu-2404 using 04_OpenVPN_Cloak_gabo_nuevo_FIX.vpn; nls1-specific zero-RX symptom documented"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on authorized bridge-only Ubuntu 24.04 VM lab-vm-1 using 04_OpenVPN_Cloak_gabo_nuevo_FIX.vpn; field-host-1-specific zero-RX symptom documented"
         },
         "shadowsocks": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "socks": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "trojan": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "tuic": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "vless": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "vmess": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         },
         "wireguard": {
           "disposition": "green",
-          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on nls1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
         }
       },
       "release": "ubuntu_24_04",
@@ -5062,7 +5062,7 @@
         "status": "not_run"
       },
       "opensuse_leap_15_6": {
-        "evidence": "L2 Compatibility Matrix CI run 34140256789 green on HEAD 7939411 (2026-09-07); L2 field lifecycle CLOSED/APPROVED on nls1 (runtime cb41420)",
+        "evidence": "L2 Compatibility Matrix CI run 34140256789 green on HEAD 7939411 (2026-09-07); L2 field lifecycle CLOSED/APPROVED on field-host-1 (runtime cb41420)",
         "l1_l2_green": true,
         "status": "green"
       },

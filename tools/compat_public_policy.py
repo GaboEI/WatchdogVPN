@@ -83,7 +83,7 @@ def _validate_exceptions(items: object, name: str, known_paths: set[str]) -> dic
     return allowed
 
 
-def load_registry(path: Path = REGISTRY_PATH) -> tuple[list[Surface], dict[tuple[str, str], set[str]]]:
+def load_registry(path: Path = REGISTRY_PATH) -> tuple[list[Surface], dict[str, dict[tuple[str, str], set[str]]]]:
     document = _load_json(path)
     if set(document) != {"schema_version", "policy", "surfaces"}:
         raise PolicyError("registry keys must be schema_version, policy, and surfaces")
@@ -198,6 +198,51 @@ def scan_privacy(
     return findings
 
 
+COMPATIBILITY_ARTIFACTS = (
+    "compat/compatibility.json",
+    "compat/compatibility.schema.json",
+    "compat/distribution_presentation.json",
+    "compat/github_about.json",
+    "compat/public_surfaces.json",
+)
+
+# The artifact scan targets the private data that must never appear in the
+# public compatibility data: private absolute paths, home paths, internal host
+# identifiers and credentials. `private-ipv4`/`private-ipv6` are intentionally
+# excluded here because `compat/public_surfaces.json` legitimately records
+# loopback exception literals (e.g. `127.0.0.1`); those rules remain enforced
+# on the documentation surfaces by `scan_privacy`.
+COMPATIBILITY_ARTIFACT_RULES = frozenset(
+    {"private-path", "private-host", "credential", "credential-uri", "authorization-credential"}
+)
+
+
+def scan_compatibility_artifacts(root: Path = ROOT) -> list[Finding]:
+    """Scan the public compatibility artifacts themselves for private data.
+
+    The compatibility manifest and its companion artifacts are tracked in the
+    public repository. They are product data rather than prose, so they are
+    scanned directly by path (not through the registry), guaranteeing the real
+    tracked artifacts are checked and never a fixture. A private absolute path,
+    home path, internal host identifier or credential is a finding.
+    """
+    findings: list[Finding] = []
+    for relative in COMPATIBILITY_ARTIFACTS:
+        path = root / relative
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise PolicyError("cannot read compatibility artifact %s: %s" % (relative, exc)) from exc
+        for rule, pattern in PRIVATE_PATTERNS:
+            if rule not in COMPATIBILITY_ARTIFACT_RULES:
+                continue
+            for match in pattern.finditer(text):
+                findings.append(Finding(relative, _line_number(text, match.start()), rule, match.group(0)))
+    return findings
+
+
 def scan_editorial(
     root: Path, surfaces: Iterable[Surface], exceptions: dict[str, dict[tuple[str, str], set[str]]]
 ) -> list[Finding]:
@@ -273,6 +318,7 @@ def check(root: Path = ROOT) -> list[Finding]:
     findings.extend(Finding(path, 1, "unregistered-surface", "public document is absent from registry") for path in discover_unregistered_candidates(root, surfaces))
     findings.extend(scan_privacy(root, surfaces, exceptions))
     findings.extend(scan_editorial(root, surfaces, exceptions))
+    findings.extend(scan_compatibility_artifacts(root))
     return findings
 
 

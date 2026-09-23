@@ -88,6 +88,27 @@ class PublicPrivacyTests(unittest.TestCase):
         with self.assertRaisesRegex(policy.PolicyError, "review_date must be ISO YYYY-MM-DD"):
             policy.load_registry(self._registry_with_review_date("not-a-date"))
 
+    def test_public_compatibility_artifacts_expose_no_private_data(self) -> None:
+        # Scans the real tracked artifacts (compat/*.json), not a fixture.
+        findings = policy.scan_compatibility_artifacts(policy.ROOT)
+        self.assertEqual(
+            [(finding.path, finding.rule, finding.value) for finding in findings],
+            [],
+            "public compatibility artifacts must not expose private paths or hosts",
+        )
+
+    def test_compatibility_artifact_scan_detects_seeded_private_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "compat").mkdir()
+            (root / "compat" / "compatibility.json").write_text(
+                '{"x": "host nls1 path /home/alice/evidence"}', encoding="utf-8"
+            )
+            self.assertEqual(
+                {finding.rule for finding in policy.scan_compatibility_artifacts(root)},
+                {"private-host", "private-path"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
