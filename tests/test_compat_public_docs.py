@@ -12,6 +12,8 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+from tools import compat_public_policy as public_policy
+
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "compat_public_docs.py"
 PRODUCT_MANIFEST = ROOT / "compat" / "compatibility.json"
@@ -548,6 +550,99 @@ class PublicDocsGeneratorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertTrue(payload.get("ok"))
+
+
+class PublicClaimIntegrityTests(unittest.TestCase):
+    """Task 12C.1 adversarial fixtures at the projection and registry boundary."""
+
+    def test_manual_generated_table_edit_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            manifest = base / "manifest.json"
+            shutil.copyfile(PRODUCT_MANIFEST, manifest)
+            root = write_fixture_tree(base, manifest=manifest)
+            result = run_tool(
+                [
+                    "generate",
+                    "--root",
+                    str(root),
+                    "--manifest",
+                    str(manifest),
+                    "--presentation-map",
+                    str(PRESENTATION_MAP),
+                ]
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            document = root / "doc.md"
+            document.write_text(document.read_text(encoding="utf-8").replace("certified", "tampered", 1), encoding="utf-8")
+            result = run_tool(
+                [
+                    "--check",
+                    "--root",
+                    str(root),
+                    "--manifest",
+                    str(manifest),
+                    "--presentation-map",
+                    str(PRESENTATION_MAP),
+                ]
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("drift", result.stderr)
+
+    def test_projection_rejects_stale_family_inferred_and_incomplete_claims(self) -> None:
+        projection = {
+            "protocol_ids": ["one", "two"],
+            "rows": [
+                {
+                    "release_label": "Rolling Fixture",
+                    "release_model": "rolling",
+                    "support_classification": "certified",
+                    "rolling_freshness": "expired",
+                    "certification_date": "2026-01-01",
+                    "protocol_summary": "All 2 in-scope protocols",
+                },
+                {
+                    "release_label": "Family Fixture",
+                    "release_model": "stable",
+                    "support_classification": "family_inferred",
+                    "rolling_freshness": None,
+                    "certification_date": "2026-01-01",
+                    "protocol_summary": "—",
+                },
+                {
+                    "release_label": "Matrix Fixture",
+                    "release_model": "stable",
+                    "support_classification": "certified",
+                    "rolling_freshness": None,
+                    "certification_date": "2026-01-01",
+                    "protocol_summary": "All 1 in-scope protocols",
+                },
+            ],
+        }
+        rules = {finding.rule for finding in public_policy.validate_projection_claims(projection)}
+        self.assertEqual(
+            rules,
+            {"stale-rolling-current", "family-inferred-certified", "incomplete-matrix-all-green"},
+        )
+
+    def test_unregistered_public_surface_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            docs_dir = root / "docs"
+            docs_dir.mkdir()
+            distros_dir = root / "distros"
+            distros_dir.mkdir()
+            (root / "PUBLIC.md").write_text("Public root surface", encoding="utf-8")
+            (docs_dir / "compatibility.md").write_text("Public documentation surface", encoding="utf-8")
+            (distros_dir / "new.md").write_text("Public distro surface", encoding="utf-8")
+            candidates = public_policy.discover_unregistered_candidates(root, [])
+            self.assertEqual(candidates, ["PUBLIC.md", "distros/new.md", "docs/compatibility.md"])
+
+    def test_root_level_markdown_surface_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "PUBLIC.markdown").write_text("Public root surface", encoding="utf-8")
+            self.assertEqual(public_policy.discover_unregistered_candidates(root, []), ["PUBLIC.markdown"])
 
 
 if __name__ == "__main__":
