@@ -94,10 +94,16 @@ exists.
 
 ## Future Direction
 
-After v2.0.0 is stable, future work may include:
+After v2.0.0 is stable, the planned product sequence is:
 
-- broader GUI product work;
-- additional platforms;
+- v2.5.0: Linux desktop GUI alongside the professional CLI and TUI;
+- v3.0.0: portable control plane and macOS desktop;
+- v3.5.0: iOS client;
+- v4.0.0: Android client;
+- v4.5.0: native Windows desktop;
 - richer provider collaboration workflows;
 - packaging formats beyond the shell installer;
 - expanded public website/docs ecosystem.
+
+Each numbered product version requires its own validated release plan before
+implementation. The v2.0.0 plan and runtime scope remain Linux-only.
