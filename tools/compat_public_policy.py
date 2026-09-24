@@ -206,15 +206,41 @@ COMPATIBILITY_ARTIFACTS = (
     "compat/public_surfaces.json",
 )
 
-# The artifact scan targets the private data that must never appear in the
-# public compatibility data: private absolute paths, home paths, internal host
-# identifiers and credentials. `private-ipv4`/`private-ipv6` are intentionally
-# excluded here because `compat/public_surfaces.json` legitimately records
-# loopback exception literals (e.g. `127.0.0.1`); those rules remain enforced
-# on the documentation surfaces by `scan_privacy`.
-COMPATIBILITY_ARTIFACT_RULES = frozenset(
-    {"private-path", "private-host", "credential", "credential-uri", "authorization-credential"}
-)
+# The artifact scan rejects ALL private data in the public compatibility data:
+# private absolute paths, home paths, internal host identifiers, private
+# IPv4/IPv6 values and credentials. No rule is globally exempted.
+#
+# `compat/public_surfaces.json` is the privacy-policy registry: it legitimately
+# records documented loopback literals as exception VALUES (e.g. `127.0.0.1`).
+# The only allowance is therefore path-and-value specific: a finding is
+# suppressed only when it is inside that registry artifact AND its exact value
+# is one the registry itself declares as a privacy-exception value for that
+# rule. A private IP anywhere else (for example in
+# `compat/compatibility.json`, or an undocumented value in the registry) is
+# still a finding.
+REGISTRY_ARTIFACT = "compat/public_surfaces.json"
+
+
+def _documented_exception_values(registry_text: str) -> dict[str, set[str]]:
+    """Map rule -> the exact exception values the registry itself documents."""
+    try:
+        document = json.loads(registry_text)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(document, dict):
+        return {}
+    policy = document.get("policy")
+    if not isinstance(policy, dict):
+        return {}
+    allowed: dict[str, set[str]] = {}
+    for item in policy.get("privacy_exceptions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        rule = item.get("rule")
+        value = item.get("value")
+        if isinstance(rule, str) and isinstance(value, str):
+            allowed.setdefault(rule, set()).add(value)
+    return allowed
 
 
 def scan_compatibility_artifacts(root: Path = ROOT) -> list[Finding]:
@@ -223,8 +249,10 @@ def scan_compatibility_artifacts(root: Path = ROOT) -> list[Finding]:
     The compatibility manifest and its companion artifacts are tracked in the
     public repository. They are product data rather than prose, so they are
     scanned directly by path (not through the registry), guaranteeing the real
-    tracked artifacts are checked and never a fixture. A private absolute path,
-    home path, internal host identifier or credential is a finding.
+    tracked artifacts are checked and never a fixture. Any private absolute
+    path, home path, internal host identifier, private IPv4/IPv6 value or
+    credential is a finding. The only allowance is the documented, exact-value
+    exception recorded in the registry artifact itself.
     """
     findings: list[Finding] = []
     for relative in COMPATIBILITY_ARTIFACTS:
@@ -235,11 +263,13 @@ def scan_compatibility_artifacts(root: Path = ROOT) -> list[Finding]:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             raise PolicyError("cannot read compatibility artifact %s: %s" % (relative, exc)) from exc
+        allowed = _documented_exception_values(text) if relative == REGISTRY_ARTIFACT else {}
         for rule, pattern in PRIVATE_PATTERNS:
-            if rule not in COMPATIBILITY_ARTIFACT_RULES:
-                continue
             for match in pattern.finditer(text):
-                findings.append(Finding(relative, _line_number(text, match.start()), rule, match.group(0)))
+                value = match.group(0)
+                if value in allowed.get(rule, set()):
+                    continue
+                findings.append(Finding(relative, _line_number(text, match.start()), rule, value))
     return findings
 
 

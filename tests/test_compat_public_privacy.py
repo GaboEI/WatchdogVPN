@@ -88,26 +88,86 @@ class PublicPrivacyTests(unittest.TestCase):
         with self.assertRaisesRegex(policy.PolicyError, "review_date must be ISO YYYY-MM-DD"):
             policy.load_registry(self._registry_with_review_date("not-a-date"))
 
+    def _artifact_root(self, name: str, text: str) -> Path:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "compat").mkdir()
+        (root / "compat" / name).write_text(text, encoding="utf-8")
+        return root
+
     def test_public_compatibility_artifacts_expose_no_private_data(self) -> None:
         # Scans the real tracked artifacts (compat/*.json), not a fixture.
         findings = policy.scan_compatibility_artifacts(policy.ROOT)
         self.assertEqual(
             [(finding.path, finding.rule, finding.value) for finding in findings],
             [],
-            "public compatibility artifacts must not expose private paths or hosts",
+            "public compatibility artifacts must not expose private data",
         )
 
-    def test_compatibility_artifact_scan_detects_seeded_private_values(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "compat").mkdir()
-            (root / "compat" / "compatibility.json").write_text(
-                '{"x": "host nls1 path /home/alice/evidence"}', encoding="utf-8"
-            )
-            self.assertEqual(
-                {finding.rule for finding in policy.scan_compatibility_artifacts(root)},
-                {"private-host", "private-path"},
-            )
+    def test_compatibility_artifact_scan_detects_hosts_paths_and_credentials(self) -> None:
+        root = self._artifact_root(
+            "compatibility.json", '{"x": "host nls1 path /home/alice/evidence password=secret-value"}'
+        )
+        self.assertEqual(
+            {finding.rule for finding in policy.scan_compatibility_artifacts(root)},
+            {"private-host", "private-path", "credential"},
+        )
+
+    def test_compatibility_artifact_scan_detects_every_private_ip_class(self) -> None:
+        seeded = (
+            "10.1.2.3 172.16.5.5 172.31.9.9 192.168.7.7 127.0.0.1 169.254.10.10 "
+            "::1 fe80::1 fd12:3456::9 10.9.0.2/32"
+        )
+        root = self._artifact_root("compatibility.json", json.dumps({"evidence": seeded}))
+        findings = policy.scan_compatibility_artifacts(root)
+        rules = {finding.rule for finding in findings}
+        self.assertIn("private-ipv4", rules)
+        self.assertIn("private-ipv6", rules)
+        values = {finding.value for finding in findings}
+        for expected in (
+            "10.1.2.3",
+            "172.16.5.5",
+            "172.31.9.9",
+            "192.168.7.7",
+            "127.0.0.1",
+            "169.254.10.10",
+            "::1",
+            "fe80::1",
+            "fd12:3456::9",
+            "10.9.0.2",
+        ):
+            self.assertIn(expected, values, "seeded private value must be detected: %s" % expected)
+
+    def test_documented_exception_is_path_and_value_specific(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "compat").mkdir()
+        registry = {"policy": {"privacy_exceptions": [{"rule": "private-ipv4", "value": "127.0.0.1"}]}}
+        registry_path = root / "compat" / "public_surfaces.json"
+        compatibility_path = root / "compat" / "compatibility.json"
+
+        # 1) the documented value at its authorized path is accepted
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+        self.assertEqual(policy.scan_compatibility_artifacts(root), [])
+
+        # 2) the same value in compatibility.json is NOT exempted (path-specific)
+        compatibility_path.write_text('{"x": "127.0.0.1"}', encoding="utf-8")
+        self.assertIn("private-ipv4", {finding.rule for finding in policy.scan_compatibility_artifacts(root)})
+
+        # 3) an undocumented private IP in the registry is NOT exempted (value-specific)
+        compatibility_path.unlink()
+        registry_path.write_text(
+            json.dumps(
+                {
+                    "policy": {"privacy_exceptions": [{"rule": "private-ipv4", "value": "127.0.0.1"}]},
+                    "leak": "10.9.0.2/32",
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertIn("private-ipv4", {finding.rule for finding in policy.scan_compatibility_artifacts(root)})
 
 
 if __name__ == "__main__":
