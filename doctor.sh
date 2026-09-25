@@ -27,6 +27,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FAIL_COUNT=0
 WARN_COUNT=0
 OK_COUNT=0
+# Machine-readable signal for the update preflight: set to 1 only when the
+# single permitted non-fatal condition is present, i.e. a recognised legacy
+# installation whose provenance is migratable. The updater may continue only in
+# that exact case; every other failure stays fatal.
+DOCTOR_LEGACY_MIGRATABLE=0
 
 section() {
   printf '\n== %s ==\n' "$*"
@@ -504,6 +509,7 @@ case "$provenance_rc" in
       if [[ -z "$installed_commit" ]]; then
         info "no installed version marker yet; run ./install.sh or ./update.sh to create one"
       else
+        DOCTOR_LEGACY_MIGRATABLE=1
         mark_warn "installed runtime uses a legacy layout without schema-2 hashed provenance"
         info "recovery: run ./update.sh from a clean committed checkout to migrate to attributable hashed provenance"
       fi
@@ -781,6 +787,8 @@ done
 
 printf '\n== Result ==\n'
 printf 'OK=%d WARN=%d FAIL=%d\n' "$OK_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
+# Emitted last so an update preflight can parse it from the captured output.
+printf 'LEGACY_MIGRATABLE=%d\n' "$DOCTOR_LEGACY_MIGRATABLE"
 
 if (( FAIL_COUNT > 0 )); then
   printf 'Result: FAIL\n'

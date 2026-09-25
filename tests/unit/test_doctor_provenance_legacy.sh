@@ -20,7 +20,7 @@ assert_contains() {
 
 assert_contains "$ROOT_DIR/doctor.sh" 'mark_warn "installed runtime uses a legacy layout without schema-2 hashed provenance"' "doctor must warn, not fail, for a migratable legacy layout"
 assert_contains "$ROOT_DIR/doctor.sh" 'mark_fail "installed runtime has incomplete hashed provenance"' "doctor must still fail closed for incomplete provenance"
-assert_contains "$ROOT_DIR/update.sh" 'if ! "$ROOT_DIR/doctor.sh"; then' "updater must treat the read-only preflight as non-fatal"
+assert_contains "$ROOT_DIR/update.sh" 'if (( doctor_preflight_rc != 0 )); then' "updater must abort on any non-zero doctor exit"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -77,3 +77,60 @@ grep -Fq 'incomplete hashed provenance' <<<"$incomplete_out" || {
 }
 
 echo "doctor legacy provenance checks passed"
+
+# ---------------------------------------------------------------------------
+# F-01: the update preflight must be fail-closed. It may continue ONLY for a
+# recognised, migratable legacy condition; every other doctor failure aborts
+# before any destructive step. This exercises the real update.sh boundary by
+# extracting and running the exact preflight block with doctor.sh stubbed, so no
+# system state is touched.
+# ---------------------------------------------------------------------------
+
+update_preflight_block="$(awk '/^if \(\(RUN_DOCTOR == 1\)\); then$/{f=1} f{print} f&&/^fi$/{exit}' "$ROOT_DIR/update.sh")"
+[[ -n "$update_preflight_block" ]] || { printf 'FAIL: could not extract update preflight\n' >&2; exit 1; }
+
+run_preflight() {
+  # $1 = stub doctor exit code, $2 = stub doctor stdout
+  local rc="$1" out="$2" dir got
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/lib"
+  cp "$ROOT_DIR/lib/"*.sh "$dir/lib/" 2>/dev/null || true
+  # Stub doctor.sh: emit the configured output and exit with the configured code.
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'printf "%%s\\n" %q\n' "$out"
+    printf 'exit %s\n' "$rc"
+  } >"$dir/doctor.sh"
+  chmod +x "$dir/doctor.sh"
+  set +e
+  ROOT_DIR="$dir" RUN_DOCTOR=1 bash -c '
+    set -euo pipefail
+    fail() { printf "[FAIL] %s\n" "$*" >&2; }
+    warn() { printf "[WARN] %s\n" "$*" >&2; }
+    print_section() { :; }
+    '"$update_preflight_block"'
+  ' >/dev/null 2>&1
+  got=$?
+  set -e
+  rm -rf "$dir"
+  printf '%s' "$got"
+}
+
+# (a) recognised legacy migratable state must reach the next stage (exit 0)
+[[ "$(run_preflight 0 'LEGACY_MIGRATABLE=1')" == "0" ]] || {
+  printf 'FAIL: recognised legacy migratable state must not abort the update\n' >&2; exit 1; }
+
+# (b)+(c) incomplete/malformed/unverifiable provenance (doctor exit 1) aborts
+[[ "$(run_preflight 1 'FAIL')" != "0" ]] || {
+  printf 'FAIL: non-zero doctor exit must abort the update\n' >&2; exit 1; }
+
+# (d) healthy host: doctor exit 0 without the legacy signal still proceeds safely
+[[ "$(run_preflight 0 'OK=1 WARN=0 FAIL=0')" == "0" ]] || {
+  printf 'FAIL: healthy doctor exit 0 must allow the update\n' >&2; exit 1; }
+
+# Wiring assertions for the precise boundary.
+assert_contains "$ROOT_DIR/doctor.sh" "printf 'LEGACY_MIGRATABLE=%d\n' \"\$DOCTOR_LEGACY_MIGRATABLE\"" "doctor must emit the machine-readable legacy signal"
+assert_contains "$ROOT_DIR/update.sh" "if (( doctor_preflight_rc != 0 )); then" "updater must abort on a non-zero doctor exit"
+assert_contains "$ROOT_DIR/update.sh" "if grep -Fxq 'LEGACY_MIGRATABLE=1' <<<\"\$doctor_preflight_output\"; then" "updater must continue only on the recognised legacy signal"
+
+echo "update preflight boundary checks passed"

@@ -249,13 +249,21 @@ validate_python_runtime_dependencies
 
 if ((RUN_DOCTOR == 1)); then
   print_section "Read-only preflight"
-  # A recognised legacy installation with absent schema-2/H1 provenance is
-  # diagnostic-only for the updater: doctor reports it as WARN, and blocking on
-  # a bare non-zero doctor exit here would prevent the very update that
-  # migrates the host to attributable hashed provenance. Malformed/incomplete
-  # provenance still exits non-zero and is never masked.
-  if ! "$ROOT_DIR/doctor.sh"; then
-    warn "read-only preflight reported findings; continuing update so a supported legacy installation can migrate its provenance"
+  # The ONLY non-fatal doctor condition permitted here is a recognised legacy
+  # installation whose provenance is migratable. doctor.sh signals that exact
+  # case with exit 0 and a trailing LEGACY_MIGRATABLE=1. Every other outcome —
+  # incomplete, malformed or unverifiable provenance, or any unrelated doctor
+  # failure — stays fatal and terminates the update before any destructive step.
+  doctor_preflight_rc=0
+  doctor_preflight_output="$("$ROOT_DIR/doctor.sh" 2>&1)" || doctor_preflight_rc=$?
+  printf '%s\n' "$doctor_preflight_output"
+  if (( doctor_preflight_rc != 0 )); then
+    fail "read-only preflight found blocking problems; refusing to update"
+    printf 'Fix the reported problems and rerun ./update.sh. No system changes were made.\n' >&2
+    exit 1
+  fi
+  if grep -Fxq 'LEGACY_MIGRATABLE=1' <<<"$doctor_preflight_output"; then
+    warn "recognised legacy provenance layout; continuing so the update can publish attributable hashed provenance"
   fi
 fi
 
