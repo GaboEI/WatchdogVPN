@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -15,6 +16,27 @@ import cli.main
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WATCHDOG = ROOT_DIR / "bin" / "watchdog"
+PIPE_INTERPRETER_PLACEHOLDER = "watchdog-python-pipe-test"
+
+
+def _python_pipe_pipeline_command(runner: Path) -> list[str]:
+    """Build the ``bash -o pipefail`` SIGPIPE pipeline with the active interpreter.
+
+    The suite must drive the interpreter running it (``sys.executable``) so the
+    pipeline stays valid under a virtualenv or any environment where a bare
+    ``python3`` is absent or differs; the hardcoded ``python3`` literal was the
+    fragility recorded as ``F-13-PRE-03``/``F-13D-01``.
+    """
+    return [
+        "bash",
+        "-o",
+        "pipefail",
+        "-c",
+        '"$1" "$2" | head -n 5 >/dev/null',
+        PIPE_INTERPRETER_PLACEHOLDER,
+        sys.executable,
+        str(runner),
+    ]
 
 
 class CliSignalContractTests(unittest.TestCase):
@@ -133,15 +155,7 @@ class CliSignalContractTests(unittest.TestCase):
             env = os.environ.copy()
             env["PYTHONPATH"] = str(ROOT_DIR)
             result = subprocess.run(
-                [
-                    "bash",
-                    "-o",
-                    "pipefail",
-                    "-c",
-                    'python3 "$1" | head -n 5 >/dev/null',
-                    "watchdog-python-pipe-test",
-                    str(runner),
-                ],
+                _python_pipe_pipeline_command(runner),
                 text=True,
                 capture_output=True,
                 env=env,
@@ -150,6 +164,15 @@ class CliSignalContractTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 141)
         self.assertEqual(result.stderr, "")
+
+    def test_python_output_pipeline_uses_active_interpreter(self) -> None:
+        command = _python_pipe_pipeline_command(Path("/tmp/emit_cli_output.py"))
+        shell_script = command[command.index("-c") + 1]
+        interpreter = command[command.index(PIPE_INTERPRETER_PLACEHOLDER) + 1]
+
+        self.assertEqual(interpreter, sys.executable)
+        self.assertIn('"$1"', shell_script)
+        self.assertNotIn("python3", shell_script)
 
     def test_doctor_json_normalizes_signal_terminated_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:

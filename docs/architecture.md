@@ -7,8 +7,8 @@ split into truth checking, daemon-owned connection lifecycle, profile/provider
 stores, recovery, rotation, DNS safety and TUI layers so supported providers can
 reuse the same product shape without rewriting the user experience.
 
-The runtime is shared across supported distributions. Distro differences belong
-only in installation and dependency detection.
+The runtime is shared across supported distributions. Distribution differences
+belong only in installation and dependency package definitions.
 
 ## Core Runtime
 
@@ -45,4 +45,4 @@ only in installation and dependency detection.
 - `update.sh`: safe update path
 - `uninstall.sh`: careful removal
 - `lib/`: shared installer functions
-- `distros/`: Ubuntu, Debian, Arch, Fedora/Red Hat-family and openSUSE adapters
+- `distros/`: Ubuntu, Debian, Arch, Fedora/Red Hat-family and openSUSE package definitions

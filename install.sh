@@ -30,6 +30,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
+CERTIFICATION_LAB=0
+ACCEPT_EXPERIMENTAL_DISTRO_RISK=0
 BACKEND_MODE="custom-vps"
 BACKEND_ACTIVE="custom-vps"
 CUSTOM_VPS_ENABLED="false"
@@ -53,12 +55,18 @@ usage() {
 WatchdogVPN installer
 
 Usage:
-  ./install.sh [--dry-run] [--yes] [--skip-doctor]
+  ./install.sh [--dry-run] [--yes] [--skip-doctor] [--certification-lab]
+               [--accept-experimental-distro-risk]
 
 Options:
   --dry-run       Show what would be installed without changing the system.
   --yes           Use product defaults without enabling an unconfigured Custom VPS service.
   --skip-doctor   Do not run the read-only preflight first.
+  --certification-lab  Allow an explicitly marked field-validation run on an experimental distro.
+  --accept-experimental-distro-risk
+                  Run on a recognized-but-not-yet-certified distro without the
+                  interactive prompt (for scripted/non-interactive installs).
+                  This does not change the distro's official support status.
   --help          Show this help.
 
 What this installer manages:
@@ -78,6 +86,12 @@ while (($#)); do
       ;;
     --skip-doctor)
       RUN_DOCTOR=0
+      ;;
+    --certification-lab)
+      CERTIFICATION_LAB=1
+      ;;
+    --accept-experimental-distro-risk)
+      ACCEPT_EXPERIMENTAL_DISTRO_RISK=1
       ;;
     --help|-h)
       usage
@@ -223,9 +237,46 @@ require_supported_distro() {
   detect_distro
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
 
-  if [[ "${DISTRO_SUPPORTED:-0}" != "1" ]]; then
+  # Sequencing bootstrap (Phase 23.7.5.11D): if the compatibility engine could
+  # not run for lack of an adequate interpreter but the Bash-only identity
+  # already resolved a known adapter, install only the adapter-declared
+  # interpreter package (e.g. python311 for openSUSE) and re-run authoritative
+  # detection through the Python engine - never through the Bash fallback.
+  local bootstrap_rc=0
+  distro_bootstrap_interpreter_if_needed || bootstrap_rc=$?
+  if ((bootstrap_rc == 2)); then
+    exit 1
+  fi
+
+  if [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
+    if ((CERTIFICATION_LAB == 1)) && distro_certification_lab_enabled; then
+      warn "certification-lab override: experimental distro is not promoted to support"
+    elif distro_experimental_override_accepted; then
+      warn "experimental distro override: previously accepted by you for ${DISTRO_NAME} (${DISTRO_ID})"
+    elif ((ACCEPT_EXPERIMENTAL_DISTRO_RISK == 1)); then
+      distro_record_experimental_override
+      warn "experimental distro override: risk accepted via --accept-experimental-distro-risk for ${DISTRO_NAME} (${DISTRO_ID})"
+    elif [[ -t 0 ]] && prompt_experimental_distro_override; then
+      distro_record_experimental_override
+      warn "experimental distro override: you accepted the risk for ${DISTRO_NAME} (${DISTRO_ID})"
+    else
+      print_future_distro
+      exit 1
+    fi
+  fi
+
+  if [[ "${DISTRO_UNSUPPORTED:-0}" == "1" ]]; then
     print_unsupported_distro
     exit 1
+  fi
+
+  if [[ "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
+    if ((INSTALL_DRY_RUN == 1)) && [[ "${DISTRO_ENGINE_BLOCKED:-0}" == "1" ]]; then
+      warn "dry-run: detection engine blocked (adapter interpreter bootstrap required); continuing in simulation without support classification"
+    else
+      print_undetermined_distro
+      exit 1
+    fi
   fi
 
   local adapter
@@ -335,6 +386,9 @@ print_install_plan() {
 print_title "$PROJECT_NAME Installer"
 printf 'Installs WatchdogVPN and guides backend setup.\n'
 
+print_section "Source provenance preflight"
+require_clean_source_checkout
+
 require_supported_distro
 require_system_shape
 
@@ -373,6 +427,9 @@ print_section "Runtime validation"
 validate_repo_runtime
 capture_watchdogvpn_service_state
 runtime_transaction_begin
+print_section "Protocol runtime provisioning"
+install_official_singbox
+install_official_cloak
 print_section "Install runtime"
 install_runtime_files
 apply_backend_install_selection
@@ -380,6 +437,8 @@ print_section "Systemd verification"
 verify_systemd_units
 print_section "Enable services"
 enable_systemd_units
+print_section "Refresh daemon process"
+restart_watchdogvpn_service_after_runtime_update
 wait_for_services
 print_section "Daemon smoke test"
 smoke_test_watchdogvpn_daemon

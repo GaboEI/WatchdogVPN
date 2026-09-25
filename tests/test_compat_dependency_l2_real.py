@@ -1,0 +1,2416 @@
+"""Real focused L2 dependency checks.
+
+Set WATCHDOGVPN_REAL_L2=1 to run these against disposable Docker/Podman
+containers. Metadata refreshes, when required, happen only inside containers.
+These checks do not certify kernel, TUN, firewall or protocol behavior.
+"""
+
+from __future__ import annotations
+
+import os
+import shlex
+import shutil
+import subprocess
+import time
+import unittest
+from datetime import datetime
+from unittest import mock
+
+from compat import dependency_resolution as resolver
+from compat import detection
+from tools.compat_l2_reporter import dnf_repository_series_path
+
+
+REAL_L2_ENABLED = os.environ.get("WATCHDOGVPN_REAL_L2") == "1"
+TIMEOUT_SECONDS = 120
+# Metadata refresh (apt-get update / dnf / zypper refresh) hits the distro's
+# package mirrors over the network. Those mirrors can be slow or transiently
+# rate-limited from CI runners (observed for archive.ubuntu.com), so the
+# refresh phase gets a wider, infra-only deadline than the strict validation
+# timeouts (pull/create/start/os-release/package-query/cleanup still use
+# TIMEOUT_SECONDS). This does not weaken the compatibility validation: the
+# target still must complete the refresh and the rest of the lifecycle.
+METADATA_REFRESH_TIMEOUT_SECONDS = 300
+OUTPUT_LIMIT = 12000
+CONTROLLED_MANAGERS = frozenset(("apt-get", "dnf", "zypper", "pacman"))
+
+# Markers used only to interpret already-failed (non-zero/exception) results.
+# A parser never overrides a runtime_status of "timeout" or "runtime_error"
+# coming from the process layer itself (subprocess.TimeoutExpired / OSError);
+# these lists only disambiguate a non-zero returncode that DID execute.
+RUNTIME_INFRA_ERROR_MARKERS = (
+    "no such container",
+    "is not running",
+    "oci runtime exec failed",
+    "oci runtime create failed",
+    "unable to start container process",
+    "cannot connect to the docker daemon",
+)
+MISSING_CONTAINER_MARKERS = ("no such container",)
+# Only unambiguous manifest-absence phrasing may ever produce image_not_found.
+# Generic phrases such as "manifest for", "repository does not exist" or
+# "no such image" are deliberately excluded: real registries reuse them for
+# both a genuinely missing image AND an unauthenticated/private one, so they
+# are not sufficient proof on their own.
+PULL_IMAGE_NOT_FOUND_MARKERS = (
+    "manifest unknown",
+    "not found: manifest",
+)
+PULL_AUTH_MARKERS = (
+    "unauthorized",
+    "authentication required",
+    "docker login",
+    "podman login",
+    "no basic auth credentials",
+)
+PULL_REGISTRY_MARKERS = (
+    "no such host",
+    "dial tcp",
+    "connection refused",
+    "tls handshake",
+    "tls",
+    "i/o timeout",
+    "timeout",
+    "temporary failure in name resolution",
+    "dns",
+    "network is unreachable",
+    "network unreachable",
+    "context deadline exceeded",
+)
+# POSIX only guarantees a non-zero exit status for "command -v" when the
+# target is not found; it does not fix the exact value. 1 and 127 are the
+# clean, no-output results admitted here as a demonstrated absence for the
+# shell implementations this contract covers (dash, bash and similar
+# POSIX-compatible shells), not "the exact POSIX code".
+MANAGER_NOT_FOUND_RETURNCODES = frozenset((1, 127))
+
+
+CASES = (
+    {"target": "ubuntu_24_04", "image": "ubuntu:24.04", "id": "ubuntu", "codename": "noble", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt"},
+    {"target": "ubuntu_26_04", "image": "ubuntu:26.04", "id": "ubuntu", "codename": "resolute", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt", "optional_image": True},
+    {"target": "debian_13", "image": "debian:13", "id": "debian", "codename": "trixie", "manager": "apt-get", "packages": ("python3", "openvpn"), "kind": "apt"},
+    {"target": "fedora_44", "image": "fedora:44", "id": "fedora", "codename": None, "manager": "dnf", "packages": ("python3", "openvpn"), "kind": "dnf"},
+    {"target": "rocky_9", "image": "rockylinux:9", "id": "rocky", "codename": None, "manager": "dnf", "packages": ("python3.11", "epel-release", "openvpn"), "kind": "dnf", "architecture": "x86_64", "repository_id": "epel_9", "series": "epel9", "epel_repo_url": "https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/", "refresh": "true"},
+    {"target": "opensuse_leap_15_6", "image": "opensuse/leap:15.6", "id": "opensuse-leap", "codename": None, "manager": "zypper", "packages": ("python311", "openvpn"), "kind": "zypper"},
+    {"target": "arch", "image": "archlinux:latest", "id": "arch", "codename": None, "manager": "pacman", "packages": ("python", "openvpn"), "kind": "pacman", "refresh": "pacman -Sy --noconfirm"},
+)
+
+
+def _runtime() -> str | None:
+    for name in ("podman", "docker"):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def _run(runtime: str, args: list[str], *, timeout: int = TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([runtime] + args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=timeout)
+
+
+def _trim(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return value[:OUTPUT_LIMIT]
+
+
+def _looks_like(markers: tuple[str, ...], *texts: str) -> bool:
+    haystack = "\n".join((text or "") for text in texts).lower()
+    return any(marker in haystack for marker in markers)
+
+
+def _looks_like_runtime_infra_error(stderr: str) -> bool:
+    return _looks_like(RUNTIME_INFRA_ERROR_MARKERS, stderr)
+
+
+def _looks_like_missing_container_error(stderr: str) -> bool:
+    return _looks_like(MISSING_CONTAINER_MARKERS, stderr)
+
+
+def _phase(status: str) -> dict:
+    """Build a not-yet-executed phase stub with the full evidence contract."""
+    return {
+        "status": status,
+        "runtime_status": "not_run",
+        "semantic_status": None,
+        "returncode": None,
+        "stdout": "",
+        "stderr": "",
+        "reason": "",
+    }
+
+
+def _run_phase(runtime: str, args: list[str], *, timeout: int = TIMEOUT_SECONDS) -> dict:
+    """Execute a runtime command and return raw process-level evidence only.
+
+    This never inspects stdout/stderr content: runtime_status distinguishes
+    "the process could not be run to completion" (timeout, runtime_error)
+    from "executed" (a returncode exists, content may now be interpreted).
+    """
+    try:
+        completed = _run(runtime, args, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        return {"runtime_status": "timeout", "returncode": None, "stdout": _trim(exc.stdout), "stderr": _trim(exc.stderr)}
+    except OSError as exc:
+        return {"runtime_status": "runtime_error", "returncode": None, "stdout": "", "stderr": str(exc)}
+    return {"runtime_status": "executed", "returncode": completed.returncode, "stdout": _trim(completed.stdout), "stderr": _trim(completed.stderr)}
+
+
+def _finalize(phase: dict, status: str, reason: str) -> dict:
+    """Merge a classifier's verdict into a raw phase, preserving semantic_status
+    as None whenever the process itself never reached completion."""
+    phase["status"] = status
+    phase["reason"] = reason
+    phase["semantic_status"] = status if phase.get("runtime_status") == "executed" else None
+    return phase
+
+
+def _looks_like_unambiguous_image_not_found(stdout: str, stderr: str, image: str | None) -> bool:
+    if _looks_like(PULL_IMAGE_NOT_FOUND_MARKERS, stdout, stderr):
+        return True
+    if not image:
+        return False
+    haystack = ((stdout or "") + "\n" + (stderr or "")).lower()
+    return "manifest" in haystack and "not found" in haystack and image.lower() in haystack
+
+
+def classify_pull_result(phase: dict, image: str | None = None) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "image pull timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before the image pull completed"
+    if phase["returncode"] == 0:
+        return "available", "image pulled successfully"
+    stdout, stderr = phase.get("stdout") or "", phase.get("stderr") or ""
+    # Precedence matters: an infrastructure failure, an authentication
+    # requirement or a registry/network problem must never be shadowed by an
+    # image-not-found marker that happens to co-occur in the same message
+    # (real registries routinely combine both in one error string).
+    if _looks_like_runtime_infra_error(stderr):
+        return "runtime_error", "container runtime reported an infrastructure error during pull"
+    if _looks_like(PULL_AUTH_MARKERS, stdout, stderr):
+        return "authentication_error", "registry requires authentication"
+    if _looks_like(PULL_REGISTRY_MARKERS, stdout, stderr):
+        return "registry_error", "registry or network connectivity failed"
+    if _looks_like_unambiguous_image_not_found(stdout, stderr, image):
+        return "image_not_found", "registry unambiguously reported the image or manifest does not exist"
+    return "unknown", "image pull failed for an unrecognized reason"
+
+
+def classify_lifecycle_phase(phase: dict, *, verb: str) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "container %s timed out" % verb
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed during %s" % verb
+    if phase["returncode"] == 0:
+        return "available", "container %s completed" % verb
+    if _looks_like_runtime_infra_error(phase.get("stderr") or ""):
+        return "runtime_error", "container runtime reported an infrastructure error during %s" % verb
+    return "unknown", "container %s failed" % verb
+
+
+def classify_os_release(phase: dict, case: dict) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "os-release read timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before os-release could be read"
+    if phase["returncode"] != 0:
+        if _looks_like_runtime_infra_error(phase.get("stderr") or ""):
+            return "runtime_error", "container runtime reported an infrastructure error while reading os-release"
+        return "unknown", "os-release read command failed"
+    values = _extract_os_release(phase.get("stdout") or "")
+    if values.get("ID") != case["id"]:
+        return "malformed_response", "ID mismatch"
+    release = detection.load_product_manifest()["releases"].get(case["target"], {})
+    expected_version_ids = tuple(release.get("os_release_version_ids") or ())
+    if expected_version_ids and values.get("VERSION_ID") not in expected_version_ids:
+        return "malformed_response", "VERSION_ID mismatch"
+    expected_codename = case.get("codename")
+    if expected_codename and values.get("VERSION_CODENAME") != expected_codename:
+        return "malformed_response", "VERSION_CODENAME mismatch"
+    return "available", "os-release identity matched"
+
+
+def classify_package_manager(phase: dict) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "manager lookup timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before manager lookup completed"
+    returncode = phase["returncode"]
+    stderr, stdout = phase.get("stderr") or "", phase.get("stdout") or ""
+    if returncode != 0:
+        if _looks_like_runtime_infra_error(stderr):
+            return "runtime_error", "container runtime reported an infrastructure error during manager lookup"
+        # Only a clean 1/127 with both streams truly empty counts as a
+        # demonstrated absence. 126 (POSIX: "found but not executable") and
+        # any 1/127 with non-empty output are inconclusive, not a proven
+        # absence.
+        if returncode in MANAGER_NOT_FOUND_RETURNCODES and not stdout.strip() and not stderr.strip():
+            return "manager_unavailable", "package manager executable not found"
+        return "unknown", "manager lookup failed with an unrecognized return code"
+    if not stdout.strip():
+        return "malformed_response", "package manager path was empty"
+    return "available", "package manager path observed"
+
+
+def classify_package_query(phase: dict, kind: str, package_name: str) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "query timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before the package query completed"
+    stdout, stderr, returncode = phase.get("stdout") or "", phase.get("stderr") or "", phase["returncode"]
+    if returncode != 0 and _looks_like_runtime_infra_error(stderr):
+        return "runtime_error", "container runtime reported an infrastructure error during package query"
+    if kind == "apt":
+        # "available" requires the full positive contract: the process
+        # executed, exited zero, AND a real Candidate line was observed.
+        # A non-zero returncode can never end in "available", even if
+        # stdout happens to contain what looks like a valid Candidate line.
+        if returncode != 0:
+            if "Candidate: (none)" in stdout:
+                return "unavailable", "APT candidate missing"
+            return "unknown", "APT query failed with a non-zero return code"
+        if "Candidate: (none)" in stdout:
+            return "unavailable", "APT candidate missing"
+        if "Candidate:" in stdout and package_name in stdout:
+            return "available", "APT candidate present"
+        return "malformed_response", "APT candidate metadata missing"
+    if kind == "dnf":
+        if returncode == 0 and package_name in stdout:
+            return "available", "DNF package metadata present"
+        if returncode != 0 and ("No matching" in stderr or "No matching" in stdout):
+            return "unavailable", "DNF package missing"
+        return "unknown", "DNF query inconclusive"
+    if kind == "zypper":
+        if returncode == 0 and package_name in stdout:
+            return "available", "zypper package metadata present"
+        if returncode == 0:
+            return "unavailable", "zypper package missing"
+        return "unknown", "zypper query inconclusive"
+    if kind == "pacman":
+        if returncode == 0 and ("Name" in stdout and package_name in stdout):
+            return "available", "pacman package metadata present"
+        if returncode != 0 and ("was not found" in stderr or "target not found" in stderr):
+            return "unavailable", "pacman package missing"
+        return "unknown", "pacman query inconclusive"
+    return "malformed_response", "unknown package manager"
+
+
+def aggregate_package_status(items: list[dict]) -> str:
+    statuses = {item["status"] for item in items}
+    if statuses == {"available"}:
+        return "available"
+    if "timeout" in statuses:
+        return "timeout"
+    if "runtime_error" in statuses:
+        return "runtime_error"
+    if "manager_unavailable" in statuses:
+        return "unavailable"
+    if "unknown" in statuses or "malformed_response" in statuses:
+        return "unknown"
+    return "unavailable"
+
+
+def aggregate_dependency_status(decisions: list[dict]) -> str:
+    if not decisions:
+        return "unknown"
+    statuses = {decision["resolution_status"] for decision in decisions}
+    resolved = {"already_present", "method_selected", "recipe_not_implemented"}
+    if statuses <= resolved:
+        return "available"
+    if "timeout" in statuses:
+        return "timeout"
+    if "internal_error" in statuses:
+        return "runtime_error"
+    if "availability_unknown" in statuses:
+        return "unknown"
+    if "no_safe_route" in statuses or "out_of_contract" in statuses:
+        return "unavailable"
+    return "unknown"
+
+
+def combine_probe_statuses(*statuses: str) -> str:
+    return aggregate_package_status([{"status": status} for status in statuses])
+
+
+def compute_overall_status(probe_aggregate: str, cleanup: dict) -> str:
+    """Fold cleanup outcome into a single gate-facing status without ever
+    hiding or replacing the primary probe result. "cleaned" and "not_needed"
+    (nothing existed to remove) are the only cleanup outcomes considered ok."""
+    cleanup_ok = cleanup.get("status") in ("cleaned", "not_needed") and not cleanup.get("residual_possible")
+    if cleanup_ok:
+        return probe_aggregate
+    if probe_aggregate == "available":
+        return "cleanup_failed"
+    return "%s_with_cleanup_failure" % probe_aggregate
+
+
+def is_optional_image_exception(case: dict, result: dict) -> bool:
+    """Only a demonstrated image_not_found pull result may excuse an
+    optional_image target (currently Ubuntu 26.04). Any other pull failure
+    (timeout, runtime_error, registry_error, authentication_error, unknown)
+    must still fail the real L2 gate like every other target."""
+    return bool(case.get("optional_image")) and result["pull"]["status"] == "image_not_found"
+
+
+def _core_capability_result(capability_id: str) -> detection.CapabilityResult:
+    return detection.CapabilityResult(capability_id, "partial", "provisionable", "fixture", "fixture", "fixture")
+
+
+def _protocol_capability_result(capability_id: str) -> detection.CapabilityResult:
+    return detection.CapabilityResult(capability_id, "absent", "provisionable", "fixture", "fixture", "fixture")
+
+
+def _fixture_core_capabilities(manifest: dict, facts: detection.DistroFacts) -> tuple[detection.CapabilityResult, ...]:
+    if facts.technical_family is None:
+        family_caps = manifest["capabilities"]["core_host_capabilities"]
+    else:
+        family_caps = manifest["technical_families"][facts.technical_family]["core_capabilities"]
+    return tuple(_core_capability_result(cap_id) for cap_id in sorted(family_caps))
+
+
+def _fixture_protocol_capabilities(manifest: dict) -> tuple[detection.CapabilityResult, ...]:
+    return tuple(
+        _protocol_capability_result(cap_id)
+        for cap_id in sorted(manifest["capabilities"]["protocol_capabilities"])
+    )
+
+
+def _all_fixture_capabilities(manifest: dict, facts: detection.DistroFacts) -> tuple[detection.CapabilityResult, ...]:
+    return _fixture_core_capabilities(manifest, facts) + _fixture_protocol_capabilities(manifest)
+
+
+_PACKAGE_QUERY_STATUS_TO_AVAILABILITY = {
+    "available": resolver.AvailabilityStatus.AVAILABLE,
+    "unavailable": resolver.AvailabilityStatus.UNAVAILABLE,
+    "timeout": resolver.AvailabilityStatus.TIMEOUT,
+    "runtime_error": resolver.AvailabilityStatus.PROVIDER_ERROR,
+    "unknown": resolver.AvailabilityStatus.UNKNOWN,
+    "malformed_response": resolver.AvailabilityStatus.MALFORMED_RESPONSE,
+    "manager_unavailable": resolver.AvailabilityStatus.UNAVAILABLE,
+}
+
+
+def _availability_from_query(status: str, reason: str) -> resolver.AvailabilityObservation:
+    enum_value = _PACKAGE_QUERY_STATUS_TO_AVAILABILITY.get(status, resolver.AvailabilityStatus.UNKNOWN)
+    return resolver.AvailabilityObservation(enum_value.value, evidence=reason, reason=reason)
+
+
+def _debian_repo_arch(machine_architecture: str | None) -> str:
+    if machine_architecture == "x86_64":
+        return "amd64"
+    if machine_architecture == "aarch64":
+        return "arm64"
+    return machine_architecture or "amd64"
+
+
+def _external_apt_packages_url(candidate_data: dict, machine_architecture: str | None) -> str | None:
+    repo = candidate_data.get("repository", {})
+    base_url = (repo.get("url") or "").rstrip("/")
+    series = repo.get("series") or ""
+    if not base_url or not series:
+        return None
+    arch = _debian_repo_arch(machine_architecture)
+    return "%s/dists/%s/main/binary-%s/Packages.gz" % (base_url, series, arch)
+
+
+def _external_apt_package_query_command(candidate_data: dict, package_name: str, machine_architecture: str | None) -> str | None:
+    packages_url = _external_apt_packages_url(candidate_data, machine_architecture)
+    if packages_url is None:
+        return None
+    tmp_var = "wdvpn_external_apt_packages"
+    return (
+        "%s=$(mktemp) || exit 2; "
+        "trap 'rm -f \"$%s\"' EXIT; "
+        "curl -fsSL --max-time 30 %s -o \"$%s\" || exit 2; "
+        "gzip -t \"$%s\" || exit 2; "
+        "gzip -dc \"$%s\" | grep -Fx %s"
+        % (
+            tmp_var,
+            tmp_var,
+            shlex.quote(packages_url),
+            tmp_var,
+            tmp_var,
+            tmp_var,
+            shlex.quote("Package: %s" % package_name),
+        )
+    )
+
+
+def classify_external_apt_package_query(phase: dict, package_name: str) -> tuple[str, str]:
+    if phase["runtime_status"] != "executed":
+        return phase["runtime_status"], "external APT package index probe did not execute"
+    if phase["returncode"] == 0:
+        return "available", "external APT package %s listed" % package_name
+    if phase["returncode"] == 1:
+        return "unavailable", "external APT package %s missing" % package_name
+    return "unknown", "external APT package index probe failed"
+
+
+# Bounded retry policy for the external APT package-index probe. The probe
+# fetches a third-party repository index (e.g. a Launchpad PPA) with a single
+# curl+gzip executed inside the CI container. A transitory network/CDN failure
+# there surfaced as an inconclusive UNKNOWN on the first attempt and blocked
+# the whole L2 gate even though the index is reachable -- the same class of CI
+# flake previously fixed for _head_url's HEAD probe. rc 0 (available) and rc 1
+# (definitive absence) are final and never retried; only an inconclusive rc 2
+# (curl/gzip failure) is retried. A persistent failure still yields an
+# inconclusive phase, so the fail-closed contract is preserved.
+EXTERNAL_APT_QUERY_MAX_ATTEMPTS = 3
+EXTERNAL_APT_QUERY_BACKOFF_SECONDS = 2.0
+
+
+def run_external_apt_package_query(
+    exec_command,
+    command: str,
+    package_name: str,
+    *,
+    max_attempts: int = EXTERNAL_APT_QUERY_MAX_ATTEMPTS,
+    backoff_seconds: float = EXTERNAL_APT_QUERY_BACKOFF_SECONDS,
+) -> dict:
+    """Run an external APT package-index query, retrying only transitory failures."""
+    phase = exec_command(command)
+    status, _ = classify_external_apt_package_query(phase, package_name)
+    attempt = 1
+    while status == "unknown" and attempt < max_attempts:
+        time.sleep(backoff_seconds * attempt)
+        attempt += 1
+        phase = exec_command(command)
+        status, _ = classify_external_apt_package_query(phase, package_name)
+    return phase
+
+
+class ContainerAvailabilityProvider(resolver.AvailabilityProvider):
+    """Injected availability provider that probes packages, repositories,
+    source tags and pinned artifacts inside a running disposable container.
+    The container identity, package manager kind and host architecture are
+    taken from the L2 case and observed DistroFacts.
+    """
+
+    provider_type = "container_probe"
+    authoritative = False
+
+    def __init__(self, runtime: str, name: str, case: dict, facts: detection.DistroFacts):
+        self._runtime = runtime
+        self._name = name
+        self._case = case
+        self._facts = facts
+
+    def _exec(self, command: str) -> dict:
+        return _run_phase(self._runtime, ["exec", self._name, "sh", "-lc", command])
+
+    def _curl_available(self) -> bool:
+        phase = self._exec("command -v curl")
+        return phase["runtime_status"] == "executed" and phase["returncode"] == 0
+
+    def _head_url(self, url: str, evidence_prefix: str) -> resolver.AvailabilityObservation:
+        if not self._curl_available():
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="curl not available in container for HTTP probe",
+                reason="head_probe_tool_missing",
+                error_kind="provider_error",
+            )
+        # HTTP probe with HEAD -> GET fallback. Some CDN edge nodes (e.g.
+        # dl.fedoraproject.org) reject or fail to answer HEAD (403/405), which
+        # previously produced an inconclusive UNKNOWN that blocked the whole L2
+        # gate even though the resource exists and answers GET. The probe falls
+        # back to a bounded GET for transitory HEAD failures while keeping the
+        # fail-closed contract:
+        #   - HEAD 2xx       -> available (no GET).
+        #   - HEAD 404/410   -> unavailable (definitive absence, no GET).
+        #   - HEAD 403/405, timeout, DNS, connection failure or transitory
+        #     failure -> bounded GET fallback.
+        #   - GET 2xx        -> available (only a verified 2xx counts).
+        #   - GET 404/410    -> unavailable.
+        #   - HTTP 2xx reached but transfer stopped by our byte limit
+        #     (curl --max-filesize aborts with rc 63; the 2xx proves the
+        #     resource exists) -> available.
+        #   - timeout, DNS, connection failure, HTTP 000, 429/5xx, execution
+        #     failure or any ambiguous result -> UNKNOWN (blocks the gate).
+        # 404/410 are classified EXCLUSIVELY by the %{http_code} output; an
+        # HTTP 000 or a malformed response is never treated as not-found even
+        # when the URL or stderr happens to contain "404"/"410" (e.g. a DNS
+        # error message mentioning the string). The GET is bounded by a real
+        # byte limit (--max-filesize), the output is discarded to /dev/null,
+        # and evidence records method, URL, HTTP code and the current/max
+        # attempt.
+        max_attempts = 3
+        backoff_seconds = 2.0
+        head_error = ""
+        get_error = ""
+
+        def _method_label(fallback_get: bool) -> str:
+            return "GET(HEAD-fallback)" if fallback_get else "HEAD"
+
+        def _evidence(fallback_get: bool, http_code: str, attempt: int, outcome: str) -> str:
+            return "%s %s attempt %d/%d -> %s (HTTP %s) [%s]" % (
+                evidence_prefix, _method_label(fallback_get), attempt, max_attempts,
+                outcome, http_code or "none", url,
+            )
+
+        def _code2xx(probe: dict) -> str | None:
+            code = (probe.get("stdout") or "").strip()
+            if probe["returncode"] == 0 and code.isdigit() and 200 <= int(code) < 300:
+                return code
+            return None
+
+        def _not_found_code(probe: dict) -> str | None:
+            code = (probe.get("stdout") or "").strip()
+            if code in ("404", "410"):
+                return code
+            return None
+
+        # --- HEAD phase ---
+        for attempt in range(1, max_attempts + 1):
+            probe = self._exec(
+                "curl -I -L -f -sS --max-time 15 -o /dev/null -w '%%{http_code}' %s"
+                % shlex.quote(url)
+            )
+            if probe["runtime_status"] != "executed":
+                head_error = "exec status=%s" % probe["runtime_status"]
+                if attempt < max_attempts:
+                    time.sleep(backoff_seconds * attempt)
+                    continue
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNKNOWN.value,
+                    evidence=_evidence(False, "", attempt, "probe did not execute"),
+                    reason="%s_head_probe_failed" % evidence_prefix.replace(" ", "_"),
+                    error_kind="%s_head_probe_failed" % evidence_prefix.replace(" ", "_"),
+                )
+            code = _code2xx(probe)
+            if code is not None:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence=_evidence(False, code, attempt, "reachable"),
+                    reason="%s_head_reachable" % evidence_prefix.replace(" ", "_"),
+                )
+            code = _not_found_code(probe)
+            if code is not None:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    evidence=_evidence(False, code, attempt, "not found"),
+                    reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                    error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                )
+            # HEAD rejected or transitory failure (403/405, timeout, DNS,
+            # connection reset, HTTP 000, 429/5xx, ...): bounded GET fallback.
+            head_error = "HEAD rc=%s code=%s" % (
+                probe.get("returncode"), (probe.get("stdout") or "").strip() or "?")
+            break
+
+        # --- GET fallback phase (bounded by a real byte limit) ---
+        get_last_rc = "?"
+        get_last_code = "?"
+        get_attempt_used = 0
+        for attempt in range(1, max_attempts + 1):
+            probe = self._exec(
+                "curl -L -f -sS --max-time 15 --max-filesize 5242880 -o /dev/null -w '%%{http_code}' %s"
+                % shlex.quote(url)
+            )
+            if probe["runtime_status"] != "executed":
+                get_error = "exec status=%s" % probe["runtime_status"]
+                get_last_rc = "exec-error"
+                get_last_code = "?"
+                get_attempt_used = attempt
+                if attempt < max_attempts:
+                    time.sleep(backoff_seconds * attempt)
+                    continue
+                break
+            get_last_rc = str(probe.get("returncode"))
+            get_last_code = (probe.get("stdout") or "").strip() or "?"
+            get_attempt_used = attempt
+            code = _code2xx(probe)
+            if code is not None:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence=_evidence(True, code, attempt, "reachable"),
+                    reason="%s_get_fallback_reachable" % evidence_prefix.replace(" ", "_"),
+                )
+            code = _not_found_code(probe)
+            if code is not None:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    evidence=_evidence(True, code, attempt, "not found"),
+                    reason="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                    error_kind="%s_not_found" % evidence_prefix.replace(" ", "_"),
+                )
+            code = (probe.get("stdout") or "").strip()
+            if code.isdigit() and 200 <= int(code) < 300 and probe["returncode"] == 63:
+                # Server answered 2xx but curl stopped the transfer because our
+                # byte limit was reached: the resource exists and is reachable.
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.AVAILABLE.value,
+                    evidence=_evidence(True, code, attempt, "reachable, download bounded by limit"),
+                    reason="%s_get_fallback_reachable" % evidence_prefix.replace(" ", "_"),
+                )
+            # timeout, DNS, connection failure, HTTP 000, 429/5xx or ambiguous
+            # result: retry; persistent -> UNKNOWN (fail-closed).
+            get_error = "GET rc=%s code=%s" % (
+                probe.get("returncode"), (probe.get("stdout") or "").strip() or "?")
+            if attempt < max_attempts:
+                time.sleep(backoff_seconds * attempt)
+                continue
+            break
+
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.UNKNOWN.value,
+            evidence="%s GET(HEAD-fallback) inconclusive at attempt %d/%d: %s | last GET rc=%s code=%s | HEAD %s" % (
+                evidence_prefix, get_attempt_used or max_attempts, max_attempts, url,
+                get_last_rc, get_last_code, head_error or "none"),
+            reason="%s_probe_inconclusive" % evidence_prefix.replace(" ", "_"),
+            error_kind="%s_probe_inconclusive" % evidence_prefix.replace(" ", "_"),
+        )
+
+    def _external_apt_package_exists(self, candidate: resolver.MethodCandidate, package_name: str) -> resolver.AvailabilityObservation:
+        packages_url = _external_apt_packages_url(dict(candidate.data), self._facts.machine_architecture)
+        command = _external_apt_package_query_command(dict(candidate.data), package_name, self._facts.machine_architecture)
+        if packages_url is None or command is None:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="external APT repository metadata incomplete",
+                reason="repository_metadata_incomplete",
+                error_kind="malformed_response",
+            )
+        phase = run_external_apt_package_query(self._exec, command, package_name)
+        status, reason = classify_external_apt_package_query(phase, package_name)
+        if status == "available":
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.AVAILABLE.value,
+                evidence="external APT package %s listed in %s" % (package_name, packages_url),
+                reason="external_apt_package_listed",
+            )
+        if status == "unavailable":
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNAVAILABLE.value,
+                evidence="external APT package %s absent from %s" % (package_name, packages_url),
+                reason="external_apt_package_missing",
+                error_kind="unavailable",
+            )
+        if status in _PACKAGE_QUERY_STATUS_TO_AVAILABILITY:
+            return _availability_from_query(status, reason)
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.UNKNOWN.value,
+            evidence="external APT package index probe failed for %s: %s" % (packages_url, phase.get("stderr") or ""),
+            reason="external_apt_package_probe_failed",
+            error_kind="provider_error",
+        )
+
+    def package_exists(self, candidate: resolver.MethodCandidate, exact_target: str, package_name: str) -> resolver.AvailabilityObservation:
+        if (
+            candidate.kind == "external_repo_exact"
+            and self._case["kind"] == "apt"
+            and package_name in set(candidate.data.get("package_names", ()))
+        ):
+            return self._external_apt_package_exists(candidate, package_name)
+        phase = self._exec(_query_command(self._case, package_name))
+        status, reason = classify_package_query(phase, self._case["kind"], package_name)
+        return _availability_from_query(status, reason)
+
+    def _repository_metadata_url(self, base_url: str, series: str) -> str | None:
+        """Return the repository metadata URL for the package manager family."""
+        kind = self._case["kind"]
+        base = base_url.rstrip("/")
+        if kind == "apt":
+            return "%s/dists/%s/Release" % (base, series)
+        if kind == "dnf":
+            series_num = dnf_repository_series_path(series)
+            arch = self._facts.machine_architecture or "x86_64"
+            # Real EPEL layout: .../9/Everything/x86_64/repodata/repomd.xml
+            # (no /os/ segment). Verified against dl.fedoraproject.org.
+            return "%s/%s/Everything/%s/repodata/repomd.xml" % (base, series_num, arch)
+        if kind == "zypper":
+            return "%s/%s/repodata/repomd.xml" % (base, series)
+        return None
+
+    def repository_supports_exact_target(self, candidate: resolver.MethodCandidate, target_id: str) -> resolver.AvailabilityObservation:
+        compatible = candidate.data.get("compatible_targets", ())
+        repo = candidate.data.get("repository", {})
+        series = repo.get("series", "")
+        if compatible:
+            matched = any(
+                item.get("target_id") == target_id and item.get("series") == series
+                for item in compatible
+            )
+            if not matched:
+                return resolver.AvailabilityObservation(
+                    resolver.AvailabilityStatus.UNAVAILABLE.value,
+                    evidence="compatible_targets=%s target=%s" % (compatible, target_id),
+                    reason="target_release_not_explicitly_compatible",
+                    error_kind="target_release_not_explicitly_compatible",
+                )
+        base_url = repo.get("url", "")
+        if not base_url or not series:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="repository metadata incomplete",
+                reason="repository_metadata_incomplete",
+                error_kind="malformed_response",
+            )
+        metadata_url = self._repository_metadata_url(base_url, series)
+        if metadata_url is None:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="unsupported package manager family for repository probe: %s" % self._case["kind"],
+                reason="repository_probe_family_unsupported",
+                error_kind="provider_error",
+            )
+        return self._head_url(metadata_url, "repository metadata")
+
+    def source_revision_available(self, candidate: resolver.MethodCandidate, target_id: str) -> resolver.AvailabilityObservation:
+        components = candidate.data.get("components", ())
+        if not components:
+            components = (candidate.data,)
+        urls = []
+        for component in components:
+            repo = component.get("repository", "")
+            if component.get("resolution") == "latest_official_release":
+                # Dynamic resolution: the executor resolves the latest official
+                # release at execution time, so probe the repository's latest release.
+                if repo:
+                    urls.append("%s/releases/latest" % repo.rstrip("/"))
+                continue
+            tag = component.get("tag", "")
+            if repo and tag:
+                urls.append("%s/releases/tag/%s" % (repo.rstrip("/"), tag))
+        if not urls:
+            return resolver.AvailabilityObservation(
+                resolver.AvailabilityStatus.UNKNOWN.value,
+                evidence="source build candidate has no reachable release URLs",
+                reason="source_build_metadata_incomplete",
+                error_kind="malformed_response",
+            )
+        for url in urls:
+            observation = self._head_url(url, "source release")
+            if observation.status != resolver.AvailabilityStatus.AVAILABLE.value:
+                return observation
+        return resolver.AvailabilityObservation(
+            resolver.AvailabilityStatus.AVAILABLE.value,
+            evidence="all source release HEAD probes reachable",
+            reason="source_releases_reachable",
+        )
+
+    def artifact_exists(self, candidate: resolver.MethodCandidate, target_id: str, selected_asset: resolver.SelectedArtifact) -> resolver.AvailabilityObservation:
+        url = "%s/%s" % (selected_asset.official_download_base.rstrip("/"), selected_asset.asset_name)
+        observation = self._head_url(url, "artifact")
+        if not isinstance(observation, resolver.ArtifactAvailabilityObservation):
+            return resolver.ArtifactAvailabilityObservation(
+                observation.status,
+                evidence=observation.evidence,
+                reason=observation.reason,
+                error_kind=observation.error_kind,
+                target_id=target_id,
+                architecture=selected_asset.architecture,
+                asset_name=selected_asset.asset_name,
+                official_download_base=selected_asset.official_download_base,
+                sha256=selected_asset.sha256,
+                expected_executable=selected_asset.expected_executable,
+            )
+        return observation
+
+    def artifact_integrity_metadata_available(self, candidate: resolver.MethodCandidate, target_id: str, selected_asset: resolver.SelectedArtifact) -> resolver.AvailabilityObservation:
+        # L2 only checks that the manifest structurally declares a SHA-256 for
+        # the selected asset. The actual hash-vs-binary verification is a
+        # transactional provisioning responsibility (Tasks 23.7.5.6a/6b), not
+        # a network availability probe.
+        integrity = candidate.data.get("integrity", {})
+        declared = integrity.get(selected_asset.architecture) if isinstance(integrity, dict) else None
+        if integrity.get("type") == "sha256" and declared == selected_asset.sha256:
+            return resolver.ArtifactAvailabilityObservation(
+                resolver.AvailabilityStatus.AVAILABLE.value,
+                evidence="manifest declares a SHA-256 for the selected asset architecture",
+                reason="integrity_metadata_present",
+                target_id=target_id,
+                architecture=selected_asset.architecture,
+                asset_name=selected_asset.asset_name,
+                official_download_base=selected_asset.official_download_base,
+                sha256=selected_asset.sha256,
+                expected_executable=selected_asset.expected_executable,
+            )
+        return resolver.ArtifactAvailabilityObservation(
+            resolver.AvailabilityStatus.UNAVAILABLE.value,
+            evidence="manifest SHA-256 declaration missing or malformed for architecture %s" % selected_asset.architecture,
+            reason="integrity_metadata_missing",
+            error_kind="integrity_metadata_missing",
+            target_id=target_id,
+            architecture=selected_asset.architecture,
+            asset_name=selected_asset.asset_name,
+            official_download_base=selected_asset.official_download_base,
+            sha256=selected_asset.sha256,
+            expected_executable=selected_asset.expected_executable,
+        )
+
+
+def _extract_os_release(stdout: str) -> dict[str, str]:
+    values = {}
+    for raw in stdout.splitlines():
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        values[key] = value.strip().strip('"')
+    return values
+
+
+def _query_command(case: dict, package_name: str) -> str:
+    kind = case["kind"]
+    if kind == "apt":
+        return "apt-cache policy %s" % package_name
+    if kind == "dnf":
+        if package_name == "openvpn" and case.get("epel_repo_url"):
+            return "dnf -q --repofrompath=epel,%s --repo=epel list %s" % (case["epel_repo_url"], package_name)
+        return "dnf -q list %s" % package_name
+    if kind == "zypper":
+        return "zypper --non-interactive search --match-exact %s" % package_name
+    if kind == "pacman":
+        return "pacman -Si %s" % package_name
+    raise AssertionError(kind)
+
+
+def _manager_command(manager: str) -> str:
+    if manager not in CONTROLLED_MANAGERS:
+        raise AssertionError("uncontrolled package manager: %s" % manager)
+    return "command -v -- %s" % shlex.quote(manager)
+
+
+def _refresh_command(case: dict) -> str:
+    if case["kind"] == "apt":
+        # archive.ubuntu.com / security.ubuntu.com are frequently slow or
+        # rate-limited from CI runners (GitHub Actions), causing apt-get update
+        # to stall for minutes or time out. Point apt at Ubuntu's EC2
+        # us-east-1 mirror, which serves both archive and security releases and
+        # is reachable from the CI runner region; this only changes which host
+        # serves the same official Ubuntu repositories.
+        apt_mirror = "us-east-1.ec2.archive.ubuntu.com"
+        return (
+            "sed -i -e 's#archive.ubuntu.com#%s#g' -e 's#security.ubuntu.com#%s#g' "
+            "/etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true; "
+            "apt-get update"
+        ) % (apt_mirror, apt_mirror)
+    if case["kind"] == "zypper":
+        return "zypper --non-interactive refresh"
+    return case.get("refresh", "true")
+
+
+def _curl_prepare_command(case: dict) -> str:
+    kind = case["kind"]
+    if kind == "apt":
+        return "command -v curl >/dev/null 2>&1 || apt-get install -y curl"
+    if kind == "dnf":
+        return "command -v curl >/dev/null 2>&1 || dnf -y install curl"
+    if kind == "zypper":
+        return "command -v curl >/dev/null 2>&1 || zypper --non-interactive install curl"
+    if kind == "pacman":
+        return "command -v curl >/dev/null 2>&1 || pacman -S --noconfirm --needed curl"
+    raise AssertionError(kind)
+
+
+def _base_result(runtime: str, case: dict, name: str) -> dict:
+    return {
+        "target": case["target"],
+        "image": case["image"],
+        "runtime": runtime,
+        "container_name": name,
+        "pull": _phase("not_run"),
+        "create": _phase("not_run"),
+        "start": _phase("not_run"),
+        "os_release": _phase("not_run"),
+        "package_manager": _phase("not_run"),
+        "metadata_refresh": _phase("not_run"),
+        "http_probe_tool": _phase("not_run"),
+        "package_queries": [],
+        "cleanup": {
+            "attempted": False,
+            "status": "not_run",
+            "runtime_status": "not_run",
+            "semantic_status": None,
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "reason": "",
+            "residual_possible": False,
+        },
+        "probe_aggregate": "unknown",
+        "overall_status": "unknown",
+        "limitations": [],
+    }
+
+
+def _classify_cleanup(phase: dict) -> tuple[str, str]:
+    if phase["runtime_status"] == "timeout":
+        return "timeout", "container cleanup timed out"
+    if phase["runtime_status"] == "runtime_error":
+        return "runtime_error", "container runtime failed before cleanup completed"
+    if phase["returncode"] == 0:
+        return "cleaned", ""
+    stderr = phase.get("stderr") or ""
+    if _looks_like_missing_container_error(stderr):
+        return "not_needed", "no container existed to remove"
+    if _looks_like_runtime_infra_error(stderr):
+        return "runtime_error", "container runtime reported an infrastructure error during cleanup"
+    return "unknown", "container cleanup failed"
+
+
+def _cleanup_container(runtime: str, name: str) -> dict:
+    phase = _run_phase(runtime, ["rm", "-f", name], timeout=30)
+    status, reason = _classify_cleanup(phase)
+    _finalize(phase, status, reason)
+    phase["attempted"] = True
+    phase["residual_possible"] = status not in ("cleaned", "not_needed")
+    return phase
+
+
+def execute_l2_case(runtime: str, case: dict, name: str) -> dict:
+    result = _base_result(runtime, case, name)
+    try:
+        pull = _run_phase(runtime, ["pull", case["image"]])
+        status, reason = classify_pull_result(pull, case["image"])
+        _finalize(pull, status, reason)
+        result["pull"] = pull
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("image pull failed: %s" % status)
+            return result
+
+        create = _run_phase(runtime, ["create", "--name", name, case["image"], "sleep", "600"])
+        status, reason = classify_lifecycle_phase(create, verb="create")
+        _finalize(create, status, reason)
+        result["create"] = create
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("container create failed")
+            return result
+
+        start = _run_phase(runtime, ["start", name])
+        status, reason = classify_lifecycle_phase(start, verb="start")
+        _finalize(start, status, reason)
+        result["start"] = start
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("container start failed")
+            return result
+
+        os_release = _run_phase(runtime, ["exec", name, "cat", "/etc/os-release"])
+        status, reason = classify_os_release(os_release, case)
+        _finalize(os_release, status, reason)
+        if os_release["runtime_status"] == "executed" and os_release["returncode"] == 0:
+            values = _extract_os_release(os_release["stdout"])
+        else:
+            values = {}
+        os_release["observed_id"] = values.get("ID", "")
+        os_release["observed_version_id"] = values.get("VERSION_ID", "")
+        result["os_release"] = os_release
+        if status != "available":
+            result["probe_aggregate"] = status
+            return result
+
+        manager_command = _manager_command(case["manager"])
+        manager = _run_phase(runtime, ["exec", name, "sh", "-lc", manager_command])
+        status, reason = classify_package_manager(manager)
+        _finalize(manager, status, reason)
+        manager["command"] = manager_command
+        manager["path"] = manager["stdout"].strip() if manager.get("returncode") == 0 else ""
+        result["package_manager"] = manager
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("package manager lookup failed")
+            return result
+
+        refresh_cmd = _refresh_command(case)
+        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd], timeout=METADATA_REFRESH_TIMEOUT_SECONDS)
+        status, reason = classify_lifecycle_phase(refresh, verb="metadata refresh")
+        _finalize(refresh, status, reason)
+        refresh["command"] = refresh_cmd
+        result["metadata_refresh"] = refresh
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("metadata refresh failed")
+            return result
+
+        package_statuses = []
+        for package in case["packages"]:
+            command = _query_command(case, package)
+            query = _run_phase(runtime, ["exec", name, "sh", "-lc", command])
+            status, reason = classify_package_query(query, case["kind"], package)
+            _finalize(query, status, reason)
+            query["package"] = package
+            query["command"] = command
+            if package == "openvpn" and case.get("repository_id") and query["runtime_status"] == "executed":
+                if "Everything//" in case["epel_repo_url"] or "$" in case["epel_repo_url"]:
+                    query["status"] = "malformed_response"
+                    query["reason"] = "EPEL repository URL is not exact"
+                    query["semantic_status"] = "malformed_response"
+                query["repository_id"] = case["repository_id"]
+                query["series"] = case["series"]
+                query["architecture"] = case["architecture"]
+                query["repository_url_exact"] = case["epel_repo_url"]
+                query["target"] = case["target"]
+            package_statuses.append(query)
+        result["package_queries"] = package_statuses
+        result["probe_aggregate"] = aggregate_package_status(package_statuses)
+        return result
+    finally:
+        result["cleanup"] = _cleanup_container(runtime, name)
+        result["overall_status"] = compute_overall_status(result["probe_aggregate"], result["cleanup"])
+
+
+def _resolve_dependency_queries(
+    runtime: str,
+    name: str,
+    case: dict,
+    manifest: dict,
+    facts: detection.DistroFacts,
+    all_capabilities: tuple[detection.CapabilityResult, ...],
+) -> tuple[str, list[dict], list[dict]]:
+    """Run the resolver inside the container context and query the packages of
+    the selected candidate for each dependency requirement.
+
+    Returns (probe_aggregate, dependency_decisions, package_queries).
+    """
+    provider = ContainerAvailabilityProvider(runtime, name, case, facts)
+    evaluation = detection.evaluate(
+        manifest,
+        facts,
+        _fixture_core_capabilities(manifest, facts),
+        _fixture_protocol_capabilities(manifest),
+        now=datetime.now(),
+    )
+    report = resolver.resolve_all(
+        manifest,
+        facts,
+        evaluation.support_classification,
+        all_capabilities,
+        availability=provider,
+    )
+    decisions_out = []
+    queries_out = []
+    for decision in report.decisions:
+        decisions_out.append(
+            {
+                "dependency_id": decision.dependency_id,
+                "capability_id": decision.capability_id,
+                "resolution_status": decision.resolution_status,
+                "selected_method_id": decision.selected_method_id,
+                "selected_method_kind": decision.selected_method_kind,
+                "execution_ready": decision.execution_ready,
+                "reason": decision.reason,
+                "rejected_candidates": [
+                    {
+                        "method_id": r.method_id,
+                        "method_kind": r.method_kind,
+                        "reason": r.reason,
+                        "error_kind": r.error_kind,
+                    }
+                    for r in decision.rejected_candidates
+                ],
+            }
+        )
+        if decision.resolution_status not in ("method_selected", "recipe_not_implemented"):
+            continue
+        if not decision.selected_method_id:
+            continue
+        requirement = manifest["dependency_requirements"][decision.dependency_id]
+        candidate_data = next(
+            (c for c in requirement["method_chain"] if c["id"] == decision.selected_method_id),
+            None,
+        )
+        if candidate_data is None:
+            continue
+        kind = candidate_data["kind"]
+        if kind in ("official_package_exact", "external_repo_exact"):
+            for package_name in candidate_data.get("package_names", ()):
+                external_apt_query = (
+                    kind == "external_repo_exact"
+                    and case["kind"] == "apt"
+                    and package_name in set(candidate_data.get("package_names", ()))
+                )
+                command = (
+                    _external_apt_package_query_command(candidate_data, package_name, facts.machine_architecture)
+                    if external_apt_query
+                    else _query_command(case, package_name)
+                )
+                if command is None:
+                    query = _phase("malformed_response", reason="external APT repository metadata incomplete")
+                else:
+                    if external_apt_query:
+                        query = run_external_apt_package_query(
+                            lambda cmd: _run_phase(runtime, ["exec", name, "sh", "-lc", cmd]),
+                            command,
+                            package_name,
+                        )
+                        status, reason = classify_external_apt_package_query(query, package_name)
+                    else:
+                        query = _run_phase(runtime, ["exec", name, "sh", "-lc", command])
+                        status, reason = classify_package_query(query, case["kind"], package_name)
+                    _finalize(query, status, reason)
+                query["package"] = package_name
+                query["dependency_id"] = decision.dependency_id
+                query["method_id"] = decision.selected_method_id
+                query["command"] = command
+                if external_apt_query:
+                    query["repository_package_index"] = _external_apt_packages_url(candidate_data, facts.machine_architecture)
+                queries_out.append(query)
+        elif kind == "pinned_source_build":
+            for package_name in candidate_data.get("build_dependencies", ()):
+                command = _query_command(case, package_name)
+                query = _run_phase(runtime, ["exec", name, "sh", "-lc", command])
+                status, reason = classify_package_query(query, case["kind"], package_name)
+                _finalize(query, status, reason)
+                query["package"] = package_name
+                query["dependency_id"] = decision.dependency_id
+                query["method_id"] = decision.selected_method_id
+                query["command"] = command
+                queries_out.append(query)
+    package_aggregate = aggregate_package_status([{"status": q["status"]} for q in queries_out]) if queries_out else "unknown"
+    decision_aggregate = aggregate_dependency_status(decisions_out)
+    aggregate = combine_probe_statuses(package_aggregate, decision_aggregate)
+    return aggregate, decisions_out, queries_out
+
+
+def execute_l2_matrix_case(runtime: str, case: dict, name: str, manifest: dict) -> dict:
+    """Run the full per-family/release L2 matrix case.
+
+    Reuses the lifecycle phases from execute_l2_case, then runs the resolver
+    with a ContainerAvailabilityProvider to select candidates and query the
+    packages they declare.
+    """
+    result = _base_result(runtime, case, name)
+    result["dependency_decisions"] = []
+    result["resolver_package_queries"] = []
+    all_capabilities: tuple[detection.CapabilityResult, ...] = ()
+    try:
+        pull = _run_phase(runtime, ["pull", case["image"]])
+        status, reason = classify_pull_result(pull, case["image"])
+        _finalize(pull, status, reason)
+        result["pull"] = pull
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("image pull failed: %s" % status)
+            return result
+
+        create = _run_phase(runtime, ["create", "--name", name, case["image"], "sleep", "600"])
+        status, reason = classify_lifecycle_phase(create, verb="create")
+        _finalize(create, status, reason)
+        result["create"] = create
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("container create failed")
+            return result
+
+        start = _run_phase(runtime, ["start", name])
+        status, reason = classify_lifecycle_phase(start, verb="start")
+        _finalize(start, status, reason)
+        result["start"] = start
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("container start failed")
+            return result
+
+        os_release = _run_phase(runtime, ["exec", name, "cat", "/etc/os-release"])
+        status, reason = classify_os_release(os_release, case)
+        _finalize(os_release, status, reason)
+        if os_release["runtime_status"] == "executed" and os_release["returncode"] == 0:
+            values = _extract_os_release(os_release["stdout"])
+        else:
+            values = {}
+        os_release["observed_id"] = values.get("ID", "")
+        os_release["observed_version_id"] = values.get("VERSION_ID", "")
+        result["os_release"] = os_release
+        if status != "available":
+            result["probe_aggregate"] = status
+            return result
+
+        manager_command = _manager_command(case["manager"])
+        manager = _run_phase(runtime, ["exec", name, "sh", "-lc", manager_command])
+        status, reason = classify_package_manager(manager)
+        _finalize(manager, status, reason)
+        manager["command"] = manager_command
+        manager["path"] = manager["stdout"].strip() if manager.get("returncode") == 0 else ""
+        result["package_manager"] = manager
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("package manager lookup failed")
+            return result
+
+        refresh_cmd = _refresh_command(case)
+        refresh = _run_phase(runtime, ["exec", name, "sh", "-lc", refresh_cmd], timeout=METADATA_REFRESH_TIMEOUT_SECONDS)
+        status, reason = classify_lifecycle_phase(refresh, verb="metadata refresh")
+        _finalize(refresh, status, reason)
+        refresh["command"] = refresh_cmd
+        result["metadata_refresh"] = refresh
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("metadata refresh failed")
+            return result
+
+        curl_cmd = _curl_prepare_command(case)
+        curl_prepare = _run_phase(runtime, ["exec", name, "sh", "-lc", curl_cmd])
+        status, reason = classify_lifecycle_phase(curl_prepare, verb="curl preparation")
+        _finalize(curl_prepare, status, reason)
+        curl_prepare["command"] = curl_cmd
+        result["http_probe_tool"] = curl_prepare
+        if status != "available":
+            result["probe_aggregate"] = status
+            result["limitations"].append("HTTP probe tool preparation failed")
+            return result
+
+        os_release_data = detection.parse_os_release_text(os_release["stdout"])
+        facts = detection.distro_facts_from_os_release(
+            os_release_data,
+            manifest,
+            kernel_release="container-l2",
+            machine_architecture="x86_64",
+        )
+        all_capabilities = _all_fixture_capabilities(manifest, facts)
+        aggregate, decisions, queries = _resolve_dependency_queries(
+            runtime, name, case, manifest, facts, all_capabilities
+        )
+        result["dependency_decisions"] = decisions
+        result["resolver_package_queries"] = queries
+        result["probe_aggregate"] = aggregate
+        return result
+    finally:
+        result["cleanup"] = _cleanup_container(runtime, name)
+        result["overall_status"] = compute_overall_status(result["probe_aggregate"], result["cleanup"])
+
+
+class L2ParserTests(unittest.TestCase):
+    # --- pull classification (correction 1) ---
+
+    def test_pull_success_is_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_pull_result(phase)[0], "available")
+
+    def test_pull_classifies_image_not_found(self) -> None:
+        phase = {
+            "runtime_status": "executed",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error response from daemon: manifest for ubuntu:26.04 not found: manifest unknown: manifest unknown",
+        }
+        self.assertEqual(classify_pull_result(phase)[0], "image_not_found")
+
+    def test_pull_classifies_authentication_error(self) -> None:
+        phase = {
+            "runtime_status": "executed",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": 'Error response from daemon: Get "https://registry-1.docker.io/v2/": unauthorized: authentication required',
+        }
+        self.assertEqual(classify_pull_result(phase)[0], "authentication_error")
+
+    def test_pull_classifies_registry_error(self) -> None:
+        phase = {
+            "runtime_status": "executed",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": 'Error response from daemon: Get "https://registry-1.docker.io/v2/": dial tcp: lookup registry-1.docker.io: no such host',
+        }
+        self.assertEqual(classify_pull_result(phase)[0], "registry_error")
+
+    def test_pull_classifies_runtime_error_from_infra_marker(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "Cannot connect to the Docker daemon at unix:///var/run/docker.sock"}
+        self.assertEqual(classify_pull_result(phase)[0], "runtime_error")
+
+    def test_pull_classifies_runtime_error_from_oserror(self) -> None:
+        # _run_phase itself reports runtime_error when the runtime binary
+        # cannot even be invoked (OSError), independent of any stderr text.
+        phase = {"runtime_status": "runtime_error", "returncode": None, "stdout": "", "stderr": "runtime execution failed"}
+        self.assertEqual(classify_pull_result(phase)[0], "runtime_error")
+
+    def test_pull_classifies_timeout(self) -> None:
+        phase = {"runtime_status": "timeout", "returncode": None, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_pull_result(phase)[0], "timeout")
+
+    def test_pull_classifies_unknown_for_unrecognized_failure(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 125, "stdout": "", "stderr": "an unrecognized internal error occurred"}
+        self.assertEqual(classify_pull_result(phase)[0], "unknown")
+
+    def test_pull_unambiguous_manifest_unknown_is_image_not_found(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "Error response from daemon: manifest unknown: manifest unknown"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "image_not_found")
+
+    def test_pull_repository_does_not_exist_with_docker_login_is_authentication_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "pull access denied for privaterepo, repository does not exist or may require 'docker login'"}
+        self.assertEqual(classify_pull_result(phase, "privaterepo")[0], "authentication_error")
+
+    def test_pull_manifest_for_with_dial_tcp_is_registry_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "manifest for ubuntu:26.04 not found: dial tcp: lookup registry-1.docker.io: no such host"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "registry_error")
+
+    def test_pull_manifest_unknown_with_unauthorized_is_authentication_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "Error response from daemon: manifest unknown: unauthorized: authentication required"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "authentication_error")
+
+    def test_pull_absence_with_dns_error_is_registry_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "manifest unknown: no such host: temporary failure in name resolution"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "registry_error")
+
+    def test_pull_unrecognized_message_is_unknown(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "an internal daemon error occurred"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "unknown")
+
+    def test_pull_exact_image_not_found_without_generic_marker_is_image_not_found(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "manifest ubuntu:26.04 not found in registry-1.docker.io/library/ubuntu"}
+        self.assertEqual(classify_pull_result(phase, "ubuntu:26.04")[0], "image_not_found")
+
+    def test_only_unambiguous_manifest_unknown_case_excuses_optional_image(self) -> None:
+        optional_case = dict(CASES[1])
+        mixed_messages = (
+            ("Error response from daemon: manifest unknown: manifest unknown", "image_not_found"),
+            ("pull access denied for privaterepo, repository does not exist or may require 'docker login'", "authentication_error"),
+            ("manifest for ubuntu:26.04 not found: dial tcp: lookup registry-1.docker.io: no such host", "registry_error"),
+            ("Error response from daemon: manifest unknown: unauthorized: authentication required", "authentication_error"),
+            ("manifest unknown: no such host: temporary failure in name resolution", "registry_error"),
+            ("an internal daemon error occurred", "unknown"),
+        )
+        for stderr, expected_status in mixed_messages:
+            phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": stderr}
+            status, _ = classify_pull_result(phase, optional_case["image"])
+            with self.subTest(stderr=stderr):
+                self.assertEqual(status, expected_status)
+                excused = is_optional_image_exception(optional_case, {"pull": {"status": status}})
+                self.assertEqual(excused, expected_status == "image_not_found")
+
+    def test_only_image_not_found_excuses_optional_image(self) -> None:
+        optional_case = dict(CASES[1])
+        self.assertTrue(is_optional_image_exception(optional_case, {"pull": {"status": "image_not_found"}}))
+        for other_status in ("timeout", "runtime_error", "registry_error", "authentication_error", "unknown"):
+            with self.subTest(status=other_status):
+                self.assertFalse(is_optional_image_exception(optional_case, {"pull": {"status": other_status}}))
+        non_optional_case = dict(CASES[0])
+        self.assertFalse(is_optional_image_exception(non_optional_case, {"pull": {"status": "image_not_found"}}))
+
+    # --- probe_aggregate / cleanup / overall_status (correction 2) ---
+
+    def test_success_result_preserves_phase_evidence(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
+                package = args[-1].split()[-1]
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-phases")
+        self.assertEqual(result["probe_aggregate"], "available")
+        self.assertEqual(result["overall_status"], "available")
+        self.assertEqual(result["cleanup"]["status"], "cleaned")
+        for key in ("target", "image", "runtime", "container_name", "pull", "create", "start", "os_release", "package_manager", "metadata_refresh", "package_queries", "cleanup", "probe_aggregate", "overall_status", "limitations"):
+            self.assertIn(key, result)
+        self.assertEqual(result["os_release"]["observed_id"], "ubuntu")
+        self.assertEqual(result["os_release"]["observed_version_id"], "24.04")
+        self.assertEqual(result["os_release"]["semantic_status"], "available")
+        self.assertEqual(result["package_manager"]["path"], "/usr/bin/apt-get")
+        self.assertTrue(result["package_queries"])
+
+    def test_timeout_and_runtime_error_attempt_cleanup(self) -> None:
+        calls = []
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            if args[0] == "pull":
+                raise subprocess.TimeoutExpired(args, timeout)
+            return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-test")
+        self.assertEqual(result["probe_aggregate"], "timeout")
+        self.assertEqual(result["pull"]["status"], "timeout")
+        self.assertIn(("rm", "-f", "watchdogvpn-test"), calls)
+        self.assertEqual(result["cleanup"]["status"], "cleaned")
+        self.assertEqual(result["overall_status"], "timeout")
+
+    def test_pull_unrecognized_failure_is_unknown_end_to_end(self) -> None:
+        calls = []
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            if args[0] == "pull":
+                return subprocess.CompletedProcess([runtime] + args, 125, "", "an unrecognized internal error occurred")
+            return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("podman", CASES[0], "watchdogvpn-error")
+        self.assertEqual(result["probe_aggregate"], "unknown")
+        self.assertEqual(result["overall_status"], "unknown")
+        self.assertIn(("rm", "-f", "watchdogvpn-error"), calls)
+        self.assertEqual(result["cleanup"]["status"], "cleaned")
+
+    def test_cleanup_rc_nonzero_after_available_probe_yields_cleanup_failed(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "some cleanup problem")
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
+                package = args[-1].split()[-1]
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup-rc")
+        self.assertEqual(result["probe_aggregate"], "available")
+        self.assertTrue(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "cleanup_failed")
+
+    def test_cleanup_timeout_after_available_probe_yields_cleanup_failed(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "rm":
+                raise subprocess.TimeoutExpired(args, timeout)
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
+                package = args[-1].split()[-1]
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup-timeout")
+        self.assertEqual(result["probe_aggregate"], "available")
+        self.assertEqual(result["cleanup"]["status"], "timeout")
+        self.assertTrue(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "cleanup_failed")
+
+    def test_cleanup_oserror_after_available_probe_yields_cleanup_failed(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "rm":
+                raise OSError("runtime missing")
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[-1].startswith("apt-cache policy"):
+                package = args[-1].split()[-1]
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup-oserror")
+        self.assertEqual(result["probe_aggregate"], "available")
+        self.assertEqual(result["cleanup"]["status"], "runtime_error")
+        self.assertTrue(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "cleanup_failed")
+
+    def test_timeout_probe_with_cleanup_failure_yields_timeout_with_cleanup_failure(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "pull":
+                raise subprocess.TimeoutExpired(args, timeout)
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "some cleanup problem")
+            return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-timeout-cleanup-fail")
+        self.assertEqual(result["probe_aggregate"], "timeout")
+        self.assertTrue(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "timeout_with_cleanup_failure")
+
+    def test_optional_image_missing_cleanup_not_needed_keeps_probe_aggregate(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "pull":
+                return subprocess.CompletedProcess(
+                    [runtime] + args, 1, "", "Error response from daemon: manifest for ubuntu:26.04 not found: manifest unknown: manifest unknown"
+                )
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "Error: No such container: watchdogvpn-optional")
+            return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[1], "watchdogvpn-optional")
+        self.assertEqual(result["pull"]["status"], "image_not_found")
+        self.assertEqual(result["probe_aggregate"], "image_not_found")
+        self.assertEqual(result["cleanup"]["status"], "not_needed")
+        self.assertFalse(result["cleanup"]["residual_possible"])
+        self.assertEqual(result["overall_status"], "image_not_found")
+        self.assertTrue(is_optional_image_exception(CASES[1], result))
+
+    def test_cleanup_statuses_are_observable_and_do_not_hide_primary_result(self) -> None:
+        cleanup_statuses = (
+            subprocess.CompletedProcess(["docker", "rm", "-f", "name"], 1, "out", "denied"),
+            subprocess.TimeoutExpired(["docker", "rm", "-f", "name"], 30, output="partial", stderr="slow"),
+            OSError("runtime missing"),
+        )
+        for failure in cleanup_statuses:
+            with self.subTest(failure=type(failure).__name__):
+                calls = []
+
+                def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+                    calls.append(tuple(args))
+                    if args[0] == "pull":
+                        raise subprocess.TimeoutExpired(args, timeout, output="pull", stderr="timeout")
+                    if args[0] == "rm":
+                        if isinstance(failure, BaseException):
+                            raise failure
+                        return failure
+                    return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+
+                with mock.patch(__name__ + "._run", side_effect=fake_run):
+                    result = execute_l2_case("docker", CASES[0], "watchdogvpn-cleanup")
+                self.assertEqual(result["probe_aggregate"], "timeout")
+                self.assertEqual(result["pull"]["status"], "timeout")
+                self.assertTrue(result["cleanup"]["attempted"])
+                self.assertTrue(result["cleanup"]["residual_possible"])
+                self.assertEqual(result["overall_status"], "timeout_with_cleanup_failure")
+                self.assertIn(("rm", "-f", "watchdogvpn-cleanup"), calls)
+
+    # --- runtime status respected before content parsing (correction 3) ---
+
+    def test_os_release_timeout_is_preserved_without_parsing(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                raise subprocess.TimeoutExpired(args, timeout)
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-osrelease-timeout")
+        self.assertEqual(result["os_release"]["status"], "timeout")
+        self.assertIsNone(result["os_release"]["semantic_status"])
+        self.assertEqual(result["os_release"]["observed_id"], "")
+        self.assertEqual(result["probe_aggregate"], "timeout")
+
+    def test_os_release_runtime_error_is_preserved_without_parsing(self) -> None:
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                raise OSError("runtime missing")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-osrelease-runtime-error")
+        self.assertEqual(result["os_release"]["status"], "runtime_error")
+        self.assertIsNone(result["os_release"]["semantic_status"])
+        self.assertEqual(result["os_release"]["observed_id"], "")
+        self.assertEqual(result["probe_aggregate"], "runtime_error")
+
+    def test_os_release_nonzero_returncode_is_not_parsed_as_identity(self) -> None:
+        # Even if stdout happened to contain something that looked like a
+        # coincidental identity match, a non-zero returncode must never be
+        # treated as a valid identity read.
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 1, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "cat: /etc/os-release: Permission denied")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-osrelease-nonzero")
+        self.assertEqual(result["os_release"]["status"], "unknown")
+        self.assertEqual(result["os_release"]["observed_id"], "")
+        self.assertEqual(result["probe_aggregate"], "unknown")
+
+    def test_wrong_os_release_is_malformed(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "ID=debian\nVERSION_ID=13\n", "stderr": ""}
+        status, _ = classify_os_release(phase, CASES[0])
+        self.assertEqual(status, "malformed_response")
+
+    def test_os_release_version_ids_come_from_manifest(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "ID=rocky\nVERSION_ID=9.3\n", "stderr": ""}
+        status, _ = classify_os_release(phase, CASES[4])
+        self.assertEqual(status, "available")
+
+    def test_rolling_target_without_release_entry_is_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "ID=arch\n", "stderr": ""}
+        status, _ = classify_os_release(phase, CASES[6])
+        self.assertEqual(status, "available")
+
+    def test_manager_distinguishes_absence_from_runtime_error(self) -> None:
+        absent = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(absent)[0], "manager_unavailable")
+        infra_failure = {"runtime_status": "executed", "returncode": 126, "stdout": "", "stderr": "Error: watchdogvpn-x is not running"}
+        self.assertEqual(classify_package_manager(infra_failure)[0], "runtime_error")
+
+    def test_manager_timeout(self) -> None:
+        phase = {"runtime_status": "timeout", "returncode": None, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "timeout")
+
+    def test_manager_normal_absence_is_manager_unavailable(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "manager_unavailable")
+
+    def test_manager_clean_rc_127_absence_is_manager_unavailable(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 127, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "manager_unavailable")
+
+    def test_manager_rc_126_is_unknown(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 126, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "unknown")
+
+    def test_manager_rc_127_with_shell_error_is_unknown(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 127, "stdout": "", "stderr": "sh: line 1: command: not found"}
+        self.assertEqual(classify_package_manager(phase)[0], "unknown")
+
+    def test_manager_rc_1_with_unrecognized_stderr_is_unknown(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "", "stderr": "some unexpected shell warning"}
+        self.assertEqual(classify_package_manager(phase)[0], "unknown")
+
+    def test_manager_infra_marker_is_runtime_error(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 126, "stdout": "", "stderr": "Error: watchdogvpn-x is not running"}
+        self.assertEqual(classify_package_manager(phase)[0], "runtime_error")
+
+    def test_manager_success_with_path_is_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "/usr/bin/apt-get\n", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "available")
+
+    def test_manager_success_with_empty_path_is_malformed(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "", "stderr": ""}
+        self.assertEqual(classify_package_manager(phase)[0], "malformed_response")
+
+    def test_manager_lookup_runs_command_inside_shell(self) -> None:
+        calls = []
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            if args[0] == "exec" and args[2:] == ["sh", "-lc", "command -v -- apt-get"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[0] == "exec" and args[2:] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_case("docker", CASES[0], "watchdogvpn-manager")
+        self.assertIn(("exec", "watchdogvpn-manager", "sh", "-lc", "command -v -- apt-get"), calls)
+        self.assertEqual(result["package_manager"]["status"], "available")
+        self.assertEqual(result["package_manager"]["path"], "/usr/bin/apt-get")
+        self.assertNotEqual(result["metadata_refresh"]["status"], "not_run")
+
+    def test_epel_repository_url_is_exact_for_architecture(self) -> None:
+        rocky = CASES[4]
+        command = _query_command(rocky, "openvpn")
+        self.assertIn("Everything/x86_64/", command)
+        self.assertNotIn("$basearch", command)
+        self.assertNotIn("Everything//", command)
+
+    def test_refresh_failure_is_unknown(self) -> None:
+        self.assertEqual(aggregate_package_status([{"status": "unknown"}]), "unknown")
+
+    def test_apt_without_candidate_is_not_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 0, "stdout": "openvpn:\n  Candidate: (none)\n", "stderr": ""}
+        status, _ = classify_package_query(phase, "apt", "openvpn")
+        self.assertEqual(status, "unavailable")
+
+    def test_apt_nonzero_returncode_with_valid_looking_stdout_is_not_available(self) -> None:
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "python3:\n  Candidate: 1.0\n", "stderr": ""}
+        status, _ = classify_package_query(phase, "apt", "python3")
+        self.assertNotEqual(status, "available")
+        self.assertEqual(status, "unknown")
+
+    def test_apt_aggregate_is_not_available_when_one_query_has_nonzero_returncode(self) -> None:
+        good = {"status": "available"}
+        phase = {"runtime_status": "executed", "returncode": 1, "stdout": "python3:\n  Candidate: 1.0\n", "stderr": ""}
+        status, _ = classify_package_query(phase, "apt", "python3")
+        self.assertEqual(aggregate_package_status([good, {"status": status}]), "unknown")
+
+    def test_one_missing_package_fails_aggregate(self) -> None:
+        self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "unavailable"}]), "unavailable")
+
+    def test_manager_unavailable_fails_aggregate(self) -> None:
+        self.assertEqual(aggregate_package_status([{"status": "available"}, {"status": "manager_unavailable"}]), "unavailable")
+
+    def test_dependency_unknown_blocks_available_aggregate(self) -> None:
+        self.assertEqual(
+            aggregate_dependency_status([
+                {"resolution_status": "method_selected"},
+                {"resolution_status": "availability_unknown"},
+            ]),
+            "unknown",
+        )
+        self.assertEqual(combine_probe_statuses("available", "unknown"), "unknown")
+
+
+class L2MatrixResolverTests(unittest.TestCase):
+    # Deterministic tests for the resolver-driven matrix harness. They mock the
+    # container runtime so they run without WATCHDOGVPN_REAL_L2 and without any
+    # network access.
+
+    def _matrix_fake_run(self, case: dict, available_packages: frozenset[str]):
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and args[2:5] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and "command -v -- apt-get" in cmd:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/apt-get\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd == "apt-get update":
+                return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("command -v curl"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/curl\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("command -v git"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/git\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and "Packages.gz" in cmd and "Package: amneziawg" in cmd:
+                return subprocess.CompletedProcess([runtime] + args, 0, "Package: amneziawg\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -I"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "200\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("apt-cache policy"):
+                package = cmd.split()[-1]
+                if package in available_packages:
+                    return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: 1.0\n" % package, "")
+                return subprocess.CompletedProcess([runtime] + args, 0, "%s:\n  Candidate: (none)\n" % package, "")
+            if args[0] == "pull":
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            if args[0] in ("create", "start"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+        return fake_run
+
+    def test_matrix_case_resolves_dependencies_and_queries_packages(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and "Packages.gz" in cmd and "Package: amneziawg" in cmd:
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "")
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertEqual(result["os_release"]["status"], "available")
+        self.assertEqual(result["package_manager"]["status"], "available")
+        self.assertEqual(result["metadata_refresh"]["status"], "available")
+        self.assertTrue(result["resolver_package_queries"])
+        queried_packages = {q["package"] for q in result["resolver_package_queries"]}
+        self.assertIn("python3", queried_packages)
+        self.assertIn("golang-go", queried_packages)
+        self.assertIn("git", queried_packages)
+        self.assertEqual(result["overall_status"], "unavailable")
+
+    def test_matrix_case_fails_when_source_build_dependency_missing(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        # Make the source-build dependency "git" unavailable in the APT candidate.
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "make", "gcc")))
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and "Packages.gz" in cmd and "Package: amneziawg" in cmd:
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "")
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertEqual(result["overall_status"], "unavailable")
+        self.assertTrue(result["resolver_package_queries"])
+        self.assertTrue(
+            any(q["package"] == "git" and q["status"] == "unavailable" for q in result["resolver_package_queries"])
+        )
+
+    def test_artifact_dependency_is_probed_and_selected(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn")))
+
+        def artifact_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd.startswith("curl -I"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "200\n", "")
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=artifact_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        sing_box = next(
+            (d for d in result["dependency_decisions"] if d["dependency_id"] == "dep_sing_box_runtime"),
+            None,
+        )
+        self.assertIsNotNone(sing_box)
+        self.assertEqual(sing_box["resolution_status"], "recipe_not_implemented")
+        self.assertEqual(sing_box["selected_method_kind"], "official_artifact_pinned")
+        self.assertEqual(sing_box["selected_method_id"], "sing_box_official_artifact_stable")
+
+    def test_matrix_case_prepares_curl_before_artifact_probe(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        calls = []
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+
+        def instrumented_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=instrumented_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertEqual(result["http_probe_tool"]["status"], "available")
+        self.assertIn(("exec", "watchdogvpn-matrix-ubuntu", "sh", "-lc", "command -v curl >/dev/null 2>&1 || apt-get install -y curl"), calls)
+
+    def test_matrix_case_fails_when_curl_preparation_fails(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+
+        def no_curl_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and args[-1] == "command -v curl >/dev/null 2>&1 || apt-get install -y curl":
+                return subprocess.CompletedProcess([runtime] + args, 100, "", "unable to locate package curl")
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=no_curl_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertEqual(result["http_probe_tool"]["status"], "unknown")
+        self.assertEqual(result["overall_status"], "unknown")
+
+    def test_external_apt_repo_package_is_checked_from_declared_repo_index(self) -> None:
+        manifest = detection.load_product_manifest()
+        candidate = resolver.load_requirement(manifest, "dep_amneziawg_runtime").method_chain[0]
+        facts = detection.distro_facts_from_os_release(
+            detection.parse_os_release_text("ID=ubuntu\nVERSION_ID=24.04\nVERSION_CODENAME=noble\n"),
+            manifest,
+            machine_architecture="x86_64",
+        )
+        calls = []
+
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            cmd = args[-1] if args else ""
+            if "Packages.gz" in cmd and "Package: amneziawg" in cmd:
+                return subprocess.CompletedProcess([runtime] + args, 0, "Package: amneziawg\n", "")
+            return subprocess.CompletedProcess([runtime] + args, 1, "", "unexpected command")
+
+        provider = ContainerAvailabilityProvider("docker", "watchdogvpn-matrix-ubuntu", CASES[0], facts)
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            observation = provider.package_exists(candidate, "ubuntu_24_04", "amneziawg")
+        self.assertEqual(observation.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        self.assertTrue(any("Packages.gz" in call[-1] and "Package: amneziawg" in call[-1] for call in calls))
+        self.assertFalse(any(call[-1] == "apt-cache policy amneziawg" for call in calls))
+
+    def test_matrix_records_external_apt_repo_query_without_base_apt_cache(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        fake_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "dnsutils")))
+        with mock.patch(__name__ + "._run", side_effect=fake_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        amnezia_queries = [
+            q
+            for q in result["resolver_package_queries"]
+            if q["dependency_id"] == "dep_amneziawg_runtime" and q["package"] == "amneziawg"
+        ]
+        self.assertEqual(len(amnezia_queries), 1)
+        self.assertEqual(amnezia_queries[0]["status"], "available")
+        self.assertIn("Packages.gz", amnezia_queries[0]["command"])
+        self.assertNotEqual(amnezia_queries[0]["command"], "apt-cache policy amneziawg")
+
+    def test_dependency_availability_unknown_blocks_overall_available(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[0]
+        base_run = self._matrix_fake_run(case, frozenset(("python3", "openvpn", "golang-go", "git", "make", "gcc")))
+
+        def no_curl_after_prepare_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-ubuntu"] and cmd == "command -v curl":
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "")
+            return base_run(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=no_curl_after_prepare_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-ubuntu", manifest)
+        self.assertTrue(
+            any(d["resolution_status"] == "availability_unknown" for d in result["dependency_decisions"]),
+            result["dependency_decisions"],
+        )
+        self.assertEqual(result["overall_status"], "unknown")
+
+    def _rocky_matrix_fake_run(self, case: dict, available_packages: frozenset[str]):
+        def fake_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            cmd = args[-1] if args else ""
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and args[2:5] == ["cat", "/etc/os-release"]:
+                return subprocess.CompletedProcess([runtime] + args, 0, "ID=rocky\nVERSION_ID=9.6\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and "command -v -- dnf" in cmd:
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/dnf\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd == "true":
+                return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("command -v curl"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "/usr/bin/curl\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("curl -I"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "200\n", "")
+            if args[:2] == ["exec", "watchdogvpn-matrix-rocky"] and cmd.startswith("dnf -q") and " list " in cmd:
+                package = cmd.split()[-1]
+                if package in available_packages:
+                    return subprocess.CompletedProcess([runtime] + args, 0, "%s.x86_64 1.0 repo\n" % package, "")
+                return subprocess.CompletedProcess([runtime] + args, 1, "", "No matching Packages to list")
+            if args[0] == "pull":
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            if args[0] in ("create", "start"):
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            if args[0] == "rm":
+                return subprocess.CompletedProcess([runtime] + args, 0, "", "")
+            return subprocess.CompletedProcess([runtime] + args, 0, "ok\n", "")
+        return fake_run
+
+    def test_dnf_repository_is_probed_with_repomd_xml(self) -> None:
+        manifest = detection.load_product_manifest()
+        case = CASES[4]
+        epel_packages = frozenset((
+            "bash", "git", "coreutils", "findutils", "grep", "gawk", "sed", "gzip",
+            "glibc-common", "shadow-utils", "systemd", "sudo", "kmod", "ca-certificates",
+            "python3", "curl", "tar", "iproute", "NetworkManager", "logrotate", "libnotify",
+            "openvpn", "util-linux", "polkit", "nftables", "iptables-nft", "iputils",
+            "procps-ng", "firewalld", "systemd-resolved", "python3.11", "epel-release",
+            "golang", "make", "gcc",
+        ))
+        calls = []
+
+        def instrumented_run(runtime, args, timeout=TIMEOUT_SECONDS):
+            calls.append(tuple(args))
+            return self._rocky_matrix_fake_run(case, epel_packages)(runtime, args, timeout)
+
+        with mock.patch(__name__ + "._run", side_effect=instrumented_run):
+            result = execute_l2_matrix_case("docker", case, "watchdogvpn-matrix-rocky", manifest)
+        self.assertEqual(result["os_release"]["status"], "available")
+        base_runtime = next(
+            (d for d in result["dependency_decisions"] if d["dependency_id"] == "dep_base_runtime_commands"),
+            None,
+        )
+        self.assertIsNotNone(base_runtime)
+        self.assertEqual(base_runtime["selected_method_id"], "base_runtime_dnf_rhel9_with_epel_exact")
+        self.assertEqual(base_runtime["selected_method_kind"], "external_repo_exact")
+        self.assertEqual(base_runtime["resolution_status"], "recipe_not_implemented")
+        repository_probe = next(
+            (cmd for cmd in calls if len(cmd) >= 2 and cmd[0] == "exec" and cmd[1] == "watchdogvpn-matrix-rocky" and isinstance(cmd[-1], str) and "repodata/repomd.xml" in cmd[-1]),
+            None,
+        )
+        self.assertIsNotNone(repository_probe)
+        # Real EPEL layout is .../Everything/x86_64/repodata/repomd.xml (no /os/).
+        self.assertIn("Everything/x86_64/repodata/repomd.xml", repository_probe[-1])
+        self.assertNotIn("Everything/x86_64/os/repodata/repomd.xml", repository_probe[-1])
+
+
+@unittest.skipUnless(REAL_L2_ENABLED, "WATCHDOGVPN_REAL_L2=1 not set")
+class RealFocusedDependencyL2Tests(unittest.TestCase):
+    def test_real_container_package_queries(self) -> None:
+        runtime = _runtime()
+        if runtime is None:
+            raise unittest.SkipTest("podman or docker is not available for real focused L2 checks")
+        for case in CASES:
+            name = "watchdogvpn-l2-%s-%d" % (case["target"], int(time.time() * 1000))
+            with self.subTest(target=case["target"], image=case["image"]):
+                result = execute_l2_case(runtime, case, name)
+                if is_optional_image_exception(case, result):
+                    self.assertIn("image pull failed", result["limitations"][0])
+                    continue
+                self.assertEqual(result["overall_status"], "available", result)
+
+    def test_real_container_dependency_resolution_matrix(self) -> None:
+        runtime = _runtime()
+        if runtime is None:
+            raise unittest.SkipTest("podman or docker is not available for real focused L2 checks")
+        manifest = detection.load_product_manifest()
+        for case in CASES:
+            name = "watchdogvpn-l2-matrix-%s-%d" % (case["target"], int(time.time() * 1000))
+            with self.subTest(target=case["target"], image=case["image"]):
+                result = execute_l2_matrix_case(runtime, case, name, manifest)
+                if is_optional_image_exception(case, result):
+                    self.assertIn("image pull failed", result["limitations"][0])
+                    continue
+                self.assertEqual(result["overall_status"], "available", result)
+
+
+class ContainerAvailabilityProviderHeadProbeTests(unittest.TestCase):
+    """Direct unit tests for _head_url's HEAD -> GET fallback.
+
+    Some CDN edge nodes (e.g. dl.fedoraproject.org) reject or fail to answer
+    HTTP HEAD (403/405), which made _head_url return UNKNOWN and block the
+    whole L2 gate even though the resource exists and answers GET. The probe
+    must fall back to a bounded GET for transitory HEAD failures while keeping
+    the fail-closed contract: definitive 404/410 is unavailable, and any
+    persistent inconclusive result (timeout, DNS, 429, 5xx, execution failure,
+    ambiguous) stays UNKNOWN.
+    """
+
+    def setUp(self) -> None:
+        # Make retry backoff instant so the retry tests are fast.
+        sleep_patcher = mock.patch(__name__ + ".time.sleep")
+        self._sleep_mock = sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+
+    @staticmethod
+    def _phase(returncode, stdout="", stderr="", runtime_status="executed"):
+        return {
+            "runtime_status": runtime_status,
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+
+    def _provider(self, head_responses, get_responses):
+        provider = ContainerAvailabilityProvider("docker", "watchdogvpn-head-test", CASES[0], None)
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            if "command -v curl" in command:
+                return self._phase(0, "/usr/bin/curl\n", "")
+            responses = get_responses
+            if command.strip().startswith("curl -I"):
+                responses = head_responses
+            if responses:
+                reply = responses[0]
+                if len(responses) > 1:
+                    responses.pop(0)
+                return reply
+            return self._phase(1, "", "probe response list exhausted")
+
+        provider._exec = fake_exec
+        return provider, calls
+
+    def _get_calls(self, calls):
+        return [c for c in calls if c.strip().startswith("curl ") and "-I" not in c]
+
+    # --- fallback HEAD -> GET, 2xx => available (the reported CI bug) ---
+
+    def test_head_405_falls_back_to_get_2xx_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        self.assertTrue(self._get_calls(calls), "GET fallback must run after HEAD 405")
+
+    def test_head_403_falls_back_to_get_2xx_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "403", "")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        self.assertTrue(self._get_calls(calls), "GET fallback must run after HEAD 403")
+
+    def test_head_timeout_falls_back_to_get_2xx_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(28, "", "Operation timed out")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        self.assertTrue(self._get_calls(calls), "GET fallback must run after HEAD timeout")
+
+    # --- definitive not-found stays unavailable, no GET ---
+
+    def test_head_404_is_unavailable_without_get(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "404", "")],
+            get_responses=[],
+        )
+        obs = provider._head_url("https://example.test/missing", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+        self.assertFalse(self._get_calls(calls), "GET must not run on definitive HEAD 404")
+
+    def test_head_410_is_unavailable_without_get(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "410", "")],
+            get_responses=[],
+        )
+        obs = provider._head_url("https://example.test/gone", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+        self.assertFalse(self._get_calls(calls), "GET must not run on definitive HEAD 410")
+
+    # --- GET 404/410 => unavailable ---
+
+    def test_head_405_then_get_404_is_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "404", "")],
+        )
+        obs = provider._head_url("https://example.test/missing", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+        self.assertTrue(self._get_calls(calls), "GET must have been attempted")
+
+    # --- persistent inconclusive results stay UNKNOWN (fail-closed) ---
+
+    def test_head_405_then_get_429_persistent_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "429", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_405_then_get_5xx_persistent_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "500", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_405_then_get_execution_failure_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(1, "", "curl: exit", runtime_status="runtime_error")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_timeout_then_get_timeout_persistent_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(28, "", "Operation timed out")],
+            get_responses=[self._phase(28, "", "Operation timed out")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_head_405_then_get_410_is_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(22, "410", "")],
+        )
+        obs = provider._head_url("https://example.test/gone", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNAVAILABLE.value)
+
+    # --- DNS/HTTP 000 is UNKNOWN even when stderr mentions 404/410 ---
+    # 404/410 are classified exclusively by %{http_code}. A DNS or connection
+    # failure yields http_code 000; an error message quoting "404"/"410" must
+    # not turn that into unavailable.
+
+    def test_http_000_with_404_in_stderr_is_unknown_not_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(6, "000", "getaddrinfo failed; URL contains 404")],
+            get_responses=[self._phase(6, "000", "getaddrinfo failed; URL contains 404")],
+        )
+        obs = provider._head_url("https://404.example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    def test_http_000_with_410_in_stderr_is_unknown_not_unavailable(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(7, "000", "connection refused; endpoint 410 unavailable")],
+            get_responses=[self._phase(7, "000", "connection refused; endpoint 410 unavailable")],
+        )
+        obs = provider._head_url("https://410.example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- ambiguous response stays UNKNOWN ---
+
+    def test_ambiguous_empty_code_is_unknown(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(0, "", "")],
+            get_responses=[self._phase(0, "", "")],
+        )
+        obs = provider._head_url("https://example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- real byte limit: a server that ignores Range and streams a large
+    # body is stopped by --max-filesize; the 2xx proves the resource exists. ---
+
+    def test_get_bounded_by_byte_limit_when_server_ignores_range_is_available(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(63, "200", "")],  # curl --max-filesize abort
+        )
+        obs = provider._head_url("https://example.test/large", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        get_calls = self._get_calls(calls)
+        self.assertTrue(
+            any("--max-filesize" in c for c in get_calls),
+            "GET must enforce a real byte limit",
+        )
+        self.assertFalse(
+            any("-r 0-0" in c for c in get_calls),
+            "range 0-0 is not a sufficient download bound",
+        )
+
+    def test_get_byte_limit_stop_requires_2xx_not_unknown(self) -> None:
+        # rc 63 with a non-2xx/ambiguous code is not proof of existence.
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(63, "000", "")],
+        )
+        obs = provider._head_url("https://example.test/x", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+
+    # --- evidence records method, URL, code and attempt current/max ---
+
+    def test_evidence_records_method_url_code_and_attempt(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(0, "200", "")],
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertIn("GET(HEAD-fallback)", obs.evidence)
+        self.assertIn("attempt 1/3", obs.evidence)
+        self.assertIn("(HTTP 200)", obs.evidence)
+        self.assertIn("https://example.test/artifact", obs.evidence)
+
+    # --- the final UNKNOWN evidence must name the GET fallback method, the
+    # URL, the last code and the current/max attempt after persistent retries ---
+
+    def test_persistent_get_timeout_evidence_marks_method_url_code_and_attempt(self) -> None:
+        provider, calls = self._provider(
+            head_responses=[self._phase(22, "405", "")],
+            get_responses=[self._phase(28, "000", "Operation timed out")],  # repeated -> persistent
+        )
+        obs = provider._head_url("https://example.test/artifact", "artifact")
+        self.assertEqual(obs.status, resolver.AvailabilityStatus.UNKNOWN.value)
+        self.assertIn("GET(HEAD-fallback)", obs.evidence)
+        self.assertIn("https://example.test/artifact", obs.evidence)
+        self.assertIn("attempt 3/3", obs.evidence)
+        self.assertIn("code=000", obs.evidence)
+
+    # --- real byte limit against a disposable local HTTP server: the server
+    # ignores the concept of Range (it just streams a >5 MiB body), and the
+    # real curl command used by _head_url must stop at --max-filesize, must not
+    # transfer the whole body, and _head_url must classify the resource as
+    # available because the server answered 2xx before our limit cut it off.
+    # No Internet, no Docker, no real sleeps.
+
+    def test_get_byte_limit_real_curl_against_local_server_is_available(self) -> None:
+        import http.server
+        import threading
+
+        body_size = 6 * 1024 * 1024  # strictly above the 5 MiB probe limit
+        sent = {"bytes": 0}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args):  # silence request logging
+                pass
+
+            def do_HEAD(self):
+                self.send_response(405)  # force the HEAD -> GET fallback
+                self.end_headers()
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(body_size))
+                self.end_headers()
+                chunk = b"x" * 65536
+                remaining = body_size
+                try:
+                    while remaining > 0:
+                        n = min(len(chunk), remaining)
+                        self.wfile.write(chunk[:n])
+                        sent["bytes"] += n
+                        remaining -= n
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass  # curl aborted at our byte limit; body not fully sent
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = "http://127.0.0.1:%d/artifact" % server.server_address[1]
+
+            # The exact GET fallback command _head_url runs.
+            result = subprocess.run(
+                ["curl", "-L", "-f", "-sS", "--max-time", "15", "--max-filesize", "5242880",
+                 "-o", "/dev/null", "-w", "%{http_code}", url],
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 63, "curl must stop at --max-filesize (rc 63)")
+            self.assertEqual(result.stdout.strip(), "200", "server answered 2xx before the cut-off")
+            self.assertLess(sent["bytes"], body_size, "curl must not transfer the whole body")
+
+            provider = ContainerAvailabilityProvider("docker", "watchdogvpn-head-test", CASES[0], None)
+            exec_calls = []
+
+            def local_exec(command):
+                exec_calls.append(command)
+                if "command -v curl" in command:
+                    return self._phase(0, "/usr/bin/curl\n", "")
+                res = subprocess.run(["sh", "-lc", command], text=True, capture_output=True, timeout=30)
+                return self._phase(res.returncode, res.stdout, res.stderr)
+
+            provider._exec = local_exec
+            obs = provider._head_url(url, "artifact")
+            self.assertEqual(obs.status, resolver.AvailabilityStatus.AVAILABLE.value)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class ExternalAptQueryRetryTests(unittest.TestCase):
+    """Bounded retry for the external APT package-index probe.
+
+    A transitory curl/gzip failure (rc 2) used to surface as an inconclusive
+    UNKNOWN on the first attempt and blocked the whole L2 gate even though the
+    index is reachable. The probe must retry transitory failures, but rc 0
+    (available) and rc 1 (definitive absence) stay final and are never retried;
+    a persistent rc 2 still ends as an inconclusive phase (fail-closed).
+    """
+
+    def setUp(self) -> None:
+        sleep_patcher = mock.patch(__name__ + ".time.sleep")
+        self._sleep_mock = sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+
+    @staticmethod
+    def _phase(returncode, stdout="", stderr="", runtime_status="executed"):
+        return {
+            "runtime_status": runtime_status,
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+
+    def test_transitory_failure_is_retried_until_available(self) -> None:
+        responses = [
+            self._phase(2, "", "curl: (7) Failed to connect"),
+            self._phase(0, "Package: amneziawg\n"),
+        ]
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return responses.pop(0)
+
+        phase = run_external_apt_package_query(fake_exec, "cmd", "amneziawg")
+        self.assertEqual(phase["returncode"], 0)
+        self.assertEqual(len(calls), 2, "one retry must run after a transitory failure")
+        self.assertTrue(self._sleep_mock.called)
+
+    def test_definitive_available_is_not_retried(self) -> None:
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return self._phase(0, "Package: amneziawg\n")
+
+        phase = run_external_apt_package_query(fake_exec, "cmd", "amneziawg")
+        self.assertEqual(phase["returncode"], 0)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(self._sleep_mock.called)
+
+    def test_definitive_absence_is_not_retried(self) -> None:
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return self._phase(1, "", "")
+
+        phase = run_external_apt_package_query(fake_exec, "cmd", "amneziawg")
+        self.assertEqual(phase["returncode"], 1)
+        self.assertEqual(len(calls), 1, "rc 1 is definitive and must not be retried")
+        self.assertFalse(self._sleep_mock.called)
+
+    def test_persistent_transitory_failure_stays_inconclusive(self) -> None:
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return self._phase(2, "", "curl: (28) timeout")
+
+        phase = run_external_apt_package_query(fake_exec, "cmd", "amneziawg")
+        self.assertEqual(phase["returncode"], 2)
+        status, _ = classify_external_apt_package_query(phase, "amneziawg")
+        self.assertEqual(status, "unknown", "persistent failure must stay fail-closed")
+        self.assertEqual(len(calls), EXTERNAL_APT_QUERY_MAX_ATTEMPTS)
+
+    def test_max_attempts_is_honored(self) -> None:
+        calls = []
+
+        def fake_exec(command):
+            calls.append(command)
+            return self._phase(2, "", "")
+
+        run_external_apt_package_query(fake_exec, "cmd", "amneziawg", max_attempts=1)
+        self.assertEqual(len(calls), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

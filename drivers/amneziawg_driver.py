@@ -803,6 +803,11 @@ class AmneziaWGDriver(BaseDriver, ReentrantConnectGuard):
             return "degraded"
         return "ok"
 
+    def egress_interface(self) -> str | None:
+        if self._active_profile is None or not self._interface_exists():
+            return None
+        return INTERFACE_NAME
+
     def status(self) -> ConnectionState:
         # Evaluate interface existence unconditionally - the original
         # `self._active_profile is None or not self._interface_exists()`

@@ -14,6 +14,7 @@ from daemon.runtime_worker import RuntimeWorker
 from daemon.scheduled_rotation_loop import ScheduledRotationLoop
 from daemon.watchdog_loop import WatchdogLoop
 from daemon import systemd_helper
+from tools.installed_provenance import process_runtime_identity
 
 
 CAP_NET_BIND_SERVICE = 10
@@ -42,17 +43,16 @@ def main(argv: list[str] | None = None) -> int:
     request_socket_path = _resolve_socket_path(args.socket_path)
     event_socket_path = _resolve_event_socket_path(request_socket_path)
     runtime = build_watchdog()
+    reconcile_stale_tun_state = getattr(runtime.driver, "reconcile_stale_tun_state", None)
+    if not args.standalone and callable(reconcile_stale_tun_state):
+        reconcile_stale_tun_state()
     startup_state = runtime.startup(require_restart_protection=not args.standalone)
     if startup_state.status == "kill_switch_failed":
         systemd_helper.notify(
             "STATUS=restart protection unavailable; daemon is not ready"
         )
         return 1
-
-    reconcile_stale_tun_state = getattr(runtime.driver, "reconcile_stale_tun_state", None)
-    if not args.standalone and callable(reconcile_stale_tun_state):
-        reconcile_stale_tun_state()
-    worker = RuntimeWorker(runtime)
+    worker = RuntimeWorker(runtime, runtime_provenance=process_runtime_identity())
     server = IPCServer(request_socket_path, event_socket_path, worker)
     watchdog_loop = WatchdogLoop(worker, app_config=runtime.app_config)
     scheduled_rotation_loop = ScheduledRotationLoop(worker, app_config=runtime.app_config)

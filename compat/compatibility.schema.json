@@ -1,0 +1,76 @@
+{
+  "$id": "https://github.com/GaboEI/WatchdogVPN/compat/compatibility.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Documentation schema for WatchdogVPN Phase 23.7.5 compatibility manifest. Runtime bootstrap validation is implemented in tools/compat_read.py using only Python stdlib.",
+  "required": [
+    "schema_version",
+    "technical_families",
+    "distributions",
+    "releases",
+    "derivatives",
+    "capabilities",
+    "dependency_requirements",
+    "provisioning_methods",
+    "protocols",
+    "certifications",
+    "validation_metadata"
+  ],
+  "title": "WatchdogVPN Compatibility Manifest",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "description": "Bootstrap and authority metadata. Optional in the JSON Schema but accepted by the bootstrap reader.",
+      "type": "object"
+    },
+    "schema_version": {
+      "description": "Semantic version. Unknown major versions are rejected by the bootstrap reader.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "type": "string"
+    },
+    "technical_families": {
+      "description": "Technical adapter/package-manager paths. They do not imply support for every derivative.",
+      "type": "object"
+    },
+    "distributions": {
+      "description": "Concrete distributions. Each declares its own stable or rolling policy.",
+      "type": "object"
+    },
+    "releases": {
+      "description": "Primitive stable release policy inputs and evidence references. Each release stores an exact documented/certified version plus explicit os_release_version_ids accepted from /etc/os-release; StableReleaseFacts are derived by the bootstrap reader.",
+      "type": "object"
+    },
+    "derivatives": {
+      "description": "Exact derivative mappings. Stable mappings declare a mapping_source such as ubuntu_codename before using codename_map; rolling lineages do not borrow stable versions.",
+      "type": "object"
+    },
+    "capabilities": {
+      "description": "Separate core host capabilities and protocol capabilities.",
+      "required": [
+        "core_host_capabilities",
+        "protocol_capabilities"
+      ],
+      "type": "object"
+    },
+    "dependency_requirements": {
+      "description": "Declarative dependency-to-method chains for the internal 23.7.5.5 resolver. These are data, not executable recipes. A pinned_source_build source component may declare \"resolution\": \"latest_official_release\" instead of a frozen tag/revision; the executor then resolves the latest official release at execution time.",
+      "type": "object"
+    },
+    "provisioning_methods": {
+      "description": "Reusable method definitions. Selection and execution are later tasks.",
+      "type": "object"
+    },
+    "protocols": {
+      "description": "Protocol runtime requirements. Each protocol must require at least one protocol capability.",
+      "type": "object"
+    },
+    "certifications": {
+      "description": "Physical certification records referencing a stable release or rolling snapshot.",
+      "type": "object"
+    },
+    "validation_metadata": {
+      "description": "Rolling freshness policies, repository CI, future per-release CI placeholders and manifest-generation metadata.",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

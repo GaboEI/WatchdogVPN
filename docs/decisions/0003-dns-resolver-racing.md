@@ -6,7 +6,7 @@ Rejected for runtime DNS - 2026-07-06
 
 ## Context
 
-PHASE 15 Task 15.2 asks whether concurrent resolver racing belongs in
+This record asks whether concurrent resolver racing belongs in
 WatchdogVPN. The existing DNS v2 design is channel-based: direct traffic uses
 the direct DNS channel, proxy traffic uses the proxy/FakeIP path, and final
 fallbacks are explicit. The live sing-box configuration currently preserves

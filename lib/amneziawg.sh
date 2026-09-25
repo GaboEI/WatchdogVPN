@@ -26,6 +26,44 @@ amneziawg_runtime_available() {
   amneziawg_userspace_available && (amneziawg_kernel_module_available || amneziawg_userspace_fallback_available)
 }
 
+# Contextual AmneziaWG detection: detection, checks and doctor noise only apply
+# when at least one AmneziaWG profile is persisted (or the CLI passed the
+# authoritative profile count). A user who never touches AmneziaWG must not see
+# AmneziaWG warnings.
+amneziawg_profiles_present() {
+  local count candidates candidate
+  if [[ -n "${WATCHDOGVPN_AWG_PROFILE_COUNT:-}" ]]; then
+    [[ "${WATCHDOGVPN_AWG_PROFILE_COUNT}" != "0" ]]
+    return $?
+  fi
+  candidates=()
+  [[ -n "${WATCHDOGVPN_PROFILES_FILE:-}" ]] && candidates+=("$WATCHDOGVPN_PROFILES_FILE")
+  [[ -n "${WATCHDOGVPN_CONFIG_DIR:-}" ]] && candidates+=("$WATCHDOGVPN_CONFIG_DIR/profiles.json")
+  candidates+=(
+    "/var/lib/watchdogvpn/profiles.json"
+    "${XDG_CONFIG_HOME:-$HOME/.config}/watchdogvpn/profiles.json"
+    "$HOME/.config/watchdogvpn/profiles.json"
+  )
+  for candidate in "${candidates[@]}"; do
+    if [[ -r "$candidate" ]]; then
+      count="$(python3 -c '
+import json
+import sys
+try:
+    data = json.load(open(sys.argv[1]))
+    print(sum(1 for item in data if isinstance(item, dict) and item.get("protocol") == "amneziawg"))
+except Exception:
+    print(0)
+' "$candidate" 2>/dev/null || true)"
+      if [[ "${count:-0}" != "0" ]]; then
+        return 0
+      fi
+      return 1
+    fi
+  done
+  return 1
+}
+
 amneziawg_setup_commands() {
   declare -p DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS >/dev/null 2>&1 || return 1
   ((${#DISTRO_AMNEZIAWG_GUIDANCE_COMMANDS[@]} > 0)) || return 1

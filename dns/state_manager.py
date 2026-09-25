@@ -27,6 +27,7 @@ class DNSStateError(RuntimeError):
 
 
 DEFAULT_DNS_SNAPSHOT_NAME = "dns-state.json"
+PRODUCT_OWNED_NETWORKMANAGER_CONNECTIONS = frozenset({"wdvpn-tun0", "watchdogvpn_awg"})
 
 
 def default_snapshot_path() -> Path:
@@ -63,6 +64,7 @@ class DNSCommandRunner(Protocol):
 @dataclass(frozen=True, slots=True)
 class NetworkManagerConnectionState:
     name: str
+    uuid: str = ""
     ipv4_dns: str = ""
     ipv4_ignore_auto_dns: str = "no"
     ipv4_dns_search: str = ""
@@ -73,6 +75,7 @@ class NetworkManagerConnectionState:
     def to_dict(self) -> dict[str, str]:
         return {
             "name": self.name,
+            "uuid": self.uuid,
             "ipv4_dns": self.ipv4_dns,
             "ipv4_ignore_auto_dns": self.ipv4_ignore_auto_dns,
             "ipv4_dns_search": self.ipv4_dns_search,
@@ -85,6 +88,7 @@ class NetworkManagerConnectionState:
     def from_dict(cls, data: dict[str, object]) -> "NetworkManagerConnectionState":
         return cls(
             name=str(data["name"]),
+            uuid=str(data.get("uuid", "")),
             ipv4_dns=str(data.get("ipv4_dns", "")),
             ipv4_ignore_auto_dns=str(data.get("ipv4_ignore_auto_dns", "no")),
             ipv4_dns_search=str(data.get("ipv4_dns_search", "")),
@@ -261,9 +265,15 @@ class SystemDNSStateManager:
             name, connection_type, device = fields[:3]
             if connection_type == "loopback" or device in {"", "lo"}:
                 continue
+            if (
+                name in PRODUCT_OWNED_NETWORKMANAGER_CONNECTIONS
+                or device in PRODUCT_OWNED_NETWORKMANAGER_CONNECTIONS
+            ):
+                continue
             states.append(
                 NetworkManagerConnectionState(
                     name=name,
+                    uuid=self._nmcli_connection_property(name, "connection.uuid"),
                     ipv4_dns=self._nmcli_connection_property(name, "ipv4.dns"),
                     ipv4_ignore_auto_dns=self._nmcli_connection_property(
                         name, "ipv4.ignore-auto-dns"
@@ -313,8 +323,13 @@ class SystemDNSStateManager:
             # every later "dns reset" against the same stale snapshot. If the
             # link is gone, whatever systemd-resolved config it would have
             # carried is already gone with it - nothing left to revert.
+            self._flush_systemd_resolved_caches()
             return
         self.runner(["resolvectl", "revert", link])
+        self._flush_systemd_resolved_caches()
+
+    def _flush_systemd_resolved_caches(self) -> None:
+        self.runner(["resolvectl", "flush-caches"])
 
     def _link_exists(self, link: str) -> bool:
         try:

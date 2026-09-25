@@ -40,6 +40,7 @@ from drivers.native_policy_driver import NativePolicyDriver
 from drivers.singbox_driver import SingBoxDriver
 from dns.models import DNSPolicy
 from dns.state_manager import SystemDNSStateManager, default_snapshot_path, load_snapshot
+from dns.resolver_inventory import ResolverManager
 from models.connection_state import ConnectionState
 from models.profile import Profile, ProtocolType
 from parsers.endpoint_policy import EndpointPolicyError, profile_endpoint_host, validate_profile_endpoint
@@ -143,29 +144,65 @@ class WatchdogRuntime:
         if self.driver_selector is ORIGINAL_SELECT_DRIVER and type(self.driver) not in MANAGED_DRIVER_TYPES:
             self.driver_selector = lambda _profile=None: self.driver
 
-    def automatic_actions_enabled(self) -> bool:
+    def automatic_actions_enabled(self, *, require_autoconnect: bool = False) -> bool:
         try:
-            desired_state = self.state_manager.get("vpn_desired_state", "off")
+            state = self.state_manager.load()
         except (PersistentStoreError, PersistentValidationError):
             LOGGER.error("standby mode - invalid persistent state", exc_info=True)
             return False
+        desired_state = state.get("vpn_desired_state", "off")
         if desired_state == "off":
             LOGGER.info("standby mode - user disabled VPN")
             return False
         if desired_state != "on":
             LOGGER.error("standby mode - invalid vpn_desired_state: %r", desired_state)
             return False
+        # Automatic ticks are not the same as explicit CLI requests.  When a
+        # boot with autoconnect disabled cannot prove clean direct networking
+        # (for example DNS restore or kill-switch disable failed), the state is
+        # deliberately left diagnostic/fail-closed with desired_state=on.  That
+        # must not authorize the background loop to reconnect behind the user's
+        # autoconnect=false setting; manual connect/rotate paths do not pass
+        # require_autoconnect and keep their explicit behavior.
+        if require_autoconnect and not bool(state.get("vpn_autoconnect_enabled", False)):
+            LOGGER.info("automatic actions disabled - autoconnect disabled")
+            return False
         return True
 
     def standby_state(self) -> ConnectionState:
         return ConnectionState(status="standby", mode="standby")
 
+    def _automatic_disabled_state(self) -> ConnectionState:
+        try:
+            last_failure_reason = str(self.state_manager.get("last_failure_reason", ""))
+        except (PersistentStoreError, PersistentValidationError):
+            return self.standby_state()
+        if last_failure_reason in {"dns_restore_failed", "kill_switch_disable_failed"}:
+            return ConnectionState(status=last_failure_reason, mode="standby")
+        return self.standby_state()
+
+    def _autoconnect_enabled(self) -> bool:
+        try:
+            return bool(self.state_manager.get("vpn_autoconnect_enabled", False))
+        except (PersistentStoreError, PersistentValidationError):
+            return False
+
+    @staticmethod
+    def _runtime_state_active(state: ConnectionState) -> bool:
+        return state.status == "connected" or state.tun_active or state.proxy_active or state.mode != "standby"
+
     def run_iteration(self) -> ConnectionState:
         if not self.automatic_actions_enabled():
             return self.standby_state()
+        autoconnect_enabled = self._autoconnect_enabled()
+        current_state = self.driver.status()
+        if not autoconnect_enabled and not self._runtime_state_active(current_state):
+            return self._automatic_disabled_state()
+        # Autoconnect only gates creating/recovering a runtime. A manually
+        # connected runtime still needs health and kill-switch supervision.
         if not self._maintain_kill_switch_for_active_runtime():
             self._record_last_failure("kill_switch_failed")
-            return ConnectionState(status="kill_switch_failed", mode=self.driver.status().mode)
+            return ConnectionState(status="kill_switch_failed", mode=current_state.mode)
         active_profile = self._active_profile()
         if active_profile is not None and getattr(self.driver, "requires_profile_egress_check", False):
             status = self._checked_and_recorded(active_profile, self.driver)
@@ -176,6 +213,11 @@ class WatchdogRuntime:
         if status == "ok":
             self.recovery.record_success()
             return self.driver.status()
+        if not autoconnect_enabled:
+            self._record_last_failure("recovery_disabled")
+            state = self.driver.status()
+            state.status = "recovery_disabled"
+            return state
         return self._recover_from_failure()
 
     def _record_health_result(
@@ -309,8 +351,8 @@ class WatchdogRuntime:
         rotation attempt would - that would let an optional, unattended timer
         block traffic over a simple configuration gap.
         """
-        if not self.automatic_actions_enabled():
-            return self.standby_state()
+        if not self.automatic_actions_enabled(require_autoconnect=True):
+            return self._automatic_disabled_state()
         config = self.app_config.load()
         if not self._scheduled_rotation_enabled(config):
             return self.status()
@@ -454,13 +496,26 @@ class WatchdogRuntime:
 
         active_profile_id = str(state.get("active_profile_id", ""))
         profile = self.profile_store.get(active_profile_id) if active_profile_id else None
+        if not state.get("vpn_autoconnect_enabled", False):
+            LOGGER.info("standby mode - autoconnect disabled")
+            if not self._restore_dns_snapshot_if_present():
+                self._record_last_failure("dns_restore_failed")
+                return ConnectionState(status="dns_restore_failed", mode="standby")
+            if self.kill_switch.is_active():
+                if not self.kill_switch.disable() or self.kill_switch.is_active():
+                    self._record_last_failure("kill_switch_disable_failed")
+                    LOGGER.error("watchdog_startup_autoconnect_disabled_kill_switch_disable_failed")
+                    return ConnectionState(status="kill_switch_disable_failed", mode="standby")
+            self.state_manager.set("vpn_desired_state", "off")
+            self.state_manager.set("active_profile_id", "")
+            self._desired_on_kill_switch_forced = False
+            self._clear_last_failure()
+            return self.standby_state()
+
         if require_restart_protection and not self._apply_desired_on_protection(profile):
             self._record_last_failure("kill_switch_failed")
             return ConnectionState(status="kill_switch_failed", mode="standby")
 
-        if not state.get("vpn_autoconnect_enabled", False):
-            LOGGER.info("standby mode - autoconnect disabled")
-            return self.standby_state()
         if not active_profile_id:
             LOGGER.warning("standby mode - no active profile configured")
             return self.standby_state()
@@ -477,6 +532,10 @@ class WatchdogRuntime:
             LOGGER.error("watchdog_startup_management_path_unsafe error=%s", exc)
             self._record_last_failure("management_path_unprotected")
             return ConnectionState(status="standby", mode="standby")
+        except EndpointPolicyConnectionError as exc:
+            LOGGER.error("watchdog_startup_endpoint_resolution_failed error=%s", exc)
+            self._record_last_failure("endpoint_resolution_failed")
+            return self.standby_state()
         try:
             active_driver = self._activate_driver(driver)
         except TeardownBarrierError:
@@ -560,6 +619,7 @@ class WatchdogRuntime:
         self._handle_manual_disconnect_kill_switch()
         self._restore_dns_snapshot_if_present()
         self.state_manager.set("vpn_desired_state", "off")
+        self.state_manager.set("active_profile_id", "")
         self._health_error_detail = ""
         self._clear_last_failure()
         LOGGER.info("VPN manually disabled. Will not auto-reconnect.")
@@ -591,9 +651,23 @@ class WatchdogRuntime:
             if not desired_on:
                 self._handle_manual_disconnect_kill_switch()
 
-        if desired_on and not protection_ok:
-            LOGGER.error("watchdog_shutdown_fail_closed_barrier_unavailable")
-        return disconnected and protection_ok
+        if desired_on:
+            if not protection_ok:
+                LOGGER.error("watchdog_shutdown_fail_closed_barrier_unavailable")
+                return False
+            if not disconnected:
+                # La proteccion fail-closed ya esta aplicada (kill switch activo),
+                # por lo que no hay fuga de trafico posible. Durante un shutdown
+                # del sistema (SIGTERM con red colapsando) el driver puede no
+                # terminar su runtime a tiempo (p.ej. proceso en D-state que ni
+                # SIGKILL resuelve en el timeout 5+5s). El kernel limpia en el
+                # reboot y el siguiente arranque reconcilia; se registra para
+                # trazabilidad, pero no se reporta FAILURE.
+                LOGGER.error(
+                    "watchdog_shutdown_driver_cleanup_incomplete_protection_active"
+                )
+            return True
+        return disconnected
 
     def health_check(self) -> str:
         if not self.automatic_actions_enabled():
@@ -796,15 +870,16 @@ class WatchdogRuntime:
         unsupported = self._requested_policy_capabilities() - policy_capabilities
         if unsupported:
             raise UnsupportedDriverPolicyError(driver_name, unsupported)
-        if profile_endpoint_host(profile) is not None:
-            try:
+        try:
+            endpoint_host = profile_endpoint_host(profile)
+            if endpoint_host is not None:
                 validate_profile_endpoint(
                     profile,
                     require_resolution=True,
                     allow_captured_fakeip_ranges=self._endpoint_policy_fakeip_allowlist(),
                 )
-            except EndpointPolicyError as exc:
-                raise EndpointPolicyConnectionError(f"endpoint policy rejected connection: {exc}") from exc
+        except (EndpointPolicyError, ValueError) as exc:
+            raise EndpointPolicyConnectionError(f"endpoint policy rejected connection: {exc}") from exc
         driver = self._candidate_driver_for_profile(profile)
         options = self._connect_options()
         management_preflight = getattr(driver, "preflight_management_path", None)
@@ -1453,11 +1528,10 @@ class WatchdogRuntime:
     def _kill_switch_allowed_endpoints(self, profile: Profile | None) -> tuple[str, ...]:
         if profile is None:
             return ()
-        host = profile.config.get("host") or profile.config.get("server")
-        if not isinstance(host, str) or not host.strip():
-            endpoint = profile.config.get("endpoint")
-            if isinstance(endpoint, str):
-                host = endpoint.rsplit(":", 1)[0].strip("[]")
+        try:
+            host = profile_endpoint_host(profile)
+        except ValueError:
+            return ()
         if not isinstance(host, str) or not host.strip():
             return ()
         try:
@@ -1490,21 +1564,32 @@ class WatchdogRuntime:
             return
         LOGGER.error("watchdog_manual_disconnect_kill_switch action=disable_failed")
 
-    def _restore_dns_snapshot_if_present(self) -> None:
+    def _restore_dns_snapshot_if_present(self) -> bool:
         try:
             snapshot = load_snapshot(self.dns_snapshot_path)
         except Exception:
             LOGGER.warning("watchdog_dns_restore_on_disconnect status=load_failed", exc_info=True)
-            return
+            return False
         if snapshot is None:
-            return
+            return True
         try:
-            self.dns_state_manager.restore_state(snapshot)
+            if snapshot.inventory.manager == ResolverManager.NETWORK_MANAGER:
+                subprocess.run(
+                    ["systemctl", "start", "watchdogvpn-nm-dns-restore.service"],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=15,
+                )
+            else:
+                self.dns_state_manager.restore_state(snapshot)
             self.dns_snapshot_path.unlink()
         except Exception:
             LOGGER.warning("watchdog_dns_restore_on_disconnect status=restore_failed", exc_info=True)
-            return
+            return False
         LOGGER.info("watchdog_dns_restore_on_disconnect status=restored")
+        return True
 
     @staticmethod
     def _as_recovered(

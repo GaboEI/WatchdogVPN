@@ -1,29 +1,19 @@
-# Phase 21 Task 21.1 - Network Context Threat Model
+# Network Context: Product Boundary and Threat Model
 
-Date: 2026-07-08
-Status: closed
-
-## Scope
-
-Task 21.1 defines the privacy and safety contract for Phase 21 before any
-network-aware automation, network monitor integration, unified diagnostics or
-support export implementation is added.
-
-This task is design-only. It does not read live network state, store network
-facts, subscribe to NetworkManager events, apply routes, mutate DNS, start or
-stop the daemon, change firewall state, expose LAN services or alter runtime
-connection behavior.
-
-## Product Boundary
-
-Phase 21 may help WatchdogVPN understand the local network environment so it
-can explain state and, in later tasks, safely offer optional automation.
+WatchdogVPN can understand the local network environment so it can explain state
+and, when explicitly enabled, offer optional automation.
 
 That capability is useful but sensitive. A network name, access point
 identifier, interface name or route shape can reveal where the user is, who
 operates their network, which organization they belong to, or how their machine
 is connected. WatchdogVPN must treat network context as local private context,
 not as anonymous telemetry.
+
+## Product Boundary
+
+Network context is local private context. The product may read it to explain
+state and to drive optional, explicitly enabled automation, but it must not treat
+those facts as anonymous telemetry or as a policy authority.
 
 ## Trust Boundaries
 
@@ -32,10 +22,10 @@ not as anonymous telemetry.
 | Local host to WatchdogVPN daemon | Trusted only through existing daemon/systemd permissions and validated config. |
 | NetworkManager or system route events to WatchdogVPN | Platform input, but not a policy authority. Events may be stale, missing, partial or unavailable. |
 | Wi-Fi SSID/BSSID to WatchdogVPN | Sensitive local context. It may identify home, work, travel or organizational location. |
-| Interface names to WatchdogVPN | Potentially sensitive local context. Names can expose hardware, VM/lab topology, tethering or operator conventions. |
+| Interface names to WatchdogVPN | Potentially sensitive local context. Names can expose hardware, virtualization topology, tethering or operator conventions. |
 | Captive portal / offline detection to WatchdogVPN | Advisory signal only. It must not silently override user intent or protection state. |
 | Diagnostics engine to CLI/TUI/support export | Structured facts must be classified before display/export; normal outputs must be redacted by default. |
-| LAN proxy/gateway state to diagnostics | Read-only status only. Diagnostics must not weaken Phase 20 bind/auth/firewall/DNS contracts. |
+| LAN proxy/gateway state to diagnostics | Read-only status only. Diagnostics must not weaken the LAN sharing bind/auth/firewall/DNS contracts. |
 
 ## Data Classification
 
@@ -65,8 +55,8 @@ Constraints:
 
 ### Persistable Only With Explicit Consent
 
-These fields may be persisted only if a later task implements explicit,
-reviewable consent and clear CLI wording:
+These fields may be persisted only with explicit, reviewable consent and clear
+CLI wording:
 
 - raw Wi-Fi SSID;
 - raw Wi-Fi BSSID;
@@ -116,8 +106,7 @@ Transient output rules:
 
 ### Forbidden
 
-The following must not be stored by Phase 21 network context or normal
-diagnostics:
+The following must not be stored by network context or normal diagnostics:
 
 - private keys;
 - passwords;
@@ -139,7 +128,7 @@ diagnostics:
 Network-aware automation must never silently become a second rotation/recovery
 engine or a hidden route/DNS mutator.
 
-Minimum contract for later tasks:
+Minimum contract:
 
 - automatic network-context behavior is disabled by default or explicitly
   confirmed during setup;
@@ -148,13 +137,23 @@ Minimum contract for later tasks:
 - every automatic action must be reversible or fail without mutating state;
 - unsupported environments must degrade to manual mode with an honest
   diagnostic;
-- stale/missing network events must not trigger destructive or privacy-sensitive
-  actions;
+- stale/missing network events must not trigger destructive or
+  privacy-sensitive actions;
 - captive-portal and offline signals are advisory until validated against the
   current route/DNS/capture state;
 - automation must not enable LAN sharing, gateway mode, system proxy,
-  forwarding, DNS mutation or route mutation unless a later task explicitly
-  implements and validates that behavior.
+  forwarding, DNS mutation or route mutation unless that behavior is explicitly
+  implemented and validated.
+
+Rejected automation behaviors:
+
+- storing raw SSID/BSSID by default;
+- creating a Wi-Fi location history;
+- silently auto-connecting on any newly observed network;
+- silently disconnecting on any newly observed network;
+- treating captive portal detection as proof that protected traffic is safe;
+- reporting unsupported network-monitor environments as healthy;
+- exporting raw network identifiers in normal support bundles.
 
 ## Diagnostics Safety Contract
 
@@ -169,71 +168,7 @@ Required properties:
 - keep normal support export redacted and user-reviewed by default;
 - never include raw secrets, raw metric stores, raw DNS/destination histories
   or LAN credentials;
-- preserve Phase 19 route diagnostic honesty: configured-policy diagnostics are
-  not runtime packet proof;
-- preserve Phase 20 LAN honesty: manual gateway DNS mode must not be reported
+- preserve route diagnostic honesty: configured-policy diagnostics are not
+  runtime packet proof;
+- preserve LAN diagnostic honesty: manual gateway DNS mode must not be reported
   as automatic LAN DNS protection.
-
-## Supported Phase 21 Inputs
-
-Later Phase 21 tasks may use these as local inputs under the classification
-above:
-
-- NetworkManager connection state when available;
-- `ip route`, `ip rule`, interface inventory and DNS resolver state;
-- existing WatchdogVPN routing state (`routing_policy`, `capture_modes`,
-  `default_route_action`);
-- existing DNS policy and route/DNS diagnostics;
-- daemon connection state;
-- LAN sharing/gateway diagnostic fields;
-- provider update metadata when present in local provider/profile data;
-- read-only connectivity probes with bounded timeouts.
-
-## Rejected Modes
-
-Rejected until a later explicit design changes the contract:
-
-- storing raw SSID/BSSID by default;
-- creating a Wi-Fi location history;
-- silently auto-connecting on any newly observed network;
-- silently disconnecting on any newly observed network;
-- treating captive portal detection as proof that protected traffic is safe;
-- reporting unsupported network-monitor environments as healthy;
-- exporting raw network identifiers in normal support bundles;
-- enabling LAN sharing/gateway/system proxy from network-context automation;
-- mutating DNS, routes, firewall or forwarding from Task 21.1.
-
-## Validation Plan For Later Tasks
-
-Runtime-affecting Phase 21 tasks must validate in VM/lab when they touch:
-
-- NetworkManager events;
-- route or DNS observation that influences automation;
-- daemon connect/disconnect decisions;
-- system proxy reporting or future apply behavior;
-- LAN sharing/gateway reporting;
-- support export redaction for local network identifiers.
-
-Minimum validation expectations:
-
-- normal environment;
-- unsupported NetworkManager or missing command environment;
-- offline/captive-portal-like signal;
-- interface/default-route change;
-- configured policy with automation disabled;
-- configured policy with explicit automation enabled;
-- support export with raw SSID/BSSID/interface values present in local state;
-- cleanup proving no network/DNS/route/firewall state was changed by
-  read-only diagnostics.
-
-## Task 21.1 Acceptance
-
-Task 21.1 closes when:
-
-- network facts are classified as persistable, explicit-consent,
-  transient-only or forbidden;
-- SSID/BSSID and interface names are treated as sensitive local context;
-- automation safety rules are defined before implementation;
-- unified diagnostics safety rules are defined before implementation;
-- unsupported-environment behavior is defined as manual/honest fallback;
-- docs and memory are updated.

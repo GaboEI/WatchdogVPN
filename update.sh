@@ -30,6 +30,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ASSUME_YES=0
 RUN_DOCTOR=1
+CERTIFICATION_LAB=0
+ACCEPT_EXPERIMENTAL_DISTRO_RISK=0
 
 trap 'runtime_transaction_failure_trap "update.sh"' ERR
 
@@ -38,12 +40,19 @@ usage() {
 WatchdogVPN updater
 
 Usage:
-  ./update.sh [--dry-run] [--yes] [--skip-doctor]
+  ./update.sh [--dry-run] [--yes] [--skip-doctor] [--certification-lab]
+              [--accept-experimental-distro-risk]
 
 Options:
   --dry-run       Show what would be updated without changing the system.
   --yes           Do not ask for update confirmation.
   --skip-doctor   Do not run the read-only preflight first.
+  --certification-lab  Allow an explicitly marked field-validation run on an experimental distro.
+  --accept-experimental-distro-risk
+                  Run on a recognized-but-not-yet-certified distro without the
+                  interactive prompt (for scripted/non-interactive updates).
+                  Not needed if this distro's risk was already accepted at
+                  install time - that acceptance is reused automatically.
   --help          Show this help.
 
 The updater validates the repository, backs up replaced product files, and
@@ -61,6 +70,12 @@ while (($#)); do
       ;;
     --skip-doctor)
       RUN_DOCTOR=0
+      ;;
+    --certification-lab)
+      CERTIFICATION_LAB=1
+      ;;
+    --accept-experimental-distro-risk)
+      ACCEPT_EXPERIMENTAL_DISTRO_RISK=1
       ;;
     --help|-h)
       usage
@@ -120,8 +135,29 @@ require_supported_distro() {
   detect_distro
   info "distro: $DISTRO_NAME ($DISTRO_ID)"
 
-  if [[ "${DISTRO_SUPPORTED:-0}" != "1" ]]; then
-    print_unsupported_distro
+  if [[ "${DISTRO_FUTURE:-0}" == "1" ]]; then
+    if ((CERTIFICATION_LAB == 1)) && distro_certification_lab_enabled; then
+      warn "certification-lab override: experimental distro is not promoted to support"
+    elif distro_experimental_override_accepted; then
+      warn "experimental distro override: previously accepted by you for ${DISTRO_NAME} (${DISTRO_ID})"
+    elif ((ACCEPT_EXPERIMENTAL_DISTRO_RISK == 1)); then
+      distro_record_experimental_override
+      warn "experimental distro override: risk accepted via --accept-experimental-distro-risk for ${DISTRO_NAME} (${DISTRO_ID})"
+    elif [[ -t 0 ]] && prompt_experimental_distro_override; then
+      distro_record_experimental_override
+      warn "experimental distro override: you accepted the risk for ${DISTRO_NAME} (${DISTRO_ID})"
+    else
+      print_future_distro
+      exit 1
+    fi
+  fi
+
+  if [[ "${DISTRO_UNSUPPORTED:-0}" == "1" || "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
+    if [[ "${DISTRO_UNDETERMINED:-0}" == "1" ]]; then
+      print_undetermined_distro
+    else
+      print_unsupported_distro
+    fi
     exit 1
   fi
 
@@ -195,6 +231,9 @@ print_update_plan() {
 print_title "$PROJECT_NAME Update"
 print_preservation_contract
 
+print_section "Source provenance preflight"
+require_clean_source_checkout
+
 require_supported_distro
 require_existing_installation
 
@@ -207,8 +246,6 @@ print_section "Runtime dependencies"
 validate_required_commands
 validate_polkit_runtime_dependency
 validate_python_runtime_dependencies
-install_official_singbox
-install_official_cloak
 
 if ((RUN_DOCTOR == 1)); then
   print_section "Read-only preflight"
@@ -230,6 +267,9 @@ fi
 
 capture_watchdogvpn_service_state
 runtime_transaction_begin
+print_section "Protocol runtime provisioning"
+install_official_singbox
+install_official_cloak
 print_section "Replace product files"
 install_runtime_files
 print_section "Systemd verification"

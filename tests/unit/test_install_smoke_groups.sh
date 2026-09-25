@@ -65,4 +65,37 @@ if ! grep -Fq '"ok":true' "$TMP_DIR/status"; then
   exit 1
 fi
 
+fail() { :; }
+MOCK_ACTIVE_STATE=inactive
+MOCK_MAIN_PID=0
+systemctl() {
+  local property="" previous=""
+  for argument in "$@"; do
+    if [[ "$previous" == "-p" ]]; then
+      property="$argument"
+      break
+    fi
+    previous="$argument"
+  done
+  case "$property" in
+    ActiveState) printf '%s\n' "$MOCK_ACTIVE_STATE" ;;
+    MainPID) printf '%s\n' "$MOCK_MAIN_PID" ;;
+    *) return 1 ;;
+  esac
+}
+
+verify_watchdogvpn_daemon_inactive || {
+  printf 'FAIL: exact inactive/MainPID=0 state was rejected\n' >&2
+  exit 1
+}
+for rejected_state in 'active:0' 'activating:0' 'inactive:42' 'inactive:' ':0'; do
+  MOCK_ACTIVE_STATE="${rejected_state%%:*}"
+  MOCK_MAIN_PID="${rejected_state#*:}"
+  if verify_watchdogvpn_daemon_inactive; then
+    printf 'FAIL: unsafe skipped-smoke state was accepted: state=%s pid=%s\n' \
+      "$MOCK_ACTIVE_STATE" "$MOCK_MAIN_PID" >&2
+    exit 1
+  fi
+done
+
 printf 'install smoke refreshed-group tests passed\n'

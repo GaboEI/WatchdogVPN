@@ -99,6 +99,7 @@ runtime_transaction_prepare_candidate() {
     cp -a "$source_root/$item" "$candidate/"
   done
   _validate_staged_python_runtime "$candidate"
+  _purge_python_bytecode "$candidate"
   printf '[INFO] validated complete WatchdogVPN runtime candidate\n'
 }
 
@@ -189,6 +190,7 @@ runtime_transaction_publish_installed_version() {
     return 1
   }
   runtime_transaction_snapshot_path "$WATCHDOGVPN_VERSION_MARKER"
+  runtime_transaction_snapshot_path "$WATCHDOGVPN_PROVENANCE_MANIFEST"
   runtime_transaction_checkpoint marker-publish
   record_installed_version
 }

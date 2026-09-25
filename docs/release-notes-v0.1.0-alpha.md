@@ -35,18 +35,18 @@ and CI.
 
 | Distribution | Status |
 | --- | --- |
-| Ubuntu 24.04 | Tested on a real workstation |
-| Arch Linux | Tested on a real workstation |
-| Debian | Tested with a real install flow, including DNS tooling |
-| CachyOS | Real install passed with post-reboot VPN recovery observation |
+| Ubuntu 24.04 | Supported (stable) |
+| Arch Linux | Supported (rolling) |
+| Debian 13.6 | Supported (stable) |
+| CachyOS | Supported (rolling) |
 | Fedora | Future target |
 
 ## Known Limitations
 
 - This is not a stable 1.0 release.
 - The project is licensed under GPL-3.0-or-later.
-- On CachyOS, the real install and advanced DNS flow passed. The initial
-  post-install VPN state may need extra settle time or one reboot.
+- On CachyOS, the initial post-install VPN state may need extra settle time or
+  one reboot.
 - The TUI still contains most rendering flow in `tui/VPN`, but action command
   builders, render primitives and state/command helpers are already split into
   importable modules.
@@ -61,20 +61,12 @@ and CI.
 - [x] Product README and support matrix.
 - [x] GPL-3.0-or-later license.
 - [x] CI workflow.
-- [x] Unit behavior tests for core decision logic.
 - [x] Security and threat-model documentation.
-- [x] Demo screenshots and validation examples.
+- [x] Demo screenshots and examples.
 - [x] Project history documentation.
-- [x] Ubuntu real-machine validation.
-- [x] Arch real-machine validation.
-- [x] Debian clean-system validation.
-- [x] Final license decision before public release.
 - [ ] Release checklist approved.
 - [ ] GitHub release tag and release entry.
 - [ ] GitHub About description and topics.
-
-The full publication checklist is tracked in
-[Release Checklist](release-checklist.md).
 
 ## Upgrade Notes
 

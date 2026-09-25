@@ -1,172 +1,130 @@
-# Phase 19 Task 19.1 - Routing/Capture Contract Audit
+# Routing and capture contract
 
-Date: 2026-07-07
-Status: closed
+WatchdogVPN's routing and capture configuration is three independent axes:
 
-## Scope
+- **Routing policy** — whether configured route rules are honored: `rule` or
+  `global`.
+- **Capture (entry) mechanism** — how traffic reaches WatchdogVPN: local proxy,
+  system proxy, TUN, LAN proxy, LAN gateway/router.
+- **Route action** — where captured traffic is sent: `direct`,
+  `current`/`current_profile`, `block`, `group:<name>`/`auto`, and possible
+  future chains.
 
-Task 19.1 audits the current one-dimensional routing/capture model before any
-runtime migration. Per ADR 0005, the target product contract has three axes:
+Older builds collapsed these into a single persisted `active_mode` string. This
+document describes that mixed legacy surface, the compatibility constraints it
+imposes, and the migration path toward the three-axis model. The target model is
+recorded in
+[`docs/decisions/0005-routing-mode-and-capture-contract.md`](decisions/0005-routing-mode-and-capture-contract.md).
 
-- routing policy: `rule` or `global`;
-- capture or entry mechanism: local proxy, system proxy, TUN, LAN proxy, LAN
-  gateway/router;
-- route action: `direct`, `current`/`current_profile`, `block`, `group:<name>`
-  / `auto`, and possible future chains.
+## Legacy mixed surface
 
-No runtime or persistence code changes were made in this task.
-
-## Current Mixed Surfaces
-
-### Persisted State
+### Persisted state
 
 `config/state_manager.py` persists `active_mode` as one string with allowed
-values `rules`, `global`, `direct`, `tun`, and `proxy`.
+values `rules`, `global`, `direct`, `tun`, and `proxy`, mixing:
 
-This mixes:
-
-- `rules`: routing policy;
-- `global`: routing policy;
+- `rules`, `global`: routing policy;
 - `direct`: route action;
-- `tun`: capture mechanism;
-- `proxy`: capture mechanism.
+- `tun`, `proxy`: capture mechanism.
 
-Default state is `active_mode = "rules"`, so the current default is also tied
-to the old vocabulary.
+The default is `active_mode = "rules"`, so the default is also expressed in the
+old vocabulary.
 
 ### CLI
 
 `watchdog config set mode <value>` writes `active_mode` directly through
-`cli/main.py::_config_set_mode_value()`. This exposes the mixed internal model
-as user-facing configuration.
+`cli/main.py::_config_set_mode_value()`, exposing the mixed internal model as
+user-facing configuration.
 
 `watchdog status` prints `Mode` from `ConnectionState.mode`, plus separate TUN
-and proxy booleans. The current displayed `Mode` is not the routing policy:
-`SingBoxDriver.status()` reports `mode="sing-box"` while the actual requested
-mode is kept internally as `_active_mode`.
+and proxy booleans. The displayed `Mode` is not the routing policy:
+`SingBoxDriver.status()` reports `mode="sing-box"` while the requested mode is
+kept internally as `_active_mode`.
 
 ### Runtime
 
-`core/watchdog.py::_active_mode()` reads `active_mode` and forwards it as
-`mode` to drivers. `_connect_options()` only loads rule groups and app policy
-when `mode == "rules"`, so the current mode string controls both policy loading
-and capture behavior.
+`core/watchdog.py::_active_mode()` reads `active_mode` and forwards it as `mode`
+to drivers. `_connect_options()` only loads rule groups and app policy when
+`mode == "rules"`, so the same string controls both policy loading and capture
+behavior.
 
-`drivers/singbox_driver.py` interprets the same `mode` string in several ways:
+`drivers/singbox_driver.py` interprets that `mode` string in several ways:
 
 - `_mode_requires_tun()` treats `mode == "tun"` as TUN capture and also enables
   TUN when `mode == "rules"` with enabled app policy;
-- `generate_singbox_config()` only applies persisted rule groups and app policy
+- `generate_singbox_config()` applies persisted rule groups and app policy only
   when `mode == "rules"`;
 - every mode except `rules` routes without rule groups;
-- `direct` mode is implemented by setting the final route action to `direct`;
+- `direct` mode sets the final route action to `direct`;
 - `tun` mode is implemented as capture, not as routing policy;
-- proxy inbounds are always generated, but `status()` reports
-  `proxy_active=False` when `_active_mode == "tun"`.
+- proxy inbounds are always generated; `status()` reports local proxy active for
+  running sing-box sessions because SOCKS/HTTP inbounds remain present alongside
+  TUN capture.
 
-Task 19.10 closure note: the stale `proxy_active=False` status report for TUN
-capture was fixed after the Phase 19 model made `tun` map to
-`local_proxy,tun`. `SingBoxDriver.status()` now reports local proxy active for
-running sing-box sessions because SOCKS/HTTP inbounds remain present alongside
-TUN capture.
+This one-dimensional shortcut is what the three-axis model replaces.
 
-This is the core one-dimensional shortcut Phase 19 must replace.
+### Route generation
 
-### Route Generation
-
-`rules/singbox.py::build_singbox_route_rules()` already models route actions
-more cleanly than `active_mode`:
+`rules/singbox.py::build_singbox_route_rules()` already models route actions more
+cleanly than `active_mode`:
 
 - `direct` maps to the `direct` outbound;
 - `current_profile` / `current` maps to the active profile outbound;
 - `block` maps to a native reject rule;
-- `auto_select` and `group:<name>` currently collapse to the active outbound in
-  the sing-box route rule generator, while node-group selection affects the
+- `auto_select` and `group:<name>` collapse to the active outbound in the
+  sing-box route rule generator, while node-group selection affects the
   connection candidate pool in `core/watchdog.py`.
 
-This means route actions exist, but their runtime meaning is split across route
-rule generation and candidate-pool selection.
+Route actions therefore exist, but their runtime meaning is split across
+route-rule generation and candidate-pool selection.
 
-### App Policy
+### App policy
 
-`app_policy.models` has its own vocabulary:
+`app_policy/models.py` has its own vocabulary:
 
 - mode: `whitelist` / `blacklist`;
 - action: `current`, `direct`, `block`, and `group:<name>`.
 
-This is not the same as `active_mode`. It should remain an app-policy model,
-then feed into route actions under routing policy `rule`.
+This is not `active_mode`. It remains an app-policy model and feeds into route
+actions under routing policy `rule`.
 
-### DNS Diagnostics
+### DNS diagnostics
 
-`watchdog dns diagnose` already combines rule groups, app policy and DNS policy
-as configured-policy diagnostics. It does not consume `active_mode`, routing
-policy, or capture state. Phase 19.7 should extend diagnostics so it can
-distinguish:
+`watchdog dns diagnose` combines rule groups, app policy and DNS policy as
+configured-policy diagnostics. It does not consume `active_mode`, routing policy,
+or capture state. Route diagnostics should distinguish:
 
-- configured route action prediction;
+- configured route-action prediction;
 - selected routing policy;
 - selected capture mechanism;
 - live runtime proof, when available.
 
-### Documentation
+## Compatibility constraints
 
-ADR 0005, `README.md`, and `docs/product-roadmap.md` already describe the target
-three-axis contract. `docs/cli.md` still documents runtime update/configuration
-commands but does not yet provide a final routing/capture CLI vocabulary. That
-is appropriate until 19.2/19.3 define and implement the compatibility layer.
-
-## Compatibility Constraints
-
-Existing persisted `active_mode` values must not break on upgrade. The
-migration design in Task 19.2 should define a compatibility mapping. Initial
-audit recommendation:
+Existing persisted `active_mode` values must not break on upgrade. The migration
+defines a deterministic compatibility mapping:
 
 | Legacy `active_mode` | Routing policy | Capture / entry | Default route action | Notes |
 | --- | --- | --- | --- | --- |
-| `rules` | `rule` | local proxy plus TUN when required by app policy/DNS capture | `current` | Preserve current behavior first; later allow explicit capture selection. |
-| `global` | `global` | local proxy | `current` | All traffic entering the local proxy uses current profile. |
-| `direct` | `global` | local proxy | `direct` | Treat as a compatibility alias for a direct default action, not a routing policy. |
-| `tun` | `global` | TUN | `current` | Treat as a compatibility alias for TUN capture with global protected routing. |
-| `proxy` | `global` | local proxy | `current` | Treat as a compatibility alias for local proxy capture. |
+| `rules` | `rule` | local proxy, plus TUN when required by app policy or DNS capture | `current` | Preserves current behavior first; explicit capture selection comes later. |
+| `global` | `global` | local proxy | `current` | All traffic entering the local proxy uses the current profile. |
+| `direct` | `global` | local proxy | `direct` | Compatibility alias for a direct default action, not a routing policy. |
+| `tun` | `global` | TUN | `current` | Compatibility alias for TUN capture with global protected routing. |
+| `proxy` | `global` | local proxy | `current` | Compatibility alias for local proxy capture. |
 
-Task 19.2 should decide whether the new persisted shape stores this directly,
-for example as `routing_policy`, `capture`, and `default_route_action`, or
-whether it keeps `active_mode` as a compatibility field while adding a new
-versioned state/config document.
+## Migration path
 
-## Migration Path
-
-Task 19.2 should design the persisted shape before implementation. The design
-must include:
+The persisted shape is designed before implementation and must include:
 
 - a versioned state/config schema for routing policy and capture mechanisms;
 - a deterministic import path from existing `active_mode`;
 - a rollback path that can restore the old `active_mode` if migration fails;
-- CLI wording that avoids exposing `tun`/`proxy` as routing policies;
+- CLI wording that does not expose `tun`/`proxy` as routing policies;
 - JSON output compatibility for automation;
-- a deprecation plan for `watchdog config set mode`;
-- explicit treatment of app policy and DNS capture requirements;
-- tests for every legacy `active_mode` value.
+- deprecation of `watchdog config set mode`;
+- explicit treatment of app policy and DNS capture requirements.
 
-Task 19.3 should then implement only the minimum runtime mapping needed to keep
-existing behavior while aligning the internal model with ADR 0005.
-
-## Findings
-
-No immediate runtime bug was fixed in this audit. The current behavior is a
-known architecture mismatch captured by ADR 0005 and Phase 19. The audit found
-no evidence that Phase 19 should remove Direct, proxy, TUN, app policy, rule
-groups, or node-group route actions. The migration must preserve them and split
-their meanings across the correct axes.
-
-## Validation
-
-Audit-only validation:
-
-- reviewed ADR 0005 and Phase 19 master-plan contract;
-- reviewed `config/state_manager.py`, `core/watchdog.py`,
-  `drivers/singbox_driver.py`, `rules/singbox.py`, `rules/models.py`,
-  `app_policy/models.py`, `cli/main.py`, status output, README/product roadmap,
-  and tests covering active-mode forwarding and sing-box route generation;
-- no code changes were made.
+The runtime migration applies only the minimum mapping needed to keep existing
+behavior while aligning the internal model with the three-axis contract. Direct,
+proxy, TUN, app policy, rule groups and node-group route actions are all
+preserved; their meanings are split across the correct axes.

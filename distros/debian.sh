@@ -6,8 +6,14 @@ DISTRO_BASE_PACKAGES=(
   bash git coreutils findutils grep gawk sed gzip libc-bin passwd systemd sudo kmod
   ca-certificates python3 curl tar iproute2 network-manager logrotate
   libnotify-bin openvpn util-linux polkitd nftables iptables iputils-ping procps
-  systemd-resolved
 )
+# Kali uses NetworkManager's DHCP-provided resolv.conf directly. Installing
+# systemd-resolved on this image replaces that file with the stub resolver
+# without configuring NetworkManager as a resolved backend, which leaves DNS
+# without an uplink route.
+if [[ "${DISTRO_ID:-}" != "kali" ]]; then
+  DISTRO_BASE_PACKAGES+=(systemd-resolved)
+fi
 DISTRO_DNS_PACKAGES=(dnsutils)
 DISTRO_PYTHON_CRYPTOGRAPHY_PACKAGE="python3-cryptography"
 DISTRO_POLKIT_PACKAGE="polkitd"

@@ -143,6 +143,59 @@ Next step:
 EOF
 }
 
+print_future_distro() {
+  fail "distro support is planned for a future release: ${DISTRO_NAME:-unknown} (${DISTRO_ID:-unknown})"
+  cat <<'EOF'
+This distribution is recognized but is not yet supported by this release of
+WatchdogVPN. Support status may change once certification evidence is
+completed.
+
+Next step:
+  Run ./doctor.sh for the current readiness report, or check the compatibility
+  matrix in the project documentation. To run anyway at your own risk, re-run
+  this command interactively and accept the prompt, or pass
+  --accept-experimental-distro-risk.
+EOF
+}
+
+# Real end-user informed-consent prompt for an experimental distro. This is
+# deliberately separate from the internal --certification-lab flag: it never
+# claims the distro becomes supported, it only records that the user - not
+# WatchdogVPN - chose to proceed at their own risk. Returns 0 on acceptance,
+# 1 otherwise (including non-interactive stdin, which the caller must check
+# with [[ -t 0 ]] before invoking this).
+prompt_experimental_distro_override() {
+  warn "distro support is planned for a future release: ${DISTRO_NAME:-unknown} (${DISTRO_ID:-unknown})"
+  cat <<'EOF'
+This distribution is recognized but has not been field-certified by this
+release of WatchdogVPN. It may work correctly - some recognized distributions
+share enough of an already-certified family's behavior to run fine - but
+nothing has been verified specifically for it yet.
+
+You can choose to continue anyway, at your own risk. This does not change
+this distribution's official support status; it only lets WatchdogVPN run
+here because you explicitly decided to accept that risk.
+EOF
+  local answer=""
+  read -r -p "Continue on this experimental distro anyway? [y/N] " answer
+  case "$answer" in
+    y|Y|yes|YES|Yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+print_undetermined_distro() {
+  fail "distro support cannot be determined: ${DISTRO_NAME:-unknown} (${DISTRO_ID:-unknown})"
+  cat <<'EOF'
+WatchdogVPN could not load its compatibility engine. The distribution could not
+be classified. Ensure python3 is available and the manifest
+compat/compatibility.json is intact.
+
+Next step:
+  Install python3 and run ./doctor.sh again.
+EOF
+}
+
 have_cmd() {
   local command_name="$1" candidate search_path
   local search_paths="${WATCHDOGVPN_COMMAND_PATHS:-/usr/local/sbin:/usr/sbin:/sbin}"

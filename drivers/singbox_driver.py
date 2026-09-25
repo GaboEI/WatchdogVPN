@@ -71,6 +71,22 @@ SING_BOX_LOG_LEVELS = {
     "fatal",
     "panic",
 }
+RESOLVED_FLUSH_TIMEOUT_SECONDS = 5
+RESOLVED_FLUSH_ATTEMPTS = 3
+RESOLVED_FLUSH_RETRY_DELAY_SECONDS = 1.0
+
+
+def _resolved_flush_stderr_is_transient(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return any(
+        token in lowered
+        for token in (
+            "connection timed out",
+            "message recipient disconnected",
+            "service_start_timeout",
+            "timed out",
+        )
+    )
 
 
 def _flush_systemd_resolved_caches() -> bool:
@@ -87,12 +103,17 @@ def _flush_systemd_resolved_caches() -> bool:
     systemctl = shutil.which("systemctl")
     if systemctl is None:
         return True
-    active = subprocess.run(
-        [systemctl, "is-active", "systemd-resolved.service"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        active = subprocess.run(
+            [systemctl, "is-active", "systemd-resolved.service"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=RESOLVED_FLUSH_TIMEOUT_SECONDS,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        LOGGER.error("singbox_dns_cache_flush_failed reason=resolver_state_probe_failed error=%s", exc)
+        return False
     state = (active.stdout or "").strip()
     if active.returncode in {3, 4} or state in {"inactive", "failed", "unknown"}:
         return True
@@ -108,19 +129,43 @@ def _flush_systemd_resolved_caches() -> bool:
     if resolvectl is None:
         LOGGER.error("singbox_dns_cache_flush_failed reason=resolvectl_unavailable")
         return False
-    flushed = subprocess.run(
-        [resolvectl, "flush-caches"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if flushed.returncode == 0:
-        return True
-    LOGGER.error(
-        "singbox_dns_cache_flush_failed reason=command_failed rc=%s stderr=%s",
-        flushed.returncode,
-        (flushed.stderr or "").strip(),
-    )
+    for attempt in range(1, RESOLVED_FLUSH_ATTEMPTS + 1):
+        try:
+            flushed = subprocess.run(
+                [resolvectl, "flush-caches"],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=RESOLVED_FLUSH_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            LOGGER.error(
+                "singbox_dns_cache_flush_failed reason=command_timeout attempt=%s/%s timeout_seconds=%s",
+                attempt,
+                RESOLVED_FLUSH_ATTEMPTS,
+                RESOLVED_FLUSH_TIMEOUT_SECONDS,
+            )
+            if attempt < RESOLVED_FLUSH_ATTEMPTS:
+                time.sleep(RESOLVED_FLUSH_RETRY_DELAY_SECONDS)
+                continue
+            return False
+        except (subprocess.SubprocessError, OSError) as exc:
+            LOGGER.error("singbox_dns_cache_flush_failed reason=command_error error=%s", exc)
+            return False
+        if flushed.returncode == 0:
+            return True
+        stderr = (flushed.stderr or "").strip()
+        LOGGER.error(
+            "singbox_dns_cache_flush_failed reason=command_failed attempt=%s/%s rc=%s stderr=%s",
+            attempt,
+            RESOLVED_FLUSH_ATTEMPTS,
+            flushed.returncode,
+            stderr,
+        )
+        if attempt < RESOLVED_FLUSH_ATTEMPTS and _resolved_flush_stderr_is_transient(stderr):
+            time.sleep(RESOLVED_FLUSH_RETRY_DELAY_SECONDS)
+            continue
+        return False
     return False
 
 
@@ -1171,13 +1216,13 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         rule_prefs, route_tables = self._discover_singbox_tun_residue(
             include_orphaned_auto_route_rule=True,
         )
-        if not rule_prefs and not route_tables:
+        if not rule_prefs and not route_tables and not self._tun_interface_exists():
             return
         self._tun_cleanup_rule_prefs = rule_prefs
         self._tun_cleanup_route_tables = route_tables
         self._cleanup_tun_residue()
 
-    def _cleanup_tun_residue(self) -> None:
+    def _cleanup_tun_residue(self) -> bool:
         """Best-effort cleanup for sing-box TUN state after child crashes."""
         rule_prefs = self._tun_cleanup_rule_prefs
         route_tables = self._tun_cleanup_route_tables
@@ -1193,10 +1238,71 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             for table in route_tables:
                 self._run_cleanup_command(["ip", "route", "flush", "table", table])
                 self._run_cleanup_command(["ip", "-6", "route", "flush", "table", table])
-        self._forget_networkmanager_tun_connection()
+        networkmanager_cleanup_ok = self._forget_networkmanager_tun_connection()
         self._clear_tun_cleanup_state()
+        return networkmanager_cleanup_ok
 
-    def _forget_networkmanager_tun_connection(self) -> None:
+    def _networkmanager_state(self) -> str:
+        """Return the NetworkManager daemon state as 'active', 'inactive' or
+        'unknown'.
+
+        Some distributions (openSUSE with Wicked) install the NetworkManager
+        package but never run its daemon: nmcli exists, yet NM cannot adopt
+        the TUN, so the ownership registration/cleanup helpers would always
+        fail. Those helpers are skipped ONLY on an explicit, unambiguous
+        systemd answer of 'inactive' (the normal stopped-state answer, rc=3
+        with stdout 'inactive'). Any error, timeout, unexpected return code,
+        empty/ambiguous output, or a state such as 'failed', 'activating' or
+        'deactivating' is 'unknown' so callers fail closed instead of
+        silently skipping NetworkManager protection and teardown on a host
+        where NM actually manages the network.
+        """
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "NetworkManager.service"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return "unknown"
+        state = (result.stdout or "").strip().lower()
+        if state == "active" and result.returncode == 0:
+            return "active"
+        if state == "inactive" and result.returncode == 3:
+            return "inactive"
+        return "unknown"
+
+    def _record_networkmanager_tun_connection(self) -> bool:
+        if not shutil.which("nmcli"):
+            return True
+        state = self._networkmanager_state()
+        if state == "inactive":
+            # Wicked-managed system (openSUSE): the NM daemon is explicitly
+            # not running, so it cannot adopt the TUN and there is no
+            # ownership to record.
+            return True
+        if state == "unknown":
+            # Cannot prove that NM is not running: fail closed rather than
+            # silently skipping the registration, which would leave a
+            # NetworkManager-managed TUN unprotected.
+            return False
+        try:
+            result = subprocess.run(
+                ["systemctl", "start", "watchdogvpn-nm-tun-register.service"],
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=15,
+            )
+            return result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def _forget_networkmanager_tun_connection(self) -> bool:
         # On a NetworkManager-managed system, NM auto-adopts a newly-seen
         # interface like wdvpn-tun0 into its own persistent connection
         # profile (autoconnect on by default). Merely killing the sing-box
@@ -1211,10 +1317,39 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         # leftover interface didn't match the persisted desired-off state.
         # Deleting NM's connection profile - not just the kernel device -
         # is what actually stops it from coming back. This is a no-op
-        # wherever NetworkManager is absent or never adopted the interface.
+        # wherever NetworkManager is explicitly absent or inactive.
         if not shutil.which("nmcli"):
-            return
-        self._run_cleanup_command(["nmcli", "con", "delete", "wdvpn-tun0"])
+            self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
+            return True
+        state = self._networkmanager_state()
+        if state == "inactive":
+            # Wicked-managed system (openSUSE): the NM daemon is explicitly
+            # not running, so it never adopts the TUN; still delete the
+            # kernel link best-effort.
+            self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
+            return True
+        if state == "unknown":
+            # Cannot prove that NM is not running: fail closed (upper layers
+            # must not report a clean teardown) but still attempt the kernel
+            # link deletion best-effort.
+            self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
+            return False
+        try:
+            result = subprocess.run(
+                ["systemctl", "start", "watchdogvpn-nm-tun-cleanup.service"],
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=15,
+            )
+            helper_started = result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            helper_started = False
+        # sing-box normally releases its TUN on exit, but a failed auto-route
+        # teardown can leave the kernel link behind without an owning process.
+        self._run_cleanup_command(["ip", "link", "delete", "wdvpn-tun0"])
+        return helper_started
 
     def _append_log(self, message: str) -> None:
         _, log_path = self._ensure_runtime_paths()
@@ -1247,6 +1382,17 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 return True
             time.sleep(0.1)
         return False
+
+    def _tun_interface_exists(self) -> bool:
+        if not shutil.which("ip"):
+            return False
+        result = subprocess.run(
+            ["ip", "-o", "link", "show", "wdvpn-tun0"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return result.returncode == 0
 
     def _tun_interface_active(self) -> bool:
         if not shutil.which("ip"):
@@ -1408,6 +1554,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         management_peers: tuple[str, ...] = (),
         native_transport: bool = False,
         native_bypass_cidrs: tuple[str, ...] = (),
+        native_egress_interface: str | None = None,
         management_routes: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         if mode not in ALLOWED_ACTIVE_MODES:
@@ -1420,8 +1567,13 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             "inbounds": self._build_inbounds(lan_proxy),
             "outbounds": [],
         }
+        native_bind_interface = (native_egress_interface or "").strip()
         if native_transport:
-            outbound = self._ensure_direct_outbound(config)
+            if not native_bind_interface:
+                raise ValueError("native_transport requires native_egress_interface")
+            outbound = self._ensure_direct_outbound(
+                config, bind_interface=native_bind_interface
+            )
         else:
             outbound = self._profile_to_route_target(profile, config)
         self._append_chain_outbounds(config, chain_runtime_plans or {})
@@ -1523,9 +1675,11 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
                 if needs_direct_outbound:
                     self._ensure_direct_outbound(
                         config,
-                        dns_config.direct_domain_resolver,
+                        domain_resolver=dns_config.direct_domain_resolver,
                         bind_interface=(
-                            None if native_transport else self._outbound_bind_interface(profile)
+                            native_bind_interface
+                            if native_transport
+                            else self._outbound_bind_interface(profile)
                         ),
                     )
 
@@ -1546,7 +1700,9 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             self._ensure_direct_outbound(
                 config,
                 bind_interface=(
-                    None if native_transport else self._outbound_bind_interface(profile)
+                    native_bind_interface
+                    if native_transport
+                    else self._outbound_bind_interface(profile)
                 ),
             )
         mode_route_rules = build_singbox_route_rules(
@@ -1633,6 +1789,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         management_peers: tuple[str, ...] | None = None,
         native_transport: bool = False,
         native_bypass_cidrs: tuple[str, ...] = (),
+        native_egress_interface: str | None = None,
         management_routes: dict[str, str] | None = None,
     ) -> bool:
         self.last_error = ""
@@ -1676,6 +1833,8 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             config_kwargs["native_transport"] = True
         if native_bypass_cidrs:
             config_kwargs["native_bypass_cidrs"] = native_bypass_cidrs
+        if native_egress_interface:
+            config_kwargs["native_egress_interface"] = native_egress_interface
         if management_routes:
             config_kwargs["management_routes"] = management_routes
         if management_peers:
@@ -1700,6 +1859,12 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         if self._process.poll() is None and self.health_check() == "ok":
             if self._tun_expected:
                 self._capture_tun_cleanup_state()
+                if not self._record_networkmanager_tun_connection():
+                    self.last_error = "NetworkManager TUN ownership registration failed"
+                    self._connected_at = None
+                    self._active_profile = None
+                    self.disconnect()
+                    return False
             if self._fakeip_cache_flush_required and not self._dns_cache_flusher():
                 self.last_error = "system DNS cache invalidation failed for FakeIP activation"
                 self._connected_at = None
@@ -1732,6 +1897,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
         self._active_mode = "global"
         self._tun_expected = False
         stopped = True
+        tun_cleanup_ok = True
         try:
             if process is not None and process.poll() is None:
                 process.terminate()
@@ -1748,7 +1914,7 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             self._cleanup_lan_gateway()
             process_stopped = process is None or process.poll() is not None
             if cleanup_tun_residue and process_stopped:
-                self._cleanup_tun_residue()
+                tun_cleanup_ok = self._cleanup_tun_residue()
             # Best-effort sweep of every child this driver type has ever
             # recorded, not just the one this instance held a reference to -
             # catches anything orphaned by a past bug or crash too.
@@ -1758,9 +1924,9 @@ class SingBoxDriver(BaseDriver, ReentrantConnectGuard):
             if not self._dns_cache_flusher():
                 self._fakeip_cache_flush_required = True
                 self.last_error = "system DNS cache invalidation failed for FakeIP deactivation"
-                return False
+                return stopped and tun_cleanup_ok
             self._fakeip_cache_flush_required = False
-        return stopped
+        return stopped and tun_cleanup_ok
 
     def _owned_proxy_egress_ready(self) -> bool:
         """Require the active sing-box process to own both proxy listeners.

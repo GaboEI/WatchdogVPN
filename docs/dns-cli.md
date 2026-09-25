@@ -8,7 +8,7 @@ watchdog dns --help
 
 From a source checkout you can also run `./bin/watchdog dns --help`. It is
 intentionally separate from the historical `watchdogvpn` runtime wrapper.
-Phase 10 shipped the DNS v2 command set with real status, test, apply and reset
+The DNS v2 command set provides real status, test, apply and reset
 behavior.
 
 ## Status
@@ -21,12 +21,12 @@ watchdog dns status
 watchdog dns status --json
 ```
 
-Useful lab/test path overrides (temporary files and fixtures; not required for
-normal operator use):
+Alternative path overrides (temporary files; not required for normal operator
+use):
 
 ```sh
 watchdog dns status --policy-file ./dns-policy.json
-watchdog dns status --resolv-conf-path /tmp/watchdogvpn-resolv.conf --json
+watchdog dns status --resolv-conf-path /path/to/resolv.conf --json
 ```
 
 ## Test
@@ -55,7 +55,7 @@ watchdog dns diagnose --domain example.com
 watchdog dns diagnose --domain example.com --process-name curl --json
 ```
 
-Route calculation uses the same Phase 19 diagnostic contract as
+Route calculation uses the same routing diagnostic contract as
 `watchdog rules explain`: `routing_policy=global` ignores route rules and uses
 the default route action, while `routing_policy=rule` evaluates rule groups and
 falls back to `default_route_action` on no match. The legacy `active_mode`
@@ -105,8 +105,8 @@ reachability check, but confirmed mutation rejects non-53 ports instead of
 leaving the host pointed at an address where DNS will not answer on the
 standard port.
 
-`--skip-entrypoint-check` exists for controlled validation paths such as tests
-against temporary files. It should not be used for normal workstation apply.
+`--skip-entrypoint-check` exists for temporary-file setups. It should not be
+used for normal workstation apply.
 
 ## Reset
 
@@ -139,5 +139,5 @@ Overrides:
 ```sh
 WATCHDOGVPN_DNS_POLICY_FILE=/path/to/dns-policy.json watchdog dns status
 sudo env WATCHDOGVPN_DNS_SNAPSHOT_FILE=/path/to/dns-state.json watchdog dns reset --yes
-WATCHDOGVPN_CONFIG_DIR=/tmp/watchdogvpn watchdog dns status
+WATCHDOGVPN_CONFIG_DIR=/path/to/config watchdog dns status
 ```

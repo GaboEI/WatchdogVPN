@@ -4,8 +4,9 @@ import base64
 import json
 import socket
 import unittest
+from email.message import Message
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from parsers import (
@@ -22,6 +23,7 @@ from parsers import (
 )
 from parsers.subscription import (
     DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
+    DEFAULT_SUBSCRIPTION_USER_AGENT,
     _parse_subscription_userinfo,
 )
 from models.profile import ProtocolType
@@ -29,7 +31,14 @@ from models.profile import ProtocolType
 
 def _mock_subscription_response(urlopen_mock, payload: bytes, headers: list[tuple[str, str]] | None = None):
     response = urlopen_mock.return_value.__enter__.return_value
-    response.read.side_effect = [payload, b""]
+    reads = {"count": 0}
+
+    def read_response(_size: int) -> bytes:
+        value = payload if reads["count"] % 2 == 0 else b""
+        reads["count"] += 1
+        return value
+
+    response.read.side_effect = read_response
     response.headers.items.return_value = headers or []
     return response
 
@@ -62,6 +71,12 @@ class UriParserTests(unittest.TestCase):
     def test_remote_uri_does_not_trust_untrusted_allow_local(self) -> None:
         with self.assertRaisesRegex(ParseError, "globally routable"):
             parse_uri("vless://uuid@127.0.0.1:443?encryption=none&allow_local=true")
+
+    def test_remote_uri_import_does_not_resolve_hostname(self) -> None:
+        with patch("parsers.endpoint_policy.socket.getaddrinfo", side_effect=socket.gaierror("private answer")):
+            profile = parse_uri("vless://uuid@provider.example:443?encryption=none")
+
+        self.assertEqual(profile.config["host"], "provider.example")
 
     def test_parse_uri_decodes_fragment_name(self) -> None:
         profile = parse_uri("vless://uuid@example.com:443?encryption=none#Austria%2C%20Vienna%20%5B3GBIT%5D")
@@ -305,6 +320,65 @@ class SingboxJsonParserTests(unittest.TestCase):
                 {"type": "trojan", "tag": "primary", "server": "sb.example.com", "server_port": 443}
             )
 
+    def test_parse_singbox_json_flattens_nested_tls_reality(self) -> None:
+        profiles = parse_singbox_json(
+            {
+                "type": "vless",
+                "tag": "reality-profile",
+                "server": "sb.example.com",
+                "server_port": 443,
+                "uuid": "uuid-1",
+                "flow": "xtls-rprx-vision",
+                "packet_encoding": "xudp",
+                "tls": {
+                    "enabled": True,
+                    "server_name": "www.yahoo.com",
+                    "utls": {"enabled": True, "fingerprint": "firefox"},
+                    "reality": {
+                        "enabled": True,
+                        "public_key": "pbk-value",
+                        "short_id": "sid-value",
+                    },
+                },
+            }
+        )
+        self.assertEqual(len(profiles), 1)
+        cfg = profiles[0].config
+        self.assertEqual(cfg["pbk"], "pbk-value")
+        self.assertEqual(cfg["sid"], "sid-value")
+        self.assertEqual(cfg["sni"], "www.yahoo.com")
+        self.assertEqual(cfg["fp"], "firefox")
+
+    def test_parse_singbox_json_reality_flatten_does_not_override_explicit(self) -> None:
+        profiles = parse_singbox_json(
+            {
+                "type": "vless",
+                "tag": "explicit",
+                "server": "sb.example.com",
+                "server_port": 443,
+                "uuid": "uuid-1",
+                "pbk": "explicit-pbk",
+                "sid": "explicit-sid",
+                "sni": "explicit.example.com",
+                "fp": "chrome",
+                "tls": {
+                    "enabled": True,
+                    "server_name": "www.yahoo.com",
+                    "utls": {"enabled": True, "fingerprint": "firefox"},
+                    "reality": {
+                        "enabled": True,
+                        "public_key": "nested-pbk",
+                        "short_id": "nested-sid",
+                    },
+                },
+            }
+        )
+        cfg = profiles[0].config
+        self.assertEqual(cfg["pbk"], "explicit-pbk")
+        self.assertEqual(cfg["sid"], "explicit-sid")
+        self.assertEqual(cfg["sni"], "explicit.example.com")
+        self.assertEqual(cfg["fp"], "chrome")
+
 
 class OpenVPNConfigParserTests(unittest.TestCase):
     def test_parse_openvpn_config(self) -> None:
@@ -313,7 +387,7 @@ class OpenVPNConfigParserTests(unittest.TestCase):
             client
             dev tun
             proto udp
-            remote vpn.example.com 1194
+            remote 138.124.91.224 1194
             auth-user-pass
 
             <ca>
@@ -322,8 +396,8 @@ class OpenVPNConfigParserTests(unittest.TestCase):
             """
         )
         self.assertEqual(profile.protocol, ProtocolType.OPENVPN)
-        self.assertEqual(profile.name, "openvpn-vpn.example.com-1194")
-        self.assertEqual(profile.config["host"], "vpn.example.com")
+        self.assertEqual(profile.name, "openvpn-138.124.91.224-1194")
+        self.assertEqual(profile.config["host"], "138.124.91.224")
         self.assertEqual(profile.config["port"], 1194)
         self.assertEqual(profile.config["proto"], "udp")
         self.assertEqual(profile.config["dev"], "tun")
@@ -404,13 +478,70 @@ class SubscriptionParserTests(unittest.TestCase):
         ):
             fetch_and_parse("https://example.com/sub")
 
-        request = urlopen_mock.call_args.args[0]
+        request = urlopen_mock.call_args_list[0].args[0]
         self.assertIsInstance(request, Request)
         self.assertEqual(request.get_header("User-agent"), "watchdog-test-agent")
         self.assertEqual(
-            urlopen_mock.call_args.kwargs["timeout"],
+            urlopen_mock.call_args_list[0].kwargs["timeout"],
             DEFAULT_SUBSCRIPTION_CONNECT_TIMEOUT_SECONDS,
         )
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_negotiates_provider_format_without_user_intervention(self, fetch_mock) -> None:
+        invalid = base64.b64encode(b"vless://uuid@0.0.0.0:443?encryption=none").decode("ascii")
+        valid = """proxies:\n  - name: karing-node\n    type: vless\n    server: node.example.com\n    port: 443\n    uuid: uuid-1\n"""
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return invalid, {}
+            if user_agent == "Karing":
+                return valid, {}
+            return invalid, {}
+
+        fetch_mock.side_effect = fetch_response
+        with patch.dict("os.environ", {}, clear=True):
+            profiles = fetch_and_parse("https://example.com/sub")
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].name, "karing-node")
+        self.assertEqual(fetch_mock.call_count, 5)
+        self.assertEqual(fetch_mock.call_args_list[0].kwargs["user_agent"], DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(fetch_mock.call_args_list[1].kwargs["user_agent"], "Karing")
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_keeps_valid_candidate_after_later_format_error(self, fetch_mock) -> None:
+        valid = base64.b64encode(
+            b"vless://uuid@node.example.com:443?encryption=none"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return valid, {}
+            return "proxies:\n  - malformed", {}
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            profiles = fetch_and_parse("https://example.com/sub")
+
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].config["host"], "node.example.com")
+        self.assertEqual(fetch_mock.call_count, 5)
+
+    @patch("parsers.subscription.urlopen")
+    def test_fetch_retries_user_agent_after_403(self, urlopen_mock) -> None:
+        valid = b"proxies:\n  - name: karing-node\n    type: vless\n    server: node.example.com\n    port: 443\n    uuid: uuid-1\n"
+        _mock_subscription_response(urlopen_mock, valid)
+        urlopen_mock.side_effect = [
+            HTTPError("https://example.com/sub", 403, "Forbidden", Message(), None),
+            *([urlopen_mock.return_value] * 4),
+        ]
+
+        result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(result.user_agent, "Karing")
+        self.assertEqual(len(result.profiles), 1)
+        self.assertEqual(urlopen_mock.call_count, 5)
 
     @patch("parsers.subscription.urlopen")
     def test_fetch_rejects_oversized_response(self, urlopen_mock) -> None:

@@ -80,7 +80,7 @@ Representative milestones:
 2026-04-28  Document desktop launcher plan
 2026-04-28  Document future private VPN backend
 2026-04-28  Document optional legacy DNS integration
-2026-04-29  Document audit and harden VPN stack
+2026-04-29  Document review and harden VPN stack
 2026-04-29  Stabilize DNS and domain bypass refresh
 2026-04-29  Add VPN stress test tool
 2026-04-29  Add rotate rollback after stress test
@@ -132,7 +132,7 @@ Representative milestones:
 2026-05-09  Prepare alpha portfolio status
 2026-05-09  Add baseline GitHub Actions CI
 2026-05-09  Document security model and risks
-2026-05-09  Add VPN rotation frequency audit
+2026-05-09  Add VPN rotation frequency review
 2026-05-09  Relax VPN rotation timer activation
 2026-05-09  Add TUI screenshots and demo documentation
 2026-05-09  Improve README project overview
@@ -140,9 +140,9 @@ Representative milestones:
 
 ## Why the Raw Local History Is Not Published in `main`
 
-The local prototype captured a real workstation while the system was being
-debugged. That was useful engineering context, but it is not appropriate as a
-public product history because it can include:
+The local prototype captured a developer workstation while the system was
+being debugged. That was useful engineering context, but it is not appropriate
+as a public product history because it can include:
 
 - local routing snapshots;
 - domain exclusion lists from the author's machine;
@@ -159,7 +159,7 @@ The important story is not that every early script edit or prototype commit
 appears in `main`. The important story is that the project moved through
 identifiable engineering stages:
 
-1. Local script automation for a real workstation problem.
+1. Local script automation for a workstation problem.
 2. Step-by-step replication documentation.
 3. Real failure investigation.
 4. Truth-layer validation.

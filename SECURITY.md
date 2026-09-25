@@ -73,7 +73,7 @@ Out of scope:
 
 - Requests to bypass VPN licensing or provider restrictions.
 - General anonymity guarantees.
-- Unsupported distributions not claimed as validated.
+- Unsupported distributions that are not certified.
 
 ## Project Security Notes
 
@@ -84,7 +84,7 @@ The detailed security model is documented in:
 
 Known development limitations include:
 
-- External installer verification is not fully cryptographically pinned.
-- CI is stronger than syntax-only validation, but not yet a full integration
-  simulation.
-- The final CLI/TUI surfaces are still being completed and audited for v2.0.0.
+- External installer downloads are not fully cryptographically pinned.
+- Automated checks are broader than syntax-only checks, but not a full
+  integration environment.
+- The CLI/TUI surfaces are still being completed for v2.0.0.

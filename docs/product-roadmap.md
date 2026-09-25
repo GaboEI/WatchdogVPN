@@ -37,7 +37,7 @@ prototype/runtime history into a maintainable product foundation:
 - routing rules;
 - split tunneling and app policy;
 - complete CLI;
-- validated TUI;
+- complete TUI;
 - safe backup/restore;
 - release-quality docs.
 
@@ -59,7 +59,7 @@ unsafe paths when the kill switch is active.
 
 The next major product capability is Linux app/process policy: selected
 processes should be able to go through VPN, go direct, use an auto-selected
-node group or be blocked. This must be validated with real traffic, not only
+node group or be blocked. This must hold for live traffic, not only
 generated config.
 
 ### Observability
@@ -70,8 +70,8 @@ favor privacy.
 
 ### CLI and TUI
 
-The CLI is the validation and operator surface. The final TUI comes later, once
-the behavior it renders is proven through CLI-backed real-world use.
+The CLI is the operator surface. The TUI comes later, once the behavior it
+renders is stable.
 
 ### Routing Mode and Capture Architecture
 
@@ -93,13 +93,13 @@ traffic: downloader/cache behavior, trust policy, bootstrap detours, stale-cache
 handling and honest diagnostics for failed or partial policy data.
 
 Explicit proxy-chain and route-chain actions are part of the v2 plan, but they
-are split into a dedicated pre-release phase instead of being partially added
-inside Phase 19. Until that phase lands, validators reject chain syntax while
-the route-action model remains open for loop prevention, DNS ownership, hop
-health checks, failure behavior and installed-VM validation.
+are deferred to a dedicated pre-release workstream instead of being partially
+added to the routing model. Until that workstream lands, validators reject chain
+syntax while the route-action model remains open for loop prevention, DNS
+ownership, hop health checks and failure behavior.
 
-Phase 21.5 Task 21.5.1 defines the accepted chain contract: `chain:<id>` is a
-first-class route action only after model validation and runtime mapping land;
+The accepted chain contract is: `chain:<id>` is a
+first-class route action only after the model and runtime mapping land;
 v2.0 hops are explicit profile or node-group hops; nested chains are rejected;
 DNS is chain-owned by default; unresolved chains fail closed.
 
@@ -110,8 +110,8 @@ intentionally share a protected path with LAN devices before the final CLI is
 frozen. This includes authenticated LAN proxy sharing and, as a separate
 higher-risk capability, full gateway/router mode. This is valuable for people
 who manage networks, servers and multi-device labs, but it changes the trust
-boundary and must remain disabled by default, explicit, VM-validated,
-firewall-aware, kill-switch-covered, DNS-honest and teardown-validated.
+boundary and must remain disabled by default, explicit, firewall-aware,
+kill-switch-covered, DNS-honest and clean on teardown.
 
 ### Network Context Automation and Unified Diagnostics
 
@@ -134,12 +134,11 @@ release candidate is stable.
 
 ## Release Discipline
 
-Every major phase should close with:
+Each area must preserve:
 
-- focused tests;
-- real-machine validation when system behavior is involved;
-- QA audit;
-- fixed HIGH/MEDIUM findings before advancement;
+- explicit input handling and fail-closed defaults;
+- reversibility of any state change;
+- DNS honesty and kill-switch coverage;
 - updated docs where public behavior changed.
 
 ## What Is Out Of Scope For v2.0.0
@@ -150,7 +149,7 @@ Every major phase should close with:
 - Claims that compatibility protocols are censorship-resistant by default.
 - Silent removal of user-owned provider/account/profile data.
 - LAN proxy sharing or gateway/router mode in the current mainline runtime
-  before the dedicated branch/phase validates the security model.
+  before the security model is defined in a dedicated workstream.
 
 ## Future Direction After v2.0.0
 

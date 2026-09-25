@@ -20,6 +20,7 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.native.health_check.return_value = "ok"
         self.native.disconnect.return_value = True
         self.native.status.return_value = ConnectionState(active_profile_id="native", status="connected")
+        self.native.egress_interface.return_value = "watchdogvpn_awg"
         self.native.is_available.return_value = True
         self.companion = Mock(spec=SingBoxDriver)
         self.companion.connect.return_value = True
@@ -39,6 +40,7 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.companion.connect.assert_called_once_with(
             self.profile, dns_policy=None, mode="rules", native_transport=True,
             native_bypass_cidrs=("198.51.100.7/32",), management_peers=(),
+            native_egress_interface="watchdogvpn_awg",
         )
         self.companion.disconnect.assert_called_once_with()
         self.native.disconnect.assert_called_once_with()
@@ -65,6 +67,27 @@ class NativePolicyDriverTests(unittest.TestCase):
         self.assertTrue(self.driver.connect(self.profile))
         self.assertTrue(self.driver.disconnect())
         self.assertEqual(calls[-2:], ["companion", "native"])
+
+    def test_connect_fails_closed_without_native_egress_interface(self) -> None:
+        self.native.egress_interface.return_value = None
+
+        self.assertFalse(self.driver.connect(self.profile, mode="tun"))
+
+        self.companion.connect.assert_not_called()
+        self.native.disconnect.assert_called_once_with()
+        self.assertEqual(self.driver.last_error, "native transport egress interface is unavailable")
+
+    def test_native_preflight_runs_before_existing_runtime_teardown(self) -> None:
+        self.native.preflight_profile.side_effect = ValueError("invalid raw remote")
+        self.driver._active_profile = self.profile
+
+        self.assertFalse(self.driver.connect(self.profile, mode="rules"))
+
+        self.native.disconnect.assert_not_called()
+        self.companion.disconnect.assert_not_called()
+        self.native.connect.assert_not_called()
+        self.companion.connect.assert_not_called()
+        self.assertEqual(self.driver.last_error, "invalid raw remote")
 
 
 class NativeEndpointBypassCidrsTests(unittest.TestCase):
@@ -110,6 +133,7 @@ class NativeEndpointBypassCidrsTests(unittest.TestCase):
         native = Mock()
         native.connect.return_value = True
         native.status.return_value = ConnectionState(active_profile_id="native", status="connected")
+        native.egress_interface.return_value = "watchdogvpn_awg"
         companion = Mock(spec=SingBoxDriver)
         companion.connect.return_value = True
         companion.preflight_native_management_routes.return_value = {}
@@ -124,6 +148,23 @@ class NativeEndpointBypassCidrsTests(unittest.TestCase):
             companion.connect.call_args.kwargs["native_bypass_cidrs"],
             ("198.51.100.7/32",),
         )
+        self.assertEqual(
+            companion.connect.call_args.kwargs["native_egress_interface"],
+            "watchdogvpn_awg",
+        )
+
+    def test_openvpn_bypass_cidr_uses_raw_config_remote_not_host_metadata(self) -> None:
+        profile = Profile(
+            "openvpn-native",
+            "openvpn-native",
+            ProtocolType.OPENVPN,
+            {"host": "138.124.91.224", "raw_config": "client\nremote 8.8.8.8 1194\n"},
+            ProfileSource.MANUAL,
+        )
+
+        cidrs = NativePolicyDriver._native_endpoint_bypass_cidrs(profile)
+
+        self.assertEqual(cidrs, ("8.8.8.8/32",))
 
 
 if __name__ == "__main__":

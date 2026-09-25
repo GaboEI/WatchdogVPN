@@ -6,7 +6,7 @@ CERTIFICATION_VAGRANTFILE="$ROOT_DIR/tests/vm/distro-certification/Vagrantfile"
 
 assert_contains() {
   local file="$1" pattern="$2" message="$3"
-  if ! grep -Fq "$pattern" "$file"; then
+  if ! grep -Fq -- "$pattern" "$file"; then
     printf 'FAIL: %s\n' "$message" >&2
     printf 'missing pattern in %s: %s\n' "$file" "$pattern" >&2
     exit 1
@@ -15,7 +15,7 @@ assert_contains() {
 
 assert_not_contains() {
   local file="$1" pattern="$2" message="$3"
-  if grep -Fq "$pattern" "$file"; then
+  if grep -Fq -- "$pattern" "$file"; then
     printf 'FAIL: %s\n' "$message" >&2
     printf 'unexpected pattern in %s: %s\n' "$file" "$pattern" >&2
     exit 1
@@ -46,6 +46,16 @@ assert_install_order() {
   local file="$1" first="$2" second="$3" message="$4" first_line second_line
   first_line="$(awk -v pat="$first" 'seen && $0 == pat {print NR; exit} /^enable_systemd_units$/ {seen=1}' "$file")"
   second_line="$(awk -v pat="$second" 'seen && $0 == pat {print NR; exit} /^enable_systemd_units$/ {seen=1}' "$file")"
+  if [[ -z "$first_line" || -z "$second_line" || "$first_line" -ge "$second_line" ]]; then
+    printf 'FAIL: %s\n' "$message" >&2
+    exit 1
+  fi
+}
+
+assert_script_body_order() {
+  local file="$1" first="$2" second="$3" message="$4" first_line second_line
+  first_line="$(awk -v pat="$first" 'seen && $0 ~ pat {print NR; exit} /^print_title / {seen=1}' "$file")"
+  second_line="$(awk -v pat="$second" 'seen && $0 ~ pat {print NR; exit} /^print_title / {seen=1}' "$file")"
   if [[ -z "$first_line" || -z "$second_line" || "$first_line" -ge "$second_line" ]]; then
     printf 'FAIL: %s\n' "$message" >&2
     exit 1
@@ -102,18 +112,65 @@ assert_contains "$ROOT_DIR/lib/runtime.sh" 'install -d -m 0700 -o watchdogvpn -g
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo chmod 0700 "$private_dir"' "private state must enforce service-only rwx permissions"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo chmod g-s "$private_dir"' "private state must explicitly clear the setgid bit inherited from shared state"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo chmod 0600 "$cache_path"' "FakeIP cache must remain private"
-assert_contains "$ROOT_DIR/lib/runtime.sh" 'etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules' "runtime install must deploy the narrow resolver cache-flush policy"
-assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.id === "org.freedesktop.resolve1.flush-caches"' "polkit policy must authorize only the resolver cache-flush action"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules' "runtime install must deploy the DNS runtime policy"
+assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.id === "org.freedesktop.resolve1.flush-caches"' "polkit policy must authorize resolver cache flushing"
+assert_not_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'org.freedesktop.NetworkManager.settings.modify.system' "polkit policy must not grant global NetworkManager settings modification"
+assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.id === "org.freedesktop.systemd1.manage-units"' "polkit policy must authorize only the dedicated DNS restore unit"
+assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.lookup("unit") === "watchdogvpn-nm-dns-restore.service"' "polkit policy must bind unit authorization to the DNS restore helper"
+assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.lookup("unit") === "watchdogvpn-nm-tun-register.service"' "polkit policy must bind TUN ownership registration to the fixed helper"
+assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.lookup("unit") === "watchdogvpn-nm-tun-cleanup.service"' "polkit policy must bind TUN cleanup authorization to the fixed NetworkManager helper"
+assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'action.lookup("verb") === "start"' "polkit policy must not permit stop, restart, or other unit operations"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'prepare_networkmanager_dns_restore_state' "runtime install must create root-only NetworkManager DNS restore state"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'run_step sudo "$(watchdogvpn_python)" -m compileall -q "$stage"' "root-owned runtime staging must validate bytecode with matching privileges"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install -d -m 0700 -o root -g root "$state_dir"' "NetworkManager DNS restore state must be root-only"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'chmod g-s "$state_dir"' "NetworkManager DNS restore state must explicitly remove inherited setgid"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'chmod 0700 "$state_dir"' "NetworkManager DNS restore state must clear inherited setgid bits"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-dns-restore dns.networkmanager_restore' "runtime install must deploy the root DNS-only restore helper"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-register drivers.networkmanager_tun_cleanup' "runtime install must deploy the fixed NetworkManager TUN ownership helper"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-cleanup drivers.networkmanager_tun_cleanup' "runtime install must deploy the fixed NetworkManager TUN cleanup helper"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-dns-restore.service" 'User=root' "DNS restore unit must execute as root"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-dns-restore.service" 'ReadWritePaths=/var/lib/watchdogvpn/nm-dns-restore' "DNS restore unit must only write its root snapshot directory"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'RuntimeDirectory=watchdogvpn-nm-tun' "TUN ownership register unit must use a root-owned runtime directory"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'RuntimeDirectoryMode=0700' "TUN ownership register runtime directory must be root-only"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'RuntimeDirectoryPreserve=yes' "TUN ownership register state must survive until cleanup"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'ReadWritePaths=/run/watchdogvpn-nm-tun' "TUN ownership register unit must not write under daemon-controlled /run/watchdogvpn"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'RuntimeDirectory=watchdogvpn-nm-tun' "TUN cleanup unit must read the root-owned runtime directory"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'RuntimeDirectoryMode=0700' "TUN cleanup runtime directory must be root-only"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'RuntimeDirectoryPreserve=yes' "TUN cleanup state must not vanish before cleanup"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'ReadWritePaths=/run/watchdogvpn-nm-tun' "TUN cleanup unit must not write under daemon-controlled /run/watchdogvpn"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'OWNED_UUIDS_PATH = Path("/run/watchdogvpn-nm-tun/owned-uuid")' "TUN ownership registry must live outside daemon-controlled /run/watchdogvpn"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'os.O_EXCL' "TUN ownership registry temp creation must reject precreated paths"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'O_NOFOLLOW' "TUN ownership registry must reject symlink traversal"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'os.fstat' "TUN ownership registry must validate descriptor identity"
+assert_contains "$ROOT_DIR/drivers/networkmanager_tun_cleanup.py" 'os.fsync(parent_fd)' "TUN ownership registry must fsync parent directory after atomic updates"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-cleanup.service" 'ExecStart=/usr/local/bin/watchdogvpn-nm-tun-cleanup cleanup' "TUN cleanup unit must execute the fixed helper in explicit cleanup mode"
+assert_contains "$ROOT_DIR/systemd/watchdogvpn-nm-tun-register.service" 'ExecStart=/usr/local/bin/watchdogvpn-nm-tun-register register' "TUN register unit must execute the fixed helper in explicit register mode"
 assert_contains "$ROOT_DIR/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules" 'subject.user === "watchdogvpn"' "polkit policy must scope authorization to the service account"
 assert_contains "$ROOT_DIR/uninstall.sh" '/etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules' "uninstall must remove the resolver cache-flush policy"
 assert_contains "$ROOT_DIR/install.sh" 'validate_polkit_runtime_dependency' "installer must validate the resolver authorization runtime"
 assert_contains "$ROOT_DIR/update.sh" 'validate_polkit_runtime_dependency' "updater must validate the resolver authorization runtime before replacement"
+assert_contains "$ROOT_DIR/install.sh" 'require_clean_source_checkout' "installer must fail closed before publication from dirty or unverifiable source"
+assert_contains "$ROOT_DIR/update.sh" 'require_clean_source_checkout' "updater must fail closed before publication from dirty or unverifiable source"
+assert_script_body_order "$ROOT_DIR/install.sh" 'require_clean_source_checkout' 'require_supported_distro' "installer must reject dirty source before distro checks or other preflight"
+assert_script_body_order "$ROOT_DIR/install.sh" 'require_clean_source_checkout' 'install_official_singbox' "installer must reject dirty source before dependency provisioning"
+assert_script_body_order "$ROOT_DIR/install.sh" 'require_clean_source_checkout' 'install_runtime_files' "installer must reject dirty source before runtime mutation"
+assert_script_body_order "$ROOT_DIR/update.sh" 'require_clean_source_checkout' 'require_supported_distro' "updater must reject dirty source before distro checks or other preflight"
+assert_script_body_order "$ROOT_DIR/update.sh" 'require_clean_source_checkout' 'install_official_singbox' "updater must reject dirty source before dependency provisioning"
+assert_script_body_order "$ROOT_DIR/update.sh" 'require_clean_source_checkout' 'install_runtime_files' "updater must reject dirty source before runtime mutation"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" 'git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=all' "source provenance preflight must reject uncommitted and untracked source"
 assert_contains "$ROOT_DIR/distros/arch.sh" 'DISTRO_POLKIT_PACKAGE="polkit"' "Arch-family installs must name the polkit runtime package"
 assert_contains "$ROOT_DIR/distros/debian.sh" 'DISTRO_POLKIT_PACKAGE="polkitd"' "Debian-family installs must name the polkit daemon package"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'smoke_test_watchdogvpn_daemon()' "runtime install must define a daemon smoke test"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'systemctl is-active --quiet watchdogvpn.service' "daemon smoke test must verify the service is active"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo test -S "$socket_path"' "daemon smoke test must verify the IPC socket exists"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'watchdog_status_with_refreshed_groups "$socket_path"' "daemon smoke test must refresh the invoking user's group vector"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'verify_watchdogvpn_effective_unit' "daemon smoke test must reject effective unit overrides before publication"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'tools/installed_provenance.py" verify-running' "daemon smoke test must prove the running generation before publication"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'DropInPaths' "daemon smoke test must reject out-of-scope systemd drop-ins"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'ExecStart' "daemon smoke test must verify the effective daemon entrypoint"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'verify_watchdogvpn_daemon_inactive' "skipped daemon smoke must prove no process generation remains active"
+assert_contains "$ROOT_DIR/lib/runtime.sh" 'WATCHDOGVPN_VERIFIED_GENERATION_SHA256' "daemon smoke must retain its approved generation digest"
+assert_contains "$ROOT_DIR/lib/version_marker.sh" '--expected-generation-sha256' "publication must bind the manifest to the daemon-approved smoke digest"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'sudo setpriv \' "daemon smoke test must use the required privilege transition tool"
 assert_contains "$ROOT_DIR/lib/runtime.sh" '      --init-groups \' "daemon smoke test must reload supplementary groups from NSS"
 assert_contains "$ROOT_DIR/lib/runtime.sh" 'env HOME="$target_home" USER="$target_user" LOGNAME="$target_user"' "daemon smoke test must not inherit root's identity environment after sudo"
@@ -133,6 +190,7 @@ assert_contains "$ROOT_DIR/uninstall.sh" 'remove_root_path /usr/local/bin/watchd
 assert_contains "$ROOT_DIR/install.sh" "settle_vpn_after_install" "installer must run VPN settle check before final validation"
 assert_contains "$ROOT_DIR/install.sh" "smoke_test_watchdogvpn_daemon" "installer must run daemon smoke validation"
 assert_contains "$ROOT_DIR/update.sh" "smoke_test_watchdogvpn_daemon" "updater must run daemon smoke validation"
+assert_contains "$ROOT_DIR/install.sh" "restart_watchdogvpn_service_after_runtime_update" "installer must restart an already-active daemon after replacing imported Python modules"
 assert_contains "$ROOT_DIR/update.sh" "capture_watchdogvpn_service_state" "updater must capture the live daemon generation before replacing runtime files"
 assert_contains "$ROOT_DIR/update.sh" "restart_watchdogvpn_service_after_runtime_update" "updater must restart an active daemon after replacing imported Python modules"
 assert_contains "$ROOT_DIR/lib/systemd.sh" 'systemctl restart watchdogvpn.service' "runtime update restart must be an explicit systemd lifecycle action"
@@ -144,6 +202,7 @@ assert_contains "$ROOT_DIR/lib/common.sh" '${BACKUP_ROOT:-/var/backups/watchdogv
 assert_contains "$ROOT_DIR/install.sh" 'trap '\''runtime_transaction_failure_trap "install.sh"'\'' ERR' "installer must roll back and print recovery guidance on unexpected failure"
 assert_contains "$ROOT_DIR/update.sh" 'trap '\''runtime_transaction_failure_trap "update.sh"'\'' ERR' "updater must roll back and print recovery guidance on unexpected failure"
 assert_order "$ROOT_DIR/install.sh" "enable_systemd_units" "smoke_test_watchdogvpn_daemon" "installer must smoke test after enabling services"
+assert_order "$ROOT_DIR/install.sh" "restart_watchdogvpn_service_after_runtime_update" "smoke_test_watchdogvpn_daemon" "installer must restart the daemon before accepting the IPC smoke test"
 assert_order "$ROOT_DIR/update.sh" "enable_systemd_units" "smoke_test_watchdogvpn_daemon" "updater must smoke test after enabling services"
 assert_order "$ROOT_DIR/update.sh" "capture_watchdogvpn_service_state" "install_runtime_files" "updater must snapshot the old daemon before replacing its imported modules"
 assert_order "$ROOT_DIR/update.sh" "restart_watchdogvpn_service_after_runtime_update" "smoke_test_watchdogvpn_daemon" "updater must restart the daemon before accepting the IPC smoke test"

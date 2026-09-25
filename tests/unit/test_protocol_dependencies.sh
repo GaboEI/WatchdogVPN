@@ -20,6 +20,24 @@ assert_not_contains() {
   fi
 }
 
+# Kali keeps NetworkManager's DHCP DNS backend and must not install or require
+# systemd-resolved merely because it shares the Debian package adapter.
+kali_adapter_packages="$(cd "$ROOT_DIR" && DISTRO_ID=kali bash -c 'source distros/debian.sh; printf "%s\n" "${DISTRO_BASE_PACKAGES[@]}"')"
+if grep -Fxq systemd-resolved <<<"$kali_adapter_packages"; then
+  printf 'FAIL: Kali adapter must not install systemd-resolved over NetworkManager DNS\n' >&2
+  exit 1
+fi
+kali_required_commands="$(cd "$ROOT_DIR" && DISTRO_ID=kali bash -c 'source lib/packages.sh; required_commands')"
+if grep -Fxq resolvectl <<<"$kali_required_commands"; then
+  printf 'FAIL: Kali command contract must not require resolvectl\n' >&2
+  exit 1
+fi
+debian_required_commands="$(cd "$ROOT_DIR" && DISTRO_ID=debian bash -c 'source lib/packages.sh; required_commands')"
+if ! grep -Fxq resolvectl <<<"$debian_required_commands"; then
+  printf 'FAIL: Debian command contract must continue requiring resolvectl\n' >&2
+  exit 1
+fi
+
 assert_order() {
   local file="$1" first="$2" second="$3" message="$4" first_line second_line
   # Wiring assertions care about the executable call sites, which appear
@@ -187,9 +205,12 @@ assert_contains "$ROOT_DIR/distros/fedora.sh" 'DISTRO_PYTHON_CRYPTOGRAPHY_PACKAG
 assert_contains "$ROOT_DIR/distros/fedora.sh" 'distro_prepare_package_repos()' "Fedora adapter must define the RHEL-family EPEL repo hook"
 assert_contains "$ROOT_DIR/distros/fedora.sh" '[[ "${DISTRO_ID:-}" == "fedora" ]] && return 0' "EPEL hook must be a no-op on real Fedora"
 assert_contains "$ROOT_DIR/lib/packages.sh" 'declare -F distro_prepare_package_repos' "package validation must call the optional distro repo-prep hook before installing the base package set"
-for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps openvpn NetworkManager polkit firewalld systemd-resolved apparmor-utils python311; do
+for package in git coreutils findutils grep gawk sed glibc shadow systemd sudo kmod ca-certificates nftables iptables iputils procps openvpn NetworkManager polkit firewalld apparmor-utils python311; do
   assert_contains "$ROOT_DIR/distros/opensuse.sh" "$package" "openSUSE adapter must map $package"
 done
+# openSUSE uses netconfig/Wicked as its DNS backend; it has no
+# systemd-resolved package and ships no resolvectl command.
+assert_not_contains "$ROOT_DIR/distros/opensuse.sh" 'systemd-resolved' "openSUSE adapter must not map a non-existent systemd-resolved package"
 assert_contains "$ROOT_DIR/distros/opensuse.sh" 'DISTRO_PACKAGE_MANAGER="zypper"' "openSUSE adapter must use zypper"
 # openSUSE Leap's default python3 is 3.6, too old for the runtime, so the
 # adapter pins a modern interpreter and its matching cryptography package.

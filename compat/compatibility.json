@@ -1,0 +1,5150 @@
+{
+  "capabilities": {
+    "core_host_capabilities": {
+      "cap_apparmor": {
+        "description": "AppArmor reporting; never lowered for certification",
+        "type": "diagnostic_only"
+      },
+      "cap_architecture": {
+        "description": "Supported CPU architecture for selected methods",
+        "supported_values": [
+          "x86_64",
+          "aarch64"
+        ],
+        "type": "required"
+      },
+      "cap_dns_backend": {
+        "description": "A supported DNS backend such as systemd-resolved, NetworkManager DNS, netconfig/wicked (openSUSE), or static resolv.conf",
+        "type": "required"
+      },
+      "cap_kernel": {
+        "description": "Linux kernel exposing the capabilities WatchdogVPN requires",
+        "type": "required"
+      },
+      "cap_network_manager": {
+        "description": "NetworkManager (admitted equivalents: Wicked for openSUSE SUSE family)",
+        "type": "required"
+      },
+      "cap_nftables": {
+        "description": "nftables backend required for the atomic kill switch",
+        "type": "required"
+      },
+      "cap_package_manager": {
+        "description": "Family package manager used for bootstrap and runtime packages",
+        "type": "required"
+      },
+      "cap_persistence": {
+        "description": "Installed state survives reboot and can be audited",
+        "type": "required"
+      },
+      "cap_policy_routing": {
+        "description": "ip rule and route capability required by capture and split tunnel",
+        "type": "required"
+      },
+      "cap_polkit": {
+        "description": "Polkit privileged-action support",
+        "type": "required"
+      },
+      "cap_python310": {
+        "description": "Final product runtime Python floor; bootstrap reader only requires Python 3.6",
+        "type": "provisionable"
+      },
+      "cap_rollback": {
+        "description": "Provisioner rollback and uninstall capability",
+        "type": "required"
+      },
+      "cap_selinux": {
+        "description": "SELinux reporting; never lowered for certification",
+        "type": "diagnostic_only"
+      },
+      "cap_firewalld": {
+        "description": "firewalld reporting; never lowered for certification",
+        "type": "diagnostic_only"
+      },
+      "cap_sudo": {
+        "description": "Privilege elevation path",
+        "type": "required"
+      },
+      "cap_systemd": {
+        "description": "systemd init and service semantics",
+        "type": "required"
+      },
+      "cap_tun": {
+        "description": "/dev/net/tun support",
+        "type": "required"
+      },
+      "cap_base_runtime_commands": {
+        "description": "Base command/runtime package surface currently required by legacy package reconciliation",
+        "type": "provisionable"
+      },
+      "cap_python_cryptography": {
+        "description": "Python cryptography module for product runtime operations that require cryptographic primitives",
+        "type": "provisionable"
+      },
+      "cap_dns_runtime_package": {
+        "description": "Distribution DNS helper package required when the selected DNS backend needs package support",
+        "type": "provisionable",
+        "dns_backend_policy": {
+          "systemd_resolved": {
+            "helper_requirement": "satisfied_by_backend"
+          },
+          "networkmanager": {
+            "helper_requirement": "satisfied_by_backend"
+          },
+          "static_resolv_conf": {
+            "helper_requirement": "optional"
+          },
+          "unknown": {
+            "helper_requirement": "unknown"
+          }
+        }
+      }
+    },
+    "protocol_capabilities": {
+      "proto_amneziawg_runtime": {
+        "description": "awg tools plus AmneziaWG kernel module or amneziawg-go",
+        "type": "provisionable"
+      },
+      "proto_ck_client_runtime": {
+        "description": "Cloak ck-client runtime",
+        "type": "provisionable"
+      },
+      "proto_openvpn_runtime": {
+        "description": "OpenVPN runtime",
+        "type": "provisionable"
+      },
+      "proto_sing_box_runtime": {
+        "description": "sing-box runtime used by VLESS, Trojan, Hysteria2, VMess, TUIC, Shadowsocks, SOCKS and HTTP",
+        "type": "provisionable"
+      }
+    }
+  },
+  "certifications": {
+    "cert_opensuse_tumbleweed_rolling": {
+      "current": true,
+      "date": "2026-09-10T00:00:00Z",
+      "distribution": "opensuse_tumbleweed",
+      "evidence": "23.7.5.11D openSUSE Tumbleweed 20260907 field certification on field-host-1 (runtime eb969bd, generation SHA-256 c21912e05a6c82b894f1b5f979a04fae132520fc6ac25cda41d3d44b24a1fc0d, provenance verified): 12/12 protocols green with real egress (T4.1 protocol matrix, TW-E04), AmneziaWG resolved through the guided official provisioning flow and validated with real AWG egress; reboot lifecycle (T5, TW-E06), isolated fault harness (T6, TW-E07) and final cleanup (T7, TW-E08) CLOSED/APPROVED by independent audit 2026-09-11",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real AWG egress via the guided official provisioning flow: 9/9 HTTPS 200 through the tunnel (example/github/ipify), tunnel egress distinct from direct, kill switch applied (23.7.5.11D T4.1 AWG resolution, TW-E04)"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel, kill switch applied (23.7.5.11D T4.1/T4.2 Tumbleweed validation, TW-E04)"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel, kill switch applied (23.7.5.11D T4.1/T4.2 Tumbleweed validation, TW-E04)"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel; tunnel egress 138.124.91.224 distinct from direct (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel (23.7.5.11D T4.1 Tumbleweed matrix, TW-E04)"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 through the tunnel, kill switch applied (23.7.5.11D T4.1/T4.2 Tumbleweed validation, TW-E04)"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "openSUSE Tumbleweed 20260907"
+    },
+    "cert_arch_rolling": {
+      "current": true,
+      "date": "2026-08-15T00:00:00Z",
+      "distribution": "arch",
+      "evidence": "23.7.5.11B Arch Linux field recertification on field-host-1 (runtime cd112b4): 12/12 real-egress protocol matrix; reboot lifecycle autoconnect off/on; isolated fault harness fail-closed (dns_restore_failed/kill_switch_disable_failed); cleanup final standby with doctor FAIL=0; shutdown FAILURE fix cd112b4. Evidence under vault-evidence/watchdogvpn-task-23-7-5-11B-arch-field-host-1-*",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "23.7.5.11B Arch Linux fresh real-egress field evidence (promoted from formal_non_green)"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "23.7.5.11B Arch Linux fresh real-egress field evidence (promoted from formal_non_green)"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "23.7.5.11B Arch Linux fresh real-egress field evidence (promoted from formal_non_green)"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "arch-default-and-lts-2026-07-22"
+    },
+    "cert_cachyos_rolling": {
+      "current": true,
+      "date": "2026-08-16T00:00:00Z",
+      "distribution": "cachyos",
+      "evidence": "23.7.5.11B CachyOS field recertification on field-host-1: 12/12 real-egress protocol matrix with fresh evidence; WireGuard, Shadowsocks and plain OpenVPN promoted from formal_non_green on fresh real-egress field evidence. Evidence under vault-evidence/watchdogvpn-task-23-7-5-11B-cachyos-field-host-1-matrix-*",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "23.7.5.11B CachyOS fresh real-egress field evidence (promoted from formal_non_green)"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "23.7.5.11B CachyOS fresh real-egress field evidence (promoted from formal_non_green)"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "23.7.5.11B CachyOS fresh real-egress field evidence (promoted from formal_non_green)"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "cachyos-2026-08-16"
+    },
+    "cert_kali_rolling": {
+      "current": true,
+      "date": "2026-08-12T00:00:00Z",
+      "distribution": "kali",
+      "evidence": "docs/phase-23-7-5-compatibility-contract.md Task 23.7.5.10e Kali rolling certification and private evidence",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "formal_non_green",
+          "evidence": "formal non-green Plan-B/no-egress disposition; not counted as green"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "pre-23-7-5-10e-kali-l3-validation"
+    },
+    "cert_debian_13": {
+      "current": true,
+      "date": "2026-08-14T00:00:00Z",
+      "distribution": "debian",
+      "evidence": "docs/phase-23-7-5-compatibility-contract.md Task 23.7.5.11A.2 Debian 13 field recertification and private evidence bundle watchdogvpn-task-23-7-5-11A-2-debian-final-20260814T0800Z.tar.gz sha256 d64d0cf013759a7ae1dd9a99394c17ff58a586b691a5dfbbb0217c601747df8a",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: awg-138.124.91.224-LI3jGvaI"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1 after documented retry: http-138.124.91.224-ubuntu"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: gaboturbo.serveminecraft.net-2"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: openvpn-138.124.91.224-1194"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on authorized bridge-only VM lab-vm-2: oc-138.124.91.224-wdvpnkal"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: shadowsocks-138.124.91.224-ubuntu"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: socks-138.124.91.224-ubuntu"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: gaboturbo.serveminecraft.net"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: tuic-138.124.91.224-ubuntu"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: ubuntu_gabo_yahoo_firefox"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: vmess-138.124.91.224-ubuntu"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "11A.2 Debian 13 fresh real egress on field-host-1: wireguard tunnel egress verified"
+        }
+      },
+      "release": "debian_13",
+      "scope": "physical_field_certification"
+    },
+    "cert_fedora_44": {
+      "current": true,
+      "date": "2026-08-19T00:00:00Z",
+      "distribution": "fedora",
+      "evidence": "23.7.5.11C Fedora 44 field recertification (kernel 7.1.8-200); 12/12 protocols green with real egress; matrix evidence SHA256 98c443893d385cb5fa9cdf6f93db3470742fd6725af413a4e93fec7f1bbbf31b; runtime bd316eb, provenance verified",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 via ovpn_auto.sh; first attempt rc=70 due to def1 route redirect, second attempt with auto-disconnect succeeded; operational finding, not product bug"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        }
+      },
+      "release": "fedora_44",
+      "scope": "physical_field_certification"
+    },
+    "cert_kali_rolling_11e": {
+      "current": true,
+      "date": "2026-09-14T00:00:00Z",
+      "distribution": "kali",
+      "evidence": "23.7.5.11E Kali field recertification on field-host-1 (Kali GNU/Linux Rolling 2026.3; runtime a8bc2d1; K0 baseline and K1-K9 gates CLOSED/APPROVED): 12/12 protocols green with real egress. Plain OpenVPN, WireGuard, Shadowsocks and AmneziaWG validated fresh in 11E with real tunnel egress and a verified 100 MiB transfer (K3.1/K3.2, KALI-E04); the remaining 8 protocols are real-egress green convalidated from Task 23.7.5.10e. FakeIP validated (K3.6). Evidence: the 11E Kali evidence register (02_11e_kali_linux_evidence.md, KALI-E04).",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11E Kali real egress via the guided official provisioning flow; tunnel egress 104.28.211.192 distinct from direct; 100 MiB transfer HTTP 200 size 104857600; kill switch applied (KALI-E04, K3.1)"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11E Kali real egress: 5/5 independent sites, tunnel egress 138.124.91.224 distinct from direct with warp=off; 100 MiB transfer HTTP 200 size 104857600; kill switch applied; outbound SSH continuity PASS (KALI-E04, K3.1/K3.2)"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11E Kali real egress: 4/5 sites IPv4 138.124.91.224 plus 1/5 IPv6, warp=off; 100 MiB transfer HTTP 200 size 104857600; kill switch applied (KALI-E04, K3.1/K3.2)"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real-egress green convalidated from the Task 23.7.5.10e Kali certification matrix (cert_kali_rolling)"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11E Kali real egress: 5/5 independent sites, tunnel egress 138.124.91.224 distinct from direct with warp=off; 100 MiB transfer HTTP 200 size 104857600; kill switch applied (KALI-E04, K3.1/K3.2)"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "Kali GNU/Linux Rolling 2026.3"
+    },
+    "cert_manjaro_rolling": {
+      "current": true,
+      "date": "2026-09-18T00:00:00Z",
+      "distribution": "manjaro",
+      "evidence": "Manjaro rolling snapshot (XFCE 26.1.0 image 260812, kernel 6.1.187-2-MANJARO) field certification on field-host-1: 12/12 canonical-index protocols green with real tunnel egress (tunnel egress distinct from the direct egress, HTTP 200 x3), kill-switch protection and clean cross-protocol teardown; format, reboot, suspend-to-disk resume and autoconnect lifecycle (M5), isolated worker fault handling (M6) and decommission with baseline restore (M7) CLOSED_APPROVED by independent Judge-Tester audit; approved-provider import, three usable VLESS nodes with distinct tunnel egress and forced provider rotation verified (M4.3). Evidence register MAN-E00–MAN-E09.",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel via the guided official provisioning flow: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06; guided AWG build verified in M3, MAN-E04)"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; product-owned tunnel interfaces observed; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3 plus a bounded approximately 100 MiB transfer; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06); approved provider imported privately with three usable VLESS nodes, distinct tunnel egress and forced provider rotation verified (M4.3, MAN-E05)"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3 plus a bounded approximately 100 MiB transfer; kill switch applied; clean teardown (23.7.5.11H M4.1/M4.2, MAN-E05/MAN-E06)"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "Manjaro XFCE 26.1.0 image 260812, kernel 6.1.187-2-MANJARO"
+    },
+    "cert_pop_24_04": {
+      "current": true,
+      "date": "2026-09-16T00:00:00Z",
+      "distribution": "pop",
+      "evidence": "Pop!_OS 24.04 LTS field certification on physical hardware: 12/12 protocols green with real tunnel egress (tunnel egress distinct from the direct egress, HTTP 200 x3), kill-switch protection and clean teardown; DNS apply/reset, split tunneling and FakeIP validated; reboot lifecycle, isolated fault-failure handling and final cleanup approved.",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel via the guided official provisioning flow: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress through the tunnel: tunnel egress distinct from the direct egress, HTTP 200 x3; kill switch applied; clean teardown"
+        }
+      },
+      "release": "pop_24_04",
+      "scope": "physical_field_certification"
+    },
+    "cert_linuxmint_22_3": {
+      "current": true,
+      "date": "2026-08-14T00:00:00Z",
+      "distribution": "linuxmint",
+      "evidence": "docs/phase-23-5-distro-certification-lab.md Task 23.6.7 Linux Mint 22.3 closure and private evidence; 23.7.5.11A.3 Linux Mint 22.3 field recertification on field-host-1 at vault-evidence/watchdogvpn-task-23-7-5-11A-3-mint-aa1d3bf-controlled-deploy-20260814T222516Z/ with isolated fault-validation evidence at vault-evidence/watchdogvpn-task-23-7-5-11A-3-mint-aa1d3bf-isolated-fault-validation-20260814T231258Z/",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "fresh Linux Mint 22.3 11A.3 real-egress field evidence"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "fresh Linux Mint 22.3 11A.3 real-egress field evidence"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "fresh Linux Mint 22.3 11A.3 real-egress field evidence"
+        }
+      },
+      "release": "linuxmint_22_3",
+      "scope": "physical_field_certification"
+    },
+    "cert_opensuse_leap_15_6": {
+      "current": true,
+      "date": "2026-09-08T00:00:00Z",
+      "distribution": "opensuse_leap",
+      "evidence": "23.7.5.11D openSUSE Leap 15.6 field recertification (runtime cb41420, generation SHA-256 7bcc2884baaf6285cd01ce03eec4accecf5acadef2b25a93f9297afea8814487, provenance verified); 12/12 protocols green with real egress; reinforced trio (WireGuard/Shadowsocks/plain OpenVPN) with verified 100MiB download (SHA-256 3e432abb314fe350334d244d48070bb8556f774aa7876c6c524296c2ac4608bc); L3.1 matrix summary SHA256 f29ff92a8a04785db16f8bcc539e8e59d4e88642f7ff6427ab9ac326d63e7fcd; L3 gate, L4 reboot lifecycle, L5 isolated fault harness and L6 final cleanup CLOSED/APPROVED by independent audit 2026-09-08",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600, SHA-256 3e432abb314fe350334d244d48070bb8556f774aa7876c6c524296c2ac4608bc) through the tunnel; promoted from formal_non_green to green in 23.7.5.11D"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600, SHA-256 3e432abb314fe350334d244d48070bb8556f774aa7876c6c524296c2ac4608bc) through the tunnel; promoted from formal_non_green to green in 23.7.5.11D"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 (23.7.5.11D L3.1 matrix)"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600, SHA-256 3e432abb314fe350334d244d48070bb8556f774aa7876c6c524296c2ac4608bc) through the tunnel; promoted from formal_non_green to green in 23.7.5.11D"
+        }
+      },
+      "release": "opensuse_leap_15_6",
+      "scope": "physical_field_certification"
+    },
+    "cert_rocky_9": {
+      "current": true,
+      "date": "2026-08-20T00:00:00Z",
+      "distribution": "rocky",
+      "evidence": "23.7.5.11C Rocky Linux 9.8 field recertification (kernel 5.14.0-687.39.1.el9_8); 12/12 protocols green with real egress + 100MiB download for the promoted trio; matrix evidence SHA256 2bbce34d5a278d6716054311df1894a9c0b96bb0dd9ff0f7bdf4352c761b65e5; runtime b23577b, provenance verified",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "certification matrix real egress"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        }
+      },
+      "release": "rocky_9",
+      "scope": "physical_field_certification"
+    },
+    "cert_ubuntu_24_04": {
+      "current": true,
+      "date": "2026-08-14T00:00:00Z",
+      "distribution": "ubuntu",
+      "evidence": "Task 23.7.5.11A.1 Ubuntu 24.04 field certification and private evidence at vault-evidence/watchdogvpn-task-23-7-5-11A-1-ubuntu-20260813T104226Z/; focal OpenVPN plain reopening evidence at vault-evidence/watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz (sha256 43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871). Other 11 protocol results reuse the original 11A.1 evidence; only OpenVPN plain received fresh evidence in the focal reopening.",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress after guided PPA runtime install; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "23.7.5.11A.1 focal Ubuntu OpenVPN plain reopening approved by judge: field-host-1 Ubuntu 24.04.1, profile openvpn-138.124.91.224-1194, connect_rc=0, egress_ip=138.124.91.224, HTTP 200 to YouTube/Facebook/Instagram, disconnect_rc=0, clean teardown; evidence bundle watchdogvpn-task-23-7-5-11A-1-ubuntu-openvpn-retest-youtube-facebook-instagram-20260814T104827Z.tar.gz sha256=43bf270944ef6769839f50d8a0d568267dc8910f7b38ab30450615292474c871"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on authorized bridge-only Ubuntu 24.04 VM lab-vm-1 using 04_OpenVPN_Cloak_gabo_nuevo_FIX.vpn; field-host-1-specific zero-RX symptom documented"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "fresh 23.7.5.11A.1 Ubuntu real egress on field-host-1; connect_rc=0 ip_rc=0 http_rc=0 http_code=200"
+        }
+      },
+      "release": "ubuntu_24_04",
+      "scope": "physical_field_certification"
+    },
+    "cert_almalinux_9": {
+      "current": true,
+      "date": "2026-09-02T00:00:00Z",
+      "distribution": "almalinux",
+      "evidence": "23.7.5.11C AlmaLinux 9.5 field recertification (kernel 5.14.0-503.15.1.el9_5); 12/12 protocols green with real egress, promoted trio (WireGuard/Shadowsocks/plain OpenVPN) with verified 100MiB download, protocol 01 VLESS certified; matrix evidence SHA256 a406e7e070a8996e1d46373068321e9fe49d8318da02135db93c52c56b88ff69; primary VLESS evidence SHA256 33c72888b9118d73f36921f39d2d22a7f4abff4d39c6b166712938353e54e678; runtime 9258219, provenance verified",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "real egress HTTP 200x3 + 100MiB download (size=104857600) through the tunnel; promoted from formal_non_green to green in 23.7.5.11C"
+        }
+      },
+      "release": "almalinux_9",
+      "scope": "physical_field_certification"
+    },
+    "cert_centos_stream_rolling": {
+      "current": true,
+      "date": "2026-09-20T00:00:00Z",
+      "distribution": "centos_stream",
+      "evidence": "CentOS Stream 9 rolling is field-certified and supported: all 12 canonical protocols are compatible and verified on a real install. CentOS Stream certification does not certify RHEL.",
+      "protocol_results": {
+        "amneziawg": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "http": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "hysteria2": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "openvpn": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "openvpn_cloak": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "shadowsocks": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "socks": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "trojan": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "tuic": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "vless": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "vmess": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        },
+        "wireguard": {
+          "disposition": "green",
+          "evidence": "compatible and verified on a real install"
+        }
+      },
+      "scope": "physical_field_certification",
+      "snapshot": "CentOS Stream 9 rolling"
+    }
+  },
+  "derivatives": {
+    "cachyos_lineage": {
+      "base_version_gating": false,
+      "distribution": "cachyos",
+      "lineage_distribution": "arch",
+      "mapping_type": "rolling_lineage"
+    },
+    "kali_lineage": {
+      "base_version_gating": false,
+      "distribution": "kali",
+      "lineage_distribution": "debian",
+      "mapping_type": "rolling_lineage"
+    },
+    "linuxmint_ubuntu_codename": {
+      "codename_map": {
+        "noble": "ubuntu_24_04"
+      },
+      "distribution": "linuxmint",
+      "lineage_distribution": "ubuntu",
+      "mapping_source": "ubuntu_codename",
+      "mapping_type": "codename_map"
+    },
+    "manjaro_lineage": {
+      "base_version_gating": false,
+      "distribution": "manjaro",
+      "lineage_distribution": "arch",
+      "mapping_type": "rolling_lineage"
+    },
+    "pop_version_codename": {
+      "codename_map": {
+        "noble": "ubuntu_24_04"
+      },
+      "distribution": "pop",
+      "lineage_distribution": "ubuntu",
+      "mapping_source": "version_codename",
+      "mapping_type": "codename_map"
+    },
+    "opensuse_tumbleweed_lineage": {
+      "base_version_gating": false,
+      "distribution": "opensuse_tumbleweed",
+      "lineage_distribution": "opensuse_leap",
+      "mapping_type": "rolling_lineage"
+    }
+  },
+  "dependency_requirements": {
+    "dep_base_runtime_commands": {
+      "capability_id": "cap_base_runtime_commands",
+      "description": "Legacy required_commands and DISTRO_BASE_PACKAGES inventory represented as exact package candidates",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "base_runtime_apt_stable",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "libc-bin",
+            "passwd",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python3",
+            "curl",
+            "tar",
+            "iproute2",
+            "network-manager",
+            "logrotate",
+            "libnotify-bin",
+            "openvpn",
+            "util-linux",
+            "polkitd",
+            "nftables",
+            "iptables",
+            "iputils-ping",
+            "procps",
+            "systemd-resolved"
+          ],
+          "postcondition": "cap_base_runtime_commands",
+          "priority": 1,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "pop_24_04",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "base_runtime_apt_kali_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "libc-bin",
+            "passwd",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python3",
+            "curl",
+            "tar",
+            "iproute2",
+            "network-manager",
+            "logrotate",
+            "libnotify-bin",
+            "openvpn",
+            "util-linux",
+            "polkitd",
+            "nftables",
+            "iptables",
+            "iputils-ping",
+            "procps"
+          ],
+          "postcondition": "cap_base_runtime_commands",
+          "priority": 2,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "base_runtime_dnf_fedora_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "glibc-common",
+            "shadow-utils",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python3",
+            "curl",
+            "tar",
+            "iproute",
+            "NetworkManager",
+            "logrotate",
+            "libnotify",
+            "openvpn",
+            "util-linux",
+            "polkit",
+            "nftables",
+            "iptables-nft",
+            "iputils",
+            "procps-ng",
+            "firewalld",
+            "systemd-resolved"
+          ],
+          "postcondition": "cap_base_runtime_commands",
+          "priority": 3,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "fedora_44"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "id": "base_runtime_dnf_rhel9_with_epel_exact",
+          "priority": 4,
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_prerequisite_exact",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "glibc-common",
+            "shadow-utils",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python3",
+            "curl",
+            "tar",
+            "iproute",
+            "NetworkManager",
+            "logrotate",
+            "libnotify",
+            "openvpn",
+            "util-linux",
+            "polkit",
+            "nftables",
+            "iptables-nft",
+            "iputils",
+            "procps-ng",
+            "firewalld",
+            "systemd-resolved",
+            "python3.11"
+          ],
+          "repository_package": "epel-release",
+          "provider": "fedora_epel",
+          "repository": {
+            "id": "epel_9",
+            "url": "https://dl.fedoraproject.org/pub/epel/",
+            "series": "epel9"
+          },
+          "compatible_targets": [
+            {
+              "target_id": "rocky_9",
+              "series": "epel9"
+            },
+            {
+              "target_id": "almalinux_9",
+              "series": "epel9"
+            },
+            {
+              "target_id": "rhel_9",
+              "series": "epel9"
+            }
+          ],
+          "signing_key_provenance": "Fedora EPEL 9 trust is bootstrapped by epel-release installed from the target system's already-trusted base repositories; epel-release carries the EPEL repository GPG key and repo configuration. Fedora publishes the EPEL 9 package signing key as keyid 8A3872BF3228467C, fingerprint FF8A D134 4597 106E CE81 3B91 8A38 72BF 3228 467C, on fedoraproject.org/security.",
+          "exposed_package_names": [
+            "openvpn"
+          ],
+          "runtime_python": {
+            "executable": "python3.11",
+            "package": "python3.11",
+            "cryptography_package": "python3.11-cryptography"
+          },
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_base_runtime_commands",
+          "evidence": [
+            "distros/fedora.sh RHEL-family branch requires EPEL before complete base runtime package reconciliation because openvpn is EPEL-only"
+          ]
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "base_runtime_zypper_stable",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "glibc",
+            "shadow",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python3",
+            "curl",
+            "tar",
+            "iproute2",
+            "NetworkManager",
+            "logrotate",
+            "libnotify-tools",
+            "openvpn",
+            "util-linux",
+            "polkit",
+            "nftables",
+            "iptables",
+            "iputils",
+            "procps",
+            "firewalld",
+            "apparmor-utils",
+            "python311"
+          ],
+          "postcondition": "cap_base_runtime_commands",
+          "priority": 5,
+          "runtime_python": {
+            "cryptography_package": "python311-cryptography",
+            "executable": "python3.11",
+            "package": "python311"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "base_runtime_zypper_tumbleweed_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "glibc",
+            "shadow",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python3",
+            "curl",
+            "tar",
+            "iproute2",
+            "NetworkManager",
+            "logrotate",
+            "libnotify-tools",
+            "openvpn",
+            "util-linux",
+            "polkit",
+            "nftables",
+            "iptables",
+            "iputils",
+            "procps",
+            "firewalld",
+            "apparmor-utils",
+            "python313"
+          ],
+          "postcondition": "cap_base_runtime_commands",
+          "priority": 6,
+          "runtime_python": {
+            "cryptography_package": "python313-cryptography",
+            "executable": "python3.13",
+            "package": "python313"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "base_runtime_pacman_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "package_manager": "pacman",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "glibc",
+            "shadow",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python",
+            "curl",
+            "tar",
+            "iproute2",
+            "networkmanager",
+            "logrotate",
+            "libnotify",
+            "openvpn",
+            "util-linux",
+            "polkit",
+            "nftables",
+            "iptables",
+            "iputils",
+            "procps-ng"
+          ],
+          "postcondition": "cap_base_runtime_commands",
+          "priority": 7,
+          "runtime_python": {
+            "cryptography_package": "python-cryptography",
+            "executable": "python",
+            "package": "python"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          }
+        },
+        {
+          "id": "base_runtime_dnf_rhel9_with_epel_exact_centos_stream_rolling",
+          "priority": 8,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "bash",
+            "git",
+            "coreutils",
+            "findutils",
+            "grep",
+            "gawk",
+            "sed",
+            "gzip",
+            "glibc-common",
+            "shadow-utils",
+            "systemd",
+            "sudo",
+            "kmod",
+            "ca-certificates",
+            "python3",
+            "curl",
+            "tar",
+            "iproute",
+            "NetworkManager",
+            "logrotate",
+            "libnotify",
+            "openvpn",
+            "util-linux",
+            "polkit",
+            "nftables",
+            "iptables-nft",
+            "iputils",
+            "procps-ng",
+            "firewalld",
+            "systemd-resolved",
+            "python3.11"
+          ],
+          "runtime_python": {
+            "executable": "python3.11",
+            "package": "python3.11",
+            "cryptography_package": "python3.11-cryptography"
+          },
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_base_runtime_commands",
+          "evidence": [
+            "distros/fedora.sh RHEL-family branch requires EPEL before complete base runtime package reconciliation because openvpn is EPEL-only"
+          ]
+        }
+      ]
+    },
+    "dep_python_runtime": {
+      "capability_id": "cap_python310",
+      "description": "Final Python runtime package exact to family/release policy",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_apt_stable",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "python3"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 1,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "pop_24_04",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_apt_kali_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "python3"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 2,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_dnf_fedora_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "python3"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 3,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "fedora_44"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_dnf_rhel9_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "python3.11"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 4,
+          "runtime_python": {
+            "cryptography_package": "python3.11-cryptography",
+            "executable": "python3.11",
+            "package": "python3.11"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_zypper_stable",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "python311"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 5,
+          "runtime_python": {
+            "cryptography_package": "python311-cryptography",
+            "executable": "python3.11",
+            "package": "python311"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_zypper_tumbleweed_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "python313"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 6,
+          "runtime_python": {
+            "cryptography_package": "python313-cryptography",
+            "executable": "python3.13",
+            "package": "python313"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_pacman_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "package_manager": "pacman",
+          "package_names": [
+            "python"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 7,
+          "runtime_python": {
+            "cryptography_package": "python-cryptography",
+            "executable": "python",
+            "package": "python"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_runtime_dnf_rhel9_official_centos_stream_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "python3.11"
+          ],
+          "postcondition": "cap_python310",
+          "priority": 8,
+          "runtime_python": {
+            "cryptography_package": "python3.11-cryptography",
+            "executable": "python3.11",
+            "package": "python3.11"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        }
+      ]
+    },
+    "dep_python_cryptography": {
+      "capability_id": "cap_python_cryptography",
+      "description": "Python cryptography module package exact to family/release policy",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_apt_stable",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "python3-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 1,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "pop_24_04",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_apt_kali_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "python3-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 2,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_dnf_fedora_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "python3-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 3,
+          "runtime_python": {
+            "cryptography_package": "python3-cryptography",
+            "executable": "python3",
+            "package": "python3"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "fedora_44"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_dnf_rhel9_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "python3.11-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 4,
+          "runtime_python": {
+            "cryptography_package": "python3.11-cryptography",
+            "executable": "python3.11",
+            "package": "python3.11"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_zypper_stable",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "python311-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 5,
+          "runtime_python": {
+            "cryptography_package": "python311-cryptography",
+            "executable": "python3.11",
+            "package": "python311"
+          },
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_zypper_tumbleweed_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "python313-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 6,
+          "runtime_python": {
+            "cryptography_package": "python313-cryptography",
+            "executable": "python3.13",
+            "package": "python313"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_pacman_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "package_manager": "pacman",
+          "package_names": [
+            "python-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 7,
+          "runtime_python": {
+            "cryptography_package": "python-cryptography",
+            "executable": "python",
+            "package": "python"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ],
+          "id": "python_cryptography_dnf_rhel9_official_centos_stream_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "python3.11-cryptography"
+          ],
+          "postcondition": "cap_python_cryptography",
+          "priority": 8,
+          "runtime_python": {
+            "cryptography_package": "python3.11-cryptography",
+            "executable": "python3.11",
+            "package": "python3.11"
+          },
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        }
+      ]
+    },
+    "dep_polkit_runtime": {
+      "capability_id": "cap_polkit",
+      "description": "Polkit runtime package exact to family/release policy",
+      "method_chain": [
+        {
+          "id": "polkit_apt_stable",
+          "priority": 1,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "pop_24_04",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "polkitd"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_polkit",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "polkit_apt_kali_rolling",
+          "priority": 2,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "polkitd"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_polkit",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "polkit_dnf_stable",
+          "priority": 3,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "fedora_44",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "polkit"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_polkit",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "polkit_zypper_stable",
+          "priority": 4,
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "zypper",
+          "package_names": [
+            "polkit"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_polkit",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "polkit_zypper_tumbleweed_rolling",
+          "priority": 5,
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "zypper",
+          "package_names": [
+            "polkit"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_polkit",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "polkit_pacman_rolling",
+          "priority": 6,
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "pacman",
+          "package_names": [
+            "polkit"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_polkit",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "polkit_dnf_stable_centos_stream_rolling",
+          "priority": 7,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "polkit"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_polkit",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        }
+      ]
+    },
+    "dep_dns_runtime_package": {
+      "capability_id": "cap_dns_runtime_package",
+      "description": "DNS helper package exact to family/release policy",
+      "method_chain": [
+        {
+          "id": "dns_runtime_apt_stable",
+          "priority": 1,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "linuxmint_22_3",
+              "ubuntu_24_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "dnsutils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "lib/packages.sh package inventory audit",
+            "Ubuntu packages: noble dnsutils remains an installable transitional package for bind9-dnsutils"
+          ]
+        },
+        {
+          "id": "dns_runtime_apt_bind9_dnsutils_stable",
+          "priority": 2,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "bind9-dnsutils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "Ubuntu packages: resolute dnsutils is virtual and bind9-dnsutils is the installable provider",
+            "Debian trixie official APT index: dnsutils absent, bind9-dnsutils present"
+          ]
+        },
+        {
+          "id": "dns_runtime_apt_kali_rolling",
+          "priority": 3,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "dnsutils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "dns_runtime_dnf_stable",
+          "priority": 4,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "fedora_44",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "bind-utils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "dns_runtime_zypper_stable",
+          "priority": 5,
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "zypper",
+          "package_names": [
+            "bind-utils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "dns_runtime_zypper_tumbleweed_rolling",
+          "priority": 6,
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "zypper",
+          "package_names": [
+            "bind-utils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "dns_runtime_pacman_rolling",
+          "priority": 7,
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "pacman",
+          "package_names": [
+            "bind"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        },
+        {
+          "id": "dns_runtime_dnf_stable_centos_stream_rolling",
+          "priority": 8,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "bind-utils"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_dns_runtime_package",
+          "evidence": [
+            "lib/packages.sh package inventory audit"
+          ]
+        }
+      ]
+    },
+    "dep_network_manager": {
+      "capability_id": "cap_network_manager",
+      "description": "NetworkManager package for supported family exact targets",
+      "method_chain": [
+        {
+          "id": "network_manager_apt_stable_official",
+          "priority": 1,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "pop_24_04",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "network-manager"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_network_manager",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "network_manager_apt_kali_rolling_official",
+          "priority": 2,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "network-manager"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_network_manager",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "network_manager_dnf_official",
+          "priority": 3,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "fedora_44",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "NetworkManager"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_network_manager",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "network_manager_zypper_stable_official",
+          "priority": 4,
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "zypper",
+          "package_names": [
+            "NetworkManager"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_network_manager",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "network_manager_zypper_tumbleweed_rolling_official",
+          "priority": 5,
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "zypper",
+          "package_names": [
+            "NetworkManager"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_network_manager",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "network_manager_pacman_official",
+          "priority": 6,
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "pacman",
+          "package_names": [
+            "networkmanager"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_network_manager",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "network_manager_dnf_official_centos_stream_rolling",
+          "priority": 7,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "NetworkManager"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_network_manager",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        }
+      ]
+    },
+    "dep_nftables": {
+      "capability_id": "cap_nftables",
+      "description": "nftables package for exact family targets",
+      "method_chain": [
+        {
+          "id": "nftables_apt_stable_official",
+          "priority": 1,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "pop_24_04",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "nftables"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_nftables",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "nftables_apt_kali_rolling_official",
+          "priority": 2,
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "apt",
+          "package_names": [
+            "nftables"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_nftables",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "nftables_dnf_official",
+          "priority": 3,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "fedora_44",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "nftables"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_nftables",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "nftables_zypper_stable_official",
+          "priority": 4,
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "zypper",
+          "package_names": [
+            "nftables"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_nftables",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "nftables_zypper_tumbleweed_rolling_official",
+          "priority": 5,
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "zypper",
+          "package_names": [
+            "nftables"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_nftables",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "nftables_pacman_official",
+          "priority": 6,
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "pacman",
+          "package_names": [
+            "nftables"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_nftables",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        },
+        {
+          "id": "nftables_dnf_official_centos_stream_rolling",
+          "priority": 7,
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          },
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "package_manager": "dnf",
+          "package_names": [
+            "nftables"
+          ],
+          "implementation_status": "not_implemented",
+          "postcondition": "cap_nftables",
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ]
+        }
+      ]
+    },
+    "dep_openvpn_runtime": {
+      "capability_id": "proto_openvpn_runtime",
+      "description": "OpenVPN runtime package exact to family target",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "id": "openvpn_apt_stable_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 1,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "linuxmint_22_3",
+              "pop_24_04",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "id": "openvpn_apt_kali_rolling_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "apt_official_package",
+          "package_manager": "apt",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 2,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "id": "openvpn_dnf_fedora_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 3,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "fedora_44"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "compatible_targets": [
+            {
+              "series": "epel9",
+              "target_id": "almalinux_9"
+            },
+            {
+              "series": "epel9",
+              "target_id": "rhel_9"
+            },
+            {
+              "series": "epel9",
+              "target_id": "rocky_9"
+            }
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "exposed_package_names": [
+            "openvpn"
+          ],
+          "id": "openvpn_epel_rhel9_exact",
+          "implementation_status": "not_implemented",
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_prerequisite_exact",
+          "package_manager": "dnf",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 4,
+          "provider": "fedora_epel",
+          "repository": {
+            "id": "epel_9",
+            "series": "epel9",
+            "url": "https://dl.fedoraproject.org/pub/epel/"
+          },
+          "repository_package": "epel-release",
+          "signing_key_provenance": "Fedora EPEL 9 trust is bootstrapped by epel-release installed from the target system's already-trusted base repositories; epel-release carries the EPEL repository GPG key and repo configuration. Fedora publishes the EPEL 9 package signing key as keyid 8A3872BF3228467C, fingerprint FF8A D134 4597 106E CE81 3B91 8A38 72BF 3228 467C, on fedoraproject.org/security.",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "rhel_9",
+              "rocky_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "id": "openvpn_zypper_stable_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 5,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "id": "openvpn_zypper_tumbleweed_rolling_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "zypper_official_package",
+          "package_manager": "zypper",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 6,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "id": "openvpn_pacman_official",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "pacman_official_package",
+          "package_manager": "pacman",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 7,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "evidence": [
+            "lib/packages.sh DISTRO_BASE_PACKAGES audit"
+          ],
+          "id": "openvpn_epel_rhel9_exact_centos_stream_rolling",
+          "implementation_status": "not_implemented",
+          "kind": "official_package_exact",
+          "method_ref": "dnf_official_package",
+          "package_manager": "dnf",
+          "package_names": [
+            "openvpn"
+          ],
+          "postcondition": "proto_openvpn_runtime",
+          "priority": 8,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        }
+      ]
+    },
+    "dep_sing_box_runtime": {
+      "capability_id": "proto_sing_box_runtime",
+      "description": "sing-box runtime artifact; artifact is selected but installation stays future transactional work",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "assets": [
+            {
+              "architecture": "x86_64",
+              "archive_or_binary_kind": "tar.gz",
+              "asset_name": "sing-box-1.13.14-linux-amd64-glibc.tar.gz",
+              "expected_executable": "sing-box",
+              "official_download_base": "https://github.com/SagerNet/sing-box/releases/download/v1.13.14",
+              "sha256": "aae9172317c61760aae3dafcde889b2e51b7ea590c40d2b3c7ccdeae14b361b6"
+            },
+            {
+              "architecture": "aarch64",
+              "archive_or_binary_kind": "tar.gz",
+              "asset_name": "sing-box-1.13.14-linux-arm64.tar.gz",
+              "expected_executable": "sing-box",
+              "official_download_base": "https://github.com/SagerNet/sing-box/releases/download/v1.13.14",
+              "sha256": "4742df6a4314e8ecc41736849fca6d73b8f9e91b6e8b06ee794ff17ba180579e"
+            }
+          ],
+          "evidence": [
+            "https://github.com/SagerNet/sing-box",
+            "lib/singbox.sh upstream audit"
+          ],
+          "expected_executable": "sing-box",
+          "expected_files": [
+            "sing-box"
+          ],
+          "id": "sing_box_official_artifact_stable",
+          "implementation_status": "not_implemented",
+          "integrity": {
+            "aarch64": "4742df6a4314e8ecc41736849fca6d73b8f9e91b6e8b06ee794ff17ba180579e",
+            "type": "sha256",
+            "x86_64": "aae9172317c61760aae3dafcde889b2e51b7ea590c40d2b3c7ccdeae14b361b6"
+          },
+          "kind": "official_artifact_pinned",
+          "method_ref": "official_artifact_pinned",
+          "official_download_base": "https://github.com/SagerNet/sing-box/releases/download/v1.13.14",
+          "official_provenance": "https://github.com/SagerNet/sing-box",
+          "postcondition": "proto_sing_box_runtime",
+          "priority": 1,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "debian_13",
+              "fedora_44",
+              "linuxmint_22_3",
+              "opensuse_leap_15_6",
+              "rhel_9",
+              "rocky_9",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "arch_pacman",
+              "debian_apt",
+              "redhat_dnf",
+              "suse_zypper",
+              "ubuntu_apt"
+            ]
+          },
+          "version": "1.13.14"
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "assets": [
+            {
+              "architecture": "x86_64",
+              "archive_or_binary_kind": "tar.gz",
+              "asset_name": "sing-box-1.13.14-linux-amd64-glibc.tar.gz",
+              "expected_executable": "sing-box",
+              "official_download_base": "https://github.com/SagerNet/sing-box/releases/download/v1.13.14",
+              "sha256": "aae9172317c61760aae3dafcde889b2e51b7ea590c40d2b3c7ccdeae14b361b6"
+            },
+            {
+              "architecture": "aarch64",
+              "archive_or_binary_kind": "tar.gz",
+              "asset_name": "sing-box-1.13.14-linux-arm64.tar.gz",
+              "expected_executable": "sing-box",
+              "official_download_base": "https://github.com/SagerNet/sing-box/releases/download/v1.13.14",
+              "sha256": "4742df6a4314e8ecc41736849fca6d73b8f9e91b6e8b06ee794ff17ba180579e"
+            }
+          ],
+          "evidence": [
+            "https://github.com/SagerNet/sing-box",
+            "lib/singbox.sh upstream audit"
+          ],
+          "expected_executable": "sing-box",
+          "expected_files": [
+            "sing-box"
+          ],
+          "id": "sing_box_official_artifact_rolling",
+          "implementation_status": "not_implemented",
+          "integrity": {
+            "aarch64": "4742df6a4314e8ecc41736849fca6d73b8f9e91b6e8b06ee794ff17ba180579e",
+            "type": "sha256",
+            "x86_64": "aae9172317c61760aae3dafcde889b2e51b7ea590c40d2b3c7ccdeae14b361b6"
+          },
+          "kind": "official_artifact_pinned",
+          "method_ref": "official_artifact_pinned",
+          "official_download_base": "https://github.com/SagerNet/sing-box/releases/download/v1.13.14",
+          "official_provenance": "https://github.com/SagerNet/sing-box",
+          "postcondition": "proto_sing_box_runtime",
+          "priority": 2,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "kali",
+              "manjaro",
+              "opensuse_tumbleweed",
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman",
+              "debian_apt",
+              "redhat_dnf",
+              "suse_zypper",
+              "ubuntu_apt"
+            ]
+          },
+          "version": "1.13.14"
+        }
+      ]
+    },
+    "dep_ck_client_runtime": {
+      "capability_id": "proto_ck_client_runtime",
+      "description": "Cloak ck-client runtime artifact; artifact is selected but installation stays future transactional work",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "assets": [
+            {
+              "architecture": "x86_64",
+              "archive_or_binary_kind": "binary",
+              "asset_name": "ck-client-linux-amd64-v2.12.0",
+              "expected_executable": "ck-client",
+              "official_download_base": "https://github.com/cbeuw/Cloak/releases/download/v2.12.0",
+              "sha256": "ceabde7e13cf0e9dd7f53f811d6f24c1246755911b06aa40fb541041016348e3"
+            },
+            {
+              "architecture": "aarch64",
+              "archive_or_binary_kind": "binary",
+              "asset_name": "ck-client-linux-arm64-v2.12.0",
+              "expected_executable": "ck-client",
+              "official_download_base": "https://github.com/cbeuw/Cloak/releases/download/v2.12.0",
+              "sha256": "4aa5e9a16864caed73e374fe87a5bc853043aa2c06fbd89e329ff1f623bf5f71"
+            }
+          ],
+          "evidence": [
+            "https://github.com/cbeuw/Cloak",
+            "lib/cloak.sh upstream audit"
+          ],
+          "expected_executable": "ck-client",
+          "expected_files": [
+            "ck-client"
+          ],
+          "id": "ck_client_official_artifact_stable",
+          "implementation_status": "not_implemented",
+          "integrity": {
+            "aarch64": "4aa5e9a16864caed73e374fe87a5bc853043aa2c06fbd89e329ff1f623bf5f71",
+            "type": "sha256",
+            "x86_64": "ceabde7e13cf0e9dd7f53f811d6f24c1246755911b06aa40fb541041016348e3"
+          },
+          "kind": "official_artifact_pinned",
+          "method_ref": "official_artifact_pinned",
+          "official_download_base": "https://github.com/cbeuw/Cloak/releases/download/v2.12.0",
+          "official_provenance": "https://github.com/cbeuw/Cloak",
+          "postcondition": "proto_ck_client_runtime",
+          "priority": 1,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "almalinux_9",
+              "debian_13",
+              "fedora_44",
+              "linuxmint_22_3",
+              "opensuse_leap_15_6",
+              "rhel_9",
+              "rocky_9",
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "arch_pacman",
+              "debian_apt",
+              "redhat_dnf",
+              "suse_zypper",
+              "ubuntu_apt"
+            ]
+          },
+          "version": "2.12.0"
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "assets": [
+            {
+              "architecture": "x86_64",
+              "archive_or_binary_kind": "binary",
+              "asset_name": "ck-client-linux-amd64-v2.12.0",
+              "expected_executable": "ck-client",
+              "official_download_base": "https://github.com/cbeuw/Cloak/releases/download/v2.12.0",
+              "sha256": "ceabde7e13cf0e9dd7f53f811d6f24c1246755911b06aa40fb541041016348e3"
+            },
+            {
+              "architecture": "aarch64",
+              "archive_or_binary_kind": "binary",
+              "asset_name": "ck-client-linux-arm64-v2.12.0",
+              "expected_executable": "ck-client",
+              "official_download_base": "https://github.com/cbeuw/Cloak/releases/download/v2.12.0",
+              "sha256": "4aa5e9a16864caed73e374fe87a5bc853043aa2c06fbd89e329ff1f623bf5f71"
+            }
+          ],
+          "evidence": [
+            "https://github.com/cbeuw/Cloak",
+            "lib/cloak.sh upstream audit"
+          ],
+          "expected_executable": "ck-client",
+          "expected_files": [
+            "ck-client"
+          ],
+          "id": "ck_client_official_artifact_rolling",
+          "implementation_status": "not_implemented",
+          "integrity": {
+            "aarch64": "4aa5e9a16864caed73e374fe87a5bc853043aa2c06fbd89e329ff1f623bf5f71",
+            "type": "sha256",
+            "x86_64": "ceabde7e13cf0e9dd7f53f811d6f24c1246755911b06aa40fb541041016348e3"
+          },
+          "kind": "official_artifact_pinned",
+          "method_ref": "official_artifact_pinned",
+          "official_download_base": "https://github.com/cbeuw/Cloak/releases/download/v2.12.0",
+          "official_provenance": "https://github.com/cbeuw/Cloak",
+          "postcondition": "proto_ck_client_runtime",
+          "priority": 2,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "kali",
+              "manjaro",
+              "opensuse_tumbleweed",
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman",
+              "debian_apt",
+              "redhat_dnf",
+              "suse_zypper",
+              "ubuntu_apt"
+            ]
+          },
+          "version": "2.12.0"
+        }
+      ]
+    },
+    "dep_amneziawg_runtime": {
+      "capability_id": "proto_amneziawg_runtime",
+      "description": "AmneziaWG userspace runtime: exact external package where proven, otherwise pinned transactional source build for awg, awg-quick and amneziawg-go",
+      "method_chain": [
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "compatible_targets": [
+            {
+              "series": "noble",
+              "target_id": "ubuntu_24_04"
+            }
+          ],
+          "evidence": [
+            "distros/ubuntu.sh PPA series audit: noble only explicitly represented"
+          ],
+          "id": "amneziawg_ubuntu_ppa_exact",
+          "implementation_status": "not_implemented",
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_exact",
+          "package_manager": "apt",
+          "package_names": [
+            "amneziawg"
+          ],
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 1,
+          "provider": "amnezia",
+          "repository": {
+            "id": "amnezia_ubuntu_ppa_noble",
+            "series": "noble",
+            "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
+          },
+          "signing_key_provenance": "Launchpad PPA signing key for amnezia/ppa (keyid 57290828, retrieved from keyserver.ubuntu.com)",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "ubuntu_24_04",
+              "ubuntu_26_04"
+            ],
+            "technical_families": [
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "compatible_targets": [
+            {
+              "own_release": "linuxmint_22_3",
+              "series": "noble",
+              "target_id": "ubuntu_24_04"
+            }
+          ],
+          "evidence": [
+            "Linux Mint 22.3 UBUNTU_CODENAME=noble mapping to ubuntu_24_04 authorized by derivative mapping"
+          ],
+          "id": "amneziawg_mint_base_ppa_exact",
+          "implementation_status": "not_implemented",
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_exact",
+          "package_manager": "apt",
+          "package_names": [
+            "amneziawg"
+          ],
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 2,
+          "provider": "amnezia",
+          "repository": {
+            "id": "amnezia_ubuntu_ppa_noble_for_mint",
+            "series": "noble",
+            "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
+          },
+          "signing_key_provenance": "Launchpad PPA signing key for amnezia/ppa (keyid 57290828, retrieved from keyserver.ubuntu.com)",
+          "target_identity": "mapped_base_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "linuxmint_22_3"
+            ],
+            "technical_families": [
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "compatible_targets": [],
+          "evidence": [
+            "distros/debian.sh legacy focal PPA exists but lacks Debian 13 exact compatibility evidence"
+          ],
+          "id": "amneziawg_debian_legacy_focal_ppa",
+          "implementation_status": "not_implemented",
+          "kind": "external_repo_exact",
+          "method_ref": "external_repo_exact",
+          "package_manager": "apt",
+          "package_names": [
+            "amneziawg"
+          ],
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 3,
+          "provider": "amnezia",
+          "repository": {
+            "id": "amnezia_ubuntu_ppa_focal_legacy",
+            "series": "focal",
+            "url": "https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu"
+          },
+          "signing_key_provenance": "Launchpad PPA signing key for amnezia/ppa (keyid 57290828, retrieved from keyserver.ubuntu.com)",
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13"
+            ],
+            "technical_families": [
+              "debian_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "golang-go",
+            "git",
+            "make",
+            "gcc"
+          ],
+          "components": [
+            {
+              "build_dependencies": [
+                "golang-go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_tools",
+              "expected_outputs": [
+                "awg",
+                "awg-quick"
+              ],
+              "postcondition": "amneziawg_tools_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+              "resolution": "latest_official_release"
+            },
+            {
+              "build_dependencies": [
+                "golang-go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_transport",
+              "expected_outputs": [
+                "amneziawg-go"
+              ],
+              "postcondition": "amneziawg_transport_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+              "resolution": "latest_official_release"
+            }
+          ],
+          "evidence": [
+            "Task 23.7.5.6b source-build hardening resolves the latest official AmneziaWG release (tag plus exact commit) at execution time, and the manifest no longer freezes a tag or revision"
+          ],
+          "expected_outputs": [
+            "awg",
+            "awg-quick",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_apt_stable_future",
+          "implementation_status": "implemented",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 4,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "debian_13",
+              "ubuntu_24_04",
+              "ubuntu_26_04",
+              "linuxmint_22_3"
+            ],
+            "technical_families": [
+              "debian_apt",
+              "ubuntu_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "golang",
+            "git",
+            "make",
+            "gcc"
+          ],
+          "components": [
+            {
+              "build_dependencies": [
+                "golang",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_tools",
+              "expected_outputs": [
+                "awg",
+                "awg-quick"
+              ],
+              "postcondition": "amneziawg_tools_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+              "resolution": "latest_official_release"
+            },
+            {
+              "build_dependencies": [
+                "golang",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_transport",
+              "expected_outputs": [
+                "amneziawg-go"
+              ],
+              "postcondition": "amneziawg_transport_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+              "resolution": "latest_official_release"
+            }
+          ],
+          "evidence": [
+            "Task 23.7.5.6b source-build hardening resolves the latest official AmneziaWG release (tag plus exact commit) at execution time, and the manifest no longer freezes a tag or revision"
+          ],
+          "expected_outputs": [
+            "awg",
+            "awg-quick",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_dnf_stable_future",
+          "implementation_status": "implemented",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 5,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "fedora_44",
+              "rocky_9",
+              "almalinux_9",
+              "rhel_9"
+            ],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "go",
+            "git",
+            "make",
+            "gcc"
+          ],
+          "components": [
+            {
+              "build_dependencies": [
+                "go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_tools",
+              "expected_outputs": [
+                "awg",
+                "awg-quick"
+              ],
+              "postcondition": "amneziawg_tools_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+              "resolution": "latest_official_release"
+            },
+            {
+              "build_dependencies": [
+                "go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_transport",
+              "expected_outputs": [
+                "amneziawg-go"
+              ],
+              "postcondition": "amneziawg_transport_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+              "resolution": "latest_official_release"
+            }
+          ],
+          "evidence": [
+            "Task 23.7.5.6b source-build hardening resolves the latest official AmneziaWG release (tag plus exact commit) at execution time, and the manifest no longer freezes a tag or revision"
+          ],
+          "expected_outputs": [
+            "awg",
+            "awg-quick",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_zypper_stable_future",
+          "implementation_status": "implemented",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 6,
+          "target_identity": "resolved_release",
+          "target_scope": {
+            "rolling_distributions": [],
+            "stable_releases": [
+              "opensuse_leap_15_6"
+            ],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "golang-go",
+            "git",
+            "make",
+            "gcc"
+          ],
+          "components": [
+            {
+              "build_dependencies": [
+                "golang-go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_tools",
+              "expected_outputs": [
+                "awg",
+                "awg-quick"
+              ],
+              "postcondition": "amneziawg_tools_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+              "resolution": "latest_official_release"
+            },
+            {
+              "build_dependencies": [
+                "golang-go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_transport",
+              "expected_outputs": [
+                "amneziawg-go"
+              ],
+              "postcondition": "amneziawg_transport_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+              "resolution": "latest_official_release"
+            }
+          ],
+          "evidence": [
+            "Task 23.7.5.6b source-build hardening resolves the latest official AmneziaWG release (tag plus exact commit) at execution time, and the manifest no longer freezes a tag or revision"
+          ],
+          "expected_outputs": [
+            "awg",
+            "awg-quick",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_apt_kali_rolling_future",
+          "implementation_status": "implemented",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 7,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "kali"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "debian_apt"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "go",
+            "git",
+            "make",
+            "gcc"
+          ],
+          "components": [
+            {
+              "build_dependencies": [
+                "go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_tools",
+              "expected_outputs": [
+                "awg",
+                "awg-quick"
+              ],
+              "postcondition": "amneziawg_tools_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+              "resolution": "latest_official_release"
+            },
+            {
+              "build_dependencies": [
+                "go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_transport",
+              "expected_outputs": [
+                "amneziawg-go"
+              ],
+              "postcondition": "amneziawg_transport_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+              "resolution": "latest_official_release"
+            }
+          ],
+          "evidence": [
+            "Task 23.7.5.6b source-build hardening resolves the latest official AmneziaWG release (tag plus exact commit) at execution time, and the manifest no longer freezes a tag or revision"
+          ],
+          "expected_outputs": [
+            "awg",
+            "awg-quick",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_zypper_tumbleweed_rolling_future",
+          "implementation_status": "implemented",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 8,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "opensuse_tumbleweed"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "suse_zypper"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "go",
+            "git",
+            "make",
+            "gcc"
+          ],
+          "components": [
+            {
+              "build_dependencies": [
+                "go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_tools",
+              "expected_outputs": [
+                "awg",
+                "awg-quick"
+              ],
+              "postcondition": "amneziawg_tools_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+              "resolution": "latest_official_release"
+            },
+            {
+              "build_dependencies": [
+                "go",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_transport",
+              "expected_outputs": [
+                "amneziawg-go"
+              ],
+              "postcondition": "amneziawg_transport_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+              "resolution": "latest_official_release"
+            }
+          ],
+          "evidence": [
+            "Task 23.7.5.6b source-build hardening resolves the latest official AmneziaWG release (tag plus exact commit) at execution time, and the manifest no longer freezes a tag or revision"
+          ],
+          "expected_outputs": [
+            "awg",
+            "awg-quick",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_pacman_rolling_future",
+          "implementation_status": "implemented",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 9,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "arch",
+              "cachyos",
+              "manjaro"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "arch_pacman"
+            ]
+          }
+        },
+        {
+          "architectures": [
+            "x86_64",
+            "aarch64"
+          ],
+          "build_dependencies": [
+            "golang",
+            "git",
+            "make",
+            "gcc"
+          ],
+          "components": [
+            {
+              "build_dependencies": [
+                "golang",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_tools",
+              "expected_outputs": [
+                "awg",
+                "awg-quick"
+              ],
+              "postcondition": "amneziawg_tools_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-tools",
+              "resolution": "latest_official_release"
+            },
+            {
+              "build_dependencies": [
+                "golang",
+                "git",
+                "make",
+                "gcc"
+              ],
+              "component_id": "amneziawg_transport",
+              "expected_outputs": [
+                "amneziawg-go"
+              ],
+              "postcondition": "amneziawg_transport_present",
+              "repository": "https://github.com/amnezia-vpn/amneziawg-go",
+              "resolution": "latest_official_release"
+            }
+          ],
+          "evidence": [
+            "Task 23.7.5.6b source-build hardening resolves the latest official AmneziaWG release (tag plus exact commit) at execution time, and the manifest no longer freezes a tag or revision"
+          ],
+          "expected_outputs": [
+            "awg",
+            "awg-quick",
+            "amneziawg-go"
+          ],
+          "id": "amneziawg_pinned_source_build_dnf_stable_centos_stream_rolling",
+          "implementation_status": "implemented",
+          "kind": "pinned_source_build",
+          "method_ref": "pinned_source_build",
+          "official_provenance": "https://github.com/amnezia-vpn",
+          "postcondition": "proto_amneziawg_runtime",
+          "priority": 10,
+          "target_identity": "rolling_distribution",
+          "target_scope": {
+            "rolling_distributions": [
+              "centos_stream"
+            ],
+            "stable_releases": [],
+            "technical_families": [
+              "redhat_dnf"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "distributions": {
+    "almalinux": {
+      "id": "almalinux",
+      "lineage": {
+        "family_inference_allowed": true,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "almalinux_9"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "arch": {
+      "id": "arch",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": "2026-08-15T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "arch_pacman"
+    },
+    "cachyos": {
+      "id": "cachyos",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": "2026-08-16T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "arch_pacman"
+    },
+    "centos_stream": {
+      "id": "centos_stream",
+      "lineage": {
+        "family_inference_allowed": true,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "os_release_ids": [
+        "centos"
+      ],
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": "2026-09-20T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "redhat_dnf"
+    },
+    "debian": {
+      "id": "debian",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "debian_13"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "debian_apt"
+    },
+    "fedora": {
+      "id": "fedora",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "fedora_44"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "kali": {
+      "id": "kali",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": "2026-09-14T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "debian_apt"
+    },
+    "linuxmint": {
+      "id": "linuxmint",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "linuxmint_22_3"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "ubuntu_apt"
+    },
+    "manjaro": {
+      "id": "manjaro",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": "2026-09-18T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "arch_pacman"
+    },
+    "pop": {
+      "id": "pop",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "pop_24_04"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "ubuntu_apt"
+    },
+    "opensuse_leap": {
+      "id": "opensuse_leap",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "opensuse_leap_15_6"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "suse_zypper"
+    },
+    "opensuse_tumbleweed": {
+      "id": "opensuse_tumbleweed",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "rolling": {
+          "eol_or_withdrawn": false,
+          "evidence_expiry_seconds": 31536000,
+          "expressly_excluded": false,
+          "last_validated": "2026-09-10T00:00:00Z",
+          "meets_technical_floor": true
+        }
+      },
+      "release_model": "rolling",
+      "technical_family": "suse_zypper"
+    },
+    "rhel": {
+      "id": "rhel",
+      "lineage": {
+        "family_inference_allowed": true,
+        "has_own_evidence": false,
+        "is_derivative": true
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [],
+          "excluded_releases": [],
+          "pending_releases": [
+            "rhel_9"
+          ]
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "rocky": {
+      "id": "rocky",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "rocky_9"
+          ],
+          "excluded_releases": [],
+          "pending_releases": []
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "redhat_dnf"
+    },
+    "ubuntu": {
+      "id": "ubuntu",
+      "lineage": {
+        "family_inference_allowed": false,
+        "has_own_evidence": true,
+        "is_derivative": false
+      },
+      "policy": {
+        "inherits_family_support": false,
+        "stable": {
+          "admitted_releases": [
+            "ubuntu_24_04"
+          ],
+          "excluded_releases": [],
+          "pending_releases": [
+            "ubuntu_26_04"
+          ]
+        }
+      },
+      "release_model": "stable",
+      "technical_family": "ubuntu_apt"
+    }
+  },
+  "metadata": {
+    "bootstrap_python_min": "3.6",
+    "bootstrap_python_runtime_note": "Python 3.6 syntax compatibility verified by AST parse; independent Python 3.6 runtime execution not yet verified on this host.",
+    "bootstrap_python_runtime_verified": false,
+    "bootstrap_python_syntax_verified": true,
+    "max_manifest_bytes": 1048576,
+    "source_authority": "Phase 23.7.5 design, Master Plan, repo certification docs, and external project memory as of 2026-07-26"
+  },
+  "protocols": {
+    "amneziawg": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_amneziawg_runtime"
+      ]
+    },
+    "http": {
+      "category": "compatibility",
+      "evidence_policy": "Useful real HTTP proxy traffic required",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "hysteria2": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "openvpn": {
+      "category": "formal_non_green",
+      "evidence_policy": "No false green: runtime/listener/TLS without egress remains non-green",
+      "required_protocol_capabilities": [
+        "proto_openvpn_runtime"
+      ]
+    },
+    "openvpn_cloak": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_openvpn_runtime",
+        "proto_ck_client_runtime"
+      ]
+    },
+    "shadowsocks": {
+      "category": "formal_non_green",
+      "evidence_policy": "No false green: runtime/listener without useful egress remains non-green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "socks": {
+      "category": "compatibility",
+      "evidence_policy": "Useful real SOCKS traffic required",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "trojan": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "tuic": {
+      "category": "compatibility",
+      "evidence_policy": "Useful real traffic required",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "vless": {
+      "category": "resilient",
+      "evidence_policy": "Real TUN, owned SOCKS and owned HTTP egress required for a green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "vmess": {
+      "category": "compatibility",
+      "evidence_policy": "Useful real traffic required",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    },
+    "wireguard": {
+      "category": "formal_non_green",
+      "evidence_policy": "No false green: process/TUN/handshake without egress remains non-green",
+      "required_protocol_capabilities": [
+        "proto_sing_box_runtime"
+      ]
+    }
+  },
+  "provisioning_methods": {
+    "apt_official_package": {
+      "exact_release_required": true,
+      "kind": "official_package_exact",
+      "mutates_system": true,
+      "provenance": "Distribution official apt repository for the exact release"
+    },
+    "dnf_official_package": {
+      "exact_release_required": true,
+      "kind": "official_package_exact",
+      "mutates_system": true,
+      "provenance": "Distribution official dnf repository for the exact release"
+    },
+    "external_repo_exact": {
+      "exact_release_required": true,
+      "kind": "external_repo_exact",
+      "mutates_system": true,
+      "provenance": "External repository explicitly compatible with the exact target release"
+    },
+    "external_repo_prerequisite_exact": {
+      "exact_release_required": true,
+      "kind": "external_repo_exact",
+      "mutates_system": true,
+      "provenance": "External repository prerequisite declared exactly; execution belongs to transactional provisioning"
+    },
+    "official_artifact_pinned": {
+      "exact_release_required": true,
+      "kind": "official_artifact_pinned",
+      "mutates_system": true,
+      "provenance": "Official artifact with pinned version and integrity verification"
+    },
+    "pacman_official_package": {
+      "exact_release_required": true,
+      "kind": "official_package_exact",
+      "mutates_system": true,
+      "provenance": "Distribution official pacman repository"
+    },
+    "pinned_source_build": {
+      "exact_release_required": true,
+      "kind": "pinned_source_build",
+      "mutates_system": true,
+      "provenance": "Pinned source build with integrity, installed-file manifest, rollback and uninstall"
+    },
+    "zypper_official_package": {
+      "exact_release_required": true,
+      "kind": "official_package_exact",
+      "mutates_system": true,
+      "provenance": "Distribution official zypper repository for the exact release"
+    }
+  },
+  "releases": {
+    "almalinux_9": {
+      "distribution": "almalinux",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_almalinux_9"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "9.0",
+        "9.1",
+        "9.2",
+        "9.3",
+        "9.4",
+        "9.5",
+        "9.6",
+        "9.7",
+        "9.8"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "9"
+    },
+    "debian_13": {
+      "codename": "trixie",
+      "distribution": "debian",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_debian_13"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "13"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "13.6"
+    },
+    "fedora_44": {
+      "distribution": "fedora",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_fedora_44"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "44"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "44"
+    },
+    "linuxmint_22_3": {
+      "codename": "zena",
+      "distribution": "linuxmint",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_linuxmint_22_3"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "22.3"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "22.3"
+    },
+    "opensuse_leap_15_6": {
+      "distribution": "opensuse_leap",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_opensuse_leap_15_6"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "15.6"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "15.6"
+    },
+    "rhel_9": {
+      "distribution": "rhel",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "9"
+      ],
+      "policy_state": "pending_evaluation",
+      "vendor_maintained": true,
+      "version": "9"
+    },
+    "pop_24_04": {
+      "codename": "noble",
+      "distribution": "pop",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_pop_24_04"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "24.04"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "24.04"
+    },
+    "rocky_9": {
+      "distribution": "rocky",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_rocky_9"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "9.0",
+        "9.1",
+        "9.2",
+        "9.3",
+        "9.4",
+        "9.5",
+        "9.6",
+        "9.7",
+        "9.8"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "9"
+    },
+    "ubuntu_24_04": {
+      "codename": "noble",
+      "distribution": "ubuntu",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [
+        "cert_ubuntu_24_04"
+      ],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "24.04"
+      ],
+      "policy_state": "admitted",
+      "vendor_maintained": true,
+      "version": "24.04.4"
+    },
+    "ubuntu_26_04": {
+      "codename": "resolute",
+      "distribution": "ubuntu",
+      "eol_or_withdrawn": false,
+      "evidence_refs": [],
+      "meets_technical_floor": true,
+      "os_release_version_ids": [
+        "26.04"
+      ],
+      "policy_state": "pending_evaluation",
+      "vendor_maintained": true,
+      "version": "26.04"
+    }
+  },
+  "schema_version": "1.0.0",
+  "technical_families": {
+    "arch_pacman": {
+      "adapter": "arch",
+      "common_features": [
+        "systemd",
+        "pacman",
+        "nftables"
+      ],
+      "core_capabilities": [
+        "cap_systemd",
+        "cap_network_manager",
+        "cap_dns_backend",
+        "cap_tun",
+        "cap_nftables",
+        "cap_policy_routing",
+        "cap_kernel",
+        "cap_architecture",
+        "cap_python310",
+        "cap_dns_runtime_package",
+        "cap_base_runtime_commands",
+        "cap_python_cryptography",
+        "cap_package_manager",
+        "cap_sudo",
+        "cap_polkit",
+        "cap_persistence",
+        "cap_rollback"
+      ],
+      "package_manager": "pacman",
+      "provisioning_methods": [
+        "pacman_official_package",
+        "official_artifact_pinned",
+        "pinned_source_build"
+      ]
+    },
+    "debian_apt": {
+      "adapter": "debian",
+      "common_features": [
+        "systemd",
+        "apt",
+        "nftables"
+      ],
+      "core_capabilities": [
+        "cap_systemd",
+        "cap_network_manager",
+        "cap_dns_backend",
+        "cap_tun",
+        "cap_nftables",
+        "cap_policy_routing",
+        "cap_kernel",
+        "cap_architecture",
+        "cap_python310",
+        "cap_dns_runtime_package",
+        "cap_base_runtime_commands",
+        "cap_python_cryptography",
+        "cap_package_manager",
+        "cap_sudo",
+        "cap_polkit",
+        "cap_persistence",
+        "cap_rollback",
+        "cap_apparmor"
+      ],
+      "package_manager": "apt",
+      "provisioning_methods": [
+        "apt_official_package",
+        "external_repo_exact",
+        "official_artifact_pinned",
+        "pinned_source_build"
+      ]
+    },
+    "redhat_dnf": {
+      "adapter": "fedora",
+      "common_features": [
+        "systemd",
+        "dnf",
+        "selinux",
+        "firewalld",
+        "nftables"
+      ],
+      "core_capabilities": [
+        "cap_systemd",
+        "cap_network_manager",
+        "cap_dns_backend",
+        "cap_tun",
+        "cap_nftables",
+        "cap_policy_routing",
+        "cap_kernel",
+        "cap_architecture",
+        "cap_python310",
+        "cap_dns_runtime_package",
+        "cap_base_runtime_commands",
+        "cap_python_cryptography",
+        "cap_package_manager",
+        "cap_sudo",
+        "cap_polkit",
+        "cap_persistence",
+        "cap_rollback",
+        "cap_selinux",
+        "cap_firewalld"
+      ],
+      "package_manager": "dnf",
+      "provisioning_methods": [
+        "dnf_official_package",
+        "external_repo_exact",
+        "external_repo_prerequisite_exact",
+        "official_artifact_pinned",
+        "pinned_source_build"
+      ]
+    },
+    "suse_zypper": {
+      "adapter": "opensuse",
+      "common_features": [
+        "systemd",
+        "zypper",
+        "apparmor",
+        "firewalld",
+        "nftables"
+      ],
+      "core_capabilities": [
+        "cap_systemd",
+        "cap_network_manager",
+        "cap_dns_backend",
+        "cap_tun",
+        "cap_nftables",
+        "cap_policy_routing",
+        "cap_kernel",
+        "cap_architecture",
+        "cap_python310",
+        "cap_dns_runtime_package",
+        "cap_base_runtime_commands",
+        "cap_python_cryptography",
+        "cap_package_manager",
+        "cap_sudo",
+        "cap_polkit",
+        "cap_persistence",
+        "cap_rollback",
+        "cap_apparmor",
+        "cap_firewalld"
+      ],
+      "package_manager": "zypper",
+      "provisioning_methods": [
+        "zypper_official_package",
+        "official_artifact_pinned",
+        "pinned_source_build"
+      ]
+    },
+    "ubuntu_apt": {
+      "adapter": "ubuntu",
+      "common_features": [
+        "systemd",
+        "apt",
+        "nftables"
+      ],
+      "core_capabilities": [
+        "cap_systemd",
+        "cap_network_manager",
+        "cap_dns_backend",
+        "cap_tun",
+        "cap_nftables",
+        "cap_policy_routing",
+        "cap_kernel",
+        "cap_architecture",
+        "cap_python310",
+        "cap_dns_runtime_package",
+        "cap_base_runtime_commands",
+        "cap_python_cryptography",
+        "cap_package_manager",
+        "cap_sudo",
+        "cap_polkit",
+        "cap_persistence",
+        "cap_rollback",
+        "cap_apparmor"
+      ],
+      "package_manager": "apt",
+      "provisioning_methods": [
+        "apt_official_package",
+        "external_repo_exact",
+        "official_artifact_pinned",
+        "pinned_source_build"
+      ]
+    }
+  },
+  "validation_metadata": {
+    "certification_review_policy": {
+      "review_due_seconds": 28908000,
+      "review_overdue_seconds": 31536000
+    },
+    "doc_generation": {
+      "public_claims_generated": true,
+      "reason": "Task 23.7.5.12 owns public documentation generation"
+    },
+    "per_release_ci": {
+      "almalinux_9": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "debian_13": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "fedora_44": {
+        "evidence": "L2 Compatibility Matrix CI run 32353570891 green on HEAD 27620d2 (2026-08-20); field matrix evidence at SHA 98c443893d385cb5fa9cdf6f93db3470742fd6725af413a4e93fec7f1bbbf31b",
+        "l1_l2_green": true,
+        "status": "green"
+      },
+      "linuxmint_22_3": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "opensuse_leap_15_6": {
+        "evidence": "L2 Compatibility Matrix CI run 34140256789 green on HEAD 7939411 (2026-09-07); L2 field lifecycle CLOSED/APPROVED on field-host-1 (runtime cb41420)",
+        "l1_l2_green": true,
+        "status": "green"
+      },
+      "pop_24_04": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "rhel_9": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "rocky_9": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "ubuntu_24_04": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      },
+      "ubuntu_26_04": {
+        "evidence": null,
+        "l1_l2_green": false,
+        "status": "not_run"
+      }
+    },
+    "repository_ci": {
+      "evidence": "Task closure records before Phase 23.7.5.3",
+      "latest_known_green": true,
+      "scope": "general repository CI; not a per-release L1/L2 compatibility matrix"
+    },
+    "rolling_policies": {
+      "arch": {
+        "evidence_refs": [
+          "cert_arch_rolling"
+        ],
+        "expiry_seconds": 31536000,
+        "last_validated": "2026-08-15T00:00:00Z"
+      },
+      "cachyos": {
+        "evidence_refs": [
+          "cert_cachyos_rolling"
+        ],
+        "expiry_seconds": 31536000,
+        "last_validated": "2026-08-16T00:00:00Z"
+      },
+      "centos_stream": {
+        "evidence_refs": [
+          "cert_centos_stream_rolling"
+        ],
+        "expiry_seconds": 31536000,
+        "last_validated": "2026-09-20T00:00:00Z"
+      },
+      "default": {
+        "evidence_refs": [],
+        "expiry_seconds": 31536000
+      },
+      "kali": {
+        "evidence_refs": [
+          "cert_kali_rolling",
+          "cert_kali_rolling_11e"
+        ],
+        "expiry_seconds": 31536000,
+        "last_validated": "2026-09-14T00:00:00Z"
+      },
+      "manjaro": {
+        "evidence_refs": [
+          "cert_manjaro_rolling"
+        ],
+        "expiry_seconds": 31536000,
+        "last_validated": "2026-09-18T00:00:00Z"
+      },
+      "opensuse_tumbleweed": {
+        "evidence_refs": [
+          "cert_opensuse_tumbleweed_rolling"
+        ],
+        "expiry_seconds": 31536000,
+        "last_validated": "2026-09-10T00:00:00Z"
+      }
+    }
+  }
+}

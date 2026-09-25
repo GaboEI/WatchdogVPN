@@ -32,12 +32,12 @@ class CliCommandInventoryTests(unittest.TestCase):
         self.routes = self.inventory["routes"]
 
     def test_inventory_covers_every_current_route(self) -> None:
-        self.assertEqual(self.inventory["route_count"], 136)
-        self.assertEqual(self.inventory["command_route_count"], 135)
-        self.assertEqual(self.inventory["parser_route_count"], 128)
+        self.assertEqual(self.inventory["route_count"], 143)
+        self.assertEqual(self.inventory["command_route_count"], 142)
+        self.assertEqual(self.inventory["parser_route_count"], 135)
         self.assertEqual(self.inventory["passthrough_route_count"], 8)
-        self.assertEqual(self.inventory["group_route_count"], 19)
-        self.assertEqual(self.inventory["leaf_route_count"], 117)
+        self.assertEqual(self.inventory["group_route_count"], 20)
+        self.assertEqual(self.inventory["leaf_route_count"], 123)
         commands = [route["command"] for route in self.routes]
         self.assertEqual(len(commands), len(set(commands)))
 
@@ -259,7 +259,22 @@ class CliCommandInventoryTests(unittest.TestCase):
         cli_docs = (ROOT_DIR / "docs" / "cli.md").read_text(encoding="utf-8")
         self.assertIn("generated/cli-command-inventory.md", cli_docs)
         self.assertIn("generated/cli-command-inventory.json", cli_docs)
-        self.assertIn("generate_cli_inventory.py --check", cli_docs)
+
+    def test_generated_markdown_header_excludes_maintainer_workflow(self) -> None:
+        rendered = render_inventory_markdown(self.inventory)
+        header = rendered.split("## Snapshot", 1)[0]
+        for maintainer_prose in (
+            "generate_cli_inventory.py",
+            "--check",
+            "Regenerate",
+            "regenerate",
+            "parity",
+            "Do not edit",
+            "Internal test and recovery-path",
+            "snapshot",
+        ):
+            self.assertNotIn(maintainer_prose, header)
+        self.assertIn("documented public `watchdog` CLI routes", rendered)
 
     def test_primary_cli_documentation_covers_wdcli_020_safety_contracts(self) -> None:
         cli_docs = (ROOT_DIR / "docs" / "cli.md").read_text(encoding="utf-8")

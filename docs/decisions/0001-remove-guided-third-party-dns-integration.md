@@ -40,7 +40,7 @@ outside WatchdogVPN scope.
 
 - Users who relied on the guided external DNS setup must install and configure
   their DNS stack independently if they still want it.
-- One-time cleanup is required before Phase 10.
+- One-time cleanup is required before DNS v2 is enabled.
 
 ### Neutral
 

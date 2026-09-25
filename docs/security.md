@@ -76,7 +76,7 @@ User configuration and state that must be preserved by default:
 
 `doctor.sh` is read-only and must not install, remove or modify files.
 
-`install.sh` and `update.sh` validate repository files before installing them,
+`install.sh` and `update.sh` check repository files before installing them,
 back up replaced files and preserve existing user configuration.
 
 `uninstall.sh` removes product-managed files but does not remove user-owned
@@ -86,7 +86,7 @@ purge options.
 
 ## DNS Safety
 
-The old guided third-party DNS integration was removed before Phase 10. DNS v2
+The old guided third-party DNS integration was removed. DNS v2
 will own resolver selection and custom DNS behavior without depending on an
 external DNS service. `vpn_dns_rescue` remains as a fallback helper to recover
 name resolution when local DNS services are removed or broken during
@@ -100,10 +100,9 @@ failure, outbound traffic that is not allowed through the active WatchdogVPN TUN
 path is blocked.
 
 This includes other VPN or proxy clients that were already connected before the
-WatchdogVPN failure. Phase 23 field validation proved this behavior with a real
-external VPN active: after a controlled WatchdogVPN runtime failure triggered
-the kill switch, that external VPN's egress was also blocked. This is expected
-by design, not a separate external-client allowlist failure. Users who run
+WatchdogVPN failure: when the kill switch engages after a WatchdogVPN runtime
+failure, that external VPN's egress is blocked as well. This is by design, not
+a separate external-client allowlist failure. Users who run
 another VPN client alongside WatchdogVPN should treat an active WatchdogVPN kill
 switch as taking precedence over the host's normal outbound networking until
 WatchdogVPN recovers, disconnects cleanly or the panic button removes the
@@ -128,17 +127,15 @@ sudo /usr/local/bin/watchdog_panic status
 ```
 
 This matters because it needs root. `sudo`'s own `secure_path` setting -
-separate from, and evaluated before, the invoked command's own `PATH` - is
-compiled to exclude `/usr/local/bin` on several distros (confirmed on Rocky
-Linux 9), so `sudo watchdog_panic sleep` (bare name) fails there with
-`sudo: watchdog_panic: command not found`, even though the same command
-resolves fine without `sudo`. A full path never needs that lookup at all,
-so it works everywhere regardless of a given distro's `secure_path`, with no
-system-wide sudoers change required. (Command-scoped `Defaults!cmnd
-secure_path=...` rules cannot help here either - `sudo` has to resolve which
-command is being run, from its bare name, before it can even test whether a
-command-scoped rule applies; confirmed empirically, not just by reading the
-sudoers manual.)
+separate from, and evaluated before, the invoked command's own `PATH` - can
+exclude `/usr/local/bin` on several distros, so `sudo watchdog_panic sleep`
+(bare name) can fail there with `sudo: watchdog_panic: command not found`,
+even though the same command resolves fine without `sudo`. A full path never
+needs that lookup at all, so it works regardless of a given distro's
+`secure_path`, with no system-wide sudoers change required. (Command-scoped
+`Defaults!cmnd secure_path=...` rules cannot help here either - `sudo` has to
+resolve which command is being run, from its bare name, before it can test
+whether a command-scoped rule applies.)
 
 Implemented as a dependency-light bash script, not a Python CLI command,
 on purpose: a panic button must still work if the daemon or the Python
@@ -261,8 +258,8 @@ payload. Users should still obtain profiles from trusted sources.
 ## External Installer Risk
 
 WatchdogVPN can guide installation of required open runtime dependencies when
-they are missing. Any future provider-specific download path must be explicit,
-auditable and separately validated.
+they are missing. Any future provider-specific download path must be explicit
+and auditable.
 
 Current risk:
 
@@ -279,15 +276,15 @@ Current mitigation:
 Manual-first path:
 
 1. Install any user-owned provider software from trusted documentation.
-2. Confirm the service/profile works independently.
+2. Make sure the service/profile works independently.
 3. Run `./install.sh` and let WatchdogVPN configure its daemon and runtime.
 4. Configure DNS through the WatchdogVPN v2 DNS system.
 
 Planned hardening:
 
-- Document manual verified installation as the safest path.
-- Add checksum/signature validation if the upstream distribution provides stable
-  verification material.
+- Document manual installation as the safest path.
+- Add checksum/signature checks if the upstream distribution provides stable
+  signing material.
 - Keep automatic download behavior visible and auditable.
 
 ## Rule-Set Downloads And Runtime Cache
@@ -301,9 +298,9 @@ Security rules:
 - Remote rule-set trust policies require `expected_sha256`.
 - Built-in rule sets load from explicit local source paths.
 - New payloads replace cache files only after integrity and source-format
-  validation pass.
+  checks pass.
 - Critical rule-set failures fail closed before runtime starts.
-- Runtime emits local sing-box rule-set declarations from verified cache files;
+- Runtime emits local sing-box rule-set declarations from its own cache files;
   it does not delegate remote rule-set downloads to sing-box.
 
 ## Python TUI Command Execution
@@ -318,12 +315,11 @@ Current rules:
   and `run_process_args`.
 - User-provided domains and locations should be shell-quoted before command
   execution.
-- User-provided domains, TUI settings and DNS profiles are validated before
+- User-provided domains, TUI settings and DNS profiles are checked before
   command construction in the TUI action layer where practical.
 - Privileged operations are routed through narrow helper scripts where possible.
 - The TUI is treated as trusted local tooling, not as a sandbox boundary.
-- New action command builders should be covered by unit tests when they accept
-  dynamic input.
+- New action command builders must handle dynamic input defensively.
 
 Planned hardening:
 
@@ -355,7 +351,7 @@ common sensitive values such as IPv4/IPv6 addresses, email addresses,
 device-code URLs and the user's home directory path, but users should still
 review the file before sharing it.
 
-Phase 16 observability must default to local aggregate counters only. Full
+Observability must default to local aggregate counters only. Full
 destination or request history, if ever implemented, must be explicit opt-in,
 clearly labeled sensitive, retention-bounded, purgeable and excluded from normal
 diagnostic exports by default.
@@ -381,9 +377,9 @@ derived from the caller-supplied passphrase with scrypt
 (`n=16384`, `r=8`, `p=1`, 32-byte key). Passwords are not stored and cannot be
 recovered.
 
-Encrypted restores require the password. Missing password, wrong password,
-payload authentication failure, unsupported encrypted format metadata or
-unsupported KDF parameters fail before local configuration is mutated. When
+Encrypted restores require the password. A missing password, a wrong password,
+a payload authentication failure, unsupported encrypted-format metadata or
+unsupported KDF parameters all fail before local configuration changes. When
 restoring from an encrypted backup, the pre-restore auto-backup is encrypted
 with the same passphrase instead of writing an unexpected plaintext copy.
 

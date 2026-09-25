@@ -1,44 +1,41 @@
-# ADR 0005: Routing Mode and Capture Contract
-
-Date: 2026-07-06
+# 0005 - Routing mode and capture contract
 
 ## Status
 
-Accepted.
+Accepted
 
 ## Context
 
-WatchdogVPN has historically used internal runtime modes such as `rules`,
-`global`, `direct`, `tun`, and `proxy`. Those names are useful implementation
-states, but they mix three different product concepts:
+WatchdogVPN can describe its runtime with modes such as `rules`, `global`,
+`direct`, `tun`, and `proxy`. Those names are useful implementation states, but
+they mix three different product concepts:
 
 - routing policy: whether routing rules are honored;
 - capture or entry mechanism: how traffic reaches WatchdogVPN;
 - route action: where matched traffic is sent.
 
-Mixing those concepts risks freezing the final CLI/TUI around an internal
-implementation shortcut. That would cap the product before LAN sharing,
-gateway mode, rule import compatibility, and richer route diagnostics are
-complete.
+Mixing those concepts risks freezing the CLI and TUI around an internal
+implementation shortcut, capping the product before LAN sharing, gateway mode,
+rule import compatibility, and richer route diagnostics are complete.
 
 ## Decision
 
 WatchdogVPN's product model separates routing policy, capture mechanism, and
 route action.
 
-### Routing Policy
+### Routing policy
 
 Routing policy answers whether routing rules are used:
 
 - `rule`: respect user rules, default rules, rule sets, split-tunnel
-  exceptions, block rules, node-group selections, and future route chains.
+  exceptions, block rules, node-group selections, and route chains.
 - `global`: ignore split-tunnel exceptions and route all captured traffic
   through the selected protected profile/path.
 
 The user-facing meaning of `global` is "protected full routing for captured
 traffic," not "disable TUN" and not "local proxy only."
 
-### Capture and Entry
+### Capture and entry
 
 Capture or entry answers how traffic reaches WatchdogVPN:
 
@@ -52,53 +49,43 @@ Capture or entry answers how traffic reaches WatchdogVPN:
   protected route.
 
 TUN and proxy are not replacements for `rule` or `global`; they are entry
-mechanisms. TUN may coexist with local/system proxy. Future LAN proxy/gateway
+mechanisms. TUN may coexist with local/system proxy. LAN proxy and gateway
 work builds on the same separation.
 
-### Route Actions
+### Route actions
 
 Route actions answer where matched traffic goes:
 
 - `direct`: leave through the normal direct network path;
 - `current` / `current_profile`: use the selected protected profile/path;
 - `block`: reject the traffic;
-- `group:<name>` / `auto`: use a validated node-group or auto-selection
-  policy when the runtime supports it;
-- future chain actions: route through explicit proxy chains if accepted by a
-  later design task.
+- `group:<name>` / `auto`: use a validated node-group or auto-selection policy
+  when the runtime supports it;
+- `chain:<id>`: route through an explicit proxy chain when the runtime supports
+  it.
 
 `direct` is a first-class route action. It must not be removed or hidden merely
 because the product also supports global protected routing.
 
-## Required Follow-Up
+### Contract requirements
 
-Before the final Full CLI phase, the dedicated Phase 19 track must align the
-runtime configuration, CLI vocabulary, TUI vocabulary, docs, importers,
-diagnostics, and tests with this contract.
-
-That phase must:
-
-- audit existing `active_mode` behavior and decide any migration or
-  compatibility layer;
-- make Rule/Global a routing-policy concept, not a proxy/TUN toggle;
-- make Proxy/TUN/LAN explicit capture/entry concepts;
-- preserve direct/current/block/group route actions;
-- define rule import compatibility and live rule-set lifecycle without tying
-  WatchdogVPN to one external JSON layout;
-- define system-proxy/local-proxy cleanup, warning and coexistence behavior;
-- ensure rule detection diagnostics can answer "which rule would match this
-  domain/IP/process, and which route action would apply?";
-- decide whether proxy-chain/route-chain actions are v2.0.0 work, v2.x work or
-  deliberately out of scope;
-- keep the current localhost-only LAN posture until the dedicated LAN phase
-  validates broader exposure.
+- Rule/Global is a routing-policy concept, not a proxy/TUN toggle.
+- Proxy/TUN/LAN are explicit capture/entry concepts.
+- Direct/current/block/group route actions are preserved.
+- Existing `active_mode` behavior may remain internally during migration, but it
+  must not define the final product contract.
+- Rule import compatibility and live rule-set lifecycle must not tie
+  WatchdogVPN to one external JSON layout.
+- System-proxy and local-proxy cleanup, warning and coexistence behavior must be
+  defined.
+- Rule detection diagnostics must answer "which rule would match this
+  domain/IP/process, and which route action would apply?".
+- The localhost-only LAN posture is kept until broader exposure is validated.
 
 ## Consequences
 
-- The final CLI/TUI must not expose a confusing one-dimensional "mode" model.
-- Existing implementation states may remain internally during migration, but
-  they must not define the final product contract.
+- The CLI and TUI must not expose a confusing one-dimensional "mode" model.
 - WatchdogVPN can support both simple users and network operators without
   dropping advanced routing/capture capabilities.
-- Future phases must add new phases or tasks for this work instead of editing
-  closed phase history retroactively.
+- New routing, capture or chain work must extend this contract instead of
+  retroactively rewriting it.

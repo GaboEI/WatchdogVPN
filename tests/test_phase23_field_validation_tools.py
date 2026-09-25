@@ -79,6 +79,25 @@ class Phase23FieldValidationToolsTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(record.parent.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(record.stat().st_mode), 0o600)
 
+    def test_preflight_git_check_does_not_require_local_main_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.make_runner(tmp)
+
+            with patch.object(runner, "run", return_value=0) as mocked_run, patch.object(
+                runner, "snapshot"
+            ):
+                runner.preflight()
+
+            git_rev_parse = [
+                call.args[2]
+                for call in mocked_run.call_args_list
+                if call.args[0] == "preflight" and call.args[1] == "git-rev-parse"
+            ]
+            self.assertEqual(len(git_rev_parse), 1)
+            self.assertEqual(git_rev_parse[0][:3], ["git", "rev-parse", "HEAD"])
+            self.assertNotIn("main", git_rev_parse[0])
+            self.assertNotIn("origin/main", git_rev_parse[0])
+
     def test_mutation_polls_authoritative_outcome_until_success(self) -> None:
         command_id = "123e4567-e89b-12d3-a456-426614174000"
         with tempfile.TemporaryDirectory() as tmp:

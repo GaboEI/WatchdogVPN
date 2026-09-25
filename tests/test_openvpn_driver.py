@@ -16,7 +16,7 @@ class OpenVPNDriverTests(unittest.TestCase):
             name="openvpn-demo",
             protocol=ProtocolType.OPENVPN,
             config={
-                "raw_config": "client\ndev tun\nproto udp\nremote vpn.example.com 1194\n",
+                "raw_config": "client\ndev tun\nproto udp\nremote 138.124.91.224 1194\n",
                 "dev": "tun0",
             },
             source=ProfileSource.MANUAL,
@@ -63,7 +63,7 @@ class OpenVPNDriverTests(unittest.TestCase):
     def test_generate_openvpn_config_writes_temp_file(self) -> None:
         try:
             raw_config = self.driver.generate_openvpn_config(self.profile)
-            self.assertIn("remote vpn.example.com 1194", raw_config)
+            self.assertIn("remote 138.124.91.224 1194", raw_config)
             self.assertIsNotNone(self.driver._config_path)
             self.assertEqual(self.driver._config_path.name, CONFIG_NAME)
             self.assertEqual(self.driver._config_path.read_text(encoding="utf-8"), self.profile.config["raw_config"])
@@ -80,7 +80,7 @@ class OpenVPNDriverTests(unittest.TestCase):
             "wrapped-1",
             "wrapped",
             ProtocolType.OPENVPN,
-            {"raw_config": "client\nremote vpn.example.com 1194\n", "wrapper": "cloak"},
+            {"raw_config": "client\nremote 138.124.91.224 1194\n", "wrapper": "cloak"},
             ProfileSource.MANUAL,
         )
         with self.assertRaises(ValueError):
@@ -88,9 +88,12 @@ class OpenVPNDriverTests(unittest.TestCase):
 
     @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNDriver, "_wait_for_ready", return_value=True)
+    @patch.object(OpenVPNDriver, "_protect_remote_endpoint_route", return_value=True)
     @patch.object(OpenVPNDriver, "generate_openvpn_config")
     @patch("drivers.openvpn_driver.subprocess.Popen")
-    def test_connect_starts_process(self, popen_mock, generate_mock, ready_mock, binary_mock) -> None:
+    def test_connect_starts_process(
+        self, popen_mock, generate_mock, route_mock, ready_mock, binary_mock
+    ) -> None:
         process = popen_mock.return_value
         process.poll.return_value = None
         process.pid = 4242
@@ -98,6 +101,7 @@ class OpenVPNDriverTests(unittest.TestCase):
 
         self.assertTrue(self.driver.connect(self.profile))
         generate_mock.assert_called_once_with(self.profile)
+        route_mock.assert_called_once_with(self.profile)
         ready_mock.assert_called_once_with(self.profile)
         popen_mock.assert_called_once()
         command = popen_mock.call_args.args[0]
@@ -125,10 +129,11 @@ class OpenVPNDriverTests(unittest.TestCase):
 
     @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
     @patch.object(OpenVPNDriver, "_wait_for_ready", return_value=True)
+    @patch.object(OpenVPNDriver, "_protect_remote_endpoint_route", return_value=True)
     @patch.object(OpenVPNDriver, "generate_openvpn_config")
     @patch("drivers.openvpn_driver.subprocess.Popen")
     def test_connect_disconnects_stale_process_before_starting_new_one(
-        self, popen_mock, generate_mock, ready_mock, binary_mock
+        self, popen_mock, generate_mock, route_mock, ready_mock, binary_mock
     ) -> None:
         # Regression guard for WDCLI-001.
         stale_process = unittest.mock.Mock()
@@ -165,6 +170,391 @@ class OpenVPNDriverTests(unittest.TestCase):
         self.assertFalse(self.driver.connect(self.profile))
         popen_mock.assert_not_called()
         self.assertEqual(self.driver.last_error, "required binary not found: openvpn")
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_preserves_onlink_default(self, run_mock, which_mock) -> None:
+        default_result = unittest.mock.Mock(returncode=0, stdout="default via 10.0.0.1 dev net0 onlink\n")
+        add_result = unittest.mock.Mock(returncode=0, stderr="")
+        run_mock.side_effect = [default_result, add_result]
+        profile = Profile(
+            id="openvpn-ip",
+            name="openvpn-ip",
+            protocol=ProtocolType.OPENVPN,
+            config={"raw_config": "client\nremote 138.124.91.224 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        self.assertTrue(self.driver._protect_remote_endpoint_route(profile))
+
+        run_mock.assert_any_call(
+            ["ip", "route", "add", "138.124.91.224/32", "via", "10.0.0.1", "dev", "net0", "onlink"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(self.driver._owned_endpoint_route, "138.124.91.224/32")
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_uses_raw_config_remote_not_host_metadata(self, run_mock, which_mock) -> None:
+        default_result = unittest.mock.Mock(returncode=0, stdout="default via 10.0.0.1 dev net0 onlink\n")
+        add_result = unittest.mock.Mock(returncode=0, stderr="")
+        run_mock.side_effect = [default_result, add_result]
+        profile = Profile(
+            id="openvpn-raw-endpoint",
+            name="openvpn-raw-endpoint",
+            protocol=ProtocolType.OPENVPN,
+            config={"host": "138.124.91.224", "raw_config": "client\nremote 8.8.8.8 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        self.assertTrue(self.driver._protect_remote_endpoint_route(profile))
+
+        run_mock.assert_any_call(
+            ["ip", "route", "add", "8.8.8.8/32", "via", "10.0.0.1", "dev", "net0", "onlink"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(self.driver._owned_endpoint_route, "8.8.8.8/32")
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_ipv6_endpoint(self, run_mock, which_mock) -> None:
+        for remote in ("remote", "--remote", "REMOTE", '"--remote"'):
+            with self.subTest(remote=remote):
+                self.driver.last_error = ""
+                profile = Profile(
+                    id="openvpn-ipv6",
+                    name="openvpn-ipv6",
+                    protocol=ProtocolType.OPENVPN,
+                    config={"raw_config": f"client\n{remote} 2001:db8::1 1194\n"},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+                run_mock.assert_not_called()
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn("IPv6 remote endpoints", self.driver.last_error)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_non_global_ipv4_endpoint(self, run_mock, which_mock) -> None:
+        profile = Profile(
+            id="openvpn-private",
+            name="openvpn-private",
+            protocol=ProtocolType.OPENVPN,
+            config={"host": "138.124.91.224", "raw_config": "client\nremote 10.0.0.1 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+        run_mock.assert_not_called()
+        self.assertIsNone(self.driver._owned_endpoint_route)
+        self.assertIn("global IPv4", self.driver.last_error)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_multiple_remote_endpoints(self, run_mock, which_mock) -> None:
+        cases = (
+            "client\nremote 138.124.91.224 1194\nremote 198.51.100.7 1194\n",
+            "client\n--remote 138.124.91.224 1194\n--remote 198.51.100.7 1194\n",
+            "client\n--remote 138.124.91.224 1194\n--remote 2001:db8::1 1194\n",
+            "client\nREMOTE 138.124.91.224 1194\nREMOTE 198.51.100.7 1194\n",
+            'client\n"--remote" 138.124.91.224 1194\n"--remote" 198.51.100.7 1194\n',
+        )
+        for raw_config in cases:
+            with self.subTest(raw_config=raw_config):
+                self.driver.last_error = ""
+                profile = Profile(
+                    id="openvpn-multiple",
+                    name="openvpn-multiple",
+                    protocol=ProtocolType.OPENVPN,
+                    config={"raw_config": raw_config},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+                run_mock.assert_not_called()
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn("multiple remote endpoints", self.driver.last_error)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_remote_random(self, run_mock, which_mock) -> None:
+        for random_directive in ("remote-random", "--remote-random", "REMOTE-RANDOM", "--REMOTE-RANDOM", '"--remote-random"'):
+            with self.subTest(random_directive=random_directive):
+                self.driver.last_error = ""
+                profile = Profile(
+                    id="openvpn-random",
+                    name="openvpn-random",
+                    protocol=ProtocolType.OPENVPN,
+                    config={"raw_config": f"client\nremote 138.124.91.224 1194\n{random_directive}\n"},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+                run_mock.assert_not_called()
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn("remote-random", self.driver.last_error)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_remote_random_hostname(self, run_mock, which_mock) -> None:
+        for random_directive in (
+            "remote-random-hostname",
+            "--remote-random-hostname",
+            "REMOTE-RANDOM-HOSTNAME",
+            "--REMOTE-RANDOM-HOSTNAME",
+            '"--remote-random-hostname"',
+        ):
+            with self.subTest(random_directive=random_directive):
+                self.driver.last_error = ""
+                profile = Profile(
+                    id="openvpn-random-hostname",
+                    name="openvpn-random-hostname",
+                    protocol=ProtocolType.OPENVPN,
+                    config={"raw_config": f"client\nremote 138.124.91.224 1194\n{random_directive}\n"},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+                run_mock.assert_not_called()
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn("remote-random-hostname", self.driver.last_error)
+
+    @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch("drivers.openvpn_driver.subprocess.Popen")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    @patch("socket.getaddrinfo")
+    def test_connect_rejects_unsafe_remote_before_runtime_mutation(
+        self, getaddrinfo_mock, run_mock, popen_mock, binary_mock
+    ) -> None:
+        cases = (
+            ("ipv6", 'client\n"--remote" 2001:db8::1 1194\n', {}, "IPv6 remote endpoints"),
+            ("hostname", "client\nREMOTE example.com 1194\n", {}, "hostname remote endpoints"),
+            (
+                "host-field-masks-hostname",
+                "client\nremote vpn.example.com 1194\n",
+                {"host": "198.51.100.9"},
+                "hostname remote endpoints",
+            ),
+            (
+                "host-field-masks-ipv6",
+                "client\nremote 2001:db8::1 1194\n",
+                {"host": "198.51.100.9"},
+                "IPv6 remote endpoints",
+            ),
+            (
+                "multiple",
+                "client\nREMOTE 198.51.100.1 1194\n--remote 2001:db8::1 1194\n",
+                {},
+                "multiple remote endpoints",
+            ),
+            (
+                "host-field-masks-multiple",
+                "client\nremote 198.51.100.1 1194\nremote 2001:db8::1 1194\n",
+                {"host": "198.51.100.9"},
+                "multiple remote endpoints",
+            ),
+            (
+                "remote-random",
+                "client\n--remote 198.51.100.1 1194\n--REMOTE-RANDOM\n",
+                {},
+                "remote-random",
+            ),
+            (
+                "remote-random-hostname",
+                'client\n--remote 198.51.100.1 1194\n"--remote-random-hostname"\n',
+                {},
+                "remote-random-hostname",
+            ),
+        )
+        for profile_id, raw_config, extra_config, expected_error in cases:
+            with self.subTest(profile_id=profile_id):
+                driver = OpenVPNDriver()
+                profile = Profile(
+                    id=profile_id,
+                    name=profile_id,
+                    protocol=ProtocolType.OPENVPN,
+                    config={"raw_config": raw_config, **extra_config},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(driver.connect(profile))
+
+                self.assertIn(expected_error, driver.last_error)
+                self.assertIsNone(driver._runtime_dir)
+                self.assertIsNone(driver._config_path)
+                self.assertIsNone(driver._process)
+        run_mock.assert_not_called()
+        popen_mock.assert_not_called()
+        getaddrinfo_mock.assert_not_called()
+
+    @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch("drivers.openvpn_driver.subprocess.Popen")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_connect_rejects_invalid_candidate_before_existing_runtime_teardown(
+        self, run_mock, popen_mock, binary_mock
+    ) -> None:
+        self.driver._process = unittest.mock.Mock()
+        profile = Profile(
+            id="openvpn-invalid-candidate",
+            name="openvpn-invalid-candidate",
+            protocol=ProtocolType.OPENVPN,
+            config={"raw_config": "client\nremote vpn.example.com 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        with patch.object(self.driver, "disconnect", return_value=True) as disconnect_mock:
+            self.assertFalse(self.driver.connect(profile))
+
+        disconnect_mock.assert_not_called()
+        run_mock.assert_not_called()
+        popen_mock.assert_not_called()
+        self.assertIsNotNone(self.driver._process)
+        self.assertIn("hostname remote endpoints", self.driver.last_error)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_hostname_endpoint(self, run_mock, which_mock) -> None:
+        cases = (
+            ("client\nremote example.com 1194\n", {}),
+            ("client\nREMOTE example.com 1194\n", {}),
+            ('client\n"--remote" example.com 1194\n', {}),
+            ("client\nremote example.com 1194\n", {"host": "198.51.100.9"}),
+        )
+        for raw_config, extra_config in cases:
+            with self.subTest(raw_config=raw_config):
+                self.driver.last_error = ""
+                profile = Profile(
+                    id="openvpn-hostname",
+                    name="openvpn-hostname",
+                    protocol=ProtocolType.OPENVPN,
+                    config={"raw_config": raw_config, **extra_config},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+                run_mock.assert_not_called()
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn("hostname remote endpoints", self.driver.last_error)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_rejects_host_field_divergent_raw_remote(self, run_mock, which_mock) -> None:
+        cases = (
+            ("client\nremote vpn.example.com 1194\n", "hostname remote endpoints"),
+            ("client\nremote 2001:db8::1 1194\n", "IPv6 remote endpoints"),
+            ("client\nremote 198.51.100.1 1194\nremote 2001:db8::1 1194\n", "multiple remote endpoints"),
+        )
+        for raw_config, expected_error in cases:
+            with self.subTest(raw_config=raw_config):
+                self.driver.last_error = ""
+                profile = Profile(
+                    id="openvpn-divergent-host",
+                    name="openvpn-divergent-host",
+                    protocol=ProtocolType.OPENVPN,
+                    config={"host": "198.51.100.9", "raw_config": raw_config},
+                    source=ProfileSource.MANUAL,
+                )
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+                run_mock.assert_not_called()
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn(expected_error, self.driver.last_error)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_remote_endpoint_route_reports_route_install_failure(self, run_mock, which_mock) -> None:
+        default_result = unittest.mock.Mock(returncode=0, stdout="default via 10.0.0.1 dev net0 onlink\n")
+        add_result = unittest.mock.Mock(returncode=2, stderr="network unreachable")
+        run_mock.side_effect = [default_result, add_result]
+        profile = Profile(
+            id="openvpn-route-fail",
+            name="openvpn-route-fail",
+            protocol=ProtocolType.OPENVPN,
+            config={"raw_config": "client\nremote 138.124.91.224 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        self.assertFalse(self.driver._protect_remote_endpoint_route(profile))
+
+        self.assertIsNone(self.driver._owned_endpoint_route)
+        self.assertEqual(self.driver.last_error, "OpenVPN endpoint route protection failed")
+
+    @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNDriver, "_wait_for_ready", return_value=False)
+    @patch.object(OpenVPNDriver, "generate_openvpn_config")
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    @patch("drivers.openvpn_driver.subprocess.Popen")
+    def test_connect_cleans_owned_endpoint_route_after_readiness_failure(
+        self, popen_mock, run_mock, which_mock, generate_mock, ready_mock, binary_mock
+    ) -> None:
+        default_result = unittest.mock.Mock(returncode=0, stdout="default via 10.0.0.1 dev net0 onlink\n")
+        add_result = unittest.mock.Mock(returncode=0, stderr="")
+        delete_result = unittest.mock.Mock(returncode=0, stderr="")
+        run_mock.side_effect = [default_result, add_result, delete_result]
+        process = popen_mock.return_value
+        process.poll.return_value = None
+        process.pid = 4242
+        profile = Profile(
+            id="openvpn-route-cleanup",
+            name="openvpn-route-cleanup",
+            protocol=ProtocolType.OPENVPN,
+            config={"raw_config": "client\nremote 138.124.91.224 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        self.assertFalse(self.driver.connect(profile))
+
+        run_mock.assert_any_call(
+            ["ip", "route", "delete", "138.124.91.224/32"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertIsNone(self.driver._owned_endpoint_route)
+        self.assertIsNone(self.driver._runtime_dir)
+
+    @patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn")
+    @patch.object(OpenVPNDriver, "_protect_remote_endpoint_route", return_value=False)
+    @patch.object(OpenVPNDriver, "generate_openvpn_config")
+    @patch("drivers.openvpn_driver.subprocess.Popen")
+    def test_connect_cleans_runtime_and_does_not_spawn_when_endpoint_protection_fails(
+        self, popen_mock, generate_mock, route_mock, binary_mock
+    ) -> None:
+        self.assertFalse(self.driver.connect(self.profile))
+
+        generate_mock.assert_called_once_with(self.profile)
+        route_mock.assert_called_once_with(self.profile)
+        popen_mock.assert_not_called()
+        self.assertIsNone(self.driver._runtime_dir)
+        self.assertIsNone(self.driver._process)
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_cleanup_endpoint_route_deletes_only_owned_route(self, run_mock, which_mock) -> None:
+        self.driver._owned_endpoint_route = "138.124.91.224/32"
+
+        self.driver._cleanup_endpoint_route()
+
+        run_mock.assert_called_once_with(
+            ["ip", "route", "delete", "138.124.91.224/32"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertIsNone(self.driver._owned_endpoint_route)
 
     @patch.object(OpenVPNDriver, "_cleanup_runtime")
     def test_disconnect_terminates_and_cleans_runtime(self, cleanup_mock) -> None:
@@ -272,6 +662,21 @@ class OpenVPNDriverTests(unittest.TestCase):
         process.poll.return_value = None
         self.driver._process = process
         self.assertEqual(self.driver.health_check(), "ok")
+
+    @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=True)
+    def test_egress_interface_returns_owned_openvpn_device(self, tun_mock) -> None:
+        self.driver._active_profile = self.profile
+        self.driver._expected_interface = "tunwd1234"
+
+        self.assertEqual(self.driver.egress_interface(), "tunwd1234")
+
+    @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=False)
+    def test_egress_interface_fails_closed_without_active_device(self, tun_mock) -> None:
+        self.driver._active_profile = self.profile
+        self.driver._expected_interface = "tunwd1234"
+
+        self.assertIsNone(self.driver.egress_interface())
+
     @patch.object(OpenVPNDriver, "_readiness_evidence_ready", return_value=False)
     @patch.object(OpenVPNDriver, "_vpn_interface_active", return_value=True)
     def test_status_rejects_live_process_without_current_generation_evidence(

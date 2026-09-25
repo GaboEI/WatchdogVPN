@@ -7,7 +7,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from daemon.event_bus import EventBus
 from drivers.base import ManagementPathSafetyError, TeardownBarrierError, UnsupportedDriverPolicyError
@@ -93,10 +93,12 @@ class RuntimeWorker:
         runtime: RuntimeLike,
         event_bus: EventBus | None = None,
         metrics_recorder: MetricsRecorder | None = None,
+        runtime_provenance: Mapping[str, str] | None = None,
     ) -> None:
         self.runtime = runtime
         self.event_bus = event_bus or EventBus()
         self.metrics_recorder = metrics_recorder or MetricsRecorder()
+        self.runtime_provenance = dict(runtime_provenance or {"status": "unavailable"})
         self._queue: "queue.Queue[WorkerRequest | object]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="watchdogvpn-runtime-worker", daemon=True)
         self._started = threading.Event()
@@ -492,7 +494,13 @@ class RuntimeWorker:
         )
 
     def _handle_status(self) -> Response:
-        return Response(ok=True, payload={"state": _state_payload(self.runtime.status())})
+        return Response(
+            ok=True,
+            payload={
+                "state": _state_payload(self.runtime.status()),
+                "runtime_provenance": dict(self.runtime_provenance),
+            },
+        )
 
     def _handle_rotate(self, payload: dict[str, Any]) -> Response:
         force = payload.get("force", False)

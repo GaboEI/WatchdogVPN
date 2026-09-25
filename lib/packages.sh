@@ -5,7 +5,14 @@ required_commands() {
   printf '%s\n' \
     bash git python3 curl tar ip ss systemctl systemd-run sudo logrotate awk sed \
     grep find sort sha256sum install getent useradd usermod openvpn setpriv \
-    sysctl modinfo nmcli nft iptables ip6tables ping pgrep resolvectl
+    sysctl modinfo nmcli nft iptables ip6tables ping pgrep
+  # resolvectl belongs to systemd-resolved, which only some families use.
+  # Kali has no resolvectl (existing rule); the SUSE family uses
+  # netconfig/Wicked as its DNS backend and ships no resolvectl command
+  # (openSUSE Leap 15.6 has no systemd-resolved package either).
+  if [[ "${DISTRO_ID:-}" != "kali" && "${DISTRO_FAMILY:-}" != "suse" ]]; then
+    printf '%s\n' resolvectl
+  fi
 }
 
 optional_commands() {

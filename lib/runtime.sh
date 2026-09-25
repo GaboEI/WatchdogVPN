@@ -5,6 +5,7 @@ PYTHON_PACKAGE_DIR="${PYTHON_PACKAGE_DIR:-/usr/local/lib/watchdogvpn}"
 PYTHON_RUNTIME_PACKAGES=(
   app_policy
   cli
+  compat
   config
   core
   daemon
@@ -31,6 +32,7 @@ PYTHON_RUNTIME_SUPPORT_DIRS=(
   bin
   sbin
   systemd
+  tools
   etc
   examples
   distros
@@ -52,6 +54,8 @@ RP_FILTER_ALL_PATH="${WATCHDOGVPN_RP_FILTER_ALL_PATH:-/proc/sys/net/ipv4/conf/al
 RP_FILTER_DEFAULT_PATH="${WATCHDOGVPN_RP_FILTER_DEFAULT_PATH:-/proc/sys/net/ipv4/conf/default/rp_filter}"
 RP_FILTER_CONF_DIR="${WATCHDOGVPN_RP_FILTER_CONF_DIR:-/proc/sys/net/ipv4/conf}"
 SYSCTL_INSTALLED_MARKER_PATH="${WATCHDOGVPN_VERSION_MARKER:-/usr/local/lib/watchdogvpn/installed-version}"
+WATCHDOGVPN_EXPECTED_DAEMON_WRAPPER_SHA256=""
+WATCHDOGVPN_VERIFIED_GENERATION_SHA256="pending"
 
 # Historical WatchdogVPN-owned files removed from the shipped set before this
 # release (AdGuard-era rotation/watchdog automation, Task 2.6). Kept separate
@@ -104,6 +108,9 @@ install_runtime_files() {
   install_python_module_wrapper /usr/local/bin/watchdog cli.main
   install_root_file "$runtime_root/bin/watchdogvpn" /usr/local/bin/watchdogvpn 0755
   install_python_module_wrapper /usr/local/bin/watchdogvpn-daemon daemon.main
+  install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-dns-restore dns.networkmanager_restore
+  install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-register drivers.networkmanager_tun_cleanup
+  install_python_module_wrapper /usr/local/bin/watchdogvpn-nm-tun-cleanup drivers.networkmanager_tun_cleanup
 
   install_root_file "$runtime_root/sbin/vpn_domain_bypass_apply.sh" /usr/local/sbin/vpn_domain_bypass_apply.sh 0700
 
@@ -117,6 +124,18 @@ install_runtime_files() {
     /etc/polkit-1/rules.d/49-watchdogvpn-resolved.rules \
     0644
   install_systemd_units
+  prepare_networkmanager_dns_restore_state
+}
+
+prepare_networkmanager_dns_restore_state() {
+  local state_dir="/var/lib/watchdogvpn/nm-dns-restore"
+  run_step sudo install -d -m 0700 -o root -g root "$state_dir"
+  run_step sudo chmod g-s "$state_dir"
+  run_step sudo chmod 0700 "$state_dir"
+  if root_path_exists "$state_dir/snapshot.json"; then
+    run_step sudo chown root:root "$state_dir/snapshot.json"
+    run_step sudo chmod 0600 "$state_dir/snapshot.json"
+  fi
 }
 
 # Detects the interface currently carrying the default IPv4 route - the same
@@ -498,7 +517,7 @@ restore_sysctl_defaults_baseline() {
 }
 
 install_python_module_wrapper() {
-  local dest="$1" module="$2" tmp quoted_root py quoted_py
+  local dest="$1" module="$2" tmp quoted_root py quoted_py quoted_dest quoted_unit
   py="$(watchdogvpn_python)" || {
     fail "no Python >=3.${WATCHDOGVPN_MIN_PYTHON_MINOR} interpreter available for the runtime launcher"
     return 1
@@ -511,10 +530,41 @@ install_python_module_wrapper() {
     printf 'set -euo pipefail\n\n'
     printf 'ROOT_DIR=%s\n' "$quoted_root"
     printf 'export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"\n'
-    printf 'exec %s -m %s "$@"\n' "$quoted_py" "$module"
+    if [[ "$module" == "daemon.main" ]]; then
+      printf -v quoted_dest '%q' "$dest"
+      printf -v quoted_unit '%q' "/etc/systemd/system/watchdogvpn.service"
+      printf 'exec %s -m tools.installed_provenance launch-daemon --runtime-root "$ROOT_DIR" --deployment %s --deployment %s -- "$@"\n' \
+        "$quoted_py" "$quoted_dest" "$quoted_unit"
+    else
+      printf 'exec %s -m %s "$@"\n' "$quoted_py" "$module"
+    fi
   } >"$tmp"
+  if [[ "$module" == "daemon.main" ]]; then
+    WATCHDOGVPN_EXPECTED_DAEMON_WRAPPER_SHA256="$(sha256sum "$tmp" | awk 'NR == 1 {print $1}')"
+  fi
   install_root_file "$tmp" "$dest" 0755
   rm -f "$tmp"
+}
+
+selinux_relabel_runtime_path() {
+  # Restore the policy-expected SELinux context of a published runtime path.
+  # cp -a preserves the source context, so a checkout staged under /root
+  # publishes admin_home_t into /usr/local/lib/watchdogvpn on enforcing hosts.
+  local path="${1:-}"
+  if [[ -z "$path" ]]; then
+    return 0
+  fi
+  if ! command -v restorecon >/dev/null 2>&1; then
+    printf '[INFO] SELinux context relabel skipped: restorecon not available\n'
+    return 0
+  fi
+  local enforce
+  enforce="$(getenforce 2>/dev/null || printf 'Disabled')"
+  if [[ "$enforce" == "Disabled" ]]; then
+    printf '[INFO] SELinux context relabel skipped: SELinux disabled\n'
+    return 0
+  fi
+  run_step sudo restorecon -R -- "$path"
 }
 
 install_python_package_tree() {
@@ -540,6 +590,7 @@ install_python_package_tree() {
       run_step sudo cp -a "$source_root/$item" "$stage/"
     done
     runtime_transaction_checkpoint permission
+    _purge_python_bytecode "$stage"
     run_step sudo chown -R root:root "$stage"
     run_step sudo find "$stage" -type d -exec chmod 0755 {} +
     run_step sudo find "$stage" -type f -exec chmod 0644 {} +
@@ -548,7 +599,9 @@ install_python_package_tree() {
     done
     run_step sudo find "$stage/bin" "$stage/sbin" -type f -exec chmod 0755 {} +
     _validate_staged_python_runtime "$stage"
+    _purge_python_bytecode "$stage"
     runtime_transaction_replace_directory_from_stage "$stage" "$dest"
+    selinux_relabel_runtime_path "$dest"
     return 0
   fi
   backup_path "$dest"
@@ -563,6 +616,7 @@ install_python_package_tree() {
   for item in "${PYTHON_RUNTIME_SUPPORT_DIRS[@]}"; do
     run_step sudo cp -a "$source_root/$item" "$dest/"
   done
+  _purge_python_bytecode "$dest"
   run_step sudo chown -R root:root "$dest"
   run_step sudo find "$dest" -type d -exec chmod 0755 {} +
   run_step sudo find "$dest" -type f -exec chmod 0644 {} +
@@ -570,6 +624,13 @@ install_python_package_tree() {
     run_step sudo chmod 0755 "$dest/$item"
   done
   run_step sudo find "$dest/bin" "$dest/sbin" -type f -exec chmod 0755 {} +
+  selinux_relabel_runtime_path "$dest"
+}
+
+_purge_python_bytecode() {
+  local root="$1"
+  run_step sudo find "$root" -type d -name __pycache__ -prune -exec rm -rf -- {} +
+  run_step sudo find "$root" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 }
 
 _validate_staged_python_runtime() {
@@ -586,7 +647,7 @@ _validate_staged_python_runtime() {
       return 1
     }
   done
-  "$(watchdogvpn_python)" -m compileall -q "$stage"
+  run_step sudo "$(watchdogvpn_python)" -m compileall -q "$stage"
 }
 
 migrate_watchdogvpn_shared_state() {
@@ -954,9 +1015,43 @@ watchdog_status_with_refreshed_groups() {
   WATCHDOGVPN_SOCKET_PATH="$socket_path" /usr/local/bin/watchdog status --json
 }
 
+verify_watchdogvpn_effective_unit() {
+  local fragment dropins exec_start
+  fragment="$(systemctl show watchdogvpn.service -p FragmentPath --value 2>/dev/null || true)"
+  dropins="$(systemctl show watchdogvpn.service -p DropInPaths --value 2>/dev/null || true)"
+  exec_start="$(systemctl show watchdogvpn.service -p ExecStart --value 2>/dev/null || true)"
+  if [[ "$fragment" != "/etc/systemd/system/watchdogvpn.service" ]]; then
+    fail "watchdogvpn.service effective fragment is outside the installed generation: ${fragment:-unknown}"
+    return 1
+  fi
+  if [[ -n "$dropins" ]]; then
+    local out_of_scope_dropin
+    out_of_scope_dropin="$(printf '%s\n' "$dropins" | tr ' ' '\n' | grep 'watchdogvpn.service.d/' | head -n1 || true)"
+    if [[ -n "$out_of_scope_dropin" ]]; then
+      fail "watchdogvpn.service has out-of-scope drop-ins: $out_of_scope_dropin"
+      return 1
+    fi
+  fi
+  if [[ "$exec_start" != *"/usr/local/bin/watchdogvpn-daemon"* ]]; then
+    fail "watchdogvpn.service effective ExecStart does not use the installed daemon wrapper"
+    return 1
+  fi
+  return 0
+}
+
+verify_watchdogvpn_daemon_inactive() {
+  local active_state main_pid
+  active_state="$(systemctl show watchdogvpn.service -p ActiveState --value 2>/dev/null || true)"
+  main_pid="$(systemctl show watchdogvpn.service -p MainPID --value 2>/dev/null || true)"
+  if [[ "$active_state" != "inactive" || "$main_pid" != "0" ]]; then
+    fail "daemon must be inactive with MainPID=0 when its generation smoke test is skipped (state=${active_state:-unknown}, pid=${main_pid:-unknown})"
+    return 1
+  fi
+}
+
 smoke_test_watchdogvpn_daemon() {
   local socket_path="${WATCHDOGVPN_SOCKET_PATH:-/run/watchdogvpn/control.sock}"
-  local status_output status_rc
+  local status_output status_rc provenance_output provenance_rc
 
   if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY-RUN] smoke test watchdogvpn.service and daemon IPC status\n'
@@ -967,12 +1062,18 @@ smoke_test_watchdogvpn_daemon() {
     runtime_transaction_checkpoint smoke
   fi
 
+  verify_watchdogvpn_effective_unit
+
   if [[ "${ENABLE_VPN_AUTOMATION:-1}" != "1" ]]; then
+    verify_watchdogvpn_daemon_inactive
+    WATCHDOGVPN_VERIFIED_GENERATION_SHA256="inactive"
     printf '[SKIP] daemon smoke test; VPN automation is disabled for this install\n'
     return 0
   fi
 
   if [[ -e "${WATCHDOGVPN_HIBERNATE_MARKER:-/etc/watchdogvpn/.hibernating}" ]]; then
+    verify_watchdogvpn_daemon_inactive
+    WATCHDOGVPN_VERIFIED_GENERATION_SHA256="inactive"
     printf '[SKIP] daemon smoke test; WatchdogVPN is asleep (run: watchdog_panic wake)\n'
     return 0
   fi
@@ -994,8 +1095,28 @@ smoke_test_watchdogvpn_daemon() {
   status_rc=$?
   set -e
   if ((status_rc == 0)); then
-    ok "daemon IPC status smoke test passed"
-    return 0
+    set +e
+    provenance_output="$(printf '%s\n' "$status_output" \
+      | "$(watchdogvpn_python)" "${PYTHON_PACKAGE_DIR:-/usr/local/lib/watchdogvpn}/tools/installed_provenance.py" verify-running \
+        --runtime-root "${PYTHON_PACKAGE_DIR:-/usr/local/lib/watchdogvpn}" \
+        --deployment /usr/local/bin/watchdogvpn-daemon \
+        --deployment /etc/systemd/system/watchdogvpn.service \
+        --status-file - 2>&1)"
+    provenance_rc=$?
+    set -e
+    if ((provenance_rc == 0)); then
+      WATCHDOGVPN_VERIFIED_GENERATION_SHA256="$(printf '%s\n' "$provenance_output" \
+        | "$(watchdogvpn_python)" -c 'import json, sys; print(json.load(sys.stdin)["generation_sha256"])')"
+      if [[ ! "$WATCHDOGVPN_VERIFIED_GENERATION_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+        fail "daemon generation smoke returned an invalid verified digest"
+        return 1
+      fi
+      ok "daemon IPC status and installed generation smoke test passed"
+      return 0
+    fi
+    fail "daemon IPC status did not prove the installed generation"
+    printf '%s\n' "$provenance_output"
+    return 1
   fi
 
   fail "daemon IPC status smoke test failed"

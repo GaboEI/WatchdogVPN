@@ -68,6 +68,24 @@ class EndpointPolicyTests(unittest.TestCase):
             "vpn.example",
         )
 
+    def test_import_validation_does_not_resolve_hostname(self) -> None:
+        def private_resolver(*_args, **_kwargs):
+            return _resolver("10.0.0.1")(*_args, **_kwargs)
+
+        self.assertEqual(
+            validate_profile_endpoint(
+                Profile(
+                    id="test",
+                    name="test",
+                    protocol=ProtocolType.VLESS,
+                    config={"host": "provider.example"},
+                    source=ProfileSource.MANUAL,
+                ),
+                resolver=private_resolver,
+            ),
+            "provider.example",
+        )
+
     def test_resolution_failure_is_fail_closed(self) -> None:
         def failing_resolver(*_args, **_kwargs):
             raise socket.gaierror(socket.EAI_NONAME, "not found")
@@ -86,6 +104,30 @@ class EndpointPolicyTests(unittest.TestCase):
             source=ProfileSource.MANUAL,
         )
         self.assertEqual(profile_endpoint_host(profile), "2001:4860:4860::8888")
+
+    def test_openvpn_endpoint_is_extracted_from_raw_config_not_host_metadata(self) -> None:
+        profile = Profile(
+            id="test",
+            name="test",
+            protocol=ProtocolType.OPENVPN,
+            config={"host": "138.124.91.224", "raw_config": "client\nremote 8.8.8.8 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        self.assertEqual(profile_endpoint_host(profile), "8.8.8.8")
+        self.assertEqual(validate_profile_endpoint(profile, require_resolution=True), "8.8.8.8")
+
+    def test_openvpn_private_raw_remote_is_rejected_before_metadata_host(self) -> None:
+        profile = Profile(
+            id="test",
+            name="test",
+            protocol=ProtocolType.OPENVPN,
+            config={"host": "138.124.91.224", "raw_config": "client\nremote 10.0.0.1 1194\n"},
+            source=ProfileSource.MANUAL,
+        )
+
+        with self.assertRaisesRegex(EndpointPolicyError, "global IPv4"):
+            validate_profile_endpoint(profile, require_resolution=True)
 
     def test_profile_validation_threads_fakeip_allowlist(self) -> None:
         profile = Profile(

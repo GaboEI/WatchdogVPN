@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 import argparse
 import ipaddress
 import json
@@ -11,13 +9,14 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 GUARD_ENV = "WATCHDOGVPN_FIELD_VALIDATION"
 SERVICE = "watchdogvpn.service"
 NFT_TABLE = ("inet", "watchdogvpn")
 IPTABLES_CHAIN = "WATCHDOGVPN-OUTPUT"
+MIN_PYTHON = (3, 10)
 
 
 class ControlledFailureError(RuntimeError):
@@ -28,7 +27,7 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _run(command: list[str], *, timeout: int = 45) -> subprocess.CompletedProcess[str]:
+def _run(command: List[str], *, timeout: int = 45) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
             command,
@@ -41,7 +40,7 @@ def _run(command: list[str], *, timeout: int = 45) -> subprocess.CompletedProces
         raise ControlledFailureError(f"command timed out: {command[0]}") from exc
 
 
-def _require_ok(command: list[str], *, timeout: int = 45) -> str:
+def _require_ok(command: List[str], *, timeout: int = 45) -> str:
     completed = _run(command, timeout=timeout)
     if completed.returncode != 0:
         raise ControlledFailureError(
@@ -50,8 +49,8 @@ def _require_ok(command: list[str], *, timeout: int = 45) -> str:
     return completed.stdout
 
 
-def _status_fields(text: str) -> dict[str, str]:
-    fields: dict[str, str] = {}
+def _status_fields(text: str) -> Dict[str, str]:
+    fields: Dict[str, str] = {}
     for line in text.splitlines():
         key, separator, value = line.partition(":")
         if separator:
@@ -70,7 +69,7 @@ def _validated_probe_domain(value: str) -> str:
     return domain
 
 
-def _select_target_ip(payload: dict[str, Any], firewall_snapshot: str) -> str:
+def _select_target_ip(payload: Dict[str, Any], firewall_snapshot: str) -> str:
     for answer in payload.get("Answer", []):
         if not isinstance(answer, dict):
             continue
@@ -105,7 +104,7 @@ def _iptables_drop_packet_count(snapshot: str) -> int:
     return total
 
 
-def _firewall_snapshot(backend: str) -> tuple[str, int]:
+def _firewall_snapshot(backend: str) -> Tuple[str, int]:
     if backend == "nftables":
         snapshot = _require_ok(
             ["sudo", "-n", "nft", "list", "table", *NFT_TABLE]
@@ -130,7 +129,7 @@ def _main_pid() -> int:
 
 def _owned_sing_box_child(daemon_pid: int, *, proc_root: Path = Path("/proc")) -> int:
     task_root = proc_root / str(daemon_pid) / "task"
-    child_values: set[str] = set()
+    child_values: Set[str] = set()
     try:
         children_paths = list(task_root.glob("*/children"))
         for children_path in children_paths:
@@ -140,7 +139,7 @@ def _owned_sing_box_child(daemon_pid: int, *, proc_root: Path = Path("/proc")) -
     if not children_paths:
         raise ControlledFailureError("daemon task list is unavailable")
 
-    matches: list[int] = []
+    matches: List[int] = []
     for value in child_values:
         if not value.isdigit():
             continue
@@ -182,18 +181,22 @@ def _write_private(path: Path, value: str) -> None:
 
 def controlled_failure(
     *, physical_interface: str, probe_domain: str, evidence_dir: Path
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     probe_domain = _validated_probe_domain(probe_domain)
-    record: dict[str, Any] = {
+    record: Dict[str, Any] = {
         "started_at": _utc_now(),
         "physical_interface": physical_interface,
         "probe_domain": probe_domain,
     }
-    daemon_pid: int | None = None
+    daemon_pid: Optional[int] = None
     daemon_stopped = False
 
     _require_ok(["ip", "link", "show", "dev", physical_interface])
     status = _status_fields(_require_ok(["watchdog", "status"]))
+    _write_private(
+        evidence_dir / "status-before.json",
+        _require_ok(["watchdog", "status", "--json"]),
+    )
     if status.get("status") != "connected":
         raise ControlledFailureError("WatchdogVPN is not connected")
     if status.get("kill switch state") != "applied":
@@ -203,6 +206,23 @@ def controlled_failure(
 
     before_snapshot, drop_before = _firewall_snapshot(backend)
     _write_private(evidence_dir / "firewall-before.txt", before_snapshot)
+    _write_private(
+        evidence_dir / "egress-before.txt",
+        _require_ok(
+            [
+                "curl",
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--max-time",
+                "15",
+                "--socks5-hostname",
+                "127.0.0.1:2080",
+                "https://api.ipify.org",
+            ],
+            timeout=25,
+        ),
+    )
 
     doh = _require_ok(
         [
@@ -252,7 +272,7 @@ def controlled_failure(
                 "--output",
                 "/dev/null",
                 "--write-out",
-                "%{http_code}",
+                "http_code=%{http_code}\tbytes=%{size_download}\tremote_ip=%{remote_ip}\ttime_total=%{time_total}\n",
                 f"https://{probe_domain}/",
             ],
             timeout=15,
@@ -277,14 +297,18 @@ def controlled_failure(
         record.update(
             {
                 "curl_returncode": curl_result.returncode,
-                "curl_http_code": curl_result.stdout.strip(),
+                "curl_result": curl_result.stdout.strip(),
                 "ping_returncode": ping_result.returncode,
                 "drop_before": drop_before,
                 "drop_after": drop_after,
                 "drop_delta": drop_after - drop_before,
             }
         )
-        if curl_result.returncode not in {7, 28} or curl_result.stdout.strip() != "000":
+        if (
+            curl_result.returncode not in {7, 28}
+            or not curl_result.stdout.startswith("http_code=000")
+            or "bytes=0" not in curl_result.stdout
+        ):
             raise ControlledFailureError(
                 "forced physical HTTPS did not fail closed before data transfer"
             )
@@ -321,6 +345,12 @@ def main() -> int:
     parser.add_argument("--evidence-dir", required=True, type=Path)
     args = parser.parse_args()
 
+    if sys.version_info < MIN_PYTHON:
+        print(
+            "refusing controlled failure: Python 3.10 or newer is required",
+            file=sys.stderr,
+        )
+        return 64
     if os.environ.get(GUARD_ENV) != "1":
         print(
             f"refusing controlled failure without {GUARD_ENV}=1",
@@ -329,6 +359,10 @@ def main() -> int:
         return 64
 
     args.evidence_dir.mkdir(parents=True, exist_ok=True)
+    _write_private(
+        args.evidence_dir / "python_version.txt",
+        ".".join(str(part) for part in sys.version_info[:3]) + "\n",
+    )
     try:
         result = controlled_failure(
             physical_interface=args.physical_interface,

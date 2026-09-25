@@ -102,6 +102,7 @@ class DaemonStartupProtectionTests(unittest.TestCase):
 
         self.assertEqual(main([]), 1)
 
+        runtime.driver.reconcile_stale_tun_state.assert_called_once_with()
         runtime.startup.assert_called_once_with(require_restart_protection=True)
         ipc_server_mock.assert_not_called()
         notify_mock.assert_called_once_with(

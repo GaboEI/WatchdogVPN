@@ -1,0 +1,1082 @@
+{
+  "schema_version": "1.0.0",
+  "policy": {
+    "default_audience": "technical_reference",
+    "audience_overrides": {
+      "README.md": "product",
+      "SECURITY.md": "product",
+      "docs/github-about.md": "product",
+      "external:github-about": "product"
+    },
+    "privacy_exceptions": [
+      {"surface": "docs/cli.md", "rule": "private-ipv4", "value": "127.0.0.1", "reason": "Documented loopback endpoint, not private operational evidence.", "owner": "maintainer", "review_date": "2026-09-23"},
+      {"surface": "docs/decisions/0004-lan-proxy-sharing.md", "rule": "private-ipv4", "value": "127.0.0.1", "reason": "Documented loopback endpoint, not private operational evidence.", "owner": "maintainer", "review_date": "2026-09-23"},
+      {"surface": "docs/dns-cli.md", "rule": "private-ipv4", "value": "127.0.0.1", "reason": "Documented loopback endpoint, not private operational evidence.", "owner": "maintainer", "review_date": "2026-09-23"},
+      {"surface": "docs/phase-19-task-19-6-system-local-proxy-capture-contract.md", "rule": "private-ipv4", "value": "127.0.0.1", "reason": "Documented loopback endpoint, not private operational evidence.", "owner": "maintainer", "review_date": "2026-09-23"},
+      {"surface": "docs/phase-20-task-20-1-lan-sharing-threat-model.md", "rule": "private-ipv4", "value": "127.0.0.1", "reason": "Documented loopback endpoint, not private operational evidence.", "owner": "maintainer", "review_date": "2026-09-23"}
+    ],
+    "editorial_exceptions": [
+      {"surface": "README.md", "rule": "process-narrative", "value": "CI", "reason": "Visible repository status badge.", "owner": "maintainer", "review_date": "2026-09-23"},
+      {"surface": "README.md", "rule": "process-narrative", "value": "tests", "reason": "Public repository layout label.", "owner": "maintainer", "review_date": "2026-09-23"}
+    ]
+  },
+  "surfaces": [
+    {
+      "path": "CHANGELOG.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "README.md",
+      "type": "GENERATED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "ROADMAP.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "SECURITY.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "distros/README.md",
+      "type": "GENERATED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/architecture.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/cli-plan-v0.3.0.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/cli.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/configuration.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/custom-vps-backend.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/decisions/0001-remove-guided-third-party-dns-integration.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/decisions/0002-node-groups-vs-rotation-pool.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/decisions/0003-dns-resolver-racing.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/decisions/0004-lan-proxy-sharing.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/decisions/0005-routing-mode-and-capture-contract.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/decisions/0006-remote-backup-sync.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/decisions/0007-proxy-route-chain-decision.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/decisions/0008-chain-route-action-contract.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/demo.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/dns-cli.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/generated/cli-command-inventory.md",
+      "type": "GENERATED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/github-about.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/github-planning.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/install-contracts.md",
+      "type": "GENERATED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/phase-10-design.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-12-task-12-1-split-tunneling-design-audit.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-13-task-13-4-logical-rule-decision.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-13-task-13-5-ruleset-trust-model.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-16-task-16-1-observability-threat-model.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-16-task-16-2-metrics-store.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-16-task-16-3-traffic-rule-counters.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-16-task-16-4-diagnostic-export-rules.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-16-task-16-5-observability-commands.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-1-backup-manager.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-10-backup-sync-audit-closure.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-2-partial-export-import.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-3-merge-restore-policy.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-4-selection-provider-state-restore.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-5-auto-backup-policy.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-6-sensitive-backup-warning.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-7-encrypted-backup-format.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-8-uninstall-flow.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-17-task-17-9-remote-sync-decision.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-18-task-18-1-legacy-contamination-inventory.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-18-task-18-2-installer-entrypoint-audit.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-18-task-18-3-dependency-installation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-18-task-18-4-shared-state-permissions.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-18-task-18-5-mixed-install-preflight.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-18-task-18-6-vm-smoke.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-18-task-18-7-installer-doctor-integration.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-19-task-19-1-routing-capture-contract-audit.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-19-task-19-2-state-config-migration-design.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-19-task-19-3-runtime-mapping-implementation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-19-task-19-4-rule-import-compatibility.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-19-task-19-5-ruleset-runtime-lifecycle.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-19-task-19-6-system-local-proxy-capture-contract.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-19-task-19-7-rule-detection-diagnostics-contract.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-19-task-19-8-capture-ux-coexistence-contract.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-19-task-19-9-proxy-route-chain-decision.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-20-task-20-1-lan-sharing-threat-model.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-20-task-20-2-branch-scaffold.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-20-task-20-3-authenticated-lan-proxy-mode.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-20-task-20-4-lan-proxy-kill-switch-dns-validation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-20-task-20-5-gateway-router-design-gate.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-20-task-20-6-gateway-router-implementation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-5-task-21-5-1-chain-threat-model-syntax-contract.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-21-5-task-21-5-2-chain-policy-model-validation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-5-task-21-5-3-chain-runtime-mapping.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-5-task-21-5-4-chain-diagnostics.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-5-task-21-5-5-chain-installed-vm-validation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-task-21-1-network-context-threat-model.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-21-task-21-2-network-aware-policy-model.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-task-21-3-network-monitor-integration.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-task-21-4-unified-diagnostics-engine.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-task-21-5-provider-metadata-health-summary.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-21-task-21-6-redacted-support-export.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-branch-gate.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-merge-prep.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-task-22-1-cli-architecture-audit.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-task-22-2-connection-lifecycle-cli.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-task-22-3-profile-provider-cli.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-task-22-4-policy-cli.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-task-22-5-dns-stats-backup-uninstall-cli.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-task-22-6-setup-doctor-cli.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-22-task-22-7-cli-audit-closure.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-5-distro-certification-lab.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-6-task-23-6-1-threat-compatibility-audit.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-23-6-task-23-6-2-fedora-adapter.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-6-task-23-6-3-opensuse-adapter.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-7-5-8-l1-coverage-report.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-7-5-9-plan.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-7-5-compatibility-contract.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-23-branch-gate.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-r28-006-native-policy-companion-design.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "TRANSFORM_PUBLIC"
+    },
+    {
+      "path": "docs/phase-23-r28-01-backup-restore-crash-recovery.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-r28-02-bounded-backup-parsing.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-r28-03-robust-network-context-decoding.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-r28-04-bootstrap-resolver-acyclicity.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-r28-05-aggregate-metrics-redaction.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-r28-07-provider-refresh-reconciliation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-r28-exit-gate-installed-field-reaudit.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-task-23-1-field-validation-plan.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-task-23-2-cli-field-validation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-task-23-3-6-cli-entrypoint-consolidation.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-task-23-3-6-cli-inventory-and-docs.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/phase-23-task-23-3-6-responsive-terminal-output.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/pre-phase-11-closure-2026-07-03.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/problem-context.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/product-roadmap.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/project-history.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/providers.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-02-dns-v2.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-02-layer-2.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-02-layer-3.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-03-layer-1.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-03-layer-4.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-03-layer-5.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-03-phase-2-6-legacy-removal.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-04-phase-12-task-12-5-real-traffic.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-05-phase-12-task-12-6-split-tunneling.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-05-phase-13-policy-diagnostics.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-06-phase-14-node-groups.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-06-phase-15-task-15-1-dns-refinement.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-06-phase-15-task-15-6-network-services.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-07-phase-16-observability.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-07-phase-17-backup-sync.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-07-phase-18-installer.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-08-phase-19-routing-capture.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-08-phase-20-lan-sharing-gateway.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-08-phase-21-network-context-diagnostics.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-09-phase-21-5-route-chains.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-09-phase-22-full-cli-interface.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/qa-audit-2026-07-13-phase-23-task-23-4-release-candidate.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/release-checklist.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/release-notes-v0.1.0-alpha.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/release-notes-v0.1.1.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/release-notes-v0.2.0.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/release-notes-v0.3.0.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/release-notes-v0.3.1.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/repo-maintenance-2026-07-03.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/reporting.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/roadmap-post-alpha.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/roadmap-v1.1.0.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/roadmap.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/runtime-update-contract.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/security.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/threat-model.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "docs/todo-docs.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/v2-validation-log.md",
+      "type": "HISTORICAL",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "MIGRATE_TO_VAULT"
+    },
+    {
+      "path": "docs/validation.md",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    },
+    {
+      "path": "external:github-about",
+      "type": "VERIFIED",
+      "owner": "maintainer",
+      "managed_region": null,
+      "disposition": "RETAIN_PRODUCT"
+    }
+  ]
+}
