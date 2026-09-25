@@ -4918,6 +4918,53 @@ class RoundSevenQuarantineProtocolTests(unittest.TestCase):
             )
         self.assertTrue(target.exists())
 
+    def test_strict_custody_trusted_uid_default_never_exempts_the_adversary(self) -> None:
+        # Reproduces the T-PR23-11 root scenario without needing to run as
+        # root: the custody owner, the configured adversary and the trusted
+        # uid default are all the same uid, and strict policy must still fail
+        # closed instead of accepting that ownership as separation.
+        self.addCleanup(self._restore_hooks)
+        target = self.root / "owned"
+        target.write_bytes(b"owned")
+        with self.assertRaises(PathPolicyError):
+            paths_mod.remove_file_if_owned_relative(
+                self._handle(),
+                target,
+                expected_sha256=hashlib.sha256(b"owned").hexdigest(),
+                isolation_policy=paths_mod.CustodyIsolationPolicy(
+                    require_uid_separation=True,
+                    adversary_uid=os.getuid(),
+                    trusted_custody_uids=(os.getuid(),),
+                ),
+            )
+        self.assertTrue(target.exists())
+
+    def test_lab_policy_keeps_intentionally_weaker_semantics(self) -> None:
+        self.addCleanup(self._restore_hooks)
+        custody_dir = self.root / ".wdvpn-custody"
+        custody_dir.mkdir(mode=0o700)
+        fd = os.open(custody_dir, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            # The lab policy is explicitly non-strict: it must not silently
+            # inherit the strict same-uid rejection.
+            paths_mod._verify_private_directory_fd(
+                fd,
+                label="lab custody",
+                policy=paths_mod.LAB_CUSTODY_ISOLATION_POLICY,
+            )
+            with self.assertRaises(PathPolicyError):
+                paths_mod._verify_private_directory_fd(
+                    fd,
+                    label="strict custody",
+                    policy=paths_mod.CustodyIsolationPolicy(
+                        require_uid_separation=True,
+                        adversary_uid=os.getuid(),
+                        trusted_custody_uids=(0,),
+                    ),
+                )
+        finally:
+            os.close(fd)
+
     def test_crash_after_move_pending_before_rename_leaves_original_and_move_pending(self) -> None:
         self.addCleanup(self._restore_hooks)
         target = self.root / "owned"

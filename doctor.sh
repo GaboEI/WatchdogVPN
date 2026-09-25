@@ -500,6 +500,13 @@ case "$provenance_rc" in
       mark_fail "installed runtime has incomplete hashed provenance"
       info "$provenance_output"
       info "recovery: stop using the installed runtime and run ./update.sh from a trusted clean checkout"
+    elif [[ "$provenance_layout_state" == "legacy" ]]; then
+      if [[ -z "$installed_commit" ]]; then
+        info "no installed version marker yet; run ./install.sh or ./update.sh to create one"
+      else
+        mark_warn "installed runtime uses a legacy layout without schema-2 hashed provenance"
+        info "recovery: run ./update.sh from a clean committed checkout to migrate to attributable hashed provenance"
+      fi
     else
       mark_fail "installed runtime has no attributable hashed provenance"
       info "$provenance_output"

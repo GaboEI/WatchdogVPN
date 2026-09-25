@@ -161,6 +161,7 @@ def _register_source_build_executors(registry: TrustedExecutorRegistry, manifest
             components=components_from_candidate(candidate, release_resolver=release_resolver),
             build_user=build_user,
             workspace_root=Path(args.workspace_root),
+            workspace_authority_root=Path(args.workspace_authority_root) if getattr(args, "workspace_authority_root", None) else None,
             install_root=Path(args.install_root),
         )
         registry.register(method_kind=candidate["kind"], method_id=candidate["id"], executor=executor)
@@ -260,6 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--global-lock-root", default="/run/lock/watchdogvpn/provisioning")
     parser.add_argument("--install-root", default="/usr/local/bin")
     parser.add_argument("--workspace-root", default="/var/lib/watchdogvpn/provisioning/build/amneziawg")
+    parser.add_argument("--workspace-authority-root", default="/var/lib/watchdogvpn/provisioning/build")
     parser.add_argument("--build-user", help="required explicit non-root user for mutating provisioning commands")
     parser.add_argument("--force-runtime-absent", action="store_true", help="internal fixture/audit mode: force AWG runtime absent before resolving")
     sub = parser.add_subparsers(dest="command", required=True)

@@ -138,6 +138,7 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
             components=_components(),
             build_user=build_user,
             workspace_root=workspace,
+            workspace_authority_root=state_root / "build",
             install_root=bin_root,
             runner=runner,
             require_root_install=False,
@@ -218,6 +219,176 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
             outcome = engine.prepare(_decision(), env, apply=True)
             self.assertEqual(outcome.status.value, "preparation_failed")
             self.assertEqual(list(env.context.allowed_roots[0].iterdir()), [])
+
+    # --- T-PR23-16: privileged build workspace authority boundary ---
+
+    def _default_build_user(self) -> str:
+        user = getpass.getuser()
+        return "nobody" if user == "root" else user
+
+    def _workspace_executor(
+        self,
+        *,
+        workspace_root: Path,
+        authority_root: Path,
+        build_user: str,
+    ) -> AmneziaWGUserspaceSourceBuildExecutor:
+        return AmneziaWGUserspaceSourceBuildExecutor(
+            method_id="amneziawg_pinned_source_build_apt_stable_future",
+            components=_components(),
+            build_user=build_user,
+            workspace_root=workspace_root,
+            workspace_authority_root=authority_root,
+            install_root=workspace_root.parent / "bin-out",
+            runner=FakeRunner(),
+            require_root_install=False,
+        )
+
+    def test_workspace_root_outside_authority_boundary_is_rejected_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            authority = root / "authority"
+            authority.mkdir()
+            external = root / "external-parent"
+            external.mkdir(mode=0o755)
+            before = external.stat()
+            executor = self._workspace_executor(
+                workspace_root=external,
+                authority_root=authority,
+                build_user=self._default_build_user(),
+            )
+            with self.assertRaises(ValueError):
+                executor._prepare_build_workspace_parent(external)
+            after = external.stat()
+            self.assertEqual(
+                (before.st_uid, before.st_gid, stat.S_IMODE(before.st_mode)),
+                (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)),
+            )
+            self.assertEqual(sorted(path.name for path in external.iterdir()), [])
+
+    def test_workspace_root_equal_to_authority_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            authority = Path(tmp) / "authority"
+            authority.mkdir()
+            executor = self._workspace_executor(
+                workspace_root=authority,
+                authority_root=authority,
+                build_user=self._default_build_user(),
+            )
+            with self.assertRaises(ValueError):
+                executor._prepare_build_workspace_parent(authority)
+
+    def test_symlinked_workspace_root_is_rejected_without_touching_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            authority = root / "authority"
+            authority.mkdir()
+            target = root / "target"
+            target.mkdir(mode=0o755)
+            link = authority / "amneziawg"
+            link.symlink_to(target)
+            executor = self._workspace_executor(
+                workspace_root=link,
+                authority_root=authority,
+                build_user=self._default_build_user(),
+            )
+            with self.assertRaises(ValueError):
+                executor._prepare_build_workspace_parent(link)
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(sorted(path.name for path in target.iterdir()), [])
+
+    def test_preexisting_workspace_owned_by_another_uid_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            authority = Path(tmp) / "authority"
+            authority.mkdir()
+            workspace = authority / "amneziawg"
+            workspace.mkdir(mode=0o700)
+            executor = self._workspace_executor(
+                workspace_root=workspace,
+                authority_root=authority,
+                build_user=self._default_build_user(),
+            )
+            executor._build_uid = workspace.stat().st_uid + 1
+            executor._build_gid = workspace.stat().st_gid + 1
+            with self.assertRaises(ValueError):
+                executor._prepare_build_workspace_parent(workspace)
+            self.assertTrue(workspace.is_dir())
+            self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o700)
+
+    def test_preexisting_group_writable_workspace_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            authority = Path(tmp) / "authority"
+            authority.mkdir()
+            workspace = authority / "amneziawg"
+            workspace.mkdir()
+            os.chmod(workspace, 0o777)
+            executor = self._workspace_executor(
+                workspace_root=workspace,
+                authority_root=authority,
+                build_user=self._default_build_user(),
+            )
+            with self.assertRaises(ValueError):
+                executor._prepare_build_workspace_parent(workspace)
+            self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o777)
+
+    def test_valid_dedicated_workspace_is_created_owned_by_build_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            authority = Path(tmp) / "authority"
+            workspace = authority / "amneziawg"
+            executor = self._workspace_executor(
+                workspace_root=workspace,
+                authority_root=authority,
+                build_user=self._default_build_user(),
+            )
+            executor._prepare_build_workspace_parent(workspace)
+            st = workspace.stat()
+            self.assertTrue(workspace.is_dir())
+            self.assertEqual((st.st_uid, st.st_gid), (executor._build_uid, executor._build_gid))
+            self.assertEqual(stat.S_IMODE(st.st_mode), 0o700)
+
+    def test_reproduced_arbitrary_workspace_root_fails_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_root = root / "usr-local-bin"
+            bin_root.mkdir()
+            state_root = root / "state"
+            lock_root = root / "locks"
+            authority = state_root / "build"
+            external = root / "var-lib-like"
+            external.mkdir(mode=0o755)
+            build_user = self._default_build_user()
+            registry = TrustedExecutorRegistry()
+            executor = AmneziaWGUserspaceSourceBuildExecutor(
+                method_id="amneziawg_pinned_source_build_apt_stable_future",
+                components=_components(),
+                build_user=build_user,
+                workspace_root=external,
+                workspace_authority_root=authority,
+                install_root=bin_root,
+                runner=FakeRunner(),
+                require_root_install=False,
+            )
+            registry.register(
+                method_kind=AMNEZIAWG_SOURCE_BUILD_METHOD_KIND,
+                method_id="amneziawg_pinned_source_build_apt_stable_future",
+                executor=executor,
+            )
+            context = ExecutionContext(
+                allowed_roots=(bin_root,),
+                now=lambda: "2026-07-29T00:00:00+00:00",
+                custody_isolation_policy=LAB_CUSTODY_ISOLATION_POLICY,
+            )
+            env = engine.ProvisioningEnvironment(
+                state_root=state_root,
+                registry=registry,
+                expected_executor_version=AMNEZIAWG_SOURCE_BUILD_EXECUTOR_VERSION,
+                context=context,
+                global_lock_root=lock_root,
+            )
+            outcome = engine.prepare(_decision(), env, apply=True)
+            self.assertEqual(outcome.status.value, "preparation_failed")
+            self.assertEqual(sorted(path.name for path in external.iterdir()), [])
+            self.assertEqual(stat.S_IMODE(external.stat().st_mode), 0o755)
 
     def test_recovery_apply_failure_rolls_back_without_invalid_transition(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

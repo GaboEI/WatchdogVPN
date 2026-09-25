@@ -47,6 +47,12 @@ assert_contains "$ROOT_DIR/lib/version_marker.sh" 'install -d -m 0755' "version 
 assert_contains "$ROOT_DIR/doctor.sh" 'verify-daemon' "doctor must compare the active daemon generation with installed provenance"
 assert_contains "$ROOT_DIR/doctor.sh" 'daemon process generation did not prove the installed runtime provenance' "doctor must fail closed when an H1 daemon omits its generation digest"
 assert_contains "$ROOT_DIR/doctor.sh" 'provenance_layout_state="$(installed_provenance_layout_state)"' "doctor must classify incomplete H1 publication"
+assert_contains "$ROOT_DIR/doctor.sh" 'mark_warn "installed runtime uses a legacy layout without schema-2 hashed provenance"' "doctor must warn, not fail, for a migratable legacy provenance layout"
+assert_contains "$ROOT_DIR/update.sh" 'continuing update so a supported legacy installation can migrate its provenance' "updater must not abort solely because the legacy pre-update provenance is absent"
+
+# The updater must not let a bare doctor failure block the migration path.
+assert_contains "$ROOT_DIR/update.sh" 'if ! "$ROOT_DIR/doctor.sh"; then' "updater must treat the read-only preflight as non-fatal"
+assert_contains "$ROOT_DIR/update.sh" 'warn "read-only preflight reported findings' "updater must warn and continue when the preflight reports findings"
 
 # --- behavioral: record/read/compare actually works, isolated from the real
 #     system (no sudo, a throwaway marker path) ---

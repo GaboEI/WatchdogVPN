@@ -249,7 +249,14 @@ validate_python_runtime_dependencies
 
 if ((RUN_DOCTOR == 1)); then
   print_section "Read-only preflight"
-  "$ROOT_DIR/doctor.sh"
+  # A recognised legacy installation with absent schema-2/H1 provenance is
+  # diagnostic-only for the updater: doctor reports it as WARN, and blocking on
+  # a bare non-zero doctor exit here would prevent the very update that
+  # migrates the host to attributable hashed provenance. Malformed/incomplete
+  # provenance still exits non-zero and is never masked.
+  if ! "$ROOT_DIR/doctor.sh"; then
+    warn "read-only preflight reported findings; continuing update so a supported legacy installation can migrate its provenance"
+  fi
 fi
 
 if [[ "${INSTALL_DRY_RUN:-0}" == "1" ]]; then
