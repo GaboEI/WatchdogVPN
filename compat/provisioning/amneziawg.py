@@ -288,7 +288,10 @@ class AmneziaWGUserspaceSourceBuildExecutor(Executor):
         component = next((item for item in self.components if item.component_id == component_id), None)
         if component is None:
             raise ValueError("unknown component %s" % component_id)
-        validate_identifier(component.component_id, field="component_id")
+        try:
+            validate_identifier(component.component_id, field="component_id")
+        except ValueError as exc:
+            raise ValueError("invalid component id %r: %s" % (component.component_id, exc)) from None
         worktree = self.workspace_root / component.component_id
         self._prepare_build_workspace_parent(self.workspace_root)
         self._assert_within_workspace_authority(worktree)
