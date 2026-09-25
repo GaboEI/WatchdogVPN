@@ -222,6 +222,43 @@ class AmneziaWGProvisioningTests(unittest.TestCase):
 
     # --- T-PR23-16: privileged build workspace authority boundary ---
 
+    def test_internal_cli_rejects_out_of_boundary_workspace_root_in_plan_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            authority = root / "authority"
+            authority.mkdir()
+            external = root / "var-lib-like"
+            external.mkdir(mode=0o755)
+            rc = compat_runtime_prepare.main([
+                "--workspace-root", str(external),
+                "--workspace-authority-root", str(authority),
+                "--build-user", self._default_build_user(),
+                "--force-runtime-absent",
+                "plan",
+            ])
+            self.assertEqual(rc, compat_runtime_prepare.EXIT_USAGE)
+            self.assertEqual(sorted(path.name for path in external.iterdir()), [])
+            self.assertEqual(stat.S_IMODE(external.stat().st_mode), 0o755)
+
+    def test_internal_cli_rejects_symlinked_workspace_root_in_plan_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            authority = root / "authority"
+            authority.mkdir()
+            target = root / "target"
+            target.mkdir()
+            link = authority / "amneziawg"
+            link.symlink_to(target)
+            rc = compat_runtime_prepare.main([
+                "--workspace-root", str(link),
+                "--workspace-authority-root", str(authority),
+                "--build-user", self._default_build_user(),
+                "--force-runtime-absent",
+                "plan",
+            ])
+            self.assertEqual(rc, compat_runtime_prepare.EXIT_USAGE)
+            self.assertEqual(sorted(path.name for path in target.iterdir()), [])
+
     def _default_build_user(self) -> str:
         user = getpass.getuser()
         return "nobody" if user == "root" else user
