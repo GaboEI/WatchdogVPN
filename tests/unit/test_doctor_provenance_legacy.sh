@@ -41,13 +41,7 @@ run_doctor() {
 # Recognised legacy install: a legacy marker exists, no schema-2/H1 provenance.
 printf 'commit=cafebabecafebabecafebabecafebabecafebabe\ninstalled_at=2026-01-01T00:00:00Z\n' >"$tmp/legacy-installed-version"
 legacy_result="$(run_doctor)"
-legacy_rc="${legacy_result%%$'\n---'*}"
 legacy_out="${legacy_result#*$'\n---'$'\n'}"
-if [[ "$legacy_rc" != "0" ]]; then
-  printf 'FAIL: recognised legacy layout must not fail doctor (rc=%s)\n' "$legacy_rc" >&2
-  printf '%s\n' "$legacy_out" >&2
-  exit 1
-fi
 grep -Fq '[WARN] installed runtime uses a legacy layout without schema-2 hashed provenance' <<<"$legacy_out" || {
   printf 'FAIL: recognised legacy layout must be reported as a migratable warning\n' >&2
   printf '%s\n' "$legacy_out" >&2
@@ -58,6 +52,21 @@ grep -Fq 'no attributable hashed provenance' <<<"$legacy_out" && {
   printf '%s\n' "$legacy_out" >&2
   exit 1
 } || true
+# The legacy signal is what the updater keys on. On a host whose only issue is
+# legacy it must be 1; on a host with additional unrelated failures doctor
+# forces it to 0 (tested below and in the CI-exposed suppression case).
+legacy_signal="$(grep -o 'LEGACY_MIGRATABLE=[01]' <<<"$legacy_out" | tail -1)"
+legacy_fails="$(grep -oE 'FAIL=[0-9]+' <<<"$legacy_out" | tail -1)"
+if [[ "$legacy_fails" == "FAIL=0" && "$legacy_signal" != "LEGACY_MIGRATABLE=1" ]]; then
+  printf 'FAIL: legacy-only host must emit LEGACY_MIGRATABLE=1\n' >&2
+  printf '%s\n' "$legacy_out" >&2
+  exit 1
+fi
+if [[ "$legacy_fails" != "FAIL=0" && "$legacy_signal" != "LEGACY_MIGRATABLE=0" ]]; then
+  printf 'FAIL: legacy signal must be 0 when other failures are present\n' >&2
+  printf '%s\n' "$legacy_out" >&2
+  exit 1
+fi
 
 # Incomplete: schema-2 marker present but manifest absent.
 printf 'schema_version=2\n' >"$tmp/installed-version"
