@@ -124,6 +124,13 @@ run_preflight() {
 [[ "$(run_preflight 1 'FAIL')" != "0" ]] || {
   printf 'FAIL: non-zero doctor exit must abort the update\n' >&2; exit 1; }
 
+# (c2) legacy signal MUST be suppressed when other failures are present:
+# doctor.sh forces LEGACY_MIGRATABLE=0 whenever FAIL_COUNT>0, so an update on a
+# host with real failures cannot continue even if the layout is legacy.
+assert_contains "$ROOT_DIR/doctor.sh" 'if (( FAIL_COUNT > 0 )); then
+  DOCTOR_LEGACY_MIGRATABLE=0
+fi' "doctor must suppress the legacy signal when any failure is present"
+
 # (d) healthy host: doctor exit 0 without the legacy signal still proceeds safely
 [[ "$(run_preflight 0 'OK=1 WARN=0 FAIL=0')" == "0" ]] || {
   printf 'FAIL: healthy doctor exit 0 must allow the update\n' >&2; exit 1; }

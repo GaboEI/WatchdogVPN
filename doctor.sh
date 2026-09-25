@@ -787,6 +787,12 @@ done
 
 printf '\n== Result ==\n'
 printf 'OK=%d WARN=%d FAIL=%d\n' "$OK_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
+# The legacy signal is only ever true when the legacy layout is the SOLE
+# non-OK condition. If any FAIL exists the signal is forced to 0, so the
+# updater can never continue through a genuine failure.
+if (( FAIL_COUNT > 0 )); then
+  DOCTOR_LEGACY_MIGRATABLE=0
+fi
 # Emitted last so an update preflight can parse it from the captured output.
 printf 'LEGACY_MIGRATABLE=%d\n' "$DOCTOR_LEGACY_MIGRATABLE"
 
