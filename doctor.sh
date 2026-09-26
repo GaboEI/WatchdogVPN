@@ -508,6 +508,9 @@ case "$provenance_rc" in
     elif [[ "$provenance_layout_state" == "legacy" ]]; then
       if [[ -z "$installed_commit" ]]; then
         info "no installed version marker yet; run ./install.sh or ./update.sh to create one"
+      elif ! installed_runtime_present; then
+        info "only a preserved version marker is present; no installed runtime detected"
+        info "recovery: run ./install.sh to install, or ./uninstall.sh --purge-config to remove the residual marker"
       else
         DOCTOR_LEGACY_MIGRATABLE=1
         mark_warn "installed runtime uses a legacy layout without schema-2 hashed provenance"
