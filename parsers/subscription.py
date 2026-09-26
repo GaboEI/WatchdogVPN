@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import socket
 import time
 from dataclasses import dataclass, field
@@ -295,6 +296,23 @@ def fetch_and_parse(url: str) -> list[Profile]:
     return fetch_subscription(url).profiles
 
 
+_SUBSCRIPTION_URL_TOKEN_RE = re.compile(r"(?:https?|ftp|file)://\S+")
+
+
+def _redact_subscription_error(message: str, url: str) -> str:
+    """Strip the subscription URL/token from a negotiation error message.
+
+    Negotiation failures are surfaced to the user and may be logged. They must
+    stay useful without echoing the subscription URL, whose path is often a
+    bearer token. Both the exact input URL and any recognizable URL scheme are
+    replaced (T-PR23-01)."""
+    redacted = message
+    for secret in {url, url.strip()}:
+        if secret:
+            redacted = redacted.replace(secret, "<redacted>")
+    return _SUBSCRIPTION_URL_TOKEN_RE.sub("<redacted>", redacted)
+
+
 def fetch_subscription(url: str) -> SubscriptionFetchResult:
     errors: list[str] = []
     candidates: list[SubscriptionFetchResult] = []
@@ -302,16 +320,18 @@ def fetch_subscription(url: str) -> SubscriptionFetchResult:
         try:
             text, headers = _fetch(url, user_agent=user_agent)
         except ParseError as exc:
-            errors.append(str(exc))
-            if "subscription request rejected with HTTP status" not in str(exc):
-                raise
+            # One User-Agent attempt must not discard a candidate another
+            # User-Agent already produced (T-PR23-01). Every fetch failure -
+            # HTTP rejection, timeout, URL error or any other ParseError - is
+            # recorded and negotiation continues; a valid candidate wins.
+            errors.append(_redact_subscription_error(str(exc), url))
             continue
         try:
             profiles, rejected_profiles = _parse_profiles_detailed(text)
         except ParseError as exc:
             # Providers can return different formats per User-Agent. A bad
             # format must not discard a valid candidate from another UA.
-            errors.append(str(exc))
+            errors.append(_redact_subscription_error(str(exc), url))
             continue
         metadata = _parse_subscription_userinfo(headers.get(SUBSCRIPTION_USERINFO_HEADER))
         candidates.append(

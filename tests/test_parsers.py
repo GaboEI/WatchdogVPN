@@ -528,6 +528,75 @@ class SubscriptionParserTests(unittest.TestCase):
         self.assertEqual(profiles[0].config["host"], "node.example.com")
         self.assertEqual(fetch_mock.call_count, 5)
 
+    @patch("parsers.subscription._fetch")
+    def test_fetch_keeps_valid_candidate_after_later_fetch_timeout(self, fetch_mock) -> None:
+        # T-PR23-01: a valid candidate parsed from one User-Agent must survive
+        # a later User-Agent whose fetch fails with a non-HTTP ParseError
+        # (for example a timeout), instead of aborting the whole negotiation.
+        valid = base64.b64encode(
+            b"vless://uuid@node.example.com:443?encryption=none"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return valid, {}
+            raise ParseError("subscription fetch timed out")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(len(result.profiles), 1)
+        self.assertEqual(result.profiles[0].config["host"], "node.example.com")
+        self.assertEqual(result.user_agent, DEFAULT_SUBSCRIPTION_USER_AGENT)
+        self.assertEqual(fetch_mock.call_count, 5)
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_returns_best_valid_candidate_across_user_agents(self, fetch_mock) -> None:
+        # T-PR23-01: among several valid candidates the best one (most
+        # profiles) is returned, with a stable tie-break on first-seen order.
+        small = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none"
+        ).decode("ascii")
+        large = base64.b64encode(
+            b"vless://uuid@one.example.com:443?encryption=none\n"
+            b"vless://uuid@two.example.com:443?encryption=none"
+        ).decode("ascii")
+
+        def fetch_response(_url: str, *, user_agent: str):
+            if user_agent == DEFAULT_SUBSCRIPTION_USER_AGENT:
+                return small, {}
+            if user_agent == "Karing":
+                return large, {}
+            raise ParseError("subscription fetch timed out")
+
+        fetch_mock.side_effect = fetch_response
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = fetch_subscription("https://example.com/sub")
+
+        self.assertEqual(len(result.profiles), 2)
+        self.assertEqual(result.user_agent, "Karing")
+
+    @patch("parsers.subscription._fetch")
+    def test_fetch_without_valid_candidate_fails_without_leaking_secret(self, fetch_mock) -> None:
+        # T-PR23-01: when no User-Agent yields a valid candidate the failure
+        # is explicit and must not echo the subscription URL/token.
+
+        def fetch_response(url: str, *, user_agent: str):
+            raise ParseError(f"invalid subscription URL: {url}")
+
+        fetch_mock.side_effect = fetch_response
+
+        with self.assertRaises(ParseError) as captured:
+            fetch_subscription("https://example.com/sub/private-token-value")
+
+        message = str(captured.exception)
+        self.assertIn("invalid subscription URL", message)
+        self.assertNotIn("private-token-value", message)
+        self.assertNotIn("https://example.com", message)
+
     @patch("parsers.subscription.urlopen")
     def test_fetch_retries_user_agent_after_403(self, urlopen_mock) -> None:
         valid = b"proxies:\n  - name: karing-node\n    type: vless\n    server: node.example.com\n    port: 443\n    uuid: uuid-1\n"
@@ -565,7 +634,7 @@ class SubscriptionParserTests(unittest.TestCase):
             {"WATCHDOGVPN_SUBSCRIPTION_TOTAL_TIMEOUT_SECONDS": "1"},
             clear=False,
         ):
-            with patch("parsers.subscription.time.monotonic", side_effect=[0.0, 0.0, 0.0, 2.0]):
+            with patch("parsers.subscription.time.monotonic", side_effect=[0.0, 2.0] * 6):
                 with self.assertRaisesRegex(ParseError, "timed out after 1 seconds"):
                     fetch_and_parse("https://example.com/sub")
 

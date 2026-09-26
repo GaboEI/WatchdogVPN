@@ -321,7 +321,9 @@ class CliProviderCommandTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("invalid subscription URL", result.stderr)
-            self.assertIn("TU_URL_REAL_DEL_PROVIDER", result.stderr)
+            # T-PR23-01: a negotiation failure must not echo the subscription
+            # URL/token (Task 23.7.5R.2 contract).
+            self.assertNotIn("TU_URL_REAL_DEL_PROVIDER", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
 
     def test_provider_add_rejects_non_https_scheme(self) -> None:
