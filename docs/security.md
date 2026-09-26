@@ -245,6 +245,14 @@ What the parser enforces:
 - **Process isolation**: the OpenVPN process is launched through `setpriv`
   with only `net_admin` and `net_raw` capabilities, even when the daemon
   holds broader privileges.
+- **Native endpoint-route protection**: before startup the driver pins the
+  single remote endpoint with a host route on the current default path
+  (gateway, interface and `onlink` semantics). A pre-existing endpoint route
+  is accepted only when it resolves to that same gateway and interface; an
+  unverifiable, ambiguous or differently-routed endpoint fails closed instead
+  of being trusted. Failed startup after route creation rolls back atomically:
+  any spawned process is stopped, the endpoint route is removed only when this
+  attempt created it, and runtime state is cleared.
 
 These checks run at profile import time and are repeated by the drivers
 before writing any runtime config file. Malformed or unsafe profiles are
