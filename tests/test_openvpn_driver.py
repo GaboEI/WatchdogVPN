@@ -965,6 +965,38 @@ class OpenVPNDriverTests(unittest.TestCase):
         self.assertIsNone(self.driver._process)
         self.assertIn("spawn failed", self.driver.last_error)
 
+    def test_connect_rollback_survives_a_failing_disconnect(self) -> None:
+        with (
+            patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn"),
+            patch.object(OpenVPNDriver, "generate_openvpn_config"),
+            patch.object(
+                OpenVPNDriver, "_protect_remote_endpoint_route", side_effect=self._owned_route_side_effect()
+            ),
+            patch.object(
+                OpenVPNDriver,
+                "_configure_readiness",
+                side_effect=RuntimeError("synthetic readiness failure"),
+            ),
+            patch.object(OpenVPNDriver, "disconnect", side_effect=RuntimeError("teardown boom")),
+            patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip"),
+            patch("drivers.openvpn_driver.subprocess.run") as run_mock,
+        ):
+            self.assertFalse(self.driver.connect(self.profile))
+
+        run_mock.assert_any_call(
+            ["ip", "route", "delete", "138.124.91.224/32"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertIsNone(self.driver._owned_endpoint_route)
+        self.assertIsNone(self.driver._runtime_dir)
+        self.assertIsNone(self.driver._process)
+        self.assertIsNone(self.driver._active_profile)
+        self.assertIsNone(self.driver._connected_at)
+        self.assertIn("synthetic readiness failure", self.driver.last_error)
+        self.assertNotIn("teardown boom", self.driver.last_error)
+
     def test_connect_rolls_back_after_readiness_failure(self) -> None:
         process = unittest.mock.Mock()
         process.poll.return_value = None

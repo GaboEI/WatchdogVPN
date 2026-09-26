@@ -441,6 +441,8 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         """
         try:
             self.disconnect()
+        except Exception:
+            pass
         finally:
             self._process = None
             self._active_profile = None
