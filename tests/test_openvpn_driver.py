@@ -866,6 +866,71 @@ class OpenVPNDriverTests(unittest.TestCase):
                 self.assertIsNone(self.driver._owned_endpoint_route)
                 self.assertTrue(self.driver.last_error)
 
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_rejects_duplicate_or_miskeyed_route_get(self, run_mock, which_mock) -> None:
+        cases = (
+            (
+                "duplicate-dev",
+                "138.124.91.224 via 10.0.0.1 dev net0 dev evil0 src 10.0.0.2 uid 0\n",
+            ),
+            (
+                "duplicate-via",
+                "138.124.91.224 via 10.0.0.1 via 10.0.0.2 dev net0 src 10.0.0.2 uid 0\n",
+            ),
+            (
+                "dev-followed-by-keyword",
+                "138.124.91.224 via 10.0.0.1 dev via src 10.0.0.2 uid 0\n",
+            ),
+            (
+                "via-followed-by-keyword",
+                "138.124.91.224 via dev net0 src 10.0.0.2 uid 0\n",
+            ),
+        )
+        for label, resolution_stdout in cases:
+            with self.subTest(label=label):
+                self.driver.last_error = ""
+                self.driver._owned_endpoint_route = None
+                run_mock.side_effect = [
+                    self._default_route_result(),
+                    self._file_exists_result(),
+                    unittest.mock.Mock(returncode=0, stdout=resolution_stdout),
+                ]
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(self._ipv4_profile()))
+
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn("ambiguous", self.driver.last_error)
+                for call in run_mock.call_args_list:
+                    self.assertNotIn("delete", call.args[0])
+
+    @patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip")
+    @patch("drivers.openvpn_driver.subprocess.run")
+    def test_protect_rejects_duplicate_or_missing_default_route(self, run_mock, which_mock) -> None:
+        cases = (
+            ("duplicate-via", "default via 10.0.0.1 via 10.0.0.2 dev net0 onlink\n"),
+            ("duplicate-dev", "default via 10.0.0.1 dev net0 dev evil0 onlink\n"),
+            ("via-followed-by-keyword", "default via dev net0\n"),
+            ("dev-followed-by-keyword", "default via 10.0.0.1 dev via\n"),
+            ("missing-via-value", "default dev net0 via\n"),
+            ("missing-dev-value", "default via 10.0.0.1 dev\n"),
+        )
+        for label, default_stdout in cases:
+            with self.subTest(label=label):
+                self.driver.last_error = ""
+                self.driver._owned_endpoint_route = None
+                run_mock.reset_mock()
+                run_mock.side_effect = [unittest.mock.Mock(returncode=0, stdout=default_stdout)]
+
+                self.assertFalse(self.driver._protect_remote_endpoint_route(self._ipv4_profile()))
+
+                self.assertIsNone(self.driver._owned_endpoint_route)
+                self.assertIn("malformed or ambiguous", self.driver.last_error)
+                self.assertEqual(run_mock.call_count, 1)
+                for call in run_mock.call_args_list:
+                    self.assertNotIn("add", call.args[0])
+                    self.assertNotIn("delete", call.args[0])
+
     # --- Task 23.7.5R.3 regressions: transactional startup rollback (T-PR23-03) ---
 
     def _owned_route_side_effect(self, route: str = "138.124.91.224/32"):
@@ -1088,6 +1153,72 @@ class OpenVPNDriverTests(unittest.TestCase):
 
         self.assertEqual(self.driver._owned_endpoint_route, "138.124.91.224/32")
         self.assertIs(self.driver._process, process)
+
+
+    def test_connect_fails_closed_on_ambiguous_existing_route_without_spawn(self) -> None:
+        cases = (
+            (
+                "duplicate-dev",
+                "138.124.91.224 via 10.0.0.1 dev net0 dev evil0 src 10.0.0.2 uid 0\n",
+            ),
+            (
+                "duplicate-via",
+                "138.124.91.224 via 10.0.0.1 via 10.0.0.2 dev net0 src 10.0.0.2 uid 0\n",
+            ),
+        )
+        for label, resolution_stdout in cases:
+            with self.subTest(label=label):
+                driver = OpenVPNDriver()
+                with (
+                    patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn"),
+                    patch.object(OpenVPNDriver, "generate_openvpn_config"),
+                    patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip"),
+                    patch("drivers.openvpn_driver.subprocess.run") as run_mock,
+                    patch("drivers.openvpn_driver.subprocess.Popen") as popen_mock,
+                ):
+                    run_mock.side_effect = [
+                        self._default_route_result(),
+                        self._file_exists_result(),
+                        unittest.mock.Mock(returncode=0, stdout=resolution_stdout),
+                    ]
+                    self.assertFalse(driver.connect(self.profile))
+
+                popen_mock.assert_not_called()
+                self.assertIsNone(driver._owned_endpoint_route)
+                self.assertIsNone(driver._runtime_dir)
+                self.assertIsNone(driver._process)
+                self.assertIsNone(driver._active_profile)
+                self.assertIsNone(driver._connected_at)
+                for call in run_mock.call_args_list:
+                    self.assertNotIn("delete", call.args[0])
+
+    def test_connect_fails_closed_on_ambiguous_default_route_without_spawn(self) -> None:
+        cases = (
+            "default via 10.0.0.1 via 10.0.0.2 dev net0 onlink\n",
+            "default via 10.0.0.1 dev net0 dev evil0 onlink\n",
+            "default via dev net0\n",
+            "default via 10.0.0.1 dev\n",
+        )
+        for default_stdout in cases:
+            with self.subTest(default_stdout=default_stdout):
+                driver = OpenVPNDriver()
+                with (
+                    patch.object(OpenVPNDriver, "find_openvpn_binary", return_value="/usr/sbin/openvpn"),
+                    patch.object(OpenVPNDriver, "generate_openvpn_config"),
+                    patch("drivers.openvpn_driver.shutil.which", return_value="/usr/bin/ip"),
+                    patch("drivers.openvpn_driver.subprocess.run") as run_mock,
+                    patch("drivers.openvpn_driver.subprocess.Popen") as popen_mock,
+                ):
+                    run_mock.side_effect = [unittest.mock.Mock(returncode=0, stdout=default_stdout)]
+                    self.assertFalse(driver.connect(self.profile))
+
+                popen_mock.assert_not_called()
+                self.assertIsNone(driver._owned_endpoint_route)
+                self.assertIsNone(driver._runtime_dir)
+                self.assertIsNone(driver._process)
+                for call in run_mock.call_args_list:
+                    self.assertNotIn("add", call.args[0])
+                    self.assertNotIn("delete", call.args[0])
 
 
 if __name__ == "__main__":

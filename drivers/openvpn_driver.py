@@ -40,29 +40,84 @@ class _DefaultPath:
     onlink: bool
 
 
-def _route_flag_value(tokens: list[str], flag: str) -> tuple[bool, str | None]:
-    """Return ``(present, value)`` for a single-valued route keyword."""
-    if flag not in tokens:
-        return (False, None)
-    index = tokens.index(flag)
-    if index + 1 >= len(tokens):
-        return (True, None)
-    return (True, tokens[index + 1])
+_ROUTE_KEYWORDS = frozenset(
+    {
+        "via",
+        "dev",
+        "onlink",
+        "src",
+        "uid",
+        "scope",
+        "proto",
+        "metric",
+        "table",
+        "pref",
+        "realm",
+        "mtu",
+        "advmss",
+        "hoplimit",
+        "initcwnd",
+        "initrwnd",
+        "lifetime",
+        "error",
+        "linkdown",
+        "lock",
+        "quickack",
+        "cache",
+        "default",
+        "unicast",
+        "blackhole",
+        "unreachable",
+        "prohibit",
+        "throw",
+        "local",
+        "broadcast",
+        "anycast",
+        "multicast",
+    }
+)
+
+
+class _RouteTokenError(ValueError):
+    """Route data is ambiguous: a keyword is duplicated, valueless or miskeyed."""
+
+
+def _strict_route_value(tokens: list[str], flag: str) -> str | None:
+    """Return the single value of ``flag``, or ``None`` when absent.
+
+    Ambiguous data is rejected instead of guessed: a duplicated keyword, a
+    keyword with no value, or a keyword immediately followed by another route
+    keyword raises ``_RouteTokenError``.
+    """
+    indexes = [index for index, token in enumerate(tokens) if token == flag]
+    if not indexes:
+        return None
+    if len(indexes) > 1:
+        raise _RouteTokenError(f"duplicate '{flag}' keyword")
+    value_index = indexes[0] + 1
+    if value_index >= len(tokens):
+        raise _RouteTokenError(f"'{flag}' keyword has no value")
+    value = tokens[value_index]
+    if value in _ROUTE_KEYWORDS:
+        raise _RouteTokenError(f"'{flag}' keyword is followed by the '{value}' keyword")
+    return value
 
 
 def _default_path_from_tokens(tokens: list[str]) -> _DefaultPath | None:
     """Parse gateway, interface and onlink semantics from default-route tokens.
 
-    Returns ``None`` for a malformed default route (a ``via``/``dev`` keyword
-    with no following value) so the caller can fail closed instead of guessing.
+    Returns ``None`` for malformed or ambiguous default-route data (missing
+    value, duplicated keyword or keyword followed by another keyword) so the
+    caller fails closed instead of guessing.
     """
-    has_via, gateway = _route_flag_value(tokens, "via")
-    has_dev, interface = _route_flag_value(tokens, "dev")
-    if (has_via and not gateway) or (has_dev and not interface):
+    try:
+        gateway = _strict_route_value(tokens, "via")
+        interface = _strict_route_value(tokens, "dev")
+    except _RouteTokenError:
         return None
     return _DefaultPath(
-        gateway=gateway if has_via else None,
-        interface=interface if has_dev else None,
+        gateway=gateway,
+        interface=interface,
         onlink="onlink" in tokens,
     )
 
@@ -223,7 +278,7 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             return False
         expected = _default_path_from_tokens(tokens)
         if expected is None:
-            self.last_error = "OpenVPN endpoint route default path is malformed"
+            self.last_error = "OpenVPN endpoint route default path is malformed or ambiguous"
             return False
         command = ["ip", "route", "add", route]
         if expected.gateway is not None:
@@ -272,9 +327,13 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
         if not tokens:
             self.last_error = "OpenVPN endpoint route could not be verified against the default route"
             return False
-        has_dev, interface = _route_flag_value(tokens, "dev")
-        has_via, gateway = _route_flag_value(tokens, "via")
-        if not has_dev or not interface:
+        try:
+            interface = _strict_route_value(tokens, "dev")
+            gateway = _strict_route_value(tokens, "via")
+        except _RouteTokenError as exc:
+            self.last_error = f"OpenVPN endpoint route resolution is ambiguous: {exc}"
+            return False
+        if not interface:
             self.last_error = "OpenVPN endpoint route verification found no outbound interface"
             return False
         if interface != expected.interface:
@@ -283,12 +342,12 @@ class OpenVPNDriver(BaseDriver, ReentrantConnectGuard):
             )
             return False
         if expected.gateway is None:
-            if has_via and gateway:
+            if gateway is not None:
                 self.last_error = (
                     "OpenVPN endpoint route uses a gateway the default route does not"
                 )
                 return False
-        elif not has_via or gateway != expected.gateway:
+        elif gateway != expected.gateway:
             self.last_error = "OpenVPN endpoint route does not follow the default route gateway"
             return False
         return True
