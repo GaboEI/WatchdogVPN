@@ -69,6 +69,7 @@ def save_root_snapshot(connections: list[dict[str, str]]) -> None:
     path = root_snapshot_path()
     if not path.parent.exists():
         path.parent.mkdir(mode=0o700, parents=True)
+        _hardened_root_directory(path.parent)
     _validate_metadata(os.lstat(path.parent), path.parent, 0o700, directory=True)
     temporary = path.with_name(f".{path.name}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -125,6 +126,18 @@ def migrate_legacy_snapshot() -> bool:
         return False
     save_root_snapshot(connections)
     return True
+
+
+def _hardened_root_directory(path: Path) -> None:
+    # The shared state directory /var/lib/watchdogvpn is setgid (2770), so a
+    # freshly created snapshot directory would inherit the watchdogvpn group and
+    # the setgid bit and would fail the root-only validation below. Force the
+    # exact owner and mode this authority requires. Run by a root caller only.
+    try:
+        os.chown(path, 0, 0)
+    except OSError:
+        pass
+    os.chmod(path, 0o700)
 
 
 def _restore_connections(connections: list[dict[str, str]]) -> None:

@@ -11,6 +11,7 @@ from unittest.mock import patch
 import dns.networkmanager_restore as nm_restore
 from dns.networkmanager_restore import (
     NetworkManagerRestoreError,
+    _hardened_root_directory,
     _legacy_snapshot_is_trusted,
     _load_validated_snapshot,
     _validate_metadata,
@@ -121,6 +122,17 @@ class NetworkManagerRestoreTests(unittest.TestCase):
         self.assertEqual(command[5::2], ["ipv4.ignore-auto-dns", "ipv4.dns", "ipv6.ignore-auto-dns", "ipv6.dns"])
         self.assertFalse(any(token in " ".join(command) for token in ("gateway", "route", "proxy", "dns-search", "connection.id")))
 
+
+    def test_hardened_root_directory_clears_inherited_setgid(self) -> None:
+        # The snapshot directory is created under the setgid shared state
+        # directory; it must end up exactly 0700 or the root-only validation
+        # rejects it. Same defect class as the NetworkManager TUN registry.
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "nm-dns-restore"
+            state.mkdir(mode=0o700)
+            os.chmod(state, 0o2770)
+            _hardened_root_directory(state)
+            self.assertEqual(state.stat().st_mode & 0o7777, 0o700)
 
     def test_legacy_snapshot_trust_requires_root_and_no_group_or_other_write(self) -> None:
         def stat_result(mode: int, uid: int) -> os.stat_result:
