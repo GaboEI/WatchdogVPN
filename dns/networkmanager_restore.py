@@ -149,38 +149,42 @@ def _restore_connections(connections: list[dict[str, str]]) -> None:
 
 
 def _load_legacy_connections(path: Path, *, require_trusted: bool) -> list[dict[str, str]]:
-    metadata = _load_legacy_metadata(path)
-    if require_trusted and not _legacy_snapshot_is_trusted(metadata):
-        raise NetworkManagerRestoreError(
-            "legacy NetworkManager DNS restore snapshot is untrusted"
-        )
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    # Validate and read through the same open descriptor: the trust decision
+    # (regular file, root-owned, not group/other writable) is applied to the
+    # fstat of the file we actually read, so a source swapped between a prior
+    # inspection and the open can never be promoted. O_NOFOLLOW rejects a
+    # symlinked path outright.
     try:
-        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
-            payload = json.load(handle)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise NetworkManagerRestoreError(
-            "invalid legacy NetworkManager DNS restore snapshot"
-        ) from exc
-    finally:
-        os.close(descriptor)
-    return _connections_from_runtime_snapshot(payload)
-
-
-def _load_legacy_metadata(path: Path) -> os.stat_result:
-    try:
-        metadata = os.lstat(path)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except FileNotFoundError as exc:
         raise NetworkManagerRestoreError("NetworkManager DNS restore snapshot is absent") from exc
     except OSError as exc:
         raise NetworkManagerRestoreError(
             "cannot inspect the legacy NetworkManager DNS restore snapshot"
         ) from exc
-    if not stat.S_ISREG(metadata.st_mode):
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise NetworkManagerRestoreError(
+                "invalid legacy NetworkManager DNS restore snapshot path"
+            )
+        if require_trusted and not _legacy_snapshot_is_trusted(metadata):
+            raise NetworkManagerRestoreError(
+                "legacy NetworkManager DNS restore snapshot is untrusted"
+            )
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as handle:
+            payload = json.load(handle)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise NetworkManagerRestoreError(
-            "invalid legacy NetworkManager DNS restore snapshot path"
-        )
-    return metadata
+            "invalid legacy NetworkManager DNS restore snapshot"
+        ) from exc
+    except OSError as exc:
+        raise NetworkManagerRestoreError(
+            "invalid legacy NetworkManager DNS restore snapshot"
+        ) from exc
+    finally:
+        os.close(descriptor)
+    return _connections_from_runtime_snapshot(payload)
 
 
 def _legacy_snapshot_is_trusted(metadata: os.stat_result) -> bool:

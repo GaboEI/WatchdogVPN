@@ -337,6 +337,55 @@ class NetworkManagerRestoreTests(unittest.TestCase):
 
             save.assert_not_called()
 
+    def test_load_legacy_connections_validates_the_open_descriptor(self) -> None:
+        # F-R4-05: validation must run on the fstat of the opened descriptor,
+        # not on a prior path inspection that could be raced.
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "dns-state.json"
+            legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
+            os.chmod(legacy, 0o600)
+            trusted = os.stat_result((stat.S_IFREG | 0o600, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+            with patch.object(nm_restore.os, "fstat", return_value=trusted), patch.object(
+                nm_restore.os, "lstat"
+            ) as lstat_mock:
+                connections = nm_restore._load_legacy_connections(legacy, require_trusted=True)
+
+            lstat_mock.assert_not_called()
+        self.assertEqual(connections[0]["uuid"], UUID)
+
+    def test_migrate_rejects_snapshot_swapped_to_untrusted_before_open(self) -> None:
+        # F-R4-05: if the source is swapped between an inspect and the open, the
+        # trust decision must see the metadata of the file actually opened.
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "dns-state.json"
+            legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
+            os.chmod(legacy, 0o600)
+            real_open = os.open
+            seen: list[int] = []
+
+            def racing_open(path, flags, *args, **kwargs):
+                if str(path) == str(legacy):
+                    os.chmod(legacy, 0o666)
+                return real_open(path, flags, *args, **kwargs)
+
+            def spy(metadata: os.stat_result) -> bool:
+                seen.append(stat.S_IMODE(metadata.st_mode))
+                return metadata.st_uid == 0 and (stat.S_IMODE(metadata.st_mode) & 0o022) == 0
+
+            with patch.object(nm_restore.os, "open", side_effect=racing_open), patch.object(
+                nm_restore.os, "geteuid", return_value=0
+            ), patch.object(
+                nm_restore, "root_snapshot_exists", return_value=False
+            ), patch.object(
+                nm_restore, "legacy_snapshot_path", return_value=legacy
+            ), patch.object(
+                nm_restore, "_legacy_snapshot_is_trusted", side_effect=spy
+            ), patch.object(nm_restore, "save_root_snapshot") as save:
+                self.assertFalse(migrate_legacy_snapshot())
+
+            self.assertEqual(seen, [0o666])
+            save.assert_not_called()
+
     def test_migrate_is_a_noop_when_root_snapshot_exists(self) -> None:
         with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(
             nm_restore, "root_snapshot_exists", return_value=True
