@@ -139,8 +139,11 @@ class NetworkManagerRestoreTests(unittest.TestCase):
             return os.stat_result((mode, 0, 0, 1, uid, 0, 0, 0, 0, 0))
 
         self.assertTrue(_legacy_snapshot_is_trusted(stat_result(stat.S_IFREG | 0o644, 0)))
-        self.assertFalse(_legacy_snapshot_is_trusted(stat_result(stat.S_IFREG | 0o660, 0)))
-        self.assertFalse(_legacy_snapshot_is_trusted(stat_result(stat.S_IFREG | 0o606, 0)))
+        for untrusted_mode in (0o660, 0o606, 0o666, 0o646):
+            with self.subTest(mode=oct(untrusted_mode)):
+                self.assertFalse(
+                    _legacy_snapshot_is_trusted(stat_result(stat.S_IFREG | untrusted_mode, 0))
+                )
         self.assertFalse(_legacy_snapshot_is_trusted(stat_result(stat.S_IFREG | 0o600, 1000)))
 
     def test_restore_falls_back_to_trusted_legacy_snapshot(self) -> None:
@@ -221,14 +224,19 @@ class NetworkManagerRestoreTests(unittest.TestCase):
 
         run.assert_not_called()
 
-    def test_migrate_promotes_legacy_snapshot_into_root_authority(self) -> None:
+    def test_migrate_promotes_trusted_legacy_snapshot_into_root_authority(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             legacy = Path(tmp) / "dns-state.json"
             legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
+            root = Path(tmp) / "nm-dns-restore" / "snapshot.json"
             with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(
                 nm_restore, "root_snapshot_exists", return_value=False
             ), patch.object(
                 nm_restore, "legacy_snapshot_path", return_value=legacy
+            ), patch.object(
+                nm_restore, "root_snapshot_path", return_value=root
+            ), patch.object(
+                nm_restore, "_legacy_snapshot_is_trusted", return_value=True
             ), patch.object(nm_restore, "save_root_snapshot") as save:
                 self.assertTrue(migrate_legacy_snapshot())
 
@@ -244,6 +252,90 @@ class NetworkManagerRestoreTests(unittest.TestCase):
                 "ipv6.dns": "2001:db8::53",
             }],
         )
+
+    def test_migrate_refuses_untrusted_legacy_without_creating_root_authority(self) -> None:
+        # F-R4-01: a snapshot the unprivileged daemon can write (group/other
+        # writable, or not root-owned) must never be promoted to root authority.
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "dns-state.json"
+            legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
+            os.chmod(legacy, 0o666)
+            root = Path(tmp) / "nm-dns-restore" / "snapshot.json"
+            with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(
+                nm_restore, "root_snapshot_exists", return_value=False
+            ), patch.object(
+                nm_restore, "legacy_snapshot_path", return_value=legacy
+            ), patch.object(
+                nm_restore, "root_snapshot_path", return_value=root
+            ), patch.object(nm_restore, "save_root_snapshot") as save:
+                self.assertFalse(migrate_legacy_snapshot())
+
+            save.assert_not_called()
+            self.assertFalse(root.exists())
+
+    def test_migrate_refuses_non_root_owned_legacy_without_promoting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "dns-state.json"
+            legacy.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
+            os.chmod(legacy, 0o600)
+            with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(
+                nm_restore, "root_snapshot_exists", return_value=False
+            ), patch.object(
+                nm_restore, "legacy_snapshot_path", return_value=legacy
+            ), patch.object(nm_restore, "save_root_snapshot") as save:
+                # The real trust check runs: the file is owned by the test user.
+                self.assertFalse(migrate_legacy_snapshot())
+
+            save.assert_not_called()
+
+    def test_migrate_refuses_symlink_legacy_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "real.json"
+            target.write_text(json.dumps(legacy_runtime_payload()), encoding="utf-8")
+            link = Path(tmp) / "dns-state.json"
+            link.symlink_to(target)
+            with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(
+                nm_restore, "root_snapshot_exists", return_value=False
+            ), patch.object(
+                nm_restore, "legacy_snapshot_path", return_value=link
+            ), patch.object(
+                nm_restore, "_legacy_snapshot_is_trusted", return_value=True
+            ), patch.object(nm_restore, "save_root_snapshot") as save:
+                self.assertFalse(migrate_legacy_snapshot())
+
+            save.assert_not_called()
+
+    def test_migrate_refuses_corrupt_trusted_legacy_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "dns-state.json"
+            legacy.write_text("not valid json", encoding="utf-8")
+            with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(
+                nm_restore, "root_snapshot_exists", return_value=False
+            ), patch.object(
+                nm_restore, "legacy_snapshot_path", return_value=legacy
+            ), patch.object(
+                nm_restore, "_legacy_snapshot_is_trusted", return_value=True
+            ), patch.object(nm_restore, "save_root_snapshot") as save:
+                self.assertFalse(migrate_legacy_snapshot())
+
+            save.assert_not_called()
+
+    def test_migrate_refuses_non_networkmanager_trusted_legacy_snapshot(self) -> None:
+        payload = legacy_runtime_payload()
+        payload["inventory"] = {"manager": "systemd-resolved"}  # type: ignore[assignment]
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "dns-state.json"
+            legacy.write_text(json.dumps(payload), encoding="utf-8")
+            with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(
+                nm_restore, "root_snapshot_exists", return_value=False
+            ), patch.object(
+                nm_restore, "legacy_snapshot_path", return_value=legacy
+            ), patch.object(
+                nm_restore, "_legacy_snapshot_is_trusted", return_value=True
+            ), patch.object(nm_restore, "save_root_snapshot") as save:
+                self.assertFalse(migrate_legacy_snapshot())
+
+            save.assert_not_called()
 
     def test_migrate_is_a_noop_when_root_snapshot_exists(self) -> None:
         with patch.object(nm_restore.os, "geteuid", return_value=0), patch.object(

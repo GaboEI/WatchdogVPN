@@ -53,17 +53,30 @@ def record_active_tun_connection() -> bool:
 
 
 def remove_stale_tun_connections() -> bool:
-    """Remove only the NetworkManager profile identity previously registered by WatchdogVPN."""
-    owned_uuid = _read_owned_uuid_registry()
-    if owned_uuid is None:
-        return False
+    """Remove only the NetworkManager profile identity previously registered.
 
+    Returns True when the owned resource is reconciled: the registered profile
+    was deleted, or it is provably absent. Returns False when there is no
+    ownership authority but a product-shaped residual profile exists, because
+    the teardown cannot be reported clean without either owning the profile or
+    reconciling its absence. An unsafe, ambiguous or invalid registry, or a
+    failed delete, raises so the caller fails closed.
+    """
+    owned_uuid = _read_owned_uuid_registry()
     listing = _run_nmcli([
         "nmcli", "--terse", "--fields", "UUID,NAME,TYPE", "--escape", "no",
         "connection", "show",
     ])
+    rows = _parse_connection_rows(listing.stdout)
+    if owned_uuid is None:
+        # No ownership authority: never delete a candidate by name, but a
+        # product-shaped residual (for example a profile left by an install
+        # whose previous volatile registry was lost on reboot) must not be
+        # reported as cleaned either.
+        return not _has_product_tun_candidate(rows)
+
     connection_uuids: list[str] = []
-    for uuid, name, connection_type, _device in _parse_connection_rows(listing.stdout):
+    for uuid, name, connection_type, _device in rows:
         if uuid == owned_uuid and name == CONNECTION_NAME and connection_type == CONNECTION_TYPE:
             connection_uuids.append(uuid)
 
@@ -73,7 +86,14 @@ def remove_stale_tun_connections() -> bool:
     for connection_uuid in connection_uuids:
         _run_nmcli(["nmcli", "connection", "delete", "uuid", connection_uuid])
     _remove_owned_uuid_registry()
-    return bool(connection_uuids)
+    return True
+
+
+def _has_product_tun_candidate(rows: list[tuple[str, str, str, str]]) -> bool:
+    return any(
+        name == CONNECTION_NAME and connection_type == CONNECTION_TYPE
+        for _uuid, name, connection_type, _device in rows
+    )
 
 
 def _parse_connection_rows(output: str) -> list[tuple[str, str, str, str]]:
@@ -292,7 +312,11 @@ def main() -> int:
             if not record_active_tun_connection():
                 return 1
         elif mode == "cleanup" or mode.endswith("cleanup"):
-            remove_stale_tun_connections()
+            # An unresolved cleanup (no authority but a product-shaped residual
+            # profile) must not be reported as success: the caller would then
+            # treat a possibly-unclean teardown as done.
+            if not remove_stale_tun_connections():
+                return 1
         else:
             raise NetworkManagerTunCleanupError("unknown NetworkManager TUN helper mode")
     except NetworkManagerTunCleanupError:

@@ -104,7 +104,10 @@ profile without touching connections it does not own.
   because a NetworkManager profile is persistent. A malformed, ambiguous,
   symlinked, wrongly-owned or non-root-owned registry is rejected and no
   NetworkManager profile is deleted; a connection is deleted only when its UUID
-  matches the recorded owner and its name and type still match.
+  matches the recorded owner and its name and type still match. When no
+  ownership registry exists but a product-shaped residual profile does, the
+  helper refuses to delete it by name and reports failure instead of a false
+  clean teardown.
 - The registration helper exits non-zero when NetworkManager did not adopt the
   TUN, so a caller that only checks the helper exit status never treats an
   unconfirmed adoption as recorded ownership.
@@ -114,8 +117,8 @@ profile without touching connections it does not own.
   the helper restores from the legacy state only when the file is root-owned
   and not group- or other-writable, so the unprivileged daemon cannot forge the
   DNS values that root applies. The installer promotes (migrates) a legacy
-  snapshot into the root authority so a pre-existing install keeps its restore
-  ability across the upgrade. An absent, corrupt or untrusted snapshot fails
+  snapshot into the root authority only under that same trust bar, so a snapshot
+  the daemon could write is never promoted to a root authority. An absent, corrupt or untrusted snapshot fails
   with an actionable error and no DNS mutation.
 
 ## Kill Switch Scope

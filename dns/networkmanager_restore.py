@@ -107,12 +107,15 @@ def restore_root_snapshot() -> bool:
 
 
 def migrate_legacy_snapshot() -> bool:
-    """Promote a legacy runtime snapshot into the root-only restore authority.
+    """Promote a trusted legacy runtime snapshot into the root-only authority.
 
-    Run by the installer as root so a pre-existing install keeps its restore
-    ability across an upgrade. It never overwrites an existing root snapshot and
-    never mutates live DNS; it only materialises the durable authority from the
-    already recorded legacy state.
+    Run by the installer as root so a pre-existing install can keep its restore
+    ability across an upgrade. The legacy source must meet the same trust bar as
+    the runtime fallback -- root-owned, a regular file, and not writable by group
+    or others -- because a snapshot the unprivileged daemon can write must never
+    be promoted to root authority. It never overwrites an existing root snapshot
+    and never mutates live DNS; an absent, unsafe, corrupt or non-NetworkManager
+    source is a no-op with no root authority created.
     """
     if os.geteuid() != 0:
         raise NetworkManagerRestoreError(
@@ -121,7 +124,7 @@ def migrate_legacy_snapshot() -> bool:
     if root_snapshot_exists():
         return False
     try:
-        connections = _load_legacy_connections(legacy_snapshot_path(), require_trusted=False)
+        connections = _load_legacy_connections(legacy_snapshot_path(), require_trusted=True)
     except NetworkManagerRestoreError:
         return False
     save_root_snapshot(connections)
